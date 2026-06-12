@@ -1,6 +1,9 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Tool is the sealed interface implemented by every tool kind the SDK supports
 // (function tools, hosted tools such as web search, etc). It mirrors the Python
@@ -50,6 +53,12 @@ type FunctionTool struct {
 	InputGuardrails []ToolInputGuardrail
 	// OutputGuardrails inspect the tool's result after OnInvoke runs.
 	OutputGuardrails []ToolOutputGuardrail
+
+	// Timeout bounds a single invocation of this tool. When it expires the
+	// invocation's context is canceled and the call fails with a
+	// ToolTimeoutError (fed back to the model via FailureErrorFunction when
+	// set, fatal otherwise). Zero means no timeout.
+	Timeout time.Duration
 
 	// NeedsApproval, when true, pauses the run before this tool executes,
 	// surfacing a ToolApprovalItem in RunResult.Interruptions for a human to

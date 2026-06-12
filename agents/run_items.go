@@ -154,6 +154,19 @@ func extractMessageText(item TResponseOutputItem) string {
 	return b.String()
 }
 
+// extractMessageRefusal pulls the concatenated refusal content from a message
+// output item, or "" when the message carries none.
+func extractMessageRefusal(item TResponseOutputItem) string {
+	msg := item.AsMessage()
+	var b strings.Builder
+	for _, part := range msg.Content {
+		if part.Type == "refusal" && part.Refusal != "" {
+			b.WriteString(part.Refusal)
+		}
+	}
+	return b.String()
+}
+
 // newFunctionCallOutputItem builds a ToolCallOutputItem for a function tool
 // result, serializing non-string outputs to JSON.
 func newFunctionCallOutputItem(agent *Agent, callID string, output any) *ToolCallOutputItem {

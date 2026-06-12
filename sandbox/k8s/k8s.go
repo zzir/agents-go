@@ -378,6 +378,12 @@ func buildJob(configMapName string, filePaths []string, req sandbox.ExecRequest,
 		// directory individually (subPath mounts keyed "f<i>"): nested paths
 		// and dotfiles work, and no copy step (no shell) is needed in the
 		// image. ConfigMap keys cannot contain "/", hence the indexed keys.
+		//
+		// Nested targets (e.g. /work/pkg/util.py) rely on the OCI runtime
+		// creating bind-mount destinations inside the already-mounted work
+		// emptyDir — runc/crun create missing parent directories and file
+		// targets, and the work mount is deliberately first in this list so it
+		// is mounted before the file mounts resolve against it.
 		volumes = append(volumes, corev1.Volume{Name: "code", VolumeSource: corev1.VolumeSource{
 			ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}},
 		}})

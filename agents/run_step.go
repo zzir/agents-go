@@ -182,6 +182,16 @@ func (r *runner) executeToolsAndSideEffects(
 		// No tools to run: this is a candidate final output.
 		if lastMessage != nil {
 			text := lastMessage.Text()
+			// A message with no text but a refusal is a refusal, not an empty
+			// (or unparsable) final output.
+			if text == "" {
+				if refusal := extractMessageRefusal(lastMessage.Raw); refusal != "" {
+					return nil, &ModelRefusalError{
+						AgentsError: AgentsError{Message: "model refused to respond: " + refusal},
+						Refusal:     refusal,
+					}
+				}
+			}
 			if outputSchema != nil && !outputSchema.IsPlainText() {
 				final, err := outputSchema.ValidateJSON(text)
 				if err != nil {
@@ -244,6 +254,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			}
 
 			span := r.trace.StartSpan("function:"+run.Call.Name, r.agentParentID())
+			defer span.Finish() // idempotent; covers panics in user tool code
 			out, err := invokeTool(gctx, run.Tool, tc, run.Call.Arguments)
 			if err != nil {
 				span.SetError(err.Error(), nil)
@@ -388,7 +399,20 @@ func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJS
 	if tool.OnInvoke == nil {
 		return nil, newUserError("function tool %q has no OnInvoke", tool.Name)
 	}
-	return tool.OnInvoke(ctx, tc, argsJSON)
+	if tool.Timeout <= 0 {
+		return tool.OnInvoke(ctx, tc, argsJSON)
+	}
+	tctx, cancel := context.WithTimeout(ctx, tool.Timeout)
+	defer cancel()
+	out, err := tool.OnInvoke(tctx, tc, argsJSON)
+	// Only the tool's own deadline (not a caller cancellation) is a timeout.
+	if err != nil && tctx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		return nil, &ToolTimeoutError{
+			AgentsError: AgentsError{Message: fmt.Sprintf("tool %q timed out after %v", tool.Name, tool.Timeout)},
+			ToolName:    tool.Name,
+		}
+	}
+	return out, err
 }
 
 // multipleHandoffsMessage is sent back as the tool output for every handoff

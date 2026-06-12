@@ -158,8 +158,12 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 // defaults applied.
 func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *container.HostConfig) {
 	cfg := &container.Config{
-		Image:      s.opts.Image,
-		Cmd:        req.Cmd,
+		Image: s.opts.Image,
+		// Entrypoint (not Cmd) carries the full command: with a non-empty
+		// entrypoint the daemon inherits neither the image's ENTRYPOINT nor its
+		// CMD, so req.Cmd runs exactly as given. Cmd alone would be appended as
+		// arguments to an image ENTRYPOINT.
+		Entrypoint: req.Cmd,
 		WorkingDir: workDir,
 		Env:        envSlice(req.Env),
 		Tty:        false,
@@ -213,20 +217,34 @@ func (s *Sandbox) readLogs(ctx context.Context, id string, max int64) (string, s
 }
 
 // demuxLogs splits a multiplexed docker log stream into stdout and stderr,
-// capping each at max bytes. Reading stops at the source once both caps plus
-// framing slack have been consumed, so unbounded output cannot exhaust memory.
+// capping each at max bytes. Reading stops at the source only once BOTH
+// streams are full — a per-total limit would let a flooding stdout starve a
+// short stderr (or vice versa) that arrives later in the stream. Memory stays
+// bounded throughout because each buffer discards beyond its cap.
 func demuxLogs(r io.Reader, max int64) (string, string, error) {
 	stdout := &cappedBuffer{max: max}
 	stderr := &cappedBuffer{max: max}
-	// Each frame carries an 8-byte header; allow both streams to reach their
-	// cap plus slack for the headers, then stop reading. A cut mid-frame
-	// surfaces as ErrUnexpectedEOF, which just means "truncated".
-	limited := io.LimitReader(r, 2*max+64*1024)
-	if _, err := stdcopy.StdCopy(stdout, stderr, limited); err != nil &&
+	src := &stopWhenFull{r: r, full: func() bool { return stdout.full() && stderr.full() }}
+	// A cut mid-frame surfaces as ErrUnexpectedEOF, which just means "truncated".
+	if _, err := stdcopy.StdCopy(stdout, stderr, src); err != nil &&
 		err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return "", "", err
 	}
 	return stdout.String(), stderr.String(), nil
+}
+
+// stopWhenFull reads from r until full() reports both sinks are at capacity,
+// then ends the stream early.
+type stopWhenFull struct {
+	r    io.Reader
+	full func() bool
+}
+
+func (s *stopWhenFull) Read(p []byte) (int, error) {
+	if s.full() {
+		return 0, io.EOF
+	}
+	return s.r.Read(p)
 }
 
 // cappedBuffer is an io.Writer that keeps at most max bytes and silently
@@ -248,6 +266,9 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *cappedBuffer) String() string { return b.buf.String() }
+
+// full reports whether the buffer has reached its cap.
+func (b *cappedBuffer) full() bool { return int64(b.buf.Len()) >= b.max }
 
 // Close implements sandbox.Sandbox.
 func (s *Sandbox) Close() error { return s.cli.Close() }

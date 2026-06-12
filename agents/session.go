@@ -25,6 +25,9 @@ type Session interface {
 
 // InMemorySession is a goroutine-safe in-memory Session, useful for tests and
 // short-lived conversations. History is lost when the process exits.
+//
+// GetItems returns a copy of the item slice, but the items share underlying
+// pointers with the store; treat returned items as read-only.
 type InMemorySession struct {
 	mu    sync.Mutex
 	items []TResponseInputItem

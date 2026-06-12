@@ -78,6 +78,11 @@ func nestedRunOptions(parent *RunContext, maxTurns int) RunOptions {
 		opts.ModelSettings = parent.inheritedOpts.ModelSettings
 		opts.Tracer = parent.inheritedOpts.Tracer
 	}
+	if parent != nil {
+		// Join the parent's trace so the nested run's spans are attributed to
+		// the same workflow instead of an orphan root trace.
+		opts.parentTrace = parent.activeTrace
+	}
 	// Share the parent's user context value, but use a fresh usage accumulator
 	// and approval store for the nested run.
 	if parent != nil {

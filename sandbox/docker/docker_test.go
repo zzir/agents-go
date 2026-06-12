@@ -184,3 +184,41 @@ func TestDemuxLogs_SmallOutputUnchanged(t *testing.T) {
 		t.Errorf("stdout = %q, stderr = %q", stdout, stderr)
 	}
 }
+
+// The full command must run via Entrypoint so an image ENTRYPOINT cannot turn
+// req.Cmd into mere arguments, and the image CMD is not appended.
+func TestBuildConfig_CommandRunsAsEntrypoint(t *testing.T) {
+	s := &Sandbox{opts: Options{Image: "python:3.12-slim"}}
+	cfg, _ := s.buildConfig(sandbox.ExecRequest{Cmd: []string{"python", "main.py"}})
+	if got := []string(cfg.Entrypoint); len(got) != 2 || got[0] != "python" || got[1] != "main.py" {
+		t.Errorf("entrypoint = %v, want [python main.py]", got)
+	}
+	if len(cfg.Cmd) != 0 {
+		t.Errorf("cmd = %v, want empty (image CMD must not leak in)", cfg.Cmd)
+	}
+}
+
+// A flooding stdout must not starve a later, short stderr: reading stops only
+// once BOTH streams are full.
+func TestDemuxLogs_LateStderrNotStarved(t *testing.T) {
+	var mux bytes.Buffer
+	outW := stdcopy.NewStdWriter(&mux, stdcopy.Stdout)
+	errW := stdcopy.NewStdWriter(&mux, stdcopy.Stderr)
+	// stdout floods far past its cap first...
+	for range 100 {
+		outW.Write(bytes.Repeat([]byte("o"), 1024))
+	}
+	// ...then a short stderr arrives at the very end of the stream.
+	errW.Write([]byte("boom"))
+
+	stdout, stderr, err := demuxLogs(&mux, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stdout) != 4096 {
+		t.Errorf("stdout len = %d, want capped at 4096", len(stdout))
+	}
+	if stderr != "boom" {
+		t.Errorf("stderr = %q, want %q (must not be starved by stdout volume)", stderr, "boom")
+	}
+}

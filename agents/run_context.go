@@ -1,6 +1,10 @@
 package agents
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/zzir/agents-go/tracing"
+)
 
 // RunContext carries user-supplied data and run-scoped state through a single
 // agent run. It is passed to tool invocations, guardrails and lifecycle hooks.
@@ -21,6 +25,10 @@ type RunContext struct {
 	// inheritedOpts carries the run's model provider/model so nested runs (e.g.
 	// agent-as-tool) inherit them. Set by the runner; not user-facing.
 	inheritedOpts *RunOptions
+
+	// activeTrace is the run's trace handle, so nested runs join it instead of
+	// starting an orphan root trace. Set by the runner; not user-facing.
+	activeTrace *tracing.TraceHandle
 }
 
 // NewRunContext returns a RunContext wrapping the given user value with a fresh

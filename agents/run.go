@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -55,6 +56,11 @@ type RunOptions struct {
 	// saves tokens but requires a model that returns response IDs and keeps
 	// responses stored (the default; do not set ModelSettings.Store=false).
 	UsePreviousResponseID bool
+
+	// parentTrace, when set, makes the run record its spans into an existing
+	// trace instead of starting (and finishing) its own. Set internally for
+	// nested agent-as-tool runs; not user-facing.
+	parentTrace *tracing.TraceHandle
 }
 
 // Run executes the agent loop until the agent produces a final output, hands off
@@ -85,7 +91,11 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
 
-	if opts.Tracer != nil {
+	if opts.parentTrace != nil {
+		// Nested run (agent-as-tool): record spans into the parent's trace
+		// rather than starting an orphan root trace. The parent finishes it.
+		r.trace = opts.parentTrace
+	} else if opts.Tracer != nil {
 		workflow := agent.Name
 		if workflow == "" {
 			workflow = "Agent workflow"
@@ -93,6 +103,7 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 		r.trace = opts.Tracer.StartTrace(workflow)
 		defer r.trace.Finish()
 	}
+	rc.activeTrace = r.trace
 
 	// With a session, prepend stored history to the model input.
 	modelInput := userInput
@@ -520,34 +531,11 @@ func normalizeInput(input any) ([]TResponseInputItem, error) {
 	}
 }
 
+// asAgentsError finds the embedded AgentsError of any SDK error type in err's
+// chain (unwrapping fmt.Errorf %w wrapping), so RunErrorDetails can be attached.
 func asAgentsError(err error, target **AgentsError) bool {
-	switch e := err.(type) {
-	case *MaxTurnsError:
-		*target = &e.AgentsError
-		return true
-	case *ModelBehaviorError:
-		*target = &e.AgentsError
-		return true
-	case *ModelRefusalError:
-		*target = &e.AgentsError
-		return true
-	case *UserError:
-		*target = &e.AgentsError
-		return true
-	case *ToolTimeoutError:
-		*target = &e.AgentsError
-		return true
-	case *InputGuardrailTripwireError:
-		*target = &e.AgentsError
-		return true
-	case *OutputGuardrailTripwireError:
-		*target = &e.AgentsError
-		return true
-	case *ToolGuardrailTripwireError:
-		*target = &e.AgentsError
-		return true
-	case *AgentsError:
-		*target = e
+	if c, ok := errors.AsType[agentsErrorCarrier](err); ok {
+		*target = c.base()
 		return true
 	}
 	return false

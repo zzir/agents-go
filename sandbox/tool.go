@@ -61,9 +61,20 @@ type codeToolArgs struct {
 // so it can correct itself.
 func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 	cfg = cfg.withDefaults()
-	schema, err := agents.SchemaFor[codeToolArgs](true)
-	if err != nil {
-		schema = map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}}
+	schema, schemaErr := agents.SchemaFor[codeToolArgs](true)
+	if schemaErr != nil {
+		// Cannot happen for codeToolArgs today; surface it on invocation
+		// rather than exposing a schema without the "code" property (which
+		// would let the model "succeed" at running an empty file).
+		return &agents.FunctionTool{
+			Name:             cfg.Name,
+			Description:      cfg.Description,
+			ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
+			Strict:           true,
+			OnInvoke: func(context.Context, *agents.ToolContext, string) (any, error) {
+				return nil, fmt.Errorf("code tool %q: schema generation failed: %w", cfg.Name, schemaErr)
+			},
+		}
 	}
 	return &agents.FunctionTool{
 		Name:             cfg.Name,

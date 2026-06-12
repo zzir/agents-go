@@ -50,6 +50,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		r.trace = opts.Tracer.StartTrace(workflow)
 		defer r.trace.Finish()
 	}
+	rc.activeTrace = r.trace
 	defer func() { r.agentSpan.Finish() }()
 
 	modelInput := userInput
@@ -205,7 +206,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 				return nil, err
 			}
 			return &RunResult{
-				Input:        userInput,
+				Input:        modelInput,
 				NewItems:     generatedItems,
 				RawResponses: rawResponses,
 				FinalOutput:  step.FinalOutput,
@@ -246,7 +247,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 				CurrentTurn:         turn,
 			}
 			return &RunResult{
-				Input:         userInput,
+				Input:         modelInput,
 				NewItems:      generatedItems,
 				RawResponses:  rawResponses,
 				LastAgent:     currentAgent,

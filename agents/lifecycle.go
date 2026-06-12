@@ -33,19 +33,32 @@ func (BaseRunHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) e
 func (BaseRunHooks) runHooks() {}
 
 // AgentHooks receives lifecycle callbacks scoped to a single agent. Embed
-// BaseAgentHooks for a no-op default.
+// BaseAgentHooks for a no-op default. It mirrors the Python SDK's AgentHooks
+// (on_start, on_end, on_handoff, on_tool_start, on_tool_end).
 type AgentHooks interface {
 	OnStart(ctx context.Context, rc *RunContext, agent *Agent) error
 	OnEnd(ctx context.Context, rc *RunContext, agent *Agent, output any) error
+	// OnHandoff fires on the receiving agent's hooks when control is handed to
+	// it; source is the agent that delegated.
+	OnHandoff(ctx context.Context, rc *RunContext, agent, source *Agent) error
+	// OnToolStart fires before one of this agent's tools is invoked.
+	OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error
+	// OnToolEnd fires after one of this agent's tools returns, with its result.
+	OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error
 	agentHooks()
 }
 
 // BaseAgentHooks is a no-op AgentHooks implementation.
 type BaseAgentHooks struct{}
 
-func (BaseAgentHooks) OnStart(context.Context, *RunContext, *Agent) error    { return nil }
-func (BaseAgentHooks) OnEnd(context.Context, *RunContext, *Agent, any) error { return nil }
-func (BaseAgentHooks) agentHooks()                                           {}
+func (BaseAgentHooks) OnStart(context.Context, *RunContext, *Agent) error           { return nil }
+func (BaseAgentHooks) OnEnd(context.Context, *RunContext, *Agent, any) error        { return nil }
+func (BaseAgentHooks) OnHandoff(context.Context, *RunContext, *Agent, *Agent) error { return nil }
+func (BaseAgentHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) error { return nil }
+func (BaseAgentHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
+	return nil
+}
+func (BaseAgentHooks) agentHooks() {}
 
 // The call* helpers invoke both run-level and agent-level hooks, tolerating nil.
 
@@ -79,21 +92,42 @@ func callAgentEnd(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunCont
 
 func callHandoff(ctx context.Context, hooks RunHooks, from, to *Agent, rc *RunContext) error {
 	if hooks != nil {
-		return hooks.OnHandoff(ctx, rc, from, to)
+		if err := hooks.OnHandoff(ctx, rc, from, to); err != nil {
+			return err
+		}
+	}
+	if to.Hooks != nil {
+		if err := to.Hooks.OnHandoff(ctx, rc, to, from); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func callToolStart(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContext, tool Tool) error {
 	if hooks != nil {
-		return hooks.OnToolStart(ctx, rc, agent, tool)
+		if err := hooks.OnToolStart(ctx, rc, agent, tool); err != nil {
+			return err
+		}
+	}
+	if agent.Hooks != nil {
+		if err := agent.Hooks.OnToolStart(ctx, rc, agent, tool); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func callToolEnd(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContext, tool Tool, result any) error {
 	if hooks != nil {
-		return hooks.OnToolEnd(ctx, rc, agent, tool, result)
+		if err := hooks.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+			return err
+		}
+	}
+	if agent.Hooks != nil {
+		if err := agent.Hooks.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+			return err
+		}
 	}
 	return nil
 }

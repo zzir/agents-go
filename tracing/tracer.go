@@ -17,14 +17,16 @@ func NewTracer(proc Processor) *Tracer { return &Tracer{proc: proc} }
 
 // TraceHandle represents an in-progress trace.
 type TraceHandle struct {
-	Trace  *Trace
-	tracer *Tracer
+	Trace    *Trace
+	tracer   *Tracer
+	finished bool
 }
 
 // SpanHandle represents an in-progress span.
 type SpanHandle struct {
-	Span   *Span
-	tracer *Tracer
+	Span     *Span
+	tracer   *Tracer
+	finished bool
 }
 
 // StartTrace begins a new trace for the given workflow. Finish it with Finish.
@@ -37,11 +39,13 @@ func (t *Tracer) StartTrace(workflowName string) *TraceHandle {
 	return &TraceHandle{Trace: tr, tracer: t}
 }
 
-// Finish ends the trace.
+// Finish ends the trace. It is idempotent: only the first call notifies the
+// processor, so deferred and explicit finishes can coexist safely.
 func (h *TraceHandle) Finish() {
-	if h == nil || h.tracer == nil || h.Trace == nil {
+	if h == nil || h.tracer == nil || h.Trace == nil || h.finished {
 		return
 	}
+	h.finished = true
 	h.tracer.proc.OnTraceEnd(h.Trace)
 }
 
@@ -98,11 +102,13 @@ func (h *SpanHandle) SetError(message string, data map[string]any) {
 	h.Span.Error = &SpanError{Message: message, Data: data}
 }
 
-// Finish ends the span, stamping its end time.
+// Finish ends the span, stamping its end time. It is idempotent: only the
+// first call exports the span, so deferred and explicit finishes can coexist.
 func (h *SpanHandle) Finish() {
-	if h == nil || h.tracer == nil || h.Span == nil {
+	if h == nil || h.tracer == nil || h.Span == nil || h.finished {
 		return
 	}
+	h.finished = true
 	h.Span.EndedAt = Now()
 	h.tracer.proc.OnSpanEnd(h.Span)
 }

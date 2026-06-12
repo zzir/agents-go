@@ -232,6 +232,11 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 		cleanup()
 		return err
 	}
+	// Flush to disk before the rename so a crash cannot publish a truncated file.
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return err

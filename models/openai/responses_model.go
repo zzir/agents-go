@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strings"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -103,9 +104,25 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 		opts = append(opts, option.WithQuery(k, v))
 	}
 	for k, v := range s.ExtraBody {
-		opts = append(opts, option.WithJSONSet(k, v))
+		// WithJSONSet interprets the key as an sjson path, so escape its
+		// special characters to set a literal top-level key (Python's
+		// extra_body semantics).
+		opts = append(opts, option.WithJSONSet(escapeJSONPath(k), v))
 	}
 	return opts
+}
+
+// escapeJSONPath escapes sjson path metacharacters in a literal key.
+func escapeJSONPath(k string) string {
+	var b strings.Builder
+	for _, r := range k {
+		switch r {
+		case '.', '*', '?', '|', '#', '@', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // GetResponse implements agents.Model.

@@ -90,6 +90,7 @@ func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (*RunResul
 		r.trace = opts.Tracer.StartTrace(workflow + " (resumed)")
 		defer r.trace.Finish()
 	}
+	rc.activeTrace = r.trace
 	return r.loop(ctx, state.CurrentAgent, state.OriginalInput)
 }
 

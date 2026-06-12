@@ -15,14 +15,37 @@ type RunErrorDetails struct {
 	Usage        *Usage
 }
 
-// AgentsError is the base type for errors raised by the SDK. Use errors.As to
-// extract a *AgentsError or one of the concrete error types below.
+// AgentsError is the base type for errors raised by the SDK. Match concrete
+// error types with errors.As, or use AsAgentsError to reach the embedded base
+// (and its RunErrorDetails) of any SDK error generically.
 type AgentsError struct {
 	Message string
 	Details *RunErrorDetails
 }
 
 func (e *AgentsError) Error() string { return e.Message }
+
+// base lets every error type embedding AgentsError be discovered (and its
+// Details populated) through errors.As, even when wrapped.
+func (e *AgentsError) base() *AgentsError { return e }
+
+// agentsErrorCarrier is implemented by *AgentsError and, via embedding, by
+// every concrete SDK error type.
+type agentsErrorCarrier interface {
+	error
+	base() *AgentsError
+}
+
+// AsAgentsError returns the embedded AgentsError of any SDK error in err's
+// chain (unwrapping fmt.Errorf %w wrapping). errors.As with **AgentsError
+// cannot match the concrete error types, since they embed the base rather
+// than wrap it; this helper is the generic accessor.
+func AsAgentsError(err error) (*AgentsError, bool) {
+	if c, ok := errors.AsType[agentsErrorCarrier](err); ok {
+		return c.base(), true
+	}
+	return nil, false
+}
 
 // MaxTurnsError is returned when a run exceeds its configured turn budget.
 type MaxTurnsError struct {

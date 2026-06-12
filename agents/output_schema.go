@@ -123,6 +123,21 @@ func (s *typedOutputSchema[T]) ValidateJSON(jsonStr string) (any, error) {
 		}
 		return v, nil
 	}
+	// encoding/json leaves missing keys at their zero value, so check the
+	// root-level required keys explicitly before decoding; otherwise a model
+	// that ignores the schema yields a silent zero value instead of an error.
+	if required, ok := s.schema["required"].([]any); ok && len(required) > 0 {
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(jsonStr), &probe); err != nil {
+			return nil, fmt.Errorf("decoding output as %s: %w", s.typeName, err)
+		}
+		for _, k := range required {
+			key, _ := k.(string)
+			if _, present := probe[key]; !present {
+				return nil, fmt.Errorf("decoding output as %s: missing required key %q", s.typeName, key)
+			}
+		}
+	}
 	var v T
 	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
 		return nil, fmt.Errorf("decoding output as %s: %w", s.typeName, err)
