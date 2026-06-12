@@ -9,6 +9,7 @@ import (
 )
 
 func approvalAgentAndModel(t *testing.T, ran *bool) (*Agent, *fakeModel) {
+	t.Helper()
 	tool := NewFunctionTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			*ran = true

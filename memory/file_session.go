@@ -137,7 +137,7 @@ func (s *FileSession) AddItems(_ context.Context, items []agents.TResponseInputI
 		return err
 	}
 	if _, err := f.Write(buf.Bytes()); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()
@@ -216,8 +216,8 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 	}
 	tmpName := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 	}
 	if err := tmp.Chmod(mode); err != nil {
 		cleanup()
@@ -238,7 +238,7 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 	return os.Rename(tmpName, s.path)

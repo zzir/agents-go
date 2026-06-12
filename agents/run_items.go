@@ -28,9 +28,14 @@ type MessageOutputItem struct {
 	Raw   TResponseOutputItem
 }
 
+// AgentRef implements RunItem.
 func (i *MessageOutputItem) AgentRef() *Agent { return i.Agent }
+
+// ItemType implements RunItem.
 func (i *MessageOutputItem) ItemType() string { return "message_output" }
 func (i *MessageOutputItem) isRunItem()       {}
+
+// ToInputItem implements RunItem.
 func (i *MessageOutputItem) ToInputItem() (TResponseInputItem, error) {
 	return outputItemToInput(i.Raw)
 }
@@ -46,9 +51,14 @@ type ToolCallItem struct {
 	Raw   TResponseOutputItem
 }
 
+// AgentRef implements RunItem.
 func (i *ToolCallItem) AgentRef() *Agent { return i.Agent }
+
+// ItemType implements RunItem.
 func (i *ToolCallItem) ItemType() string { return "tool_call" }
 func (i *ToolCallItem) isRunItem()       {}
+
+// ToInputItem implements RunItem.
 func (i *ToolCallItem) ToInputItem() (TResponseInputItem, error) {
 	return outputItemToInput(i.Raw)
 }
@@ -66,9 +76,14 @@ type ToolCallOutputItem struct {
 	Output any
 }
 
+// AgentRef implements RunItem.
 func (i *ToolCallOutputItem) AgentRef() *Agent { return i.Agent }
+
+// ItemType implements RunItem.
 func (i *ToolCallOutputItem) ItemType() string { return "tool_call_output" }
 func (i *ToolCallOutputItem) isRunItem()       {}
+
+// ToInputItem implements RunItem.
 func (i *ToolCallOutputItem) ToInputItem() (TResponseInputItem, error) {
 	return i.Raw, nil
 }
@@ -79,9 +94,14 @@ type HandoffCallItem struct {
 	Raw   TResponseOutputItem
 }
 
+// AgentRef implements RunItem.
 func (i *HandoffCallItem) AgentRef() *Agent { return i.Agent }
+
+// ItemType implements RunItem.
 func (i *HandoffCallItem) ItemType() string { return "handoff_call" }
 func (i *HandoffCallItem) isRunItem()       {}
+
+// ToInputItem implements RunItem.
 func (i *HandoffCallItem) ToInputItem() (TResponseInputItem, error) {
 	return outputItemToInput(i.Raw)
 }
@@ -94,9 +114,14 @@ type HandoffOutputItem struct {
 	TargetAgent *Agent
 }
 
+// AgentRef implements RunItem.
 func (i *HandoffOutputItem) AgentRef() *Agent { return i.Agent }
+
+// ItemType implements RunItem.
 func (i *HandoffOutputItem) ItemType() string { return "handoff_output" }
 func (i *HandoffOutputItem) isRunItem()       {}
+
+// ToInputItem implements RunItem.
 func (i *HandoffOutputItem) ToInputItem() (TResponseInputItem, error) {
 	return i.Raw, nil
 }
@@ -107,9 +132,14 @@ type ReasoningItem struct {
 	Raw   TResponseOutputItem
 }
 
+// AgentRef implements RunItem.
 func (i *ReasoningItem) AgentRef() *Agent { return i.Agent }
+
+// ItemType implements RunItem.
 func (i *ReasoningItem) ItemType() string { return "reasoning" }
 func (i *ReasoningItem) isRunItem()       {}
+
+// ToInputItem implements RunItem.
 func (i *ReasoningItem) ToInputItem() (TResponseInputItem, error) {
 	return outputItemToInput(i.Raw)
 }

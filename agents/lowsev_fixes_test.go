@@ -35,7 +35,7 @@ func TestRun_RefusalSurfacesAsError(t *testing.T) {
 
 // FunctionTool.Timeout must cancel the invocation and produce ToolTimeoutError.
 func TestRun_ToolTimeout(t *testing.T) {
-	tool := NewFunctionTool("slow", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+	tool := NewFunctionTool("slow", "", func(ctx context.Context, _ *ToolContext, args struct{}) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -61,7 +61,7 @@ func TestRun_ToolTimeout(t *testing.T) {
 	}
 
 	// With the default FailureErrorFunction the timeout is fed back to the model.
-	tool2 := NewFunctionTool("slow2", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+	tool2 := NewFunctionTool("slow2", "", func(ctx context.Context, _ *ToolContext, args struct{}) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})

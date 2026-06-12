@@ -221,7 +221,7 @@ func (silentStreamModel) GetResponse(context.Context, ModelRequest) (*ModelRespo
 }
 
 func (silentStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {}
+	return func(_ func(*TResponseStreamEvent, error) bool) {}
 }
 
 // After an agent calls a tool, tool_choice must be left unset on later turns

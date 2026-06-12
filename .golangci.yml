@@ -1,0 +1,41 @@
+version: "2"
+
+linters:
+  # On top of the defaults (errcheck, govet, ineffassign, staticcheck, unused).
+  enable:
+    - bodyclose      # HTTP response bodies closed
+    - copyloopvar    # redundant loop-variable copies (Go 1.22+)
+    - errorlint      # errors compared/wrapped correctly (%w, errors.Is/As)
+    - gocritic       # assorted correctness/readability diagnostics
+    - intrange       # for i := 0; i < n -> for i := range n
+    - misspell       # typos in comments and strings
+    - nilerr         # returning nil after checking err != nil
+    - nolintlint     # nolint directives must be specific and justified
+    - revive         # style: exported docs, naming, etc.
+    - thelper        # test helpers call t.Helper()
+    - unconvert      # unnecessary type conversions
+    - unparam        # unused function parameters
+    - usestdlibvars  # http.MethodPost etc. instead of literals
+    - wastedassign   # assignments never read
+    - whitespace     # stray leading/trailing blank lines
+  settings:
+    errcheck:
+      exclude-functions:
+        # Best-effort closes on interface-typed values (e.g. response bodies).
+        - (io.Closer).Close
+  exclusions:
+    rules:
+      # `defer x.Close()` is the universal Go cleanup idiom; close errors that
+      # matter are checked explicitly on the non-deferred paths.
+      - linters: [errcheck]
+        source: 'defer .*\.Close\(\)$'
+      # "handoff_occured" (sic) deliberately matches the Python SDK's spelling.
+      - linters: [misspell]
+        source: occured
+      # Tests and examples implement fixed callback signatures (tools,
+      # guardrails, models) where parameters often go unused; examples in
+      # particular should show the real signature, not a row of underscores.
+      # Production code keeps the rule.
+      - linters: [revive]
+        path: (_test\.go$|^examples/|/example/)
+        text: unused-parameter

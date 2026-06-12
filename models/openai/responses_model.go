@@ -10,7 +10,6 @@ import (
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
-	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -38,7 +37,7 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 	}
 
 	params := responses.ResponseNewParams{
-		Model: shared.ResponsesModel(m.model),
+		Model: m.model,
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: req.Input},
 	}
 	if req.SystemInstructions != "" {

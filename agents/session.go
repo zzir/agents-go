@@ -36,6 +36,7 @@ type InMemorySession struct {
 // NewInMemorySession returns an empty in-memory session.
 func NewInMemorySession() *InMemorySession { return &InMemorySession{} }
 
+// GetItems implements Session.
 func (s *InMemorySession) GetItems(_ context.Context, limit int) ([]TResponseInputItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -45,6 +46,7 @@ func (s *InMemorySession) GetItems(_ context.Context, limit int) ([]TResponseInp
 	return append([]TResponseInputItem(nil), s.items[len(s.items)-limit:]...), nil
 }
 
+// AddItems implements Session.
 func (s *InMemorySession) AddItems(_ context.Context, items []TResponseInputItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -52,6 +54,7 @@ func (s *InMemorySession) AddItems(_ context.Context, items []TResponseInputItem
 	return nil
 }
 
+// PopItem implements Session.
 func (s *InMemorySession) PopItem(_ context.Context) (*TResponseInputItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,6 +66,7 @@ func (s *InMemorySession) PopItem(_ context.Context) (*TResponseInputItem, error
 	return &last, nil
 }
 
+// Clear implements Session.
 func (s *InMemorySession) Clear(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

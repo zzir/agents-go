@@ -87,7 +87,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 		// a clear error instead of being fed back as a vague "tool error". Code
 		// that runs but exits non-zero is returned as normal output (below) so
 		// the model can correct it.
-		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (any, error) {
+		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 				return nil, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err)
@@ -106,7 +106,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 }
 
 // formatResult renders an ExecResult as the string sent back to the model.
-func formatResult(res *ExecResult, max int) string {
+func formatResult(res *ExecResult, limit int) string {
 	var b strings.Builder
 	if res.TimedOut {
 		b.WriteString("[timed out]\n")
@@ -114,12 +114,12 @@ func formatResult(res *ExecResult, max int) string {
 	fmt.Fprintf(&b, "exit_code: %d\n", res.ExitCode)
 	if res.Stdout != "" {
 		b.WriteString("stdout:\n")
-		b.WriteString(truncate(res.Stdout, max))
+		b.WriteString(truncate(res.Stdout, limit))
 		b.WriteString("\n")
 	}
 	if res.Stderr != "" {
 		b.WriteString("stderr:\n")
-		b.WriteString(truncate(res.Stderr, max))
+		b.WriteString(truncate(res.Stderr, limit))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -127,11 +127,11 @@ func formatResult(res *ExecResult, max int) string {
 
 // truncate cuts s to at most max bytes, backing up to a rune boundary so a
 // multi-byte UTF-8 sequence is never split.
-func truncate(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+func truncate(s string, limit int) string {
+	if limit <= 0 || len(s) <= limit {
 		return s
 	}
-	cut := max
+	cut := limit
 	// s[cut] is the first excluded byte; if it is a continuation byte the rune
 	// straddles the cut, so back up (bounded: invalid UTF-8 is cut as-is).
 	for back := 0; back < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(s[cut]); back++ {

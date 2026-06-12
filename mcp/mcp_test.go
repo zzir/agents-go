@@ -34,7 +34,7 @@ func startInProcessServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	t.Cleanup(func() { server.Close() })
+	t.Cleanup(func() { _ = server.Close() })
 	return server
 }
 

@@ -57,7 +57,7 @@ func TestHTTPExporter(t *testing.T) {
 }
 
 func TestHTTPExporter_Non2xxDropsBatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "rejected", http.StatusInternalServerError)
 	}))
 	defer srv.Close()

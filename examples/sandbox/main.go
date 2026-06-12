@@ -29,6 +29,13 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run keeps the deferred sandbox cleanup ahead of any fatal exit.
+func run() error {
 	// Dev-only, unisolated backend. See the package doc above for Docker/K8s.
 	sb := sandbox.NewLocal()
 	defer sb.Close()
@@ -52,7 +59,8 @@ func main() {
 			ModelProvider: openai.NewProvider(),
 		})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println(res.FinalOutputString())
+	return nil
 }

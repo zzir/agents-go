@@ -10,12 +10,14 @@ import (
 // without a configured destination.
 type NoopExporter struct{}
 
+// Export implements Exporter.
 func (NoopExporter) Export([]any) {}
 
 // FuncExporter adapts a function to the Exporter interface, convenient for tests
 // and custom sinks.
 type FuncExporter func(items []any)
 
+// Export implements Exporter.
 func (f FuncExporter) Export(items []any) { f(items) }
 
 // ConsoleExporter writes each item as a line of JSON to an io.Writer. It is
@@ -28,6 +30,7 @@ type ConsoleExporter struct {
 // NewConsoleExporter returns a ConsoleExporter writing to w.
 func NewConsoleExporter(w io.Writer) *ConsoleExporter { return &ConsoleExporter{w: w} }
 
+// Export implements Exporter.
 func (e *ConsoleExporter) Export(items []any) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -44,6 +47,7 @@ type CollectingExporter struct {
 	items []any
 }
 
+// Export implements Exporter.
 func (e *CollectingExporter) Export(items []any) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

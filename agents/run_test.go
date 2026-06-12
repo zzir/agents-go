@@ -20,7 +20,7 @@ type fakeModel struct {
 	calls     int
 }
 
-func (m *fakeModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *fakeModel) GetResponse(_ context.Context, req ModelRequest) (*ModelResponse, error) {
 	m.lastReq = req
 	m.calls++
 	if m.idx >= len(m.responses) {
@@ -82,12 +82,14 @@ func mustOutputItem(t *testing.T, raw string) TResponseOutputItem {
 }
 
 func messageOutput(t *testing.T, text string) TResponseOutputItem {
+	t.Helper()
 	raw := `{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":` +
 		quote(text) + `,"annotations":[]}]}`
 	return mustOutputItem(t, raw)
 }
 
 func functionCallOutput(t *testing.T, name, callID, args string) TResponseOutputItem {
+	t.Helper()
 	raw := `{"type":"function_call","id":"fc_1","call_id":` + quote(callID) +
 		`,"name":` + quote(name) + `,"arguments":` + quote(args) + `,"status":"completed"}`
 	return mustOutputItem(t, raw)

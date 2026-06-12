@@ -185,7 +185,7 @@ func TestTracer_SpanHierarchy(t *testing.T) {
 	}
 }
 
-func TestNilTracerIsNoop(t *testing.T) {
+func TestNilTracerIsNoop(_ *testing.T) {
 	var tr *Tracer
 	// Must not panic.
 	h := tr.StartTrace("x")

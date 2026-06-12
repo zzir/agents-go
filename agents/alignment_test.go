@@ -99,7 +99,7 @@ func TestHandoff_OnHandoffAndInputFilter(t *testing.T) {
 		callbackFired = true
 		return nil
 	}
-	h.InputFilter = func(d HandoffInputData) HandoffInputData {
+	h.InputFilter = func(_ HandoffInputData) HandoffInputData {
 		// Drop everything, give the target a single fresh message.
 		return HandoffInputData{InputHistory: InputItemsFromText("fresh start")}
 	}

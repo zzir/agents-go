@@ -106,13 +106,12 @@ func RunStreamed(ctx context.Context, agent *Agent, input any, opts RunOptions) 
 	return sr
 }
 
-// emit sends an event to the consumer, returning false if the context is done.
-func (s *StreamedResult) emit(ctx context.Context, event StreamEvent) bool {
+// emit sends an event to the consumer; the send is dropped when the context is
+// done (the run loop notices the cancellation at its next turn check).
+func (s *StreamedResult) emit(ctx context.Context, event StreamEvent) {
 	select {
 	case s.ch <- streamMsg{event: event}:
-		return true
 	case <-ctx.Done():
-		return false
 	}
 }
 

@@ -54,7 +54,7 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, 
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	for name, content := range req.Files {
 		full := filepath.Join(dir, filepath.Clean("/"+name))

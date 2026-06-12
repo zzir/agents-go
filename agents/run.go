@@ -248,7 +248,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			parentID := r.agentParentID() // read before the goroutine races a handoff
 			go func() {
 				gspan := r.trace.StartSpan("guardrail:input", parentID)
-				_, gerr := runInputGuardrails(ctx, r.rc, startAgent, startAgent.InputGuardrails, originalInput)
+				gerr := runInputGuardrails(ctx, r.rc, startAgent, startAgent.InputGuardrails, originalInput)
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)
 				}
@@ -327,7 +327,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		case stepFinalOutput:
 			if len(currentAgent.OutputGuardrails) > 0 {
 				gspan := r.trace.StartSpan("guardrail:output", r.agentParentID())
-				_, gerr := runOutputGuardrails(ctx, r.rc, currentAgent, currentAgent.OutputGuardrails, step.FinalOutput)
+				gerr := runOutputGuardrails(ctx, r.rc, currentAgent, currentAgent.OutputGuardrails, step.FinalOutput)
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)
 				}

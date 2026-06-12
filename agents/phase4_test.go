@@ -15,7 +15,7 @@ func TestInputGuardrailTripwire(t *testing.T) {
 		ModelImpl: model,
 		InputGuardrails: []InputGuardrail{{
 			Name: "block",
-			Run: func(ctx context.Context, rc *RunContext, agent *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
+			Run: func(_ context.Context, rc *RunContext, agent *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
 				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
 			},
 		}},
@@ -37,7 +37,7 @@ func TestOutputGuardrailTripwire(t *testing.T) {
 		ModelImpl: model,
 		OutputGuardrails: []OutputGuardrail{{
 			Name: "pii",
-			Run: func(ctx context.Context, rc *RunContext, agent *Agent, output any) (GuardrailFunctionOutput, error) {
+			Run: func(_ context.Context, rc *RunContext, agent *Agent, output any) (GuardrailFunctionOutput, error) {
 				return GuardrailFunctionOutput{TripwireTriggered: output == "leak"}, nil
 			},
 		}},

@@ -78,14 +78,18 @@ func (p *BatchProcessor) enqueue(item any) {
 	}
 }
 
-// The trace row is enqueued on start (matching the Python SDK) so that a crash
-// mid-run does not orphan its spans. Span starts are not buffered: only span
-// ends carry the final data.
-
+// OnTraceStart enqueues the trace row immediately (matching the Python SDK) so
+// that a crash mid-run does not orphan its spans.
 func (p *BatchProcessor) OnTraceStart(t *Trace) { p.enqueue(t) }
-func (p *BatchProcessor) OnTraceEnd(*Trace)     {}
-func (p *BatchProcessor) OnSpanStart(*Span)     {}
-func (p *BatchProcessor) OnSpanEnd(s *Span)     { p.enqueue(s) }
+
+// OnTraceEnd is a no-op: the trace row was already enqueued on start.
+func (p *BatchProcessor) OnTraceEnd(*Trace) {}
+
+// OnSpanStart is a no-op: only span ends carry the final data.
+func (p *BatchProcessor) OnSpanStart(*Span) {}
+
+// OnSpanEnd enqueues the finished span.
+func (p *BatchProcessor) OnSpanEnd(s *Span) { p.enqueue(s) }
 
 func (p *BatchProcessor) run() {
 	defer p.wg.Done()

@@ -7,6 +7,7 @@ package agents
 // provider default.
 type ToolChoice = string
 
+// The predefined tool-choice modes.
 const (
 	ToolChoiceAuto     ToolChoice = "auto"
 	ToolChoiceRequired ToolChoice = "required"

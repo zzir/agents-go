@@ -51,10 +51,11 @@ type OutputGuardrailTripwireError struct {
 }
 
 // runInputGuardrails runs all input guardrails concurrently, returning a
-// tripwire error if any trips. It is invoked alongside the first model call.
-func runInputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guardrails []InputGuardrail, input []TResponseInputItem) ([]InputGuardrailResult, error) {
+// tripwire error (carrying the offending result) if any trips. It is invoked
+// alongside the first model call.
+func runInputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guardrails []InputGuardrail, input []TResponseInputItem) error {
 	if len(guardrails) == 0 {
-		return nil, nil
+		return nil
 	}
 	results := make([]InputGuardrailResult, len(guardrails))
 	errs := make([]error, len(guardrails))
@@ -72,23 +73,24 @@ func runInputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guard
 	}
 	for i := range guardrails {
 		if errs[i] != nil {
-			return results, errs[i]
+			return errs[i]
 		}
 		if results[i].Output.TripwireTriggered {
-			return results, &InputGuardrailTripwireError{
+			return &InputGuardrailTripwireError{
 				AgentsError: AgentsError{Message: "input guardrail " + guardrails[i].Name + " tripwire triggered"},
 				Result:      results[i],
 			}
 		}
 	}
-	return results, nil
+	return nil
 }
 
 // runOutputGuardrails runs all output guardrails concurrently on the final
-// output, returning a tripwire error if any trips.
-func runOutputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guardrails []OutputGuardrail, output any) ([]OutputGuardrailResult, error) {
+// output, returning a tripwire error (carrying the offending result) if any
+// trips.
+func runOutputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guardrails []OutputGuardrail, output any) error {
 	if len(guardrails) == 0 {
-		return nil, nil
+		return nil
 	}
 	results := make([]OutputGuardrailResult, len(guardrails))
 	errs := make([]error, len(guardrails))
@@ -106,14 +108,14 @@ func runOutputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guar
 	}
 	for i := range guardrails {
 		if errs[i] != nil {
-			return results, errs[i]
+			return errs[i]
 		}
 		if results[i].Output.TripwireTriggered {
-			return results, &OutputGuardrailTripwireError{
+			return &OutputGuardrailTripwireError{
 				AgentsError: AgentsError{Message: "output guardrail " + guardrails[i].Name + " tripwire triggered"},
 				Result:      results[i],
 			}
 		}
 	}
-	return results, nil
+	return nil
 }

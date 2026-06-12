@@ -128,7 +128,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		// non-streaming loop (run synchronously here for simplicity).
 		if turn == 1 && len(startAgent.InputGuardrails) > 0 {
 			gspan := r.trace.StartSpan("guardrail:input", r.agentParentID())
-			_, gerr := runInputGuardrails(ctx, rc, startAgent, startAgent.InputGuardrails, modelInput)
+			gerr := runInputGuardrails(ctx, rc, startAgent, startAgent.InputGuardrails, modelInput)
 			if gerr != nil {
 				gspan.SetError(gerr.Error(), nil)
 			}
@@ -196,7 +196,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 
 		switch step.NextStep {
 		case stepFinalOutput:
-			if _, gerr := runOutputGuardrails(ctx, rc, currentAgent, currentAgent.OutputGuardrails, step.FinalOutput); gerr != nil {
+			if gerr := runOutputGuardrails(ctx, rc, currentAgent, currentAgent.OutputGuardrails, step.FinalOutput); gerr != nil {
 				return nil, r.fail(gerr, modelInput, generatedItems, rawResponses, currentAgent)
 			}
 			if err := r.saveToSession(ctx); err != nil {

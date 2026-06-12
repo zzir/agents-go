@@ -18,6 +18,8 @@ type RunErrorDetails struct {
 // AgentsError is the base type for errors raised by the SDK. Match concrete
 // error types with errors.As, or use AsAgentsError to reach the embedded base
 // (and its RunErrorDetails) of any SDK error generically.
+//
+//nolint:revive // the name stutters (agents.AgentsError) but deliberately matches the Python SDK's AgentsException.
 type AgentsError struct {
 	Message string
 	Details *RunErrorDetails

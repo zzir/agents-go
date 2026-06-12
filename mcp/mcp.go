@@ -172,7 +172,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 		// so it can recover, matching the SDK-wide default; without this every
 		// MCP error would abort the whole run.
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
-		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (any, error) {
+		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
 			var args map[string]any
 			if strings.TrimSpace(argsJSON) != "" {
 				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {

@@ -23,10 +23,19 @@ type RunHooks interface {
 // callbacks you care about.
 type BaseRunHooks struct{}
 
-func (BaseRunHooks) OnAgentStart(context.Context, *RunContext, *Agent) error      { return nil }
-func (BaseRunHooks) OnAgentEnd(context.Context, *RunContext, *Agent, any) error   { return nil }
+// OnAgentStart is a no-op.
+func (BaseRunHooks) OnAgentStart(context.Context, *RunContext, *Agent) error { return nil }
+
+// OnAgentEnd is a no-op.
+func (BaseRunHooks) OnAgentEnd(context.Context, *RunContext, *Agent, any) error { return nil }
+
+// OnHandoff is a no-op.
 func (BaseRunHooks) OnHandoff(context.Context, *RunContext, *Agent, *Agent) error { return nil }
+
+// OnToolStart is a no-op.
 func (BaseRunHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) error { return nil }
+
+// OnToolEnd is a no-op.
 func (BaseRunHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
 	return nil
 }
@@ -51,10 +60,19 @@ type AgentHooks interface {
 // BaseAgentHooks is a no-op AgentHooks implementation.
 type BaseAgentHooks struct{}
 
-func (BaseAgentHooks) OnStart(context.Context, *RunContext, *Agent) error           { return nil }
-func (BaseAgentHooks) OnEnd(context.Context, *RunContext, *Agent, any) error        { return nil }
+// OnStart is a no-op.
+func (BaseAgentHooks) OnStart(context.Context, *RunContext, *Agent) error { return nil }
+
+// OnEnd is a no-op.
+func (BaseAgentHooks) OnEnd(context.Context, *RunContext, *Agent, any) error { return nil }
+
+// OnHandoff is a no-op.
 func (BaseAgentHooks) OnHandoff(context.Context, *RunContext, *Agent, *Agent) error { return nil }
+
+// OnToolStart is a no-op.
 func (BaseAgentHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) error { return nil }
+
+// OnToolEnd is a no-op.
 func (BaseAgentHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
 	return nil
 }
