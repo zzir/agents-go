@@ -5,6 +5,8 @@ A Go port of [openai-agents-python](https://github.com/openai/openai-agents-pyth
 enforce guardrails, stream events, persist sessions, pause for human approval,
 and emit traces — all with idiomatic Go APIs.
 
+**[Documentation](docs/index.md)** — mirrors the [Python SDK docs](https://openai.github.io/openai-agents-python/) structure, including a full [comparison with the Python SDK](docs/python_differences.md).
+
 ## Install
 
 ```bash

@@ -1,0 +1,94 @@
+# Orchestrating multiple agents
+
+Orchestration is deciding which agents run, in what order, and how they decide what happens next. There are two main approaches, freely mixable:
+
+1. **Let the LLM decide**: give a capable agent tools and handoffs and let it plan.
+2. **Orchestrate via code**: you decide the flow; agents are well-scoped subroutines.
+
+## Orchestrating via LLM
+
+An agent equipped with tools, [handoffs](handoffs.md) and clear instructions can plan autonomously: research with tools, delegate specialist work, write results somewhere. This is the most flexible pattern. Tactics that pay off (same as Python):
+
+1. Invest in prompts: state available tools, constraints, and how to operate.
+2. Monitor with [tracing](tracing.md) and iterate.
+3. Let the agent self-improve: loop, critique, retry ([guardrails](guardrails.md) catch the failure modes).
+4. Use specialist agents that excel at one task over one generalist.
+
+```go
+research := &agents.Agent{Name: "Researcher", Tools: []agents.Tool{webLookup}}
+writer := &agents.Agent{Name: "Writer", Instructions: agents.StaticInstructions("Write the final report.")}
+
+planner := &agents.Agent{
+	Name:         "Planner",
+	Instructions: agents.StaticInstructions("Plan the work, research as needed, then hand off to the writer."),
+	Tools:        []agents.Tool{webLookup},
+	Handoffs:     []agents.Handoff{agents.HandoffTo(writer)},
+}
+```
+
+## Agents as tools
+
+Where a handoff *transfers* the conversation, `AsTool` keeps the orchestrator in charge: the sub-agent runs on just the input the orchestrator passes, returns its final output as the tool result, and the orchestrator continues.
+
+```go
+spanish := &agents.Agent{Name: "spanish_agent", Instructions: agents.StaticInstructions("Translate the message to Spanish.")}
+french := &agents.Agent{Name: "french_agent", Instructions: agents.StaticInstructions("Translate the message to French.")}
+
+orchestrator := &agents.Agent{
+	Name: "orchestrator",
+	Instructions: agents.StaticInstructions(
+		"You are a translation agent. Use the tools to translate; for multiple languages, call the relevant tools."),
+	Tools: []agents.Tool{
+		spanish.AsTool(agents.AgentToolConfig{Name: "translate_to_spanish", Description: "Translate the user's message to Spanish"}),
+		french.AsTool(agents.AgentToolConfig{Name: "translate_to_french", Description: "Translate the user's message to French"}),
+	},
+}
+```
+
+`AgentToolConfig` options:
+
+| Field | Purpose |
+|---|---|
+| `Name` / `Description` | What the calling model sees (name defaults to the sanitized agent name) |
+| `MaxTurns` | Turn budget for the nested run (0 = default) |
+| `CustomOutputExtractor` | Derive the tool's string result from the nested `*RunResult` |
+
+The nested run inherits the parent's model provider, model override, model settings and tracer through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
+
+## Orchestrating via code
+
+Plain Go is often the clearest orchestrator — deterministic, testable, cheap:
+
+```go
+// Chain: outline -> approve -> write
+outline, err := agents.Run(ctx, outliner, topic, opts)
+if err != nil { return err }
+
+check, err := agents.Run(ctx, reviewer, outline.FinalOutputString(), opts)
+if err != nil { return err }
+if verdict, _ := agents.FinalOutputAs[Verdict](check); !verdict.Good {
+	return fmt.Errorf("outline rejected: %s", verdict.Reason)
+}
+
+story, err := agents.Run(ctx, writer, outline.FinalOutputString(), opts)
+```
+
+Patterns that map directly from the Python docs:
+
+- **Structured decisions**: use [`OutputType`](agents.md#structured-output-types) to get a typed verdict you can branch on.
+- **Chaining**: feed one agent's output into the next.
+- **Evaluate-and-retry**: loop a worker and a critic agent until the critic passes.
+- **Fan-out**: Go makes parallel agents natural — run several `agents.Run` calls in goroutines (e.g. with `errgroup`) and join the results.
+
+```go
+g, gctx := errgroup.WithContext(ctx)
+results := make([]*agents.RunResult, len(questions))
+for i, q := range questions {
+	g.Go(func() error {
+		res, err := agents.Run(gctx, analyst, q, opts)
+		results[i] = res
+		return err
+	})
+}
+if err := g.Wait(); err != nil { /* … */ }
+```
