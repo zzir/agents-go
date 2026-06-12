@@ -1,0 +1,4 @@
+
+# Local multi-module workspace (submodules build standalone via replace directives)
+go.work
+go.work.sum
