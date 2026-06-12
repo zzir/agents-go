@@ -17,10 +17,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -70,7 +70,8 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Image == "" {
 		return nil, fmt.Errorf("docker sandbox: Image is required")
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	// API-version negotiation is on by default in the moby client.
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker sandbox: %w", err)
 	}
@@ -90,12 +91,12 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 	}
 
 	cfg, hostCfg := s.buildConfig(req)
-	created, err := s.cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+	created, err := s.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg})
 	if err != nil {
 		return nil, fmt.Errorf("docker sandbox: create: %w", err)
 	}
 	id := created.ID
-	defer s.cli.ContainerRemove(context.WithoutCancel(ctx), id, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	defer s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 
 	// Always sent, even with no request files: the tarball also creates the
 	// writable working directory inside the root-owned volume.
@@ -103,11 +104,11 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 	if terr != nil {
 		return nil, terr
 	}
-	if err := s.cli.CopyToContainer(ctx, id, volumeDir, tarball, container.CopyToContainerOptions{}); err != nil {
+	if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: volumeDir, Content: tarball}); err != nil {
 		return nil, fmt.Errorf("docker sandbox: copy files: %w", err)
 	}
 
-	if err := s.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := s.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		return nil, fmt.Errorf("docker sandbox: start: %w", err)
 	}
 
@@ -116,7 +117,8 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 	defer cancel()
 
 	res := &sandbox.ExecResult{}
-	statusCh, errCh := s.cli.ContainerWait(wctx, id, container.WaitConditionNotRunning)
+	wait := s.cli.ContainerWait(wctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	statusCh, errCh := wait.Result, wait.Error
 	select {
 	case status := <-statusCh:
 		if status.Error != nil {
@@ -132,7 +134,7 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 		if wctx.Err() == context.DeadlineExceeded {
 			res.TimedOut = true
 			res.ExitCode = -1
-			_ = s.cli.ContainerKill(context.WithoutCancel(ctx), id, "KILL")
+			_, _ = s.cli.ContainerKill(context.WithoutCancel(ctx), id, client.ContainerKillOptions{Signal: "KILL"})
 		} else if werr != nil {
 			return nil, fmt.Errorf("docker sandbox: wait: %w", werr)
 		}
@@ -204,7 +206,7 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 
 // readLogs fetches the container output, capping each stream at max bytes.
 func (s *Sandbox) readLogs(ctx context.Context, id string, max int64) (string, string, error) {
-	rc, err := s.cli.ContainerLogs(ctx, id, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	rc, err := s.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
 		return "", "", fmt.Errorf("docker sandbox: logs: %w", err)
 	}

@@ -3,11 +3,12 @@ package docker
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/binary"
 	"io"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
 
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -150,13 +151,21 @@ func TestBuildTar_Traversal(t *testing.T) {
 	}
 }
 
+// muxWrite appends one frame of the Docker multiplexed log stream: an 8-byte
+// header (stream type + big-endian payload length) followed by the payload.
+// The writer side of this protocol is no longer exported by the moby client.
+func muxWrite(buf *bytes.Buffer, stream stdcopy.StdType, p []byte) {
+	hdr := [8]byte{0: byte(stream)}
+	binary.BigEndian.PutUint32(hdr[4:], uint32(len(p)))
+	buf.Write(hdr[:])
+	buf.Write(p)
+}
+
 func TestDemuxLogs_CapsEachStream(t *testing.T) {
 	var mux bytes.Buffer
-	outW := stdcopy.NewStdWriter(&mux, stdcopy.Stdout)
-	errW := stdcopy.NewStdWriter(&mux, stdcopy.Stderr)
 	for range 100 {
-		outW.Write(bytes.Repeat([]byte("o"), 1024))
-		errW.Write([]byte("e"))
+		muxWrite(&mux, stdcopy.Stdout, bytes.Repeat([]byte("o"), 1024))
+		muxWrite(&mux, stdcopy.Stderr, []byte("e"))
 	}
 
 	stdout, stderr, err := demuxLogs(&mux, 4096)
@@ -173,8 +182,8 @@ func TestDemuxLogs_CapsEachStream(t *testing.T) {
 
 func TestDemuxLogs_SmallOutputUnchanged(t *testing.T) {
 	var mux bytes.Buffer
-	stdcopy.NewStdWriter(&mux, stdcopy.Stdout).Write([]byte("hello"))
-	stdcopy.NewStdWriter(&mux, stdcopy.Stderr).Write([]byte("oops"))
+	muxWrite(&mux, stdcopy.Stdout, []byte("hello"))
+	muxWrite(&mux, stdcopy.Stderr, []byte("oops"))
 
 	stdout, stderr, err := demuxLogs(&mux, 1<<20)
 	if err != nil {
@@ -202,14 +211,12 @@ func TestBuildConfig_CommandRunsAsEntrypoint(t *testing.T) {
 // once BOTH streams are full.
 func TestDemuxLogs_LateStderrNotStarved(t *testing.T) {
 	var mux bytes.Buffer
-	outW := stdcopy.NewStdWriter(&mux, stdcopy.Stdout)
-	errW := stdcopy.NewStdWriter(&mux, stdcopy.Stderr)
 	// stdout floods far past its cap first...
 	for range 100 {
-		outW.Write(bytes.Repeat([]byte("o"), 1024))
+		muxWrite(&mux, stdcopy.Stdout, bytes.Repeat([]byte("o"), 1024))
 	}
 	// ...then a short stderr arrives at the very end of the stream.
-	errW.Write([]byte("boom"))
+	muxWrite(&mux, stdcopy.Stderr, []byte("boom"))
 
 	stdout, stderr, err := demuxLogs(&mux, 4096)
 	if err != nil {
