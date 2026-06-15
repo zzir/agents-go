@@ -56,6 +56,12 @@ model := agents.NewRetryModel(primary, policy)
 
 Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation; `openai.RetryableError` adds OpenAI-aware status-code classification.
 
+> **Two layers of retry.** The `openai-go` client already retries transient failures on its own — by default `MaxRetries: 2` on 408/409/429/5xx and connection errors, honoring `Retry-After`. `NewRetryModel` sits *above* that: it wraps the whole `GetResponse`/stream call (including response handling) and is the unit that a fallback chain advances over. The two compose multiplicatively, so with the defaults a single transient error can be attempted up to `MaxAttempts × 3` times. To keep retry behavior in one place — more predictable and easier to observe — disable the client layer when building the provider and let `RetryModel` own it:
+>
+> ```go
+> provider := openai.NewProvider(option.WithMaxRetries(0))
+> ```
+
 **Fallback** — `agents.NewFallbackModel(primary, backups...)` tries each backend in order until one succeeds, joining all errors if none do. Wrap each backend in a retry first so it exhausts its own retries before the chain advances:
 
 ```go
