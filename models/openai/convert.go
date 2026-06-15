@@ -57,21 +57,21 @@ func functionToolParam(name, description string, schema map[string]any, strict b
 // convertToolChoice maps an SDK tool-choice string to the Responses API union.
 // An empty choice leaves the field omitted (provider default); any value other
 // than auto/required/none is treated as a specific function tool name.
-func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToolChoiceUnion, bool, error) {
+func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToolChoiceUnion, bool) {
 	switch choice {
 	case "":
-		return responses.ResponseNewParamsToolChoiceUnion{}, false, nil
+		return responses.ResponseNewParamsToolChoiceUnion{}, false
 	case agents.ToolChoiceAuto:
-		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsAuto)}, true, nil
+		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsAuto)}, true
 	case agents.ToolChoiceRequired:
-		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsRequired)}, true, nil
+		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsRequired)}, true
 	case agents.ToolChoiceNone:
-		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsNone)}, true, nil
+		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsNone)}, true
 	default:
 		// A specific function tool name.
 		return responses.ResponseNewParamsToolChoiceUnion{
 			OfFunctionTool: &responses.ToolChoiceFunctionParam{Name: choice},
-		}, true, nil
+		}, true
 	}
 }
 

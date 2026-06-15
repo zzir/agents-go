@@ -54,11 +54,7 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	tc, ok, err := convertToolChoice(settingsToolChoice(req.Settings))
-	if err != nil {
-		return responses.ResponseNewParams{}, err
-	}
-	if ok {
+	if tc, ok := convertToolChoice(settingsToolChoice(req.Settings)); ok {
 		params.ToolChoice = tc
 	}
 
