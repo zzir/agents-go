@@ -35,12 +35,23 @@ type RunOptions struct {
 	ModelProvider         ModelProvider    // resolves agent model names (required unless ModelImpl/Model set)
 	Model                 Model            // run-level model override for every agent
 	ModelSettings         *ModelSettings   // run-level settings merged over each agent's own
+	CallModelInputFilter  CallModelInputFilter // edit instructions/input just before each model call
+	MaxToolConcurrency    int              // cap parallel function tools per turn; 0 = unlimited
+	ToolNotFoundBehavior  ToolNotFoundBehavior // unknown tool call: abort (default) or return error to model
+	HandoffInputFilter    func(HandoffInputData) HandoffInputData // default filter for handoffs without their own
 	Hooks                 RunHooks         // run-scoped lifecycle callbacks
 	Session               Session          // conversation persistence (docs: Sessions)
 	Tracer                *tracing.Tracer  // opt-in tracing (docs: Tracing)
 	UsePreviousResponseID bool             // server-managed conversation state (below)
 }
 ```
+
+A few control knobs worth calling out:
+
+- **`CallModelInputFilter`** runs just before each model call to edit the system instructions and input items actually sent (e.g. trim tokens, inject context). It does not change what a [session](sessions.md) saves. It does not fire on a HITL-resumed turn.
+- **`MaxToolConcurrency`** bounds how many of a turn's function tools run at once (they otherwise all run in parallel) — useful against downstream rate limits.
+- **`ToolNotFoundBehavior`** defaults to `ToolNotFoundError` (a hallucinated tool name aborts the run). Set `ToolNotFoundReturnToModel` to instead feed an error back as the tool output so the model can correct itself.
+- **`HandoffInputFilter`** applies to any handoff that doesn't set its own `Handoff.InputFilter` — e.g. `agents.NestHandoffHistory(...)` to fold prior history across every handoff ([Handoffs](handoffs.md#nesting-handoff-history)).
 
 ## Conversations / chat threads
 

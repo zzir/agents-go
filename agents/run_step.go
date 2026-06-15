@@ -49,16 +49,29 @@ type functionCall struct {
 	Raw       TResponseOutputItem
 }
 
+// ToolNotFoundBehavior controls handling of a model tool call that names no
+// known tool on the agent.
+type ToolNotFoundBehavior int
+
+const (
+	// ToolNotFoundError aborts the run with a ModelBehaviorError (default).
+	ToolNotFoundError ToolNotFoundBehavior = iota
+	// ToolNotFoundReturnToModel synthesizes an error tool output and continues,
+	// letting the model correct itself on the next turn.
+	ToolNotFoundReturnToModel
+)
+
 // processedResponse is the classified content of a model response.
 type processedResponse struct {
-	NewItems  []RunItem
-	Functions []toolRunFunction
-	Handoffs  []toolRunHandoff
-	ToolsUsed []string
+	NewItems     []RunItem
+	Functions    []toolRunFunction
+	Handoffs     []toolRunHandoff
+	ToolsUsed    []string
+	UnknownTools []functionCall
 }
 
 func (p *processedResponse) hasToolsToRun() bool {
-	return len(p.Functions) > 0 || len(p.Handoffs) > 0
+	return len(p.Functions) > 0 || len(p.Handoffs) > 0 || len(p.UnknownTools) > 0
 }
 
 // processModelResponse classifies each output item of a model response into run
@@ -70,6 +83,7 @@ func processModelResponse(
 	tools []Tool,
 	handoffs []Handoff,
 	resp *ModelResponse,
+	toolNotFound ToolNotFoundBehavior,
 ) (*processedResponse, error) {
 	handoffMap := make(map[string]Handoff, len(handoffs))
 	for _, h := range handoffs {
@@ -100,6 +114,13 @@ func processModelResponse(
 			}
 			ft, ok := functionMap[fc.Name]
 			if !ok {
+				if toolNotFound == ToolNotFoundReturnToModel {
+					// Record the call and let executeToolsAndSideEffects synthesize
+					// an error output, so the model can correct itself next turn.
+					pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
+					pr.UnknownTools = append(pr.UnknownTools, call)
+					continue
+				}
 				return nil, newModelBehaviorError("tool %q not found on agent %q", fc.Name, agent.Name)
 			}
 			pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
@@ -157,6 +178,13 @@ func (r *runner) executeToolsAndSideEffects(
 	}
 	for _, fr := range functionResults {
 		newStepItems = append(newStepItems, fr.outputItem)
+	}
+
+	// Unknown tool calls (ToolNotFoundReturnToModel): feed an error output back so
+	// the model can correct itself. hasToolsToRun stays true, forcing another turn.
+	for _, call := range pr.UnknownTools {
+		msg := fmt.Sprintf("Error: tool %q not found.", call.Name)
+		newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, msg))
 	}
 
 	// Handoffs take precedence: switch to the first requested target agent.
@@ -230,6 +258,9 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	}
 	results := make([]functionToolResult, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
+	if r.opts.MaxToolConcurrency > 0 {
+		g.SetLimit(r.opts.MaxToolConcurrency)
+	}
 	for i, run := range runs {
 		g.Go(func() error {
 			tc := &ToolContext{
@@ -497,15 +528,25 @@ func (r *runner) checkToolUseBehavior(ctx context.Context, agent *Agent, results
 	}
 }
 
-// applyHandoffInputFilter builds the full conversation input and runs the
-// handoff's InputFilter over it, returning the filtered input for the next agent.
-func applyHandoffInputFilter(h *Handoff, originalInput []TResponseInputItem, generated []RunItem) ([]TResponseInputItem, error) {
+// applyHandoffInputFilter builds the full conversation input and runs filter
+// over it, returning the filtered input for the next agent.
+func applyHandoffInputFilter(filter func(HandoffInputData) HandoffInputData, originalInput []TResponseInputItem, generated []RunItem) ([]TResponseInputItem, error) {
 	full, err := buildModelInput(originalInput, generated)
 	if err != nil {
 		return nil, err
 	}
-	out := h.InputFilter(HandoffInputData{InputHistory: full})
+	out := filter(HandoffInputData{InputHistory: full})
 	return out.InputHistory, nil
+}
+
+// handoffInputFilter resolves the filter for a handoff: the handoff's own
+// InputFilter takes precedence over the run-level RunOptions.HandoffInputFilter.
+// Returns nil when neither is set.
+func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffInputData {
+	if h.InputFilter != nil {
+		return h.InputFilter
+	}
+	return r.opts.HandoffInputFilter
 }
 
 func lastMessageItem(items []RunItem) *MessageOutputItem {

@@ -10,6 +10,17 @@ import (
 // DefaultMaxTurns is the turn budget applied when RunOptions.MaxTurns is zero.
 const DefaultMaxTurns = 10
 
+// ModelInputData is the editable portion of a model call passed to a
+// CallModelInputFilter: the system instructions and the input items.
+type ModelInputData struct {
+	Instructions string
+	Input        []TResponseInputItem
+}
+
+// CallModelInputFilter edits the instructions and input items just before a
+// model call. Returning an error aborts the run.
+type CallModelInputFilter func(ctx context.Context, rc *RunContext, agent *Agent, data ModelInputData) (ModelInputData, error)
+
 // RunOptions configures a run. The zero value is valid: MaxTurns defaults to
 // DefaultMaxTurns and a fresh RunContext is created. A ModelProvider (or an
 // agent with an explicit ModelImpl) is required so the runner can obtain a Model.
@@ -37,6 +48,26 @@ type RunOptions struct {
 	// ModelSettings is a run-level settings override merged over each agent's
 	// own ModelSettings.
 	ModelSettings *ModelSettings
+
+	// CallModelInputFilter, when set, is invoked just before each model call to
+	// edit the instructions and input items sent (e.g. to trim tokens or inject
+	// context). It does not change what is saved to the session.
+	CallModelInputFilter CallModelInputFilter
+
+	// MaxToolConcurrency bounds how many function tools run concurrently within a
+	// single turn. Zero means no limit (every tool call in the turn runs in
+	// parallel).
+	MaxToolConcurrency int
+
+	// ToolNotFoundBehavior controls what happens when the model calls a tool the
+	// agent does not expose. The default (ToolNotFoundError) aborts the run;
+	// ToolNotFoundReturnToModel feeds an error back so the model can retry.
+	ToolNotFoundBehavior ToolNotFoundBehavior
+
+	// HandoffInputFilter is a run-level default applied to any handoff that does
+	// not set its own Handoff.InputFilter. Use NestHandoffHistory to fold prior
+	// history across all handoffs.
+	HandoffInputFilter func(HandoffInputData) HandoffInputData
 
 	// Hooks receives run-scoped lifecycle callbacks.
 	Hooks RunHooks
@@ -265,6 +296,13 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			resp = pendingResponse
 			pendingResponse = nil
 		} else {
+			if r.opts.CallModelInputFilter != nil {
+				edited, ferr := r.opts.CallModelInputFilter(ctx, r.rc, currentAgent, ModelInputData{Instructions: systemPrompt, Input: modelInput})
+				if ferr != nil {
+					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
+				}
+				systemPrompt, modelInput = edited.Instructions, edited.Input
+			}
 			if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, r.rc, systemPrompt, modelInput); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
@@ -298,7 +336,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			rawResponses = append(rawResponses, resp)
 		}
 
-		processed, err := processModelResponse(currentAgent, tools, handoffs, resp)
+		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.ToolNotFoundBehavior)
 		if err != nil {
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
@@ -360,17 +398,19 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err := callHandoff(ctx, r.opts.Hooks, currentAgent, step.NewAgent, r.rc); err != nil {
 				return nil, err
 			}
-			if step.Handoff != nil && step.Handoff.InputFilter != nil {
-				filtered, ferr := applyHandoffInputFilter(step.Handoff, originalInput, generatedItems)
-				if ferr != nil {
-					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
+			if step.Handoff != nil {
+				if filter := r.handoffInputFilter(step.Handoff); filter != nil {
+					filtered, ferr := applyHandoffInputFilter(filter, originalInput, generatedItems)
+					if ferr != nil {
+						return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
+					}
+					originalInput = filtered
+					generatedItems = nil
+					// The server's stored history is unfiltered, so we can no longer
+					// chain via previous_response_id; resend the filtered input.
+					previousResponseID = ""
+					serverItemCount = 0
 				}
-				originalInput = filtered
-				generatedItems = nil
-				// The server's stored history is unfiltered, so we can no longer
-				// chain via previous_response_id; resend the filtered input.
-				previousResponseID = ""
-				serverItemCount = 0
 			}
 			currentAgent = step.NewAgent
 			shouldRunStartHooks = true

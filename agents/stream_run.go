@@ -139,6 +139,13 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		}
 
 		// Stream the model call, forwarding raw events and capturing the response.
+		if r.opts.CallModelInputFilter != nil {
+			edited, ferr := r.opts.CallModelInputFilter(ctx, rc, currentAgent, ModelInputData{Instructions: systemPrompt, Input: turnInput})
+			if ferr != nil {
+				return nil, r.fail(ferr, modelInput, generatedItems, rawResponses, currentAgent)
+			}
+			systemPrompt, turnInput = edited.Instructions, edited.Input
+		}
 		if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, rc, systemPrompt, turnInput); err != nil {
 			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)
 		}
@@ -166,7 +173,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		rc.Usage.Add(resp.Usage)
 		rawResponses = append(rawResponses, resp)
 
-		processed, err := processModelResponse(currentAgent, tools, handoffs, resp)
+		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.ToolNotFoundBehavior)
 		if err != nil {
 			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)
 		}
@@ -223,16 +230,18 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 			if err := callHandoff(ctx, opts.Hooks, currentAgent, step.NewAgent, rc); err != nil {
 				return nil, err
 			}
-			if step.Handoff != nil && step.Handoff.InputFilter != nil {
-				filtered, ferr := applyHandoffInputFilter(step.Handoff, modelInput, generatedItems)
-				if ferr != nil {
-					return nil, r.fail(ferr, modelInput, generatedItems, rawResponses, currentAgent)
+			if step.Handoff != nil {
+				if filter := r.handoffInputFilter(step.Handoff); filter != nil {
+					filtered, ferr := applyHandoffInputFilter(filter, modelInput, generatedItems)
+					if ferr != nil {
+						return nil, r.fail(ferr, modelInput, generatedItems, rawResponses, currentAgent)
+					}
+					modelInput = filtered
+					generatedItems = nil
+					// Filtered history can't chain via previous_response_id.
+					previousResponseID = ""
+					serverItemCount = 0
 				}
-				modelInput = filtered
-				generatedItems = nil
-				// Filtered history can't chain via previous_response_id.
-				previousResponseID = ""
-				serverItemCount = 0
 			}
 			currentAgent = step.NewAgent
 			shouldRunStartHooks = true
