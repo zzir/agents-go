@@ -110,7 +110,7 @@ func (myHooks) OnToolStart(ctx context.Context, rc *agents.RunContext, agent *ag
 agent.Hooks = myHooks{}
 ```
 
-Available callbacks: `OnStart`, `OnEnd`, `OnHandoff` (fires on the receiving agent), `OnToolStart`, `OnToolEnd`. Run-scoped equivalents exist on `RunOptions.Hooks` ([Running agents](running_agents.md)).
+Available callbacks: `OnStart`, `OnEnd`, `OnHandoff` (fires on the receiving agent), `OnToolStart`, `OnToolEnd`, `OnLLMStart`, `OnLLMEnd`. `OnLLMStart`/`OnLLMEnd` bracket each model call (with the system prompt and input items, then the response); they do not fire on a HITL-resumed turn, which reuses the interrupted response without calling the model. Run-scoped equivalents exist on `RunOptions.Hooks` ([Running agents](running_agents.md)).
 
 ## Cloning
 

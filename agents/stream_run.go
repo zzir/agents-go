@@ -139,6 +139,9 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		}
 
 		// Stream the model call, forwarding raw events and capturing the response.
+		if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, rc, systemPrompt, turnInput); err != nil {
+			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)
+		}
 		span := r.trace.StartSpan("generation:"+currentAgent.Name, r.agentParentID())
 		resp, err := r.streamOneModelCall(ctx, sr, model, ModelRequest{
 			SystemInstructions: systemPrompt,
@@ -157,6 +160,9 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		}
 		span.Set("response_id", resp.ResponseID)
 		span.Finish()
+		if err := callLLMEnd(ctx, r.opts.Hooks, currentAgent, rc, resp); err != nil {
+			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)
+		}
 		rc.Usage.Add(resp.Usage)
 		rawResponses = append(rawResponses, resp)
 

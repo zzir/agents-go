@@ -265,6 +265,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			resp = pendingResponse
 			pendingResponse = nil
 		} else {
+			if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, r.rc, systemPrompt, modelInput); err != nil {
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			}
 			span := r.trace.StartSpan("generation:"+currentAgent.Name, r.agentParentID())
 			resp, err = model.GetResponse(ctx, ModelRequest{
 				SystemInstructions: systemPrompt,
@@ -283,6 +286,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			span.Set("response_id", resp.ResponseID)
 			span.Finish()
+			if err := callLLMEnd(ctx, r.opts.Hooks, currentAgent, r.rc, resp); err != nil {
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			}
 			if guardErrCh != nil {
 				if gerr := <-guardErrCh; gerr != nil {
 					return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)

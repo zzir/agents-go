@@ -16,6 +16,13 @@ type RunHooks interface {
 	OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error
 	// OnToolEnd fires after a tool returns, with its result.
 	OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error
+	// OnLLMStart fires just before the agent's model is invoked, with the
+	// resolved system prompt (empty if none) and the input items being sent. It
+	// does not fire on a HITL-resumed turn, which reuses the interrupted
+	// response instead of calling the model.
+	OnLLMStart(ctx context.Context, rc *RunContext, agent *Agent, systemPrompt string, input []TResponseInputItem) error
+	// OnLLMEnd fires immediately after the model call returns, with the response.
+	OnLLMEnd(ctx context.Context, rc *RunContext, agent *Agent, response *ModelResponse) error
 	runHooks()
 }
 
@@ -39,6 +46,16 @@ func (BaseRunHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) erro
 func (BaseRunHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
 	return nil
 }
+
+// OnLLMStart is a no-op.
+func (BaseRunHooks) OnLLMStart(context.Context, *RunContext, *Agent, string, []TResponseInputItem) error {
+	return nil
+}
+
+// OnLLMEnd is a no-op.
+func (BaseRunHooks) OnLLMEnd(context.Context, *RunContext, *Agent, *ModelResponse) error {
+	return nil
+}
 func (BaseRunHooks) runHooks() {}
 
 // AgentHooks receives lifecycle callbacks scoped to a single agent. Embed
@@ -54,6 +71,11 @@ type AgentHooks interface {
 	OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error
 	// OnToolEnd fires after one of this agent's tools returns, with its result.
 	OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error
+	// OnLLMStart fires just before this agent's model is invoked, with the
+	// resolved system prompt (empty if none) and the input items being sent.
+	OnLLMStart(ctx context.Context, rc *RunContext, agent *Agent, systemPrompt string, input []TResponseInputItem) error
+	// OnLLMEnd fires immediately after this agent's model call returns.
+	OnLLMEnd(ctx context.Context, rc *RunContext, agent *Agent, response *ModelResponse) error
 	agentHooks()
 }
 
@@ -74,6 +96,16 @@ func (BaseAgentHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) er
 
 // OnToolEnd is a no-op.
 func (BaseAgentHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
+	return nil
+}
+
+// OnLLMStart is a no-op.
+func (BaseAgentHooks) OnLLMStart(context.Context, *RunContext, *Agent, string, []TResponseInputItem) error {
+	return nil
+}
+
+// OnLLMEnd is a no-op.
+func (BaseAgentHooks) OnLLMEnd(context.Context, *RunContext, *Agent, *ModelResponse) error {
 	return nil
 }
 func (BaseAgentHooks) agentHooks() {}
@@ -144,6 +176,34 @@ func callToolEnd(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunConte
 	}
 	if agent.Hooks != nil {
 		if err := agent.Hooks.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func callLLMStart(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContext, systemPrompt string, input []TResponseInputItem) error {
+	if hooks != nil {
+		if err := hooks.OnLLMStart(ctx, rc, agent, systemPrompt, input); err != nil {
+			return err
+		}
+	}
+	if agent.Hooks != nil {
+		if err := agent.Hooks.OnLLMStart(ctx, rc, agent, systemPrompt, input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func callLLMEnd(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContext, response *ModelResponse) error {
+	if hooks != nil {
+		if err := hooks.OnLLMEnd(ctx, rc, agent, response); err != nil {
+			return err
+		}
+	}
+	if agent.Hooks != nil {
+		if err := agent.Hooks.OnLLMEnd(ctx, rc, agent, response); err != nil {
 			return err
 		}
 	}

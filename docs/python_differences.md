@@ -56,13 +56,12 @@
 
 ## Not implemented in Go
 
-- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation (hosted `tool_choice` values are rejected with a clear error)
+- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name ([tools](tools.md))
 - **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
-- **LiteLLM / multi-provider layer**
+- **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
 - **Realtime and voice agents**
 - **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
 - **MCP**: prompts, resources, tool-list caching, dynamic (callable) tool filters; only static allow/block lists
-- **Lifecycle**: `on_llm_start` / `on_llm_end` hooks
 - **Usage limits / cost estimation helpers**
 
 ## Go-only additions

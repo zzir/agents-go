@@ -90,7 +90,7 @@ func (auditHooks) OnHandoff(ctx context.Context, rc *agents.RunContext, from, to
 }
 ```
 
-Callbacks: `OnAgentStart`, `OnAgentEnd`, `OnHandoff`, `OnToolStart`, `OnToolEnd`. Tool callbacks may fire concurrently (tools run in parallel), so hooks must be goroutine-safe.
+Callbacks: `OnAgentStart`, `OnAgentEnd`, `OnHandoff`, `OnToolStart`, `OnToolEnd`, `OnLLMStart`, `OnLLMEnd`. `OnLLMStart`/`OnLLMEnd` bracket each model call (the second carries the `*ModelResponse`); they do not fire on a HITL-resumed turn. Tool callbacks may fire concurrently (tools run in parallel), so hooks must be goroutine-safe.
 
 ## Errors
 
