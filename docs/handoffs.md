@@ -70,6 +70,22 @@ h.InputFilter = func(d agents.HandoffInputData) agents.HandoffInputData {
 
 > Note: the Go filter receives one flattened `InputHistory` list rather than Python's three-part `input_history` / `pre_handoff_items` / `new_items` split.
 
+### Nesting handoff history
+
+For multi-agent chains, `agents.NestHandoffHistory` is a ready-made filter that folds the prior conversation into one compact summary message for the next agent (mirroring Python's `nest_handoff_history`), cutting tokens and tool-call noise:
+
+```go
+h := agents.HandoffTo(billing)
+h.InputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
+```
+
+The default folds the transcript into a single assistant message wrapped in `<CONVERSATION HISTORY>` markers. On a later handoff the filter **flattens** any earlier summary back into its transcript before re-folding, so a chain of handoffs yields one flat summary rather than a summary-of-summaries. Customize via `NestHistoryOptions`:
+
+- `Mapper` — a `HandoffHistoryMapper` that folds the transcript your own way (e.g. call an LLM for a real summary instead of the default JSON-per-line transcript).
+- `StartMarker` / `EndMarker` — override the wrapper markers (a custom `Mapper` must reuse them for flattening to work).
+
+The transcript is serialized one JSON item per line, which round-trips through `UnmarshalInputItem` when flattened — Go uses this in place of Python's looser text format for reliable nesting.
+
 ## Recommended prompts
 
 As in Python, models follow handoffs better when the instructions mention them:

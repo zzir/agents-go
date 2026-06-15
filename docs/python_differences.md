@@ -45,7 +45,7 @@
 | Tool errors | `failure_error_function` default feeds the error to the model | Same default (`DefaultToolErrorFunction`); set the field to `nil` for fatal |
 | Tool timeout | — | `FunctionTool.Timeout` → `*ToolTimeoutError` |
 | Model refusal | refusal text surfaces as plain content | run fails with `*ModelRefusalError` carrying the refusal |
-| Handoff input filter | receives `input_history` / `pre_handoff_items` / `new_items` separately | receives one flattened `InputHistory`; the session always keeps the unfiltered conversation |
+| Handoff input filter | receives `input_history` / `pre_handoff_items` / `new_items` separately | receives one flattened `InputHistory`; the session always keeps the unfiltered conversation. `NestHandoffHistory` ports `nest_handoff_history` (fold + flatten) on top of this |
 | HITL state | `RunState` JSON (Python format) | `RunState` JSON round-trips **Go↔Go only**, and rebuilding needs an agent-name registry (Go functions don't serialize) |
 | Input guardrail timing | parallel with the first model call | same for `Run`; `RunStreamed` runs them synchronously before the first call |
 | Streamed text items | `message_output_created` fires once per completed message | same (use raw delta events for token-level UI) |

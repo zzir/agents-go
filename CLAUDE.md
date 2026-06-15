@@ -111,7 +111,9 @@ as a callable tool (nested run).
 ### Handoffs, guardrails, HITL
 
 - **Handoffs** (`handoff.go`): an agent can transfer control to another agent.
-  `InputFilter` can rewrite the conversation seen by the target.
+  `InputFilter` can rewrite the conversation seen by the target; `NestHandoffHistory`
+  (`handoff_history.go`) is a prebuilt filter that folds prior history into one
+  summary message and flattens earlier summaries to avoid nesting.
 - **Guardrails** (`guardrail.go`, `tool_guardrails.go`): input/output guardrails
   at the run level and the tool level; a tripwire halts the run.
 - **Human-in-the-loop** (`run_state.go`): when a tool `NeedsApproval`, the run
