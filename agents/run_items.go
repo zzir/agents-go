@@ -45,7 +45,7 @@ func (i *MessageOutputItem) Text() string {
 	return extractMessageText(i.Raw)
 }
 
-// ToolCallItem is a function (or hosted) tool call emitted by the model.
+// ToolCallItem is a function tool call emitted by the model.
 type ToolCallItem struct {
 	Agent *Agent
 	Raw   TResponseOutputItem

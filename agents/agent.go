@@ -93,7 +93,7 @@ type Agent struct {
 	// ModelSettings overrides default model configuration for this agent.
 	ModelSettings *ModelSettings
 
-	// Tools are the function/hosted tools available to the agent.
+	// Tools are the function tools available to the agent.
 	Tools []Tool
 
 	// MCPServers are MCP servers whose tools are exposed to the agent.

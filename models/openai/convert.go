@@ -1,5 +1,6 @@
 // Package openai implements the agents Model interface against the OpenAI
-// Responses and Chat Completions APIs, using the official openai-go SDK.
+// Responses API, using the official openai-go SDK. The older Chat Completions
+// API is intentionally not supported.
 package openai
 
 import (
@@ -13,14 +14,16 @@ import (
 )
 
 // convertTools translates the SDK's tools and handoffs into Responses API tool
-// params. It mirrors Converter.convert_tools in the Python SDK (function tools
-// and handoffs only for now; hosted tools land in a later phase).
+// params. Tools are provider-agnostic: every Tool is a FunctionTool the SDK
+// executes locally (handoffs are modeled as function tools too), so the
+// conversion only emits function-tool params. The SDK has no provider-hosted
+// tool types.
 func convertTools(tools []agents.Tool, handoffs []agents.Handoff) ([]responses.ToolUnionParam, error) {
 	out := make([]responses.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {
 		ft, ok := t.(*agents.FunctionTool)
 		if !ok {
-			return nil, fmt.Errorf("openai: unsupported tool type %T (only function tools are supported in this phase)", t)
+			return nil, fmt.Errorf("openai: unsupported tool type %T (only function tools are supported)", t)
 		}
 		out = append(out, functionToolParam(ft.Name, ft.Description, ft.ParamsJSONSchema, ft.Strict))
 	}
@@ -51,17 +54,9 @@ func functionToolParam(name, description string, schema map[string]any, strict b
 	return responses.ToolUnionParam{OfFunction: fn}
 }
 
-// hostedToolChoices are tool_choice values that select a hosted tool type on
-// the Responses API. Hosted tools are not supported yet, so these must not be
-// silently sent as function names.
-var hostedToolChoices = map[string]bool{
-	"file_search": true, "web_search": true, "web_search_preview": true,
-	"computer_use_preview": true, "image_generation": true,
-	"code_interpreter": true, "mcp": true,
-}
-
 // convertToolChoice maps an SDK tool-choice string to the Responses API union.
-// An empty choice leaves the field omitted (provider default).
+// An empty choice leaves the field omitted (provider default); any value other
+// than auto/required/none is treated as a specific function tool name.
 func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToolChoiceUnion, bool, error) {
 	switch choice {
 	case "":
@@ -73,10 +68,6 @@ func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToo
 	case agents.ToolChoiceNone:
 		return responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: oai.Opt(responses.ToolChoiceOptionsNone)}, true, nil
 	default:
-		if hostedToolChoices[choice] {
-			return responses.ResponseNewParamsToolChoiceUnion{}, false,
-				fmt.Errorf("openai: tool_choice %q selects a hosted tool, which is not supported yet", choice)
-		}
 		// A specific function tool name.
 		return responses.ResponseNewParamsToolChoiceUnion{
 			OfFunctionTool: &responses.ToolChoiceFunctionParam{Name: choice},

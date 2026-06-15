@@ -69,9 +69,6 @@ type ModelSettings struct {
 	// PromptCacheRetention is "in_memory" or "24h".
 	PromptCacheRetention string `json:"prompt_cache_retention,omitempty"`
 
-	// IncludeUsage requests a usage chunk (Chat Completions only).
-	IncludeUsage *bool `json:"include_usage,omitempty"`
-
 	// ResponseInclude lists additional output data to include in the response.
 	ResponseInclude []string `json:"response_include,omitempty"`
 
@@ -135,9 +132,6 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	}
 	if override.PromptCacheRetention != "" {
 		out.PromptCacheRetention = override.PromptCacheRetention
-	}
-	if override.IncludeUsage != nil {
-		out.IncludeUsage = override.IncludeUsage
 	}
 	if override.ResponseInclude != nil {
 		out.ResponseInclude = override.ResponseInclude

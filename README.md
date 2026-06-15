@@ -61,6 +61,7 @@ func main() {
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewSSEServer` |
+| Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 
 ## Tools
 

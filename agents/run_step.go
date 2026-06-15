@@ -64,7 +64,7 @@ func (p *processedResponse) hasToolsToRun() bool {
 // processModelResponse classifies each output item of a model response into run
 // items and pending tool/handoff actions. It is the Go counterpart of the Python
 // SDK's process_model_response, covering messages, reasoning, function calls and
-// handoff calls (hosted tools land in later phases).
+// handoff calls.
 func processModelResponse(
 	agent *Agent,
 	tools []Tool,
@@ -105,7 +105,8 @@ func processModelResponse(
 			pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
 			pr.Functions = append(pr.Functions, toolRunFunction{Tool: ft, Call: call})
 		default:
-			// Unknown/hosted output types are ignored in this phase.
+			// The supported tool set produces only the item types handled above;
+			// ignore any other output item type defensively.
 		}
 	}
 	return pr, nil

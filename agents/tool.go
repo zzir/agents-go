@@ -5,9 +5,11 @@ import (
 	"time"
 )
 
-// Tool is the sealed interface implemented by every tool kind the SDK supports
-// (function tools, hosted tools such as web search, etc). It mirrors the Python
-// SDK's Tool union type.
+// Tool is the sealed interface implemented by every tool the SDK supports. Tools
+// are provider-agnostic: a Tool is a FunctionTool whose Go function the SDK
+// executes locally, and the same Tool works against any model backend. The SDK
+// deliberately does not model provider-hosted tools (e.g. OpenAI's server-side
+// web_search), which would couple a tool to one backend.
 //
 // The unexported marker method keeps the set of tool kinds closed to this
 // package; construct tools via the provided constructors (e.g. NewFunctionTool).
