@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -29,6 +30,26 @@ type Options struct {
 	// ClientName/ClientVersion identify this client to the server.
 	ClientName    string
 	ClientVersion string
+
+	// CacheToolsList caches the server's tool list after the first fetch so a
+	// multi-turn run does not re-issue list_tools every turn. Call
+	// InvalidateToolsCache when the server's tools may have changed. Static and
+	// dynamic filters still run on every ListTools, against the cached list.
+	CacheToolsList bool
+
+	// ToolFilter, when set, decides per call whether a tool is exposed, applied
+	// after the static AllowedTools/BlockedTools lists. It receives the original
+	// (unprefixed) tool name and may consult the run context.
+	ToolFilter func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
+
+	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_") to
+	// avoid collisions when multiple servers expose same-named tools. The server
+	// is still called with the original name.
+	ToolNamePrefix string
+
+	// RequireApproval, when set, marks an exposed MCP tool as needing human
+	// approval (HITL) whenever it returns true for the tool's original name.
+	RequireApproval func(toolName string) bool
 }
 
 // Server is a connected MCP server whose tools are exposed to an agent. It
@@ -39,6 +60,16 @@ type Server struct {
 	opts    Options
 	allowed map[string]bool
 	blocked map[string]bool
+
+	mu     sync.Mutex
+	cached []cachedTool // populated lazily when CacheToolsList is set
+}
+
+// cachedTool pairs an adapted tool with its original (unprefixed) MCP name, used
+// for static/dynamic filtering on each ListTools call.
+type cachedTool struct {
+	originalName string
+	tool         agents.Tool
 }
 
 func newServer(name string, opts Options) *Server {
@@ -130,24 +161,59 @@ func (s *Server) allow(toolName string) bool {
 	return true
 }
 
-// ListTools implements agents.MCPServer, fetching the server's tools and
-// adapting each into an agents.FunctionTool that proxies to CallTool.
-func (s *Server) ListTools(ctx context.Context, _ *agents.RunContext, _ *agents.Agent) ([]agents.Tool, error) {
+// ListTools implements agents.MCPServer, fetching (or reusing a cached) tool
+// list and adapting each into an agents.FunctionTool that proxies to CallTool.
+// Static (AllowedTools/BlockedTools) and dynamic (ToolFilter) filters run here on
+// every call, so caching never hides a context-dependent filter decision.
+func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]agents.Tool, error) {
+	all, err := s.toolList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var tools []agents.Tool
+	for _, ct := range all {
+		if !s.allow(ct.originalName) {
+			continue
+		}
+		if s.opts.ToolFilter != nil && !s.opts.ToolFilter(ctx, rc, agent, ct.originalName) {
+			continue
+		}
+		tools = append(tools, ct.tool)
+	}
+	return tools, nil
+}
+
+// toolList returns the adapted tools, fetching them from the server (and caching
+// when CacheToolsList is set) or reusing the cache.
+func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	if s.session == nil {
 		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.opts.CacheToolsList && s.cached != nil {
+		return s.cached, nil
 	}
 	res, err := s.session.ListTools(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err)
 	}
-	var tools []agents.Tool
+	list := make([]cachedTool, 0, len(res.Tools))
 	for _, mt := range res.Tools {
-		if !s.allow(mt.Name) {
-			continue
-		}
-		tools = append(tools, s.toolFor(mt))
+		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt)})
 	}
-	return tools, nil
+	if s.opts.CacheToolsList {
+		s.cached = list
+	}
+	return list, nil
+}
+
+// InvalidateToolsCache drops any cached tool list so the next ListTools refetches
+// it. No-op when CacheToolsList is not set.
+func (s *Server) InvalidateToolsCache() {
+	s.mu.Lock()
+	s.cached = nil
+	s.mu.Unlock()
 }
 
 func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
@@ -162,9 +228,10 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 			strict = true
 		}
 	}
-	toolName := mt.Name
-	return &agents.FunctionTool{
-		Name:             toolName,
+	originalName := mt.Name
+	exposedName := s.opts.ToolNamePrefix + originalName
+	tool := &agents.FunctionTool{
+		Name:             exposedName,
 		Description:      mt.Description,
 		ParamsJSONSchema: schema,
 		Strict:           strict,
@@ -176,20 +243,25 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 			var args map[string]any
 			if strings.TrimSpace(argsJSON) != "" {
 				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-					return nil, fmt.Errorf("mcp tool %q: invalid arguments: %w", toolName, err)
+					return nil, fmt.Errorf("mcp tool %q: invalid arguments: %w", exposedName, err)
 				}
 			}
-			result, err := s.session.CallTool(ctx, &mcpsdk.CallToolParams{Name: toolName, Arguments: args})
+			// The server is always called with the original (unprefixed) name.
+			result, err := s.session.CallTool(ctx, &mcpsdk.CallToolParams{Name: originalName, Arguments: args})
 			if err != nil {
-				return nil, fmt.Errorf("mcp tool %q call failed: %w", toolName, err)
+				return nil, fmt.Errorf("mcp tool %q call failed: %w", originalName, err)
 			}
 			text := resultText(result)
 			if result.IsError {
-				return nil, fmt.Errorf("mcp tool %q returned error: %s", toolName, text)
+				return nil, fmt.Errorf("mcp tool %q returned error: %s", originalName, text)
 			}
 			return text, nil
 		},
 	}
+	if s.opts.RequireApproval != nil && s.opts.RequireApproval(originalName) {
+		tool.NeedsApproval = true
+	}
+	return tool
 }
 
 // schemaToMap normalizes the MCP input schema (an any) into a map[string]any.
@@ -257,6 +329,40 @@ func resultText(result *mcpsdk.CallToolResult) string {
 		}
 	}
 	return b.String()
+}
+
+// ListPrompts returns the prompt templates the server exposes. A prompt can be
+// turned into agent instructions via GetPrompt. params may be nil.
+func (s *Server) ListPrompts(ctx context.Context, params *mcpsdk.ListPromptsParams) (*mcpsdk.ListPromptsResult, error) {
+	if s.session == nil {
+		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+	}
+	return s.session.ListPrompts(ctx, params)
+}
+
+// GetPrompt fetches a prompt by name with the given arguments. The returned
+// messages can seed an agent's instructions or input.
+func (s *Server) GetPrompt(ctx context.Context, params *mcpsdk.GetPromptParams) (*mcpsdk.GetPromptResult, error) {
+	if s.session == nil {
+		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+	}
+	return s.session.GetPrompt(ctx, params)
+}
+
+// ListResources returns the resources the server exposes. params may be nil.
+func (s *Server) ListResources(ctx context.Context, params *mcpsdk.ListResourcesParams) (*mcpsdk.ListResourcesResult, error) {
+	if s.session == nil {
+		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+	}
+	return s.session.ListResources(ctx, params)
+}
+
+// ReadResource reads a resource by URI.
+func (s *Server) ReadResource(ctx context.Context, params *mcpsdk.ReadResourceParams) (*mcpsdk.ReadResourceResult, error) {
+	if s.session == nil {
+		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+	}
+	return s.session.ReadResource(ctx, params)
 }
 
 var _ agents.MCPServer = (*Server)(nil)

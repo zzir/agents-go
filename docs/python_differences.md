@@ -59,9 +59,11 @@
 - **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name ([tools](tools.md))
 - **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
 - **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
+- **Structured / multimodal tool output** — a tool's result goes back to the model as text (JSON for non-string values); there is no `ToolOutputImage`/`ToolOutputText` equivalent, so a tool cannot hand the model native image input. This is also why MCP multimodal results (images/embedded resources) are JSON-encoded into text rather than passed as image input
+- **Server-managed / compaction sessions** — `OpenAIConversationsSession` and history-compaction backends are not ported; Go offers in-memory, JSONL (`FileSession`) and SQL (`sessions` module) persistence plus `RunOptions.UsePreviousResponseID` for server-side chaining
+- **Prompts API** — binding an agent's instructions to an OpenAI stored prompt (`prompt` id/version/variables); MCP server prompts (`server.GetPrompt`) are a separate, supported feature
 - **Realtime and voice agents**
 - **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
-- **MCP**: prompts, resources, tool-list caching, dynamic (callable) tool filters; only static allow/block lists
 - **Usage limits / cost estimation helpers**
 
 ## Go-only additions

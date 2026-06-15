@@ -43,11 +43,35 @@ mcp.Options{
 	BlockedTools: []string{"delete_file"},                 // hide these
 	Strict:       true,                                    // normalize schemas to OpenAI strict mode
 	ClientName:   "my-app", ClientVersion: "1.2.0",        // reported to the server
+
+	CacheToolsList: true,            // cache list_tools across turns
+	ToolNamePrefix: "github_",       // avoid name clashes between servers
+	ToolFilter: func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, name string) bool {
+		return rc.Context != nil // expose tools only in some run contexts
+	},
+	RequireApproval: func(name string) bool { return name == "delete_file" }, // HITL
 }
 ```
 
-- **Tool filtering**: `AllowedTools` whitelists, `BlockedTools` blacklists (blocked wins). The Go SDK supports static filters only — Python's context-dependent callable filters have no counterpart yet.
+- **Tool filtering**: `AllowedTools` whitelists, `BlockedTools` blacklists (blocked wins). `ToolFilter` adds a dynamic, per-call decision on top — it sees the run context and the tool's original name, and runs on every `ListTools` even when the list is cached.
+- **`CacheToolsList`**: caches the server's tool list after the first fetch so a multi-turn run does not re-issue `list_tools` each turn. Call `server.InvalidateToolsCache()` when the server's tools may have changed. Filters still run on every call.
+- **`ToolNamePrefix`**: prepends a prefix to each exposed tool name so several servers can expose same-named tools without colliding; the server is still called with the original name.
+- **`RequireApproval`**: marks matching tools as needing human approval, routing them through the [HITL](human_in_the_loop.md) flow like any `NeedsApproval` function tool.
 - **Strict**: rewrites each tool's input schema to the strict subset; if a server's schema cannot be made strict, the original schema is used and strict mode is disabled for that tool (never half-converted).
+
+## Prompts and resources
+
+A `Server` also exposes the MCP prompt and resource endpoints directly (they are not agent tools — call them yourself, e.g. to seed instructions from a server-managed prompt):
+
+```go
+prompts, _ := server.ListPrompts(ctx, nil)
+p, _ := server.GetPrompt(ctx, &mcpsdk.GetPromptParams{Name: "code_review", Arguments: map[string]string{"lang": "go"}})
+// p.Messages -> turn into agent instructions or input
+
+resources, _ := server.ListResources(ctx, nil)
+r, _ := server.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file:///README.md"})
+// r.Contents -> inject as context
+```
 
 ## Behavior
 
@@ -55,4 +79,4 @@ mcp.Options{
 - A tool call that fails — including results flagged `isError` — is fed back to the model as the tool output so it can recover, like any function tool failure. Set the produced tool's `FailureErrorFunction` to nil if you want failures to abort the run (advanced).
 - `Close()` shuts the session down; it is safe to call once finished with the server.
 
-Prompts, resources, and tool-list caching are not implemented yet — see [differences](python_differences.md).
+Not modeled: provider-hosted MCP (OpenAI's server-side MCP tool), per the SDK's no-hosted-tools stance. Multimodal tool results (images/embedded resources) are JSON-encoded into the text output rather than passed to the model as native image input — see [differences](python_differences.md).
