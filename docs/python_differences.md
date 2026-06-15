@@ -49,7 +49,7 @@
 | HITL state | `RunState` JSON (Python format) | `RunState` JSON round-trips **Go↔Go only**, and rebuilding needs an agent-name registry (Go functions don't serialize) |
 | Input guardrail timing | parallel with the first model call | same for `Run`; `RunStreamed` runs them synchronously before the first call |
 | Streamed text items | `message_output_created` fires once per completed message | same (use raw delta events for token-level UI) |
-| Session backends | SQLite / SQLAlchemy / Redis / encrypted | `InMemorySession` + `FileSession` (JSONL); implement `Session` for databases |
+| Session backends | SQLite / SQLAlchemy / Redis / encrypted | `InMemorySession` + `FileSession` (JSONL) in core; `sessions` module adds SQLite/PostgreSQL via bun; implement `Session` for anything else |
 | Tracing backend | OpenAI traces dashboard by default | generic tracer → processor → exporter pipeline (console/HTTP/custom); **not** the OpenAI dashboard wire format. Traces export at start, spans at finish |
 | Server-side conversation state | `previous_response_id` / `conversation_id` parameters | opt-in `RunOptions.UsePreviousResponseID`; `conversation_id` not wired up |
 | Usage of nested `as_tool` runs | separate from parent | same (separate), but nested spans join the parent trace |

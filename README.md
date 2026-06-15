@@ -57,7 +57,7 @@ func main() {
 | Handoffs | `agents.HandoffTo(targetAgent)` |
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
 | Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails |
-| Sessions | `agents.Session`, `agents.InMemorySession`, `memory.FileSession` |
+| Sessions | `agents.Session`, `agents.InMemorySession`, `memory.FileSession`, `sessions` (SQLite/Postgres via bun) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewSSEServer` |

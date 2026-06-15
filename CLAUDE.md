@@ -46,13 +46,16 @@ Requires Go 1.26+.
 
 ## Multi-module layout
 
-This is a Go **workspace** (`go.work`), not a single module. Three modules:
+This is a Go **workspace** (`go.work`), not a single module. Four modules:
 
 - **root** (`github.com/zzir/agents-go`) — the SDK. Depends only on `openai-go`,
   `jsonschema-go`, `go-sdk` (MCP), `golang.org/x/sync`.
 - **`sandbox/docker`** and **`sandbox/k8s`** — optional sandbox backends, each its
   own module so the heavy Docker/Kubernetes client deps don't leak into the root
   module's dependency graph. Anyone using only the core SDK pays nothing for them.
+- **`sessions`** — SQLite/PostgreSQL `Session` backends via uptrace/bun, its own
+  module for the same reason (DB drivers stay out of the core graph). It
+  `require`s the root module with `replace => ..`, the same pattern as sandbox.
 
 `go.work` is gitignored. CI builds each module standalone with `GOWORK=off` — so
 **a workspace-only fix won't catch a missing `go.mod` require**. Always validate
@@ -123,9 +126,10 @@ as a callable tool (nested run).
 
 ### Sessions, tracing, MCP, sandbox
 
-- **Sessions** (`agents/session.go`, `memory/`): conversation persistence.
-  `InMemorySession` and `memory.FileSession` (JSONL). `UsePreviousResponseID`
-  opts into server-side state chaining instead of resending history.
+- **Sessions** (`agents/session.go`, `memory/`, `sessions/`): conversation
+  persistence. `InMemorySession` and `memory.FileSession` (JSONL) in core;
+  `sessions` module adds SQLite/PostgreSQL via bun. `UsePreviousResponseID` opts
+  into server-side state chaining instead of resending history.
 - **Tracing** (`tracing/`): `Trace`/`Span` with `Processor`/`Exporter`. Spans
   carry an untyped `Data map[string]any` (Python's typed SpanData is not ported).
 - **MCP** (`mcp/mcp.go`): Stdio / SSE / StreamableHTTP MCP servers exposed as

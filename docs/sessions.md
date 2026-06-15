@@ -30,6 +30,19 @@ type Session interface {
 
 Implement it against any store (Postgres, Redis, …). Use `agents.MarshalInputItem` / `agents.UnmarshalInputItem` for encoding — they handle two openai-go serialization quirks (assistant messages and `"type"`-less easy messages) that naive JSON round-trips get wrong.
 
+## Choosing an implementation
+
+The built-ins sit on a spectrum from "zero dependencies" to "full database". They all satisfy the same interface, so you can switch later:
+
+| Implementation | Storage | Dependencies | Module | Use when |
+|---|---|---|---|---|
+| `InMemorySession` | memory | none | core | tests, short-lived chats |
+| `memory.FileSession` | JSONL file | none | core | single process, no database wanted |
+| `sessions` (SQLite) | `.db` file | bun + driver | `sessions` | one host, but you want SQL (transactions, external querying) |
+| `sessions` (PostgreSQL) | server | bun + driver | `sessions` | concurrent processes, shared/production storage |
+
+`FileSession` and the SQLite backend overlap — both persist to one local file — and the line between them is dependencies: `FileSession` is **zero-dependency** and lives in the core module, so anyone using the SDK has it without pulling a database driver. Reach for the `sessions` module's SQLite when you specifically want SQL semantics (real transactions, querying the `.db` with other tools, an easy migration path to Postgres).
+
 ## Built-in implementations
 
 ### InMemorySession
@@ -38,7 +51,7 @@ Implement it against any store (Postgres, Redis, …). Use `agents.MarshalInputI
 
 ### FileSession (JSONL file)
 
-`memory.FileSession` persists history as one JSON item per line, with zero extra dependencies — the Go counterpart of Python's `SQLiteSession` niche:
+`memory.FileSession` persists history as one JSON item per line, with zero extra dependencies. It fills the "simple local persistence" niche Python covers with `SQLiteSession`, but without a database driver (for actual SQLite/Postgres, see the `sessions` module below):
 
 ```go
 import "github.com/zzir/agents-go/memory"
@@ -53,6 +66,25 @@ Properties:
 - Goroutine-safe within a process — including multiple `FileSession` instances opened on the same path (they share a per-path lock). Cross-process access is **not** locked.
 - Appends are written in a single `write` call; rewrites (PopItem) go through an fsynced temp file + atomic rename.
 - Corrupt lines are skipped on read rather than failing the whole session.
+
+### SQL sessions (SQLite / PostgreSQL)
+
+The `github.com/zzir/agents-go/sessions` module backs a `Session` with a SQL database via [uptrace/bun](https://bun.uptrace.dev). It is a **separate Go module** so its database-driver dependencies never reach the core SDK — add it only if you use it:
+
+```go
+import "github.com/zzir/agents-go/sessions"
+
+// SQLite — pure-Go (modernc) driver, no CGO:
+sess, db, err := sessions.NewSQLite("file:/var/data/agents.db", "user-123")
+defer db.Close()
+err = sessions.CreateSchema(ctx, db) // once
+
+// PostgreSQL — bring your own *sql.DB (pgx, lib/pq, or bun's pgdriver):
+sess, db := sessions.NewPostgres(sqldb, "user-123")
+err = sessions.CreateSchema(ctx, db)
+```
+
+Both store one row per item in an `agent_messages` table, encoded with `agents.MarshalInputItem`. A single `*bun.DB` can serve many session IDs (`sessions.New(db, id)`); rows are isolated by `session_id`. One schema and CRUD path serves both backends — bun smooths over the dialect differences.
 
 ## Session semantics
 
