@@ -86,11 +86,19 @@ to land in both files.**
 
 `Model` is a two-method interface: `GetResponse` (blocking) and `StreamResponse`
 (an `iter.Seq2[*TResponseStreamEvent, error]`). `ModelProvider.GetModel(name)`
-resolves an agent's model name to a `Model`. The only implementation today is
-`models/openai` (Responses API). `convert.go` translates SDK types ↔ OpenAI
+resolves an agent's model name to a `Model`. The concrete backend is
+`models/openai` (Responses API): `convert.go` translates SDK types ↔ OpenAI
 Responses API params; `responses_model.go` is the `Model` impl. The SDK speaks
 the OpenAI **Responses** API format internally — `TResponseInputItem` and friends
 are aliases of `openai-go/v3/responses` types.
+
+Resilience and multi-backend routing are provider-agnostic **decorators** in the
+`agents` package, not run-loop changes — they wrap a `Model`/`ModelProvider` and
+the runner is none the wiser: `NewRetryModel` (backoff+jitter retry),
+`NewFallbackModel` (try backends in order), `RouterProvider` (route by model-name
+prefix). Error classification that needs OpenAI types lives in the provider:
+`openai.RetryableError` / `openai.RetryAfter`. Streaming retry/fallback can only
+switch backends before the first event is emitted (see `model_retry.go`).
 
 ### Tools (`agents/function_tool.go`, `agents/tool.go`)
 

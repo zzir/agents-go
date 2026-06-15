@@ -25,7 +25,7 @@ provider = openai.NewProvider(option.WithAPIKey("…"))  // any openai-go option
 provider = provider.WithDefaultModel("gpt-4o-mini")    // default when Agent.Model is empty (else "gpt-4o")
 ```
 
-Only the **Responses API** is implemented (`openai.ResponsesModel`); there is no Chat Completions fallback and no LiteLLM-style multi-provider layer ([differences](python_differences.md)). Any OpenAI-compatible gateway that speaks the Responses API works via `option.WithBaseURL`.
+Only the **Responses API** is implemented (`openai.ResponsesModel`); there is no Chat Completions fallback ([differences](python_differences.md)). Any OpenAI-compatible gateway that speaks the Responses API works via `option.WithBaseURL`, and you can drive several such providers in one run with retries and fallback — see [Retries, fallback, and multiple providers](#retries-fallback-and-multiple-providers).
 
 ## Choosing models per agent
 
@@ -38,6 +38,59 @@ Each agent's name is resolved through the run's provider. Two overrides bypass t
 
 - `Agent.ModelImpl` — an explicit `Model` instance for this agent (highest precedence; this is also how you plug in a fake model for tests).
 - `RunOptions.Model` — one `Model` instance for every agent in the run.
+
+## Retries, fallback, and multiple providers
+
+Three provider-agnostic decorators compose for resilience and multi-backend routing. None touch the run loop — they wrap a `Model` (or `ModelProvider`).
+
+**Retry** — `agents.NewRetryModel(inner, policy)` retries transient failures with exponential backoff and jitter:
+
+```go
+policy := agents.RetryPolicy{
+    MaxAttempts: 3,                     // total tries; 1 disables retry
+    RetryIf:     openai.RetryableError, // retry 429/5xx/network, not 4xx or cancel
+    RetryAfter:  openai.RetryAfter,     // honor a Retry-After header when present
+}
+model := agents.NewRetryModel(primary, policy)
+```
+
+Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation; `openai.RetryableError` adds OpenAI-aware status-code classification.
+
+**Fallback** — `agents.NewFallbackModel(primary, backups...)` tries each backend in order until one succeeds, joining all errors if none do. Wrap each backend in a retry first so it exhausts its own retries before the chain advances:
+
+```go
+model := agents.NewFallbackModel(
+    agents.NewRetryModel(primary, policy),
+    agents.NewRetryModel(backup, policy),
+)
+agent := &agents.Agent{Name: "assistant", ModelImpl: model}
+```
+
+**Different vendors are just different providers** — same Responses protocol, different `base_url`/key:
+
+```go
+openaiP := openai.NewProvider() // OPENAI_API_KEY
+groqP := openai.NewProvider(
+    option.WithBaseURL("https://api.groq.com/openai/v1"),
+    option.WithAPIKey(os.Getenv("GROQ_API_KEY")))
+```
+
+**Routing by name** — `agents.NewRouterProvider` sends each agent to a backend by a model-name prefix, so one run can mix vendors per agent:
+
+```go
+router := agents.NewRouterProvider(map[string]agents.ModelProvider{
+    "openai": openaiP,
+    "groq":   groqP,
+}).WithFallback(openaiP)
+
+agents.Run(ctx, agent, input, agents.RunOptions{ModelProvider: router})
+// Agent.Model "groq/llama-3.3-70b" -> groqP.GetModel("llama-3.3-70b")
+// Agent.Model "gpt-4o"             -> fallback openaiP.GetModel("gpt-4o")
+```
+
+> **Streaming caveat:** retry and fallback can only switch backends *before the first event is emitted*. Once tokens start streaming a later error is passed through unchanged — already-sent output cannot be rolled back. Blocking `GetResponse` has no such limit, so it retries and falls back on any failure.
+
+A runnable example is in `examples/fallback`.
 
 ## Model settings
 
@@ -65,8 +118,7 @@ agent.ModelSettings = &agents.ModelSettings{
 
 Notes:
 
-- `ToolChoice` of `"required"` or a specific tool name is automatically released after the agent calls a tool, preventing infinite loops — see [Agents](agents.md#tool-use-behavior).
-- Hosted tool choices (`"file_search"`, `"web_search"`, …) are rejected with an error since hosted tools are unsupported.
+- `ToolChoice` of `"required"` or a specific tool name is automatically released after the agent calls a tool, preventing infinite loops — see [Agents](agents.md#tool-use-behavior). Any value other than `"auto"`/`"required"`/`"none"` is sent as a function tool name (the SDK has no provider-hosted tools).
 
 ## Custom models
 
