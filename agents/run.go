@@ -235,7 +235,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if r.agentSpan != nil {
 				r.agentSpan.Finish()
 			}
-			r.agentSpan = r.trace.StartSpan("agent:"+currentAgent.Name, "")
+			r.agentSpan = r.trace.StartAgentSpan(currentAgent.Name, "")
 		}
 
 		model, err := r.resolveModel(currentAgent)
@@ -278,7 +278,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			guardErrCh = make(chan error, 1)
 			parentID := r.agentParentID() // read before the goroutine races a handoff
 			go func() {
-				gspan := r.trace.StartSpan("guardrail:input", parentID)
+				gspan := r.trace.StartGuardrailSpan("input", parentID)
 				gerr := runInputGuardrails(ctx, r.rc, startAgent, startAgent.InputGuardrails, originalInput)
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)
@@ -306,7 +306,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, r.rc, systemPrompt, modelInput); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			span := r.trace.StartSpan("generation:"+currentAgent.Name, r.agentParentID())
+			span := r.trace.StartGenerationSpan(currentAgent.Name, r.agentParentID())
 			resp, err = model.GetResponse(ctx, ModelRequest{
 				SystemInstructions: systemPrompt,
 				Input:              modelInput,
@@ -370,7 +370,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		switch step.NextStep {
 		case stepFinalOutput:
 			if len(currentAgent.OutputGuardrails) > 0 {
-				gspan := r.trace.StartSpan("guardrail:output", r.agentParentID())
+				gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
 				gerr := runOutputGuardrails(ctx, r.rc, currentAgent, currentAgent.OutputGuardrails, step.FinalOutput)
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)

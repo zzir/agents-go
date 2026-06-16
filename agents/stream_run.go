@@ -89,7 +89,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 			if r.agentSpan != nil {
 				r.agentSpan.Finish()
 			}
-			r.agentSpan = r.trace.StartSpan("agent:"+currentAgent.Name, "")
+			r.agentSpan = r.trace.StartAgentSpan(currentAgent.Name, "")
 		}
 
 		model, err := r.resolveModel(currentAgent)
@@ -127,7 +127,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		// Input guardrails on the first turn, on the same full input as the
 		// non-streaming loop (run synchronously here for simplicity).
 		if turn == 1 && len(startAgent.InputGuardrails) > 0 {
-			gspan := r.trace.StartSpan("guardrail:input", r.agentParentID())
+			gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
 			gerr := runInputGuardrails(ctx, rc, startAgent, startAgent.InputGuardrails, modelInput)
 			if gerr != nil {
 				gspan.SetError(gerr.Error(), nil)
@@ -149,7 +149,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, rc, systemPrompt, turnInput); err != nil {
 			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)
 		}
-		span := r.trace.StartSpan("generation:"+currentAgent.Name, r.agentParentID())
+		span := r.trace.StartGenerationSpan(currentAgent.Name, r.agentParentID())
 		resp, err := r.streamOneModelCall(ctx, sr, model, ModelRequest{
 			SystemInstructions: systemPrompt,
 			Input:              turnInput,

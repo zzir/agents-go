@@ -1,6 +1,9 @@
 package tracing
 
-import "time"
+import (
+	"maps"
+	"time"
+)
 
 // Now is the clock used for span timing. Tests may override it for determinism.
 var Now = time.Now
@@ -49,21 +52,57 @@ func (h *TraceHandle) Finish() {
 	h.tracer.proc.OnTraceEnd(h.Trace)
 }
 
-// StartSpan begins a span under this trace, optionally nested under parentID.
-func (h *TraceHandle) StartSpan(name, parentID string) *SpanHandle {
+// startSpan is the shared constructor for StartSpan and the typed helpers.
+func (h *TraceHandle) startSpan(name, parentID, spanType string, data map[string]any) *SpanHandle {
 	if h == nil || h.tracer == nil || h.Trace == nil {
 		return &SpanHandle{}
 	}
+	d := map[string]any{}
+	maps.Copy(d, data)
 	sp := &Span{
 		TraceID:   h.Trace.TraceID,
 		SpanID:    NewSpanID(),
 		ParentID:  parentID,
 		Name:      name,
+		Type:      spanType,
 		StartedAt: Now(),
-		Data:      map[string]any{},
+		Data:      d,
 	}
 	h.tracer.proc.OnSpanStart(sp)
 	return &SpanHandle{Span: sp, tracer: h.tracer}
+}
+
+// StartSpan begins an untyped span under this trace, optionally nested under
+// parentID. Prefer a typed constructor (StartAgentSpan, etc.) where one fits.
+func (h *TraceHandle) StartSpan(name, parentID string) *SpanHandle {
+	return h.startSpan(name, parentID, "", nil)
+}
+
+// StartAgentSpan begins a span for an agent turn (Type SpanTypeAgent).
+func (h *TraceHandle) StartAgentSpan(name, parentID string) *SpanHandle {
+	return h.startSpan("agent:"+name, parentID, SpanTypeAgent, map[string]any{"name": name})
+}
+
+// StartGenerationSpan begins a span for a model call (Type SpanTypeGeneration).
+// Callers typically Set("response_id", …) on the returned span.
+func (h *TraceHandle) StartGenerationSpan(name, parentID string) *SpanHandle {
+	return h.startSpan("generation:"+name, parentID, SpanTypeGeneration, map[string]any{"name": name})
+}
+
+// StartFunctionSpan begins a span for a function tool call (Type SpanTypeFunction).
+func (h *TraceHandle) StartFunctionSpan(name, parentID string) *SpanHandle {
+	return h.startSpan("function:"+name, parentID, SpanTypeFunction, map[string]any{"name": name})
+}
+
+// StartHandoffSpan begins a span for a handoff (Type SpanTypeHandoff).
+func (h *TraceHandle) StartHandoffSpan(name, parentID string) *SpanHandle {
+	return h.startSpan("handoff:"+name, parentID, SpanTypeHandoff, map[string]any{"name": name})
+}
+
+// StartGuardrailSpan begins a span for a guardrail stage ("input"/"output")
+// (Type SpanTypeGuardrail).
+func (h *TraceHandle) StartGuardrailSpan(stage, parentID string) *SpanHandle {
+	return h.startSpan("guardrail:"+stage, parentID, SpanTypeGuardrail, map[string]any{"stage": stage})
 }
 
 // StartSpan begins a span nested under this span.

@@ -285,7 +285,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				return nil
 			}
 
-			span := r.trace.StartSpan("function:"+run.Call.Name, r.agentParentID())
+			span := r.trace.StartFunctionSpan(run.Call.Name, r.agentParentID())
 			defer span.Finish() // idempotent; covers panics in user tool code
 			out, err := invokeTool(gctx, run.Tool, tc, run.Call.Arguments)
 			if err != nil {
@@ -462,7 +462,7 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 	for _, ignored := range handoffs[1:] {
 		newStepItems = append(newStepItems, newFunctionCallOutputItem(from, ignored.Call.CallID, multipleHandoffsMessage))
 	}
-	span := r.trace.StartSpan("handoff:"+run.Handoff.ToolName, r.agentParentID())
+	span := r.trace.StartHandoffSpan(run.Handoff.ToolName, r.agentParentID())
 	defer span.Finish()
 	if run.Handoff.OnInvoke == nil {
 		return nil, newUserError("handoff %q has no OnInvoke", run.Handoff.ToolName)

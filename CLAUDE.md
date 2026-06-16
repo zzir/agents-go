@@ -130,8 +130,11 @@ as a callable tool (nested run).
   persistence. `InMemorySession` and `memory.FileSession` (JSONL) in core;
   `sessions` module adds SQLite/PostgreSQL via bun. `UsePreviousResponseID` opts
   into server-side state chaining instead of resending history.
-- **Tracing** (`tracing/`): `Trace`/`Span` with `Processor`/`Exporter`. Spans
-  carry an untyped `Data map[string]any` (Python's typed SpanData is not ported).
+- **Tracing** (`tracing/`): `Trace`/`Span` with `Processor`/`Exporter`. Each span
+  carries a `Type` tag (the `SpanType*` constants, set by typed constructors like
+  `StartAgentSpan`) plus a `Data map[string]any` — the idiomatic-Go stand-in for
+  Python's typed SpanData: a tag + map, not a sealed union. `StartSpan` stays for
+  untyped custom spans.
 - **MCP** (`mcp/mcp.go`): Stdio / SSE / StreamableHTTP MCP servers exposed as
   tool sources; `agents/mcp.go` bridges them into the runner's tool list.
 - **Sandbox** (`sandbox/`): pluggable code-execution backends (Local + the Docker

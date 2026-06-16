@@ -19,13 +19,15 @@ res, err := agents.Run(ctx, agent, input, agents.RunOptions{
 
 ## What gets recorded
 
-| Span | Covers |
-|---|---|
-| `agent:<name>` | One agent's tenure (per handoff segment); parent of the spans below |
-| `generation:<name>` | One model call (records the `response_id`) |
-| `function:<tool>` | One function tool invocation (errors recorded) |
-| `handoff:<tool>` | A handoff execution |
-| `guardrail:input` / `guardrail:output` | Guardrail batches (tripwires recorded as errors) |
+| Span | `Type` | Covers |
+|---|---|---|
+| `agent:<name>` | `SpanTypeAgent` | One agent's tenure (per handoff segment); parent of the spans below |
+| `generation:<name>` | `SpanTypeGeneration` | One model call (records the `response_id`) |
+| `function:<tool>` | `SpanTypeFunction` | One function tool invocation (errors recorded) |
+| `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution |
+| `guardrail:input` / `guardrail:output` | `SpanTypeGuardrail` | Guardrail batches (tripwires recorded as errors) |
+
+Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner creates these via the typed constructors (`StartAgentSpan`, `StartGenerationSpan`, `StartFunctionSpan`, `StartHandoffSpan`, `StartGuardrailSpan`); the untyped `StartSpan` remains for custom spans and leaves `Type` empty. This is the idiomatic-Go stand-in for Python's typed `SpanData` subclasses — a `Type` tag plus a `Data` map rather than a sealed union.
 
 Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own.
 

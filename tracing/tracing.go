@@ -24,13 +24,27 @@ type SpanError struct {
 	Data    map[string]any
 }
 
+// Span types attached by the typed span constructors (StartAgentSpan, etc.) so
+// consumers can dispatch on Span.Type instead of parsing Span.Name.
+const (
+	SpanTypeAgent      = "agent"
+	SpanTypeGeneration = "generation"
+	SpanTypeFunction   = "function"
+	SpanTypeHandoff    = "handoff"
+	SpanTypeGuardrail  = "guardrail"
+)
+
 // Span is a single unit of work within a trace (an agent turn, a model
 // generation, a tool call, etc).
 type Span struct {
-	TraceID   string
-	SpanID    string
-	ParentID  string
-	Name      string
+	TraceID  string
+	SpanID   string
+	ParentID string
+	Name     string
+	// Type is one of the SpanType constants when the span was created via a typed
+	// constructor; it is empty for spans from the untyped StartSpan. Data holds
+	// the span's structured fields (e.g. "name", "stage", "response_id").
+	Type      string
 	StartedAt time.Time
 	EndedAt   time.Time
 	Error     *SpanError
