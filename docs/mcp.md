@@ -76,7 +76,8 @@ r, _ := server.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file:///README
 ## Behavior
 
 - Tool call results prefer the server's `structuredContent` (JSON), then a single text block verbatim; multiple or non-text content blocks are JSON-encoded so nothing is dropped.
+- Image results are passed through natively: when a result carries image content (an `image` block, or an embedded resource with an `image/*` MIME type) it becomes a `function_call_output` content list so the model receives real image input — text blocks stay text, other blocks are JSON-encoded into a text part. This builds on [structured tool output](tools.md#structured--multimodal-output).
 - A tool call that fails — including results flagged `isError` — is fed back to the model as the tool output so it can recover, like any function tool failure. Set the produced tool's `FailureErrorFunction` to nil if you want failures to abort the run (advanced).
 - `Close()` shuts the session down; it is safe to call once finished with the server.
 
-Not modeled: provider-hosted MCP (OpenAI's server-side MCP tool), per the SDK's no-hosted-tools stance. Multimodal tool results (images/embedded resources) are JSON-encoded into the text output rather than passed to the model as native image input — see [differences](python_differences.md).
+Not modeled: provider-hosted MCP (OpenAI's server-side MCP tool), per the SDK's no-hosted-tools stance.

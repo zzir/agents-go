@@ -251,11 +251,10 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 			if err != nil {
 				return nil, fmt.Errorf("mcp tool %q call failed: %w", originalName, err)
 			}
-			text := resultText(result)
 			if result.IsError {
-				return nil, fmt.Errorf("mcp tool %q returned error: %s", originalName, text)
+				return nil, fmt.Errorf("mcp tool %q returned error: %s", originalName, resultText(result))
 			}
-			return text, nil
+			return resultOutput(result), nil
 		},
 	}
 	if s.opts.RequireApproval != nil && s.opts.RequireApproval(originalName) {
@@ -329,6 +328,70 @@ func resultText(result *mcpsdk.CallToolResult) string {
 		}
 	}
 	return b.String()
+}
+
+// resultOutput renders a tool result for the model. When the result carries any
+// image content (an image block, or an embedded resource with an image MIME
+// type) it is returned as structured multimodal content so the model receives
+// native image input; every block is mapped — text stays text, images become
+// images, and anything else is JSON-encoded into a text part so nothing is
+// silently dropped. Otherwise it falls back to the plain-text rendering.
+func resultOutput(result *mcpsdk.CallToolResult) any {
+	if !hasImageContent(result.Content) {
+		return resultText(result)
+	}
+	var parts []agents.ToolOutputContent
+	if result.StructuredContent != nil {
+		if b, err := json.Marshal(result.StructuredContent); err == nil {
+			parts = append(parts, agents.ToolOutputText{Text: string(b)})
+		}
+	}
+	for _, c := range result.Content {
+		switch v := c.(type) {
+		case *mcpsdk.TextContent:
+			parts = append(parts, agents.ToolOutputText{Text: v.Text})
+		case *mcpsdk.ImageContent:
+			parts = append(parts, agents.ToolOutputImageFromBytes(v.MIMEType, v.Data))
+		case *mcpsdk.EmbeddedResource:
+			if r := v.Resource; r != nil && isImageMIME(r.MIMEType) && len(r.Blob) > 0 {
+				parts = append(parts, agents.ToolOutputImageFromBytes(r.MIMEType, r.Blob))
+				continue
+			}
+			parts = append(parts, jsonTextPart(c))
+		default:
+			parts = append(parts, jsonTextPart(c))
+		}
+	}
+	return parts
+}
+
+// hasImageContent reports whether any block is image content the model can take
+// as native input.
+func hasImageContent(content []mcpsdk.Content) bool {
+	for _, c := range content {
+		switch v := c.(type) {
+		case *mcpsdk.ImageContent:
+			return true
+		case *mcpsdk.EmbeddedResource:
+			if v.Resource != nil && isImageMIME(v.Resource.MIMEType) && len(v.Resource.Blob) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isImageMIME(mimeType string) bool {
+	return strings.HasPrefix(mimeType, "image/")
+}
+
+// jsonTextPart JSON-encodes a content block into a text part so non-image,
+// non-text blocks (audio, resource links, …) are preserved rather than dropped.
+func jsonTextPart(c mcpsdk.Content) agents.ToolOutputText {
+	if b, err := json.Marshal(c); err == nil {
+		return agents.ToolOutputText{Text: string(b)}
+	}
+	return agents.ToolOutputText{Text: ""}
 }
 
 // ListPrompts returns the prompt templates the server exposes. A prompt can be

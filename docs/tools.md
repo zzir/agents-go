@@ -79,6 +79,33 @@ t.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Age
 
 Tools can carry their own input/output guardrails — see [Guardrails](guardrails.md#tool-guardrails).
 
+### Structured / multimodal output
+
+By default a tool's return value goes back to the model as text (JSON for non-string values). To hand the model **native image or file input** instead, return a `ToolOutputContent` — or a `[]ToolOutputContent` for several parts — which becomes a `function_call_output` content list:
+
+```go
+type chartArgs struct {
+	Metric string `json:"metric" jsonschema:"which metric to chart"`
+}
+
+renderChart := agents.NewFunctionTool("render_chart", "Render a chart as an image.",
+	func(ctx context.Context, tc *agents.ToolContext, args chartArgs) ([]agents.ToolOutputContent, error) {
+		png := plot(args.Metric) // []byte
+		return []agents.ToolOutputContent{
+			agents.ToolOutputText{Text: "chart for " + args.Metric},
+			agents.ToolOutputImageFromBytes("image/png", png),
+		}, nil
+	})
+```
+
+The three content parts mirror the Responses API:
+
+- `ToolOutputText{Text}` — a text part (same as returning the string directly, but combinable with images/files).
+- `ToolOutputImage{ImageURL, FileID, Detail}` — native image input; set `ImageURL` (a URL or a base64 `data:` URL — `ToolOutputImageFromBytes(mime, bytes)` builds one) **or** `FileID` (an uploaded file).
+- `ToolOutputFile{FileData, FileURL, FileID, Filename}` — native file input (e.g. a PDF).
+
+A runnable example lives in `examples/toolimage`. This is the Go counterpart of Python's `ToolOutputText` / `ToolOutputImage` / `ToolOutputFileContent`; it is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
+
 ### Hand-built tools
 
 `FunctionTool` is an exported struct, so advanced callers can build one directly with a custom `ParamsJSONSchema` and raw-JSON `OnInvoke`:

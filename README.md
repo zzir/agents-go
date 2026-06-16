@@ -54,6 +54,7 @@ func main() {
 | Streaming | `agents.RunStreamed(...)` → `Events()` iterator |
 | Function tools | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
 | Structured output | `agents.OutputType[T]()` |
+| Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` (tool returns native image/file input) |
 | Handoffs | `agents.HandoffTo(targetAgent)` |
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
 | Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails |

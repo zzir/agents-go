@@ -198,11 +198,17 @@ func extractMessageRefusal(item TResponseOutputItem) string {
 }
 
 // newFunctionCallOutputItem builds a ToolCallOutputItem for a function tool
-// result, serializing non-string outputs to JSON.
+// result. Structured/multimodal outputs (ToolOutputContent) become a content
+// list so the model receives native text/image/file input; everything else is
+// serialized to a string (JSON for non-string values).
 func newFunctionCallOutputItem(agent *Agent, callID string, output any) *ToolCallOutputItem {
+	raw, ok := toolOutputContentItem(callID, output)
+	if !ok {
+		raw = responses.ResponseInputItemParamOfFunctionCallOutput(callID, stringifyToolOutput(output))
+	}
 	return &ToolCallOutputItem{
 		Agent:  agent,
-		Raw:    responses.ResponseInputItemParamOfFunctionCallOutput(callID, stringifyToolOutput(output)),
+		Raw:    raw,
 		Output: output,
 	}
 }

@@ -76,3 +76,52 @@ func TestMCP_ToolFiltering(t *testing.T) {
 		t.Errorf("blocked tool should be hidden, got %d tools", len(tools))
 	}
 }
+
+func TestResultOutput_TextOnly(t *testing.T) {
+	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "hello"}}}
+	out := resultOutput(res)
+	if s, ok := out.(string); !ok || s != "hello" {
+		t.Fatalf("text-only result = %#v, want string \"hello\"", out)
+	}
+}
+
+func TestResultOutput_Image(t *testing.T) {
+	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+		&mcpsdk.TextContent{Text: "see chart"},
+		&mcpsdk.ImageContent{MIMEType: "image/png", Data: []byte{0x89, 0x50}},
+	}}
+	out := resultOutput(res)
+	parts, ok := out.([]agents.ToolOutputContent)
+	if !ok {
+		t.Fatalf("image result is not structured content: %T", out)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("len(parts) = %d", len(parts))
+	}
+	if _, ok := parts[0].(agents.ToolOutputText); !ok {
+		t.Errorf("parts[0] = %T, want ToolOutputText", parts[0])
+	}
+	img, ok := parts[1].(agents.ToolOutputImage)
+	if !ok {
+		t.Fatalf("parts[1] = %T, want ToolOutputImage", parts[1])
+	}
+	if img.ImageURL == "" || img.ImageURL[:5] != "data:" {
+		t.Errorf("image URL = %q", img.ImageURL)
+	}
+}
+
+func TestResultOutput_ImageResource(t *testing.T) {
+	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+		&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{
+			URI: "file:///c.png", MIMEType: "image/png", Blob: []byte{1, 2, 3},
+		}},
+	}}
+	out := resultOutput(res)
+	parts, ok := out.([]agents.ToolOutputContent)
+	if !ok || len(parts) != 1 {
+		t.Fatalf("resource image result = %#v", out)
+	}
+	if _, ok := parts[0].(agents.ToolOutputImage); !ok {
+		t.Errorf("parts[0] = %T, want ToolOutputImage", parts[0])
+	}
+}

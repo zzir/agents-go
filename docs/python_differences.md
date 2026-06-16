@@ -14,6 +14,7 @@
 | `@function_tool` decorator | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
 | pydantic argument model + docstring | argument struct + `json:"..."`/`jsonschema:"..."` tags |
 | `output_type=MyModel` | `OutputType: agents.OutputType[MyModel]()` |
+| `ToolOutputText` / `ToolOutputImage` / `ToolOutputFileContent` | `agents.ToolOutputText` / `ToolOutputImage` / `ToolOutputFile` (return one, or `[]agents.ToolOutputContent`, from a function tool) |
 | `result.final_output_as(T)` | `agents.FinalOutputAs[T](res)` |
 | `handoff(agent)` / `agent.handoffs` | `agents.HandoffTo(agent)` / `Agent.Handoffs` |
 | `agent.as_tool(...)` | `agent.AsTool(agents.AgentToolConfig{...})` |
@@ -59,7 +60,6 @@
 - **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing without the hosted `apply_patch`, see `tools/editor`'s provider-agnostic str_replace tools; [tools](tools.md))
 - **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
 - **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
-- **Structured / multimodal tool output** — a tool's result goes back to the model as text (JSON for non-string values); there is no `ToolOutputImage`/`ToolOutputText` equivalent, so a tool cannot hand the model native image input. This is also why MCP multimodal results (images/embedded resources) are JSON-encoded into text rather than passed as image input
 - **Server-managed / compaction sessions** — `OpenAIConversationsSession` and history-compaction backends are not ported; Go offers in-memory, JSONL (`FileSession`) and SQL (`sessions` module) persistence plus `RunOptions.UsePreviousResponseID` for server-side chaining
 - **Prompts API** — binding an agent's instructions to an OpenAI stored prompt (`prompt` id/version/variables); MCP server prompts (`server.GetPrompt`) are a separate, supported feature
 - **Realtime and voice agents**
