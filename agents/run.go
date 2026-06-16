@@ -246,6 +246,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		if err != nil {
 			return nil, err
 		}
+		prompt, err := currentAgent.GetPrompt(ctx, r.rc)
+		if err != nil {
+			return nil, err
+		}
 		outputSchema := agentOutputSchema(currentAgent)
 		if err := outputSchemaError(outputSchema); err != nil {
 			return nil, err
@@ -309,6 +313,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			span := r.trace.StartGenerationSpan(currentAgent.Name, r.agentParentID())
 			resp, err = model.GetResponse(ctx, ModelRequest{
 				SystemInstructions: systemPrompt,
+				Prompt:             prompt,
 				Input:              modelInput,
 				Settings:           r.resolveSettings(currentAgent),
 				Tools:              tools,

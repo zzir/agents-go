@@ -58,7 +58,8 @@ func main() {
 | Handoffs | `agents.HandoffTo(targetAgent)` |
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
 | Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails |
-| Sessions | `agents.Session`, `agents.InMemorySession`, `memory.FileSession`, `sessions` (SQLite/Postgres via bun) |
+| Sessions | `agents.Session`, `agents.InMemorySession`, `memory.FileSession`, `sessions` (SQLite/Postgres), `openai.ConversationsSession` (server-side) |
+| Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` (OpenAI stored prompt) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewSSEServer` |
@@ -209,6 +210,9 @@ go run ./examples/tools
 go run ./examples/handoffs
 go run ./examples/streaming
 go run ./examples/hitl
+go run ./examples/toolimage      # a tool returns a generated image to the model
+go run ./examples/conversations  # server-side history via the Conversations API
+OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt  # drive an agent from a stored prompt
 go run ./examples/sandbox   # writes & runs Python in a sandbox (host needs python3)
 
 # isolated backends live in their own modules:

@@ -29,6 +29,8 @@ func (t ModelTracing) IncludeData() bool { return t == ModelTracingEnabled }
 type ModelRequest struct {
 	// SystemInstructions is the system prompt, if any.
 	SystemInstructions string
+	// Prompt is the OpenAI stored-prompt configuration, if the agent set one.
+	Prompt *Prompt
 	// Input is the conversation history in OpenAI Responses input format.
 	Input []TResponseInputItem
 	// Settings holds the model configuration (temperature, etc).

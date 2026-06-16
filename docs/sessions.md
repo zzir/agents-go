@@ -40,6 +40,7 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 | `memory.FileSession` | JSONL file | none | core | single process, no database wanted |
 | `sessions` (SQLite) | `.db` file | bun + driver | `sessions` | one host, but you want SQL (transactions, external querying) |
 | `sessions` (PostgreSQL) | server | bun + driver | `sessions` | concurrent processes, shared/production storage |
+| `openai.ConversationsSession` | OpenAI server | core (`models/openai`) | core | no local store; history lives in the OpenAI Conversations API |
 
 `FileSession` and the SQLite backend overlap — both persist to one local file — and the line between them is dependencies: `FileSession` is **zero-dependency** and lives in the core module, so anyone using the SDK has it without pulling a database driver. Reach for the `sessions` module's SQLite when you specifically want SQL semantics (real transactions, querying the `.db` with other tools, an easy migration path to Postgres).
 
@@ -85,6 +86,23 @@ err = sessions.CreateSchema(ctx, db)
 ```
 
 Both store one row per item in an `agent_messages` table, encoded with `agents.MarshalInputItem`. A single `*bun.DB` can serve many session IDs (`sessions.New(db, id)`); rows are isolated by `session_id`. One schema and CRUD path serves both backends — bun smooths over the dialect differences.
+
+### OpenAI Conversations (server-side)
+
+`openai.ConversationsSession` stores history **server-side** under an OpenAI conversation ID — there is no local store at all. It is the Go counterpart of Python's `OpenAIConversationsSession`. The conversation is created lazily on first use unless you attach an existing one:
+
+```go
+import "github.com/zzir/agents-go/models/openai"
+
+sess := openai.NewConversationsSession() // reads OPENAI_API_KEY; or pass option.WithAPIKey(...)
+// sess = sess.WithConversationID("conv_existing")     // resume a known conversation
+// id, _ := sess.ConversationID(ctx)                   // read/create the server-side ID
+
+agents.Run(ctx, agent, "remember my name is Ada",
+	agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()})
+```
+
+`GetItems`/`AddItems`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
 
 ## Session semantics
 

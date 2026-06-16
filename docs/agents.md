@@ -52,6 +52,20 @@ agent.Instructions = agents.InstructionsFunc(
 
 `agents.StaticInstructions("...")` wraps the fixed-string case.
 
+## Stored prompts
+
+Instead of (or alongside) inline `Instructions`, an agent can reference an [OpenAI stored prompt](https://platform.openai.com/docs/guides/prompting) via `Agent.Prompt`. The prompt's id, optional version, and variable substitutions are sent as the Responses API `prompt` parameter:
+
+```go
+agent.Prompt = agents.StaticPrompt(agents.Prompt{
+	ID:        "pmpt_abc123",
+	Version:   "2",                                   // optional
+	Variables: map[string]any{"tone": "concise"},     // optional string substitutions
+})
+```
+
+`agents.PromptFunc(func(ctx, rc, agent) (*agents.Prompt, error))` computes the prompt per run from the [context](context.md) — the counterpart of Python's `DynamicPromptFunction`. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.GetPrompt`), which fetch prompt *text* to use as instructions.
+
 ## Structured output types
 
 By default agents produce plain text (`string`). Set `OutputType` to request a typed result, validated against a reflected JSON schema in strict mode:

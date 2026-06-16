@@ -50,9 +50,10 @@
 | HITL state | `RunState` JSON (Python format) | `RunState` JSON round-trips **Go↔Go only**, and rebuilding needs an agent-name registry (Go functions don't serialize) |
 | Input guardrail timing | parallel with the first model call | same for `Run`; `RunStreamed` runs them synchronously before the first call |
 | Streamed text items | `message_output_created` fires once per completed message | same (use raw delta events for token-level UI) |
-| Session backends | SQLite / SQLAlchemy / Redis / encrypted | `InMemorySession` + `FileSession` (JSONL) in core; `sessions` module adds SQLite/PostgreSQL via bun; implement `Session` for anything else |
+| Session backends | SQLite / SQLAlchemy / Redis / encrypted / OpenAI Conversations | `InMemorySession` + `FileSession` (JSONL) in core; `sessions` module adds SQLite/PostgreSQL via bun; `openai.ConversationsSession` (server-side via the Conversations API); implement `Session` for anything else |
 | Tracing backend | OpenAI traces dashboard by default | generic tracer → processor → exporter pipeline (console/HTTP/custom); **not** the OpenAI dashboard wire format. Traces export at start, spans at finish |
-| Server-side conversation state | `previous_response_id` / `conversation_id` parameters | opt-in `RunOptions.UsePreviousResponseID`; `conversation_id` not wired up |
+| Server-side conversation state | `previous_response_id` / `conversation_id` parameters | opt-in `RunOptions.UsePreviousResponseID`; the run-level `conversation_id` parameter is not wired up, but `openai.ConversationsSession` persists history server-side via the Conversations API |
+| Stored prompts | `Agent(prompt=Prompt(id, version, variables))` / `DynamicPromptFunction` | `Agent.Prompt` = `StaticPrompt(agents.Prompt{...})` or `PromptFunc(...)` (OpenAI Responses backend only) |
 | Usage of nested `as_tool` runs | separate from parent | same (separate), but nested spans join the parent trace |
 
 ## Not implemented in Go
@@ -60,11 +61,10 @@
 - **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing without the hosted `apply_patch`, see `tools/editor`'s provider-agnostic str_replace tools; [tools](tools.md))
 - **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
 - **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
-- **Server-managed / compaction sessions** — `OpenAIConversationsSession` and history-compaction backends are not ported; Go offers in-memory, JSONL (`FileSession`) and SQL (`sessions` module) persistence plus `RunOptions.UsePreviousResponseID` for server-side chaining
-- **Prompts API** — binding an agent's instructions to an OpenAI stored prompt (`prompt` id/version/variables); MCP server prompts (`server.GetPrompt`) are a separate, supported feature
+- **History-compaction sessions** — `OpenAIResponsesCompactionSession` (automatic history summarization) is not ported. The server-side `OpenAIConversationsSession` **is** ported as `openai.ConversationsSession`; Go also offers in-memory, JSONL (`FileSession`) and SQL (`sessions` module) persistence plus `RunOptions.UsePreviousResponseID` for server-side chaining
+- **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others
 - **Realtime and voice agents**
 - **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
-- **Usage limits / cost estimation helpers**
 
 ## Go-only additions
 

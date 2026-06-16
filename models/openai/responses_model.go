@@ -51,6 +51,9 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 			OfString: oai.String(req.ConversationID),
 		}
 	}
+	if req.Prompt != nil {
+		params.Prompt = convertPrompt(req.Prompt)
+	}
 	if len(tools) > 0 {
 		params.Tools = tools
 	}

@@ -139,3 +139,25 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 		}
 	}
 }
+
+// convertPrompt translates an agents.Prompt into the Responses API prompt
+// parameter. Variable values that are strings become text substitutions; other
+// values are stringified (the Responses API also accepts image/file content
+// variables, which are not modeled here).
+func convertPrompt(p *agents.Prompt) responses.ResponsePromptParam {
+	out := responses.ResponsePromptParam{ID: p.ID}
+	if p.Version != "" {
+		out.Version = oai.String(p.Version)
+	}
+	if len(p.Variables) > 0 {
+		out.Variables = make(map[string]responses.ResponsePromptVariableUnionParam, len(p.Variables))
+		for k, v := range p.Variables {
+			s, ok := v.(string)
+			if !ok {
+				s = fmt.Sprintf("%v", v)
+			}
+			out.Variables[k] = responses.ResponsePromptVariableUnionParam{OfString: oai.String(s)}
+		}
+	}
+	return out
+}

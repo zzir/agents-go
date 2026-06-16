@@ -100,6 +100,10 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		if err != nil {
 			return nil, err
 		}
+		prompt, err := currentAgent.GetPrompt(ctx, rc)
+		if err != nil {
+			return nil, err
+		}
 		outputSchema := agentOutputSchema(currentAgent)
 		if err := outputSchemaError(outputSchema); err != nil {
 			return nil, err
@@ -152,6 +156,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		span := r.trace.StartGenerationSpan(currentAgent.Name, r.agentParentID())
 		resp, err := r.streamOneModelCall(ctx, sr, model, ModelRequest{
 			SystemInstructions: systemPrompt,
+			Prompt:             prompt,
 			Input:              turnInput,
 			Settings:           r.resolveSettings(currentAgent),
 			Tools:              tools,

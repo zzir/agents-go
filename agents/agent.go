@@ -1,6 +1,9 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Instructions produces the system prompt for an agent. It may be static or
 // computed per run. Use StaticInstructions for a fixed string or InstructionsFunc
@@ -78,6 +81,11 @@ type Agent struct {
 	// Instructions is the system prompt. May be nil for no system prompt.
 	Instructions Instructions
 
+	// Prompt, when set, configures the agent to use an OpenAI stored prompt
+	// (the Responses API `prompt` parameter). It is independent of Instructions;
+	// both may be set. Only the OpenAI Responses backend honors it.
+	Prompt PromptProvider
+
 	// Handoffs are the sub-agents (or explicit Handoff values) this agent may
 	// delegate to.
 	Handoffs []Handoff
@@ -137,4 +145,20 @@ func (a *Agent) GetSystemPrompt(ctx context.Context, rc *RunContext) (string, er
 		return "", nil
 	}
 	return a.Instructions.GetInstructions(ctx, rc, a)
+}
+
+// GetPrompt resolves the agent's stored-prompt configuration for the given run
+// context, or nil if the agent has no Prompt.
+func (a *Agent) GetPrompt(ctx context.Context, rc *RunContext) (*Prompt, error) {
+	if a.Prompt == nil {
+		return nil, nil
+	}
+	p, err := a.Prompt.GetPrompt(ctx, rc, a)
+	if err != nil {
+		return nil, err
+	}
+	if p != nil && p.ID == "" {
+		return nil, fmt.Errorf("agent %q: prompt ID is required", a.Name)
+	}
+	return p, nil
 }
