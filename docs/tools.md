@@ -123,3 +123,24 @@ agent := &agents.Agent{
 ```
 
 The model controls only the `query`; `Count`, `Country`, `SearchLang`, `SafeSearch` and `Freshness` are fixed by `Options`. A runnable example lives in `examples/bravesearch`.
+
+## File editing
+
+`tools/editor` gives an agent file-editing tools following the `str_replace` editor pattern — provider-agnostic function tools, no hosted `apply_patch` and no diff parser (the SDK does not model OpenAI's hosted `apply_patch`/`local_shell` tools):
+
+```go
+import "github.com/zzir/agents-go/tools/editor"
+
+agent := &agents.Agent{
+    Name:  "coder",
+    Model: "gpt-4o",
+    Tools: editor.NewTools("./workspace"), // view_file, create_file, str_replace, insert_text
+}
+```
+
+- `view_file` — print a file with line numbers, or list a directory.
+- `create_file` — create a new file (fails if it exists, so edits never clobber).
+- `str_replace` — replace a snippet that occurs **exactly once** (the model includes surrounding context to make it unique); 0 or >1 matches are rejected so edits stay precise.
+- `insert_text` — insert a line after a given line number.
+
+Every read and write is confined to the directory passed to `NewTools` via Go's `os.Root`, so `../` traversal and symlink escapes are rejected, and reads are capped at 1 MiB.

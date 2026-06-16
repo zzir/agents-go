@@ -56,7 +56,7 @@
 
 ## Not implemented in Go
 
-- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name ([tools](tools.md))
+- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing without the hosted `apply_patch`, see `tools/editor`'s provider-agnostic str_replace tools; [tools](tools.md))
 - **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
 - **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
 - **Structured / multimodal tool output** — a tool's result goes back to the model as text (JSON for non-string values); there is no `ToolOutputImage`/`ToolOutputText` equivalent, so a tool cannot hand the model native image input. This is also why MCP multimodal results (images/embedded resources) are JSON-encoded into text rather than passed as image input

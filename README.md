@@ -62,6 +62,7 @@ func main() {
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewSSEServer` |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
+| File editing | `editor.NewTools(dir)` (str_replace editor, `os.Root`-confined) |
 | Retry / fallback | `agents.NewRetryModel(...)`, `agents.NewFallbackModel(...)` |
 | Multi-provider routing | `agents.NewRouterProvider(...)` (per-agent backend by name) |
 | Skills | `skills.Load / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md` format) |
