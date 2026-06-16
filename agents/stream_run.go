@@ -166,6 +166,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)
 		}
 		span.Set("response_id", resp.ResponseID)
+		setGenerationUsage(span, resp.Usage)
 		span.Finish()
 		if err := callLLMEnd(ctx, r.opts.Hooks, currentAgent, rc, resp); err != nil {
 			return nil, r.fail(err, modelInput, generatedItems, rawResponses, currentAgent)

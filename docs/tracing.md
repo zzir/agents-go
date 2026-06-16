@@ -22,7 +22,7 @@ res, err := agents.Run(ctx, agent, input, agents.RunOptions{
 | Span | `Type` | Covers |
 |---|---|---|
 | `agent:<name>` | `SpanTypeAgent` | One agent's tenure (per handoff segment); parent of the spans below |
-| `generation:<name>` | `SpanTypeGeneration` | One model call (records the `response_id`) |
+| `generation:<name>` | `SpanTypeGeneration` | One model call (records `response_id` and per-call `input_tokens`/`output_tokens`/`total_tokens`) |
 | `function:<tool>` | `SpanTypeFunction` | One function tool invocation (errors recorded) |
 | `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution |
 | `guardrail:input` / `guardrail:output` | `SpanTypeGuardrail` | Guardrail batches (tripwires recorded as errors) |

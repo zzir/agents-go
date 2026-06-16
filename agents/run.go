@@ -323,6 +323,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			span.Set("response_id", resp.ResponseID)
+			setGenerationUsage(span, resp.Usage)
 			span.Finish()
 			if err := callLLMEnd(ctx, r.opts.Hooks, currentAgent, r.rc, resp); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
@@ -488,6 +489,18 @@ func (r *runner) markToolsUsed(agent *Agent) {
 
 // resolveModel returns the Model for the given agent, honoring (in order) the
 // agent's explicit ModelImpl, the run-level Model override, then the provider.
+// setGenerationUsage records a single model call's token counts on its
+// generation span, so trace consumers see per-call input/output/total tokens
+// (rc.Usage holds the run-wide accumulation separately).
+func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
+	if u == nil {
+		return
+	}
+	span.Set("input_tokens", u.InputTokens)
+	span.Set("output_tokens", u.OutputTokens)
+	span.Set("total_tokens", u.TotalTokens)
+}
+
 func (r *runner) resolveModel(agent *Agent) (Model, error) {
 	if agent.ModelImpl != nil {
 		return agent.ModelImpl, nil
