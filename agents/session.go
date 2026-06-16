@@ -23,6 +23,27 @@ type Session interface {
 	Clear(ctx context.Context) error
 }
 
+// CompactionArgs carry the context a CompactionAwareSession needs to decide
+// whether (and how) to compact its history after a run.
+type CompactionArgs struct {
+	// ResponseID is the last model response's identifier.
+	ResponseID string
+	// Store reports whether that response was stored server-side; nil if unknown.
+	Store *bool
+	// Force requests compaction regardless of the session's own decision hook.
+	Force bool
+}
+
+// CompactionAwareSession is a Session that can compact its own stored history —
+// e.g. by replacing older items with a model-generated summary via the OpenAI
+// responses.compact API. After a run is persisted, the runner calls
+// RunCompaction so the session can shrink history when it has grown large. It is
+// the Go counterpart of Python's OpenAIResponsesCompactionAwareSession.
+type CompactionAwareSession interface {
+	Session
+	RunCompaction(ctx context.Context, args CompactionArgs) error
+}
+
 // InMemorySession is a goroutine-safe in-memory Session, useful for tests and
 // short-lived conversations. History is lost when the process exits.
 //

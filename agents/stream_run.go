@@ -39,6 +39,9 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 	if err != nil {
 		return nil, err
 	}
+	if err := validateServerState(opts); err != nil {
+		return nil, err
+	}
 	rc.inheritedOpts = &opts
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
 
@@ -72,6 +75,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 	// previous_response_id tracking, mirroring the non-streaming loop.
 	var previousResponseID string
 	var serverItemCount int
+	var serverCursorActive bool
 
 	for turn := 1; ; turn++ {
 		if turn > maxTurns {
@@ -118,10 +122,13 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		// items the server does not yet have; otherwise send the full history.
 		var turnInput []TResponseInputItem
 		var prevID string
-		if r.opts.UsePreviousResponseID && previousResponseID != "" {
+		switch {
+		case r.opts.UsePreviousResponseID && previousResponseID != "":
 			turnInput, err = itemsToInputList(generatedItems[serverItemCount:])
 			prevID = previousResponseID
-		} else {
+		case r.opts.ConversationID != "" && serverCursorActive:
+			turnInput, err = itemsToInputList(generatedItems[serverItemCount:])
+		default:
 			turnInput, err = buildModelInput(modelInput, generatedItems)
 		}
 		if err != nil {
@@ -164,6 +171,7 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 			Handoffs:           handoffs,
 			Tracing:            ModelTracingDisabled,
 			PreviousResponseID: prevID,
+			ConversationID:     r.opts.ConversationID,
 		})
 		if err != nil {
 			span.SetError(err.Error(), nil)
@@ -178,6 +186,8 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		}
 		rc.Usage.Add(resp.Usage)
 		rawResponses = append(rawResponses, resp)
+		r.lastResponseID = resp.ResponseID
+		r.lastStore = r.resolveSettings(currentAgent).Store
 
 		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.ToolNotFoundBehavior)
 		if err != nil {
@@ -210,6 +220,10 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 		// sent this turn plus the model's own output; synthesized items pend.
 		if r.opts.UsePreviousResponseID && resp.ResponseID != "" {
 			previousResponseID = resp.ResponseID
+			serverItemCount = lenBeforeStep + len(processed.NewItems)
+		}
+		if r.opts.ConversationID != "" {
+			serverCursorActive = true
 			serverItemCount = lenBeforeStep + len(processed.NewItems)
 		}
 

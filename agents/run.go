@@ -88,6 +88,12 @@ type RunOptions struct {
 	// responses stored (the default; do not set ModelSettings.Store=false).
 	UsePreviousResponseID bool
 
+	// ConversationID attaches the run to a server-side OpenAI conversation
+	// (the Responses API `conversation` parameter). Like UsePreviousResponseID,
+	// the server holds history, so the runner sends only new items each turn. It
+	// is server-managed state and must not be combined with a local Session.
+	ConversationID string
+
 	// parentTrace, when set, makes the run record its spans into an existing
 	// trace instead of starting (and finishing) its own. Set internally for
 	// nested agent-as-tool runs; not user-facing.
@@ -117,6 +123,9 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 
 	userInput, err := normalizeInput(input)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateServerState(opts); err != nil {
 		return nil, err
 	}
 
@@ -171,6 +180,11 @@ type runner struct {
 	// toolsUsedBy tracks which agents have called tools this run, driving the
 	// tool_choice reset (Agent.DisableToolChoiceReset).
 	toolsUsedBy map[*Agent]bool
+
+	// lastResponseID / lastStore record the final model call's response id and
+	// store setting, used to drive session compaction after persistence.
+	lastResponseID string
+	lastStore      *bool
 }
 
 // agentParentID returns the current agent span's ID for nesting child spans.
@@ -217,6 +231,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	// server already has (so we only send the rest).
 	var previousResponseID string
 	var serverItemCount int
+	var serverCursorActive bool
 
 	for turn := startTurn; ; turn++ {
 		if turn > r.maxTurns {
@@ -264,10 +279,14 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// items the server does not yet have; otherwise send the full history.
 		var modelInput []TResponseInputItem
 		var prevID string
-		if r.opts.UsePreviousResponseID && previousResponseID != "" {
+		switch {
+		case r.opts.UsePreviousResponseID && previousResponseID != "":
 			modelInput, err = itemsToInputList(generatedItems[serverItemCount:])
 			prevID = previousResponseID
-		} else {
+		case r.opts.ConversationID != "" && serverCursorActive:
+			// The conversation already holds prior items server-side.
+			modelInput, err = itemsToInputList(generatedItems[serverItemCount:])
+		default:
 			modelInput, err = buildModelInput(originalInput, generatedItems)
 		}
 		if err != nil {
@@ -321,6 +340,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Handoffs:           handoffs,
 				Tracing:            ModelTracingDisabled,
 				PreviousResponseID: prevID,
+				ConversationID:     r.opts.ConversationID,
 			})
 			if err != nil {
 				span.SetError(err.Error(), nil)
@@ -341,6 +361,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			r.rc.Usage.Add(resp.Usage)
 			rawResponses = append(rawResponses, resp)
 		}
+		r.lastResponseID = resp.ResponseID
+		r.lastStore = r.resolveSettings(currentAgent).Store
 
 		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.ToolNotFoundBehavior)
 		if err != nil {
@@ -367,6 +389,16 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if resumedTurn {
 				// The interrupted response's own items were already recorded
 				// before the run paused; only this turn's tool outputs pend.
+				serverItemCount = lenBeforeStep
+			} else {
+				serverItemCount = lenBeforeStep + len(processed.NewItems)
+			}
+		}
+		// conversation_id mode: the server appends each turn's items, so advance
+		// the cursor and send only deltas from the next turn on.
+		if r.opts.ConversationID != "" {
+			serverCursorActive = true
+			if resumedTurn {
 				serverItemCount = lenBeforeStep
 			} else {
 				serverItemCount = lenBeforeStep + len(processed.NewItems)
@@ -481,7 +513,32 @@ func (r *runner) saveToSession(ctx context.Context) error {
 	toSave := make([]TResponseInputItem, 0, len(r.userInput)+len(genInput))
 	toSave = append(toSave, r.userInput...)
 	toSave = append(toSave, genInput...)
-	return r.opts.Session.AddItems(ctx, toSave)
+	if err := r.opts.Session.AddItems(ctx, toSave); err != nil {
+		return err
+	}
+	// If the session can compact itself (e.g. via responses.compact), give it a
+	// chance now that the run's items are persisted. At run end there are no
+	// pending tool outputs, so compaction is always safe to attempt here.
+	if cs, ok := r.opts.Session.(CompactionAwareSession); ok && r.lastResponseID != "" {
+		return cs.RunCompaction(ctx, CompactionArgs{ResponseID: r.lastResponseID, Store: r.lastStore})
+	}
+	return nil
+}
+
+// validateServerState rejects incompatible server-managed conversation options.
+// conversation_id and previous_response_id both put history on the server, so
+// they cannot be combined with each other or with a local Session.
+func validateServerState(opts RunOptions) error {
+	if opts.ConversationID == "" {
+		return nil
+	}
+	if opts.UsePreviousResponseID {
+		return newUserError("ConversationID cannot be combined with UsePreviousResponseID")
+	}
+	if opts.Session != nil {
+		return newUserError("ConversationID cannot be combined with a local Session")
+	}
+	return nil
 }
 
 // markToolsUsed records that agent called tools this run (for tool_choice reset).

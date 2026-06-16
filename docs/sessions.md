@@ -41,6 +41,7 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 | `sessions` (SQLite) | `.db` file | bun + driver | `sessions` | one host, but you want SQL (transactions, external querying) |
 | `sessions` (PostgreSQL) | server | bun + driver | `sessions` | concurrent processes, shared/production storage |
 | `openai.ConversationsSession` | OpenAI server | core (`models/openai`) | core | no local store; history lives in the OpenAI Conversations API |
+| `openai.CompactionSession` | wraps another Session | core (`models/openai`) | core | auto-summarize history via `responses.compact` once it grows large |
 
 `FileSession` and the SQLite backend overlap — both persist to one local file — and the line between them is dependencies: `FileSession` is **zero-dependency** and lives in the core module, so anyone using the SDK has it without pulling a database driver. Reach for the `sessions` module's SQLite when you specifically want SQL semantics (real transactions, querying the `.db` with other tools, an easy migration path to Postgres).
 
@@ -103,6 +104,25 @@ agents.Run(ctx, agent, "remember my name is Ada",
 ```
 
 `GetItems`/`AddItems`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
+
+### Automatic compaction
+
+`openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result. It is the Go counterpart of Python's `OpenAIResponsesCompactionSession`.
+
+```go
+import "github.com/zzir/agents-go/models/openai"
+
+base := agents.NewInMemorySession() // or memory.FileSession, sessions.New, …
+sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
+	Model:     "gpt-4.1",  // OpenAI model used for compaction (default gpt-4.1)
+	Threshold: 20,         // compact when ≥20 candidate items accumulate (default 10)
+	// Mode / ShouldCompact override the defaults if needed.
+}, /* option.WithAPIKey(...) */)
+
+agents.Run(ctx, agent, "…", agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()})
+```
+
+The runner calls compaction after persisting a completed run (Python compacts per turn; Go persists once per run, so compaction is attempted once per run). "Candidate" items exclude user messages and existing compaction items, matching the Python heuristic. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
 
 ## Session semantics
 

@@ -131,10 +131,14 @@ as a callable tool (nested run).
 - **Sessions** (`agents/session.go`, `memory/`, `sessions/`): conversation
   persistence. `InMemorySession` and `memory.FileSession` (JSONL) in core;
   `sessions` module adds SQLite/PostgreSQL via bun; `openai.ConversationsSession`
-  persists history server-side via the OpenAI Conversations API.
-  `UsePreviousResponseID` opts into server-side state chaining instead of
-  resending history. An agent can also bind an OpenAI **stored prompt** via
-  `Agent.Prompt` (`StaticPrompt`/`PromptFunc`), sent as the Responses `prompt` param.
+  persists history server-side via the OpenAI Conversations API;
+  `openai.CompactionSession` decorates any Session, calling `responses.compact`
+  to summarize history past a threshold (the `agents.CompactionAwareSession`
+  interface; the runner triggers it after saving a run). `UsePreviousResponseID`
+  and `ConversationID` opt into server-side state chaining (send only deltas;
+  not combinable with a local Session). An agent can also bind an OpenAI **stored
+  prompt** via `Agent.Prompt` (`StaticPrompt`/`PromptFunc`), sent as the Responses
+  `prompt` param.
 - **Tracing** (`tracing/`): `Trace`/`Span` with `Processor`/`Exporter`. Each span
   carries a `Type` tag (the `SpanType*` constants, set by typed constructors like
   `StartAgentSpan`) plus a `Data map[string]any` — the idiomatic-Go stand-in for

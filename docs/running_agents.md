@@ -43,6 +43,7 @@ type RunOptions struct {
 	Session               Session          // conversation persistence (docs: Sessions)
 	Tracer                *tracing.Tracer  // opt-in tracing (docs: Tracing)
 	UsePreviousResponseID bool             // server-managed conversation state (below)
+	ConversationID        string           // attach to a server-side OpenAI conversation (below)
 }
 ```
 
@@ -74,7 +75,9 @@ Each `Run` is one logical turn of a conversation. To carry history across runs y
    res2, _ := agents.Run(ctx, agent, input, opts)
    ```
 
-3. **Let the server keep state** — set `UsePreviousResponseID: true` and the runner chains calls through the Responses API's `previous_response_id`, sending only new items each turn. Requires stored responses (the default; do not set `ModelSettings.Store` to false).
+3. **Let the server keep state** — two server-managed options, each sending only new items each turn instead of resending history. Neither may be combined with a local `Session` (the run errors if you try):
+   - Set `UsePreviousResponseID: true` to chain calls through the Responses API's `previous_response_id`. Requires stored responses (the default; do not set `ModelSettings.Store` to false).
+   - Set `ConversationID: "conv_..."` to attach the run to a server-side [OpenAI conversation](https://platform.openai.com/docs/guides/conversation-state) (the Responses `conversation` parameter). Create one with `openai.NewConversationsSession().ConversationID(ctx)`, or use `openai.ConversationsSession` directly as the `Session` for the same effect with local item access.
 
 ## Cancellation and deadlines
 
