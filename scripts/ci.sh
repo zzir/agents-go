@@ -36,6 +36,9 @@ step "Test sandbox backend modules"
 step "Test sessions module"
 (cd sessions && go vet ./... && go test ./...)
 
+step "Test skills module"
+(cd skills && go vet ./... && go test ./...)
+
 step "golangci-lint"
 if command -v golangci-lint >/dev/null; then
   golangci-lint run

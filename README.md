@@ -64,6 +64,7 @@ func main() {
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 | Retry / fallback | `agents.NewRetryModel(...)`, `agents.NewFallbackModel(...)` |
 | Multi-provider routing | `agents.NewRouterProvider(...)` (per-agent backend by name) |
+| Skills | `skills.Load / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md` format) |
 
 ## Tools
 

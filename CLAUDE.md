@@ -46,7 +46,7 @@ Requires Go 1.26+.
 
 ## Multi-module layout
 
-This is a Go **workspace** (`go.work`), not a single module. Four modules:
+This is a Go **workspace** (`go.work`), not a single module. Five modules:
 
 - **root** (`github.com/zzir/agents-go`) — the SDK. Depends only on `openai-go`,
   `jsonschema-go`, `go-sdk` (MCP), `golang.org/x/sync`.
@@ -56,6 +56,8 @@ This is a Go **workspace** (`go.work`), not a single module. Four modules:
 - **`sessions`** — SQLite/PostgreSQL `Session` backends via uptrace/bun, its own
   module for the same reason (DB drivers stay out of the core graph). It
   `require`s the root module with `replace => ..`, the same pattern as sandbox.
+- **`skills`** — the open Agent Skills (`SKILL.md`) format via `Instructions` +
+  a `read_skill_file` tool; its own module to keep the YAML dep out of core.
 
 `go.work` is gitignored. CI builds each module standalone with `GOWORK=off` — so
 **a workspace-only fix won't catch a missing `go.mod` require**. Always validate

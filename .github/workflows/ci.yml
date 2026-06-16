@@ -40,6 +40,9 @@ jobs:
       - name: Test sessions module
         run: (cd sessions && go vet ./... && go test ./...)
 
+      - name: Test skills module
+        run: (cd skills && go vet ./... && go test ./...)
+
   lint:
     runs-on: ubuntu-latest
     steps:

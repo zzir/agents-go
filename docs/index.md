@@ -18,11 +18,13 @@ The SDK follows the Python design closely — same run loop, same item model, sa
 go get github.com/zzir/agents-go
 ```
 
-The Docker and Kubernetes sandbox backends are separate modules so the core stays dependency-light:
+The sandbox backends, SQL sessions and skills live in separate modules so the core stays dependency-light:
 
 ```bash
 go get github.com/zzir/agents-go/sandbox/docker   # optional
 go get github.com/zzir/agents-go/sandbox/k8s      # optional
+go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
+go get github.com/zzir/agents-go/skills           # optional: Agent Skills
 ```
 
 ## Hello world
@@ -66,7 +68,7 @@ func main() {
 | Get started | [Quickstart](quickstart.md) |
 | Configuration | [Configuration](config.md) |
 | Core concepts | [Agents](agents.md) · [Running agents](running_agents.md) · [Results](results.md) |
-| Tools | [Tools](tools.md) · [Model context protocol (MCP)](mcp.md) · [Sandbox agents](sandbox.md) |
+| Tools | [Tools](tools.md) · [Model context protocol (MCP)](mcp.md) · [Sandbox agents](sandbox.md) · [Skills](skills.md) |
 | Orchestration | [Agent orchestration](multi_agent.md) · [Handoffs](handoffs.md) |
 | Safety | [Guardrails](guardrails.md) · [Human-in-the-loop](human_in_the_loop.md) |
 | State | [Sessions](sessions.md) · [Context management](context.md) · [Usage](usage.md) |
