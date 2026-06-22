@@ -137,6 +137,32 @@ last, _ = sess.PopItem(ctx)  // remove the user question
 res, _ := agents.Run(ctx, agent, correctedQuestion, agents.RunOptions{Session: sess, ModelProvider: p})
 ```
 
+## Forking sessions
+
+`ForkSession` clones an entire conversation; `ForkSessionAt` copies only the first _n_ items, creating a branch point. Both operate on the `Session` interface, so any combination of source and destination backends works (e.g. fork a SQLite session into an in-memory one):
+
+```go
+// Full clone — dst becomes an exact copy of src.
+dst := agents.NewInMemorySession()
+agents.ForkSession(ctx, src, dst)
+
+// Branch at item 5 — dst gets items [0..4], the two sessions diverge from there.
+branch := agents.NewInMemorySession()
+agents.ForkSessionAt(ctx, src, branch, 5)
+```
+
+When the fork point is known by a server-assigned item ID rather than a positional index, use `IndexOfItemID` to resolve it:
+
+```go
+items, _ := src.GetItems(ctx, 0)
+idx, ok := agents.IndexOfItemID(items, "msg_abc123")
+if ok {
+    agents.ForkSessionAt(ctx, src, branch, idx+1) // include the matched item
+}
+```
+
+Only items the model produced carry IDs (output messages, function calls, reasoning items, etc.). User-created "easy" messages have no server-assigned ID and are never matched by `IndexOfItemID` — address those by position.
+
 ## Multiple sessions
 
 One session = one conversation. Key sessions by conversation ID:

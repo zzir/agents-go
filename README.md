@@ -59,6 +59,7 @@ func main() {
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
 | Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails |
 | Sessions | `agents.Session`, `InMemorySession`, `memory.FileSession`, `sessions` (SQLite/Postgres), `openai.ConversationsSession` (server-side), `openai.CompactionSession` (auto-summarize) |
+| Session forking | `agents.ForkSession` / `ForkSessionAt` / `IndexOfItemID` |
 | Server-side state | `RunOptions.UsePreviousResponseID` / `RunOptions.ConversationID` |
 | Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` (OpenAI stored prompt) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |

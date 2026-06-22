@@ -71,3 +71,4 @@
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
 - **`FileSession`**: zero-dependency JSONL persistence with per-path locking and atomic rewrites
 - **[Skills](skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills
+- **Session forking** (`ForkSession` / `ForkSessionAt` / `IndexOfItemID`): clone a conversation or branch at a specific point — works across any `Session` backend pair. Python has no built-in fork primitive
