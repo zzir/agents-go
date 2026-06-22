@@ -75,6 +75,7 @@ func main() {
 
 Guardrails run alongside the first model call and can stop a run before it wastes tokens.
 
+{% raw %}
 ```go
 triage.InputGuardrails = []agents.InputGuardrail{{
 	Name: "homework_only",
@@ -85,6 +86,7 @@ triage.InputGuardrails = []agents.InputGuardrail{{
 	},
 }}
 ```
+{% endraw %}
 
 When a tripwire fires, `Run` returns an `*agents.InputGuardrailTripwireError`.
 

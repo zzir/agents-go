@@ -12,6 +12,7 @@ Input/output guardrails trip a **tripwire**: the run stops immediately with a ty
 
 An input guardrail receives the full model input (session history plus the new user input) and returns a `GuardrailFunctionOutput`:
 
+{% raw %}
 ```go
 agent.InputGuardrails = []agents.InputGuardrail{{
 	Name: "math_homework_filter",
@@ -27,6 +28,7 @@ agent.InputGuardrails = []agents.InputGuardrail{{
 	},
 }}
 ```
+{% endraw %}
 
 All input guardrails run **concurrently with the first model call** (matching the Python SDK); a tripwire fails the run with `*agents.InputGuardrailTripwireError`, which carries the result:
 
@@ -44,6 +46,7 @@ Input guardrails are the *first* agent's: they only run when the agent is the st
 
 Output guardrails receive the final output value and run before the result is returned (and before it is saved to a session):
 
+{% raw %}
 ```go
 agent.OutputGuardrails = []agents.OutputGuardrail{{
 	Name: "no_pii",
@@ -52,6 +55,7 @@ agent.OutputGuardrails = []agents.OutputGuardrail{{
 	},
 }}
 ```
+{% endraw %}
 
 A tripwire fails the run with `*agents.OutputGuardrailTripwireError`. Output guardrails are the *last* agent's — the one that produced the final output.
 
@@ -59,6 +63,7 @@ A tripwire fails the run with `*agents.OutputGuardrailTripwireError`. Output gua
 
 Tool guardrails scope validation to a single tool. Unlike run-level guardrails they can **reject content** without killing the run: the tool is skipped (or its output replaced) and a message goes back to the model instead.
 
+{% raw %}
 ```go
 t := agents.NewFunctionTool("send_email", "…", sendEmail)
 t.InputGuardrails = []agents.ToolInputGuardrail{{
@@ -80,6 +85,7 @@ t.OutputGuardrails = []agents.ToolOutputGuardrail{{
 	},
 }}
 ```
+{% endraw %}
 
 Three behaviors, built with helpers:
 
