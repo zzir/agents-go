@@ -2,8 +2,8 @@
 //
 // This example uses sandbox.NewLocal(), which runs code on the host WITHOUT
 // isolation — fine for a trusted local demo, but never for untrusted code in
-// production. To isolate execution, swap in the Docker or Kubernetes backend
-// (separate modules so this example stays dependency-light):
+// production. To isolate execution, swap in the Docker backend (a separate
+// module so this example stays dependency-light):
 //
 //	import "github.com/zzir/agents-go/sandbox/docker"
 //	sb, _ := docker.New(docker.Options{
@@ -11,9 +11,6 @@
 //		Limits: sandbox.Limits{MemoryBytes: 256 << 20, CPUs: 0.5},
 //	})
 //	// ...with the python image, set RunCmd to []string{"python", "main.py"}.
-//
-//	import "github.com/zzir/agents-go/sandbox/k8s"
-//	sb, _ := k8s.New(k8s.Options{Image: "python:3.12-slim", Namespace: "sandboxes"})
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/sandbox   (host needs python3)
 package main
@@ -36,7 +33,7 @@ func main() {
 
 // run keeps the deferred sandbox cleanup ahead of any fatal exit.
 func run() error {
-	// Dev-only, unisolated backend. See the package doc above for Docker/K8s.
+	// Dev-only, unisolated backend. See the package doc above for Docker.
 	sb := sandbox.NewLocal()
 	defer sb.Close()
 

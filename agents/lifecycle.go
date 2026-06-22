@@ -209,3 +209,79 @@ func callLLMEnd(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContex
 	}
 	return nil
 }
+
+// compositeRunHooks fans out every callback to multiple RunHooks implementations
+// in order. The first non-nil error short-circuits.
+type compositeRunHooks struct {
+	BaseRunHooks
+	hooks []RunHooks
+}
+
+// CompositeRunHooks combines multiple RunHooks into one. Each callback is
+// dispatched to every hook in order; the first non-nil error stops the chain.
+func CompositeRunHooks(hooks ...RunHooks) RunHooks {
+	return &compositeRunHooks{hooks: hooks}
+}
+
+func (c *compositeRunHooks) OnAgentStart(ctx context.Context, rc *RunContext, agent *Agent) error {
+	for _, h := range c.hooks {
+		if err := h.OnAgentStart(ctx, rc, agent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *compositeRunHooks) OnAgentEnd(ctx context.Context, rc *RunContext, agent *Agent, output any) error {
+	for _, h := range c.hooks {
+		if err := h.OnAgentEnd(ctx, rc, agent, output); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *compositeRunHooks) OnHandoff(ctx context.Context, rc *RunContext, from, to *Agent) error {
+	for _, h := range c.hooks {
+		if err := h.OnHandoff(ctx, rc, from, to); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *compositeRunHooks) OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error {
+	for _, h := range c.hooks {
+		if err := h.OnToolStart(ctx, rc, agent, tool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *compositeRunHooks) OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error {
+	for _, h := range c.hooks {
+		if err := h.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *compositeRunHooks) OnLLMStart(ctx context.Context, rc *RunContext, agent *Agent, systemPrompt string, input []TResponseInputItem) error {
+	for _, h := range c.hooks {
+		if err := h.OnLLMStart(ctx, rc, agent, systemPrompt, input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *compositeRunHooks) OnLLMEnd(ctx context.Context, rc *RunContext, agent *Agent, response *ModelResponse) error {
+	for _, h := range c.hooks {
+		if err := h.OnLLMEnd(ctx, rc, agent, response); err != nil {
+			return err
+		}
+	}
+	return nil
+}

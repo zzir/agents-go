@@ -18,7 +18,7 @@
 | `result.final_output_as(T)` | `agents.FinalOutputAs[T](res)` |
 | `handoff(agent)` / `agent.handoffs` | `agents.HandoffTo(agent)` / `Agent.Handoffs` |
 | `agent.as_tool(...)` | `agent.AsTool(agents.AgentToolConfig{...})` |
-| `@input_guardrail` / `@output_guardrail` | `agents.InputGuardrail{Name, Run}` / `agents.OutputGuardrail{Name, Run}` struct values |
+| `@input_guardrail` / `@output_guardrail` | `agents.InputGuardrail{Name, Run}` / `agents.OutputGuardrail{Name, Run}` struct values, or `agents.NewInputGuardrail(name, fn)` / `agents.NewOutputGuardrail(name, fn)` simplified constructors |
 | `RunContextWrapper[T]` | `*agents.RunContext` with `Context any` (type-assert back) |
 | `SQLiteSession` | `memory.FileSession` (JSONL file; same `Session` interface) |
 | `reset_tool_choice=True` (default) | `DisableToolChoiceReset` (zero value = Python's default behavior) |
@@ -67,8 +67,17 @@
 
 ## Go-only additions
 
-- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in locked-down Docker containers or Kubernetes Jobs in your own infrastructure (`sandbox`, `sandbox/docker`, `sandbox/k8s` modules), exposed via `sandbox.CodeTool`. Python's sandboxes target hosted providers (e2b / modal / blaxel) rather than self-hosted Docker/K8s
+- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in locked-down Docker containers in your own infrastructure (`sandbox`, `sandbox/docker` modules), exposed via `sandbox.CodeTool`. Python's sandboxes target hosted providers (e2b / modal / blaxel) rather than self-hosted Docker
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
 - **`FileSession`**: zero-dependency JSONL persistence with per-path locking and atomic rewrites
 - **[Skills](skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills
 - **Session forking** (`ForkSession` / `ForkSessionAt` / `IndexOfItemID`): clone a conversation or branch at a specific point — works across any `Session` backend pair. Python has no built-in fork primitive
+- **Provider-level decorators**: `NewRetryProvider(inner, policy)` and `NewFallbackProvider(primary, fallbacks...)` wrap a `ModelProvider` so every `Model` it produces automatically retries or falls back — the provider-level counterparts of `NewRetryModel` / `NewFallbackModel`, useful when you know the policy at configuration time but not the model name
+- **`NewDynamicOutputSchema`**: builds an `OutputSchema` from a `map[string]any` JSON Schema at runtime, complementing the compile-time `OutputType[T]()` for config-driven agents
+- **`WrapInstructions`**: decorates an `Instructions` value with a prefix and/or suffix applied at resolution time, eliminating the `GetInstructions(ctx, nil, nil)` + concatenate + re-wrap pattern
+- **`CompositeRunHooks`**: combines multiple `RunHooks` into one, dispatching each callback to every hook in order with first-error short-circuit
+- **`RetryPolicy` JSON round-trip**: `RetryPolicy` implements `json.Unmarshaler` / `json.Marshaler` with millisecond-based fields (`base_delay_ms`, `max_delay_ms`), making it directly usable with `json.Unmarshal` from configuration stores
+- **Simplified guardrail constructors**: `NewInputGuardrail(name, fn)` and `NewOutputGuardrail(name, fn)` accept a callback that receives only the input/output, skipping ctx/rc/agent when you don't need them
+- **Session item helpers**: `MarshalItems` / `UnmarshalItems` handle the common JSON ↔ `[]TResponseInputItem` round-trip (including nil/empty/"null" edge cases) so DB session backends don't rewrite it
+- **`NewRawFunctionTool`**: builds a `FunctionTool` from a pre-built JSON Schema `map[string]any` and a raw-JSON callback, for tools whose schema is loaded at runtime rather than reflected from a Go type
+- **Enum parse helpers**: `ParseToolNotFoundBehavior(string)` / `ToolNotFoundBehavior.String()` and `ParseToolUseBehavior(string)` convert between configuration strings and SDK enum types

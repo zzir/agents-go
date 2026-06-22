@@ -34,9 +34,8 @@ go test -race ./...             # race detector is ON in CI — keep it green
 go test -race ./agents -run TestToolOutputGuardrailRaise
 go test -race ./agents/...
 
-# Sandbox backends are SEPARATE Go modules — test them on their own
+# Sandbox backend is a SEPARATE Go module — test it on its own
 (cd sandbox/docker && go vet ./... && go test ./...)
-(cd sandbox/k8s && go vet ./... && go test ./...)
 
 # Lint (CI uses golangci-lint v2.12)
 golangci-lint run
@@ -46,13 +45,12 @@ Requires Go 1.26+.
 
 ## Multi-module layout
 
-This is a Go **workspace** (`go.work`), not a single module. Five modules:
+This is a Go **workspace** (`go.work`), not a single module. Four modules:
 
 - **root** (`github.com/zzir/agents-go`) — the SDK. Depends only on `openai-go`,
   `jsonschema-go`, `go-sdk` (MCP), `golang.org/x/sync`.
-- **`sandbox/docker`** and **`sandbox/k8s`** — optional sandbox backends, each its
-  own module so the heavy Docker/Kubernetes client deps don't leak into the root
-  module's dependency graph. Anyone using only the core SDK pays nothing for them.
+- **`sandbox/docker`** — optional Docker sandbox backend, its own module so the
+  Docker client deps don't leak into the root module's dependency graph.
 - **`sessions`** — SQLite/PostgreSQL `Session` backends via uptrace/bun, its own
   module for the same reason (DB drivers stay out of the core graph). It
   `require`s the root module with `replace => ..`, the same pattern as sandbox.

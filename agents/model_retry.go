@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"math"
@@ -40,6 +41,42 @@ type RetryPolicy struct {
 	// Sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
 	// When nil, a real timer is used. Tests inject a fake to avoid real waits.
 	Sleep func(ctx context.Context, d time.Duration) error
+}
+
+// retryPolicyJSON is the JSON-friendly representation of RetryPolicy, using
+// millisecond integer fields instead of time.Duration.
+type retryPolicyJSON struct {
+	MaxAttempts int     `json:"max_attempts"`
+	BaseDelayMs int     `json:"base_delay_ms"`
+	MaxDelayMs  int     `json:"max_delay_ms"`
+	Multiplier  float64 `json:"multiplier"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler. It accepts a JSON object with
+// millisecond delay fields (base_delay_ms, max_delay_ms) and converts them to
+// time.Duration, making RetryPolicy directly usable with json.Unmarshal from
+// configuration stores.
+func (p *RetryPolicy) UnmarshalJSON(data []byte) error {
+	var raw retryPolicyJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.MaxAttempts = raw.MaxAttempts
+	p.BaseDelay = time.Duration(raw.BaseDelayMs) * time.Millisecond
+	p.MaxDelay = time.Duration(raw.MaxDelayMs) * time.Millisecond
+	p.Multiplier = raw.Multiplier
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler, producing the millisecond-based JSON
+// format that UnmarshalJSON consumes.
+func (p RetryPolicy) MarshalJSON() ([]byte, error) {
+	return json.Marshal(retryPolicyJSON{
+		MaxAttempts: p.MaxAttempts,
+		BaseDelayMs: int(p.BaseDelay / time.Millisecond),
+		MaxDelayMs:  int(p.MaxDelay / time.Millisecond),
+		Multiplier:  p.Multiplier,
+	})
 }
 
 // DefaultRetryIf retries every error except context cancellation or deadline
@@ -190,3 +227,26 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 }
 
 var _ Model = (*retryModel)(nil)
+
+// retryProvider wraps a ModelProvider so every Model it produces retries per the
+// given policy. This is the provider-level counterpart of NewRetryModel.
+type retryProvider struct {
+	inner  ModelProvider
+	policy RetryPolicy
+}
+
+// NewRetryProvider wraps inner so that every Model it produces automatically
+// retries per policy. It is the provider-level counterpart of NewRetryModel —
+// use it when you know the retry policy at configuration time but not the model
+// name.
+func NewRetryProvider(inner ModelProvider, policy RetryPolicy) ModelProvider {
+	return &retryProvider{inner: inner, policy: policy}
+}
+
+func (p *retryProvider) GetModel(name string) (Model, error) {
+	m, err := p.inner.GetModel(name)
+	if err != nil {
+		return nil, err
+	}
+	return NewRetryModel(m, p.policy), nil
+}

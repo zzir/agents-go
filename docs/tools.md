@@ -125,7 +125,7 @@ t := &agents.FunctionTool{
 
 ## Sandbox code tools
 
-`sandbox.CodeTool` wraps an isolated execution backend (local, Docker, Kubernetes) as a "run this code" tool — see [Sandbox agents](sandbox.md).
+`sandbox.CodeTool` wraps an isolated execution backend (local, Docker) as a "run this code" tool — see [Sandbox agents](sandbox.md).
 
 ## Web search (Brave)
 

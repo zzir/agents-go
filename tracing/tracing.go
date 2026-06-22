@@ -64,8 +64,22 @@ type Processor interface {
 	Shutdown(ctx context.Context)
 }
 
-// Exporter ships finished traces and spans to a destination. Items are *Trace or
-// *Span values.
+// Exporter ships finished traces and spans to a destination.
+//
+// Each element of the items slice is either a *Trace (the root of a trace tree)
+// or a *Span (a single unit of work within a trace). Implementations should
+// type-switch to distinguish them:
+//
+//	func (e *myExporter) Export(items []any) {
+//	    for _, item := range items {
+//	        switch v := item.(type) {
+//	        case *Trace:
+//	            // handle trace
+//	        case *Span:
+//	            // handle span
+//	        }
+//	    }
+//	}
 type Exporter interface {
 	Export(items []any)
 }

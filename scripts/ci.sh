@@ -31,7 +31,6 @@ go test -race ./...
 
 step "Test sandbox backend modules"
 (cd sandbox/docker && go vet ./... && go test ./...)
-(cd sandbox/k8s && go vet ./... && go test ./...)
 
 step "Test sessions module"
 (cd sessions && go vet ./... && go test ./...)

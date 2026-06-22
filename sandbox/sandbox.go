@@ -1,7 +1,7 @@
 // Package sandbox runs untrusted, agent-generated code in an isolated
 // environment and exposes it to an agent as a tool. The Sandbox interface is
-// backend-agnostic; concrete backends (Docker, Kubernetes Jobs) live in
-// subpackages so that callers who do not use them pull no heavy dependencies.
+// backend-agnostic; the Docker backend lives in a subpackage so that callers
+// who do not use it pull no heavy dependencies.
 //
 // A sandbox executes a command in a working directory after writing the request
 // files into it. Backends enforce isolation (no network, read-only root,
@@ -40,7 +40,7 @@ type ExecRequest struct {
 	// are written before Cmd runs.
 	Files map[string]string
 	// Stdin is fed to the process's standard input. Only LocalSandbox supports
-	// it; the docker and k8s backends reject requests that set it.
+	// it; the docker backend rejects requests that set it.
 	Stdin string
 	// Env sets environment variables for the process. Backends do not pass the
 	// host environment through: LocalSandbox provides only a minimal set of

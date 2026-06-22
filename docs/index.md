@@ -8,7 +8,7 @@
 - **Sessions**: persist conversation history across runs
 - **Human-in-the-loop**: pause a run for tool approval and resume it later — even in another process
 - **Tracing**: built-in spans for every model call, tool call, handoff and guardrail
-- **Sandboxes**: run model-generated code in locked-down Docker containers or Kubernetes Jobs
+- **Sandboxes**: run model-generated code in locked-down Docker containers
 
 The SDK follows the Python design closely — same run loop, same item model, same defaults — while staying idiomatic Go: generics instead of runtime reflection magic, `context.Context` for cancellation, errors instead of exceptions. See [Differences from the Python SDK](python_differences.md) for the complete comparison.
 
@@ -22,7 +22,6 @@ The sandbox backends, SQL sessions and skills live in separate modules so the co
 
 ```bash
 go get github.com/zzir/agents-go/sandbox/docker   # optional
-go get github.com/zzir/agents-go/sandbox/k8s      # optional
 go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
 go get github.com/zzir/agents-go/skills           # optional: Agent Skills
 ```

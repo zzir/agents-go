@@ -47,6 +47,10 @@ const (
 type Options struct {
 	// Image is the container image to run (must be available locally). Required.
 	Image string
+	// Host is the Docker daemon address (e.g. "tcp://remote:2375"). When empty,
+	// the standard DOCKER_HOST environment variable (or the platform default
+	// socket) is used.
+	Host string
 	// Limits caps the container's resources. Zero fields use the defaults below.
 	Limits sandbox.Limits
 	// User runs the process as the given user[:group]. Defaults to "65534:65534"
@@ -71,7 +75,11 @@ func New(opts Options) (*Sandbox, error) {
 		return nil, fmt.Errorf("docker sandbox: Image is required")
 	}
 	// API-version negotiation is on by default in the moby client.
-	cli, err := client.New(client.FromEnv)
+	clientOpts := []client.Opt{client.FromEnv}
+	if opts.Host != "" {
+		clientOpts = append(clientOpts, client.WithHost(opts.Host))
+	}
+	cli, err := client.New(clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("docker sandbox: %w", err)
 	}

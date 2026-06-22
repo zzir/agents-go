@@ -23,6 +23,12 @@ type LocalOptions struct {
 	// ExecRequest.Env, so host secrets (API keys, tokens) cannot leak into
 	// model-generated code.
 	InheritHostEnv bool
+
+	// WorkDir, when non-empty, is used as the working directory for every
+	// execution instead of a fresh temp directory. Request files are still
+	// written into it, but the directory is NOT removed afterwards. This
+	// allows the sandbox to operate on an existing project tree.
+	WorkDir string
 }
 
 // LocalSandbox runs commands directly on the host in a temporary working
@@ -30,7 +36,7 @@ type LocalOptions struct {
 // (only PATH, HOME and TMPDIR from the host plus ExecRequest.Env, unless
 // LocalOptions.InheritHostEnv is set) and must only be used for development
 // and tests with trusted code — never for untrusted, agent-generated code in
-// production. Use the docker or k8s backends for real isolation.
+// production. Use the docker backend for real isolation.
 type LocalSandbox struct {
 	opts LocalOptions
 }
@@ -50,11 +56,18 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, 
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("sandbox: ExecRequest.Cmd is empty")
 	}
-	dir, err := os.MkdirTemp("", "agents-sandbox-")
-	if err != nil {
-		return nil, err
+
+	var dir string
+	if s.opts.WorkDir != "" {
+		dir = s.opts.WorkDir
+	} else {
+		tmp, err := os.MkdirTemp("", "agents-sandbox-")
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		dir = tmp
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
 
 	for name, content := range req.Files {
 		full := filepath.Join(dir, filepath.Clean("/"+name))

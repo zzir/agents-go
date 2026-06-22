@@ -75,3 +75,35 @@ func (m *fallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 }
 
 var _ Model = (*fallbackModel)(nil)
+
+// fallbackProvider wraps a primary ModelProvider with fallback alternatives.
+// Each GetModel call produces a FallbackModel chaining every provider's model.
+type fallbackProvider struct {
+	primary   ModelProvider
+	fallbacks []ModelProvider
+}
+
+// NewFallbackProvider wraps primary so that every Model it produces automatically
+// falls back through the models from each fallback provider. It is the
+// provider-level counterpart of NewFallbackModel.
+func NewFallbackProvider(primary ModelProvider, fallbacks ...ModelProvider) ModelProvider {
+	return &fallbackProvider{primary: primary, fallbacks: fallbacks}
+}
+
+func (p *fallbackProvider) GetModel(name string) (Model, error) {
+	m, err := p.primary.GetModel(name)
+	if err != nil {
+		return nil, err
+	}
+	var fbs []Model
+	for _, fp := range p.fallbacks {
+		fm, ferr := fp.GetModel(name)
+		if ferr == nil {
+			fbs = append(fbs, fm)
+		}
+	}
+	if len(fbs) == 0 {
+		return m, nil
+	}
+	return NewFallbackModel(m, fbs...), nil
+}

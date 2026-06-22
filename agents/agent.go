@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Instructions produces the system prompt for an agent. It may be static or
@@ -32,6 +33,50 @@ func InstructionsFunc(f func(context.Context, *RunContext, *Agent) (string, erro
 	return instructionsFunc(f)
 }
 
+// wrappedInstructions decorates an Instructions with a prefix and/or suffix,
+// applied at resolution time. It eliminates the common pattern of extracting
+// text with GetInstructions(ctx, nil, nil), concatenating, and re-wrapping.
+type wrappedInstructions struct {
+	inner          Instructions
+	prefix, suffix string
+}
+
+func (w *wrappedInstructions) GetInstructions(ctx context.Context, rc *RunContext, agent *Agent) (string, error) {
+	base, err := w.inner.GetInstructions(ctx, rc, agent)
+	if err != nil {
+		return "", err
+	}
+	if w.prefix != "" && base != "" {
+		base = w.prefix + "\n\n" + base
+	} else if w.prefix != "" {
+		base = w.prefix
+	}
+	if w.suffix != "" && base != "" {
+		base = base + "\n\n" + w.suffix
+	} else if w.suffix != "" {
+		base = w.suffix
+	}
+	return base, nil
+}
+
+// WrapInstructions decorates inner by prepending prefix and appending suffix at
+// resolution time, separated by double newlines. Empty prefix/suffix are
+// skipped. If inner is nil, a static instruction from prefix+suffix is returned.
+func WrapInstructions(inner Instructions, prefix, suffix string) Instructions {
+	if inner == nil {
+		s := prefix
+		if suffix != "" {
+			if s != "" {
+				s += "\n\n" + suffix
+			} else {
+				s = suffix
+			}
+		}
+		return StaticInstructions(s)
+	}
+	return &wrappedInstructions{inner: inner, prefix: prefix, suffix: suffix}
+}
+
 // ToolUseBehavior controls what happens after the model calls one or more tools.
 // It is a sealed interface; use the predefined implementations below.
 type ToolUseBehavior interface {
@@ -56,6 +101,32 @@ type StopAtTools struct {
 }
 
 func (StopAtTools) toolUseBehavior() {}
+
+// ParseToolUseBehavior converts a configuration string to a ToolUseBehavior.
+// Recognized formats: "" or "run_llm_again" → nil, "stop_on_first" →
+// StopOnFirstTool{}, "stop_at:name1,name2" → StopAtTools{Names: [...]}.
+// Unknown values return nil (RunLLMAgain default).
+func ParseToolUseBehavior(s string) ToolUseBehavior {
+	switch {
+	case s == "" || s == "run_llm_again":
+		return nil
+	case s == "stop_on_first":
+		return StopOnFirstTool{}
+	case strings.HasPrefix(s, "stop_at:"):
+		raw := strings.TrimPrefix(s, "stop_at:")
+		parts := strings.Split(raw, ",")
+		var names []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				names = append(names, p)
+			}
+		}
+		return StopAtTools{Names: names}
+	default:
+		return nil
+	}
+}
 
 // ToolUseBehaviorFunc decides, from the results of the tools run this turn,
 // whether to stop with a final output. Returning stop=true ends the run with the

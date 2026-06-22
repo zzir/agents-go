@@ -2,6 +2,8 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 )
 
@@ -96,3 +98,26 @@ func (s *InMemorySession) Clear(_ context.Context) error {
 }
 
 var _ Session = (*InMemorySession)(nil)
+
+// MarshalItems serializes a slice of input items to JSON, suitable for database
+// storage. It handles nil slices gracefully (returning "[]").
+func MarshalItems(items []TResponseInputItem) ([]byte, error) {
+	if items == nil {
+		items = []TResponseInputItem{}
+	}
+	return json.Marshal(items)
+}
+
+// UnmarshalItems deserializes a JSON byte slice (as produced by MarshalItems)
+// back into input items. It tolerates nil, empty, and "null" inputs by returning
+// an empty slice.
+func UnmarshalItems(data []byte) ([]TResponseInputItem, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return nil, nil
+	}
+	var items []TResponseInputItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("unmarshal session items: %w", err)
+	}
+	return items, nil
+}

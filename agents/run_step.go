@@ -61,6 +61,28 @@ const (
 	ToolNotFoundReturnToModel
 )
 
+// ParseToolNotFoundBehavior converts a string to a ToolNotFoundBehavior.
+// Recognized values: "error" (or ""), "return_to_model". Unknown values return
+// ToolNotFoundError.
+func ParseToolNotFoundBehavior(s string) ToolNotFoundBehavior {
+	switch s {
+	case "return_to_model":
+		return ToolNotFoundReturnToModel
+	default:
+		return ToolNotFoundError
+	}
+}
+
+// String returns the string representation of the behavior.
+func (b ToolNotFoundBehavior) String() string {
+	switch b {
+	case ToolNotFoundReturnToModel:
+		return "return_to_model"
+	default:
+		return "error"
+	}
+}
+
 // processedResponse is the classified content of a model response.
 type processedResponse struct {
 	NewItems     []RunItem

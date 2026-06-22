@@ -16,6 +16,5 @@ go run ./examples/hello
 | [`examples/hitl`](../examples/hitl/main.go) | Human-in-the-loop: interrupt, approve/reject, resume |
 | [`examples/sandbox`](../examples/sandbox/main.go) | An agent that writes and runs code in a local sandbox |
 | [`sandbox/docker/example`](../sandbox/docker/example/main.go) | The Docker sandbox backend (separate module) |
-| [`sandbox/k8s/example`](../sandbox/k8s/example/main.go) | The Kubernetes Jobs sandbox backend (separate module) |
 
 The test suites are also worth reading as usage references — `agents/run_test.go` shows how to script a fake model (`Agent.ModelImpl`) for offline tests of your own agents.

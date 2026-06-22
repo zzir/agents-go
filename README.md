@@ -67,8 +67,11 @@ func main() {
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewSSEServer` |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 | File editing | `editor.NewTools(dir)` (str_replace editor, `os.Root`-confined) |
-| Retry / fallback | `agents.NewRetryModel(...)`, `agents.NewFallbackModel(...)` |
+| Retry / fallback | `agents.NewRetryModel(...)`, `agents.NewFallbackModel(...)` (model-level); `agents.NewRetryProvider(...)`, `agents.NewFallbackProvider(...)` (provider-level) |
 | Multi-provider routing | `agents.NewRouterProvider(...)` (per-agent backend by name) |
+| Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |
+| Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
+| Composite hooks | `agents.CompositeRunHooks(hooks...)` (fan out to multiple RunHooks) |
 | Skills | `skills.Load / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md` format) |
 
 ## Tools
@@ -167,8 +170,8 @@ agent := &agents.Agent{Name: "a", Model: "gpt-4o", MCPServers: []agents.MCPServe
 ## Sandbox (code execution)
 
 Run untrusted, agent-generated code in an isolated environment and expose it as a
-tool. Backends (Docker, Kubernetes Jobs) are **separate modules** so the core
-stays dependency-light — install only the one you use:
+tool. The Docker backend is a **separate module** so the core stays
+dependency-light:
 
 ```go
 import (
@@ -184,11 +187,10 @@ agent := &agents.Agent{Name: "coder", Model: "gpt-4o",
 	Tools: []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{Name: "run_python"})}}
 ```
 
-Both backends default to: no network, read-only root fs, dropped capabilities,
-non-root user, and CPU/memory/PID/time limits. The Kubernetes backend
-(`.../sandbox/k8s`) additionally runs each call as a one-shot Job with no service
-account token. `sandbox.NewLocal()` runs on the host **without isolation** — for
-trusted dev/tests only.
+The Docker backend defaults to: no network, read-only root fs, dropped
+capabilities, non-root user, and CPU/memory/PID/time limits.
+`sandbox.NewLocal()` runs on the host **without isolation** — for trusted
+dev/tests only.
 
 ## Packages
 
@@ -200,7 +202,7 @@ Core module path: `github.com/zzir/agents-go`.
 - `.../tracing` — traces, spans, processors and exporters.
 - `.../mcp` — Model Context Protocol client.
 - `.../sandbox` — `Sandbox` interface + `CodeTool` + local backend.
-- `.../sandbox/docker`, `.../sandbox/k8s` — **separate modules** with the Docker / Kubernetes backends.
+- `.../sandbox/docker` — **separate module** with the Docker backend.
 - `.../examples` — runnable examples (`hello`, `tools`, `handoffs`, `streaming`, `hitl`, `sandbox`).
 
 ## Examples
@@ -218,9 +220,8 @@ go run ./examples/compaction      # auto-summarize long history via responses.co
 OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt  # drive an agent from a stored prompt
 go run ./examples/sandbox   # writes & runs Python in a sandbox (host needs python3)
 
-# isolated backends live in their own modules:
+# isolated backend lives in its own module:
 (cd sandbox/docker && OPENAI_API_KEY=$OPENAI_API_KEY go run ./example)  # needs Docker
-(cd sandbox/k8s    && OPENAI_API_KEY=$OPENAI_API_KEY go run ./example)  # needs a cluster
 ```
 
 ## Design notes

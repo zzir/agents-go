@@ -73,3 +73,22 @@ func unmarshalToolArgs(argsJSON string, dst any) error {
 	}
 	return json.Unmarshal([]byte(argsJSON), dst)
 }
+
+// NewRawFunctionTool builds a FunctionTool from a pre-built JSON Schema map and
+// a function that receives raw JSON arguments. Use this when the schema is
+// loaded at runtime (e.g. from a database) rather than derived from a Go type.
+// Strict mode is enabled by default.
+func NewRawFunctionTool(
+	name, description string,
+	paramsSchema map[string]any,
+	fn func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error),
+) *FunctionTool {
+	return &FunctionTool{
+		Name:                 name,
+		Description:          description,
+		ParamsJSONSchema:     paramsSchema,
+		Strict:               true,
+		FailureErrorFunction: DefaultToolErrorFunction,
+		OnInvoke:             fn,
+	}
+}

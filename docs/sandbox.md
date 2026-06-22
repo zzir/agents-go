@@ -5,11 +5,10 @@ The `sandbox` packages run **model-generated code** in an isolated environment a
 ```
 agents.Agent ── CodeTool ──► sandbox.Sandbox (interface)
                                ├── sandbox.LocalSandbox      (dev only, no isolation)
-                               ├── sandbox/docker.Sandbox    (ephemeral containers)
-                               └── sandbox/k8s.Sandbox       (one Kubernetes Job per exec)
+                               └── sandbox/docker.Sandbox    (ephemeral containers)
 ```
 
-The Docker and Kubernetes backends are **separate Go modules** (`sandbox/docker`, `sandbox/k8s`) so the core module stays dependency-light.
+The Docker backend is a **separate Go module** (`sandbox/docker`) so the core module stays dependency-light.
 
 ## Quickstart
 
@@ -69,26 +68,9 @@ sb, err := docker.New(docker.Options{
 
 Each `Exec` creates a locked-down container and removes it afterwards: no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, runs as `nobody`, writable `work` dir and `/tmp` (tmpfs), memory/CPU/PID limits, hard timeout (container killed). The command runs as the container entrypoint verbatim — image `ENTRYPOINT`/`CMD` never interfere.
 
-### Kubernetes
-
-```go
-import k8s "github.com/zzir/agents-go/sandbox/k8s"
-
-sb, err := k8s.New(k8s.Options{
-	Image:        "python:3.12-slim",
-	Namespace:    "sandbox",
-	Limits:       sandbox.Limits{MemoryBytes: 256 << 20, CPUs: 0.5},
-	StartTimeout: 2 * time.Minute, // image pull/scheduling budget, separate from exec timeout
-})
-```
-
-Each `Exec` creates a ConfigMap (request files) plus a one-shot Job: non-root, read-only root fs, dropped capabilities, no service-account token, resource limits, TTL cleanup, and the ConfigMap owned by the Job so crashes leak nothing. Files are projected via per-file subPath mounts (nested paths and dotfiles work; no shell needed in the image). Pod logs return stdout+stderr combined; stdin is not supported.
-
-> Network isolation on Kubernetes requires a deny-all NetworkPolicy (or sandboxed runtimeClass) in the namespace — the SDK cannot enforce it from the Job spec.
-
 ## The Sandbox interface
 
-Implement it to add your own backend (Firecracker, remote runners, …):
+Implement it to add your own backend (Firecracker, Kubernetes, remote runners, …):
 
 ```go
 type Sandbox interface {
@@ -108,9 +90,9 @@ type ExecRequest struct {
 type ExecResult struct {
 	ExitCode int
 	Stdout   string
-	Stderr   string // (k8s: combined into Stdout)
+	Stderr   string
 	TimedOut bool
 }
 ```
 
-See [examples/sandbox](../examples/sandbox/main.go), [sandbox/docker/example](../sandbox/docker/example/main.go) and [sandbox/k8s/example](../sandbox/k8s/example/main.go) for runnable programs.
+See [examples/sandbox](../examples/sandbox/main.go) and [sandbox/docker/example](../sandbox/docker/example/main.go) for runnable programs.

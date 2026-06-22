@@ -119,3 +119,27 @@ func runOutputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guar
 	}
 	return nil
 }
+
+// NewInputGuardrail creates an InputGuardrail with a simplified callback that
+// receives only the input items. Use the full InputGuardrail struct literal when
+// you need access to the RunContext or Agent.
+func NewInputGuardrail(name string, fn func(input []TResponseInputItem) (GuardrailFunctionOutput, error)) InputGuardrail {
+	return InputGuardrail{
+		Name: name,
+		Run: func(_ context.Context, _ *RunContext, _ *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
+			return fn(input)
+		},
+	}
+}
+
+// NewOutputGuardrail creates an OutputGuardrail with a simplified callback that
+// receives only the output value. Use the full OutputGuardrail struct literal
+// when you need access to the RunContext or Agent.
+func NewOutputGuardrail(name string, fn func(output any) (GuardrailFunctionOutput, error)) OutputGuardrail {
+	return OutputGuardrail{
+		Name: name,
+		Run: func(_ context.Context, _ *RunContext, _ *Agent, output any) (GuardrailFunctionOutput, error) {
+			return fn(output)
+		},
+	}
+}
