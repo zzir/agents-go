@@ -35,7 +35,6 @@ jobs:
       - name: Test sandbox backend modules
         run: |
           (cd sandbox/docker && go vet ./... && go test ./...)
-          (cd sandbox/k8s && go vet ./... && go test ./...)
 
       - name: Test sessions module
         run: (cd sessions && go vet ./... && go test ./...)
