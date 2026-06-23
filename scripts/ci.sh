@@ -38,9 +38,13 @@ step "Test sessions module"
 step "Test skills module"
 (cd skills && go vet ./... && go test ./...)
 
+step "Test agents-server module"
+(cd cmd/agents-server && go vet ./... && go test -race ./...)
+
 step "golangci-lint"
 if command -v golangci-lint >/dev/null; then
   golangci-lint run
+  (cd cmd/agents-server && golangci-lint run)
 else
   echo "golangci-lint not installed; skipping (CI runs it)." >&2
   echo "Install: brew install golangci-lint" >&2

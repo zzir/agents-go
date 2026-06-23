@@ -1,0 +1,337 @@
+// Package bridge adapts stored configuration into live agents-SDK constructs (agents, model providers, MCP servers, sandboxes, guardrails) and drives streamed runs over the WebSocket.
+package bridge
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"path/filepath"
+	"strings"
+
+	"github.com/openai/openai-go/v3/option"
+	"github.com/rs/zerolog"
+
+	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	openaiProvider "github.com/zzir/agents-go/models/openai"
+	"github.com/zzir/agents-go/skills"
+	"github.com/zzir/agents-go/tools/bravesearch"
+	"github.com/zzir/agents-go/tools/editor"
+)
+
+// AgentDeps holds all the dependencies needed to build a fully configured agent.
+type AgentDeps struct {
+	AgentConfigs   *store.AgentConfigStore
+	McpServers     *store.McpServerStore
+	SandboxConfigs *store.SandboxStore
+	Memories       *store.MemoryStore
+	Settings       *store.SettingStore
+	ProviderRoutes *store.ProviderRouteStore
+	Sessions       *store.SessionStore
+	Traces         *store.TraceStore
+	McpManager     *McpManager
+	SandboxManager *SandboxManager
+	RootDir        string
+}
+
+// BuildResult contains the built agent and its resolved model provider.
+type BuildResult struct {
+	Agent                 *agents.Agent
+	Provider              agents.ModelProvider
+	MaxTurns              int
+	UsePreviousResponseID bool
+	HandoffInputFilter    string
+	MaxToolConcurrency    int
+	ToolNotFoundBehavior  string
+}
+
+// BuildFullAgent constructs an *agents.Agent from a config ID, loading all
+// associated resources: provider, MCP tools, sandbox CodeTool, memory, and
+// global settings (system_prompt). agentConfigID is required. sandboxID is
+// optional — when set, only that sandbox is attached; when empty, all are.
+func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string) (*BuildResult, error) {
+	if agentConfigID == "" {
+		return nil, fmt.Errorf("agent_config_id is required")
+	}
+	visited := make(map[string]bool)
+	return buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, visited)
+}
+
+func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandboxID string, visited map[string]bool) (*BuildResult, error) {
+	if visited[configID] {
+		return nil, fmt.Errorf("cycle detected in handoff chain: %s", configID)
+	}
+	visited[configID] = true
+
+	log := zerolog.Ctx(ctx)
+	result := &BuildResult{}
+
+	globalSystemPrompt := settingValue(ctx, deps.Settings, "system_prompt")
+
+	ac, err := deps.AgentConfigs.Get(ctx, configID)
+	if err != nil {
+		return nil, fmt.Errorf("loading agent config: %w", err)
+	}
+
+	agent := &agents.Agent{
+		Name:                   ac.Name,
+		Model:                  ac.Model,
+		HandoffDescription:     ac.HandoffDescription,
+		DisableToolChoiceReset: ac.DisableToolChoiceReset,
+	}
+	result.MaxTurns = ac.MaxTurns
+	result.UsePreviousResponseID = ac.UsePreviousResponseID
+	result.HandoffInputFilter = ac.HandoffInputFilter
+	result.MaxToolConcurrency = ac.MaxToolConcurrency
+	result.ToolNotFoundBehavior = ac.ToolNotFoundBehavior
+
+	if ac.Instructions != "" {
+		agent.Instructions = agents.StaticInstructions(ac.Instructions)
+	}
+	if ac.ModelSettings != "" {
+		var ms agents.ModelSettings
+		if err := json.Unmarshal([]byte(ac.ModelSettings), &ms); err == nil {
+			agent.ModelSettings = &ms
+		}
+	}
+
+	// ToolUseBehavior
+	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.ToolUseBehavior)
+
+	// Guardrails
+	if ac.InputGuardrails != "" {
+		agent.InputGuardrails = BuildInputGuardrails(ac.InputGuardrails)
+	}
+	if ac.OutputGuardrails != "" {
+		agent.OutputGuardrails = BuildOutputGuardrails(ac.OutputGuardrails)
+	}
+
+	// Output schema (structured output)
+	if ac.OutputSchema != "" {
+		agent.OutputType = BuildOutputSchema(ac.OutputSchema)
+	}
+
+	// Stored prompt
+	if ac.PromptID != "" {
+		agent.Prompt = agents.StaticPrompt(agents.Prompt{
+			ID:      ac.PromptID,
+			Version: ac.PromptVersion,
+		})
+	}
+
+	// Provider + retry/fallback decorators
+	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
+	apiKey := ac.APIKey
+	if apiKey == "" {
+		apiKey = settingValue(ctx, deps.Settings, "openai_api_key")
+	}
+	if apiKey != "" {
+		ac.APIKey = apiKey
+		provider := buildProviderFromConfig(ac, proxyClient)
+		if ac.RetryEnabled {
+			var policy agents.RetryPolicy
+			if ac.RetryPolicy != "" {
+				_ = json.Unmarshal([]byte(ac.RetryPolicy), &policy)
+			}
+			provider = agents.NewRetryProvider(provider, policy)
+		}
+		if ac.FallbackModels != "" {
+			provider = wrapFallbackProvider(provider, ac.FallbackModels, proxyClient)
+		}
+		result.Provider = provider
+	}
+
+	// Global system prompt
+	if globalSystemPrompt != "" {
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, globalSystemPrompt, "")
+	}
+
+	// Memory
+	memories, err := deps.Memories.ListForAgent(ctx, configID)
+	if err == nil && len(memories) > 0 {
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", buildMemoryBlock(memories))
+	}
+
+	// MCP servers
+	if ac.ToolsJSON != "" {
+		var mcpServerIDs []string
+		if err := json.Unmarshal([]byte(ac.ToolsJSON), &mcpServerIDs); err == nil {
+			for _, id := range mcpServerIDs {
+				srv := deps.McpManager.Get(id)
+				if srv != nil {
+					agent.MCPServers = append(agent.MCPServers, srv)
+				} else {
+					log.Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
+				}
+			}
+		}
+	}
+
+	// Sandbox tools: "" = none, "__all__" = every configured sandbox, else = specific ID
+	if sandboxID == "__all__" {
+		sandboxes, err := deps.SandboxConfigs.List(ctx)
+		if err == nil {
+			for i := range sandboxes {
+				tool, err := deps.SandboxManager.CodeTool(&sandboxes[i])
+				if err != nil {
+					log.Warn().Err(err).Str("sandbox", sandboxes[i].Name).Msg("failed to create sandbox tool")
+					continue
+				}
+				agent.Tools = append(agent.Tools, tool)
+			}
+		}
+	} else if sandboxID != "" {
+		sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
+		if err == nil {
+			tool, err := deps.SandboxManager.CodeTool(sbCfg)
+			if err != nil {
+				log.Warn().Err(err).Str("sandbox", sbCfg.Name).Msg("failed to create sandbox tool")
+			} else {
+				agent.Tools = append(agent.Tools, tool)
+			}
+		}
+	}
+
+	// Brave Search
+	if apiKey := settingValue(ctx, deps.Settings, "brave_api_key"); apiKey != "" {
+		bsOpts := bravesearch.Options{APIKey: apiKey}
+		if proxyClient != nil {
+			bsOpts.HTTPClient = proxyClient
+		}
+		bsTool, err := bravesearch.New(bsOpts)
+		if err == nil {
+			agent.Tools = append(agent.Tools, bsTool)
+		} else {
+			log.Warn().Err(err).Msg("failed to create brave_search tool")
+		}
+	}
+
+	// Editor tools
+	if settingValue(ctx, deps.Settings, "enable_editor_tools") == "true" && deps.RootDir != "" {
+		agent.Tools = append(agent.Tools, editor.NewTools(deps.RootDir)...)
+	}
+
+	// Skills — loaded from <root>/skills, matching where SkillHandler manages
+	// them. Load and ReadFileTool must share this root so the relative paths in
+	// the rendered index resolve correctly.
+	if deps.RootDir != "" {
+		skillsDir := filepath.Join(deps.RootDir, "skills")
+		loadedSkills, err := skills.Load(skillsDir)
+		if err == nil && len(loadedSkills) > 0 {
+			agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))
+			agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
+		}
+	}
+
+	// Handoffs — recursive build
+	if ac.HandoffsJSON != "" {
+		var handoffIDs []string
+		if err := json.Unmarshal([]byte(ac.HandoffsJSON), &handoffIDs); err == nil {
+			for _, hID := range handoffIDs {
+				hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, visited)
+				if err != nil {
+					log.Warn().Err(err).Str("handoff_id", hID).Msg("handoff agent build failed, skipping")
+					continue
+				}
+				agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
+			}
+		}
+	}
+
+	result.Agent = agent
+	return result, nil
+}
+
+func buildMemoryBlock(memories []store.Memory) string {
+	var b strings.Builder
+	b.WriteString("## Memories\n")
+	for _, m := range memories {
+		fmt.Fprintf(&b, "- **%s**: %s\n", m.Key, m.Content)
+	}
+	return b.String()
+}
+
+func settingValue(ctx context.Context, settings *store.SettingStore, key string) string {
+	if settings == nil {
+		return ""
+	}
+	s, err := settings.Get(ctx, key)
+	if err != nil || s.Value == "" {
+		return ""
+	}
+	return s.Value
+}
+
+func buildProviderFromConfig(ac *store.AgentConfig, proxyClient *http.Client) agents.ModelProvider {
+	var opts []option.RequestOption
+	if ac.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(ac.APIKey))
+	}
+	if ac.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(ac.BaseURL))
+	}
+	if proxyClient != nil {
+		opts = append(opts, option.WithHTTPClient(proxyClient))
+	}
+	return openaiProvider.NewProvider(opts...)
+}
+
+type fallbackEntry struct {
+	Model   string `json:"model"`
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+}
+
+func wrapFallbackProvider(primary agents.ModelProvider, fallbackJSON string, proxyClient *http.Client) agents.ModelProvider {
+	var entries []fallbackEntry
+	if json.Unmarshal([]byte(fallbackJSON), &entries) != nil || len(entries) == 0 {
+		return primary
+	}
+	var fallbacks []agents.ModelProvider
+	for _, e := range entries {
+		var opts []option.RequestOption
+		if e.APIKey != "" {
+			opts = append(opts, option.WithAPIKey(e.APIKey))
+		}
+		if e.BaseURL != "" {
+			opts = append(opts, option.WithBaseURL(e.BaseURL))
+		}
+		if proxyClient != nil {
+			opts = append(opts, option.WithHTTPClient(proxyClient))
+		}
+		fallbacks = append(fallbacks, openaiProvider.NewProvider(opts...))
+	}
+	return agents.NewFallbackProvider(primary, fallbacks...)
+}
+
+// BuildRouterProvider builds a RouterProvider from all stored provider routes.
+func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.ModelProvider) agents.ModelProvider {
+	if deps.ProviderRoutes == nil {
+		return fallback
+	}
+	routes, err := deps.ProviderRoutes.List(ctx)
+	if err != nil || len(routes) == 0 {
+		return fallback
+	}
+	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
+	routeMap := make(map[string]agents.ModelProvider, len(routes))
+	for _, r := range routes {
+		var opts []option.RequestOption
+		if r.APIKey != "" {
+			opts = append(opts, option.WithAPIKey(r.APIKey))
+		}
+		if r.BaseURL != "" {
+			opts = append(opts, option.WithBaseURL(r.BaseURL))
+		}
+		if proxyClient != nil {
+			opts = append(opts, option.WithHTTPClient(proxyClient))
+		}
+		routeMap[r.Prefix] = openaiProvider.NewProvider(opts...)
+	}
+	router := agents.NewRouterProvider(routeMap)
+	if fallback != nil {
+		router.WithFallback(fallback)
+	}
+	return router
+}

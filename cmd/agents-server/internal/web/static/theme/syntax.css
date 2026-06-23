@@ -1,0 +1,81 @@
+/* =============================================================
+   Syntax highlighting — GitHub Primer light / dark
+   Replaces external highlight.js theme so colors follow data-theme.
+   ============================================================= */
+
+/* --- Light theme (default) --- */
+.hljs {
+  color: #24292e;
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote { color: #6e7781; font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag { color: #cf222e; }
+.hljs-string,
+.hljs-doctag,
+.hljs-addition { color: #0a3069; }
+.hljs-number,
+.hljs-literal { color: #0550ae; }
+.hljs-title,
+.hljs-title.function_,
+.hljs-section { color: #8250df; }
+.hljs-built_in { color: #0550ae; }
+.hljs-type,
+.hljs-title.class_ { color: #953800; }
+.hljs-attr,
+.hljs-attribute { color: #116329; }
+.hljs-variable,
+.hljs-template-variable { color: #953800; }
+.hljs-name,
+.hljs-tag { color: #116329; }
+.hljs-meta,
+.hljs-meta .hljs-keyword { color: #6e7781; }
+.hljs-symbol,
+.hljs-bullet { color: #0550ae; }
+.hljs-regexp { color: #116329; }
+.hljs-deletion { color: #82071e; background: #ffebe9; }
+.hljs-addition { background: #dafbe1; }
+.hljs-subst { color: #24292e; }
+.hljs-params { color: #24292e; }
+.hljs-property { color: #0550ae; }
+.hljs-selector-class,
+.hljs-selector-id { color: #8250df; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+
+/* --- Dark theme --- */
+[data-theme="dark"] .hljs { color: #e6edf3; }
+[data-theme="dark"] .hljs-comment,
+[data-theme="dark"] .hljs-quote { color: #8b949e; }
+[data-theme="dark"] .hljs-keyword,
+[data-theme="dark"] .hljs-selector-tag { color: #ff7b72; }
+[data-theme="dark"] .hljs-string,
+[data-theme="dark"] .hljs-doctag,
+[data-theme="dark"] .hljs-addition { color: #a5d6ff; }
+[data-theme="dark"] .hljs-number,
+[data-theme="dark"] .hljs-literal { color: #79c0ff; }
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-title.function_,
+[data-theme="dark"] .hljs-section { color: #d2a8ff; }
+[data-theme="dark"] .hljs-built_in { color: #79c0ff; }
+[data-theme="dark"] .hljs-type,
+[data-theme="dark"] .hljs-title.class_ { color: #ffa657; }
+[data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-attribute { color: #7ee787; }
+[data-theme="dark"] .hljs-variable,
+[data-theme="dark"] .hljs-template-variable { color: #ffa657; }
+[data-theme="dark"] .hljs-name,
+[data-theme="dark"] .hljs-tag { color: #7ee787; }
+[data-theme="dark"] .hljs-meta,
+[data-theme="dark"] .hljs-meta .hljs-keyword { color: #8b949e; }
+[data-theme="dark"] .hljs-symbol,
+[data-theme="dark"] .hljs-bullet { color: #79c0ff; }
+[data-theme="dark"] .hljs-regexp { color: #7ee787; }
+[data-theme="dark"] .hljs-deletion { color: #ffa198; background: rgba(248, 81, 73, 0.15); }
+[data-theme="dark"] .hljs-addition { background: rgba(46, 160, 67, 0.15); }
+[data-theme="dark"] .hljs-subst { color: #e6edf3; }
+[data-theme="dark"] .hljs-params { color: #e6edf3; }
+[data-theme="dark"] .hljs-property { color: #79c0ff; }
+[data-theme="dark"] .hljs-selector-class,
+[data-theme="dark"] .hljs-selector-id { color: #d2a8ff; }
