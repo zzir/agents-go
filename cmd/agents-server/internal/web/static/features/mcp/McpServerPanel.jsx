@@ -6,8 +6,35 @@ const { useState } = React;
 const h = React.createElement;
 const TRANSPORTS = ['stdio', 'sse', 'streamable_http'];
 
+// flatten turns a stored server (top-level columns + nested config) into the
+// flat field set the form edits; pack() is its inverse.
+function flatten(s) {
+  const c = s.config || {};
+  return {
+    name: s.name || '', transport_type: s.transport_type || 'stdio', auto_connect: !!s.auto_connect,
+    command: c.command || '',
+    args: Array.isArray(c.args) ? JSON.stringify(c.args) : '', // array → JSON text for the input
+    endpoint: c.endpoint || '',
+  };
+}
+
+// pack assembles the API payload: shared columns at the top level, transport
+// settings under config (interpreted server-side per transport_type).
+function pack(form) {
+  const base = { name: form.name, transport_type: form.transport_type, auto_connect: form.auto_connect };
+  let config;
+  if (form.transport_type === 'stdio') {
+    let args = [];
+    try { args = form.args ? JSON.parse(form.args) : []; } catch (e) { args = []; }
+    config = { command: form.command, args };
+  } else {
+    config = { endpoint: form.endpoint };
+  }
+  return { ...base, config };
+}
+
 function McpForm({ initial, onSave, onCancel }) {
-  const [form, setForm] = useState(initial || { name: '', transport_type: 'stdio', command: '', args: '', endpoint: '', auto_connect: false });
+  const [form, setForm] = useState(flatten(initial || {}));
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
   const isStdio = form.transport_type === 'stdio';
 
@@ -24,7 +51,7 @@ function McpForm({ initial, onSave, onCancel }) {
       'Auto-connect on server start',
     ),
     h('div', { style: { display: 'flex', gap: '8px' } },
-      h('button', { onClick: () => onSave(form), className: 'btn btn-primary' }, 'Save'),
+      h('button', { onClick: () => onSave(pack(form)), className: 'btn btn-primary' }, 'Save'),
       onCancel && h('button', { onClick: onCancel, className: 'btn' }, 'Cancel'),
     ),
   );
@@ -67,7 +94,7 @@ export function McpServerPanel() {
               h('span', { style: { fontWeight: 500, fontSize: '14px' } }, s.name),
             ),
             h('div', { style: { fontSize: '12px', color: 'var(--color-fg-muted)', marginTop: '4px', marginLeft: '16px' } },
-              s.transport_type + (s.command ? ': ' + s.command : '') + (s.endpoint ? ': ' + s.endpoint : ''),
+              s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : ''),
             ),
           ),
           h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' } },

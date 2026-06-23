@@ -4,16 +4,51 @@ import { useApi } from '/lib/hooks.js';
 
 const { useState } = React;
 const h = React.createElement;
-const TYPES = ['local', 'docker'];
+const TYPES = ['local', 'docker', 'ssh'];
+
+const TYPE_LABELS = { local: 'Local', docker: 'Docker', ssh: 'SSH' };
 
 const TYPE_INFO = {
   local:  'Run code directly on the host machine.',
   docker: 'Run code inside an isolated Docker container.',
+  ssh:    'Run code on a remote host over SSH (no isolation; resource limits are not enforced).',
 };
 
+// flatten turns a stored sandbox (top-level columns + nested config) into the
+// flat field set the form edits. pack() is its inverse.
+function flatten(s) {
+  const c = s.config || {};
+  return {
+    name: s.name || '', type: s.type || 'docker',
+    run_cmd: s.run_cmd || '', filename: s.filename || '', timeout: s.timeout ?? 30,
+    // docker
+    image: c.image || 'python:3.12-slim', host: c.host || '', network: !!c.network,
+    // ssh
+    addr: c.addr || '', user: c.user || '', key_file: c.key_file || '', password: c.password || '',
+    use_agent: !!c.use_agent, known_hosts: c.known_hosts || '', insecure_host_key: !!c.insecure_host_key,
+  };
+}
+
+// pack assembles the API payload: shared columns at the top level, backend
+// settings under config (interpreted server-side per type).
+function pack(form) {
+  const base = { name: form.name, type: form.type, run_cmd: form.run_cmd, filename: form.filename, timeout: form.timeout };
+  let config;
+  if (form.type === 'docker') {
+    config = { image: form.image, host: form.host, network: form.network };
+  } else if (form.type === 'ssh') {
+    config = {
+      addr: form.addr, user: form.user, use_agent: form.use_agent,
+      key_file: form.key_file, password: form.password,
+      known_hosts: form.known_hosts, insecure_host_key: form.insecure_host_key,
+    };
+  }
+  return config ? { ...base, config } : base;
+}
+
 function SandboxForm({ initial, onSave, onCancel }) {
-  const defaults = { name: '', type: 'docker', host: '', image: 'python:3.12-slim', network: false, run_cmd: '', filename: '', timeout: 30 };
-  const [form, setForm] = useState(initial || defaults);
+  const blank = { name: '', type: 'docker', run_cmd: '', filename: '', timeout: 30 };
+  const [form, setForm] = useState(initial ? flatten(initial) : flatten(blank));
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
   const t = form.type;
 
@@ -22,7 +57,7 @@ function SandboxForm({ initial, onSave, onCancel }) {
     fc('Type',
       h('div', null,
         h('select', { value: t, onChange: e => set('type', e.target.value), className: 'form-select' },
-          TYPES.map(v => h('option', { key: v, value: v }, v === 'local' ? 'Local' : 'Docker')),
+          TYPES.map(v => h('option', { key: v, value: v }, TYPE_LABELS[v])),
         ),
         h('span', { className: 'FormControl-caption' }, TYPE_INFO[t]),
       ),
@@ -42,6 +77,39 @@ function SandboxForm({ initial, onSave, onCancel }) {
       'Allow network access',
     ),
 
+    t === 'ssh' && fc('SSH Host',
+      h('div', null,
+        h('input', { value: form.addr, onChange: e => set('addr', e.target.value), placeholder: 'dev-box:22', className: 'form-control' }),
+        h('span', { className: 'FormControl-caption' }, 'Remote address as host or host:port (port defaults to 22).'),
+      ),
+    ),
+    t === 'ssh' && fc('SSH User',
+      h('input', { value: form.user, onChange: e => set('user', e.target.value), placeholder: 'sandbox', className: 'form-control' }),
+    ),
+    t === 'ssh' && fc('Private Key File',
+      h('div', null,
+        h('input', { value: form.key_file, onChange: e => set('key_file', e.target.value), placeholder: '~/.ssh/id_ed25519', className: 'form-control' }),
+        h('span', { className: 'FormControl-caption' }, 'Path on the server host. Tried before password. Leave empty to use a password or the SSH agent.'),
+      ),
+    ),
+    t === 'ssh' && fc('Password',
+      h('input', { type: 'password', value: form.password, onChange: e => set('password', e.target.value), placeholder: '(optional)', className: 'form-control' }),
+    ),
+    t === 'ssh' && h('label', { className: 'form-checkbox', style: { marginBottom: '12px' } },
+      h('input', { type: 'checkbox', checked: form.use_agent, onChange: e => set('use_agent', e.target.checked) }),
+      'Use SSH agent (SSH_AUTH_SOCK)',
+    ),
+    t === 'ssh' && fc('Known Hosts File',
+      h('div', null,
+        h('input', { value: form.known_hosts, onChange: e => set('known_hosts', e.target.value), placeholder: '~/.ssh/known_hosts', className: 'form-control' }),
+        h('span', { className: 'FormControl-caption' }, 'Path on the server host. Empty uses the default ~/.ssh/known_hosts.'),
+      ),
+    ),
+    t === 'ssh' && h('label', { className: 'form-checkbox', style: { marginBottom: '12px' } },
+      h('input', { type: 'checkbox', checked: form.insecure_host_key, onChange: e => set('insecure_host_key', e.target.checked) }),
+      'Skip host key verification (insecure — dev/test only)',
+    ),
+
     fc('Run Command',
       h('div', null,
         h('input', { value: form.run_cmd, onChange: e => set('run_cmd', e.target.value), placeholder: '["python", "main.py"]', className: 'form-control form-control-mono' }),
@@ -59,7 +127,7 @@ function SandboxForm({ initial, onSave, onCancel }) {
       'seconds',
     ),
     h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
-      h('button', { onClick: () => onSave(form), className: 'btn btn-primary' }, 'Save'),
+      h('button', { onClick: () => onSave(pack(form)), className: 'btn btn-primary' }, 'Save'),
       onCancel && h('button', { onClick: onCancel, className: 'btn' }, 'Cancel'),
     ),
   );
@@ -96,10 +164,14 @@ function ExecPanel({ sandbox, onClose }) {
 }
 
 function sandboxSummary(s) {
+  const c = s.config || {};
   const parts = [];
   if (s.type === 'docker') {
-    parts.push(s.host || 'local socket');
-    if (s.image) parts.push(s.image);
+    parts.push(c.host || 'local socket');
+    if (c.image) parts.push(c.image);
+  } else if (s.type === 'ssh') {
+    parts.push((c.user ? c.user + '@' : '') + (c.addr || '?'));
+    if (c.insecure_host_key) parts.push('insecure host key');
   }
   return parts.join(' · ') || 'default settings';
 }
@@ -117,8 +189,8 @@ export function SandboxPanel() {
   };
   const handleDelete = async (id) => { await api.sandboxes.delete(id); reload(); };
 
-  const typeLabel = (t) => t === 'local' ? 'Local' : 'Docker';
-  const typeClass = (t) => t === 'docker' ? 'Label-accent' : 'Label-default';
+  const typeLabel = (t) => TYPE_LABELS[t] || t;
+  const typeClass = (t) => t === 'docker' ? 'Label-accent' : t === 'ssh' ? 'Label-success' : 'Label-default';
 
   return h('div', null,
     h('div', { className: 'SectionHeader' },

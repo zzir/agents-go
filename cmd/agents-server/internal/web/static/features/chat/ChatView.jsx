@@ -46,7 +46,7 @@ function ProcessGroup({ toolCalls, onApprove, onReject }) {
   );
 }
 
-export function ChatView({ sessionId, onSessionUpdated }) {
+export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
   const [messages, setMessages] = useState([]);
   const [toolCalls, setToolCalls] = useState({});
   const [streaming, setStreaming] = useState('');
@@ -58,8 +58,8 @@ export function ChatView({ sessionId, onSessionUpdated }) {
   const [liveRunId, setLiveRunId] = useState(null);
   const [showTrace, setShowTrace] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState({});
-  const { data: agentConfigs } = useApi(() => api.agents.list());
-  const { data: sandboxConfigs } = useApi(() => api.sandboxes.list());
+  const { data: agentConfigs, reload: reloadAgents } = useApi(() => api.agents.list());
+  const { data: sandboxConfigs, reload: reloadSandboxes } = useApi(() => api.sandboxes.list());
 
   useEffect(() => {
     if (agentConfigs && agentConfigs.length > 0 && !agentConfigId) {
@@ -67,9 +67,15 @@ export function ChatView({ sessionId, onSessionUpdated }) {
     }
   }, [agentConfigs]);
 
+  // Settings closed — agents/sandboxes may have changed; re-fetch the lists
+  // (they were otherwise only loaded once on mount).
+  useEffect(() => {
+    if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
+  }, [settingsReloadKey]);
+
   const wsRef = useRef(null);
   const runIdRef = useRef(null);
-  const scrollRef = useScrollToBottom(messages.length + streaming);
+  const scrollRef = useScrollToBottom(messages.length + streaming, sessionId);
 
   const showToast = useCallback((msg, type) => {
     setToast({ msg, type });

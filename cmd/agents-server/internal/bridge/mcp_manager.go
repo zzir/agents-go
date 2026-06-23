@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -47,17 +46,28 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 
 	switch cfg.TransportType {
 	case "stdio":
-		args := parseArgs(cfg.Args)
-		cmd := exec.CommandContext(ctx, cfg.Command, args...)
+		var sc store.StdioMcpConfig
+		if cerr := unmarshalConfig(cfg.Config, &sc); cerr != nil {
+			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
+		}
+		cmd := exec.CommandContext(ctx, sc.Command, sc.Args...)
 		srv, err = mcp.NewStdioServer(ctx, cfg.Name, cmd, opts)
 	case "sse":
-		transport := &mcpsdk.SSEClientTransport{Endpoint: cfg.Endpoint}
+		var hc store.HTTPMcpConfig
+		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
+			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
+		}
+		transport := &mcpsdk.SSEClientTransport{Endpoint: hc.Endpoint}
 		if pc := m.proxyClient(ctx); pc != nil {
 			transport.HTTPClient = pc
 		}
 		srv, err = mcp.NewWithTransport(ctx, cfg.Name, transport, opts)
 	case "streamable_http":
-		transport := &mcpsdk.StreamableClientTransport{Endpoint: cfg.Endpoint}
+		var hc store.HTTPMcpConfig
+		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
+			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
+		}
+		transport := &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint}
 		if pc := m.proxyClient(ctx); pc != nil {
 			transport.HTTPClient = pc
 		}
@@ -132,15 +142,4 @@ func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.
 			log.Warn().Err(err).Str("mcp", configs[i].Name).Msg("mcp auto-connect failed")
 		}
 	}
-}
-
-func parseArgs(argsJSON string) []string {
-	if argsJSON == "" {
-		return nil
-	}
-	var args []string
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return nil
-	}
-	return args
 }

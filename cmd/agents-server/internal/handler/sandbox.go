@@ -37,12 +37,24 @@ func (h *SandboxHandler) List(c *gin.Context) {
 type createSandboxReq struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
-	Host     string `json:"host"`
-	Image    string `json:"image"`
-	Network  bool   `json:"network"`
 	RunCmd   string `json:"run_cmd"`
 	Filename string `json:"filename"`
 	Timeout  int    `json:"timeout"`
+	// Config is the backend-specific settings object, interpreted per Type
+	// (see store.DockerConfig / store.SSHConfig). Stored verbatim.
+	Config json.RawMessage `json:"config"`
+}
+
+// toConfig maps the request DTO onto a store model.
+func (r createSandboxReq) toConfig() *store.SandboxConfig {
+	return &store.SandboxConfig{
+		Name:     r.Name,
+		Type:     r.Type,
+		RunCmd:   r.RunCmd,
+		Filename: r.Filename,
+		Timeout:  r.Timeout,
+		Config:   r.Config,
+	}
 }
 
 // Create persists a new sandbox configuration from the request body.
@@ -60,16 +72,7 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type is required"})
 		return
 	}
-	cfg := &store.SandboxConfig{
-		Name:     req.Name,
-		Type:     req.Type,
-		Host:     req.Host,
-		Image:    req.Image,
-		Network:  req.Network,
-		RunCmd:   req.RunCmd,
-		Filename: req.Filename,
-		Timeout:  req.Timeout,
-	}
+	cfg := req.toConfig()
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -96,16 +99,7 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	id := c.Param("id")
 	h.manager.Remove(id)
-	cfg := &store.SandboxConfig{
-		Name:     req.Name,
-		Type:     req.Type,
-		Host:     req.Host,
-		Image:    req.Image,
-		Network:  req.Network,
-		RunCmd:   req.RunCmd,
-		Filename: req.Filename,
-		Timeout:  req.Timeout,
-	}
+	cfg := req.toConfig()
 	if err := h.store.Update(c.Request.Context(), id, cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

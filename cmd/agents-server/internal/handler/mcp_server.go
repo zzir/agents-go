@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -47,22 +48,18 @@ func (h *McpServerHandler) List(c *gin.Context) {
 type mcpServerReq struct {
 	Name          string `json:"name"`
 	TransportType string `json:"transport_type"`
-	Command       string `json:"command"`
-	Args          string `json:"args"`
-	Endpoint      string `json:"endpoint"`
-	OptionsJSON   string `json:"options"`
 	AutoConnect   bool   `json:"auto_connect"`
+	// Config is the transport-specific settings object, interpreted per
+	// TransportType (see store.StdioMcpConfig / store.HTTPMcpConfig).
+	Config json.RawMessage `json:"config"`
 }
 
 func (r *mcpServerReq) toModel() *store.McpServerConfig {
 	return &store.McpServerConfig{
 		Name:          r.Name,
 		TransportType: r.TransportType,
-		Command:       r.Command,
-		Args:          r.Args,
-		Endpoint:      r.Endpoint,
-		OptionsJSON:   r.OptionsJSON,
 		AutoConnect:   r.AutoConnect,
+		Config:        r.Config,
 	}
 }
 

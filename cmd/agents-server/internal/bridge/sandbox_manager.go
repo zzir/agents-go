@@ -10,6 +10,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
+	sshsb "github.com/zzir/agents-go/sandbox/ssh"
 )
 
 // SandboxManager caches and reuses sandbox instances keyed by config id.
@@ -104,15 +105,52 @@ func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox
 		}
 		return sandbox.NewLocal(), nil
 	case "docker":
-		if cfg.Image == "" {
+		var dc store.DockerConfig
+		if err := unmarshalConfig(cfg.Config, &dc); err != nil {
+			return nil, fmt.Errorf("docker sandbox: invalid config: %w", err)
+		}
+		if dc.Image == "" {
 			return nil, fmt.Errorf("docker sandbox requires an image")
 		}
 		return dockersb.New(dockersb.Options{
-			Image:   cfg.Image,
-			Host:    cfg.Host,
-			Network: cfg.Network,
+			Image:   dc.Image,
+			Host:    dc.Host,
+			Network: dc.Network,
+		})
+	case "ssh":
+		var sc store.SSHConfig
+		if err := unmarshalConfig(cfg.Config, &sc); err != nil {
+			return nil, fmt.Errorf("ssh sandbox: invalid config: %w", err)
+		}
+		if sc.Addr == "" {
+			return nil, fmt.Errorf("ssh sandbox requires a host")
+		}
+		if sc.User == "" {
+			return nil, fmt.Errorf("ssh sandbox requires a user")
+		}
+		return sshsb.New(sshsb.Options{
+			Addr: sc.Addr,
+			User: sc.User,
+			Auth: sshsb.AuthConfig{
+				UseAgent: sc.UseAgent,
+				KeyFile:  sc.KeyFile,
+				Password: sc.Password,
+			},
+			HostKey: sshsb.HostKeyConfig{
+				KnownHostsFile:        sc.KnownHosts,
+				InsecureIgnoreHostKey: sc.InsecureHostKey,
+			},
 		})
 	default:
 		return nil, fmt.Errorf("unknown sandbox type: %s", cfg.Type)
 	}
+}
+
+// unmarshalConfig decodes a SandboxConfig.Config payload, treating empty as a
+// zero-value config so the per-type required-field checks produce the error.
+func unmarshalConfig(raw json.RawMessage, v any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, v)
 }

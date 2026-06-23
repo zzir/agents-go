@@ -65,6 +65,9 @@ function App() {
   const [view, setView] = useState('chat');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
+  // Bumped when the Settings dialog closes so the chat view re-fetches the
+  // agent/sandbox lists it picked up once on mount.
+  const [settingsReloadKey, setSettingsReloadKey] = useState(0);
 
   const sessionPane = h(SessionList, {
     activeId: activeSession,
@@ -89,14 +92,14 @@ function App() {
 
   let main;
   if (view === 'chat') {
-    main = h(ChatView, { sessionId: activeSession, onSessionUpdated: handleSessionUpdated });
+    main = h(ChatView, { sessionId: activeSession, onSessionUpdated: handleSessionUpdated, settingsReloadKey });
   } else if (view === 'files') {
     main = h(FileViewer, { filePath: selectedFile });
   }
 
   return h(ThemeProvider, null,
     h(AppShell, { view, onViewChange: setView, onSettingsOpen: () => setSettingsOpen(true), sidebarPane }, main),
-    settingsOpen && h(SettingsDialog, { onClose: () => setSettingsOpen(false) }),
+    settingsOpen && h(SettingsDialog, { onClose: () => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); } }),
   );
 }
 

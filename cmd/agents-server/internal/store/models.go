@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -77,21 +78,36 @@ type AgentConfig struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"    json:"updated_at"`
 }
 
-// McpServerConfig is the persisted connection definition for an MCP server
-// (stdio, SSE, or streamable HTTP transport).
+// McpServerConfig is the persisted connection definition for an MCP server.
+// Transport-specific settings live in Config (JSON, interpreted per
+// TransportType), so a new transport needs no schema migration.
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	ID            string    `bun:"id,pk"                 json:"id"`
-	Name          string    `bun:"name,notnull"           json:"name"`
-	TransportType string    `bun:"transport_type,notnull" json:"transport_type"`
-	Command       string    `bun:"command"                json:"command,omitempty"`
-	Args          string    `bun:"args"                   json:"args,omitempty"`
-	Endpoint      string    `bun:"endpoint"               json:"endpoint,omitempty"`
-	OptionsJSON   string    `bun:"options"                json:"options,omitempty"`
-	AutoConnect   bool      `bun:"auto_connect"           json:"auto_connect"`
-	CreatedAt     time.Time `bun:"created_at,notnull"     json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull"     json:"updated_at"`
+	ID            string `bun:"id,pk"                  json:"id"`
+	Name          string `bun:"name,notnull"           json:"name"`
+	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | sse | streamable_http
+	AutoConnect   bool   `bun:"auto_connect"           json:"auto_connect"`
+
+	// Config holds the transport-specific settings as JSON: StdioMcpConfig for
+	// "stdio", HTTPMcpConfig for "sse"/"streamable_http". Stored as TEXT and
+	// exchanged with the API as a raw JSON object.
+	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
+
+	CreatedAt time.Time `bun:"created_at,notnull"     json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
+}
+
+// StdioMcpConfig is the McpServerConfig.Config payload for TransportType == "stdio".
+type StdioMcpConfig struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+}
+
+// HTTPMcpConfig is the McpServerConfig.Config payload for the "sse" and
+// "streamable_http" transports.
+type HTTPMcpConfig struct {
+	Endpoint string `json:"endpoint"`
 }
 
 // Memory is a stored key/content fact, either global or scoped to an agent config.
@@ -147,20 +163,45 @@ type TraceEvent struct {
 }
 
 // SandboxConfig is the persisted definition of a code-execution sandbox backend.
+// Backend-specific settings live in Config (JSON, interpreted per Type), so a new
+// backend type needs no schema migration — only a new Config payload struct and a
+// case in the bridge. The top-level columns are the settings shared by every
+// backend (the CodeTool execution knobs).
 type SandboxConfig struct {
 	bun.BaseModel `bun:"table:sandbox_configs,alias:sb"`
 
-	ID        string    `bun:"id,pk"                json:"id"`
-	Name      string    `bun:"name,notnull"          json:"name"`
-	Type      string    `bun:"type,notnull"          json:"type"`
-	Host      string    `bun:"host"                  json:"host"`
-	Image     string    `bun:"image"                 json:"image"`
-	Network   bool      `bun:"network"               json:"network"`
-	RunCmd    string    `bun:"run_cmd"               json:"run_cmd"`
-	Filename  string    `bun:"filename"              json:"filename"`
-	Timeout   int       `bun:"timeout"               json:"timeout"`
-	CreatedAt time.Time `bun:"created_at,notnull"    json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull"    json:"updated_at"`
+	ID       string `bun:"id,pk"          json:"id"`
+	Name     string `bun:"name,notnull"   json:"name"`
+	Type     string `bun:"type,notnull"   json:"type"` // local | docker | ssh
+	RunCmd   string `bun:"run_cmd"        json:"run_cmd"`
+	Filename string `bun:"filename"       json:"filename"`
+	Timeout  int    `bun:"timeout"        json:"timeout"`
+
+	// Config holds the backend-specific settings as JSON: DockerConfig for
+	// "docker", SSHConfig for "ssh"; empty for "local". Stored as TEXT and sent
+	// to/received from the API as a raw JSON object (no double-encoding).
+	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
+
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
+// DockerConfig is the SandboxConfig.Config payload for Type == "docker".
+type DockerConfig struct {
+	Image   string `json:"image"`
+	Host    string `json:"host,omitempty"` // Docker daemon address
+	Network bool   `json:"network"`
+}
+
+// SSHConfig is the SandboxConfig.Config payload for Type == "ssh".
+type SSHConfig struct {
+	Addr            string `json:"addr"` // remote host[:port]
+	User            string `json:"user"`
+	UseAgent        bool   `json:"use_agent"`
+	KeyFile         string `json:"key_file,omitempty"`
+	Password        string `json:"password,omitempty"`
+	KnownHosts      string `json:"known_hosts,omitempty"`
+	InsecureHostKey bool   `json:"insecure_host_key"`
 }
 
 // BeforeAppendModel hooks stamp id/timestamps for the CrudStore-backed entities
