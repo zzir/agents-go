@@ -39,8 +39,8 @@ type ExecRequest struct {
 	// Files maps a path (relative to the working directory) to its content; they
 	// are written before Cmd runs.
 	Files map[string]string
-	// Stdin is fed to the process's standard input. Only LocalSandbox supports
-	// it; the docker backend rejects requests that set it.
+	// Stdin is fed to the process's standard input. LocalSandbox and the SSH
+	// backend support it; the docker backend rejects requests that set it.
 	Stdin string
 	// Env sets environment variables for the process. Backends do not pass the
 	// host environment through: LocalSandbox provides only a minimal set of

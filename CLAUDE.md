@@ -34,8 +34,9 @@ go test -race ./...             # race detector is ON in CI — keep it green
 go test -race ./agents -run TestToolOutputGuardrailRaise
 go test -race ./agents/...
 
-# Sandbox backend is a SEPARATE Go module — test it on its own
+# Sandbox backends are SEPARATE Go modules — test each on its own
 (cd sandbox/docker && go vet ./... && go test ./...)
+(cd sandbox/ssh && go vet ./... && go test ./...)
 
 # Lint (CI uses golangci-lint v2.12)
 golangci-lint run
@@ -51,6 +52,10 @@ This is a Go **workspace** (`go.work`), not a single module. Four modules:
   `jsonschema-go`, `go-sdk` (MCP), `golang.org/x/sync`.
 - **`sandbox/docker`** — optional Docker sandbox backend, its own module so the
   Docker client deps don't leak into the root module's dependency graph.
+- **`sandbox/ssh`** — optional remote SSH sandbox backend (runs commands on a
+  remote host, files via SFTP), its own module so the `golang.org/x/crypto` and
+  `pkg/sftp` deps stay out of the core graph. No isolation / limits — see
+  [docs/sandbox.md](docs/sandbox.md).
 - **`sessions`** — SQLite/PostgreSQL `Session` backends via uptrace/bun, its own
   module for the same reason (DB drivers stay out of the core graph). It
   `require`s the root module with `replace => ..`, the same pattern as sandbox.
@@ -145,7 +150,7 @@ as a callable tool (nested run).
 - **MCP** (`mcp/mcp.go`): Stdio / SSE / StreamableHTTP MCP servers exposed as
   tool sources; `agents/mcp.go` bridges them into the runner's tool list.
 - **Sandbox** (`sandbox/`): pluggable code-execution backends (Local + the Docker
-  and K8s submodules) behind a `Sandbox` interface, wrapped as a tool via `tool.go`.
+  and SSH submodules) behind a `Sandbox` interface, wrapped as a tool via `tool.go`.
 
 ## Design decisions
 

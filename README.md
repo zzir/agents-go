@@ -190,7 +190,10 @@ agent := &agents.Agent{Name: "coder", Model: "gpt-4o",
 The Docker backend defaults to: no network, read-only root fs, dropped
 capabilities, non-root user, and CPU/memory/PID/time limits.
 `sandbox.NewLocal()` runs on the host **without isolation** — for trusted
-dev/tests only.
+dev/tests only. The `sandbox/ssh` backend (also a separate module) runs commands
+on a remote host over SSH, transferring files via SFTP — useful for offloading
+to a disposable VM, but it provides **no** isolation or resource limits of its
+own.
 
 ## Packages
 
@@ -203,6 +206,7 @@ Core module path: `github.com/zzir/agents-go`.
 - `.../mcp` — Model Context Protocol client.
 - `.../sandbox` — `Sandbox` interface + `CodeTool` + local backend.
 - `.../sandbox/docker` — **separate module** with the Docker backend.
+- `.../sandbox/ssh` — **separate module** with the remote SSH backend.
 - `.../examples` — runnable examples (`hello`, `tools`, `handoffs`, `streaming`, `hitl`, `sandbox`).
 
 ## Examples
@@ -220,8 +224,10 @@ go run ./examples/compaction      # auto-summarize long history via responses.co
 OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt  # drive an agent from a stored prompt
 go run ./examples/sandbox   # writes & runs Python in a sandbox (host needs python3)
 
-# isolated backend lives in its own module:
+# isolated / remote backends live in their own modules:
 (cd sandbox/docker && OPENAI_API_KEY=$OPENAI_API_KEY go run ./example)  # needs Docker
+(cd sandbox/ssh && SSH_HOST=host SSH_USER=user SSH_KEY=~/.ssh/id_ed25519 \
+	OPENAI_API_KEY=$OPENAI_API_KEY go run ./example)  # needs a reachable SSH host
 ```
 
 ## Design notes

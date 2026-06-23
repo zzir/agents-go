@@ -67,7 +67,7 @@
 
 ## Go-only additions
 
-- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in locked-down Docker containers in your own infrastructure (`sandbox`, `sandbox/docker` modules), exposed via `sandbox.CodeTool`. Python's sandboxes target hosted providers (e2b / modal / blaxel) rather than self-hosted Docker
+- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in your own infrastructure — locked-down Docker containers (`sandbox/docker`) or a remote host over SSH (`sandbox/ssh`) — exposed via `sandbox.CodeTool`. Python's sandboxes target hosted providers (e2b / modal / blaxel) rather than self-hosted backends
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
 - **`FileSession`**: zero-dependency JSONL persistence with per-path locking and atomic rewrites
 - **[Skills](skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills
