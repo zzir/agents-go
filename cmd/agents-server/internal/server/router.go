@@ -21,14 +21,15 @@ type Routes struct {
 	AgentUpdate gin.HandlerFunc
 	AgentDelete gin.HandlerFunc
 
-	McpServerList       gin.HandlerFunc
-	McpServerCreate     gin.HandlerFunc
-	McpServerGet        gin.HandlerFunc
-	McpServerUpdate     gin.HandlerFunc
-	McpServerDelete     gin.HandlerFunc
-	McpServerConnect    gin.HandlerFunc
-	McpServerDisconnect gin.HandlerFunc
-	McpServerTools      gin.HandlerFunc
+	McpServerList          gin.HandlerFunc
+	McpServerCreate        gin.HandlerFunc
+	McpServerGet           gin.HandlerFunc
+	McpServerUpdate        gin.HandlerFunc
+	McpServerDelete        gin.HandlerFunc
+	McpServerConnect       gin.HandlerFunc
+	McpServerDisconnect    gin.HandlerFunc
+	McpServerTools         gin.HandlerFunc
+	McpServerOAuthCallback gin.HandlerFunc
 
 	MemoryList   gin.HandlerFunc
 	MemoryCreate gin.HandlerFunc
@@ -92,6 +93,7 @@ func (s *Server) RegisterRoutes(r Routes) {
 		mcpServers := api.Group("/mcp-servers")
 		mcpServers.GET("", r.McpServerList)
 		mcpServers.POST("", r.McpServerCreate)
+		mcpServers.GET("/oauth/callback", r.McpServerOAuthCallback)
 		mcpServers.GET("/:id", r.McpServerGet)
 		mcpServers.PUT("/:id", r.McpServerUpdate)
 		mcpServers.DELETE("/:id", r.McpServerDelete)

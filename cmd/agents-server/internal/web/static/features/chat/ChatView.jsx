@@ -1,12 +1,13 @@
 import React from 'react';
 import { WSClient } from '/lib/ws.js';
 import { api } from '/lib/api.js';
+import { renderMarkdown } from '/lib/markdown.js';
 import { useScrollToBottom, useApi } from '/lib/hooks.js';
 import { MessageBubble } from '/features/chat/MessageBubble.jsx';
 import { MessageInput } from '/features/chat/MessageInput.jsx';
 import { ToolCallCard } from '/features/chat/ToolCallCard.jsx';
 
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const h = React.createElement;
 
 function ProcessGroup({ toolCalls, onApprove, onReject }) {
@@ -18,7 +19,6 @@ function ProcessGroup({ toolCalls, onApprove, onReject }) {
   const completedCount = toolCalls.filter(tc => tc.status === 'completed' || tc.output).length;
   const isRunning = completedCount < count && pendingCount === 0;
 
-  // Auto-expand if there are pending approvals
   const shouldShow = expanded || pendingCount > 0;
 
   return h('div', { className: 'process-group' },
@@ -46,9 +46,29 @@ function ProcessGroup({ toolCalls, onApprove, onReject }) {
   );
 }
 
+function TurnBlock({ parts, streaming, isLive, onApprove, onReject }) {
+  const isEmpty = parts.length === 0 && !streaming;
+  return h('div', { className: 'message message-turn' },
+    parts.map((part, i) => {
+      if (part.type === 'text') {
+        return h('div', { key: 'p-' + i, className: 'turn-text markdown-body', dangerouslySetInnerHTML: { __html: renderMarkdown(part.content) } });
+      }
+      if (part.type === 'tools') {
+        return h(ProcessGroup, { key: 'p-' + i, toolCalls: part.toolCalls, onApprove, onReject });
+      }
+      return null;
+    }),
+    streaming && h('div', { className: 'turn-text markdown-body', dangerouslySetInnerHTML: { __html: renderMarkdown(streaming + '▋') } }),
+    isLive && isEmpty && h('div', { className: 'thinking-indicator' },
+      h('div', { className: 'thinking-dots' },
+        h('span', null), h('span', null), h('span', null),
+      ),
+    ),
+  );
+}
+
 export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
   const [messages, setMessages] = useState([]);
-  const [toolCalls, setToolCalls] = useState({});
   const [streaming, setStreaming] = useState('');
   const [running, setRunning] = useState(false);
   const [toast, setToast] = useState(null);
@@ -86,7 +106,6 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
     if (!sessionId) return;
     setMessages([]);
     setStreaming('');
-    setToolCalls({});
     setTraceRuns({});
     setLiveRunId(null);
 
@@ -94,17 +113,19 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
       if (!msgs) return;
       const timeline = [];
       const pendingTC = {};
-      let tcBatch = [];
-      const flushBatch = () => {
-        if (tcBatch.length > 0) {
-          timeline.push({ role: 'tools', toolCalls: tcBatch });
-          tcBatch = [];
-        }
+      let turn = null;
+      const ensureTurn = () => {
+        if (!turn) { turn = { role: 'turn', parts: [] }; timeline.push(turn); }
       };
+      const finishTurn = () => { turn = null; };
       for (const m of msgs) {
-        if (m.role === 'tool_call') {
+        if (m.role === 'user') {
+          finishTurn();
+          if (m.content) timeline.push({ role: 'user', content: m.content });
+        } else if (m.role === 'tool_call') {
           try {
             const item = JSON.parse(m.item);
+            ensureTurn();
             const tc = {
               tool_call_id: item.call_id,
               tool_name: item.name,
@@ -113,7 +134,12 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
               status: null,
             };
             pendingTC[item.call_id] = tc;
-            tcBatch.push(tc);
+            const last = turn.parts[turn.parts.length - 1];
+            if (last && last.type === 'tools') {
+              last.toolCalls.push(tc);
+            } else {
+              turn.parts.push({ type: 'tools', toolCalls: [tc] });
+            }
           } catch (_) {}
         } else if (m.role === 'tool_output') {
           try {
@@ -123,12 +149,15 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
               pendingTC[item.call_id].status = 'completed';
             }
           } catch (_) {}
+        } else if (m.role === 'system' && m.content) {
+          finishTurn();
+          timeline.push({ role: 'system', content: m.content });
         } else if (m.content) {
-          flushBatch();
-          timeline.push({ role: m.role, content: m.content });
+          ensureTurn();
+          turn.parts.push({ type: 'text', content: m.content });
         }
       }
-      flushBatch();
+      finishTurn();
       setMessages(timeline);
     });
 
@@ -148,77 +177,115 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
     const ws = new WSClient();
     wsRef.current = ws;
 
+    const streamBuf = { text: '' };
+
+    const addTurnPart = (part) => {
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === 'turn') {
+          updated[updated.length - 1] = { ...last, parts: [...last.parts, part] };
+          return updated;
+        }
+        return prev;
+      });
+    };
+
     ws.on('run.started', (payload) => {
       setRunning(true);
+      streamBuf.text = '';
       setStreaming('');
       runIdRef.current = payload.run_id;
       setLiveRunId(payload.run_id);
+      setMessages(prev => [...prev, { role: 'turn', parts: [] }]);
       setTraceRuns(prev => ({ ...prev, [payload.run_id]: [] }));
       setExpandedRuns(prev => ({ ...prev, [payload.run_id]: true }));
     });
     ws.on('run.step', (payload) => {
-      setStreaming(prev => prev + payload.delta);
+      streamBuf.text += payload.delta;
+      setStreaming(streamBuf.text);
     });
     ws.on('run.output', (payload) => {
+      streamBuf.text = '';
       setStreaming('');
       setRunning(false);
       setLiveRunId(null);
       runIdRef.current = null;
-      setToolCalls(prevTC => {
-        const tcList = Object.values(prevTC);
-        if (tcList.length > 0) {
-          setMessages(prev => [
-            ...prev,
-            { role: 'tools', toolCalls: tcList },
-            { role: 'assistant', content: payload.final_output },
-          ]);
-        } else {
-          setMessages(prev => [...prev, { role: 'assistant', content: payload.final_output }]);
-        }
-        return {};
-      });
+      if (payload.final_output) {
+        addTurnPart({ type: 'text', content: payload.final_output });
+      }
     });
     ws.on('run.error', (payload) => {
+      const remaining = streamBuf.text;
+      streamBuf.text = '';
       setStreaming('');
       setRunning(false);
       setLiveRunId(null);
       runIdRef.current = null;
       showToast(payload.message, 'error');
-      setToolCalls(prevTC => {
-        const tcList = Object.values(prevTC);
-        if (tcList.length > 0) {
-          setMessages(prev => [
-            ...prev,
-            { role: 'tools', toolCalls: tcList },
-            { role: 'system', content: 'Error: ' + payload.message },
-          ]);
-        } else {
-          setMessages(prev => [...prev, { role: 'system', content: 'Error: ' + payload.message }]);
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === 'turn') {
+          const parts = [...last.parts];
+          if (remaining) parts.push({ type: 'text', content: remaining });
+          updated[updated.length - 1] = { ...last, parts };
+          return updated;
         }
-        return {};
+        return [...prev, { role: 'system', content: 'Error: ' + payload.message }];
       });
     });
     ws.on('run.tool_call', (payload) => {
-      setToolCalls(prev => ({
-        ...prev,
-        [payload.tool_call_id]: {
-          tool_call_id: payload.tool_call_id,
-          tool_name: payload.tool_name,
-          arguments: payload.arguments,
-          needs_approval: payload.needs_approval,
-          status: null,
-          output: null,
+      const flushed = streamBuf.text;
+      streamBuf.text = '';
+      if (flushed) setStreaming('');
+
+      const tc = {
+        tool_call_id: payload.tool_call_id,
+        tool_name: payload.tool_name,
+        arguments: payload.arguments,
+        needs_approval: payload.needs_approval,
+        status: null,
+        output: null,
+      };
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role !== 'turn') return prev;
+        const parts = [...last.parts];
+        if (flushed) parts.push({ type: 'text', content: flushed });
+        const lastPart = parts[parts.length - 1];
+        if (lastPart?.type === 'tools') {
+          parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, tc] };
+        } else {
+          parts.push({ type: 'tools', toolCalls: [tc] });
         }
-      }));
+        updated[updated.length - 1] = { ...last, parts };
+        return updated;
+      });
     });
     ws.on('run.tool_result', (payload) => {
-      setToolCalls(prev => {
-        const updated = { ...prev };
-        const key = payload.tool_call_id || Object.keys(updated).find(k => !updated[k].output);
-        if (key && updated[key]) {
-          updated[key] = { ...updated[key], output: payload.output, status: 'completed' };
+      setMessages(prev => {
+        const updated = [...prev];
+        for (let i = updated.length - 1; i >= 0; i--) {
+          if (updated[i].role !== 'turn') continue;
+          const parts = [...updated[i].parts];
+          for (let p = parts.length - 1; p >= 0; p--) {
+            if (parts[p].type !== 'tools') continue;
+            const tcs = parts[p].toolCalls;
+            const idx = tcs.findIndex(tc =>
+              tc.tool_call_id === payload.tool_call_id ||
+              (!payload.tool_call_id && !tc.output));
+            if (idx >= 0) {
+              const newTcs = [...tcs];
+              newTcs[idx] = { ...newTcs[idx], output: payload.output, status: 'completed' };
+              parts[p] = { ...parts[p], toolCalls: newTcs };
+              updated[i] = { ...updated[i], parts };
+              return updated;
+            }
+          }
         }
-        return updated;
+        return prev;
       });
     });
     ws.on('run.agent_start', () => {});
@@ -254,7 +321,6 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
   const handleSend = useCallback((text) => {
     if (!sessionId || !wsRef.current || !agentConfigId) return;
     setMessages(prev => [...prev, { role: 'user', content: text }]);
-    setToolCalls({});
     const payload = {
       session_id: sessionId,
       input: text,
@@ -268,7 +334,15 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
     if (!wsRef.current || !runIdRef.current) return;
     wsRef.current.send('run.cancel', { run_id: runIdRef.current });
     if (streaming) {
-      setMessages(prev => [...prev, { role: 'assistant', content: streaming }]);
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === 'turn') {
+          updated[updated.length - 1] = { ...last, parts: [...last.parts, { type: 'text', content: streaming }] };
+          return updated;
+        }
+        return prev;
+      });
     }
     setStreaming('');
     setRunning(false);
@@ -276,23 +350,40 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
     showToast('Run cancelled', 'info');
   }, [streaming, showToast]);
 
+  const updateToolCall = useCallback((toolCallId, patch) => {
+    setMessages(prev => {
+      const updated = [...prev];
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role !== 'turn') continue;
+        const parts = [...updated[i].parts];
+        for (let p = parts.length - 1; p >= 0; p--) {
+          if (parts[p].type !== 'tools') continue;
+          const tcs = parts[p].toolCalls;
+          const idx = tcs.findIndex(tc => tc.tool_call_id === toolCallId);
+          if (idx >= 0) {
+            const newTcs = [...tcs];
+            newTcs[idx] = { ...newTcs[idx], ...patch };
+            parts[p] = { ...parts[p], toolCalls: newTcs };
+            updated[i] = { ...updated[i], parts };
+            return updated;
+          }
+        }
+      }
+      return prev;
+    });
+  }, []);
+
   const handleApprove = useCallback((toolCallId) => {
     if (!wsRef.current) return;
-    setToolCalls(prev => ({
-      ...prev,
-      [toolCallId]: { ...prev[toolCallId], status: 'approved' }
-    }));
+    updateToolCall(toolCallId, { status: 'approved' });
     wsRef.current.send('tool.approve', { tool_call_id: toolCallId });
-  }, []);
+  }, [updateToolCall]);
 
   const handleReject = useCallback((toolCallId) => {
     if (!wsRef.current) return;
-    setToolCalls(prev => ({
-      ...prev,
-      [toolCallId]: { ...prev[toolCallId], status: 'rejected' }
-    }));
+    updateToolCall(toolCallId, { status: 'rejected' });
     wsRef.current.send('tool.reject', { tool_call_id: toolCallId });
-  }, []);
+  }, [updateToolCall]);
 
   if (!sessionId) {
     return h('div', { className: 'chat-empty' },
@@ -305,8 +396,6 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
       h('div', { className: 'chat-empty-sub' }, 'Pick a chat from the sidebar, or create a new one to begin.'),
     );
   }
-
-  const toolCallList = Object.values(toolCalls);
 
   const inputFooter = h('div', { className: 'chat-input-footer' },
     agentConfigs && agentConfigs.length > 0
@@ -335,24 +424,19 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
 
   return h('div', { className: 'chat-main' },
     h('div', { ref: scrollRef, className: 'chat-messages' },
-      messages.map((m, i) =>
-        m.role === 'tools'
-          ? h(ProcessGroup, { key: 'tc-' + i, toolCalls: m.toolCalls, onApprove: handleApprove, onReject: handleReject })
-          : h(MessageBubble, { key: i, role: m.role, content: m.content }),
-      ),
-      toolCallList.length > 0 && !messages.some(m => m.role === 'tools' && m.toolCalls === toolCallList) && h(ProcessGroup, {
-        toolCalls: toolCallList,
-        onApprove: handleApprove,
-        onReject: handleReject,
-      }),
-      running && !streaming && toolCallList.length === 0 && h('div', { className: 'thinking-indicator' },
-        h('div', { className: 'thinking-dots' },
-          h('span', null), h('span', null), h('span', null),
-        ),
-      ),
-      streaming && h(MessageBubble, {
-        role: 'assistant',
-        content: streaming + '▋',
+      messages.map((m, i) => {
+        if (m.role === 'turn') {
+          const isLive = running && i === messages.length - 1;
+          return h(TurnBlock, {
+            key: 'turn-' + i,
+            parts: m.parts,
+            streaming: isLive ? streaming : null,
+            isLive,
+            onApprove: handleApprove,
+            onReject: handleReject,
+          });
+        }
+        return h(MessageBubble, { key: i, role: m.role, content: m.content });
       }),
     ),
 
@@ -393,7 +477,7 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
       ),
     ),
 
-    h(MessageInput, { onSend: handleSend, onCancel: handleCancel, disabled: running, running, footer: inputFooter }),
+    h(MessageInput, { onSend: handleSend, onCancel: handleCancel, disabled: running || !agentConfigId, running, footer: inputFooter }),
 
     toast && h('div', {
       className: 'Toast ' + (toast.type === 'error' ? 'Toast-error' : 'Toast-info'),

@@ -73,8 +73,9 @@ func run(_ *cobra.Command, _ []string) error {
 	providerRouteStore := store.NewProviderRouteStore(db)
 	sandboxStore := store.NewSandboxStore(db)
 	mcpManager := bridge.NewMcpManager(settingStore)
+	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
 	defer mcpManager.CloseAll()
-	go bridge.AutoConnectMcpServers(ctx, mcpManager, mcpServerStore)
+	go bridge.AutoConnectMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
 	sandboxManager := bridge.NewSandboxManager(flagRootDir)
 	defer sandboxManager.CloseAll()
 
@@ -95,7 +96,7 @@ func run(_ *cobra.Command, _ []string) error {
 
 	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore)
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore)
-	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager)
+	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
 	settingHandler := handler.NewSettingHandler(settingStore)
 	skillHandler := handler.NewSkillHandler(flagRootDir)
@@ -122,14 +123,15 @@ func run(_ *cobra.Command, _ []string) error {
 		AgentUpdate: agentConfigHandler.Update,
 		AgentDelete: agentConfigHandler.Delete,
 
-		McpServerList:       mcpServerHandler.List,
-		McpServerCreate:     mcpServerHandler.Create,
-		McpServerGet:        mcpServerHandler.Get,
-		McpServerUpdate:     mcpServerHandler.Update,
-		McpServerDelete:     mcpServerHandler.Delete,
-		McpServerConnect:    mcpServerHandler.Connect,
-		McpServerDisconnect: mcpServerHandler.Disconnect,
-		McpServerTools:      mcpServerHandler.Tools,
+		McpServerList:          mcpServerHandler.List,
+		McpServerCreate:        mcpServerHandler.Create,
+		McpServerGet:           mcpServerHandler.Get,
+		McpServerUpdate:        mcpServerHandler.Update,
+		McpServerDelete:        mcpServerHandler.Delete,
+		McpServerConnect:       mcpServerHandler.Connect,
+		McpServerDisconnect:    mcpServerHandler.Disconnect,
+		McpServerTools:         mcpServerHandler.Tools,
+		McpServerOAuthCallback: mcpServerHandler.OAuthCallback,
 
 		MemoryList:   memoryHandler.List,
 		MemoryCreate: memoryHandler.Create,

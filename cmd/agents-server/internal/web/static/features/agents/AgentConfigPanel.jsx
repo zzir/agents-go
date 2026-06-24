@@ -5,7 +5,10 @@ import { useApi } from '/lib/hooks.js';
 const { useState } = React;
 const h = React.createElement;
 
-function AgentForm({ initial, onSave, onCancel }) {
+function AgentForm({ initial, onSave, onCancel, mcpServers }) {
+  const initTools = () => {
+    try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
+  };
   const [form, setForm] = useState(initial || {
     name: '', instructions: '', model: 'gpt-4o',
     provider_type: '', api_key: '', base_url: '',
@@ -19,8 +22,12 @@ function AgentForm({ initial, onSave, onCancel }) {
     handoff_input_filter: '', max_tool_concurrency: 0,
     tool_not_found_behavior: '',
   });
+  const [selectedMcp, setSelectedMcp] = useState(initTools);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const toggleMcp = (id) => {
+    setSelectedMcp(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   return h('div', { className: 'form-box' },
     fc('Name', h('input', { value: form.name, onChange: e => set('name', e.target.value), placeholder: 'e.g. Code Assistant', className: 'form-control' })),
@@ -33,6 +40,19 @@ function AgentForm({ initial, onSave, onCancel }) {
 
     h('div', { className: 'divider' }),
     fc('Instructions', h('textarea', { value: form.instructions, onChange: e => set('instructions', e.target.value), rows: 5, placeholder: 'System prompt / instructions for this agent...', className: 'form-control form-control-mono' })),
+
+    mcpServers && mcpServers.length > 0 && h('div', null,
+      h('div', { className: 'divider' }),
+      h('div', { style: { fontSize: '12px', fontWeight: 600, color: 'var(--color-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' } }, 'MCP Servers'),
+      mcpServers.map(s =>
+        h('label', { key: s.id, className: 'form-checkbox', style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('input', { type: 'checkbox', checked: selectedMcp.includes(s.id), onChange: () => toggleMcp(s.id) }),
+          h('span', null, s.name),
+          s.connected && h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--color-success-fg)', display: 'inline-block', marginLeft: '4px' } }),
+        ),
+      ),
+      h('div', { className: 'FormControl-caption' }, 'Select which MCP servers this agent can use'),
+    ),
 
     h('div', { className: 'advanced-toggle', onClick: () => setShowAdvanced(!showAdvanced) },
       (showAdvanced ? '▾' : '▸') + ' Advanced',
@@ -91,7 +111,7 @@ function AgentForm({ initial, onSave, onCancel }) {
     ),
 
     h('div', { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
-      h('button', { onClick: () => onSave(form), className: 'btn btn-primary' }, 'Save'),
+      h('button', { onClick: () => onSave({ ...form, tools: JSON.stringify(selectedMcp) }), className: 'btn btn-primary' }, 'Save'),
       onCancel && h('button', { onClick: onCancel, className: 'btn' }, 'Cancel'),
     ),
   );
@@ -99,6 +119,7 @@ function AgentForm({ initial, onSave, onCancel }) {
 
 export function AgentConfigPanel() {
   const { data: agents, reload } = useApi(() => api.agents.list());
+  const { data: mcpServers } = useApi(() => api.mcpServers.list());
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
 
@@ -121,8 +142,8 @@ export function AgentConfigPanel() {
       !adding && h('button', { onClick: () => setAdding(true), className: 'btn btn-primary btn-sm' }, '+ Add'),
     ),
 
-    adding && h(AgentForm, { onSave: handleSave, onCancel: () => setAdding(false) }),
-    editing && h(AgentForm, { initial: editing, onSave: handleSave, onCancel: () => setEditing(null) }),
+    adding && h(AgentForm, { onSave: handleSave, onCancel: () => setAdding(false), mcpServers }),
+    editing && h(AgentForm, { initial: editing, onSave: handleSave, onCancel: () => setEditing(null), mcpServers }),
 
     h('div', { className: 'Box' },
       agents && agents.map(a =>
@@ -135,6 +156,16 @@ export function AgentConfigPanel() {
             a.instructions && h('div', { style: { fontSize: '11px', color: 'var(--color-fg-subtle)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
               a.instructions.substring(0, 80) + (a.instructions.length > 80 ? '...' : ''),
             ),
+            (() => {
+              try {
+                const ids = JSON.parse(a.tools || '[]');
+                if (!ids.length || !mcpServers) return null;
+                const names = ids.map(id => (mcpServers.find(s => s.id === id) || {}).name).filter(Boolean);
+                if (!names.length) return null;
+                return h('div', { style: { fontSize: '11px', color: 'var(--color-fg-muted)', marginTop: '3px' } },
+                  'MCP: ' + names.join(', '));
+              } catch { return null; }
+            })(),
           ),
           h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
             h('button', { onClick: () => { setAdding(false); setEditing(a); }, className: 'btn btn-sm btn-invisible' }, 'Edit'),

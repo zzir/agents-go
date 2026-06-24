@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"sync"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rs/zerolog"
 
@@ -42,7 +43,7 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 
 	var srv *mcp.Server
 	var err error
-	opts := mcp.Options{}
+	opts := mcp.Options{ToolNamePrefix: cfg.Name + "__"}
 
 	switch cfg.TransportType {
 	case "stdio":
@@ -108,6 +109,34 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	return h.base.RoundTrip(req)
 }
 
+// ConnectHTTPWithOAuth connects a streamable HTTP MCP server with the given
+// OAuth handler. It is called from OAuthCoordinator in a goroutine and blocks
+// until the OAuth flow completes (or the context is cancelled).
+func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
+	m.mu.Lock()
+	if _, ok := m.servers[cfg.ID]; ok {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+
+	transport := &mcpsdk.StreamableClientTransport{
+		Endpoint:     hc.Endpoint,
+		OAuthHandler: oauthHandler,
+	}
+	transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
+
+	srv, err := mcp.NewWithTransport(ctx, cfg.Name, transport, mcp.Options{ToolNamePrefix: cfg.Name + "__"})
+	if err != nil {
+		return fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, err)
+	}
+
+	m.mu.Lock()
+	m.servers[cfg.ID] = srv
+	m.mu.Unlock()
+	return nil
+}
+
 // Disconnect closes an MCP server connection and removes it from the manager.
 func (m *McpManager) Disconnect(id string) error {
 	m.mu.Lock()
@@ -146,9 +175,10 @@ func (m *McpManager) CloseAll() {
 }
 
 // AutoConnectMcpServers connects every stored MCP server whose config has
-// AutoConnect set. Failures are logged and skipped so one bad server cannot
-// block the others (or server startup). Intended to be run in a goroutine.
-func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.McpServerStore) {
+// AutoConnect set. For OAuth servers with a saved token it uses the coordinator
+// to reconnect silently. Failures are logged and skipped so one bad server
+// cannot block the others (or server startup). Intended to be run in a goroutine.
+func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
 	log := zerolog.Ctx(ctx)
 	configs, err := servers.List(ctx)
 	if err != nil {
@@ -159,7 +189,22 @@ func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.
 		if !configs[i].AutoConnect {
 			continue
 		}
-		if err := mgr.Connect(ctx, &configs[i]); err != nil {
+		cfg := &configs[i]
+		if cfg.TransportType == "streamable_http" && cfg.OAuthToken != "" {
+			var hc store.HTTPMcpConfig
+			if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
+				result, err := oauth.ConnectWithOAuth(ctx, mgr, cfg, &hc, "")
+				if err != nil {
+					log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth auto-connect failed")
+				} else if result.Connected {
+					log.Info().Str("mcp", cfg.Name).Msg("mcp oauth auto-connected with saved token")
+				} else {
+					log.Warn().Str("mcp", cfg.Name).Msg("mcp oauth auto-connect needs user authorization, skipping")
+				}
+				continue
+			}
+		}
+		if err := mgr.Connect(ctx, cfg); err != nil {
 			log.Warn().Err(err).Str("mcp", configs[i].Name).Msg("mcp auto-connect failed")
 		}
 	}

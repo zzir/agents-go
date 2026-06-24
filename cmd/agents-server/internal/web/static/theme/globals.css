@@ -277,30 +277,16 @@ a:hover { text-decoration: underline; }
   border-radius: 18px 18px 4px 18px;
 }
 
-/* Assistant message — left-aligned with avatar */
+/* Assistant message — left-aligned, no avatar */
 .message-assistant {
   display: flex;
-  gap: var(--space-3);
 }
-.message-assistant .message-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  background: var(--color-neutral-muted);
-  color: var(--color-fg-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.message-assistant .message-avatar svg { width: 16px; height: 16px; }
 .message-assistant .message-body {
   flex: 1;
   min-width: 0;
   font-size: var(--text-sm);
   line-height: 1.6;
   color: var(--color-fg-default);
-  padding-top: 4px;
 }
 
 /* System message */
@@ -318,34 +304,51 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--color-border-muted);
 }
 
+/* --- Assistant turn (one run: text + tool calls as one block) --- */
+.message-turn {
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--space-2) 0;
+}
+.turn-text {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-fg-default);
+}
+.turn-text + .process-group,
+.process-group + .turn-text { margin-top: var(--space-2); }
+.turn-text + .turn-text { margin-top: var(--space-2); }
+
 /* --- Process messages (tool calls) collapsible --- */
 .process-group {
-  max-width: 860px;
-  margin: var(--space-2) auto;
+  margin: var(--space-2) 0;
   width: 100%;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border-muted);
 }
 .process-group-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 4px 10px;
   font-size: var(--text-xs);
   color: var(--color-fg-muted);
   cursor: pointer;
   user-select: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: var(--color-canvas-subtle);
   border: 1px solid var(--color-border-muted);
-  transition: background 0.1s;
+  transition: background 0.1s, color 0.1s;
 }
-.process-group-toggle:hover { background: var(--color-neutral-muted); }
+.process-group-toggle:hover { background: var(--color-neutral-muted); color: var(--color-fg-default); }
 .process-group-toggle .process-icon {
-  width: 14px; height: 14px; flex-shrink: 0; color: var(--color-fg-subtle);
+  width: 12px; height: 12px; flex-shrink: 0; color: var(--color-fg-subtle);
   transition: transform 0.15s;
 }
 .process-group-toggle.expanded .process-icon { transform: rotate(90deg); }
 .process-group-toggle .process-status {
-  margin-left: auto;
+  margin-left: 4px;
 }
 .process-group-body {
   padding: var(--space-1) 0 0;
@@ -800,12 +803,9 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 
 /* --- ToolCall card --- */
 .ToolCallCard {
-  border: 1px solid var(--color-border-default);
+  border: 1px solid var(--color-border-muted);
   border-radius: var(--radius-md);
-  margin: var(--space-2) 0;
-  max-width: 860px;
-  margin-left: auto;
-  margin-right: auto;
+  margin: var(--space-1) 0;
   overflow: hidden;
 }
 .ToolCallCard-header {
@@ -1120,6 +1120,7 @@ body.dialog-open { overflow: hidden; }
 
 /* Message entrance — quiet staggered fade-up */
 .message,
+.message-turn,
 .ToolCallCard,
 .process-group {
   animation: msg-in var(--dur-slow) var(--ease-out) both;
@@ -1131,13 +1132,6 @@ body.dialog-open { overflow: hidden; }
 
 /* User bubble — hairline border for definition */
 .message-user .message-body { border: 1px solid var(--color-border-subtle); }
-
-/* Assistant avatar — branded accent chip */
-.message-assistant .message-avatar {
-  background: var(--color-accent-subtle);
-  color: var(--color-accent-fg);
-  box-shadow: var(--shadow-sm);
-}
 
 /* Composer — resting depth under the input */
 .chat-input-box { box-shadow: var(--shadow-sm); }

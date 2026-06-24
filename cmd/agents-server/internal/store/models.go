@@ -94,6 +94,11 @@ type McpServerConfig struct {
 	// exchanged with the API as a raw JSON object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
+	// OAuthToken is the JSON-serialized oauth2.Token obtained during the OAuth
+	// flow. Stored separately from Config so that regular CRUD updates (which
+	// overwrite Config) don't erase it, and hidden from the API (json:"-").
+	OAuthToken string `bun:"oauth_token,type:text,nullzero" json:"-"`
+
 	CreatedAt time.Time `bun:"created_at,notnull"     json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
 }
@@ -111,6 +116,17 @@ type HTTPMcpConfig struct {
 	// Headers are added to every HTTP request to the server, e.g. an
 	// "Authorization: Bearer <token>" or an API-key header.
 	Headers map[string]string `json:"headers,omitempty"`
+
+	// AuthMode selects the authentication method: "" or "header" for static
+	// headers (the default), "oauth" for the OAuth 2.1 authorization code flow.
+	AuthMode string `json:"auth_mode,omitempty"`
+	// OAuthClientID is an optional pre-registered client ID. When empty and
+	// AuthMode is "oauth", the server will use dynamic client registration.
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
+	// OAuthClientSecret is the corresponding client secret (if pre-registered).
+	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
+	// OAuthScopes are the OAuth scopes to request during authorization.
+	OAuthScopes string `json:"oauth_scopes,omitempty"`
 }
 
 // Memory is a stored key/content fact, either global or scoped to an agent config.
