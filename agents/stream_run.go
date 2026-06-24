@@ -300,12 +300,17 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 // the consumer and assembling the final ModelResponse from the completed event.
 func (r *runner) streamOneModelCall(ctx context.Context, sr *StreamedResult, model Model, req ModelRequest) (*ModelResponse, error) {
 	var final *ModelResponse
+	acc := &streamAccumulator{}
 	for event, err := range model.StreamResponse(ctx, req) {
 		if err != nil {
 			return nil, err
 		}
 		sr.emit(ctx, &RawResponsesStreamEvent{Data: event})
-		if event != nil && event.Type == "response.completed" {
+		if event == nil {
+			continue
+		}
+		acc.processEvent(event)
+		if event.Type == "response.completed" {
 			completed := event.AsResponseCompleted()
 			final = &ModelResponse{
 				Output:     completed.Response.Output,
@@ -320,5 +325,28 @@ func (r *runner) streamOneModelCall(ctx context.Context, sr *StreamedResult, mod
 		// empty response would make a failed run "succeed" with empty output.
 		return nil, newModelBehaviorError("model stream ended without a completed response")
 	}
+	// Some backends (e.g. ChatGPT with store=false) return an empty Output
+	// array in the completed event. Fall back to output assembled from
+	// streaming deltas so the run produces a usable final result.
+	if len(final.Output) == 0 {
+		final.Output = acc.buildOutput()
+	}
 	return final, nil
+}
+
+// streamAccumulator collects output items from streaming events so they can
+// be used as a fallback when the completed response has an empty Output array.
+type streamAccumulator struct {
+	items []TResponseOutputItem
+}
+
+func (a *streamAccumulator) processEvent(event *TResponseStreamEvent) {
+	if event.Type == "response.output_item.done" {
+		done := event.AsResponseOutputItemDone()
+		a.items = append(a.items, done.Item)
+	}
+}
+
+func (a *streamAccumulator) buildOutput() []TResponseOutputItem {
+	return a.items
 }

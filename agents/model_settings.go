@@ -63,6 +63,9 @@ type ModelSettings struct {
 	// Metadata is included with the model response call.
 	Metadata map[string]string `json:"metadata,omitempty"`
 
+	// ServiceTier selects the processing tier: "auto", "default", "flex" or "priority".
+	ServiceTier string `json:"service_tier,omitempty"`
+
 	// Store controls whether the provider stores the response for later retrieval.
 	Store *bool `json:"store,omitempty"`
 
@@ -126,6 +129,9 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	}
 	if override.Metadata != nil {
 		out.Metadata = override.Metadata
+	}
+	if override.ServiceTier != "" {
+		out.ServiceTier = override.ServiceTier
 	}
 	if override.Store != nil {
 		out.Store = override.Store

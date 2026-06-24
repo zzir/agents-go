@@ -132,6 +132,9 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 	if len(s.Metadata) > 0 {
 		params.Metadata = shared.Metadata(s.Metadata)
 	}
+	if s.ServiceTier != "" {
+		params.ServiceTier = responses.ResponseNewParamsServiceTier(s.ServiceTier)
+	}
 	if s.Reasoning != nil {
 		params.Reasoning = shared.ReasoningParam{
 			Effort:  shared.ReasoningEffort(s.Reasoning.Effort),
