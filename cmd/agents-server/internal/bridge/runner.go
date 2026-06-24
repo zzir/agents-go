@@ -300,7 +300,11 @@ func (r *Runner) maybeGenerateTitle(sessionID, agentConfigID, userInput string, 
 		ModelProvider: built.Provider,
 		MaxTurns:      1,
 	})
-	for range sr.Events() {
+	for _, err := range sr.Events() {
+		if err != nil {
+			log.Warn().Err(err).Msg("title gen: stream error")
+			return
+		}
 	}
 	res, err := sr.FinalResult()
 	if err != nil {

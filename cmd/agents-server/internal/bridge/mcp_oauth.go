@@ -66,7 +66,7 @@ type ConnectResult struct {
 // returns immediately with either a Connected result or an AuthorizeURL that
 // the frontend should open.
 func (c *OAuthCoordinator) ConnectWithOAuth(
-	ctx context.Context,
+	_ context.Context,
 	mgr *McpManager,
 	cfg *store.McpServerConfig,
 	hc *store.HTTPMcpConfig,

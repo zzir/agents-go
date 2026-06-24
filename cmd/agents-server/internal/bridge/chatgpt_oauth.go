@@ -17,6 +17,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
+// ChatGPT OAuth configuration constants.
 const (
 	chatgptClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
 	chatgptAuthURL     = "https://auth.openai.com/oauth/authorize"
@@ -24,9 +25,11 @@ const (
 	chatgptScope       = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 	chatgptRedirectURI = "http://localhost:1455/auth/callback"
 	chatgptFallbackURI = "http://localhost:1457/auth/callback"
-	ChatGPTBaseURL     = "https://chatgpt.com/backend-api/codex"
+	// ChatGPTBaseURL is the base URL for the ChatGPT Codex API.
+	ChatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
 )
 
+// ChatGPTOAuth manages the OAuth flow for ChatGPT subscription authentication.
 type ChatGPTOAuth struct {
 	agents *store.AgentConfigStore
 
@@ -42,6 +45,7 @@ type chatgptPending struct {
 	cancel        context.CancelFunc
 }
 
+// NewChatGPTOAuth creates a new ChatGPT OAuth manager.
 func NewChatGPTOAuth(agents *store.AgentConfigStore) *ChatGPTOAuth {
 	return &ChatGPTOAuth{
 		agents:  agents,
@@ -49,11 +53,13 @@ func NewChatGPTOAuth(agents *store.AgentConfigStore) *ChatGPTOAuth {
 	}
 }
 
+// ChatGPTLoginResult is returned by StartLogin with the authorize URL.
 type ChatGPTLoginResult struct {
 	AuthorizeURL string `json:"authorize_url"`
 	State        string `json:"state"`
 }
 
+// StartLogin begins the ChatGPT OAuth PKCE flow for the given agent.
 func (o *ChatGPTOAuth) StartLogin(agentConfigID string) (*ChatGPTLoginResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
@@ -77,14 +83,14 @@ func (o *ChatGPTOAuth) StartLogin(agentConfigID string) (*ChatGPTLoginResult, er
 	params := url.Values{
 		"response_type":              {"code"},
 		"client_id":                  {chatgptClientID},
-		"redirect_uri":              {redirectURI},
-		"scope":                     {chatgptScope},
-		"code_challenge":            {challenge},
-		"code_challenge_method":     {"S256"},
-		"state":                     {state},
+		"redirect_uri":               {redirectURI},
+		"scope":                      {chatgptScope},
+		"code_challenge":             {challenge},
+		"code_challenge_method":      {"S256"},
+		"state":                      {state},
 		"id_token_add_organizations": {"true"},
-		"codex_cli_simplified_flow": {"true"},
-		"originator":                {"codex_cli_rs"},
+		"codex_cli_simplified_flow":  {"true"},
+		"originator":                 {"codex_cli_rs"},
 	}
 	authorizeURL := chatgptAuthURL + "?" + params.Encode()
 
@@ -126,6 +132,11 @@ func (o *ChatGPTOAuth) serveCallback(ctx context.Context, ln net.Listener, state
 	mux := http.NewServeMux()
 	srv := &http.Server{Handler: mux}
 
+	writeHTML := func(w http.ResponseWriter, status, errMsg string) {
+		_, _ = fmt.Fprint(w, callbackHTML(status, errMsg))
+	}
+	shutdown := func() { go func() { _ = srv.Shutdown(context.Background()) }() }
+
 	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		gotState := r.URL.Query().Get("state")
@@ -134,15 +145,15 @@ func (o *ChatGPTOAuth) serveCallback(ctx context.Context, ln net.Listener, state
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 		if errMsg != "" {
-			fmt.Fprint(w, callbackHTML("error", errMsg))
+			writeHTML(w, "error", errMsg)
 			o.cleanupPending(state, fmt.Errorf("oauth error: %s", errMsg))
-			go srv.Shutdown(context.Background())
+			shutdown()
 			return
 		}
 		if gotState != state || code == "" {
-			fmt.Fprint(w, callbackHTML("error", "invalid state or missing code"))
+			writeHTML(w, "error", "invalid state or missing code")
 			o.cleanupPending(state, fmt.Errorf("state mismatch"))
-			go srv.Shutdown(context.Background())
+			shutdown()
 			return
 		}
 
@@ -150,37 +161,37 @@ func (o *ChatGPTOAuth) serveCallback(ctx context.Context, ln net.Listener, state
 		p, ok := o.pending[state]
 		o.mu.Unlock()
 		if !ok {
-			fmt.Fprint(w, callbackHTML("error", "expired"))
-			go srv.Shutdown(context.Background())
+			writeHTML(w, "error", "expired")
+			shutdown()
 			return
 		}
 
 		tokens, err := exchangeCode(code, p.codeVerifier, p.redirectURI)
 		if err != nil {
-			fmt.Fprint(w, callbackHTML("error", err.Error()))
+			writeHTML(w, "error", err.Error())
 			o.cleanupPending(state, err)
-			go srv.Shutdown(context.Background())
+			shutdown()
 			return
 		}
 
 		if err := o.saveTokens(r.Context(), p.agentConfigID, tokens); err != nil {
-			fmt.Fprint(w, callbackHTML("error", err.Error()))
+			writeHTML(w, "error", err.Error())
 			o.cleanupPending(state, err)
-			go srv.Shutdown(context.Background())
+			shutdown()
 			return
 		}
 
-		fmt.Fprint(w, callbackHTML("success", ""))
+		writeHTML(w, "success", "")
 		o.cleanupPending(state, nil)
-		go srv.Shutdown(context.Background())
+		shutdown()
 	})
 
 	go func() {
 		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		_ = srv.Shutdown(context.Background())
 	}()
 
-	srv.Serve(ln)
+	_ = srv.Serve(ln)
 }
 
 func (o *ChatGPTOAuth) cleanupPending(state string, err error) {
@@ -196,6 +207,7 @@ func (o *ChatGPTOAuth) cleanupPending(state string, err error) {
 	}
 }
 
+// ChatGPTCredentials holds the access token and account ID for ChatGPT API calls.
 type ChatGPTCredentials struct {
 	AccessToken string
 	AccountID   string

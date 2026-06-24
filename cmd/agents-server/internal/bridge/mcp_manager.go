@@ -194,11 +194,12 @@ func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.
 			var hc store.HTTPMcpConfig
 			if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
 				result, err := oauth.ConnectWithOAuth(ctx, mgr, cfg, &hc, "")
-				if err != nil {
+				switch {
+				case err != nil:
 					log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth auto-connect failed")
-				} else if result.Connected {
+				case result.Connected:
 					log.Info().Str("mcp", cfg.Name).Msg("mcp oauth auto-connected with saved token")
-				} else {
+				default:
 					log.Warn().Str("mcp", cfg.Name).Msg("mcp oauth auto-connect needs user authorization, skipping")
 				}
 				continue

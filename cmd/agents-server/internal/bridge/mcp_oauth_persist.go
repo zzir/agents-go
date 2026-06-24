@@ -61,13 +61,13 @@ func (h *persistentOAuthHandler) Authorize(ctx context.Context, req *http.Reques
 	if err := h.inner.Authorize(ctx, req, resp); err != nil {
 		return err
 	}
-	ts, err := h.inner.TokenSource(ctx)
-	if err != nil || ts == nil {
-		return nil
+	ts, tsErr := h.inner.TokenSource(ctx)
+	if tsErr != nil || ts == nil {
+		return tsErr
 	}
-	tok, err := ts.Token()
-	if err != nil || tok == nil {
-		return nil
+	tok, tokErr := ts.Token()
+	if tokErr != nil || tok == nil {
+		return tokErr
 	}
 	h.mu.Lock()
 	h.tokenSource = ts
