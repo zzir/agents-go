@@ -1,7 +1,7 @@
 // Package mcp provides a Model Context Protocol (MCP) client that exposes a
 // server's tools to an agent. It implements agents.MCPServer over the official
-// modelcontextprotocol/go-sdk, supporting stdio, SSE and streamable HTTP
-// transports.
+// modelcontextprotocol/go-sdk, supporting stdio and streamable HTTP transports
+// (plus the deprecated SSE transport).
 package mcp
 
 import (
@@ -132,6 +132,10 @@ func NewStreamableHTTPServer(ctx context.Context, name, endpoint string, opts Op
 }
 
 // NewSSEServer connects to an MCP server over the SSE transport at endpoint.
+//
+// Deprecated: the MCP spec replaced the HTTP+SSE transport with streamable HTTP
+// (revision 2025-03-26); use [NewStreamableHTTPServer] for new servers. This is
+// kept for servers that only expose a legacy SSE endpoint.
 func NewSSEServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
 	s := newServer(name, opts)
 	if err := s.connect(ctx, &mcpsdk.SSEClientTransport{Endpoint: endpoint}); err != nil {

@@ -52,25 +52,13 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 		}
 		cmd := exec.CommandContext(ctx, sc.Command, sc.Args...)
 		srv, err = mcp.NewStdioServer(ctx, cfg.Name, cmd, opts)
-	case "sse":
-		var hc store.HTTPMcpConfig
-		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
-			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
-		}
-		transport := &mcpsdk.SSEClientTransport{Endpoint: hc.Endpoint}
-		if pc := m.proxyClient(ctx); pc != nil {
-			transport.HTTPClient = pc
-		}
-		srv, err = mcp.NewWithTransport(ctx, cfg.Name, transport, opts)
 	case "streamable_http":
 		var hc store.HTTPMcpConfig
 		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
 			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 		}
 		transport := &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint}
-		if pc := m.proxyClient(ctx); pc != nil {
-			transport.HTTPClient = pc
-		}
+		transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 		srv, err = mcp.NewWithTransport(ctx, cfg.Name, transport, opts)
 	default:
 		return fmt.Errorf("unknown transport type: %s", cfg.TransportType)
@@ -85,6 +73,39 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 
 func (m *McpManager) proxyClient(ctx context.Context) *http.Client {
 	return ProxyHTTPClient(ctx, m.settings)
+}
+
+// httpClientFor builds the HTTP client an HTTP-based MCP transport should use,
+// combining the optional proxy client with optional static request headers.
+// Returns nil (so the SDK uses its default client) when neither is configured.
+func httpClientFor(proxy *http.Client, headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return proxy
+	}
+	base := http.DefaultTransport
+	if proxy != nil && proxy.Transport != nil {
+		base = proxy.Transport
+	}
+	client := &http.Client{Transport: &headerRoundTripper{base: base, headers: headers}}
+	if proxy != nil {
+		client.Timeout = proxy.Timeout
+	}
+	return client
+}
+
+// headerRoundTripper adds a fixed set of headers to every request before
+// delegating to base.
+type headerRoundTripper struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context()) // never mutate the caller's request
+	for k, v := range h.headers {
+		req.Header.Set(k, v)
+	}
+	return h.base.RoundTrip(req)
 }
 
 // Disconnect closes an MCP server connection and removes it from the manager.

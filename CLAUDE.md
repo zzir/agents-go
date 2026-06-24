@@ -147,8 +147,9 @@ as a callable tool (nested run).
   `StartAgentSpan`) plus a `Data map[string]any` — the idiomatic-Go stand-in for
   Python's typed SpanData: a tag + map, not a sealed union. `StartSpan` stays for
   untyped custom spans.
-- **MCP** (`mcp/mcp.go`): Stdio / SSE / StreamableHTTP MCP servers exposed as
-  tool sources; `agents/mcp.go` bridges them into the runner's tool list.
+- **MCP** (`mcp/mcp.go`): Stdio / StreamableHTTP (and deprecated SSE) MCP servers
+  exposed as tool sources; `agents/mcp.go` bridges them into the runner's tool
+  list. The agents-server demo only surfaces stdio + streamable HTTP.
 - **Sandbox** (`sandbox/`): pluggable code-execution backends (Local + the Docker
   and SSH submodules) behind a `Sandbox` interface, wrapped as a tool via `tool.go`.
 

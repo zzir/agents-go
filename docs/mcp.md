@@ -30,7 +30,7 @@ Transports:
 |---|---|
 | `mcp.NewStdioServer(ctx, name, cmd, opts)` | Subprocess over stdio |
 | `mcp.NewStreamableHTTPServer(ctx, name, endpoint, opts)` | Streamable HTTP |
-| `mcp.NewSSEServer(ctx, name, endpoint, opts)` | Server-sent events |
+| `mcp.NewSSEServer(ctx, name, endpoint, opts)` | Server-sent events (**deprecated** — use streamable HTTP) |
 | `mcp.NewWithTransport(ctx, name, transport, opts)` | Anything implementing the go-sdk `Transport` (e.g. in-memory for tests) |
 
 The agent lists each server's tools at the start of every turn, so servers may add or remove tools between turns.

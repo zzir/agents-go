@@ -86,11 +86,11 @@ type McpServerConfig struct {
 
 	ID            string `bun:"id,pk"                  json:"id"`
 	Name          string `bun:"name,notnull"           json:"name"`
-	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | sse | streamable_http
+	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | streamable_http
 	AutoConnect   bool   `bun:"auto_connect"           json:"auto_connect"`
 
 	// Config holds the transport-specific settings as JSON: StdioMcpConfig for
-	// "stdio", HTTPMcpConfig for "sse"/"streamable_http". Stored as TEXT and
+	// "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
 	// exchanged with the API as a raw JSON object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
@@ -104,10 +104,13 @@ type StdioMcpConfig struct {
 	Args    []string `json:"args,omitempty"`
 }
 
-// HTTPMcpConfig is the McpServerConfig.Config payload for the "sse" and
-// "streamable_http" transports.
+// HTTPMcpConfig is the McpServerConfig.Config payload for the "streamable_http"
+// transport.
 type HTTPMcpConfig struct {
 	Endpoint string `json:"endpoint"`
+	// Headers are added to every HTTP request to the server, e.g. an
+	// "Authorization: Bearer <token>" or an API-key header.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // Memory is a stored key/content fact, either global or scoped to an agent config.

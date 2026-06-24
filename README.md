@@ -64,7 +64,7 @@ func main() {
 | Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` (OpenAI stored prompt) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor` |
-| MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewSSEServer` |
+| MCP | `mcp.NewStdioServer / NewStreamableHTTPServer` (`NewSSEServer` deprecated) |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 | File editing | `editor.NewTools(dir)` (str_replace editor, `os.Root`-confined) |
 | Retry / fallback | `agents.NewRetryModel(...)`, `agents.NewFallbackModel(...)` (model-level); `agents.NewRetryProvider(...)`, `agents.NewFallbackProvider(...)` (provider-level) |

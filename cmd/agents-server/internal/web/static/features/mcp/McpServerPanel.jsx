@@ -4,7 +4,7 @@ import { useApi } from '/lib/hooks.js';
 
 const { useState } = React;
 const h = React.createElement;
-const TRANSPORTS = ['stdio', 'sse', 'streamable_http'];
+const TRANSPORTS = ['stdio', 'streamable_http'];
 
 // flatten turns a stored server (top-level columns + nested config) into the
 // flat field set the form edits; pack() is its inverse.
@@ -15,6 +15,7 @@ function flatten(s) {
     command: c.command || '',
     args: Array.isArray(c.args) ? JSON.stringify(c.args) : '', // array → JSON text for the input
     endpoint: c.endpoint || '',
+    headers: c.headers ? JSON.stringify(c.headers) : '', // object → JSON text for the input
   };
 }
 
@@ -29,6 +30,9 @@ function pack(form) {
     config = { command: form.command, args };
   } else {
     config = { endpoint: form.endpoint };
+    let headers = null;
+    try { headers = form.headers ? JSON.parse(form.headers) : null; } catch (e) { headers = null; }
+    if (headers && typeof headers === 'object' && Object.keys(headers).length > 0) config.headers = headers;
   }
   return { ...base, config };
 }
@@ -46,6 +50,12 @@ function McpForm({ initial, onSave, onCancel }) {
     isStdio && fc('Command', h('input', { value: form.command, onChange: e => set('command', e.target.value), placeholder: 'npx -y @modelcontextprotocol/server-filesystem', className: 'form-control' })),
     isStdio && fc('Args (JSON array)', h('input', { value: form.args, onChange: e => set('args', e.target.value), placeholder: '["/path/to/dir"]', className: 'form-control form-control-mono' })),
     !isStdio && fc('Endpoint', h('input', { value: form.endpoint, onChange: e => set('endpoint', e.target.value), placeholder: 'http://localhost:3000/mcp', className: 'form-control' })),
+    !isStdio && fc('Headers (JSON object)',
+      h('div', null,
+        h('input', { value: form.headers, onChange: e => set('headers', e.target.value), placeholder: '{"Authorization": "Bearer <token>"}', className: 'form-control form-control-mono' }),
+        h('span', { className: 'FormControl-caption' }, 'Sent with every request, e.g. an auth or API-key header. Leave empty for none.'),
+      ),
+    ),
     h('label', { className: 'form-checkbox', style: { marginBottom: '12px' } },
       h('input', { type: 'checkbox', checked: form.auto_connect, onChange: e => set('auto_connect', e.target.checked) }),
       'Auto-connect on server start',
