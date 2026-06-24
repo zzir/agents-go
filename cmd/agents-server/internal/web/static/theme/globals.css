@@ -47,40 +47,16 @@ a:hover { text-decoration: underline; }
   z-index: 20;
 }
 
-/* Horizontal tab bar at top */
-.sidebar-tabs {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: var(--space-2);
-  flex-shrink: 0;
-  background: var(--color-canvas-subtle);
+/* Horizontal tab bar at top — extends SegmentedControl */
+.sidebar-tabs.SegmentedControl {
+  margin: var(--space-2) var(--space-2) 0;
+  border: none;
 }
-.sidebar-tab {
+.sidebar-tab.SegmentedControl-item {
   flex: 1;
-  display: flex;
-  align-items: center;
   justify-content: center;
   gap: 6px;
   padding: 6px 0;
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--color-fg-muted);
-  cursor: pointer;
-  user-select: none;
-  border: none;
-  background: none;
-  transition: background 0.1s, color 0.1s;
-}
-.sidebar-tab:hover {
-  background: var(--color-neutral-muted);
-  color: var(--color-fg-default);
-}
-.sidebar-tab.active {
-  background: var(--color-canvas-default);
-  color: var(--color-fg-default);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 .sidebar-tab-icon {
   width: 14px;
@@ -103,7 +79,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border-top: 1px solid var(--color-border-muted);
   flex-shrink: 0;
 }
@@ -201,7 +177,7 @@ a:hover { text-decoration: underline; }
   background: var(--color-canvas-default);
 }
 .chat-pane-header {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   flex-shrink: 0;
 }
 .chat-pane-body {
@@ -221,8 +197,8 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
-  margin: 0 var(--space-2);
+  padding: 6px 10px;
+  margin: 1px var(--space-1);
   border-radius: var(--radius-md);
   cursor: pointer;
   font-size: var(--text-sm);
@@ -274,7 +250,7 @@ a:hover { text-decoration: underline; }
   word-break: break-word;
   background: var(--color-accent-subtle);
   padding: 8px 14px;
-  border-radius: 18px 18px 4px 18px;
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
 }
 
 /* Assistant message — left-aligned, no avatar */
@@ -356,16 +332,13 @@ a:hover { text-decoration: underline; }
 
 /* --- Thinking indicator --- */
 .thinking-indicator {
-  max-width: 860px;
-  margin: var(--space-2) auto;
-  width: 100%;
-  padding: 0 var(--space-3);
+  margin: var(--space-1) 0;
 }
 .thinking-dots {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 10px 16px;
+  padding: 8px 14px;
   background: var(--color-canvas-subtle);
   border: 1px solid var(--color-border-muted);
   border-radius: var(--radius-lg);
@@ -398,7 +371,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: flex-end;
   border: 1px solid var(--color-border-default);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   background: var(--color-canvas-default);
   transition: border-color 0.15s, box-shadow 0.15s;
   overflow: hidden;
@@ -647,6 +620,44 @@ a:hover { text-decoration: underline; }
 
 .btn-sm { padding: 3px 8px; font-size: var(--text-xs); }
 
+/* --- SegmentedControl (Primer-style mutually-exclusive option toggle) --- */
+.SegmentedControl {
+  display: inline-flex;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-muted);
+  padding: 2px;
+  gap: 1px;
+}
+.SegmentedControl-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  font-family: inherit;
+  line-height: 20px;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.SegmentedControl-item:hover:not([aria-checked="true"]) {
+  color: var(--color-fg-default);
+}
+.SegmentedControl-item[aria-checked="true"] {
+  background: var(--color-canvas-default);
+  color: var(--color-fg-default);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px var(--color-border-default);
+}
+.SegmentedControl-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* --- Form Controls --- */
 .FormControl {
   margin-bottom: var(--space-3);
@@ -695,6 +706,7 @@ textarea.form-control { resize: vertical; min-height: 80px; }
   color: var(--color-fg-muted);
   cursor: pointer;
 }
+.form-checkbox + .form-checkbox { margin-top: var(--space-2); }
 .form-checkbox input[type="checkbox"] { cursor: pointer; }
 
 /* --- Box (card container) --- */
@@ -728,6 +740,20 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .Label-success { background: var(--color-success-subtle); color: var(--color-success-fg); }
 .Label-danger { background: var(--color-danger-subtle); color: var(--color-danger-fg); }
 .Label-default { background: var(--color-neutral-subtle); color: var(--color-fg-muted); border-color: var(--color-border-muted); }
+
+/* --- Flash (inline notification banner) --- */
+.flash {
+  padding: 10px 12px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  cursor: pointer;
+}
+.flash-error {
+  background: var(--color-danger-subtle);
+  color: var(--color-danger-fg);
+  border: 1px solid var(--color-danger-muted);
+}
 
 /* --- Toast / Flash --- */
 .Toast {
@@ -774,6 +800,58 @@ textarea.form-control { resize: vertical; min-height: 80px; }
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
   background: var(--color-canvas-subtle);
+  margin-bottom: var(--space-3);
+}
+
+/* Form section title (uppercase heading inside form-box, e.g. "Provider") */
+.form-section-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-2);
+}
+
+/* Inline control group (side-by-side controls like Reasoning + Fast) */
+.form-inline-group {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+.form-inline-group > :last-child { flex-shrink: 0; }
+
+/* Status indicator row (green dot + text + action button) */
+.form-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.form-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+.form-status-dot--success { background: var(--color-success-fg); }
+.form-status-text {
+  font-size: var(--text-xs);
+  color: var(--color-fg-muted);
+}
+
+/* Button row at bottom of form */
+.form-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* OAuth connect section inside form — collapse into preceding FormControl's margin */
+.form-oauth {
+  margin-top: calc(-1 * var(--space-1));
+}
+.form-oauth > .form-status,
+.form-oauth > .FormControl {
   margin-bottom: var(--space-3);
 }
 
@@ -1032,14 +1110,11 @@ body.dialog-open { overflow: hidden; }
   box-shadow: var(--focus-ring);
 }
 
-/* Sidebar tabs — refined active pill with token depth */
-.sidebar-tab {
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+/* SegmentedControl — refined active pill with token depth */
+.SegmentedControl-item[aria-checked="true"] {
+  box-shadow: var(--shadow-resting, 0 1px 2px rgba(0,0,0,0.06)), 0 0 0 1px var(--color-border-default);
 }
-.sidebar-tab.active {
-  box-shadow: var(--shadow-resting), 0 1px 2px rgba(31, 35, 40, 0.1);
-}
-[data-theme="dark"] .sidebar-tab.active {
+[data-theme="dark"] .SegmentedControl-item[aria-checked="true"] {
   box-shadow: inset 0 0 0 1px var(--color-border-muted);
 }
 
@@ -1048,7 +1123,7 @@ body.dialog-open { overflow: hidden; }
 .session-item.active::before {
   content: "";
   position: absolute;
-  left: -2px;
+  left: -1px;
   top: 50%;
   transform: translateY(-50%);
   width: 3px;

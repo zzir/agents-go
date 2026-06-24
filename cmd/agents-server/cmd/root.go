@@ -74,6 +74,7 @@ func run(_ *cobra.Command, _ []string) error {
 	sandboxStore := store.NewSandboxStore(db)
 	mcpManager := bridge.NewMcpManager(settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
+	chatgptOAuth := bridge.NewChatGPTOAuth(agentConfigStore)
 	defer mcpManager.CloseAll()
 	go bridge.AutoConnectMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
 	sandboxManager := bridge.NewSandboxManager(flagRootDir)
@@ -90,6 +91,7 @@ func run(_ *cobra.Command, _ []string) error {
 		Traces:         traceStore,
 		McpManager:     mcpManager,
 		SandboxManager: sandboxManager,
+		ChatGPTOAuth:   chatgptOAuth,
 		RootDir:        flagRootDir,
 	}
 	runner := bridge.NewRunner(db, deps)
@@ -105,6 +107,7 @@ func run(_ *cobra.Command, _ []string) error {
 	guardrailHandler := handler.NewGuardrailHandler()
 	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager)
 	traceHandler := handler.NewTraceHandler(traceStore)
+	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
 	wsHandler := handler.NewWSHandler(runner)
 
 	srv := server.New(log)
@@ -168,6 +171,11 @@ func run(_ *cobra.Command, _ []string) error {
 		SandboxExec:   sandboxHandler.Exec,
 
 		TraceListBySession: traceHandler.ListBySession,
+
+		ChatGPTLogin:    chatgptOAuthHandler.Login,
+		ChatGPTCallback: chatgptOAuthHandler.Callback,
+		ChatGPTStatus:   chatgptOAuthHandler.Status,
+		ChatGPTLogout:   chatgptOAuthHandler.Logout,
 	})
 
 	staticFS, err := fs.Sub(web.StaticFS, "static")

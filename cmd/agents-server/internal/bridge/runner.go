@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -129,10 +130,14 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 
 	for event, err := range sr.Events() {
 		if err != nil {
-			sendEvent("run.error", protocol.RunError{
-				Code:    "stream_error",
-				Message: err.Error(),
-			})
+			if ctx.Err() != nil {
+				sendEvent("run.cancelled", nil)
+			} else {
+				sendEvent("run.error", protocol.RunError{
+					Code:    "stream_error",
+					Message: err.Error(),
+				})
+			}
 			return mkResult()
 		}
 		r.handleStreamEvent(event, sendEvent)
@@ -262,8 +267,13 @@ func (r *Runner) updateSessionMeta(sessionID, agentConfigID string) {
 }
 
 func (r *Runner) maybeGenerateTitle(sessionID, agentConfigID, userInput string, sendEvent func(string, any)) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	log := zerolog.Ctx(ctx)
+	if log.GetLevel() == zerolog.Disabled {
+		nop := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+		log = &nop
+	}
 
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
 	if err != nil || sess.Name != "New Chat" {
@@ -271,7 +281,12 @@ func (r *Runner) maybeGenerateTitle(sessionID, agentConfigID, userInput string, 
 	}
 
 	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, "")
-	if err != nil || built.Provider == nil {
+	if err != nil {
+		log.Warn().Err(err).Msg("title gen: build agent failed")
+		return
+	}
+	if built.Provider == nil {
+		log.Warn().Msg("title gen: no provider available")
 		return
 	}
 
@@ -281,20 +296,26 @@ func (r *Runner) maybeGenerateTitle(sessionID, agentConfigID, userInput string, 
 		Instructions: agents.StaticInstructions("You generate concise chat titles. Reply with ONLY the title text, nothing else. No quotes. Under 30 characters."),
 	}
 	prompt := "Generate a short title for this chat:\n\n" + userInput
-	res, err := agents.Run(ctx, titleAgent, prompt, agents.RunOptions{
+	sr := agents.RunStreamed(ctx, titleAgent, prompt, agents.RunOptions{
 		ModelProvider: built.Provider,
 		MaxTurns:      1,
 	})
+	for range sr.Events() {
+	}
+	res, err := sr.FinalResult()
 	if err != nil {
+		log.Warn().Err(err).Msg("title gen: run failed")
 		return
 	}
 	title := strings.TrimSpace(res.FinalOutputString())
 	title = strings.Trim(title, "\"'")
 	if title == "" || len([]rune(title)) > 50 {
+		log.Warn().Str("raw", title).Msg("title gen: empty or too long")
 		return
 	}
 
 	if err := r.Deps.Sessions.Update(ctx, sessionID, title); err != nil {
+		log.Warn().Err(err).Msg("title gen: save failed")
 		return
 	}
 	sendEvent("session.title_updated", protocol.SessionTitleUpdated{

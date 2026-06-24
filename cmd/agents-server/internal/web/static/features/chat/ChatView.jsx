@@ -82,7 +82,9 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi(() => api.sandboxes.list());
 
   useEffect(() => {
-    if (agentConfigs && agentConfigs.length > 0 && !agentConfigId) {
+    if (!agentConfigs || agentConfigs.length === 0) return;
+    const valid = agentConfigs.some(a => a.id === agentConfigId);
+    if (!valid) {
       setAgentConfigId(agentConfigs[0].id);
     }
   }, [agentConfigs]);
@@ -206,13 +208,14 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
       setStreaming(streamBuf.text);
     });
     ws.on('run.output', (payload) => {
+      const text = payload.final_output || streamBuf.text;
       streamBuf.text = '';
       setStreaming('');
       setRunning(false);
       setLiveRunId(null);
       runIdRef.current = null;
-      if (payload.final_output) {
-        addTurnPart({ type: 'text', content: payload.final_output });
+      if (text) {
+        addTurnPart({ type: 'text', content: text });
       }
     });
     ws.on('run.error', (payload) => {
@@ -234,6 +237,25 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
         }
         return [...prev, { role: 'system', content: 'Error: ' + payload.message }];
       });
+    });
+    ws.on('run.cancelled', () => {
+      const remaining = streamBuf.text;
+      streamBuf.text = '';
+      setStreaming('');
+      setRunning(false);
+      setLiveRunId(null);
+      runIdRef.current = null;
+      if (remaining) {
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === 'turn') {
+            updated[updated.length - 1] = { ...last, parts: [...last.parts, { type: 'text', content: remaining }] };
+            return updated;
+          }
+          return prev;
+        });
+      }
     });
     ws.on('run.tool_call', (payload) => {
       const flushed = streamBuf.text;

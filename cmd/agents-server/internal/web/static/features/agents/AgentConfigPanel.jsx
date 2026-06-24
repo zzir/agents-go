@@ -9,9 +9,13 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
   const initTools = () => {
     try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
   };
+  const parseModelSettings = () => {
+    try { return JSON.parse((initial && initial.model_settings) || '{}'); } catch { return {}; }
+  };
+  const initMs = parseModelSettings();
   const [form, setForm] = useState(initial || {
     name: '', instructions: '', model: 'gpt-4o',
-    provider_type: '', api_key: '', base_url: '',
+    provider_type: '', auth_mode: '', api_key: '', base_url: '',
     max_turns: 0, handoff_description: '',
     disable_tool_choice_reset: false, tool_use_behavior: '',
     retry_enabled: false, retry_policy: '',
@@ -22,6 +26,9 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
     handoff_input_filter: '', max_tool_concurrency: 0,
     tool_not_found_behavior: '',
   });
+  const [reasoningEffort, setReasoningEffort] = useState((initMs.reasoning && initMs.reasoning.effort) || '');
+  const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
+  const [chatgptStatus, setChatgptStatus] = useState(initial && initial.chatgpt_token ? true : null);
   const [selectedMcp, setSelectedMcp] = useState(initTools);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -33,22 +40,116 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
     fc('Name', h('input', { value: form.name, onChange: e => set('name', e.target.value), placeholder: 'e.g. Code Assistant', className: 'form-control' })),
     fc('Model', h('input', { value: form.model, onChange: e => set('model', e.target.value), placeholder: 'gpt-4o', className: 'form-control' })),
 
+    h('div', { className: 'form-inline-group' },
+      h('div', { style: { flex: 1 } },
+        fc('Reasoning', h('div', { className: 'SegmentedControl', role: 'radiogroup' },
+          ['low', 'medium', 'high', 'xhigh'].map(v =>
+            h('button', {
+              key: v, type: 'button', className: 'SegmentedControl-item', role: 'radio',
+              'aria-checked': reasoningEffort === v ? 'true' : 'false',
+              onClick: () => setReasoningEffort(reasoningEffort === v ? '' : v),
+            }, v === 'xhigh' ? 'Extra High' : v.charAt(0).toUpperCase() + v.slice(1)),
+          ),
+        )),
+      ),
+      h('div', null,
+        fc('Fast', h('div', { className: 'SegmentedControl', role: 'radiogroup' },
+          h('button', {
+            type: 'button', className: 'SegmentedControl-item', role: 'radio',
+            'aria-checked': serviceTier !== 'priority' ? 'true' : 'false',
+            onClick: () => setServiceTier(''),
+          }, 'Off'),
+          h('button', {
+            type: 'button', className: 'SegmentedControl-item', role: 'radio',
+            'aria-checked': serviceTier === 'priority' ? 'true' : 'false',
+            onClick: () => setServiceTier('priority'),
+          }, 'On'),
+        )),
+      ),
+    ),
+
     h('div', { className: 'divider' }),
-    h('div', { style: { fontSize: '12px', fontWeight: 600, color: 'var(--color-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' } }, 'Provider'),
-    fc('API Key', h('input', { value: form.api_key, onChange: e => set('api_key', e.target.value), placeholder: 'sk-...', type: 'password', className: 'form-control' })),
-    fc('Base URL', h('input', { value: form.base_url, onChange: e => set('base_url', e.target.value), placeholder: 'https://api.openai.com/v1 (leave empty for default)', className: 'form-control' })),
+    h('div', { className: 'form-section-title' }, 'Provider'),
+    fc('Auth Mode', h('div', { className: 'SegmentedControl', role: 'radiogroup' },
+      h('button', {
+        className: 'SegmentedControl-item',
+        role: 'radio',
+        'aria-checked': form.auth_mode !== 'chatgpt_login' ? 'true' : 'false',
+        onClick: () => set('auth_mode', ''),
+        type: 'button',
+      }, 'OpenAI API Key'),
+      h('button', {
+        className: 'SegmentedControl-item',
+        role: 'radio',
+        'aria-checked': form.auth_mode === 'chatgpt_login' ? 'true' : 'false',
+        onClick: () => {
+          set('auth_mode', 'chatgpt_login');
+        },
+        type: 'button',
+      }, 'ChatGPT Subscribe'),
+    ), 'Choose authentication method'),
+
+    form.auth_mode !== 'chatgpt_login' && h(React.Fragment, null,
+      fc('API Key', h('input', { value: form.api_key, onChange: e => set('api_key', e.target.value), placeholder: 'sk-...', type: 'password', className: 'form-control' })),
+      fc('Base URL', h('input', { value: form.base_url, onChange: e => set('base_url', e.target.value), placeholder: 'https://api.openai.com/v1 (leave empty for default)', className: 'form-control' })),
+    ),
+
+    form.auth_mode === 'chatgpt_login' && h('div', { className: 'form-oauth' },
+      chatgptStatus === true
+        ? h('div', { className: 'form-status' },
+            h('span', { className: 'form-status-dot form-status-dot--success' }),
+            h('span', { className: 'form-status-text' }, 'ChatGPT account connected'),
+            h('button', {
+              className: 'btn btn-sm btn-danger', type: 'button',
+              onClick: () => fetch('/api/chatgpt/logout?agent_config_id=' + initial.id, { method: 'POST' }).then(() => setChatgptStatus(false)),
+            }, 'Disconnect'),
+          )
+        : h('div', { className: 'FormControl' },
+            h('button', {
+              className: 'btn btn-sm', type: 'button',
+              disabled: !(initial && initial.id),
+              onClick: () => {
+                const aid = initial.id;
+                fetch('/api/chatgpt/login?agent_config_id=' + aid, { method: 'POST' })
+                  .then(r => r.json())
+                  .then(d => {
+                    const popup = window.open(d.authorize_url, 'chatgpt_oauth', 'width=500,height=700');
+                    const poll = setInterval(() => {
+                      fetch('/api/agents/' + aid).then(r => r.json()).then(a => {
+                        if (a.chatgpt_token) {
+                          clearInterval(poll);
+                          setChatgptStatus(true);
+                          if (popup && !popup.closed) popup.close();
+                        }
+                      });
+                      if (popup && popup.closed) {
+                        clearInterval(poll);
+                        fetch('/api/agents/' + aid).then(r => r.json()).then(a => setChatgptStatus(!!a.chatgpt_token));
+                      }
+                    }, 2000);
+                  });
+              },
+            }, 'Sign in with ChatGPT'),
+            h('div', { className: 'FormControl-caption' },
+              !(initial && initial.id)
+                ? 'Save the agent first, then connect your ChatGPT account.'
+                : 'Opens OpenAI login in a new window. Uses your ChatGPT subscription.',
+            ),
+          ),
+      fc('Base URL Override', h('input', { value: form.base_url, onChange: e => set('base_url', e.target.value), placeholder: 'Leave empty for ChatGPT default', className: 'form-control' }), 'Only change if you know what you\'re doing'),
+    ),
 
     h('div', { className: 'divider' }),
     fc('Instructions', h('textarea', { value: form.instructions, onChange: e => set('instructions', e.target.value), rows: 5, placeholder: 'System prompt / instructions for this agent...', className: 'form-control form-control-mono' })),
 
     mcpServers && mcpServers.length > 0 && h('div', null,
       h('div', { className: 'divider' }),
-      h('div', { style: { fontSize: '12px', fontWeight: 600, color: 'var(--color-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' } }, 'MCP Servers'),
+      h('div', { className: 'form-section-title' }, 'MCP Servers'),
       mcpServers.map(s =>
-        h('label', { key: s.id, className: 'form-checkbox', style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+        h('label', { key: s.id, className: 'form-checkbox' },
           h('input', { type: 'checkbox', checked: selectedMcp.includes(s.id), onChange: () => toggleMcp(s.id) }),
           h('span', null, s.name),
-          s.connected && h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--color-success-fg)', display: 'inline-block', marginLeft: '4px' } }),
+          s.connected && h('span', { className: 'form-status-dot form-status-dot--success', style: { width: 6, height: 6 } }),
         ),
       ),
       h('div', { className: 'FormControl-caption' }, 'Select which MCP servers this agent can use'),
@@ -69,15 +170,15 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
       form.tool_use_behavior && form.tool_use_behavior.startsWith('stop_at') &&
         fc('Stop At Tool Names', h('input', { value: (form.tool_use_behavior || '').replace('stop_at:', ''), onChange: e => set('tool_use_behavior', 'stop_at:' + e.target.value), placeholder: 'tool1, tool2', className: 'form-control' })),
 
-      h('label', { className: 'form-checkbox', style: { marginTop: '12px' } },
+      h('label', { className: 'form-checkbox' },
         h('input', { type: 'checkbox', checked: form.retry_enabled || false, onChange: e => set('retry_enabled', e.target.checked) }),
         'Enable Retry',
       ),
-      form.retry_enabled && h('div', { style: { marginTop: '6px', marginLeft: '20px' } },
+      form.retry_enabled && h('div', { style: { marginLeft: '20px' } },
         fc('Retry Policy (JSON)', h('input', { value: form.retry_policy || '', onChange: e => set('retry_policy', e.target.value), placeholder: '{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}', className: 'form-control form-control-mono' }), 'Empty = SDK defaults'),
       ),
 
-      fc('Fallback Models (JSON)', h('input', { value: form.fallback_models || '', onChange: e => set('fallback_models', e.target.value), placeholder: '[{"model":"gpt-4o-mini","api_key":"sk-...","base_url":""}]', className: 'form-control form-control-mono', style: { marginTop: '8px' } }), 'JSON array of {model, api_key, base_url}'),
+      fc('Fallback Models (JSON)', h('input', { value: form.fallback_models || '', onChange: e => set('fallback_models', e.target.value), placeholder: '[{"model":"gpt-4o-mini","api_key":"sk-...","base_url":""}]', className: 'form-control form-control-mono' }), 'JSON array of {model, api_key, base_url}'),
 
       h('div', { className: 'divider' }),
       fc('Input Guardrails (JSON)', h('input', { value: form.input_guardrails || '', onChange: e => set('input_guardrails', e.target.value), placeholder: '["content_filter","max_input_length"]', className: 'form-control form-control-mono' }), 'JSON array of guardrail names'),
@@ -89,7 +190,7 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
         h('input', { type: 'checkbox', checked: form.disable_tool_choice_reset || false, onChange: e => set('disable_tool_choice_reset', e.target.checked) }),
         'Disable Tool Choice Reset',
       ),
-      h('label', { className: 'form-checkbox', style: { marginTop: '8px' } },
+      h('label', { className: 'form-checkbox' },
         h('input', { type: 'checkbox', checked: form.use_previous_response_id || false, onChange: e => set('use_previous_response_id', e.target.checked) }),
         'Use Previous Response ID (server-side state)',
       ),
@@ -110,8 +211,14 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
       )),
     ),
 
-    h('div', { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
-      h('button', { onClick: () => onSave({ ...form, tools: JSON.stringify(selectedMcp) }), className: 'btn btn-primary' }, 'Save'),
+    h('div', { className: 'form-actions' },
+      h('button', { onClick: () => {
+        const ms = {};
+        if (reasoningEffort) ms.reasoning = { effort: reasoningEffort };
+        if (serviceTier) ms.service_tier = serviceTier;
+        const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
+        onSave({ ...form, tools: JSON.stringify(selectedMcp), model_settings });
+      }, className: 'btn btn-primary' }, 'Save'),
       onCancel && h('button', { onClick: onCancel, className: 'btn' }, 'Cancel'),
     ),
   );
@@ -150,8 +257,9 @@ export function AgentConfigPanel() {
         h('div', { key: a.id, className: 'Box-row' },
           h('div', { style: { flex: 1, minWidth: 0 } },
             h('div', { style: { fontWeight: 500, fontSize: '14px' } }, a.name),
-            h('div', { style: { fontSize: '12px', color: 'var(--color-fg-muted)', marginTop: '2px' } },
-              [a.model || 'default model', a.base_url && ('@ ' + a.base_url)].filter(Boolean).join(' '),
+            h('div', { style: { fontSize: '12px', color: 'var(--color-fg-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' } },
+              h('span', null, [a.model || 'default model', a.base_url && ('@ ' + a.base_url)].filter(Boolean).join(' ')),
+              a.auth_mode === 'chatgpt_login' && h('span', { className: 'Label Label-success' }, 'ChatGPT'),
             ),
             a.instructions && h('div', { style: { fontSize: '11px', color: 'var(--color-fg-subtle)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
               a.instructions.substring(0, 80) + (a.instructions.length > 80 ? '...' : ''),

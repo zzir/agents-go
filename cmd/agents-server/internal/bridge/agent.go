@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,7 @@ type AgentDeps struct {
 	Traces         *store.TraceStore
 	McpManager     *McpManager
 	SandboxManager *SandboxManager
+	ChatGPTOAuth   *ChatGPTOAuth
 	RootDir        string
 }
 
@@ -71,7 +73,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 	ac, err := deps.AgentConfigs.Get(ctx, configID)
 	if err != nil {
-		return nil, fmt.Errorf("loading agent config: %w", err)
+		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
 	}
 
 	agent := &agents.Agent{
@@ -123,12 +125,25 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	// Provider + retry/fallback decorators
 	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
 	apiKey := ac.APIKey
+	var chatgptCreds *ChatGPTCredentials
+	if ac.AuthMode == "chatgpt_login" && deps.ChatGPTOAuth != nil {
+		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, configID); err == nil {
+			apiKey = creds.AccessToken
+			chatgptCreds = creds
+		} else {
+			log := zerolog.Ctx(ctx)
+			log.Warn().Err(err).Msg("ChatGPT OAuth token unavailable, falling back to api_key")
+		}
+	}
 	if apiKey == "" {
 		apiKey = settingValue(ctx, deps.Settings, "openai_api_key")
 	}
 	if apiKey != "" {
 		ac.APIKey = apiKey
-		provider := buildProviderFromConfig(ac, proxyClient)
+		if chatgptCreds != nil && ac.BaseURL == "" {
+			ac.BaseURL = ChatGPTBaseURL
+		}
+		provider := buildProviderFromConfig(ac, chatgptCreds, proxyClient)
 		if ac.RetryEnabled {
 			var policy agents.RetryPolicy
 			if ac.RetryPolicy != "" {
@@ -263,7 +278,7 @@ func settingValue(ctx context.Context, settings *store.SettingStore, key string)
 	return s.Value
 }
 
-func buildProviderFromConfig(ac *store.AgentConfig, proxyClient *http.Client) agents.ModelProvider {
+func buildProviderFromConfig(ac *store.AgentConfig, chatgptCreds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
 	var opts []option.RequestOption
 	if ac.APIKey != "" {
 		opts = append(opts, option.WithAPIKey(ac.APIKey))
@@ -271,10 +286,53 @@ func buildProviderFromConfig(ac *store.AgentConfig, proxyClient *http.Client) ag
 	if ac.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(ac.BaseURL))
 	}
+	if chatgptCreds != nil {
+		opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(chatgptCreds.AccountID)))
+	}
 	if proxyClient != nil {
 		opts = append(opts, option.WithHTTPClient(proxyClient))
 	}
 	return openaiProvider.NewProvider(opts...)
+}
+
+func newChatGPTMiddleware(accountID string) option.Middleware {
+	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		if accountID != "" {
+			req.Header.Set("ChatGPT-Account-ID", accountID)
+		}
+		req.Header.Set("originator", "codex_cli_rs")
+
+		if req.Body != nil && req.Method == http.MethodPost {
+			raw, err := io.ReadAll(req.Body)
+			req.Body.Close()
+			if err == nil {
+				var body map[string]any
+				if json.Unmarshal(raw, &body) == nil {
+					body["store"] = false
+					delete(body, "previous_response_id")
+					if input, ok := body["input"].([]any); ok {
+						cleaned := make([]any, 0, len(input))
+						for _, item := range input {
+							if m, ok := item.(map[string]any); ok {
+								delete(m, "id")
+								if m["type"] == "item_reference" {
+									continue
+								}
+							}
+							cleaned = append(cleaned, item)
+						}
+						body["input"] = cleaned
+					}
+					patched, _ := json.Marshal(body)
+					raw = patched
+				}
+				req.Body = io.NopCloser(strings.NewReader(string(raw)))
+				req.ContentLength = int64(len(raw))
+			}
+		}
+
+		return next(req)
+	}
 }
 
 type fallbackEntry struct {

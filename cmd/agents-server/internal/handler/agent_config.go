@@ -36,6 +36,7 @@ type agentConfigReq struct {
 	Instructions  string `json:"instructions"`
 	Model         string `json:"model"`
 	ProviderType  string `json:"provider_type"`
+	AuthMode      string `json:"auth_mode"`
 	APIKey        string `json:"api_key"`
 	BaseURL       string `json:"base_url"`
 	ModelSettings string `json:"model_settings"`
@@ -70,6 +71,7 @@ func (r *agentConfigReq) toModel() *store.AgentConfig {
 		Instructions:           r.Instructions,
 		Model:                  r.Model,
 		ProviderType:           r.ProviderType,
+		AuthMode:               r.AuthMode,
 		APIKey:                 r.APIKey,
 		BaseURL:                r.BaseURL,
 		ModelSettings:          r.ModelSettings,

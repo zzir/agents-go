@@ -36,7 +36,7 @@ export function SessionList({ activeId, onSelect, reloadKey }) {
       h('button', {
         onClick: handleCreate,
         disabled: creating,
-        className: 'btn btn-primary btn-sm',
+        className: 'btn btn-sm',
         style: { width: '100%' },
       }, '+ New Chat'),
     ),
@@ -55,9 +55,7 @@ export function SessionList({ activeId, onSelect, reloadKey }) {
           }, '×'),
         ),
       ),
-      (!sessions || sessions.length === 0) && h('div', {
-        style: { padding: '16px', textAlign: 'center', fontSize: '12px', color: 'var(--color-fg-subtle)' },
-      }, 'No conversations yet'),
+      (!sessions || sessions.length === 0) && h('div', { className: 'blankslate' }, 'No conversations yet'),
     ),
   );
 }

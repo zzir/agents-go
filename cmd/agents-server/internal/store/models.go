@@ -42,6 +42,7 @@ type AgentConfig struct {
 	Instructions  string `bun:"instructions"          json:"instructions"`
 	Model         string `bun:"model"                 json:"model"`
 	ProviderType  string `bun:"provider_type"         json:"provider_type,omitempty"`
+	AuthMode      string `bun:"auth_mode"             json:"auth_mode,omitempty"`
 	APIKey        string `bun:"api_key"               json:"api_key,omitempty"`
 	BaseURL       string `bun:"base_url"              json:"base_url,omitempty"`
 	ModelSettings string `bun:"model_settings"        json:"model_settings,omitempty"`
@@ -68,6 +69,10 @@ type AgentConfig struct {
 	UsePreviousResponseID bool   `bun:"use_previous_response_id" json:"use_previous_response_id"`
 	PromptID              string `bun:"prompt_id"                json:"prompt_id,omitempty"`
 	PromptVersion         string `bun:"prompt_version"           json:"prompt_version,omitempty"`
+
+	// ChatGPT OAuth token (JSON-serialized). Hidden from API; preserved across
+	// regular CRUD updates so editing an agent doesn't erase its token.
+	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"chatgpt_token,omitempty"`
 
 	// Batch 5: fine-grained control
 	HandoffInputFilter   string `bun:"handoff_input_filter"     json:"handoff_input_filter,omitempty"`

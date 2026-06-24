@@ -20,11 +20,13 @@ export function AppShell({ view, onViewChange, onSettingsOpen, sidebarPane, chil
 
   return h('div', { className: 'app-layout' },
     h('aside', { className: 'app-sidebar' + (mobileNavOpen ? ' mobile-open' : '') },
-      h('nav', { className: 'sidebar-tabs' },
+      h('nav', { className: 'sidebar-tabs SegmentedControl', role: 'radiogroup', 'aria-label': 'Navigation' },
         NAV_ITEMS.map(item =>
           h('button', {
             key: item.key,
-            className: 'sidebar-tab' + (view === item.key ? ' active' : ''),
+            className: 'sidebar-tab SegmentedControl-item',
+            role: 'radio',
+            'aria-checked': view === item.key ? 'true' : 'false',
             onClick: () => handleNav(item.key),
           },
             h('span', { className: 'sidebar-tab-icon' }, item.icon()),

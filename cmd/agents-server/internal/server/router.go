@@ -66,6 +66,11 @@ type Routes struct {
 	SandboxExec   gin.HandlerFunc
 
 	TraceListBySession gin.HandlerFunc
+
+	ChatGPTLogin    gin.HandlerFunc
+	ChatGPTCallback gin.HandlerFunc
+	ChatGPTStatus   gin.HandlerFunc
+	ChatGPTLogout   gin.HandlerFunc
 }
 
 // RegisterRoutes mounts every handler in r onto the server's gin engine at its API path.
@@ -142,6 +147,13 @@ func (s *Server) RegisterRoutes(r Routes) {
 		sandboxes.PUT("/:id", r.SandboxUpdate)
 		sandboxes.DELETE("/:id", r.SandboxDelete)
 		sandboxes.POST("/:id/exec", r.SandboxExec)
+	}
+	{
+		chatgpt := api.Group("/chatgpt")
+		chatgpt.POST("/login", r.ChatGPTLogin)
+		chatgpt.GET("/oauth/callback", r.ChatGPTCallback)
+		chatgpt.GET("/status", r.ChatGPTStatus)
+		chatgpt.POST("/logout", r.ChatGPTLogout)
 	}
 	s.Engine.GET("/ws", HandleWS(r.WSHandler))
 }
