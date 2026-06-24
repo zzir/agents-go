@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zzir/agents-go/agents"
@@ -50,6 +51,11 @@ type Options struct {
 	// RequireApproval, when set, marks an exposed MCP tool as needing human
 	// approval (HITL) whenever it returns true for the tool's original name.
 	RequireApproval func(toolName string) bool
+
+	// OAuthHandler, when set, is passed to the streamable HTTP transport to
+	// handle OAuth 2.1 authorization flows (authorization code + PKCE, token
+	// refresh, dynamic client registration). Ignored for stdio transports.
+	OAuthHandler auth.OAuthHandler
 }
 
 // Server is a connected MCP server whose tools are exposed to an agent. It
@@ -125,7 +131,11 @@ func NewStdioServer(ctx context.Context, name string, cmd *exec.Cmd, opts Option
 // transport at endpoint.
 func NewStreamableHTTPServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
 	s := newServer(name, opts)
-	if err := s.connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: endpoint}); err != nil {
+	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint}
+	if opts.OAuthHandler != nil {
+		transport.OAuthHandler = opts.OAuthHandler
+	}
+	if err := s.connect(ctx, transport); err != nil {
 		return nil, err
 	}
 	return s, nil

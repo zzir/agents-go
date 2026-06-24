@@ -50,6 +50,7 @@ mcp.Options{
 		return rc.Context != nil // expose tools only in some run contexts
 	},
 	RequireApproval: func(name string) bool { return name == "delete_file" }, // HITL
+	OAuthHandler: authHandler, // OAuth 2.1 authorization (streamable HTTP only)
 }
 ```
 
@@ -58,6 +59,26 @@ mcp.Options{
 - **`ToolNamePrefix`**: prepends a prefix to each exposed tool name so several servers can expose same-named tools without colliding; the server is still called with the original name.
 - **`RequireApproval`**: marks matching tools as needing human approval, routing them through the [HITL](human_in_the_loop.md) flow like any `NeedsApproval` function tool.
 - **Strict**: rewrites each tool's input schema to the strict subset; if a server's schema cannot be made strict, the original schema is used and strict mode is disabled for that tool (never half-converted).
+- **`OAuthHandler`**: passes a `go-sdk/auth.OAuthHandler` to the streamable HTTP transport for OAuth 2.1 authorization (authorization code + PKCE, token refresh, dynamic client registration). Ignored for stdio transports. See the [OAuth section](#oauth) below.
+
+## OAuth
+
+The `mcp` package supports OAuth 2.1 for streamable HTTP servers via the go-sdk's `auth` package. Set `Options.OAuthHandler` to an `auth.OAuthHandler` implementation — the built-in `auth.NewAuthorizationCodeHandler` covers the standard authorization code + PKCE flow with optional dynamic client registration:
+
+```go
+import "github.com/modelcontextprotocol/go-sdk/auth"
+
+handler, _ := auth.NewAuthorizationCodeHandler(&auth.AuthorizationCodeHandlerConfig{
+	RedirectURL:              "http://localhost:3142",
+	AuthorizationCodeFetcher: myFetcher, // opens browser, waits for redirect
+})
+
+srv, _ := mcp.NewStreamableHTTPServer(ctx, "my-server", endpoint, mcp.Options{
+	OAuthHandler: handler,
+})
+```
+
+The `agents-server` web UI handles this automatically: configure a server with **Authentication → OAuth**, and the Connect button will open an authorization popup when needed.
 
 ## Prompts and resources
 
