@@ -110,9 +110,9 @@ export function SkillsPanel() {
           ),
         ),
         group.skills.map(s =>
-          h('div', { key: s.path, className: 'Box-row', style: { paddingLeft: '24px', fontSize: '13px' } },
-            h('span', { style: { fontWeight: 500 } }, s.name),
-            s.description && h('span', { style: { color: 'var(--color-fg-muted)', marginLeft: '8px' } }, '— ' + s.description),
+          h('div', { key: s.path, className: 'Box-row skill-row' },
+            h('span', { className: 'skill-row-name' }, s.name),
+            s.description && h('span', { className: 'skill-row-desc' }, s.description),
           ),
         ),
       ),

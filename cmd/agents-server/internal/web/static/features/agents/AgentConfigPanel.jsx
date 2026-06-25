@@ -259,7 +259,7 @@ export function AgentConfigPanel() {
             h('div', { style: { fontWeight: 500, fontSize: '14px' } }, a.name),
             h('div', { style: { fontSize: '12px', color: 'var(--color-fg-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' } },
               h('span', null, [a.model || 'default model', a.base_url && ('@ ' + a.base_url)].filter(Boolean).join(' ')),
-              a.auth_mode === 'chatgpt_login' && h('span', { className: 'Label Label-success' }, 'ChatGPT'),
+              a.auth_mode === 'chatgpt_login' && h('span', { className: 'Label Label--success' }, 'ChatGPT'),
             ),
             a.instructions && h('div', { style: { fontSize: '11px', color: 'var(--color-fg-subtle)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
               a.instructions.substring(0, 80) + (a.instructions.length > 80 ? '...' : ''),

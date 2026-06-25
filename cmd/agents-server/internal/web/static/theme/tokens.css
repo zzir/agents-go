@@ -1,71 +1,17 @@
-/* =============================================================
-   Mona Sans — GitHub/Primer's brand typeface (variable).
-   Loaded from the Fontsource CDN with font-display: swap; if it
-   fails to load, the stack falls back to the system UI font, so
-   the UI degrades to its previous appearance with no breakage.
-   ============================================================= */
-@font-face {
-  font-family: "Mona Sans";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 200 900;
-  src: url("https://cdn.jsdelivr.net/fontsource/fonts/mona-sans:vf@latest/latin-wght-normal.woff2") format("woff2-variations");
-}
-
 :root {
-  /* Primer-inspired light theme tokens */
-  --color-fg-default: #1f2328;
-  --color-fg-muted: #59636e;
-  --color-fg-subtle: #818b98;
-  --color-fg-on-emphasis: #ffffff;
+  /* App-specific tokens — Primer CSS provides all --color-* tokens via data-color-mode */
 
-  --color-canvas-default: #ffffff;
-  --color-canvas-subtle: #f6f8fa;
-  --color-canvas-inset: #f0f2f5;
-  --color-canvas-overlay: #ffffff;
-
-  --color-border-default: #d1d9e0;
-  --color-border-muted: #d1d9e0b3;
-  --color-border-subtle: #1f23280d;
-
-  --color-accent-fg: #0969da;
-  --color-accent-emphasis: #0969da;
-  --color-accent-subtle: #ddf4ff;
-  --color-accent-muted: rgba(84, 174, 255, 0.4);
-
-  --color-success-fg: #1a7f37;
-  --color-success-emphasis: #1f883d;
-  --color-success-subtle: #dafbe1;
-  --color-danger-fg: #d1242f;
-  --color-danger-emphasis: #cf222e;
-  --color-danger-subtle: #ffebe9;
-
-  --color-neutral-emphasis: #6e7781;
-  --color-neutral-muted: rgba(175, 184, 193, 0.2);
-  --color-neutral-subtle: rgba(234, 238, 242, 0.5);
-
-  --color-btn-bg: #f6f8fa;
-  --color-btn-hover-bg: #eef1f4;
-  --color-btn-active-bg: #e6eaef;
-  --color-btn-primary-bg: #1f883d;
-  --color-btn-primary-hover-bg: #1a7f37;
-  --color-btn-danger-bg: #a40e26;
-
-  /* Atmospheric accent wash used behind empty states / brand moments */
   --color-accent-glow: rgba(9, 105, 218, 0.06);
 
   --shadow-sm: 0 1px 0 rgba(31, 35, 40, 0.04);
   --shadow-md: 0 3px 6px rgba(140, 149, 159, 0.15);
   --shadow-lg: 0 8px 24px rgba(140, 149, 159, 0.2);
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-
-  /* Tactile button + overlay depth (Primer "resting" / "floating") */
   --shadow-btn: 0 1px 0 rgba(31, 35, 40, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   --shadow-btn-primary: 0 1px 0 rgba(31, 35, 40, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   --shadow-resting: 0 1px 0 rgba(31, 35, 40, 0.04);
   --shadow-floating: 0 1px 3px rgba(31, 35, 40, 0.12), 0 8px 24px rgba(66, 74, 83, 0.12);
 
-  /* Focus rings */
   --focus-ring: 0 0 0 3px var(--color-accent-muted);
   --focus-ring-danger: 0 0 0 3px rgba(255, 129, 130, 0.4);
 
@@ -74,7 +20,7 @@
   --radius-lg: 12px;
   --radius-full: 100px;
 
-  --font-sans: "Mona Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --text-xs: 0.75rem;
@@ -82,11 +28,9 @@
   --text-base: 1rem;
   --text-lg: 1.125rem;
 
-  /* Negative tracking tightens Mona Sans at display sizes */
   --tracking-tight: -0.012em;
   --tracking-tighter: -0.02em;
 
-  /* Motion */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 0.1s;
@@ -101,62 +45,22 @@
   --space-5: 32px;
   --space-6: 40px;
 
-  /* Layout dimensions */
   --sidebar-width: 240px;
   --pane-width: 256px;
   --bottom-bar-height: 52px;
 }
 
-[data-theme="dark"] {
-  --color-fg-default: #f0f6fc;
-  --color-fg-muted: #9198a1;
-  --color-fg-subtle: #6e7681;
-  --color-fg-on-emphasis: #ffffff;
-
-  --color-canvas-default: #0d1117;
-  --color-canvas-subtle: #151b23;
-  --color-canvas-inset: #010409;
-  --color-canvas-overlay: #1c2128;
-
-  --color-border-default: #3d444d;
-  --color-border-muted: #3d444db3;
-  --color-border-subtle: #f0f6fc1a;
-
-  --color-accent-fg: #58a6ff;
-  --color-accent-emphasis: #1f6feb;
-  --color-accent-subtle: rgba(56, 139, 253, 0.15);
-  --color-accent-muted: rgba(56, 139, 253, 0.4);
-
-  --color-success-fg: #3fb950;
-  --color-success-emphasis: #238636;
-  --color-success-subtle: rgba(46, 160, 67, 0.15);
-  --color-danger-fg: #f85149;
-  --color-danger-emphasis: #da3633;
-  --color-danger-subtle: rgba(248, 81, 73, 0.15);
-
-  --color-neutral-emphasis: #6e7681;
-  --color-neutral-muted: rgba(110, 118, 129, 0.4);
-  --color-neutral-subtle: rgba(110, 118, 129, 0.1);
-
-  --color-btn-bg: #21262d;
-  --color-btn-hover-bg: #30363d;
-  --color-btn-active-bg: #282e33;
-  --color-btn-primary-bg: #238636;
-  --color-btn-primary-hover-bg: #2ea043;
-  --color-btn-danger-bg: #da3633;
-
+[data-color-mode="dark"] {
   --color-accent-glow: rgba(56, 139, 253, 0.12);
 
   --shadow-sm: 0 0 transparent;
   --shadow-md: 0 3px 6px #010409;
   --shadow-lg: 0 8px 24px #010409;
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-
   --shadow-btn: 0 0 transparent, inset 0 1px 0 rgba(255, 255, 255, 0.03);
   --shadow-btn-primary: 0 1px 0 rgba(1, 4, 9, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   --shadow-resting: 0 0 transparent;
-  --shadow-floating: 0 0 0 1px #3d444d, 0 16px 32px rgba(1, 4, 9, 0.55);
+  --shadow-floating: 0 0 0 1px var(--color-border-default), 0 16px 32px rgba(1, 4, 9, 0.55);
 
-  --focus-ring: 0 0 0 3px var(--color-accent-muted);
   --focus-ring-danger: 0 0 0 3px rgba(248, 81, 73, 0.35);
 }

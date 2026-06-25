@@ -1,5 +1,4 @@
 import React from 'react';
-import { WSClient } from '/lib/ws.js';
 import { api } from '/lib/api.js';
 import { renderMarkdown } from '/lib/markdown.js';
 import { useScrollToBottom, useApi } from '/lib/hooks.js';
@@ -7,7 +6,7 @@ import { MessageBubble } from '/features/chat/MessageBubble.jsx';
 import { MessageInput } from '/features/chat/MessageInput.jsx';
 import { ToolCallCard } from '/features/chat/ToolCallCard.jsx';
 
-const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const { useState, useEffect, useCallback, useMemo } = React;
 const h = React.createElement;
 
 function ProcessGroup({ toolCalls, onApprove, onReject }) {
@@ -30,8 +29,8 @@ function ProcessGroup({ toolCalls, onApprove, onReject }) {
         h('path', { d: 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z' }),
       ),
       h('span', null, count + ' tool call' + (count > 1 ? 's' : '')),
-      pendingCount > 0 && h('span', { className: 'process-status Label Label-accent' }, pendingCount + ' pending'),
-      isRunning && h('span', { className: 'process-status Label Label-default' }, 'running...'),
+      pendingCount > 0 && h('span', { className: 'process-status Label Label--accent' }, pendingCount + ' pending'),
+      isRunning && h('span', { className: 'process-status Label Label--secondary' }, 'running...'),
     ),
     shouldShow && h('div', { className: 'process-group-body' },
       toolCalls.map(tc =>
@@ -67,15 +66,10 @@ function TurnBlock({ parts, streaming, isLive, onApprove, onReject }) {
   );
 }
 
-export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
-  const [messages, setMessages] = useState([]);
-  const [streaming, setStreaming] = useState('');
-  const [running, setRunning] = useState(false);
+export function ChatView({ sessionId, messages, streaming, running, traceRuns, liveRunId, lastError, onSend, onCancel, onApprove, onReject, settingsReloadKey }) {
   const [toast, setToast] = useState(null);
   const [agentConfigId, setAgentConfigId] = useState('');
   const [sandboxId, setSandboxId] = useState('');
-  const [traceRuns, setTraceRuns] = useState({});
-  const [liveRunId, setLiveRunId] = useState(null);
   const [showTrace, setShowTrace] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState({});
   const { data: agentConfigs, reload: reloadAgents } = useApi(() => api.agents.list());
@@ -89,14 +83,10 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
     }
   }, [agentConfigs]);
 
-  // Settings closed — agents/sandboxes may have changed; re-fetch the lists
-  // (they were otherwise only loaded once on mount).
   useEffect(() => {
     if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
   }, [settingsReloadKey]);
 
-  const wsRef = useRef(null);
-  const runIdRef = useRef(null);
   const scrollRef = useScrollToBottom(messages.length + streaming, sessionId);
 
   const showToast = useCallback((msg, type) => {
@@ -105,307 +95,43 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
   }, []);
 
   useEffect(() => {
-    if (!sessionId) return;
-    setMessages([]);
-    setStreaming('');
-    setTraceRuns({});
-    setLiveRunId(null);
-
-    api.sessions.messages(sessionId).then(msgs => {
-      if (!msgs) return;
-      const timeline = [];
-      const pendingTC = {};
-      let turn = null;
-      const ensureTurn = () => {
-        if (!turn) { turn = { role: 'turn', parts: [] }; timeline.push(turn); }
-      };
-      const finishTurn = () => { turn = null; };
-      for (const m of msgs) {
-        if (m.role === 'user') {
-          finishTurn();
-          if (m.content) timeline.push({ role: 'user', content: m.content });
-        } else if (m.role === 'tool_call') {
-          try {
-            const item = JSON.parse(m.item);
-            ensureTurn();
-            const tc = {
-              tool_call_id: item.call_id,
-              tool_name: item.name,
-              arguments: item.arguments || '',
-              output: null,
-              status: null,
-            };
-            pendingTC[item.call_id] = tc;
-            const last = turn.parts[turn.parts.length - 1];
-            if (last && last.type === 'tools') {
-              last.toolCalls.push(tc);
-            } else {
-              turn.parts.push({ type: 'tools', toolCalls: [tc] });
-            }
-          } catch (_) {}
-        } else if (m.role === 'tool_output') {
-          try {
-            const item = JSON.parse(m.item);
-            if (pendingTC[item.call_id]) {
-              pendingTC[item.call_id].output = item.output || m.content;
-              pendingTC[item.call_id].status = 'completed';
-            }
-          } catch (_) {}
-        } else if (m.role === 'system' && m.content) {
-          finishTurn();
-          timeline.push({ role: 'system', content: m.content });
-        } else if (m.content) {
-          ensureTurn();
-          turn.parts.push({ type: 'text', content: m.content });
-        }
-      }
-      finishTurn();
-      setMessages(timeline);
-    });
-
-    api.sessions.traces(sessionId).then(events => {
-      if (!events || events.length === 0) return;
-      const runs = {};
-      for (const ev of events) {
-        const rid = ev.run_id || 'unknown';
-        if (!runs[rid]) runs[rid] = [];
-        runs[rid].push(ev);
-      }
-      setTraceRuns(runs);
-    }).catch(() => {});
-  }, [sessionId]);
+    if (lastError) showToast(lastError, 'error');
+  }, [lastError, showToast]);
 
   useEffect(() => {
-    const ws = new WSClient();
-    wsRef.current = ws;
-
-    const streamBuf = { text: '' };
-
-    const addTurnPart = (part) => {
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === 'turn') {
-          updated[updated.length - 1] = { ...last, parts: [...last.parts, part] };
-          return updated;
-        }
-        return prev;
-      });
-    };
-
-    ws.on('run.started', (payload) => {
-      setRunning(true);
-      streamBuf.text = '';
-      setStreaming('');
-      runIdRef.current = payload.run_id;
-      setLiveRunId(payload.run_id);
-      setMessages(prev => [...prev, { role: 'turn', parts: [] }]);
-      setTraceRuns(prev => ({ ...prev, [payload.run_id]: [] }));
-      setExpandedRuns(prev => ({ ...prev, [payload.run_id]: true }));
-    });
-    ws.on('run.step', (payload) => {
-      streamBuf.text += payload.delta;
-      setStreaming(streamBuf.text);
-    });
-    ws.on('run.output', (payload) => {
-      const text = payload.final_output || streamBuf.text;
-      streamBuf.text = '';
-      setStreaming('');
-      setRunning(false);
-      setLiveRunId(null);
-      runIdRef.current = null;
-      if (text) {
-        addTurnPart({ type: 'text', content: text });
-      }
-    });
-    ws.on('run.error', (payload) => {
-      const remaining = streamBuf.text;
-      streamBuf.text = '';
-      setStreaming('');
-      setRunning(false);
-      setLiveRunId(null);
-      runIdRef.current = null;
-      showToast(payload.message, 'error');
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === 'turn') {
-          const parts = [...last.parts];
-          if (remaining) parts.push({ type: 'text', content: remaining });
-          updated[updated.length - 1] = { ...last, parts };
-          return updated;
-        }
-        return [...prev, { role: 'system', content: 'Error: ' + payload.message }];
-      });
-    });
-    ws.on('run.cancelled', () => {
-      const remaining = streamBuf.text;
-      streamBuf.text = '';
-      setStreaming('');
-      setRunning(false);
-      setLiveRunId(null);
-      runIdRef.current = null;
-      if (remaining) {
-        setMessages(prev => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last?.role === 'turn') {
-            updated[updated.length - 1] = { ...last, parts: [...last.parts, { type: 'text', content: remaining }] };
-            return updated;
-          }
-          return prev;
-        });
-      }
-    });
-    ws.on('run.tool_call', (payload) => {
-      const flushed = streamBuf.text;
-      streamBuf.text = '';
-      if (flushed) setStreaming('');
-
-      const tc = {
-        tool_call_id: payload.tool_call_id,
-        tool_name: payload.tool_name,
-        arguments: payload.arguments,
-        needs_approval: payload.needs_approval,
-        status: null,
-        output: null,
-      };
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role !== 'turn') return prev;
-        const parts = [...last.parts];
-        if (flushed) parts.push({ type: 'text', content: flushed });
-        const lastPart = parts[parts.length - 1];
-        if (lastPart?.type === 'tools') {
-          parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, tc] };
-        } else {
-          parts.push({ type: 'tools', toolCalls: [tc] });
-        }
-        updated[updated.length - 1] = { ...last, parts };
-        return updated;
-      });
-    });
-    ws.on('run.tool_result', (payload) => {
-      setMessages(prev => {
-        const updated = [...prev];
-        for (let i = updated.length - 1; i >= 0; i--) {
-          if (updated[i].role !== 'turn') continue;
-          const parts = [...updated[i].parts];
-          for (let p = parts.length - 1; p >= 0; p--) {
-            if (parts[p].type !== 'tools') continue;
-            const tcs = parts[p].toolCalls;
-            const idx = tcs.findIndex(tc =>
-              tc.tool_call_id === payload.tool_call_id ||
-              (!payload.tool_call_id && !tc.output));
-            if (idx >= 0) {
-              const newTcs = [...tcs];
-              newTcs[idx] = { ...newTcs[idx], output: payload.output, status: 'completed' };
-              parts[p] = { ...parts[p], toolCalls: newTcs };
-              updated[i] = { ...updated[i], parts };
-              return updated;
-            }
-          }
-        }
-        return prev;
-      });
-    });
-    ws.on('run.agent_start', () => {});
-    ws.on('run.handoff', (payload) => {
-      setMessages(prev => [...prev, {
-        role: 'system',
-        content: 'Handoff: ' + payload.from + ' → ' + payload.to,
-      }]);
-    });
-    ws.on('hook.event', (payload) => {
-      const rid = runIdRef.current;
-      if (!rid) return;
-      setTraceRuns(prev => {
-        const events = prev[rid] || [];
-        return { ...prev, [rid]: [...events, { kind: 'hook', name: payload.hook, detail: formatHookDetail(payload) }] };
-      });
-    });
-    ws.on('trace.span', (payload) => {
-      const rid = runIdRef.current;
-      if (!rid) return;
-      setTraceRuns(prev => {
-        const events = prev[rid] || [];
-        return { ...prev, [rid]: [...events, { kind: 'span', name: payload.name, detail: payload.type || '', span_id: payload.span_id }] };
-      });
-    });
-    ws.on('session.title_updated', () => {
-      if (onSessionUpdated) onSessionUpdated();
-    });
-    ws.connect();
-    return () => ws.close();
-  }, [showToast]);
-
-  const handleSend = useCallback((text) => {
-    if (!sessionId || !wsRef.current || !agentConfigId) return;
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
-    const payload = {
-      session_id: sessionId,
-      input: text,
-      agent_config_id: agentConfigId,
-    };
-    if (sandboxId) payload.sandbox_id = sandboxId;
-    wsRef.current.send('run.create', payload);
-  }, [sessionId, agentConfigId, sandboxId]);
-
-  const handleCancel = useCallback(() => {
-    if (!wsRef.current || !runIdRef.current) return;
-    wsRef.current.send('run.cancel', { run_id: runIdRef.current });
-    if (streaming) {
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === 'turn') {
-          updated[updated.length - 1] = { ...last, parts: [...last.parts, { type: 'text', content: streaming }] };
-          return updated;
-        }
-        return prev;
+    const newRuns = Object.keys(traceRuns).filter(rid => !(rid in expandedRuns));
+    if (newRuns.length) {
+      setExpandedRuns(prev => {
+        const next = { ...prev };
+        newRuns.forEach(rid => { next[rid] = true; });
+        return next;
       });
     }
-    setStreaming('');
-    setRunning(false);
-    runIdRef.current = null;
-    showToast('Run cancelled', 'info');
-  }, [streaming, showToast]);
+  }, [traceRuns]);
 
-  const updateToolCall = useCallback((toolCallId, patch) => {
-    setMessages(prev => {
-      const updated = [...prev];
-      for (let i = updated.length - 1; i >= 0; i--) {
-        if (updated[i].role !== 'turn') continue;
-        const parts = [...updated[i].parts];
-        for (let p = parts.length - 1; p >= 0; p--) {
-          if (parts[p].type !== 'tools') continue;
-          const tcs = parts[p].toolCalls;
-          const idx = tcs.findIndex(tc => tc.tool_call_id === toolCallId);
-          if (idx >= 0) {
-            const newTcs = [...tcs];
-            newTcs[idx] = { ...newTcs[idx], ...patch };
-            parts[p] = { ...parts[p], toolCalls: newTcs };
-            updated[i] = { ...updated[i], parts };
-            return updated;
-          }
-        }
-      }
-      return prev;
+  const handleCopyClick = useCallback((e) => {
+    const btn = e.target.closest('.btn-copy');
+    if (!btn) return;
+    const code = btn.getAttribute('data-code')
+      ?.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    if (!code) return;
+    navigator.clipboard.writeText(code).then(() => {
+      btn.classList.add('copied');
+      const svg = btn.innerHTML;
+      btn.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"></path></svg>';
+      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = svg; }, 1500);
     });
   }, []);
 
-  const handleApprove = useCallback((toolCallId) => {
-    if (!wsRef.current) return;
-    updateToolCall(toolCallId, { status: 'approved' });
-    wsRef.current.send('tool.approve', { tool_call_id: toolCallId });
-  }, [updateToolCall]);
+  const handleSend = useCallback((text) => {
+    if (!sessionId || !agentConfigId) return;
+    onSend(text, agentConfigId, sandboxId);
+  }, [sessionId, agentConfigId, sandboxId, onSend]);
 
-  const handleReject = useCallback((toolCallId) => {
-    if (!wsRef.current) return;
-    updateToolCall(toolCallId, { status: 'rejected' });
-    wsRef.current.send('tool.reject', { tool_call_id: toolCallId });
-  }, [updateToolCall]);
+  const handleCancel = useCallback(() => {
+    onCancel();
+    showToast('Run cancelled', 'info');
+  }, [onCancel, showToast]);
 
   if (!sessionId) {
     return h('div', { className: 'chat-empty' },
@@ -445,7 +171,7 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
   );
 
   return h('div', { className: 'chat-main' },
-    h('div', { ref: scrollRef, className: 'chat-messages' },
+    h('div', { ref: scrollRef, className: 'chat-messages', onClick: handleCopyClick },
       messages.map((m, i) => {
         if (m.role === 'turn') {
           const isLive = running && i === messages.length - 1;
@@ -454,8 +180,8 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
             parts: m.parts,
             streaming: isLive ? streaming : null,
             isLive,
-            onApprove: handleApprove,
-            onReject: handleReject,
+            onApprove: onApprove,
+            onReject: onReject,
           });
         }
         return h(MessageBubble, { key: i, role: m.role, content: m.content });
@@ -481,7 +207,7 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
             },
               h('span', null, isExpanded ? '▾' : '▸'),
               h('span', { style: { fontFamily: 'monospace', color: 'var(--color-fg-muted)' } }, rid.slice(0, 8)),
-              isLive && h('span', { className: 'Label Label-accent', style: { fontSize: '10px' } }, 'live'),
+              isLive && h('span', { className: 'Label Label--accent', style: { fontSize: '10px' } }, 'live'),
               h('span', { style: { color: 'var(--color-fg-subtle)' } },
                 hookCount + ' hook' + (hookCount !== 1 ? 's' : '') + ', ' + spanCount + ' span' + (spanCount !== 1 ? 's' : '')),
             ),
@@ -505,13 +231,4 @@ export function ChatView({ sessionId, onSessionUpdated, settingsReloadKey }) {
       className: 'Toast ' + (toast.type === 'error' ? 'Toast-error' : 'Toast-info'),
     }, toast.msg),
   );
-}
-
-function formatHookDetail(ev) {
-  const parts = [];
-  if (ev.agent_name) parts.push(ev.agent_name);
-  if (ev.tool_name) parts.push('→ ' + ev.tool_name);
-  if (ev.from && ev.to) parts.push(ev.from + ' → ' + ev.to);
-  if (ev.detail) parts.push(ev.detail);
-  return parts.join(' ');
 }

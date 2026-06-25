@@ -48,21 +48,25 @@ type ToolReject struct {
 
 // RunStarted notifies the client that a run has begun and carries its assigned run ID.
 type RunStarted struct {
-	RunID string `json:"run_id"`
+	RunID     string `json:"run_id"`
+	SessionID string `json:"session_id"`
 }
 
 // RunAgentStart notifies the client that a (possibly handed-off-to) agent has started its turn.
 type RunAgentStart struct {
+	RunID     string `json:"run_id"`
 	AgentName string `json:"agent_name"`
 }
 
 // RunStep streams an incremental chunk of the agent's output text.
 type RunStep struct {
+	RunID string `json:"run_id"`
 	Delta string `json:"delta"`
 }
 
 // RunToolCall is emitted when the agent invokes a tool (or requests approval for one).
 type RunToolCall struct {
+	RunID         string `json:"run_id"`
 	ToolCallID    string `json:"tool_call_id"`
 	ToolName      string `json:"tool_name"`
 	Arguments     string `json:"arguments"`
@@ -71,25 +75,34 @@ type RunToolCall struct {
 
 // RunToolResult carries the output of a completed tool call back to the client.
 type RunToolResult struct {
+	RunID      string `json:"run_id"`
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output"`
 }
 
 // RunHandoff is emitted when control transfers from one agent to another.
 type RunHandoff struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	RunID string `json:"run_id"`
+	From  string `json:"from"`
+	To    string `json:"to"`
 }
 
 // RunOutput carries the run's final output once the agent has finished.
 type RunOutput struct {
+	RunID       string `json:"run_id"`
 	FinalOutput string `json:"final_output"`
 }
 
 // RunError reports that a run failed, with an error code and message.
 type RunError struct {
+	RunID   string `json:"run_id"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// RunCancelled notifies the client that a run was cancelled.
+type RunCancelled struct {
+	RunID string `json:"run_id"`
 }
 
 // Session events
@@ -104,6 +117,7 @@ type SessionTitleUpdated struct {
 
 // HookEvent reports a runner lifecycle hook firing (agent start/end, tool start/end, handoff, etc.).
 type HookEvent struct {
+	RunID     string `json:"run_id"`
 	Hook      string `json:"hook"`
 	AgentName string `json:"agent_name,omitempty"`
 	ToolName  string `json:"tool_name,omitempty"`
@@ -116,6 +130,7 @@ type HookEvent struct {
 
 // TraceSpan carries a single tracing span (its IDs, name, type, timing, and data) to the client.
 type TraceSpan struct {
+	RunID     string         `json:"run_id"`
 	TraceID   string         `json:"trace_id"`
 	SpanID    string         `json:"span_id"`
 	ParentID  string         `json:"parent_id,omitempty"`

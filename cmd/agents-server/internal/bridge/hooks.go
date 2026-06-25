@@ -79,42 +79,42 @@ func marshalHookData(ev protocol.HookEvent) string {
 }
 
 func (h *wsRunHooks) OnAgentStart(_ context.Context, _ *agents.RunContext, agent *agents.Agent) error {
-	ev := protocol.HookEvent{Hook: "agent_start", AgentName: agent.Name}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "agent_start", AgentName: agent.Name}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil
 }
 
 func (h *wsRunHooks) OnAgentEnd(_ context.Context, _ *agents.RunContext, agent *agents.Agent, output any) error {
-	ev := protocol.HookEvent{Hook: "agent_end", AgentName: agent.Name, Detail: fmt.Sprintf("%v", output)}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "agent_end", AgentName: agent.Name, Detail: fmt.Sprintf("%v", output)}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil
 }
 
 func (h *wsRunHooks) OnHandoff(_ context.Context, _ *agents.RunContext, from, to *agents.Agent) error {
-	ev := protocol.HookEvent{Hook: "handoff", From: from.Name, To: to.Name}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "handoff", From: from.Name, To: to.Name}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil
 }
 
 func (h *wsRunHooks) OnToolStart(_ context.Context, _ *agents.RunContext, agent *agents.Agent, tool agents.Tool) error {
-	ev := protocol.HookEvent{Hook: "tool_start", AgentName: agent.Name, ToolName: tool.ToolName()}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "tool_start", AgentName: agent.Name, ToolName: tool.ToolName()}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil
 }
 
 func (h *wsRunHooks) OnToolEnd(_ context.Context, _ *agents.RunContext, agent *agents.Agent, tool agents.Tool, _ any) error {
-	ev := protocol.HookEvent{Hook: "tool_end", AgentName: agent.Name, ToolName: tool.ToolName()}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "tool_end", AgentName: agent.Name, ToolName: tool.ToolName()}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil
 }
 
 func (h *wsRunHooks) OnLLMStart(_ context.Context, _ *agents.RunContext, agent *agents.Agent, _ string, _ []agents.TResponseInputItem) error {
-	ev := protocol.HookEvent{Hook: "llm_start", AgentName: agent.Name}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "llm_start", AgentName: agent.Name}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil
@@ -125,7 +125,7 @@ func (h *wsRunHooks) OnLLMEnd(_ context.Context, _ *agents.RunContext, agent *ag
 	if resp != nil && resp.Usage != nil {
 		detail = fmt.Sprintf("input=%d output=%d", resp.Usage.InputTokens, resp.Usage.OutputTokens)
 	}
-	ev := protocol.HookEvent{Hook: "llm_end", AgentName: agent.Name, Detail: detail}
+	ev := protocol.HookEvent{RunID: h.runID, Hook: "llm_end", AgentName: agent.Name, Detail: detail}
 	h.send("hook.event", ev)
 	h.persist(ev)
 	return nil

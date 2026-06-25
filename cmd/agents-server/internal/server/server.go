@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -18,15 +19,45 @@ func init() {
 type Server struct {
 	Engine *gin.Engine
 	Log    zerolog.Logger
+	token  string
 }
 
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
-func New(log zerolog.Logger) *Server {
+func New(log zerolog.Logger, token string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(zerologMiddleware(log))
-	return &Server{Engine: engine, Log: log}
+	engine.Use(TokenAuth(token))
+	s := &Server{Engine: engine, Log: log, token: token}
+	s.registerAuthRoutes()
+	return s
+}
+
+func (s *Server) registerAuthRoutes() {
+	auth := s.Engine.Group("/api/auth")
+	auth.POST("/login", func(c *gin.Context) {
+		var req struct {
+			Token string `json:"token"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.token)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	auth.GET("/check", func(c *gin.Context) {
+		if subtle.ConstantTimeCompare([]byte(extractToken(c)), []byte(s.token)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
 }
 
 // ServeStatic serves files from staticFS, falling back to index.html for unmatched routes (SPA support).
@@ -39,6 +70,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 		}
 		f, err := staticFS.Open(path)
 		if err != nil {
+			c.Header("Cache-Control", "no-store")
 			c.FileFromFS("index.html", httpFS)
 			return
 		}
@@ -47,6 +79,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 		if ct := mime.TypeByExtension(ext); ct != "" {
 			c.Header("Content-Type", ct)
 		}
+		c.Header("Cache-Control", "no-store")
 		c.FileFromFS(c.Request.URL.Path, httpFS)
 	})
 }
@@ -56,7 +89,7 @@ func zerologMiddleware(log zerolog.Logger) gin.HandlerFunc {
 		c.Next()
 		log.Info().
 			Str("method", c.Request.Method).
-			Str("path", c.Request.URL.Path).
+			Str("path", c.Request.URL.RequestURI()).
 			Int("status", c.Writer.Status()).
 			Msg("request")
 	}

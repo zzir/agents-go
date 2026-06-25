@@ -9,17 +9,22 @@ const NAV_ITEMS = [
   { key: 'files', label: 'Files', icon: iconFolder },
 ];
 
-export function AppShell({ view, onViewChange, onSettingsOpen, sidebarPane, children }) {
+export function AppShell({ view, onViewChange, onSettingsOpen, sidebarPane, onSidebarClose, children }) {
   const { theme, toggle } = useTheme();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleNav = useCallback((key) => {
     onViewChange(key);
-    setMobileNavOpen(false);
+    setSidebarOpen(false);
   }, [onViewChange]);
 
+  const closeSidebar = useCallback(() => {
+    setSidebarOpen(false);
+    if (onSidebarClose) onSidebarClose();
+  }, [onSidebarClose]);
+
   return h('div', { className: 'app-layout' },
-    h('aside', { className: 'app-sidebar' + (mobileNavOpen ? ' mobile-open' : '') },
+    h('aside', { className: 'app-sidebar' + (sidebarOpen ? ' mobile-open' : '') },
       h('nav', { className: 'sidebar-tabs SegmentedControl', role: 'radiogroup', 'aria-label': 'Navigation' },
         NAV_ITEMS.map(item =>
           h('button', {
@@ -34,19 +39,28 @@ export function AppShell({ view, onViewChange, onSettingsOpen, sidebarPane, chil
           ),
         ),
       ),
-      h('div', { className: 'sidebar-body' }, sidebarPane),
+      h('div', { className: 'sidebar-body', onClick: (e) => {
+        if (e.target.closest('.session-item, .file-tree-node')) setSidebarOpen(false);
+      } }, sidebarPane),
       h('div', { className: 'sidebar-footer' },
         h('button', {
-          className: 'sidebar-footer-btn',
-          onClick: () => { onSettingsOpen(); setMobileNavOpen(false); },
+          className: 'sidebar-footer-btn btn-invisible',
+          onClick: () => { onSettingsOpen(); setSidebarOpen(false); },
         },
           h('span', { className: 'sidebar-footer-icon' }, iconGear()),
           'Settings',
         ),
-        h('button', { className: 'sidebar-footer-btn', onClick: toggle },
+        h('button', { className: 'sidebar-footer-btn btn-invisible', onClick: toggle },
           theme === 'light' ? iconMoon() : iconSun(),
         ),
       ),
+    ),
+    sidebarOpen && h('div', { className: 'sidebar-backdrop', onClick: closeSidebar }),
+    h('div', { className: 'mobile-header' },
+      h('button', { className: 'mobile-header-btn btn-invisible', onClick: () => setSidebarOpen(true), 'aria-label': 'Menu' },
+        iconMenu(),
+      ),
+      h('span', { className: 'mobile-header-title' }, view === 'chat' ? 'Chat' : 'Files'),
     ),
     h('main', { className: 'app-content' }, children),
     h('nav', { className: 'bottom-bar' },
@@ -63,7 +77,7 @@ export function AppShell({ view, onViewChange, onSettingsOpen, sidebarPane, chil
         ),
         h('button', {
           className: 'bottom-bar-item',
-          onClick: () => { onSettingsOpen(); setMobileNavOpen(false); },
+          onClick: () => { onSettingsOpen(); setSidebarOpen(false); },
         },
           iconGear(),
           h('span', null, 'Settings'),
@@ -73,6 +87,11 @@ export function AppShell({ view, onViewChange, onSettingsOpen, sidebarPane, chil
   );
 }
 
+function iconMenu() {
+  return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 16, height: 16 },
+    h('path', { d: 'M1 2.75A.75.75 0 0 1 1.75 2h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 2.75Zm0 5A.75.75 0 0 1 1.75 7h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 7.75ZM1.75 12h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Z' }),
+  );
+}
 function iconChat() {
   return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 16, height: 16 },
     h('path', { d: 'M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.5 0v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25H2.75a.25.25 0 0 0-.25.25Z' }),

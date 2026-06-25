@@ -25,6 +25,7 @@ var (
 	flagPort    int
 	flagDB      string
 	flagRootDir string
+	flagToken   string
 )
 
 var rootCmd = &cobra.Command{
@@ -37,6 +38,7 @@ func init() {
 	rootCmd.Flags().IntVar(&flagPort, "port", 8080, "HTTP server port")
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path")
 	rootCmd.Flags().StringVar(&flagRootDir, "root-dir", ".", "Project root directory")
+	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
 }
 
 // Execute runs the root command.
@@ -110,7 +112,13 @@ func run(_ *cobra.Command, _ []string) error {
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
 	wsHandler := handler.NewWSHandler(runner)
 
-	srv := server.New(log)
+	token := flagToken
+	if token == "" {
+		token = server.GenerateToken()
+	}
+	log.Info().Str("token", token).Msg("auth token")
+
+	srv := server.New(log, token)
 	srv.RegisterRoutes(server.Routes{
 		SessionList:     sessionHandler.List,
 		SessionCreate:   sessionHandler.Create,

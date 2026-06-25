@@ -76,7 +76,7 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 		sink(env)
 	}
 
-	sendEvent("run.started", protocol.RunStarted{RunID: runID})
+	sendEvent("run.started", protocol.RunStarted{RunID: runID, SessionID: sessionID})
 
 	mkResult := func() *RunResult {
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
@@ -86,6 +86,7 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
 	if err != nil {
 		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
 			Code:    "config_error",
 			Message: err.Error(),
 		})
@@ -96,6 +97,7 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 	provider := built.Provider
 	if provider == nil {
 		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
 			Code:    "config_error",
 			Message: "no API key configured for this agent",
 		})
@@ -105,7 +107,7 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 	// Wrap with router provider if routes exist
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
 
-	sendEvent("run.agent_start", protocol.RunAgentStart{AgentName: agent.Name})
+	sendEvent("run.agent_start", protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
 
 	session := store.NewSessionAdapter(r.db, sessionID)
 
@@ -131,16 +133,17 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 	for event, err := range sr.Events() {
 		if err != nil {
 			if ctx.Err() != nil {
-				sendEvent("run.cancelled", nil)
+				sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 			} else {
 				sendEvent("run.error", protocol.RunError{
+					RunID:   runID,
 					Code:    "stream_error",
 					Message: err.Error(),
 				})
 			}
 			return mkResult()
 		}
-		r.handleStreamEvent(event, sendEvent)
+		r.handleStreamEvent(event, runID, sendEvent)
 	}
 
 	result := r.processResult(sr, runID, sessionID, agentConfigID, sandboxID, sendEvent)
@@ -181,11 +184,12 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
 	}
 
-	sendEvent("run.started", protocol.RunStarted{RunID: runID})
+	sendEvent("run.started", protocol.RunStarted{RunID: runID, SessionID: sessionID})
 
 	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
 	if err != nil {
 		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
 			Code:    "config_error",
 			Message: err.Error(),
 		})
@@ -194,6 +198,7 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 	provider := built.Provider
 	if provider == nil {
 		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
 			Code:    "config_error",
 			Message: "no API key configured for this agent",
 		})
@@ -205,6 +210,7 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 	})
 	if err != nil {
 		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
 			Code:    "resume_error",
 			Message: err.Error(),
 		})
@@ -218,6 +224,7 @@ func (r *Runner) processResult(sr *agents.StreamedResult, runID, sessionID, agen
 	res, err := sr.FinalResult()
 	if err != nil {
 		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
 			Code:    "run_error",
 			Message: err.Error(),
 		})
@@ -231,6 +238,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 	if len(res.Interruptions) > 0 {
 		for _, item := range res.Interruptions {
 			sendEvent("run.tool_call", protocol.RunToolCall{
+				RunID:         runID,
 				ToolCallID:    item.CallID,
 				ToolName:      item.ToolName,
 				Arguments:     item.Arguments,
@@ -251,7 +259,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 	r.updateSessionMeta(sessionID, agentConfigID)
 
 	finalText := res.FinalOutputString()
-	sendEvent("run.output", protocol.RunOutput{FinalOutput: finalText})
+	sendEvent("run.output", protocol.RunOutput{RunID: runID, FinalOutput: finalText})
 	return &RunResult{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
 }
 
@@ -338,7 +346,7 @@ func (r *Runner) CancelRun(runID string) {
 	}
 }
 
-func (r *Runner) handleStreamEvent(event agents.StreamEvent, send func(string, any)) {
+func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any)) {
 	switch e := event.(type) {
 	case *agents.RawResponsesStreamEvent:
 		if e.Data == nil {
@@ -346,7 +354,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, send func(string, a
 		}
 		delta := extractDelta(e.Data)
 		if delta != "" {
-			send("run.step", protocol.RunStep{Delta: delta})
+			send("run.step", protocol.RunStep{RunID: runID, Delta: delta})
 		}
 
 	case *agents.RunItemStreamEvent:
@@ -355,6 +363,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, send func(string, a
 			if tc, ok := e.Item.(*agents.ToolCallItem); ok {
 				fc := tc.FunctionCall()
 				send("run.tool_call", protocol.RunToolCall{
+					RunID:      runID,
 					ToolCallID: fc.CallID,
 					ToolName:   fc.Name,
 					Arguments:  fc.Arguments,
@@ -363,27 +372,30 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, send func(string, a
 		case "tool_output":
 			if to, ok := e.Item.(*agents.ToolCallOutputItem); ok {
 				send("run.tool_result", protocol.RunToolResult{
-					ToolCallID: "",
-					Output:     fmt.Sprintf("%v", to.Output),
+					RunID:  runID,
+					Output: fmt.Sprintf("%v", to.Output),
 				})
 			}
 		case "handoff_requested":
 			if hc, ok := e.Item.(*agents.HandoffCallItem); ok {
 				send("run.handoff", protocol.RunHandoff{
-					From: hc.AgentRef().Name,
+					RunID: runID,
+					From:  hc.AgentRef().Name,
 				})
 			}
 		case "handoff_occured":
 			if ho, ok := e.Item.(*agents.HandoffOutputItem); ok {
 				send("run.handoff", protocol.RunHandoff{
-					From: ho.SourceAgent.Name,
-					To:   ho.TargetAgent.Name,
+					RunID: runID,
+					From:  ho.SourceAgent.Name,
+					To:    ho.TargetAgent.Name,
 				})
 			}
 		}
 
 	case *agents.AgentUpdatedStreamEvent:
 		send("run.agent_start", protocol.RunAgentStart{
+			RunID:     runID,
 			AgentName: e.NewAgent.Name,
 		})
 	}

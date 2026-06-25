@@ -1,15 +1,52 @@
 const BASE = '/api';
 
+export function getToken() {
+  return sessionStorage.getItem('auth_token') || '';
+}
+
+export function setToken(t) {
+  sessionStorage.setItem('auth_token', t);
+}
+
+export function clearToken() {
+  sessionStorage.removeItem('auth_token');
+}
+
 async function request(path, opts = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-    ...opts,
-  });
+  const headers = { 'Content-Type': 'application/json', ...opts.headers };
+  const t = getToken();
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+  const res = await fetch(`${BASE}${path}`, { ...opts, headers });
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new Event('auth:logout'));
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || res.statusText);
   }
   return res.json();
+}
+
+export async function login(token) {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) throw new Error('invalid token');
+  setToken(token);
+  return true;
+}
+
+export async function checkAuth() {
+  const t = getToken();
+  if (!t) return false;
+  const res = await fetch(`${BASE}/auth/check`, {
+    headers: { 'Authorization': `Bearer ${t}` },
+  });
+  if (!res.ok) { clearToken(); return false; }
+  return true;
 }
 
 function crud(base) {
@@ -46,9 +83,9 @@ export const api = {
   },
   skills: {
     list: () => request('/skills'),
-    get: (path) => request(`/skill/${path}`),
+    get: (path) => request(`/skills/${path}`),
     clone: (url) => request('/skills/clone', { method: 'POST', body: JSON.stringify({ url }) }),
-    update: (name) => request(`/skills/${name}/update`, { method: 'POST' }),
+    update: (name) => request(`/skills/${name}`, { method: 'PUT' }),
     delete: (name) => request(`/skills/${name}`, { method: 'DELETE' }),
   },
   files: {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"sync"
 
@@ -56,6 +57,36 @@ func HandleWS(handler WSHandlerFunc) gin.HandlerFunc {
 		}
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		conn := &WSConn{conn: ws, ctx: ctx, cancel: cancel}
+		defer conn.Close()
+		handler(conn)
+	}
+}
+
+// HandleWSWithAuth upgrades to WebSocket, then requires the client to send
+// {"type":"auth","token":"..."} as the first message. On success it replies
+// with {"type":"auth.ok"} and enters the normal handler loop; on failure it
+// closes the connection silently.
+func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			zerolog.Ctx(c.Request.Context()).Error().Err(err).Msg("ws upgrade")
+			return
+		}
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		conn := &WSConn{conn: ws, ctx: ctx, cancel: cancel}
+
+		var auth struct {
+			Type  string `json:"type"`
+			Token string `json:"token"`
+		}
+		if err := conn.ReadJSON(&auth); err != nil || auth.Type != "auth" ||
+			subtle.ConstantTimeCompare([]byte(auth.Token), []byte(token)) != 1 {
+			conn.Close()
+			return
+		}
+		_ = conn.WriteJSON(map[string]string{"type": "auth.ok"})
+
 		defer conn.Close()
 		handler(conn)
 	}

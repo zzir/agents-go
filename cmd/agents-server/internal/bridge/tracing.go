@@ -36,6 +36,7 @@ func (e *wsExporter) Export(items []any) {
 			continue
 		}
 		ts := protocol.TraceSpan{
+			RunID:     e.runID,
 			TraceID:   span.TraceID,
 			SpanID:    span.SpanID,
 			ParentID:  span.ParentID,

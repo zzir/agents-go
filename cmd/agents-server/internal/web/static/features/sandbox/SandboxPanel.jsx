@@ -190,7 +190,7 @@ export function SandboxPanel() {
   const handleDelete = async (id) => { await api.sandboxes.delete(id); reload(); };
 
   const typeLabel = (t) => TYPE_LABELS[t] || t;
-  const typeClass = (t) => t === 'docker' ? 'Label-accent' : t === 'ssh' ? 'Label-success' : 'Label-default';
+  const typeClass = (t) => t === 'docker' ? 'Label--accent' : t === 'ssh' ? 'Label--success' : 'Label--secondary';
 
   return h('div', null,
     h('div', { className: 'SectionHeader' },

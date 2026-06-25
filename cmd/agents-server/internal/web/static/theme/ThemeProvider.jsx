@@ -14,7 +14,10 @@ export function ThemeProvider({ children }) {
   });
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const el = document.documentElement;
+    el.setAttribute('data-color-mode', theme);
+    el.setAttribute('data-light-theme', 'light');
+    el.setAttribute('data-dark-theme', 'dark');
     localStorage.setItem('theme', theme);
   }, [theme]);
 

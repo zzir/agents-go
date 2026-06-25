@@ -14,7 +14,7 @@ export function ToolCallCard({ toolCall, onApprove, onReject }) {
 
   const showStatus = status === 'approved' || status === 'rejected' || (needs_approval && !status);
   const statusLabel = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'pending';
-  const statusClass = status === 'approved' ? 'Label-success' : status === 'rejected' ? 'Label-danger' : 'Label-accent';
+  const statusClass = status === 'approved' ? 'Label--success' : status === 'rejected' ? 'Label--danger' : 'Label--accent';
 
   return h('div', { className: 'ToolCallCard' },
     h('div', { className: 'ToolCallCard-header' },

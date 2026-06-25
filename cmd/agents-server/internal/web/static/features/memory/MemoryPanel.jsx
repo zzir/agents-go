@@ -55,7 +55,7 @@ export function MemoryPanel() {
         h('div', { key: m.id, className: 'Box-row' },
           h('div', { style: { flex: 1, minWidth: 0 } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-              h('span', { className: 'Label ' + (m.agent_config_id ? 'Label-accent' : 'Label-default') }, agentName(m.agent_config_id)),
+              h('span', { className: 'Label ' + (m.agent_config_id ? 'Label--accent' : 'Label--secondary') }, agentName(m.agent_config_id)),
               h('span', { style: { fontWeight: 500, fontSize: '13px', color: 'var(--color-accent-fg)', fontFamily: 'var(--font-mono)' } }, m.key),
             ),
             h('div', { style: { fontSize: '13px', color: 'var(--color-fg-default)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },

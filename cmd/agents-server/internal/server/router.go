@@ -125,9 +125,9 @@ func (s *Server) RegisterRoutes(r Routes) {
 		skills := api.Group("/skills")
 		skills.GET("", r.SkillList)
 		skills.POST("/clone", r.SkillClone)
-		skills.POST("/:name/update", r.SkillUpdate)
+		skills.PUT("/:name", r.SkillUpdate)
 		skills.DELETE("/:name", r.SkillDelete)
-		api.GET("/skill/*path", r.SkillGet)
+		skills.GET("/*path", r.SkillGet)
 	}
 	{
 		providerRoutes := api.Group("/provider-routes")
@@ -155,5 +155,5 @@ func (s *Server) RegisterRoutes(r Routes) {
 		chatgpt.GET("/status", r.ChatGPTStatus)
 		chatgpt.POST("/logout", r.ChatGPTLogout)
 	}
-	s.Engine.GET("/ws", HandleWS(r.WSHandler))
+	s.Engine.GET("/ws", HandleWSWithAuth(r.WSHandler, s.token))
 }

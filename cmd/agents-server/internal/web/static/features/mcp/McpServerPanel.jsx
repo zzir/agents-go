@@ -216,7 +216,7 @@ export function McpServerPanel() {
             h('div', { className: 'form-status' },
               h('span', { className: 'form-status-dot', style: { background: statusDot(s) } }),
               h('span', { style: { fontWeight: 500, fontSize: '14px' } }, s.name),
-              s.config && s.config.auth_mode === 'oauth' && h('span', { className: 'Label Label-default' }, 'OAuth'),
+              s.config && s.config.auth_mode === 'oauth' && h('span', { className: 'Label Label--secondary' }, 'OAuth'),
             ),
             h('div', { style: { fontSize: '12px', color: 'var(--color-fg-muted)', marginTop: '4px', marginLeft: '16px' } },
               s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : ''),
