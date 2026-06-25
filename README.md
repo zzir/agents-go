@@ -209,6 +209,19 @@ Core module path: `github.com/zzir/agents-go`.
 - `.../sandbox/ssh` — **separate module** with the remote SSH backend.
 - `.../examples` — runnable examples (`hello`, `tools`, `handoffs`, `streaming`, `hitl`, `sandbox`).
 
+## agents-server
+
+A full-featured **[demo web app](cmd/agents-server/README.md)** that wraps the
+SDK with a REST API, WebSocket streaming, and an embedded browser UI. Configure
+agents, MCP servers, sandboxes, memories, and skills — then run conversations
+with streaming output, tool approval, and tracing, all from the browser.
+
+```bash
+go run ./cmd/agents-server --port 8080
+```
+
+![agents-server screenshot](cmd/agents-server/screenshot.png)
+
 ## Examples
 
 ```bash

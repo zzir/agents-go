@@ -25,9 +25,9 @@ func extractToken(c *gin.Context) string {
 }
 
 // TokenAuth returns a gin middleware that requires a valid token on /api/*
-// paths. The token is read from Authorization header, cookie, or query
-// parameter. Paths under /api/auth/ are excluded. /ws uses application-level
-// auth (first WS message).
+// paths. The token is read from Authorization header or query parameter.
+// Paths under /api/auth/ are excluded. /ws uses application-level auth
+// (first WS message).
 func TokenAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
