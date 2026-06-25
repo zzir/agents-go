@@ -57,7 +57,6 @@ func (s *Server) registerAuthRoutes() {
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
-
 }
 
 // ServeStatic serves files from staticFS, falling back to index.html for unmatched routes (SPA support).

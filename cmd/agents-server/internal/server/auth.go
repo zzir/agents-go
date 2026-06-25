@@ -47,4 +47,3 @@ func TokenAuth(token string) gin.HandlerFunc {
 		c.Next()
 	}
 }
-
