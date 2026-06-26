@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -12,25 +13,46 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 )
 
+type pendingRun struct {
+	state         *agents.RunState
+	sessionID     string
+	agentConfigID string
+	sandboxID     string
+	createdAt     time.Time
+}
+
+const pendingTTL = 10 * time.Minute
+
 // WSHandler dispatches WebSocket messages to start runs and handle tool approvals and rejections.
 type WSHandler struct {
 	runner *bridge.Runner
 
-	mu               sync.Mutex
-	pendingStates    map[string]*agents.RunState
-	pendingSessions  map[string]string
-	pendingConfigs   map[string]string
-	pendingSandboxes map[string]string
+	mu      sync.Mutex
+	pending map[string]*pendingRun
 }
 
 // NewWSHandler returns a WebSocket handler backed by the given runner.
 func NewWSHandler(runner *bridge.Runner) *WSHandler {
-	return &WSHandler{
-		runner:           runner,
-		pendingStates:    make(map[string]*agents.RunState),
-		pendingSessions:  make(map[string]string),
-		pendingConfigs:   make(map[string]string),
-		pendingSandboxes: make(map[string]string),
+	h := &WSHandler{
+		runner:  runner,
+		pending: make(map[string]*pendingRun),
+	}
+	go h.cleanupLoop()
+	return h
+}
+
+func (h *WSHandler) cleanupLoop() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		now := time.Now()
+		h.mu.Lock()
+		for id, p := range h.pending {
+			if now.Sub(p.createdAt) > pendingTTL {
+				delete(h.pending, id)
+			}
+		}
+		h.mu.Unlock()
 	}
 }
 
@@ -108,31 +130,19 @@ func (h *WSHandler) handleToolApprove(conn *server.WSConn, msg protocol.ToolAppr
 	log := zerolog.Ctx(ctx)
 
 	h.mu.Lock()
-	var matchedRunID string
-	for runID, state := range h.pendingStates {
-		for _, item := range state.Interruptions {
-			if item.CallID == msg.ToolCallID {
-				state.Approve(item, false)
-				matchedRunID = runID
-			}
-		}
-	}
-	sdkState := h.pendingStates[matchedRunID]
-	sessionID := h.pendingSessions[matchedRunID]
-	agentConfigID := h.pendingConfigs[matchedRunID]
-	sandboxID := h.pendingSandboxes[matchedRunID]
-	delete(h.pendingStates, matchedRunID)
-	delete(h.pendingSessions, matchedRunID)
-	delete(h.pendingConfigs, matchedRunID)
-	delete(h.pendingSandboxes, matchedRunID)
+	matchedRunID, matchedItem := h.findPendingItem(msg.ToolCallID)
+	p := h.pending[matchedRunID]
+	delete(h.pending, matchedRunID)
 	h.mu.Unlock()
 
-	if sdkState == nil {
+	if p == nil || matchedItem == nil {
 		log.Error().Str("tool_call_id", msg.ToolCallID).Msg("no pending state for approval")
 		return
 	}
 
-	result := h.runner.ResumeStreamed(ctx, sdkState, sessionID, agentConfigID, sandboxID, wsSink(conn))
+	p.state.Approve(matchedItem, false)
+
+	result := h.runner.ResumeStreamed(ctx, p.state, p.sessionID, p.agentConfigID, p.sandboxID, wsSink(conn))
 	if result != nil && result.Interrupted {
 		h.savePendingState(result)
 	}
@@ -143,41 +153,45 @@ func (h *WSHandler) handleToolReject(conn *server.WSConn, msg protocol.ToolRejec
 	log := zerolog.Ctx(ctx)
 
 	h.mu.Lock()
-	var matchedRunID string
-	for runID, state := range h.pendingStates {
-		for _, item := range state.Interruptions {
-			if item.CallID == msg.ToolCallID {
-				state.Reject(item, false, msg.Reason)
-				matchedRunID = runID
-			}
-		}
-	}
-	sdkState := h.pendingStates[matchedRunID]
-	sessionID := h.pendingSessions[matchedRunID]
-	agentConfigID := h.pendingConfigs[matchedRunID]
-	sandboxID := h.pendingSandboxes[matchedRunID]
-	delete(h.pendingStates, matchedRunID)
-	delete(h.pendingSessions, matchedRunID)
-	delete(h.pendingConfigs, matchedRunID)
-	delete(h.pendingSandboxes, matchedRunID)
+	matchedRunID, matchedItem := h.findPendingItem(msg.ToolCallID)
+	p := h.pending[matchedRunID]
+	delete(h.pending, matchedRunID)
 	h.mu.Unlock()
 
-	if sdkState == nil {
+	if p == nil || matchedItem == nil {
 		log.Error().Str("tool_call_id", msg.ToolCallID).Msg("no pending state for rejection")
 		return
 	}
 
-	result := h.runner.ResumeStreamed(ctx, sdkState, sessionID, agentConfigID, sandboxID, wsSink(conn))
+	p.state.Reject(matchedItem, false, msg.Reason)
+
+	result := h.runner.ResumeStreamed(ctx, p.state, p.sessionID, p.agentConfigID, p.sandboxID, wsSink(conn))
 	if result != nil && result.Interrupted {
 		h.savePendingState(result)
 	}
 }
 
+// findPendingItem locates the pending run and interruption matching callID.
+// Must be called with h.mu held.
+func (h *WSHandler) findPendingItem(callID string) (string, *agents.ToolApprovalItem) {
+	for runID, p := range h.pending {
+		for _, item := range p.state.Interruptions {
+			if item.CallID == callID {
+				return runID, item
+			}
+		}
+	}
+	return "", nil
+}
+
 func (h *WSHandler) savePendingState(result *bridge.RunResult) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.pendingStates[result.RunID] = result.SDKState
-	h.pendingSessions[result.RunID] = result.SessionID
-	h.pendingConfigs[result.RunID] = result.AgentConfigID
-	h.pendingSandboxes[result.RunID] = result.SandboxID
+	h.pending[result.RunID] = &pendingRun{
+		state:         result.SDKState,
+		sessionID:     result.SessionID,
+		agentConfigID: result.AgentConfigID,
+		sandboxID:     result.SandboxID,
+		createdAt:     time.Now(),
+	}
 }

@@ -247,4 +247,12 @@ func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessio
 	return nil
 }
 
+// DeleteBySession removes all messages belonging to sessionID.
+func (s *MessageStore) DeleteBySession(ctx context.Context, sessionID string) error {
+	_, err := s.db.NewDelete().Model((*Message)(nil)).
+		Where("session_id = ?", sessionID).
+		Exec(ctx)
+	return err
+}
+
 var _ agents.Session = (*SessionAdapter)(nil)

@@ -50,13 +50,12 @@ a:hover { text-decoration: underline; }
 /* Horizontal tab bar at top — extends SegmentedControl */
 .sidebar-tabs.SegmentedControl {
   margin: var(--space-2) var(--space-2) 0;
-  border: none;
+  display: flex;
+  width: calc(100% - 2 * var(--space-2));
 }
 .sidebar-tab.SegmentedControl-item {
   flex: 1;
-  justify-content: center;
   gap: 6px;
-  padding: 6px 0;
 }
 .sidebar-tab-icon {
   width: 14px;
@@ -183,66 +182,95 @@ a:hover { text-decoration: underline; }
   overflow: hidden;
 }
 
-/* Session sections */
-.session-section + .session-section {
-  margin-top: var(--space-2);
-  padding-top: var(--space-1);
-  border-top: 1px solid var(--color-border-muted);
+/* Session list — high-density chat sessions */
+.NavList {
+  list-style: none;
+  padding: 2px 0;
+  margin: 0;
 }
-.session-section-title {
-  padding: 4px 12px;
+.NavList-group-title {
+  padding: 4px 16px 2px;
   font-size: 11px;
   font-weight: 600;
   color: var(--color-fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  user-select: none;
 }
-
-/* Session items */
-.session-item {
+.NavList-item + .NavList-group-title {
+  margin-top: 8px;
+}
+.NavList-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  margin: 1px var(--space-1);
-  border-radius: var(--radius-md);
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 0 6px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: var(--text-sm);
+  font-size: 14px;
   color: var(--color-fg-default);
-  transition: background 0.1s;
+  text-decoration: none;
+  background: transparent;
+  transition: background 80ms linear;
 }
-.session-item-name {
+.NavList-item:hover {
+  background: var(--color-neutral-muted);
+  text-decoration: none;
+}
+.NavList-item[aria-current]:not([aria-current="false"]) {
+  background: var(--color-neutral-muted);
+}
+.NavList-item[aria-current]:not([aria-current="false"]):not(.running)::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 4px;
+  width: 4px;
+  height: calc(100% - 8px);
+  border-radius: 4px;
+  background: var(--color-accent-fg);
+}
+.NavList-item.running::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 4px;
+  width: 4px;
+  height: calc(100% - 8px);
+  border-radius: 4px;
+  background: var(--color-severe-emphasis);
+}
+.NavList-item-label {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  line-height: 20px;
 }
-.session-actions {
+.NavList-item-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
-  gap: 1px;
-  flex-shrink: 0;
-}
-.session-item:hover { background: var(--color-neutral-muted); }
-.session-item.active { background: var(--color-neutral-muted); font-weight: 500; }
-.session-action-btn {
+  gap: 0;
+  padding: 0 4px 0 12px;
+  border-radius: 0 6px 6px 0;
+  background:
+    linear-gradient(to right, transparent, var(--color-neutral-muted) 12px),
+    linear-gradient(to right, transparent, var(--color-canvas-subtle) 12px);
   opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-  color: var(--color-fg-muted);
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  padding: 2px;
-  line-height: 0;
-  display: inline-flex;
-  align-items: center;
+  transition: opacity var(--dur-fast) var(--ease);
 }
-.session-action-btn:hover { color: var(--color-fg-default); background: var(--color-neutral-muted); }
-.session-action-btn--danger:hover { color: var(--color-danger-fg); }
-.session-item:hover .session-action-btn { opacity: 1; }
+.NavList-item-actions .btn-octicon {
+  padding: 2px;
+  margin: 0;
+}
+.NavList-item:hover .NavList-item-actions { opacity: 1; }
+.NavList-item-action--danger:hover { color: var(--color-danger-fg); }
 
 
 /* --- Message fork button --- */
@@ -250,31 +278,91 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   align-items: flex-end;
 }
-.message-fork-btn {
+
+/* User message hover actions (edit, fork) */
+.message-user-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease);
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-fg-muted);
-  cursor: pointer;
-  padding: 2px;
-  line-height: 0;
+}
+.message-user:hover .message-user-actions { opacity: 1; }
+.message-action-btn {
   display: inline-flex;
   align-items: center;
-  margin-top: 2px;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  line-height: 0;
 }
-.message-forkable:hover .message-fork-btn { opacity: 1; }
-.message-fork-btn:hover {
+.message-action-btn:hover {
   color: var(--color-fg-default);
   background: var(--color-neutral-muted);
 }
+
+/* User message edit mode */
+.message-editing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.message-edit-textarea {
+  width: 75%;
+  min-height: 60px;
+  max-height: 200px;
+  padding: 8px 12px;
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  border: 1px solid var(--color-accent-emphasis);
+  border-radius: var(--radius-lg);
+  background: var(--color-canvas-default);
+  color: var(--color-fg-default);
+  resize: vertical;
+  outline: none;
+}
+.message-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* Turn-level actions (copy, regenerate) */
+.turn-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.message-turn:hover .turn-actions { opacity: 1; }
+.turn-action-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  border: none;
+  background: none;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  line-height: 0;
+}
+.turn-action-btn:hover {
+  color: var(--color-fg-default);
+  background: var(--color-neutral-muted);
+}
+.turn-action-btn.copied { color: var(--color-success-fg); }
 
 /* --- Chat messages area --- */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-3) var(--space-4);
+  contain: layout style;
 }
 
 /* --- Message styles --- */
@@ -538,25 +626,26 @@ a:hover { text-decoration: underline; }
 
 /* --- File tree (sidebar) --- */
 .file-tree {
-  padding: var(--space-1) 0;
-  font-size: var(--text-sm);
+  padding: 4px 0;
+  font-size: 14px;
 }
 .file-tree-node {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 6px 8px;
+  margin: 0 6px;
   cursor: pointer;
   color: var(--color-fg-default);
-  border-radius: var(--radius-md);
-  margin: 0 var(--space-1);
-  transition: background 0.1s;
+  border-radius: 6px;
+  transition: background 80ms linear;
   user-select: none;
 }
-.file-tree-node:hover { background: var(--color-neutral-muted); }
+.file-tree-node:hover {
+  background: var(--color-neutral-muted);
+}
 .file-tree-node.active {
-  background: var(--color-accent-subtle);
-  color: var(--color-accent-fg);
+  background: var(--color-neutral-muted);
 }
 .file-tree-toggle {
   width: 16px;
@@ -580,7 +669,7 @@ a:hover { text-decoration: underline; }
   flex-shrink: 0;
   color: var(--color-fg-muted);
 }
-.file-tree-node.active .file-tree-icon { color: var(--color-accent-fg); }
+.file-tree-node.is-dir .file-tree-icon { color: var(--color-accent-fg); }
 .file-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -625,30 +714,44 @@ a:hover { text-decoration: underline; }
    Primer Components
    ============================================================= */
 
-/* --- SegmentedControl (uses Primer --color-segmented-control-* design tokens) --- */
+/* --- SegmentedControl (matched to Primer React source) --- */
 .SegmentedControl {
   display: inline-flex;
-  border: 1px solid var(--color-border-default);
+  height: 32px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--color-segmented-control-bg);
-  padding: 2px;
-  gap: 1px;
+  padding: 1px;
 }
 .SegmentedControl-item {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
+  justify-content: center;
+  padding: 0 8px;
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 400;
   font-family: inherit;
-  line-height: 20px;
-  border: none;
+  line-height: 1;
+  border: 1px solid transparent;
   border-radius: calc(var(--radius-md) - 2px);
   background: transparent;
   color: var(--color-fg-muted);
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  transition: background 80ms linear;
+  position: relative;
+}
+.SegmentedControl-item:not(:last-child):not([aria-checked="true"])::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--color-border-default);
+}
+.SegmentedControl-item[aria-checked="true"] + .SegmentedControl-item::after {
+  background: transparent;
 }
 .SegmentedControl-item:hover:not([aria-checked="true"]) {
   background: var(--color-segmented-control-button-hover-bg);
@@ -657,7 +760,8 @@ a:hover { text-decoration: underline; }
 .SegmentedControl-item[aria-checked="true"] {
   background: var(--color-segmented-control-button-bg);
   color: var(--color-fg-default);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px var(--color-segmented-control-button-selected-border);
+  font-weight: 600;
+  border-color: rgba(31, 35, 40, 0.14);
 }
 .SegmentedControl-item:focus-visible {
   outline: none;
@@ -937,51 +1041,74 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }
 .markdown-body h1 { font-size: 1.2em; }
 .markdown-body h2 { font-size: 1.1em; }
-.markdown-body table { display: table; width: 100%; }
+.markdown-body table { display: table; }
 .markdown-body hr { height: 1px; border: none; background: var(--color-border-muted); }
 
-/* Code blocks — follows Primer's pre { padding:16px } convention */
+/* Code blocks — uses Primer Box + Box--condensed + Box-header */
+.markdown-body pre { background: none; }
 .code-block-wrapper {
   position: relative;
   margin: 16px 0;
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
+  border-radius: 6px;
   overflow: hidden;
 }
 .code-block-wrapper .btn-copy {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
   opacity: 0;
   transition: opacity var(--dur) var(--ease);
-  color: var(--color-fg-muted);
-  padding: 4px 8px;
-  line-height: 1;
-  background: var(--color-canvas-default);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-sm);
   z-index: 1;
-  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  background: var(--color-neutral-muted);
 }
 .code-block-wrapper:hover .btn-copy,
 .code-block-wrapper .btn-copy.copied { opacity: 1; }
-.code-block-wrapper .btn-copy:hover { color: var(--color-fg-default); background: var(--color-canvas-subtle); }
+.streaming .btn-copy { display: none; }
 .code-block-wrapper .btn-copy.copied { color: var(--color-success-fg); }
 .code-block-wrapper .hljs-code-block {
   margin: 0;
-  border: none;
-  border-radius: 0;
-  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  font-size: 13px;
   line-height: 1.5;
-  background: var(--color-canvas-subtle);
+  overflow-x: auto;
 }
-.code-block-wrapper .hljs-code-block.has-line-numbers { padding: 0; }
 .code-block-wrapper .hljs-code-block.scrollable {
-  max-height: 360px;
+  max-height: 400px;
   overflow-y: auto;
 }
 
-/* Line numbers */
+/* Mermaid diagrams */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-pending {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  background: var(--color-canvas-subtle);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-fg-muted);
+  white-space: pre;
+}
+
+/* KaTeX math */
+.math-block {
+  margin: var(--space-3) 0;
+  text-align: center;
+}
+.math-block .katex-display { margin: 0; }
+
+/* Line numbers (file viewer) */
 .code-line { display: block; white-space: pre; word-break: normal; }
 .has-line-numbers .code-line::before {
   content: attr(data-ln);
@@ -994,8 +1121,6 @@ textarea.form-control { resize: vertical; min-height: 80px; }
   border-right: 1px solid var(--color-border-muted);
   user-select: none;
 }
-
-/* File viewer line numbers */
 .file-viewer-content.has-line-numbers { padding: 0; }
 
 /* =============================================================
@@ -1053,14 +1178,28 @@ body.dialog-open { overflow: hidden; }
   overflow-y: auto;
 }
 .dialog-tab {
-  padding: 6px 10px;
-  border-top: none;
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 14px;
+  font-family: inherit;
   color: var(--color-fg-muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background 80ms linear;
+}
+.dialog-tab:hover {
+  background: var(--color-neutral-muted);
+  color: var(--color-fg-default);
 }
 .dialog-tab:last-child { box-shadow: none; }
-.dialog-tab[aria-current]:not([aria-current="false"]) { font-weight: 500; color: var(--color-fg-default); }
+.dialog-tab[aria-current]:not([aria-current="false"]) {
+  background: var(--color-neutral-muted);
+  color: var(--color-fg-default);
+}
 .dialog-tab[aria-current]:not([aria-current="false"])::before { display: none; }
 .dialog-content {
   flex: 1;
@@ -1166,7 +1305,7 @@ body.dialog-open { overflow: hidden; }
 
 /* Keyboard focus rings for interactive surfaces (mouse clicks stay clean) */
 .sidebar-tab:focus-visible,
-.session-item:focus-visible,
+.NavList-item:focus-visible,
 .file-tree-node:focus-visible,
 .bottom-bar-item:focus-visible,
 .process-group-toggle:focus-visible,
@@ -1176,31 +1315,14 @@ body.dialog-open { overflow: hidden; }
   box-shadow: var(--focus-ring);
 }
 
-/* SegmentedControl — refined active pill with token depth */
+/* SegmentedControl — refined active pill depth */
 .SegmentedControl-item[aria-checked="true"] {
-  box-shadow: var(--shadow-resting, 0 1px 2px rgba(0,0,0,0.06)), 0 0 0 1px var(--color-segmented-control-button-selected-border);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 [data-color-mode="dark"] .SegmentedControl-item[aria-checked="true"] {
-  box-shadow: inset 0 0 0 1px var(--color-segmented-control-button-selected-border);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
-/* Session items — indicator bar: blue=active, orange=running */
-.session-item { position: relative; transition: background var(--dur-fast) var(--ease); }
-.session-item.active::before,
-.session-item.running::before {
-  content: "";
-  position: absolute;
-  left: -1px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 15px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent-emphasis);
-}
-.session-item.running::before {
-  background: var(--color-severe-emphasis);
-}
 
 /* Cards — subtle hover elevation */
 .Box { transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }

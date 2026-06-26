@@ -1,72 +1,46 @@
 import React from 'react';
 import { api } from '/lib/api.js';
 import { useApi } from '/lib/hooks.js';
+import { iconBookmark, iconBookmarkSlash, iconFork, iconTrash } from '/lib/icons.js';
 
 const { useState, useEffect } = React;
 const h = React.createElement;
 
-// Octicon: bookmark (outline)
-function iconBookmark() {
-  return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 14, height: 14 },
-    h('path', { d: 'M3 2.75C3 1.784 3.784 1 4.75 1h6.5c.966 0 1.75.784 1.75 1.75v11.5a.75.75 0 0 1-1.227.579L8 11.722l-3.773 3.107A.75.75 0 0 1 3 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.91l3.023-2.489a.75.75 0 0 1 .954 0l3.023 2.49V2.75a.25.25 0 0 0-.25-.25Z' }),
-  );
-}
-
-// Octicon: bookmark-slash (for unpin)
-function iconBookmarkSlash() {
-  return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 14, height: 14 },
-    h('path', { d: 'M3.354.854a.5.5 0 1 0-.708-.708l13 13a.5.5 0 0 0 .708-.708ZM4.75 1h6.5c.966 0 1.75.784 1.75 1.75v11.5a.75.75 0 0 1-1.227.579L8 11.722l-3.773 3.107A.75.75 0 0 1 3 14.25V2.75C3 1.784 3.784 1 4.75 1Zm-.25 1.75v9.91l3.023-2.489a.75.75 0 0 1 .954 0l3.023 2.49V2.75a.25.25 0 0 0-.25-.25h-6.5a.25.25 0 0 0-.25.25Z' }),
-  );
-}
-
-// Octicon: git-branch
-function iconFork() {
-  return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 14, height: 14 },
-    h('path', { d: 'M5 3.254V3.25v.005a.75.75 0 1 1 0-.005Zm.45 1.9a2.25 2.25 0 1 0-1.95.218v5.256a2.25 2.25 0 1 0 1.5 0V7.123A5.735 5.735 0 0 0 9.25 9h1.378a2.251 2.251 0 1 0 0-1.5H9.25a4.25 4.25 0 0 1-3.8-2.346ZM12.75 9a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm-8.5 3.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z' }),
-  );
-}
-
-// Octicon: trash
-function iconTrash() {
-  return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 14, height: 14 },
-    h('path', { d: 'M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM6.5 1.75v1.5h3v-1.5a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z' }),
-  );
-}
-
 function SessionItem({ s, activeId, isRunning, onSelect, onPin, onFork, onDelete }) {
-  return h('div', {
+  return h('a', {
     key: s.id,
-    className: 'session-item' + (s.id === activeId ? ' active' : '') + (isRunning ? ' running' : ''),
+    className: 'NavList-item' + (isRunning ? ' running' : ''),
     'aria-current': s.id === activeId ? 'page' : undefined,
-    onClick: () => onSelect(s.id),
+    onClick: (e) => { e.preventDefault(); onSelect(s.id); },
+    href: '#',
   },
-    h('span', { className: 'session-item-name' }, s.name),
-    h('div', { className: 'session-actions' },
+    h('span', { className: 'NavList-item-label' }, s.name),
+    h('div', { className: 'NavList-item-actions' },
       h('button', {
-        className: 'session-action-btn',
-        onClick: (e) => { e.stopPropagation(); onPin(s.id, !s.pinned); },
+        className: 'btn-octicon',
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); onPin(s.id, !s.pinned); },
         title: s.pinned ? 'Unpin' : 'Pin',
       }, s.pinned ? iconBookmarkSlash() : iconBookmark()),
       h('button', {
-        className: 'session-action-btn',
-        onClick: (e) => { e.stopPropagation(); onFork(s.id); },
+        className: 'btn-octicon',
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); onFork(s.id); },
         title: 'Fork conversation',
       }, iconFork()),
       h('button', {
-        className: 'session-action-btn session-action-btn--danger',
-        onClick: (e) => { e.stopPropagation(); onDelete(s.id); },
+        className: 'btn-octicon NavList-item-action--danger',
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); onDelete(s.id); },
         title: 'Delete',
       }, iconTrash()),
     ),
   );
 }
 
-export function SessionList({ activeId, onSelect, reloadKey, runningSessions }) {
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions }) {
   const { data: sessions, reload } = useApi(() => api.sessions.list());
 
   useEffect(() => {
     if (reloadKey) reload();
-  }, [reloadKey]);
+  }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
@@ -75,6 +49,7 @@ export function SessionList({ activeId, onSelect, reloadKey, runningSessions }) 
       const sess = await api.sessions.create('New Chat');
       await reload();
       onSelect(sess.id);
+      if (onCreated) onCreated();
     } finally {
       setCreating(false);
     }
@@ -83,6 +58,7 @@ export function SessionList({ activeId, onSelect, reloadKey, runningSessions }) 
   const handleDelete = async (id) => {
     await api.sessions.delete(id);
     reload();
+    if (onDeleteNotify) onDeleteNotify(id);
     if (activeId === id) onSelect(null);
   };
 
@@ -116,12 +92,10 @@ export function SessionList({ activeId, onSelect, reloadKey, runningSessions }) 
       }, '+ New Chat'),
     ),
     h('div', { className: 'chat-pane-body' },
-      pinned.length > 0 && h('div', { className: 'session-section' },
-        h('div', { className: 'session-section-title' }, 'Pinned'),
+      h('nav', { className: 'NavList' },
+        pinned.length > 0 && h('div', { className: 'NavList-group-title' }, 'Pinned'),
         pinned.map(renderItem),
-      ),
-      recents.length > 0 && h('div', { className: 'session-section' },
-        (pinned.length > 0) && h('div', { className: 'session-section-title' }, 'Recents'),
+        recents.length > 0 && (pinned.length > 0) && h('div', { className: 'NavList-group-title' }, 'Recents'),
         recents.map(renderItem),
       ),
       (!sessions || sessions.length === 0) && h('div', { className: 'blankslate' }, 'No conversations yet'),

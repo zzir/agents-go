@@ -1,13 +1,141 @@
 import React from 'react';
 import { api } from '/lib/api.js';
-import { renderMarkdown } from '/lib/markdown.js';
+import { renderMarkdown, splitMermaidBlocks, sanitizeSVG } from '/lib/markdown.js';
 import { useScrollToBottom, useApi } from '/lib/hooks.js';
 import { MessageBubble } from '/features/chat/MessageBubble.jsx';
 import { MessageInput } from '/features/chat/MessageInput.jsx';
 import { ToolCallCard } from '/features/chat/ToolCallCard.jsx';
+import { TracePanel } from '/features/chat/TracePanel.jsx';
+import { iconChevronRight, iconFork, iconCopy, iconCheck, iconSync, iconEdit, iconChatBadge } from '/lib/icons.js';
 
-const { useState, useEffect, useCallback, useMemo } = React;
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
 const h = React.createElement;
+
+let mermaidMod = null;
+let mermaidTheme = null;
+let mermaidIdSeq = 0;
+
+function primerThemeVars() {
+  const s = getComputedStyle(document.documentElement);
+  const v = (n) => s.getPropertyValue(n).trim();
+  return {
+    fontFamily: v('--font-sans'),
+    fontSize: '14px',
+
+    primaryColor: v('--color-canvas-subtle'),
+    primaryBorderColor: v('--color-border-default'),
+    primaryTextColor: v('--color-fg-default'),
+    secondaryColor: v('--color-neutral-muted'),
+    secondaryBorderColor: v('--color-border-default'),
+    secondaryTextColor: v('--color-fg-default'),
+    tertiaryColor: v('--color-success-subtle'),
+    tertiaryBorderColor: v('--color-border-default'),
+    tertiaryTextColor: v('--color-fg-default'),
+
+    lineColor: v('--color-fg-muted'),
+    textColor: v('--color-fg-default'),
+    mainBkg: v('--color-canvas-subtle'),
+    nodeBorder: v('--color-border-default'),
+    nodeTextColor: v('--color-fg-default'),
+    clusterBkg: v('--color-canvas-default'),
+    clusterBorder: v('--color-border-muted'),
+    titleColor: v('--color-fg-default'),
+    edgeLabelBackground: v('--color-canvas-default'),
+
+    actorBkg: v('--color-canvas-subtle'),
+    actorBorder: v('--color-border-default'),
+    actorTextColor: v('--color-fg-default'),
+    signalColor: v('--color-fg-default'),
+    signalTextColor: v('--color-fg-default'),
+    labelBoxBkgColor: v('--color-canvas-subtle'),
+    labelBoxBorderColor: v('--color-border-default'),
+    labelTextColor: v('--color-fg-default'),
+    noteBkgColor: v('--color-attention-subtle'),
+    noteBorderColor: v('--color-border-default'),
+    noteTextColor: v('--color-fg-default'),
+    activationBorderColor: v('--color-border-default'),
+    activationBkgColor: v('--color-canvas-subtle'),
+  };
+}
+
+async function ensureMermaid() {
+  if (!mermaidMod) {
+    mermaidMod = (await import('mermaid')).default;
+  }
+  const cur = document.documentElement.getAttribute('data-color-mode') || 'light';
+  if (mermaidTheme !== cur) {
+    mermaidTheme = cur;
+    mermaidMod.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: primerThemeVars(),
+    });
+  }
+  return mermaidMod;
+}
+
+const MERMAID_CACHE_MAX = 100;
+const mermaidCache = new Map();
+function mermaidCacheSet(key, value) {
+  if (mermaidCache.size >= MERMAID_CACHE_MAX) {
+    const first = mermaidCache.keys().next().value;
+    mermaidCache.delete(first);
+  }
+  mermaidCache.set(key, value);
+}
+
+function MermaidBlock({ source }) {
+  const [colorMode, setColorMode] = useState(() =>
+    document.documentElement.getAttribute('data-color-mode') || 'light'
+  );
+  const cacheKey = source + '\0' + colorMode;
+  const [svg, setSvg] = useState(() => mermaidCache.get(cacheKey) || null);
+
+  useEffect(() => {
+    const obs = new MutationObserver(() => {
+      setColorMode(document.documentElement.getAttribute('data-color-mode') || 'light');
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-color-mode'] });
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const cached = mermaidCache.get(cacheKey);
+    if (cached) { setSvg(cached); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const mermaid = await ensureMermaid();
+        const { svg: rendered } = await mermaid.render(`m${++mermaidIdSeq}`, source);
+        if (!cancelled) {
+          const safe = sanitizeSVG(rendered);
+          mermaidCacheSet(cacheKey, safe);
+          setSvg(safe);
+        }
+      } catch {
+        // invalid syntax
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [source, cacheKey]);
+
+  if (svg) return h('div', { className: 'mermaid-diagram', dangerouslySetInnerHTML: { __html: svg } });
+  return h('pre', { className: 'mermaid-pending' }, source);
+}
+
+function TextContent({ content }) {
+  const segments = useMemo(() => splitMermaidBlocks(content), [content]);
+  if (segments.length === 1 && segments[0].type === 'md') {
+    return h('div', { className: 'turn-text markdown-body', dangerouslySetInnerHTML: { __html: renderMarkdown(content) } });
+  }
+  return h('div', { className: 'turn-text markdown-body' },
+    segments.map((seg, i) =>
+      seg.type === 'mermaid'
+        ? h(MermaidBlock, { key: `m${i}`, source: seg.text })
+        : h('div', { key: `t${i}`, dangerouslySetInnerHTML: { __html: renderMarkdown(seg.text) } })
+    )
+  );
+}
 
 function ProcessGroup({ toolCalls, onApprove, onReject }) {
   const [expanded, setExpanded] = useState(false);
@@ -25,9 +153,7 @@ function ProcessGroup({ toolCalls, onApprove, onReject }) {
       className: 'process-group-toggle' + (shouldShow ? ' expanded' : ''),
       onClick: () => setExpanded(!expanded),
     },
-      h('svg', { className: 'process-icon', viewBox: '0 0 16 16', fill: 'currentColor' },
-        h('path', { d: 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z' }),
-      ),
+      iconChevronRight({ className: 'process-icon' }),
       h('span', null, count + ' tool call' + (count > 1 ? 's' : '')),
       pendingCount > 0 && h('span', { className: 'process-status Label Label--accent' }, pendingCount + ' pending'),
       isRunning && h('span', { className: 'process-status Label Label--secondary' }, 'running...'),
@@ -45,39 +171,102 @@ function ProcessGroup({ toolCalls, onApprove, onReject }) {
   );
 }
 
-function TurnBlock({ parts, streaming, isLive, onApprove, onReject }) {
+function TurnBlock({ parts, streaming, isLive, onApprove, onReject, turnText, onRegenerate, running }) {
   const isEmpty = parts.length === 0 && !streaming;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    if (!turnText) return;
+    navigator.clipboard.writeText(turnText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [turnText]);
+
   return h('div', { className: 'message message-turn' },
     parts.map((part, i) => {
       if (part.type === 'text') {
-        return h('div', { key: 'p-' + i, className: 'turn-text markdown-body', dangerouslySetInnerHTML: { __html: renderMarkdown(part.content) } });
+        return h(TextContent, { key: 'p-' + i, content: part.content });
       }
       if (part.type === 'tools') {
         return h(ProcessGroup, { key: 'p-' + i, toolCalls: part.toolCalls, onApprove, onReject });
       }
       return null;
     }),
-    streaming && h('div', { className: 'turn-text markdown-body', dangerouslySetInnerHTML: { __html: renderMarkdown(streaming + '▋') } }),
+    streaming && h('div', { className: 'turn-text markdown-body streaming', dangerouslySetInnerHTML: { __html: renderMarkdown(streaming + '▋') } }),
     isLive && isEmpty && h('div', { className: 'thinking-indicator' },
       h('div', { className: 'thinking-dots' },
         h('span', null), h('span', null), h('span', null),
       ),
     ),
+    !isLive && turnText && h('div', { className: 'turn-actions' },
+      h('button', {
+        className: 'turn-action-btn' + (copied ? ' copied' : ''),
+        title: copied ? 'Copied!' : 'Copy response',
+        onClick: handleCopy,
+      }, copied ? iconCheck() : iconCopy()),
+      !running && onRegenerate && h('button', {
+        className: 'turn-action-btn',
+        title: 'Regenerate',
+        onClick: onRegenerate,
+      }, iconSync()),
+    ),
   );
 }
 
-function iconFork() {
-  return h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', width: 14, height: 14 },
-    h('path', { d: 'M5 3.254V3.25v.005a.75.75 0 1 1 0-.005Zm.45 1.9a2.25 2.25 0 1 0-1.95.218v5.256a2.25 2.25 0 1 0 1.5 0V7.123A5.735 5.735 0 0 0 9.25 9h1.378a2.251 2.251 0 1 0 0-1.5H9.25a4.25 4.25 0 0 1-3.8-2.346ZM12.75 9a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm-8.5 3.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z' }),
+
+function UserMessage({ content, messageId, onFork, onSend, running }) {
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(content);
+
+  const handleSubmit = useCallback(() => {
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    setEditing(false);
+    onSend(trimmed);
+  }, [editText, onSend]);
+
+  if (editing) {
+    return h('div', { className: 'message message-user message-editing' },
+      h('textarea', {
+        className: 'message-edit-textarea',
+        value: editText,
+        onChange: e => setEditText(e.target.value),
+        onKeyDown: e => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+          if (e.key === 'Escape') { setEditing(false); setEditText(content); }
+        },
+        autoFocus: true,
+        rows: 3,
+      }),
+      h('div', { className: 'message-edit-actions' },
+        h('button', { className: 'btn btn-sm', onClick: () => { setEditing(false); setEditText(content); } }, 'Cancel'),
+        h('button', { className: 'btn btn-sm btn-primary', onClick: handleSubmit, disabled: !editText.trim() }, 'Send'),
+      ),
+    );
+  }
+
+  return h('div', { className: 'message message-user message-forkable' },
+    h('div', { className: 'message-body' }, content),
+    h('div', { className: 'message-user-actions' },
+      !running && h('button', {
+        className: 'message-action-btn',
+        title: 'Edit & resend',
+        onClick: () => { setEditText(content); setEditing(true); },
+      }, iconEdit()),
+      messageId && onFork && h('button', {
+        className: 'message-action-btn',
+        title: 'Fork before this message',
+        onClick: () => onFork(messageId),
+      }, iconFork()),
+    ),
   );
 }
 
-export function ChatView({ sessionId, messages, streaming, running, traceRuns, liveRunId, lastError, onSend, onCancel, onApprove, onReject, onFork, settingsReloadKey }) {
+export function ChatView({ sessionId, messages, loaded, streaming, running, traceRuns, liveRunId, lastError, onSend, onCancel, onApprove, onReject, onFork, settingsReloadKey }) {
   const [toast, setToast] = useState(null);
   const [agentConfigId, setAgentConfigId] = useState('');
   const [sandboxId, setSandboxId] = useState('');
-  const [showTrace, setShowTrace] = useState(false);
-  const [expandedRuns, setExpandedRuns] = useState({});
   const { data: agentConfigs, reload: reloadAgents } = useApi(() => api.agents.list());
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi(() => api.sandboxes.list());
 
@@ -87,33 +276,24 @@ export function ChatView({ sessionId, messages, streaming, running, traceRuns, l
     if (!valid) {
       setAgentConfigId(agentConfigs[0].id);
     }
-  }, [agentConfigs]);
+  }, [agentConfigs, agentConfigId]);
 
   useEffect(() => {
     if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
-  }, [settingsReloadKey]);
+  }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
   const scrollRef = useScrollToBottom(messages.length + streaming, sessionId);
 
+  const toastTimerRef = useRef(null);
   const showToast = useCallback((msg, type) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
+    toastTimerRef.current = setTimeout(() => { setToast(null); toastTimerRef.current = null; }, 4000);
   }, []);
 
   useEffect(() => {
     if (lastError) showToast(lastError, 'error');
   }, [lastError, showToast]);
-
-  useEffect(() => {
-    const newRuns = Object.keys(traceRuns).filter(rid => !(rid in expandedRuns));
-    if (newRuns.length) {
-      setExpandedRuns(prev => {
-        const next = { ...prev };
-        newRuns.forEach(rid => { next[rid] = true; });
-        return next;
-      });
-    }
-  }, [traceRuns]);
 
   const handleCopyClick = useCallback((e) => {
     const btn = e.target.closest('.btn-copy');
@@ -141,11 +321,7 @@ export function ChatView({ sessionId, messages, streaming, running, traceRuns, l
 
   if (!sessionId) {
     return h('div', { className: 'chat-empty' },
-      h('div', { className: 'chat-empty-badge' },
-        h('svg', { viewBox: '0 0 16 16', fill: 'currentColor', 'aria-hidden': 'true' },
-          h('path', { d: 'M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v9.5A1.75 1.75 0 0 1 14.25 14H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 15.543V14H1.75A1.75 1.75 0 0 1 0 12.25v-9.5C0 1.784.784 1 1.75 1ZM1.5 2.75v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Z' }),
-        ),
-      ),
+      h('div', { className: 'chat-empty-badge' }, iconChatBadge()),
       h('div', { className: 'chat-empty-title' }, 'Start a conversation'),
       h('div', { className: 'chat-empty-sub' }, 'Pick a chat from the sidebar, or create a new one to begin.'),
     );
@@ -176,11 +352,18 @@ export function ChatView({ sessionId, messages, streaming, running, traceRuns, l
     ),
   );
 
+  const loading = sessionId && !loaded && messages.length === 0;
+
   return h('div', { className: 'chat-main' },
     h('div', { ref: scrollRef, className: 'chat-messages', onClick: handleCopyClick },
-      messages.map((m, i) => {
+      loading ? null : messages.map((m, i) => {
         if (m.role === 'turn') {
           const isLive = running && i === messages.length - 1;
+          const turnText = m.parts.filter(p => p.type === 'text').map(p => p.content).join('\n\n');
+          let prevUserContent = null;
+          for (let j = i - 1; j >= 0; j--) {
+            if (messages[j].role === 'user') { prevUserContent = messages[j].content; break; }
+          }
           return h(TurnBlock, {
             key: 'turn-' + i,
             parts: m.parts,
@@ -188,58 +371,26 @@ export function ChatView({ sessionId, messages, streaming, running, traceRuns, l
             isLive,
             onApprove: onApprove,
             onReject: onReject,
+            turnText,
+            onRegenerate: prevUserContent ? () => handleSend(prevUserContent) : null,
+            running,
           });
         }
-        if (m.role === 'user' && m.messageId && onFork) {
-          return h('div', { key: i, className: 'message message-user message-forkable' },
-            h('div', { className: 'message-body' }, m.content),
-            h('button', {
-              className: 'message-fork-btn',
-              title: 'Fork before this message',
-              onClick: () => onFork(m.messageId),
-            }, iconFork()),
-          );
+        if (m.role === 'user') {
+          return h(UserMessage, {
+            key: i,
+            content: m.content,
+            messageId: m.messageId,
+            onFork: onFork,
+            onSend: handleSend,
+            running,
+          });
         }
         return h(MessageBubble, { key: i, role: m.role, content: m.content });
       }),
     ),
 
-    Object.keys(traceRuns).length > 0 && h('div', { className: 'trace-panel' },
-      h('div', {
-        className: 'trace-toggle',
-        onClick: () => setShowTrace(!showTrace),
-      }, (showTrace ? '▾' : '▸') + ' Traces (' + Object.keys(traceRuns).length + ' run' + (Object.keys(traceRuns).length > 1 ? 's' : '') + ')'),
-      showTrace && h('div', { style: { maxHeight: '200px', overflowY: 'auto', marginTop: '4px' } },
-        Object.entries(traceRuns).map(([rid, events]) => {
-          const isLive = rid === liveRunId;
-          const isExpanded = expandedRuns[rid];
-          const hookCount = events.filter(e => e.kind === 'hook').length;
-          const spanCount = events.filter(e => e.kind === 'span').length;
-          return h('div', { key: rid, style: { marginBottom: '4px' } },
-            h('div', {
-              className: 'trace-run-header',
-              onClick: () => setExpandedRuns(prev => ({ ...prev, [rid]: !prev[rid] })),
-              style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', padding: '2px 0' },
-            },
-              h('span', null, isExpanded ? '▾' : '▸'),
-              h('span', { style: { fontFamily: 'monospace', color: 'var(--color-fg-muted)' } }, rid.slice(0, 8)),
-              isLive && h('span', { className: 'Label Label--accent', style: { fontSize: '10px' } }, 'live'),
-              h('span', { style: { color: 'var(--color-fg-subtle)' } },
-                hookCount + ' hook' + (hookCount !== 1 ? 's' : '') + ', ' + spanCount + ' span' + (spanCount !== 1 ? 's' : '')),
-            ),
-            isExpanded && h('div', { style: { paddingLeft: '12px' } },
-              events.map((e, i) =>
-                h('div', { key: i, className: 'trace-event' },
-                  h('span', { style: { color: e.kind === 'hook' ? 'var(--color-accent-fg)' : 'var(--color-success-fg)' } },
-                    e.kind === 'hook' ? e.name : '◆ ' + e.name),
-                  e.detail && h('span', { style: { color: 'var(--color-fg-subtle)', marginLeft: '6px' } }, e.detail),
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    ),
+    h(TracePanel, { traceRuns, liveRunId }),
 
     h(MessageInput, { onSend: handleSend, onCancel: handleCancel, disabled: running || !agentConfigId, running, footer: inputFooter }),
 

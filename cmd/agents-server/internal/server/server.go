@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
@@ -83,12 +84,23 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 	})
 }
 
+func redactQuery(u *url.URL) string {
+	q := u.Query()
+	if q.Get("token") != "" {
+		q.Set("token", "REDACTED")
+	}
+	if len(q) == 0 {
+		return u.Path
+	}
+	return u.Path + "?" + q.Encode()
+}
+
 func zerologMiddleware(log zerolog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
 		log.Info().
 			Str("method", c.Request.Method).
-			Str("path", c.Request.URL.RequestURI()).
+			Str("path", redactQuery(c.Request.URL)).
 			Int("status", c.Writer.Status()).
 			Msg("request")
 	}

@@ -91,6 +91,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	_ = h.messages.DeleteBySession(ctx, id)
 	if h.traces != nil {
 		_ = h.traces.DeleteBySession(ctx, id)
 	}

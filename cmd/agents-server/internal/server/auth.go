@@ -40,7 +40,8 @@ func TokenAuth(token string) gin.HandlerFunc {
 			return
 		}
 
-		if subtle.ConstantTimeCompare([]byte(extractToken(c)), []byte(token)) != 1 {
+		provided := extractToken(c)
+		if token == "" || provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}

@@ -25,7 +25,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	s := NewAgentConfigStore(newTestDB(t))
 
 	// Create stamps id + timestamps via the BeforeAppendModel hook.
-	ac := &AgentConfig{Name: "first", Model: "gpt-4o", MaxTurns: 5, RetryEnabled: true}
+	ac := &AgentConfig{Name: "first", Model: "gpt-5.5", MaxTurns: 5, RetryEnabled: true}
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	}
 
 	// Update is a full-row replace except id/created_at; updated_at is refreshed.
-	upd := &AgentConfig{Name: "second", Model: "gpt-4o-mini", MaxTurns: 9}
+	upd := &AgentConfig{Name: "second", Model: "o4-mini", MaxTurns: 9}
 	if err := s.Update(ctx, ac.ID, upd); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
-	if got2.Name != "second" || got2.Model != "gpt-4o-mini" || got2.MaxTurns != 9 {
+	if got2.Name != "second" || got2.Model != "o4-mini" || got2.MaxTurns != 9 {
 		t.Fatalf("update not applied: %+v", got2)
 	}
 	if got2.RetryEnabled {

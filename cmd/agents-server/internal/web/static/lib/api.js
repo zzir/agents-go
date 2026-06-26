@@ -20,11 +20,13 @@ async function request(path, opts = {}) {
   if (res.status === 401) {
     clearToken();
     window.dispatchEvent(new Event('auth:logout'));
+    throw new Error('unauthorized');
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || res.statusText);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 

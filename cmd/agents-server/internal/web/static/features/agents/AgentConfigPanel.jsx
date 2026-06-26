@@ -1,8 +1,9 @@
 import React from 'react';
 import { api } from '/lib/api.js';
 import { useApi } from '/lib/hooks.js';
+import { fc } from '/lib/form.js';
 
-const { useState } = React;
+const { useState, useEffect, useRef } = React;
 const h = React.createElement;
 
 function AgentForm({ initial, onSave, onCancel, mcpServers }) {
@@ -14,7 +15,7 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
   };
   const initMs = parseModelSettings();
   const [form, setForm] = useState(initial || {
-    name: '', instructions: '', model: 'gpt-4o',
+    name: '', instructions: '', model: 'gpt-5.5',
     provider_type: '', auth_mode: '', api_key: '', base_url: '',
     max_turns: 0, handoff_description: '',
     disable_tool_choice_reset: false, tool_use_behavior: '',
@@ -31,6 +32,8 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
   const [chatgptStatus, setChatgptStatus] = useState(initial && initial.chatgpt_token ? true : null);
   const [selectedMcp, setSelectedMcp] = useState(initTools);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const oauthPollRef = useRef(null);
+  useEffect(() => () => { if (oauthPollRef.current) clearInterval(oauthPollRef.current); }, []);
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
   const toggleMcp = (id) => {
     setSelectedMcp(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -38,7 +41,7 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
 
   return h('div', { className: 'form-box' },
     fc('Name', h('input', { value: form.name, onChange: e => set('name', e.target.value), placeholder: 'e.g. Code Assistant', className: 'form-control' })),
-    fc('Model', h('input', { value: form.model, onChange: e => set('model', e.target.value), placeholder: 'gpt-4o', className: 'form-control' })),
+    fc('Model', h('input', { value: form.model, onChange: e => set('model', e.target.value), placeholder: 'gpt-5.5', className: 'form-control' })),
 
     h('div', { className: 'form-inline-group' },
       h('div', { style: { flex: 1 } },
@@ -114,16 +117,19 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
                   .then(r => r.json())
                   .then(d => {
                     const popup = window.open(d.authorize_url, 'chatgpt_oauth', 'width=500,height=700');
-                    const poll = setInterval(() => {
+                    if (oauthPollRef.current) clearInterval(oauthPollRef.current);
+                    oauthPollRef.current = setInterval(() => {
                       fetch('/api/agents/' + aid).then(r => r.json()).then(a => {
                         if (a.chatgpt_token) {
-                          clearInterval(poll);
+                          clearInterval(oauthPollRef.current);
+                          oauthPollRef.current = null;
                           setChatgptStatus(true);
                           if (popup && !popup.closed) popup.close();
                         }
                       });
                       if (popup && popup.closed) {
-                        clearInterval(poll);
+                        clearInterval(oauthPollRef.current);
+                        oauthPollRef.current = null;
                         fetch('/api/agents/' + aid).then(r => r.json()).then(a => setChatgptStatus(!!a.chatgpt_token));
                       }
                     }, 2000);
@@ -185,7 +191,7 @@ function AgentForm({ initial, onSave, onCancel, mcpServers }) {
         fc('Retry Policy (JSON)', h('input', { value: form.retry_policy || '', onChange: e => set('retry_policy', e.target.value), placeholder: '{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}', className: 'form-control form-control-mono' }), 'Empty = SDK defaults'),
       ),
 
-      fc('Fallback Models (JSON)', h('input', { value: form.fallback_models || '', onChange: e => set('fallback_models', e.target.value), placeholder: '[{"model":"gpt-4o-mini","api_key":"sk-...","base_url":""}]', className: 'form-control form-control-mono' }), 'JSON array of {model, api_key, base_url}'),
+      fc('Fallback Models (JSON)', h('input', { value: form.fallback_models || '', onChange: e => set('fallback_models', e.target.value), placeholder: '[{"model":"gpt-5.4-mini","api_key":"sk-...","base_url":""}]', className: 'form-control form-control-mono' }), 'JSON array of {model, api_key, base_url}'),
 
       h('div', { className: 'divider' }),
       fc('Input Guardrails (JSON)', h('input', { value: form.input_guardrails || '', onChange: e => set('input_guardrails', e.target.value), placeholder: '["content_filter","max_input_length"]', className: 'form-control form-control-mono' }), 'JSON array of guardrail names'),
@@ -306,10 +312,3 @@ export function AgentConfigPanel() {
   );
 }
 
-function fc(label, input, hint) {
-  return h('div', { className: 'FormControl' },
-    h('label', { className: 'FormControl-label' }, label),
-    input,
-    hint && h('div', { className: 'FormControl-caption' }, hint),
-  );
-}

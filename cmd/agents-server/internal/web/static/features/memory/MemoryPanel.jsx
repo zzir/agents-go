@@ -1,6 +1,7 @@
 import React from 'react';
 import { api } from '/lib/api.js';
 import { useApi } from '/lib/hooks.js';
+import { fc } from '/lib/form.js';
 
 const { useState } = React;
 const h = React.createElement;
@@ -73,9 +74,3 @@ export function MemoryPanel() {
   );
 }
 
-function fc(label, input) {
-  return h('div', { className: 'FormControl' },
-    h('label', { className: 'FormControl-label' }, label),
-    input,
-  );
-}

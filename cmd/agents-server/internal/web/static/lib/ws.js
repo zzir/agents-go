@@ -6,6 +6,7 @@ export class WSClient {
     this.handlers = {};
     this._closed = false;
     this._retryDelay = 1000;
+    this._reconnectTimer = null;
   }
 
   connect() {
@@ -46,12 +47,19 @@ export class WSClient {
   _scheduleReconnect() {
     const delay = Math.min(this._retryDelay, 30000);
     this._retryDelay = Math.min(delay * 2, 30000);
-    setTimeout(() => this.connect(), delay);
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect();
+    }, delay);
   }
 
   on(type, handler) {
     this.handlers[type] = handler;
     return this;
+  }
+
+  isConnected() {
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   send(type, payload) {
@@ -62,6 +70,10 @@ export class WSClient {
 
   close() {
     this._closed = true;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.close();

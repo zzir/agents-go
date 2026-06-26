@@ -1,6 +1,7 @@
 import React from 'react';
 import { api } from '/lib/api.js';
 import { useApi } from '/lib/hooks.js';
+import { fc } from '/lib/form.js';
 
 const { useState, useEffect, useCallback } = React;
 const h = React.createElement;
@@ -241,9 +242,3 @@ export function McpServerPanel() {
   );
 }
 
-function fc(label, input) {
-  return h('div', { className: 'FormControl' },
-    label && h('label', { className: 'FormControl-label' }, label),
-    input,
-  );
-}

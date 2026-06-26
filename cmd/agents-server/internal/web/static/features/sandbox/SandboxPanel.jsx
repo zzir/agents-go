@@ -1,6 +1,7 @@
 import React from 'react';
 import { api } from '/lib/api.js';
 import { useApi } from '/lib/hooks.js';
+import { fc } from '/lib/form.js';
 
 const { useState } = React;
 const h = React.createElement;
@@ -123,8 +124,10 @@ function SandboxForm({ initial, onSave, onCancel }) {
       ),
     ),
     fc('Timeout',
-      h('input', { type: 'number', value: form.timeout, onChange: e => set('timeout', parseInt(e.target.value) || 0), placeholder: '30', className: 'form-control', min: 0, style: { width: '120px' } }),
-      'seconds',
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+        h('input', { type: 'number', value: form.timeout, onChange: e => set('timeout', parseInt(e.target.value) || 0), placeholder: '30', className: 'form-control', min: 0, style: { width: '120px' } }),
+        h('span', { style: { fontSize: '12px', color: 'var(--color-fg-muted)' } }, 'seconds'),
+      ),
     ),
     h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
       h('button', { onClick: () => onSave(pack(form)), className: 'btn btn-primary' }, 'Save'),
@@ -222,9 +225,3 @@ export function SandboxPanel() {
   );
 }
 
-function fc(label, input, suffix) {
-  return h('div', { className: 'FormControl' },
-    label && h('label', { className: 'FormControl-label' }, label),
-    suffix ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, input, h('span', { style: { fontSize: '12px', color: 'var(--color-fg-muted)' } }, suffix)) : input,
-  );
-}

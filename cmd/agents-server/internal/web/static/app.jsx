@@ -4,40 +4,47 @@ import { ThemeProvider } from '/theme/ThemeProvider.jsx';
 import { AppShell } from '/layout/AppShell.jsx';
 import { SessionList } from '/features/sessions/SessionList.jsx';
 import { ChatView } from '/features/chat/ChatView.jsx';
-import { AgentConfigPanel } from '/features/agents/AgentConfigPanel.jsx';
-import { McpServerPanel } from '/features/mcp/McpServerPanel.jsx';
-import { SkillsPanel } from '/features/skills/SkillsPanel.jsx';
-import { MemoryPanel } from '/features/memory/MemoryPanel.jsx';
-import { SettingsPanel } from '/features/settings/SettingsPanel.jsx';
-import { FileBrowser } from '/features/files/FileBrowser.jsx';
 import { FileTree } from '/features/files/FileTree.jsx';
 import { FileViewer } from '/features/files/FileViewer.jsx';
-import { SandboxPanel } from '/features/sandbox/SandboxPanel.jsx';
-import { GuardrailPanel } from '/features/guardrails/GuardrailPanel.jsx';
-import { WSClient } from '/lib/ws.js';
 import { login, checkAuth, getToken, api } from '/lib/api.js';
+import { useAgentSocket } from '/lib/useAgentSocket.js';
+import { patchToolCall } from '/lib/timeline.js';
 
 const { useState, useCallback, useEffect, useRef, useMemo } = React;
 const h = React.createElement;
 
 const DIALOG_TABS = [
-  { key: 'agents',     label: 'Agents',     comp: AgentConfigPanel },
-  { key: 'mcp',        label: 'MCP',        comp: McpServerPanel },
-  { key: 'guardrails', label: 'Guardrails', comp: GuardrailPanel },
-  { key: 'skills',     label: 'Skills',     comp: SkillsPanel },
-  { key: 'sandbox',    label: 'Sandbox',    comp: SandboxPanel },
-  { key: 'memory',     label: 'Memory',     comp: MemoryPanel },
-  { key: 'general',    label: 'General',    comp: SettingsPanel },
+  { key: 'agents',     label: 'Agents',     load: () => import('/features/agents/AgentConfigPanel.jsx') },
+  { key: 'mcp',        label: 'MCP',        load: () => import('/features/mcp/McpServerPanel.jsx') },
+  { key: 'guardrails', label: 'Guardrails', load: () => import('/features/guardrails/GuardrailPanel.jsx') },
+  { key: 'skills',     label: 'Skills',     load: () => import('/features/skills/SkillsPanel.jsx') },
+  { key: 'sandbox',    label: 'Sandbox',    load: () => import('/features/sandbox/SandboxPanel.jsx') },
+  { key: 'memory',     label: 'Memory',     load: () => import('/features/memory/MemoryPanel.jsx') },
+  { key: 'general',    label: 'General',    load: () => import('/features/settings/SettingsPanel.jsx') },
 ];
+
+const EXPORT_MAP = {
+  agents: 'AgentConfigPanel', mcp: 'McpServerPanel', guardrails: 'GuardrailPanel',
+  skills: 'SkillsPanel', sandbox: 'SandboxPanel', memory: 'MemoryPanel', general: 'SettingsPanel',
+};
 
 function SettingsDialog({ onClose }) {
   const [tab, setTab] = useState('agents');
-  const active = DIALOG_TABS.find(t => t.key === tab);
+  const [TabComp, setTabComp] = useState(null);
 
   useEffect(() => {
     document.body.classList.add('dialog-open');
     return () => document.body.classList.remove('dialog-open');
   }, []);
+
+  useEffect(() => {
+    setTabComp(null);
+    const entry = DIALOG_TABS.find(t => t.key === tab);
+    if (!entry) return;
+    entry.load().then(mod => {
+      setTabComp(() => mod[EXPORT_MAP[tab]]);
+    });
+  }, [tab]);
 
   return h('div', { className: 'dialog-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'dialog' },
@@ -57,7 +64,7 @@ function SettingsDialog({ onClose }) {
           ),
         ),
         h('div', { className: 'dialog-content' },
-          active ? h(active.comp) : null,
+          TabComp ? h(TabComp) : null,
         ),
       ),
     ),
@@ -114,61 +121,6 @@ const DEFAULT_SS = defaultSS();
 
 const MemoizedChatView = React.memo(ChatView);
 
-function buildTimeline(msgs) {
-  if (!msgs) return [];
-  const timeline = [];
-  const pendingTC = {};
-  let turn = null;
-  const ensureTurn = () => {
-    if (!turn) { turn = { role: 'turn', parts: [], messageId: 0 }; timeline.push(turn); }
-  };
-  const finishTurn = () => { turn = null; };
-  for (const m of msgs) {
-    if (m.role === 'user') {
-      finishTurn();
-      if (m.content) timeline.push({ role: 'user', content: m.content, messageId: m.id });
-    } else if (m.role === 'tool_call') {
-      try {
-        const item = JSON.parse(m.item);
-        ensureTurn();
-        if (m.id) turn.messageId = m.id;
-        const tc = { tool_call_id: item.call_id, tool_name: item.name, arguments: item.arguments || '', output: null, status: null };
-        pendingTC[item.call_id] = tc;
-        const last = turn.parts[turn.parts.length - 1];
-        if (last && last.type === 'tools') { last.toolCalls.push(tc); }
-        else { turn.parts.push({ type: 'tools', toolCalls: [tc] }); }
-      } catch (_) {}
-    } else if (m.role === 'tool_output') {
-      try {
-        const item = JSON.parse(m.item);
-        if (turn && m.id) turn.messageId = m.id;
-        if (pendingTC[item.call_id]) {
-          pendingTC[item.call_id].output = item.output || m.content;
-          pendingTC[item.call_id].status = 'completed';
-        }
-      } catch (_) {}
-    } else if (m.role === 'system' && m.content) {
-      finishTurn();
-      timeline.push({ role: 'system', content: m.content, messageId: m.id });
-    } else if (m.content) {
-      ensureTurn();
-      if (m.id) turn.messageId = m.id;
-      turn.parts.push({ type: 'text', content: m.content });
-    }
-  }
-  finishTurn();
-  return timeline;
-}
-
-function formatHookDetail(ev) {
-  const parts = [];
-  if (ev.agent_name) parts.push(ev.agent_name);
-  if (ev.tool_name) parts.push('→ ' + ev.tool_name);
-  if (ev.from && ev.to) parts.push(ev.from + ' → ' + ev.to);
-  if (ev.detail) parts.push(ev.detail);
-  return parts.join(' ');
-}
-
 function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
@@ -180,11 +132,6 @@ function App() {
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
 
   const [ss, setSS] = useState({});
-  const wsRef = useRef(null);
-  const runMapRef = useRef({});
-  const sessionRunRef = useRef({});
-  const streamBufsRef = useRef({});
-  const loadedRef = useRef(new Set());
 
   useEffect(() => {
     checkAuth().then(ok => { setAuthed(ok); setChecking(false); });
@@ -204,240 +151,43 @@ function App() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!activeSession || loadedRef.current.has(activeSession)) return;
-    loadedRef.current.add(activeSession);
-    api.sessions.messages(activeSession).then(msgs => {
-      const timeline = buildTimeline(msgs);
-      updateSS(activeSession, s => s.messages.length > 0 ? s : { ...s, messages: timeline, loaded: true });
-    });
-    api.sessions.traces(activeSession).then(events => {
-      if (!events || events.length === 0) return;
-      const runs = {};
-      for (const ev of events) {
-        const rid = ev.run_id || 'unknown';
-        if (!runs[rid]) runs[rid] = [];
-        runs[rid].push(ev);
-      }
-      updateSS(activeSession, s => Object.keys(s.traceRuns).length > 0 ? s : { ...s, traceRuns: runs });
-    }).catch(() => {});
-  }, [activeSession, updateSS]);
-
-  const reloadMessages = useCallback((sid) => {
-    api.sessions.messages(sid).then(msgs => {
-      const timeline = buildTimeline(msgs);
-      updateSS(sid, s => ({ ...s, messages: timeline }));
-    });
-  }, [updateSS]);
+  const { wsRef, sessionRunRef, loadSession, deleteSession } = useAgentSocket(updateSS);
 
   useEffect(() => {
-    const ws = new WSClient();
-    wsRef.current = ws;
+    if (activeSession) loadSession(activeSession);
+  }, [activeSession, loadSession]);
 
-    ws.on('run.started', (p) => {
-      const sid = p.session_id;
-      if (!sid) return;
-      runMapRef.current[p.run_id] = sid;
-      sessionRunRef.current[sid] = p.run_id;
-      streamBufsRef.current[p.run_id] = '';
-      if (!loadedRef.current.has(sid)) loadedRef.current.add(sid);
-      updateSS(sid, s => ({
-        ...s, running: true, liveRunId: p.run_id, loaded: true,
-        messages: [...s.messages, { role: 'turn', parts: [] }],
-        traceRuns: { ...s.traceRuns, [p.run_id]: [] },
-      }));
-    });
-
-    ws.on('run.step', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      streamBufsRef.current[p.run_id] = (streamBufsRef.current[p.run_id] || '') + p.delta;
-      updateSS(sid, s => ({ ...s, streaming: streamBufsRef.current[p.run_id] }));
-    });
-
-    ws.on('run.output', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      const text = p.final_output || streamBufsRef.current[p.run_id] || '';
-      delete streamBufsRef.current[p.run_id];
-      delete runMapRef.current[p.run_id];
-      delete sessionRunRef.current[sid];
-      updateSS(sid, s => {
-        const msgs = [...s.messages];
-        if (text) {
-          const last = msgs[msgs.length - 1];
-          if (last?.role === 'turn') {
-            msgs[msgs.length - 1] = { ...last, parts: [...last.parts, { type: 'text', content: text }] };
-          }
-        }
-        return { ...s, messages: msgs, streaming: '', running: false, liveRunId: null };
-      });
-      reloadMessages(sid);
-    });
-
-    ws.on('run.error', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      const remaining = streamBufsRef.current[p.run_id] || '';
-      delete streamBufsRef.current[p.run_id];
-      delete runMapRef.current[p.run_id];
-      delete sessionRunRef.current[sid];
-      updateSS(sid, s => {
-        const msgs = [...s.messages];
-        const last = msgs[msgs.length - 1];
-        if (last?.role === 'turn') {
-          const parts = [...last.parts];
-          if (remaining) parts.push({ type: 'text', content: remaining });
-          msgs[msgs.length - 1] = { ...last, parts };
-        } else {
-          msgs.push({ role: 'system', content: 'Error: ' + p.message });
-        }
-        return { ...s, messages: msgs, streaming: '', running: false, liveRunId: null, lastError: p.message };
-      });
-      reloadMessages(sid);
-    });
-
-    ws.on('run.cancelled', (p) => {
-      const rid = p?.run_id;
-      const sid = rid ? runMapRef.current[rid] : null;
-      if (!sid) return;
-      const remaining = streamBufsRef.current[rid] || '';
-      delete streamBufsRef.current[rid];
-      delete runMapRef.current[rid];
-      delete sessionRunRef.current[sid];
-      updateSS(sid, s => {
-        const msgs = [...s.messages];
-        if (remaining) {
-          const last = msgs[msgs.length - 1];
-          if (last?.role === 'turn') {
-            msgs[msgs.length - 1] = { ...last, parts: [...last.parts, { type: 'text', content: remaining }] };
-          }
-        }
-        return { ...s, messages: msgs, streaming: '', running: false, liveRunId: null };
-      });
-      reloadMessages(sid);
-    });
-
-    ws.on('run.tool_call', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      const flushed = streamBufsRef.current[p.run_id] || '';
-      streamBufsRef.current[p.run_id] = '';
-      const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval, status: null, output: null };
-      updateSS(sid, s => {
-        const msgs = [...s.messages];
-        const last = msgs[msgs.length - 1];
-        if (last?.role !== 'turn') return s;
-        const parts = [...last.parts];
-        if (flushed) parts.push({ type: 'text', content: flushed });
-        const lastPart = parts[parts.length - 1];
-        if (lastPart?.type === 'tools') {
-          parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, tc] };
-        } else {
-          parts.push({ type: 'tools', toolCalls: [tc] });
-        }
-        msgs[msgs.length - 1] = { ...last, parts };
-        return { ...s, messages: msgs, streaming: '' };
-      });
-    });
-
-    ws.on('run.tool_result', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      updateSS(sid, s => {
-        const msgs = [...s.messages];
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role !== 'turn') continue;
-          const parts = [...msgs[i].parts];
-          for (let j = parts.length - 1; j >= 0; j--) {
-            if (parts[j].type !== 'tools') continue;
-            const tcs = parts[j].toolCalls;
-            const idx = tcs.findIndex(tc => tc.tool_call_id === p.tool_call_id || (!p.tool_call_id && !tc.output));
-            if (idx >= 0) {
-              const newTcs = [...tcs];
-              newTcs[idx] = { ...newTcs[idx], output: p.output, status: 'completed' };
-              parts[j] = { ...parts[j], toolCalls: newTcs };
-              msgs[i] = { ...msgs[i], parts };
-              return { ...s, messages: msgs };
-            }
-          }
-        }
-        return s;
-      });
-    });
-
-    ws.on('run.agent_start', () => {});
-
-    ws.on('run.handoff', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      updateSS(sid, s => ({
-        ...s, messages: [...s.messages, { role: 'system', content: 'Handoff: ' + p.from + ' → ' + p.to }],
-      }));
-    });
-
-    ws.on('hook.event', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      updateSS(sid, s => {
-        const events = s.traceRuns[p.run_id] || [];
-        return { ...s, traceRuns: { ...s.traceRuns, [p.run_id]: [...events, { kind: 'hook', name: p.hook, detail: formatHookDetail(p) }] } };
-      });
-    });
-
-    ws.on('trace.span', (p) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      updateSS(sid, s => {
-        const events = s.traceRuns[p.run_id] || [];
-        return { ...s, traceRuns: { ...s.traceRuns, [p.run_id]: [...events, { kind: 'span', name: p.name, detail: p.type || '', span_id: p.span_id }] } };
-      });
-    });
-
-    ws.on('session.title_updated', () => {
+  useEffect(() => {
+    if (!wsRef.current) return;
+    wsRef.current.on('session.title_updated', () => {
       setSessionReloadKey(k => k + 1);
     });
-
-    ws.connect();
-    return () => ws.close();
-  }, [updateSS, reloadMessages]);
+  }, [wsRef]);
 
   const handleSend = useCallback((text, agentConfigId, sandboxId) => {
     if (!activeSession || !wsRef.current) return;
+    if (!wsRef.current.isConnected()) {
+      updateSS(activeSession, s => ({ ...s, lastError: 'WebSocket disconnected — message not sent' }));
+      return;
+    }
     updateSS(activeSession, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }] }));
     const payload = { session_id: activeSession, input: text, agent_config_id: agentConfigId };
     if (sandboxId) payload.sandbox_id = sandboxId;
     wsRef.current.send('run.create', payload);
-  }, [activeSession, updateSS]);
+  }, [activeSession, updateSS, wsRef]);
 
   const handleCancel = useCallback(() => {
     if (!wsRef.current || !activeSession) return;
     const runId = sessionRunRef.current[activeSession];
     if (!runId) return;
     wsRef.current.send('run.cancel', { run_id: runId });
-  }, [activeSession]);
+  }, [activeSession, wsRef, sessionRunRef]);
 
   const updateToolCall = useCallback((toolCallId, patch) => {
     if (!activeSession) return;
     updateSS(activeSession, s => {
-      const msgs = [...s.messages];
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (msgs[i].role !== 'turn') continue;
-        const parts = [...msgs[i].parts];
-        for (let j = parts.length - 1; j >= 0; j--) {
-          if (parts[j].type !== 'tools') continue;
-          const tcs = parts[j].toolCalls;
-          const idx = tcs.findIndex(tc => tc.tool_call_id === toolCallId);
-          if (idx >= 0) {
-            const newTcs = [...tcs];
-            newTcs[idx] = { ...newTcs[idx], ...patch };
-            parts[j] = { ...parts[j], toolCalls: newTcs };
-            msgs[i] = { ...msgs[i], parts };
-            return { ...s, messages: msgs };
-          }
-        }
-      }
-      return s;
+      const patched = patchToolCall(s.messages, toolCallId, patch);
+      return patched ? { ...s, messages: patched } : s;
     });
   }, [activeSession, updateSS]);
 
@@ -445,17 +195,27 @@ function App() {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'approved' });
     wsRef.current.send('tool.approve', { tool_call_id: toolCallId });
-  }, [updateToolCall]);
+  }, [updateToolCall, wsRef]);
 
   const handleReject = useCallback((toolCallId) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'rejected' });
     wsRef.current.send('tool.reject', { tool_call_id: toolCallId });
-  }, [updateToolCall]);
+  }, [updateToolCall, wsRef]);
+
+  const handleDeleteSession = useCallback((deletedId) => {
+    deleteSession(deletedId);
+    setSS(prev => {
+      if (!prev[deletedId]) return prev;
+      const next = { ...prev };
+      delete next[deletedId];
+      return next;
+    });
+  }, [deleteSession]);
 
   const handleFork = useCallback(async (messageId) => {
     if (!activeSession) return;
-    const forked = await api.sessions.fork(activeSession, messageId - 1);
+    const forked = await api.sessions.fork(activeSession, messageId);
     setSessionReloadKey(k => k + 1);
     setActiveSession(forked.id);
   }, [activeSession]);
@@ -468,6 +228,13 @@ function App() {
     return set;
   }, [ss]);
 
+  const handleSessionCreated = useCallback(() => {
+    setTimeout(() => {
+      const el = document.querySelector('.chat-input-box textarea');
+      if (el) el.focus();
+    }, 0);
+  }, []);
+
   if (checking) return h(ThemeProvider, null, null);
   if (!authed) return h(ThemeProvider, null, h(LoginPage, { onLogin: () => setAuthed(true) }));
 
@@ -476,6 +243,8 @@ function App() {
   const sessionPane = h(SessionList, {
     activeId: activeSession,
     onSelect: setActiveSession,
+    onDelete: handleDeleteSession,
+    onCreated: handleSessionCreated,
     reloadKey: sessionReloadKey,
     runningSessions,
   });
@@ -496,6 +265,7 @@ function App() {
     main = h(MemoizedChatView, {
       sessionId: activeSession,
       messages: currentSS.messages,
+      loaded: currentSS.loaded,
       streaming: currentSS.streaming,
       running: currentSS.running,
       traceRuns: currentSS.traceRuns,

@@ -34,6 +34,8 @@ import properties from 'highlight.js/lib/languages/properties';
 import diff from 'highlight.js/lib/languages/diff';
 import protobuf from 'highlight.js/lib/languages/protobuf';
 import graphql from 'highlight.js/lib/languages/graphql';
+import katex from 'katex';
+import DOMPurify from 'dompurify';
 
 const langs = {
   javascript, js: javascript, jsx: javascript,
@@ -73,22 +75,63 @@ function wrapLines(html) {
 
 const MAX_VISIBLE_LINES = 20;
 
+const mathBlock = {
+  name: 'mathBlock',
+  level: 'block',
+  start(src) {
+    return src.indexOf('$$');
+  },
+  tokenizer(src) {
+    const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+    if (match) {
+      return { type: 'mathBlock', raw: match[0], text: match[1].trim() };
+    }
+  },
+  renderer(token) {
+    try {
+      return `<div class="math-block">${katex.renderToString(token.text, { displayMode: true, throwOnError: false })}</div>`;
+    } catch {
+      return `<div class="math-block"><code>${token.text}</code></div>`;
+    }
+  },
+};
+
+const mathInline = {
+  name: 'mathInline',
+  level: 'inline',
+  start(src) {
+    return src.indexOf('$');
+  },
+  tokenizer(src) {
+    const match = src.match(/^\$([^\$\s](?:[^\$]*[^\$\s])?)\$/);
+    if (match) {
+      return { type: 'mathInline', raw: match[0], text: match[1].trim() };
+    }
+  },
+  renderer(token) {
+    try {
+      return katex.renderToString(token.text, { displayMode: false, throwOnError: false });
+    } catch {
+      return `<code>${token.text}</code>`;
+    }
+  },
+};
+
 const marked = new Marked({
   renderer: {
     code({ text, lang }) {
       let highlighted;
-      if (lang && hljs.getLanguage(lang)) {
+      if (lang === 'mermaid') {
+        highlighted = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      } else if (lang && hljs.getLanguage(lang)) {
         highlighted = hljs.highlight(text, { language: lang }).value;
       } else {
         highlighted = hljs.highlightAuto(text).value;
       }
       const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      const label = lang || '';
       const lineCount = text.split('\n').length;
-      const tall = lineCount > MAX_VISIBLE_LINES;
-      const cls = 'hljs-code-block' + (tall ? ' has-line-numbers scrollable' : '');
-      const code = tall ? wrapLines(highlighted) : highlighted;
-      return `<div class="code-block-wrapper"><button class="btn-copy btn btn-invisible btn-sm" data-code="${escaped}" aria-label="Copy">${COPY_ICON}</button><pre class="${cls}"><code class="hljs">${code}</code></pre></div>`;
+      const cls = 'hljs-code-block' + (lineCount > MAX_VISIBLE_LINES ? ' scrollable' : '');
+      return `<div class="code-block-wrapper"><button class="btn-octicon btn-copy" data-code="${escaped}" aria-label="Copy">${COPY_ICON}</button><pre class="${cls}"><code class="hljs">${highlighted}</code></pre></div>`;
     },
     codespan({ text }) {
       return `<code class="inline-code">${text}</code>`;
@@ -98,7 +141,27 @@ const marked = new Marked({
   gfm: true,
 });
 
+marked.use({ extensions: [mathBlock, mathInline] });
+
 export function renderMarkdown(text) {
   if (!text) return '';
-  return marked.parse(text);
+  return DOMPurify.sanitize(marked.parse(text), { ADD_TAGS: ['math-inline'], ADD_ATTR: ['data-code', 'data-ln', 'aria-label'] });
+}
+
+export function sanitizeSVG(svg) {
+  return DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['foreignObject'] });
+}
+
+export function splitMermaidBlocks(text) {
+  const re = /^```mermaid\s*\n([\s\S]*?)^```\s*$/gm;
+  const segments = [];
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segments.push({ type: 'md', text: text.slice(last, m.index) });
+    segments.push({ type: 'mermaid', text: m[1].trim() });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) segments.push({ type: 'md', text: text.slice(last) });
+  return segments.length ? segments : [{ type: 'md', text }];
 }

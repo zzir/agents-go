@@ -50,9 +50,9 @@ type RunResult struct {
 }
 
 // RunStreamed runs the agent for the given session, streaming events to the sink and returning the run outcome.
-func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sandboxID, input string, sink EventSink) *RunResult {
+func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, sandboxID, input string, sink EventSink) *RunResult {
 	runID := store.NewID()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(connCtx)
 
 	r.mu.Lock()
 	r.cancels[runID] = cancel
@@ -148,7 +148,7 @@ func (r *Runner) RunStreamed(ctx context.Context, sessionID, agentConfigID, sand
 
 	result := r.processResult(sr, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 	if result.FinalText != "" {
-		go r.maybeGenerateTitle(sessionID, agentConfigID, input, sendEvent)
+		go r.maybeGenerateTitle(connCtx, sessionID, agentConfigID, input, sendEvent)
 	}
 	return result
 }
@@ -205,8 +205,20 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 		return mkResult()
 	}
 
+	provider = BuildRouterProvider(ctx, r.Deps, provider)
+
+	session := store.NewSessionAdapter(r.db, sessionID)
+	hooks := newWSRunHooks(sendEvent, r.Deps.Traces, sessionID, runID)
+	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
+
 	res, err := agents.ResumeRun(ctx, state, agents.RunOptions{
-		ModelProvider: provider,
+		Session:               session,
+		ModelProvider:         provider,
+		MaxTurns:              built.MaxTurns,
+		Hooks:                 hooks,
+		Tracer:                tracer,
+		UsePreviousResponseID: built.UsePreviousResponseID,
+		MaxToolConcurrency:    built.MaxToolConcurrency,
 	})
 	if err != nil {
 		sendEvent("run.error", protocol.RunError{
@@ -274,8 +286,8 @@ func (r *Runner) updateSessionMeta(sessionID, agentConfigID string) {
 		Exec(context.Background())
 }
 
-func (r *Runner) maybeGenerateTitle(sessionID, agentConfigID, userInput string, sendEvent func(string, any)) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentConfigID, userInput string, sendEvent func(string, any)) {
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 	log := zerolog.Ctx(ctx)
 	if log.GetLevel() == zerolog.Disabled {
