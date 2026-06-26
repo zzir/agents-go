@@ -139,6 +139,73 @@ func TestHITL_StateSerializationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHITL_ApproveToolsAgentLevel(t *testing.T) {
+	var ran bool
+	tool := NewFunctionTool("delete_db", "dangerous",
+		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+			ran = true
+			return "deleted", nil
+		})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "delete_db", "call_1", `{}`)),
+		modelResp(messageOutput(t, "all done")),
+	}}
+	agent := &Agent{
+		Name:         "a",
+		Tools:        []Tool{tool},
+		ModelImpl:    model,
+		ApproveTools: []string{"delete_db"},
+	}
+
+	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Interruptions) != 1 {
+		t.Fatalf("expected 1 interruption, got %d", len(res.Interruptions))
+	}
+	if ran {
+		t.Error("tool should not have run before approval")
+	}
+
+	res.State.Approve(res.Interruptions[0], false)
+	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ran {
+		t.Error("tool should have run after approval")
+	}
+	if res2.FinalOutputString() != "all done" {
+		t.Errorf("final = %q", res2.FinalOutputString())
+	}
+}
+
+func TestHITL_ApproveToolsWildcard(t *testing.T) {
+	tool := NewFunctionTool("any_tool", "does stuff",
+		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+			return "ok", nil
+		})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "any_tool", "call_1", `{}`)),
+		modelResp(messageOutput(t, "done")),
+	}}
+	agent := &Agent{
+		Name:         "a",
+		Tools:        []Tool{tool},
+		ModelImpl:    model,
+		ApproveTools: []string{"*"},
+	}
+
+	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Interruptions) != 1 {
+		t.Fatalf("expected 1 interruption with wildcard, got %d", len(res.Interruptions))
+	}
+}
+
 func TestHITL_UnknownAgentInRegistry(t *testing.T) {
 	var ran bool
 	agent, _ := approvalAgentAndModel(t, &ran)

@@ -367,6 +367,9 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 			return nil, nil, nil, aerr
 		}
 		if !needs {
+			needs = agentApprovesToolName(agent, run.Call.Name)
+		}
+		if !needs {
 			toRun = append(toRun, run)
 			continue
 		}
@@ -394,6 +397,15 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 		}
 	}
 	return toRun, interruptions, rejected, nil
+}
+
+func agentApprovesToolName(agent *Agent, toolName string) bool {
+	for _, name := range agent.ApproveTools {
+		if name == "*" || name == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 // runToolInputGuardrails runs a tool's input guardrails. It returns

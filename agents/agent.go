@@ -194,6 +194,11 @@ type Agent struct {
 	// ToolUseBehavior controls post-tool-call behavior. Nil means RunLLMAgain.
 	ToolUseBehavior ToolUseBehavior
 
+	// ApproveTools lists tool names that require human approval before
+	// execution, overriding each tool's own NeedsApproval field. A single
+	// entry of "*" means every tool requires approval.
+	ApproveTools []string
+
 	// DisableToolChoiceReset keeps ModelSettings.ToolChoice as-is on every turn.
 	// By default (false), once this agent has called a tool, tool_choice is left
 	// unset on its subsequent turns so a "required" or specific-tool setting
