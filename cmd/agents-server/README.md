@@ -1,8 +1,9 @@
 # agents-server
 
-A demo application for the [agents-go](../../README.md) SDK. It provides a REST
-API, WebSocket streaming, and an embedded SPA that lets you configure agents, MCP
-servers, sandboxes, memories, and skills — then run conversations in a browser.
+A full-featured agent platform built on the [agents-go](../../README.md) SDK.
+Single binary, embedded SPA, SQLite — deploy and run in seconds. Provides a REST
+API, WebSocket streaming, and a Primer-styled web UI for configuring agents, MCP
+servers, sandboxes, guardrails, memories, and skills.
 
 ![screenshot](screenshot.png)
 
@@ -47,6 +48,8 @@ Base path `/api/`. All request and response bodies are JSON.
 | DELETE | `/sessions/:id` | Delete session and its traces |
 | GET | `/sessions/:id/messages` | List conversation messages |
 | GET | `/sessions/:id/traces` | List trace events |
+| POST | `/sessions/:id/fork` | Fork session (optionally from a specific message) |
+| PATCH | `/sessions/:id/pin` | Pin or unpin a session |
 
 ### Agents — `/api/agents`
 
@@ -106,8 +109,10 @@ Memories can be scoped to a specific agent via `agent_config_id`.
 | PUT | `/settings/:key` | Set value |
 | DELETE | `/settings/:key` | Delete |
 
-Known keys: `openai_api_key` (global API key fallback), `system_prompt`
-(global system prompt prefix), `proxy_url` (HTTP proxy for model and MCP calls).
+Known keys: `proxy_url` (HTTP proxy for model and MCP calls), `system_prompt`
+(global system prompt prefix), `brave_api_key` (injects a `brave_search` tool
+into all agents), `enable_editor_tools` (injects file-editing tools scoped to
+`--root-dir`).
 
 ### Skills — `/api/skills`
 
@@ -144,10 +149,18 @@ routing.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/guardrails` | List available guardrails |
+| GET | `/guardrails` | List all guardrails (built-in + custom) |
+| POST | `/guardrails` | Create custom guardrail |
+| GET | `/guardrails/:id` | Get guardrail |
+| PUT | `/guardrails/:id` | Update guardrail |
+| DELETE | `/guardrails/:id` | Delete guardrail |
 
-Built-in: `content_filter` (keyword patterns), `max_input_length` (50k chars),
-`max_output_length` (50k chars).
+Types: `input` (pre-model) and `output` (post-model). Modes: `regex` (pattern
+match triggers tripwire) and `max_length` (character limit).
+
+Built-in: `content_filter` (input/regex — jailbreak keywords),
+`max_input_length` (input/max_length — 50k chars),
+`max_output_length` (output/max_length — 50k chars).
 
 ### Sandboxes — `/api/sandboxes`
 
@@ -244,6 +257,7 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `settings` | Global key-value settings |
 | `provider_routes` | Model-prefix routing rules |
 | `sandbox_configs` | Sandbox configurations |
+| `guardrails` | Custom guardrail definitions |
 | `trace_events` | Trace and hook events |
 
 The database file can be deleted and recreated freely — there is no migration
