@@ -63,6 +63,18 @@ func (s *SessionStore) Update(ctx context.Context, id string, name string) error
 	return nil
 }
 
+// SetPinned updates the pinned flag of the session with the given id.
+func (s *SessionStore) SetPinned(ctx context.Context, id string, pinned bool) error {
+	if _, err := s.db.NewUpdate().Model((*Session)(nil)).
+		Set("pinned = ?", pinned).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("pinning session %s: %w", id, err)
+	}
+	return nil
+}
+
 // Delete removes the session with the given id and all of its messages in one
 // transaction.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {

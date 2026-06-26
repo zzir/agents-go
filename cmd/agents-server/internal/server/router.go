@@ -13,6 +13,8 @@ type Routes struct {
 	SessionUpdate   gin.HandlerFunc
 	SessionDelete   gin.HandlerFunc
 	SessionMessages gin.HandlerFunc
+	SessionFork     gin.HandlerFunc
+	SessionPin      gin.HandlerFunc
 	WSHandler       WSHandlerFunc
 
 	AgentList   gin.HandlerFunc
@@ -56,7 +58,11 @@ type Routes struct {
 	ProviderRouteUpdate gin.HandlerFunc
 	ProviderRouteDelete gin.HandlerFunc
 
-	GuardrailList gin.HandlerFunc
+	GuardrailList   gin.HandlerFunc
+	GuardrailCreate gin.HandlerFunc
+	GuardrailGet    gin.HandlerFunc
+	GuardrailUpdate gin.HandlerFunc
+	GuardrailDelete gin.HandlerFunc
 
 	SandboxList   gin.HandlerFunc
 	SandboxCreate gin.HandlerFunc
@@ -84,6 +90,8 @@ func (s *Server) RegisterRoutes(r Routes) {
 		sessions.PUT("/:id", r.SessionUpdate)
 		sessions.DELETE("/:id", r.SessionDelete)
 		sessions.GET("/:id/messages", r.SessionMessages)
+		sessions.POST("/:id/fork", r.SessionFork)
+		sessions.PATCH("/:id/pin", r.SessionPin)
 		sessions.GET("/:id/traces", r.TraceListBySession)
 	}
 	{
@@ -136,7 +144,14 @@ func (s *Server) RegisterRoutes(r Routes) {
 		providerRoutes.PUT("/:id", r.ProviderRouteUpdate)
 		providerRoutes.DELETE("/:id", r.ProviderRouteDelete)
 	}
-	api.GET("/guardrails", r.GuardrailList)
+	{
+		guardrails := api.Group("/guardrails")
+		guardrails.GET("", r.GuardrailList)
+		guardrails.POST("", r.GuardrailCreate)
+		guardrails.GET("/:id", r.GuardrailGet)
+		guardrails.PUT("/:id", r.GuardrailUpdate)
+		guardrails.DELETE("/:id", r.GuardrailDelete)
+	}
 	api.GET("/files", r.FileList)
 	api.GET("/files/*path", r.FileRead)
 	{

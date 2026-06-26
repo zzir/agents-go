@@ -74,6 +74,8 @@ func run(_ *cobra.Command, _ []string) error {
 	settingStore := store.NewSettingStore(db)
 	providerRouteStore := store.NewProviderRouteStore(db)
 	sandboxStore := store.NewSandboxStore(db)
+	guardrailStore := store.NewGuardrailStore(db)
+	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
 	mcpManager := bridge.NewMcpManager(settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
 	chatgptOAuth := bridge.NewChatGPTOAuth(agentConfigStore)
@@ -91,6 +93,7 @@ func run(_ *cobra.Command, _ []string) error {
 		ProviderRoutes: providerRouteStore,
 		Sessions:       sessionStore,
 		Traces:         traceStore,
+		Guardrails:     guardrailResolver,
 		McpManager:     mcpManager,
 		SandboxManager: sandboxManager,
 		ChatGPTOAuth:   chatgptOAuth,
@@ -106,7 +109,7 @@ func run(_ *cobra.Command, _ []string) error {
 	skillHandler := handler.NewSkillHandler(flagRootDir)
 	fileHandler := handler.NewFileHandler(flagRootDir)
 	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore)
-	guardrailHandler := handler.NewGuardrailHandler()
+	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
 	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager)
 	traceHandler := handler.NewTraceHandler(traceStore)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
@@ -126,6 +129,8 @@ func run(_ *cobra.Command, _ []string) error {
 		SessionUpdate:   sessionHandler.Update,
 		SessionDelete:   sessionHandler.Delete,
 		SessionMessages: sessionHandler.Messages,
+		SessionFork:     sessionHandler.Fork,
+		SessionPin:      sessionHandler.Pin,
 		WSHandler:       wsHandler.Handle,
 
 		AgentList:   agentConfigHandler.List,
@@ -169,7 +174,11 @@ func run(_ *cobra.Command, _ []string) error {
 		ProviderRouteUpdate: providerRouteHandler.Update,
 		ProviderRouteDelete: providerRouteHandler.Delete,
 
-		GuardrailList: guardrailHandler.List,
+		GuardrailList:   guardrailHandler.List,
+		GuardrailCreate: guardrailHandler.Create,
+		GuardrailGet:    guardrailHandler.Get,
+		GuardrailUpdate: guardrailHandler.Update,
+		GuardrailDelete: guardrailHandler.Delete,
 
 		SandboxList:   sandboxHandler.List,
 		SandboxCreate: sandboxHandler.Create,

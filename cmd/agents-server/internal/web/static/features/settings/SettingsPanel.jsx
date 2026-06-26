@@ -29,7 +29,7 @@ export function SettingsPanel() {
   };
 
   return h('div', null,
-    h('h2', { className: 'SectionHeader-title', style: { marginBottom: '16px' } }, 'Settings'),
+    h('h2', { className: 'SectionHeader-title', style: { marginBottom: '16px' } }, 'General Settings'),
     DEFAULT_KEYS.map(def =>
       h(SettingRow, { key: def.key, def, value: getValue(def.key), saving: saving[def.key], onSave: v => handleSave(def.key, v) }),
     ),

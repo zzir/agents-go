@@ -13,6 +13,7 @@ import { FileBrowser } from '/features/files/FileBrowser.jsx';
 import { FileTree } from '/features/files/FileTree.jsx';
 import { FileViewer } from '/features/files/FileViewer.jsx';
 import { SandboxPanel } from '/features/sandbox/SandboxPanel.jsx';
+import { GuardrailPanel } from '/features/guardrails/GuardrailPanel.jsx';
 import { WSClient } from '/lib/ws.js';
 import { login, checkAuth, getToken, api } from '/lib/api.js';
 
@@ -20,12 +21,13 @@ const { useState, useCallback, useEffect, useRef, useMemo } = React;
 const h = React.createElement;
 
 const DIALOG_TABS = [
-  { key: 'agents',   label: 'Agents',   comp: AgentConfigPanel },
-  { key: 'sandbox',  label: 'Sandbox',  comp: SandboxPanel },
-  { key: 'memory',   label: 'Memory',   comp: MemoryPanel },
-  { key: 'mcp',      label: 'MCP',      comp: McpServerPanel },
-  { key: 'skills',   label: 'Skills',   comp: SkillsPanel },
-  { key: 'general',  label: 'General',  comp: SettingsPanel },
+  { key: 'agents',     label: 'Agents',     comp: AgentConfigPanel },
+  { key: 'mcp',        label: 'MCP',        comp: McpServerPanel },
+  { key: 'guardrails', label: 'Guardrails', comp: GuardrailPanel },
+  { key: 'skills',     label: 'Skills',     comp: SkillsPanel },
+  { key: 'sandbox',    label: 'Sandbox',    comp: SandboxPanel },
+  { key: 'memory',     label: 'Memory',     comp: MemoryPanel },
+  { key: 'general',    label: 'General',    comp: SettingsPanel },
 ];
 
 function SettingsDialog({ onClose }) {
@@ -118,17 +120,18 @@ function buildTimeline(msgs) {
   const pendingTC = {};
   let turn = null;
   const ensureTurn = () => {
-    if (!turn) { turn = { role: 'turn', parts: [] }; timeline.push(turn); }
+    if (!turn) { turn = { role: 'turn', parts: [], messageId: 0 }; timeline.push(turn); }
   };
   const finishTurn = () => { turn = null; };
   for (const m of msgs) {
     if (m.role === 'user') {
       finishTurn();
-      if (m.content) timeline.push({ role: 'user', content: m.content });
+      if (m.content) timeline.push({ role: 'user', content: m.content, messageId: m.id });
     } else if (m.role === 'tool_call') {
       try {
         const item = JSON.parse(m.item);
         ensureTurn();
+        if (m.id) turn.messageId = m.id;
         const tc = { tool_call_id: item.call_id, tool_name: item.name, arguments: item.arguments || '', output: null, status: null };
         pendingTC[item.call_id] = tc;
         const last = turn.parts[turn.parts.length - 1];
@@ -138,6 +141,7 @@ function buildTimeline(msgs) {
     } else if (m.role === 'tool_output') {
       try {
         const item = JSON.parse(m.item);
+        if (turn && m.id) turn.messageId = m.id;
         if (pendingTC[item.call_id]) {
           pendingTC[item.call_id].output = item.output || m.content;
           pendingTC[item.call_id].status = 'completed';
@@ -145,9 +149,10 @@ function buildTimeline(msgs) {
       } catch (_) {}
     } else if (m.role === 'system' && m.content) {
       finishTurn();
-      timeline.push({ role: 'system', content: m.content });
+      timeline.push({ role: 'system', content: m.content, messageId: m.id });
     } else if (m.content) {
       ensureTurn();
+      if (m.id) turn.messageId = m.id;
       turn.parts.push({ type: 'text', content: m.content });
     }
   }
@@ -218,6 +223,13 @@ function App() {
     }).catch(() => {});
   }, [activeSession, updateSS]);
 
+  const reloadMessages = useCallback((sid) => {
+    api.sessions.messages(sid).then(msgs => {
+      const timeline = buildTimeline(msgs);
+      updateSS(sid, s => ({ ...s, messages: timeline }));
+    });
+  }, [updateSS]);
+
   useEffect(() => {
     const ws = new WSClient();
     wsRef.current = ws;
@@ -260,6 +272,7 @@ function App() {
         }
         return { ...s, messages: msgs, streaming: '', running: false, liveRunId: null };
       });
+      reloadMessages(sid);
     });
 
     ws.on('run.error', (p) => {
@@ -281,6 +294,7 @@ function App() {
         }
         return { ...s, messages: msgs, streaming: '', running: false, liveRunId: null, lastError: p.message };
       });
+      reloadMessages(sid);
     });
 
     ws.on('run.cancelled', (p) => {
@@ -301,6 +315,7 @@ function App() {
         }
         return { ...s, messages: msgs, streaming: '', running: false, liveRunId: null };
       });
+      reloadMessages(sid);
     });
 
     ws.on('run.tool_call', (p) => {
@@ -385,7 +400,7 @@ function App() {
 
     ws.connect();
     return () => ws.close();
-  }, [updateSS]);
+  }, [updateSS, reloadMessages]);
 
   const handleSend = useCallback((text, agentConfigId, sandboxId) => {
     if (!activeSession || !wsRef.current) return;
@@ -438,6 +453,13 @@ function App() {
     wsRef.current.send('tool.reject', { tool_call_id: toolCallId });
   }, [updateToolCall]);
 
+  const handleFork = useCallback(async (messageId) => {
+    if (!activeSession) return;
+    const forked = await api.sessions.fork(activeSession, messageId - 1);
+    setSessionReloadKey(k => k + 1);
+    setActiveSession(forked.id);
+  }, [activeSession]);
+
   const runningSessions = useMemo(() => {
     const set = new Set();
     for (const [sid, state] of Object.entries(ss)) {
@@ -483,6 +505,7 @@ function App() {
       onCancel: handleCancel,
       onApprove: handleApprove,
       onReject: handleReject,
+      onFork: handleFork,
       settingsReloadKey,
     });
   } else if (view === 'files') {

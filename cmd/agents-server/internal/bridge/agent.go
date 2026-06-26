@@ -31,6 +31,7 @@ type AgentDeps struct {
 	ProviderRoutes *store.ProviderRouteStore
 	Sessions       *store.SessionStore
 	Traces         *store.TraceStore
+	Guardrails     *GuardrailResolver
 	McpManager     *McpManager
 	SandboxManager *SandboxManager
 	ChatGPTOAuth   *ChatGPTOAuth
@@ -102,11 +103,19 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.ToolUseBehavior)
 
 	// Guardrails
-	if ac.InputGuardrails != "" {
-		agent.InputGuardrails = BuildInputGuardrails(ac.InputGuardrails)
+	if ac.InputGuardrails != "" && deps.Guardrails != nil {
+		agent.InputGuardrails = deps.Guardrails.BuildInputGuardrails(ctx, ac.InputGuardrails)
 	}
-	if ac.OutputGuardrails != "" {
-		agent.OutputGuardrails = BuildOutputGuardrails(ac.OutputGuardrails)
+	if ac.OutputGuardrails != "" && deps.Guardrails != nil {
+		agent.OutputGuardrails = deps.Guardrails.BuildOutputGuardrails(ctx, ac.OutputGuardrails)
+	}
+
+	// HITL tool approval
+	if ac.ApproveTools != "" {
+		var names []string
+		if json.Unmarshal([]byte(ac.ApproveTools), &names) == nil && len(names) > 0 {
+			agent.ApproveTools = names
+		}
 	}
 
 	// Output schema (structured output)

@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -94,6 +97,56 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// Fork creates a new session by copying messages from the source session up to
+// (and including) a given message ID. When message_id is 0 or omitted, all
+// messages are copied.
+func (h *SessionHandler) Fork(c *gin.Context) {
+	srcID := c.Param("id")
+	ctx := c.Request.Context()
+
+	src, err := h.sessions.Get(ctx, srcID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	var req struct {
+		MessageID int64 `json:"message_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	dst := &store.Session{
+		ID:            store.NewID(),
+		Name:          forkName(src.Name),
+		AgentConfigID: src.AgentConfigID,
+	}
+	if err := h.sessions.Create(ctx, dst); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.messages.ForkMessages(ctx, srcID, dst.ID, req.MessageID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, dst)
+}
+
+// Pin toggles the pinned state of the session identified by the id path parameter.
+func (h *SessionHandler) Pin(c *gin.Context) {
+	var req struct {
+		Pinned bool `json:"pinned"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.sessions.SetPinned(c.Request.Context(), c.Param("id"), req.Pinned); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // Messages responds with the messages for the session identified by the id path parameter.
 func (h *SessionHandler) Messages(c *gin.Context) {
 	msgs, err := h.messages.GetMessages(c.Request.Context(), c.Param("id"))
@@ -102,4 +155,22 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, msgs)
+}
+
+var forkSuffixRe = regexp.MustCompile(`\s*\(fork(?:\s+(\d+))?\)$`)
+
+func forkName(name string) string {
+	base := forkSuffixRe.ReplaceAllString(name, "")
+	m := forkSuffixRe.FindStringSubmatch(name)
+	n := 1
+	if m != nil && m[1] != "" {
+		n, _ = strconv.Atoi(m[1])
+	}
+	if m != nil {
+		n++
+	}
+	if n <= 1 {
+		return fmt.Sprintf("%s (fork)", base)
+	}
+	return fmt.Sprintf("%s (fork %d)", base, n)
 }

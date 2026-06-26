@@ -66,6 +66,8 @@ export const api = {
     update: (id, name) => request(`/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
     messages: (id) => request(`/sessions/${id}/messages`),
     traces: (id) => request(`/sessions/${id}/traces`),
+    fork: (id, messageId) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ message_id: messageId || 0 }) }),
+    pin: (id, pinned) => request(`/sessions/${id}/pin`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
   agents: crud('/agents'),
   mcpServers: {
@@ -93,6 +95,7 @@ export const api = {
     read: (path) => request(`/files/${encodeURIComponent(path)}`),
   },
   guardrails: {
+    ...crud('/guardrails'),
     list: () => request('/guardrails'),
   },
   providerRoutes: crud('/provider-routes'),

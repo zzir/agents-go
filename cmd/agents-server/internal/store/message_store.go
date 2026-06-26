@@ -218,4 +218,33 @@ func (a *SessionAdapter) Clear(ctx context.Context) error {
 	return nil
 }
 
+// ForkMessages copies messages from srcSessionID to dstSessionID. When
+// upToMessageID > 0, only messages with id <= upToMessageID are copied;
+// otherwise all messages are copied.
+func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessionID string, upToMessageID int64) error {
+	var msgs []Message
+	q := s.db.NewSelect().Model(&msgs).
+		Where("session_id = ?", srcSessionID).
+		OrderExpr("id ASC")
+	if upToMessageID > 0 {
+		q = q.Where("id <= ?", upToMessageID)
+	}
+	if err := q.Scan(ctx); err != nil {
+		return fmt.Errorf("fork messages read: %w", err)
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	for i := range msgs {
+		msgs[i].ID = 0
+		msgs[i].SessionID = dstSessionID
+		msgs[i].CreatedAt = now
+	}
+	if _, err := s.db.NewInsert().Model(&msgs).Exec(ctx); err != nil {
+		return fmt.Errorf("fork messages write: %w", err)
+	}
+	return nil
+}
+
 var _ agents.Session = (*SessionAdapter)(nil)

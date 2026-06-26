@@ -14,6 +14,7 @@ type Session struct {
 
 	ID            string    `bun:"id,pk"               json:"id"`
 	Name          string    `bun:"name,notnull"         json:"name"`
+	Pinned        bool      `bun:"pinned"               json:"pinned"`
 	AgentConfigID string    `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
 	CreatedAt     time.Time `bun:"created_at,notnull"   json:"created_at"`
 	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`
@@ -78,6 +79,9 @@ type AgentConfig struct {
 	HandoffInputFilter   string `bun:"handoff_input_filter"     json:"handoff_input_filter,omitempty"`
 	MaxToolConcurrency   int    `bun:"max_tool_concurrency"     json:"max_tool_concurrency"`
 	ToolNotFoundBehavior string `bun:"tool_not_found_behavior"  json:"tool_not_found_behavior,omitempty"`
+
+	// Batch 6: HITL approval
+	ApproveTools string `bun:"approve_tools" json:"approve_tools,omitempty"` // JSON: ["*"] or ["tool_name",...]
 
 	CreatedAt time.Time `bun:"created_at,notnull"    json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"    json:"updated_at"`
@@ -230,6 +234,32 @@ type SSHConfig struct {
 
 // BeforeAppendModel hooks stamp id/timestamps for the CrudStore-backed entities
 // (see stampOnAppend). bun invokes them on insert and update.
+
+// Guardrail is a stored guardrail definition. Mode selects the check logic:
+// "regex" uses Config.Pattern; "max_length" uses Config.MaxLength.
+type Guardrail struct {
+	bun.BaseModel `bun:"table:guardrails,alias:gr"`
+
+	ID          string          `bun:"id,pk"              json:"id"`
+	Name        string          `bun:"name,notnull"       json:"name"`
+	Description string          `bun:"description"        json:"description"`
+	Type        string          `bun:"type,notnull"       json:"type"` // input | output
+	Mode        string          `bun:"mode,notnull"       json:"mode"` // regex | max_length
+	Config      json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
+	CreatedAt   time.Time       `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt   time.Time       `bun:"updated_at,notnull" json:"updated_at"`
+}
+
+// GuardrailConfig is the parsed Config payload for a Guardrail.
+type GuardrailConfig struct {
+	Pattern   string `json:"pattern,omitempty"`
+	MaxLength int    `json:"max_length,omitempty"`
+}
+
+// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
+func (m *Guardrail) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
 
 // BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
 func (m *AgentConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
