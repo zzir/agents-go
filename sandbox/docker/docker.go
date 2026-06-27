@@ -51,6 +51,9 @@ type Options struct {
 	// the standard DOCKER_HOST environment variable (or the platform default
 	// socket) is used.
 	Host string
+	// Runtime is the OCI runtime to use (e.g. "runsc" for gVisor). When empty,
+	// the daemon's default runtime (usually runc) is used.
+	Runtime string
 	// Limits caps the container's resources. Zero fields use the defaults below.
 	Limits sandbox.Limits
 	// User runs the process as the given user[:group]. Defaults to "65534:65534"
@@ -188,6 +191,7 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 	}
 	hostCfg := &container.HostConfig{
 		NetworkMode:    netMode,
+		Runtime:        s.opts.Runtime,
 		ReadonlyRootfs: true,
 		CapDrop:        []string{"ALL"},
 		SecurityOpt:    []string{"no-new-privileges"},
