@@ -15,6 +15,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -67,8 +68,10 @@ type Options struct {
 
 // Sandbox is a Docker-backed sandbox.Sandbox.
 type Sandbox struct {
-	cli  *client.Client
-	opts Options
+	cli         *client.Client
+	opts        Options
+	imagePulled sync.Once
+	pullErr     error
 }
 
 // New connects to the Docker daemon (via the standard environment variables) and
@@ -92,8 +95,28 @@ func New(opts Options) (*Sandbox, error) {
 	return &Sandbox{cli: cli, opts: opts}, nil
 }
 
+// ensureImage pulls the image if it is not available locally.
+func (s *Sandbox) ensureImage(ctx context.Context) error {
+	s.imagePulled.Do(func() {
+		_, err := s.cli.ImageInspect(ctx, s.opts.Image)
+		if err == nil {
+			return
+		}
+		resp, perr := s.cli.ImagePull(ctx, s.opts.Image, client.ImagePullOptions{})
+		if perr != nil {
+			s.pullErr = fmt.Errorf("docker sandbox: pull %s: %w", s.opts.Image, perr)
+			return
+		}
+		s.pullErr = resp.Wait(ctx)
+	})
+	return s.pullErr
+}
+
 // Exec implements sandbox.Sandbox.
 func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
+	if err := s.ensureImage(ctx); err != nil {
+		return nil, err
+	}
 	if req.Stdin != "" {
 		return nil, fmt.Errorf("docker sandbox: ExecRequest.Stdin is not supported")
 	}
