@@ -38,7 +38,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(workDir)
+	defer func() { _ = os.RemoveAll(workDir) }()
 
 	// Dev-only, unisolated backend. See the package doc above for Docker.
 	sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workDir})

@@ -124,6 +124,7 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 	return res, nil
 }
 
+// Exec runs a command and returns its buffered output.
 func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, error) {
 	maxOut := req.EffectiveMaxOutputBytes()
 	stdoutBuf := &CappedBuffer{Max: maxOut}
@@ -142,6 +143,7 @@ func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, 
 	return s.exec(ctx, req, stdout, stderr)
 }
 
+// ReadFile reads a file relative to the sandbox working directory.
 func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir
@@ -149,6 +151,7 @@ func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
 }
 
+// WriteFile writes a file relative to the sandbox working directory.
 func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) error {
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
@@ -160,6 +163,7 @@ func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) er
 	return os.WriteFile(full, content, 0o644)
 }
 
+// ListDir lists entries in a directory relative to the sandbox working directory.
 func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) {
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir

@@ -86,18 +86,22 @@ func NewSlidingWindowSession(underlying Session, cfg SlidingWindowConfig) *Slidi
 	return &SlidingWindowSession{underlying: underlying, cfg: cfg}
 }
 
+// GetItems delegates to the underlying session.
 func (s *SlidingWindowSession) GetItems(ctx context.Context, limit int) ([]TResponseInputItem, error) {
 	return s.underlying.GetItems(ctx, limit)
 }
 
+// AddItems delegates to the underlying session.
 func (s *SlidingWindowSession) AddItems(ctx context.Context, items []TResponseInputItem) error {
 	return s.underlying.AddItems(ctx, items)
 }
 
+// PopItem delegates to the underlying session.
 func (s *SlidingWindowSession) PopItem(ctx context.Context) (*TResponseInputItem, error) {
 	return s.underlying.PopItem(ctx)
 }
 
+// Clear delegates to the underlying session.
 func (s *SlidingWindowSession) Clear(ctx context.Context) error {
 	return s.underlying.Clear(ctx)
 }
