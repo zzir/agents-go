@@ -3,10 +3,10 @@
 The `sandbox` packages run **model-generated code** in an isolated environment and expose that capability to an agent as a tool. This is a Go-specific extension — the Python SDK's hosted "code interpreter" tool runs on OpenAI's servers, while these sandboxes run in *your* infrastructure under your controls.
 
 ```
-agents.Agent ── CodeTool ──► sandbox.Sandbox (interface)
-                               ├── sandbox.LocalSandbox      (dev only, no isolation)
-                               ├── sandbox/docker.Sandbox    (ephemeral containers)
-                               └── sandbox/ssh.Sandbox       (remote host over SSH)
+agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
+             ── FileTools ──►   ├── sandbox.LocalSandbox      (dev only, no isolation)
+                                ├── sandbox/docker.Sandbox    (ephemeral / persistent containers)
+                                └── sandbox/ssh.Sandbox       (remote host over SSH)
 ```
 
 The Docker and SSH backends are each a **separate Go module** (`sandbox/docker`, `sandbox/ssh`) so the core module stays dependency-light.
@@ -19,20 +19,23 @@ import (
 	docker "github.com/zzir/agents-go/sandbox/docker"
 )
 
-sb, err := docker.New(docker.Options{Image: "python:3.12-slim"})
+sb, err := docker.New(docker.Options{Image: "python:3.12-slim", Persistent: true})
 if err != nil { … }
 defer sb.Close()
 
-codeTool := sandbox.CodeTool(sb, sandbox.CodeToolConfig{})
+// CodeTool runs shell commands; FileTools gives the model native read_file,
+// write_file and list_files — no shell needed.
+tools := []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
 
 agent := &agents.Agent{
 	Name:         "data analyst",
 	Instructions: agents.StaticInstructions("Write and run Python code to answer the question. Iterate until the output is correct."),
-	Tools:        []agents.Tool{codeTool},
+	Tools:        tools,
 }
 ```
 
-The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. Execution failures (non-zero exit, timeouts) are normal tool output; *infrastructure* failures (daemon down, missing image) abort the run.
+The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) are normal tool output; *infrastructure* failures (daemon down, missing image) abort the run.
 
 ## CodeTool configuration
 
@@ -56,6 +59,12 @@ sb := sandbox.NewLocal()
 ```
 
 Runs commands directly on the host in a temp directory — **no isolation**. By default the child sees only `PATH`, `HOME` and `TMPDIR` (plus request env), so host secrets cannot leak into model code; `sandbox.NewLocalWithOptions(sandbox.LocalOptions{InheritHostEnv: true})` restores full inheritance. Timeouts kill the whole process group, including backgrounded grandchildren.
+
+Set `WorkDir` to enable file operations (`ReadFile`/`WriteFile`/`ListDir`):
+
+```go
+sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: "/path/to/workspace"})
+```
 
 ### Docker
 
@@ -87,6 +96,17 @@ Authentication methods are tried in order — SSH agent (`UseAgent`), private ke
 
 > ⚠️ **The SSH backend provides no isolation.** The command runs with the SSH user's full privileges and `sandbox.Limits` are **not** enforced (SSH has no cgroups). Point it at a disposable VM or an already-sandboxed host, never a machine you care about.
 
+## FileTools configuration
+
+```go
+sandbox.FileToolConfig{
+	Timeout:        10 * time.Second, // per file operation (default: sandbox.DefaultTimeout)
+	MaxOutputBytes: 8192,             // truncation for read_file output
+}
+```
+
+File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
+
 ## The Sandbox interface
 
 Implement it to add your own backend (Firecracker, Kubernetes, remote runners, …):
@@ -94,6 +114,9 @@ Implement it to add your own backend (Firecracker, Kubernetes, remote runners, �
 ```go
 type Sandbox interface {
 	Exec(ctx context.Context, req ExecRequest) (*ExecResult, error)
+	ReadFile(ctx context.Context, path string) ([]byte, error)
+	WriteFile(ctx context.Context, path string, content []byte) error
+	ListDir(ctx context.Context, path string) ([]DirEntry, error)
 	Close() error
 }
 
@@ -112,6 +135,24 @@ type ExecResult struct {
 	Stderr   string
 	TimedOut bool
 }
+
+type DirEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
+	Size  int64  `json:"size"`
+}
 ```
+
+## ExecStreamer (optional)
+
+Backends can optionally implement `ExecStreamer` to stream command output as it arrives:
+
+```go
+type ExecStreamer interface {
+	ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error)
+}
+```
+
+Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). All three built-in backends implement this interface.
 
 See [examples/sandbox](../examples/sandbox/main.go), [sandbox/docker/example](../sandbox/docker/example/main.go) and [sandbox/ssh/example](../sandbox/ssh/example/main.go) for runnable programs.

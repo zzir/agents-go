@@ -9,7 +9,10 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"time"
 )
 
@@ -20,14 +23,18 @@ const DefaultTimeout = 30 * time.Second
 // ExecRequest.MaxOutputBytes is zero.
 const DefaultMaxOutputBytes int64 = 1 << 20 // 1 MiB
 
-// Sandbox executes commands in an isolated environment.
+// Sandbox executes commands and performs file operations in an isolated
+// environment.
 type Sandbox interface {
-	// Exec writes req.Files into a fresh working directory, runs req.Cmd there,
-	// and returns the captured output, with each output stream capped at
-	// req.MaxOutputBytes (excess output is discarded). Implementations apply
-	// isolation and the request timeout, killing the process when it is
-	// exceeded.
+	// Exec writes req.Files into the working directory, runs req.Cmd there,
+	// and returns the captured output capped at req.MaxOutputBytes.
 	Exec(ctx context.Context, req ExecRequest) (*ExecResult, error)
+	// ReadFile reads a file from the sandbox's persistent working directory.
+	ReadFile(ctx context.Context, path string) ([]byte, error)
+	// WriteFile writes a file in the sandbox, creating parent directories.
+	WriteFile(ctx context.Context, path string, content []byte) error
+	// ListDir lists entries in a sandbox directory (empty path = working dir).
+	ListDir(ctx context.Context, path string) ([]DirEntry, error)
 	// Close releases any resources held by the sandbox.
 	Close() error
 }
@@ -90,4 +97,46 @@ type Limits struct {
 	CPUs float64
 	// PIDs caps the number of processes/threads.
 	PIDs int64
+}
+
+// CappedBuffer is an io.Writer that keeps at most Max bytes and silently
+// discards the rest, so a runaway process cannot exhaust memory.
+type CappedBuffer struct {
+	Buf bytes.Buffer
+	Max int64
+}
+
+func (b *CappedBuffer) Write(p []byte) (int, error) {
+	if remain := b.Max - int64(b.Buf.Len()); remain > 0 {
+		if int64(len(p)) > remain {
+			b.Buf.Write(p[:remain])
+		} else {
+			b.Buf.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
+func (b *CappedBuffer) String() string { return b.Buf.String() }
+
+// Full reports whether the buffer has reached its cap.
+func (b *CappedBuffer) Full() bool { return int64(b.Buf.Len()) >= b.Max }
+
+// DirEntry describes one entry returned by Sandbox.ListDir.
+type DirEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
+	Size  int64  `json:"size"`
+}
+
+// ErrNoWorkDir is returned by ReadFile, WriteFile and ListDir when the sandbox
+// has no persistent working directory.
+var ErrNoWorkDir = errors.New("sandbox: no persistent working directory configured")
+
+// ExecStreamer is optionally implemented by Sandbox backends that support
+// streaming command output. Output is written to stdout/stderr as it arrives;
+// the returned ExecResult contains ExitCode and TimedOut but its Stdout and
+// Stderr fields are empty.
+type ExecStreamer interface {
+	ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error)
 }

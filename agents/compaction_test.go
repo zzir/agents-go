@@ -40,8 +40,9 @@ func TestRunnerInvokesCompaction(t *testing.T) {
 	}
 }
 
-// When the model returns no response ID, compaction is skipped (nothing to chain).
-func TestRunnerSkipsCompactionWithoutResponseID(t *testing.T) {
+// When the model returns no response ID, compaction is still invoked — the
+// session decides whether to act (e.g. SlidingWindowSession ignores ResponseID).
+func TestRunnerInvokesCompactionWithoutResponseID(t *testing.T) {
 	sess := &fakeCompactionSession{InMemorySession: NewInMemorySession()}
 	model := &recordingModel{responses: []*ModelResponse{
 		{Output: []TResponseOutputItem{messageOutput(t, "hi")}, Usage: NewUsage()}, // no ResponseID
@@ -51,7 +52,10 @@ func TestRunnerSkipsCompactionWithoutResponseID(t *testing.T) {
 	if _, err := Run(context.Background(), agent, "hello", RunOptions{Model: model, Session: sess}); err != nil {
 		t.Fatal(err)
 	}
-	if len(sess.calls) != 0 {
-		t.Errorf("RunCompaction calls = %d, want 0", len(sess.calls))
+	if len(sess.calls) != 1 {
+		t.Fatalf("RunCompaction calls = %d, want 1", len(sess.calls))
+	}
+	if sess.calls[0].ResponseID != "" {
+		t.Errorf("compaction ResponseID = %q, want empty", sess.calls[0].ResponseID)
 	}
 }

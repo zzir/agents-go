@@ -46,8 +46,8 @@ func TestBuildConfig_SecurityDefaults(t *testing.T) {
 	if host.PidsLimit == nil || *host.PidsLimit != 128 {
 		t.Errorf("pids limit = %v, want 128", host.PidsLimit)
 	}
-	if len(host.Mounts) != 1 || host.Mounts[0].Target != volumeDir {
-		t.Errorf("expected a writable %s volume mount, got %v", volumeDir, host.Mounts)
+	if len(host.Mounts) != 1 || host.Mounts[0].Target != workDir {
+		t.Errorf("expected a writable %s volume mount, got %v", workDir, host.Mounts)
 	}
 	// With a read-only root fs the container still needs a writable /tmp.
 	spec, ok := host.Tmpfs["/tmp"]
@@ -101,25 +101,17 @@ func TestBuildTar(t *testing.T) {
 	}
 	files, modes, dirs := readTar(t, r)
 
-	// The working directory itself is created world-writable (sticky) so the
-	// unprivileged user can write to it despite the root-owned volume root.
-	if !dirs["work"] {
-		t.Fatalf("missing %q dir entry, got dirs %v", "work", dirs)
-	}
-	if modes["work"] != 0o1777 {
-		t.Errorf("work dir mode = %o, want 1777", modes["work"])
-	}
-	if !dirs["work/sub"] {
+	if !dirs["sub"] {
 		t.Errorf("missing parent dir entry for nested file, got %v", dirs)
 	}
-	if modes["work/sub"] != 0o777 {
-		t.Errorf("nested dir mode = %o, want 777", modes["work/sub"])
+	if modes["sub"] != 0o777 {
+		t.Errorf("nested dir mode = %o, want 777", modes["sub"])
 	}
-	if files["work/main.py"] != "print(1)" {
-		t.Errorf("main.py = %q", files["work/main.py"])
+	if files["main.py"] != "print(1)" {
+		t.Errorf("main.py = %q", files["main.py"])
 	}
-	if files["work/sub/data.txt"] != "hi" {
-		t.Errorf("sub/data.txt = %q", files["work/sub/data.txt"])
+	if files["sub/data.txt"] != "hi" {
+		t.Errorf("sub/data.txt = %q", files["sub/data.txt"])
 	}
 	// No path traversal / leading slash.
 	for name := range modes {
@@ -129,14 +121,14 @@ func TestBuildTar(t *testing.T) {
 	}
 }
 
-func TestBuildTar_NoFilesStillCreatesWorkdir(t *testing.T) {
+func TestBuildTar_NoFiles(t *testing.T) {
 	r, err := buildTar(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, modes, dirs := readTar(t, r)
-	if !dirs["work"] || modes["work"] != 0o1777 {
-		t.Errorf("empty request must still create the writable workdir, got %v / %o", dirs, modes["work"])
+	files, _, dirs := readTar(t, r)
+	if len(files) != 0 || len(dirs) != 0 {
+		t.Errorf("empty request should produce empty tar, got files=%v dirs=%v", files, dirs)
 	}
 }
 
@@ -146,7 +138,7 @@ func TestBuildTar_Traversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	files, _, _ := readTar(t, r)
-	if files["work/escape.py"] != "x" {
+	if files["escape.py"] != "x" {
 		t.Errorf("traversal should be stripped, got %v", files)
 	}
 }

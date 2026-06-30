@@ -1,9 +1,9 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,12 +47,13 @@ func NewLocal() *LocalSandbox { return &LocalSandbox{} }
 // NewLocalWithOptions returns a LocalSandbox with the given options.
 func NewLocalWithOptions(opts LocalOptions) *LocalSandbox { return &LocalSandbox{opts: opts} }
 
-// Exec implements Sandbox by running req.Cmd in a fresh temp directory.
+// exec runs req.Cmd in a working directory, wiring stdout/stderr to the
+// provided writers.
 //
 // The command runs in its own process group (on Unix), and the whole group is
 // killed when the timeout fires, so backgrounded grandchildren cannot outlive
 // the deadline or hold the output pipes open indefinitely.
-func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, error) {
+func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("sandbox: ExecRequest.Cmd is empty")
 	}
@@ -88,9 +89,6 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, 
 		cmd.Stdin = strings.NewReader(req.Stdin)
 	}
 	cmd.Env = s.buildEnv(req.Env)
-	maxOut := req.EffectiveMaxOutputBytes()
-	stdout := &cappedBuffer{max: maxOut}
-	stderr := &cappedBuffer{max: maxOut}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	// Lead a new process group and kill the whole group on cancellation.
@@ -104,7 +102,7 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, 
 		// Best-effort sweep of any processes left behind in the group.
 		_ = killProcessGroup(cmd.Process.Pid)
 	}
-	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	res := &ExecResult{}
 	if errors.Is(runErr, exec.ErrWaitDelay) {
 		// The process itself exited successfully (a failure would surface as
 		// *exec.ExitError) but something kept the output pipes open past
@@ -124,6 +122,66 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, 
 		return nil, runErr
 	}
 	return res, nil
+}
+
+func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, error) {
+	maxOut := req.EffectiveMaxOutputBytes()
+	stdoutBuf := &CappedBuffer{Max: maxOut}
+	stderrBuf := &CappedBuffer{Max: maxOut}
+	res, err := s.exec(ctx, req, stdoutBuf, stderrBuf)
+	if err != nil {
+		return nil, err
+	}
+	res.Stdout = stdoutBuf.String()
+	res.Stderr = stderrBuf.String()
+	return res, nil
+}
+
+// ExecStream implements ExecStreamer by streaming output to the provided writers.
+func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
+	return s.exec(ctx, req, stdout, stderr)
+}
+
+func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
+	if s.opts.WorkDir == "" {
+		return nil, ErrNoWorkDir
+	}
+	return os.ReadFile(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+}
+
+func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) error {
+	if s.opts.WorkDir == "" {
+		return ErrNoWorkDir
+	}
+	full := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(full, content, 0o644)
+}
+
+func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) {
+	if s.opts.WorkDir == "" {
+		return nil, ErrNoWorkDir
+	}
+	target := s.opts.WorkDir
+	if p != "" && p != "." {
+		target = filepath.Join(target, filepath.Clean("/"+p))
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]DirEntry, 0, len(entries))
+	for _, e := range entries {
+		info, _ := e.Info()
+		var size int64
+		if info != nil {
+			size = info.Size()
+		}
+		result = append(result, DirEntry{Name: e.Name(), IsDir: e.IsDir(), Size: size})
+	}
+	return result, nil
 }
 
 // buildEnv assembles the child environment: the full host environment when
@@ -146,28 +204,8 @@ func (s *LocalSandbox) buildEnv(reqEnv map[string]string) []string {
 	return env
 }
 
-// cappedBuffer is an io.Writer that keeps at most max bytes and silently
-// discards the rest, so a runaway process cannot exhaust memory and never
-// sees a write error.
-type cappedBuffer struct {
-	buf bytes.Buffer
-	max int64
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if remain := b.max - int64(b.buf.Len()); remain > 0 {
-		if int64(len(p)) > remain {
-			b.buf.Write(p[:remain])
-		} else {
-			b.buf.Write(p)
-		}
-	}
-	return len(p), nil
-}
-
-func (b *cappedBuffer) String() string { return b.buf.String() }
-
 // Close implements Sandbox.
 func (s *LocalSandbox) Close() error { return nil }
 
 var _ Sandbox = (*LocalSandbox)(nil)
+var _ ExecStreamer = (*LocalSandbox)(nil)

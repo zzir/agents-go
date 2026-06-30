@@ -519,7 +519,7 @@ func (r *runner) saveToSession(ctx context.Context) error {
 	// If the session can compact itself (e.g. via responses.compact), give it a
 	// chance now that the run's items are persisted. At run end there are no
 	// pending tool outputs, so compaction is always safe to attempt here.
-	if cs, ok := r.opts.Session.(CompactionAwareSession); ok && r.lastResponseID != "" {
+	if cs, ok := r.opts.Session.(CompactionAwareSession); ok {
 		return cs.RunCompaction(ctx, CompactionArgs{ResponseID: r.lastResponseID, Store: r.lastStore})
 	}
 	return nil

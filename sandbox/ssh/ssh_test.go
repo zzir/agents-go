@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zzir/agents-go/sandbox"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -105,7 +106,7 @@ func TestRandomHex(t *testing.T) {
 }
 
 func TestBuildAuthMethods_Password(t *testing.T) {
-	m, err := buildAuthMethods(AuthConfig{Password: "secret"})
+	m, _, err := buildAuthMethods(AuthConfig{Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestBuildAuthMethods_Password(t *testing.T) {
 
 func TestBuildAuthMethods_KeyBytes(t *testing.T) {
 	pem := newTestPEMKey(t)
-	m, err := buildAuthMethods(AuthConfig{KeyBytes: pem})
+	m, _, err := buildAuthMethods(AuthConfig{KeyBytes: pem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestBuildAuthMethods_KeyBytes(t *testing.T) {
 }
 
 func TestBuildAuthMethods_BadKey(t *testing.T) {
-	_, err := buildAuthMethods(AuthConfig{KeyBytes: []byte("not a key")})
+	_, _, err := buildAuthMethods(AuthConfig{KeyBytes: []byte("not a key")})
 	if err == nil {
 		t.Fatal("expected an error for an invalid private key")
 	}
@@ -135,7 +136,7 @@ func TestBuildAuthMethods_BadKey(t *testing.T) {
 func TestBuildAuthMethods_Order(t *testing.T) {
 	// Key + password configured: both methods present, key before password.
 	pem := newTestPEMKey(t)
-	m, err := buildAuthMethods(AuthConfig{KeyBytes: pem, Password: "p"})
+	m, _, err := buildAuthMethods(AuthConfig{KeyBytes: pem, Password: "p"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestBuildAuthMethods_Order(t *testing.T) {
 }
 
 func TestBuildAuthMethods_None(t *testing.T) {
-	_, err := buildAuthMethods(AuthConfig{})
+	_, _, err := buildAuthMethods(AuthConfig{})
 	if err == nil {
 		t.Fatal("expected an error when no auth method is configured")
 	}
@@ -187,7 +188,7 @@ func TestNew_Validation(t *testing.T) {
 }
 
 func TestCappedBuffer(t *testing.T) {
-	b := &cappedBuffer{max: 4}
+	b := &sandbox.CappedBuffer{Max: 4}
 	n, _ := b.Write([]byte("hello world"))
 	if n != 11 {
 		t.Errorf("Write returned %d, want 11 (reports full length)", n)

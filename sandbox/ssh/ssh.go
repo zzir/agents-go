@@ -13,7 +13,6 @@
 package ssh
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -36,10 +35,6 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// defaultBaseDir is the remote directory under which per-execution working
-// directories are created when Options.BaseDir is empty.
-const defaultBaseDir = "/tmp"
-
 // defaultConnectTimeout bounds the initial TCP+handshake when Options.ConnectTimeout is zero.
 const defaultConnectTimeout = 15 * time.Second
 
@@ -55,9 +50,11 @@ type Options struct {
 	// HostKey configures remote host-key verification. The zero value verifies
 	// against ~/.ssh/known_hosts.
 	HostKey HostKeyConfig
-	// BaseDir is the remote directory under which per-execution working
-	// directories are created. Defaults to "/tmp".
-	BaseDir string
+	// WorkDir, when set, uses this fixed remote directory as the working
+	// directory for every Exec call instead of creating a temporary one.
+	// The directory must already exist on the remote host. Files from
+	// ExecRequest.Files are written into it and NOT cleaned up afterwards.
+	WorkDir string
 	// ConnectTimeout bounds the initial connection/handshake. Zero means
 	// defaultConnectTimeout.
 	ConnectTimeout time.Duration
@@ -97,9 +94,10 @@ type HostKeyConfig struct {
 
 // Sandbox is an SSH-backed sandbox.Sandbox.
 type Sandbox struct {
-	client *ssh.Client
-	sftp   *sftp.Client
-	opts   Options
+	client   *ssh.Client
+	sftp     *sftp.Client
+	opts     Options
+	agentConn net.Conn // SSH agent socket; nil when UseAgent is false
 }
 
 // New dials the SSH server and opens an SFTP subsystem, returning a ready
@@ -112,12 +110,15 @@ func New(opts Options) (*Sandbox, error) {
 		return nil, errors.New("ssh sandbox: User is required")
 	}
 
-	auth, err := buildAuthMethods(opts.Auth)
+	auth, agentConn, err := buildAuthMethods(opts.Auth)
 	if err != nil {
 		return nil, err
 	}
 	hostKey, err := buildHostKeyCallback(opts.HostKey)
 	if err != nil {
+		if agentConn != nil {
+			_ = agentConn.Close()
+		}
 		return nil, err
 	}
 	connectTimeout := opts.ConnectTimeout
@@ -132,37 +133,67 @@ func New(opts Options) (*Sandbox, error) {
 		Timeout:         connectTimeout,
 	}
 
+	closeAgent := func() {
+		if agentConn != nil {
+			_ = agentConn.Close()
+		}
+	}
 	client, err := ssh.Dial("tcp", normalizeAddr(opts.Addr), cfg)
 	if err != nil {
+		closeAgent()
 		return nil, fmt.Errorf("ssh sandbox: dial: %w", err)
 	}
 	sftpClient, err := sftp.NewClient(client)
 	if err != nil {
 		_ = client.Close()
+		closeAgent()
 		return nil, fmt.Errorf("ssh sandbox: open sftp (is the SFTP subsystem enabled on the host?): %w", err)
 	}
-	return &Sandbox{client: client, sftp: sftpClient, opts: opts}, nil
+	return &Sandbox{client: client, sftp: sftpClient, opts: opts, agentConn: agentConn}, nil
 }
 
 // Exec implements sandbox.Sandbox.
 func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
+	maxOut := req.EffectiveMaxOutputBytes()
+	stdoutBuf := &sandbox.CappedBuffer{Max: maxOut}
+	stderrBuf := &sandbox.CappedBuffer{Max: maxOut}
+	res, err := s.exec(ctx, req, stdoutBuf, stderrBuf)
+	if err != nil {
+		return nil, err
+	}
+	res.Stdout = stdoutBuf.String()
+	res.Stderr = stderrBuf.String()
+	return res, nil
+}
+
+// ExecStream implements sandbox.ExecStreamer.
+func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
+	return s.exec(ctx, req, stdout, stderr)
+}
+
+// exec is the shared core for Exec and ExecStream. Output is written to the
+// provided writers; the returned ExecResult has empty Stdout/Stderr fields.
+func (s *Sandbox) exec(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("ssh sandbox: ExecRequest.Cmd is empty")
 	}
 
-	baseDir := s.opts.BaseDir
-	if baseDir == "" {
-		baseDir = defaultBaseDir
+	var workDir string
+	var cleanup bool
+	if s.opts.WorkDir != "" {
+		workDir = s.opts.WorkDir
+	} else {
+		suffix, err := randomHex(8)
+		if err != nil {
+			return nil, fmt.Errorf("ssh sandbox: %w", err)
+		}
+		workDir = path.Join("/tmp", "agents-sandbox-"+suffix)
+		if err := s.sftp.MkdirAll(workDir); err != nil {
+			return nil, fmt.Errorf("ssh sandbox: create work dir %s: %w", workDir, err)
+		}
+		cleanup = !s.opts.KeepFiles
 	}
-	suffix, err := randomHex(8)
-	if err != nil {
-		return nil, fmt.Errorf("ssh sandbox: %w", err)
-	}
-	workDir := path.Join(baseDir, "agents-sandbox-"+suffix)
-	if err := s.sftp.MkdirAll(workDir); err != nil {
-		return nil, fmt.Errorf("ssh sandbox: create work dir %s: %w", workDir, err)
-	}
-	if !s.opts.KeepFiles {
+	if cleanup {
 		defer func() { _ = s.sftp.RemoveAll(workDir) }()
 	}
 	if err := s.writeFiles(workDir, req.Files); err != nil {
@@ -175,9 +206,6 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 	}
 	defer session.Close()
 
-	maxOut := req.EffectiveMaxOutputBytes()
-	stdout := &cappedBuffer{max: maxOut}
-	stderr := &cappedBuffer{max: maxOut}
 	session.Stdout = stdout
 	session.Stderr = stderr
 	if req.Stdin != "" {
@@ -196,7 +224,6 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 	res := &sandbox.ExecResult{}
 	select {
 	case werr := <-waitCh:
-		res.Stdout, res.Stderr = stdout.String(), stderr.String()
 		var exitErr *ssh.ExitError
 		var missingErr *ssh.ExitMissingError
 		switch {
@@ -218,7 +245,6 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 		// remote process; then drain Wait so the output copy has completed.
 		_ = session.Close()
 		<-waitCh
-		res.Stdout, res.Stderr = stdout.String(), stderr.String()
 		if cerr := ctx.Err(); cerr != nil {
 			// The caller's context was canceled or hit its own deadline; that is
 			// not an execution timeout.
@@ -229,6 +255,66 @@ func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.E
 		res.ExitCode = -1
 		return res, nil
 	}
+}
+
+// ReadFile implements sandbox.Sandbox.
+func (s *Sandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
+	if s.opts.WorkDir == "" {
+		return nil, sandbox.ErrNoWorkDir
+	}
+	f, err := s.sftp.Open(path.Join(s.opts.WorkDir, path.Clean("/"+p)))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// WriteFile implements sandbox.Sandbox.
+func (s *Sandbox) WriteFile(_ context.Context, p string, content []byte) error {
+	if s.opts.WorkDir == "" {
+		return sandbox.ErrNoWorkDir
+	}
+	clean := path.Clean("/" + p)[1:]
+	if clean == "" {
+		return fmt.Errorf("ssh sandbox: invalid file path %q", p)
+	}
+	full := path.Join(s.opts.WorkDir, clean)
+	if parent := path.Dir(full); parent != "." {
+		if err := s.sftp.MkdirAll(parent); err != nil {
+			return fmt.Errorf("ssh sandbox: mkdir %s: %w", parent, err)
+		}
+	}
+	f, err := s.sftp.Create(full)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(content)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
+}
+
+// ListDir implements sandbox.Sandbox.
+func (s *Sandbox) ListDir(_ context.Context, p string) ([]sandbox.DirEntry, error) {
+	if s.opts.WorkDir == "" {
+		return nil, sandbox.ErrNoWorkDir
+	}
+	target := s.opts.WorkDir
+	if p != "" && p != "." {
+		target = path.Join(target, path.Clean("/"+p))
+	}
+	entries, err := s.sftp.ReadDir(target)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]sandbox.DirEntry, len(entries))
+	for i, e := range entries {
+		result[i] = sandbox.DirEntry{Name: e.Name(), IsDir: e.IsDir(), Size: e.Size()}
+	}
+	return result, nil
 }
 
 // writeFiles writes each request file under dir via SFTP, creating parent
@@ -261,9 +347,14 @@ func (s *Sandbox) writeFiles(dir string, files map[string]string) error {
 	return nil
 }
 
-// Close releases the SFTP subsystem and the underlying SSH connection.
+// Close releases the SFTP subsystem, the underlying SSH connection, and the
+// SSH agent socket (if one was opened).
 func (s *Sandbox) Close() error {
-	return errors.Join(s.sftp.Close(), s.client.Close())
+	var agentErr error
+	if s.agentConn != nil {
+		agentErr = s.agentConn.Close()
+	}
+	return errors.Join(s.sftp.Close(), s.client.Close(), agentErr)
 }
 
 // buildCommand assembles a single shell command line that changes into the
@@ -325,19 +416,22 @@ func randomHex(n int) (string, error) {
 }
 
 // buildAuthMethods turns an AuthConfig into ordered ssh.AuthMethods: agent
-// first, then private key, then password.
-func buildAuthMethods(cfg AuthConfig) ([]ssh.AuthMethod, error) {
+// first, then private key, then password. When UseAgent is true, the returned
+// net.Conn is the SSH agent socket and must be closed by the caller.
+func buildAuthMethods(cfg AuthConfig) ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
+	var agentConn net.Conn
 
 	if cfg.UseAgent {
 		sock := os.Getenv("SSH_AUTH_SOCK")
 		if sock == "" {
-			return nil, errors.New("ssh sandbox: Auth.UseAgent set but SSH_AUTH_SOCK is empty")
+			return nil, nil, errors.New("ssh sandbox: Auth.UseAgent set but SSH_AUTH_SOCK is empty")
 		}
 		conn, err := net.Dial("unix", sock)
 		if err != nil {
-			return nil, fmt.Errorf("ssh sandbox: connect ssh agent: %w", err)
+			return nil, nil, fmt.Errorf("ssh sandbox: connect ssh agent: %w", err)
 		}
+		agentConn = conn
 		methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
 	}
 
@@ -346,11 +440,11 @@ func buildAuthMethods(cfg AuthConfig) ([]ssh.AuthMethod, error) {
 		if cfg.KeyFile != "" {
 			path, err := expandHome(cfg.KeyFile)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			keyBytes, err = os.ReadFile(path)
 			if err != nil {
-				return nil, fmt.Errorf("ssh sandbox: read key file: %w", err)
+				return nil, nil, fmt.Errorf("ssh sandbox: read key file: %w", err)
 			}
 		}
 		var signer ssh.Signer
@@ -361,7 +455,7 @@ func buildAuthMethods(cfg AuthConfig) ([]ssh.AuthMethod, error) {
 			signer, err = ssh.ParsePrivateKey(keyBytes)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("ssh sandbox: parse private key: %w", err)
+			return nil, nil, fmt.Errorf("ssh sandbox: parse private key: %w", err)
 		}
 		methods = append(methods, ssh.PublicKeys(signer))
 	}
@@ -371,9 +465,9 @@ func buildAuthMethods(cfg AuthConfig) ([]ssh.AuthMethod, error) {
 	}
 
 	if len(methods) == 0 {
-		return nil, errors.New("ssh sandbox: no authentication method configured (set Auth.UseAgent, KeyFile, KeyBytes or Password)")
+		return nil, nil, errors.New("ssh sandbox: no authentication method configured (set Auth.UseAgent, KeyFile, KeyBytes or Password)")
 	}
-	return methods, nil
+	return methods, agentConn, nil
 }
 
 // buildHostKeyCallback resolves the host-key verification strategy.
@@ -419,24 +513,5 @@ func expandHome(p string) (string, error) {
 	return p, nil
 }
 
-// cappedBuffer is an io.Writer that keeps at most max bytes and silently
-// discards the rest, so a runaway process cannot exhaust memory.
-type cappedBuffer struct {
-	buf bytes.Buffer
-	max int64
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if remain := b.max - int64(b.buf.Len()); remain > 0 {
-		if int64(len(p)) > remain {
-			b.buf.Write(p[:remain])
-		} else {
-			b.buf.Write(p)
-		}
-	}
-	return len(p), nil
-}
-
-func (b *cappedBuffer) String() string { return b.buf.String() }
-
 var _ sandbox.Sandbox = (*Sandbox)(nil)
+var _ sandbox.ExecStreamer = (*Sandbox)(nil)

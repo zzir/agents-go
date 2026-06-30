@@ -31,10 +31,8 @@ func main() {
 	defer sb.Close()
 
 	runPython := sandbox.CodeTool(sb, sandbox.CodeToolConfig{
-		Name:        "run_python",
-		Description: "Execute Python 3 code in an isolated container and return its output.",
-		Filename:    "main.py",
-		RunCmd:      []string{"python", "main.py"},
+		Name:        "exec_command",
+		Description: "Execute a shell command in an isolated container and return its output.",
 	})
 
 	agent := &agents.Agent{

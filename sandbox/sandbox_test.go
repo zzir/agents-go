@@ -140,43 +140,41 @@ func TestLocalSandbox_OutputCapped(t *testing.T) {
 	}
 }
 
-func TestTruncate_UTF8Safe(t *testing.T) {
-	s := strings.Repeat("界", 10) // 3 bytes per rune
-	got := truncate(s, 10)       // 10 is not a rune boundary; 9 is
+func TestTruncateWithInfo_UTF8Safe(t *testing.T) {
+	s := strings.Repeat("界", 10) // 3 bytes per rune = 30 bytes total
+	got := truncateWithInfo(s, 10) // 10 is not a rune boundary; 9 is
 	if !utf8.ValidString(got) {
 		t.Errorf("truncate produced invalid UTF-8: %q", got)
 	}
 	if !strings.HasPrefix(got, strings.Repeat("界", 3)) {
 		t.Errorf("truncate cut too much: %q", got)
 	}
-	if !strings.HasSuffix(got, "[truncated]") {
-		t.Errorf("missing truncation marker: %q", got)
+	if !strings.Contains(got, "showing 9 of 30 bytes") {
+		t.Errorf("missing byte count info: %q", got)
 	}
-	if r := truncate(s, 30); r != s {
+	if r := truncateWithInfo(s, 30); r != s {
 		t.Errorf("string at exactly max must not be truncated: %q", r)
 	}
-	if r := truncate("abcdef", 4); r != "abcd\n…[truncated]" {
-		t.Errorf("ascii truncate = %q", r)
+	got2 := truncateWithInfo("abcdef", 4)
+	if !strings.HasPrefix(got2, "abcd") || !strings.Contains(got2, "showing 4 of 6 bytes") {
+		t.Errorf("ascii truncate = %q", got2)
 	}
 }
 
 func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 	sb := NewLocal()
 	tool := CodeTool(sb, CodeToolConfig{
-		Name:     "run_sh",
-		Filename: "script.sh",
-		RunCmd:   []string{"sh", "script.sh"},
+		Name: "run_sh",
 	}).(*agents.FunctionTool)
 
 	if tool.Name != "run_sh" {
 		t.Errorf("name = %q", tool.Name)
 	}
-	// The generated schema must be strict.
 	if tool.ParamsJSONSchema["additionalProperties"] != false {
 		t.Errorf("schema not strict: %v", tool.ParamsJSONSchema)
 	}
 
-	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{}, `{"code":"echo hi from sandbox"}`)
+	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{}, `{"cmd":"echo hi from sandbox","timeout_seconds":0,"workdir":""}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +189,71 @@ func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 
 func TestCodeTool_DefaultConfig(t *testing.T) {
 	tool := CodeTool(NewLocal(), CodeToolConfig{}).(*agents.FunctionTool)
-	if tool.Name != "run_code" {
-		t.Errorf("default name = %q, want run_code", tool.Name)
+	if tool.Name != "exec_command" {
+		t.Errorf("default name = %q, want exec_command", tool.Name)
+	}
+}
+
+func TestFileTools_ReadWriteList(t *testing.T) {
+	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	tools := FileTools(sb, FileToolConfig{})
+
+	if len(tools) != 3 {
+		t.Fatalf("FileTools returned %d tools, want 3", len(tools))
+	}
+
+	ctx := context.Background()
+	tc := &agents.ToolContext{}
+
+	// write_file
+	wt := tools[1].(*agents.FunctionTool)
+	if wt.Name != "write_file" {
+		t.Fatalf("tools[1].Name = %q, want write_file", wt.Name)
+	}
+	out, err := wt.OnInvoke(ctx, tc, `{"path":"test.txt","content":"hello file tools"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := out.(string); !strings.Contains(s, "wrote") {
+		t.Errorf("write_file output = %q", s)
+	}
+
+	// read_file
+	rt := tools[0].(*agents.FunctionTool)
+	if rt.Name != "read_file" {
+		t.Fatalf("tools[0].Name = %q, want read_file", rt.Name)
+	}
+	out, err = rt.OnInvoke(ctx, tc, `{"path":"test.txt"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := out.(string); !strings.Contains(s, "hello file tools") {
+		t.Errorf("read_file output = %q", s)
+	}
+
+	// list_files
+	lt := tools[2].(*agents.FunctionTool)
+	if lt.Name != "list_files" {
+		t.Fatalf("tools[2].Name = %q, want list_files", lt.Name)
+	}
+	out, err = lt.OnInvoke(ctx, tc, `{"path":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := out.(string); !strings.Contains(s, "test.txt") {
+		t.Errorf("list_files output = %q", s)
+	}
+}
+
+func TestReadFileTool_NotFound(t *testing.T) {
+	sb := NewLocal()
+	rt := ReadFileTool(sb, FileToolConfig{}).(*agents.FunctionTool)
+	out, err := rt.OnInvoke(context.Background(), &agents.ToolContext{}, `{"path":"/nonexistent/file"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := out.(string)
+	if !strings.Contains(s, "error") {
+		t.Errorf("expected error for missing file, got: %q", s)
 	}
 }

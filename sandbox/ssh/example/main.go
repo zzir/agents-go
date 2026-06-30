@@ -48,10 +48,8 @@ func main() {
 	defer sb.Close()
 
 	runPython := sandbox.CodeTool(sb, sandbox.CodeToolConfig{
-		Name:        "run_python",
-		Description: "Execute Python 3 code on the remote host and return its output.",
-		Filename:    "main.py",
-		RunCmd:      []string{"python3", "main.py"},
+		Name:        "exec_command",
+		Description: "Execute a shell command on the remote host and return its output.",
 	})
 
 	agent := &agents.Agent{
