@@ -141,7 +141,7 @@ func TestLocalSandbox_OutputCapped(t *testing.T) {
 }
 
 func TestTruncateWithInfo_UTF8Safe(t *testing.T) {
-	s := strings.Repeat("界", 10) // 3 bytes per rune = 30 bytes total
+	s := strings.Repeat("界", 10)   // 3 bytes per rune = 30 bytes total
 	got := truncateWithInfo(s, 10) // 10 is not a rune boundary; 9 is
 	if !utf8.ValidString(got) {
 		t.Errorf("truncate produced invalid UTF-8: %q", got)

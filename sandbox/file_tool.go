@@ -122,4 +122,3 @@ func ListFilesTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 		},
 	)
 }
-

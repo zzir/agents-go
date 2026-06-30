@@ -94,9 +94,9 @@ type HostKeyConfig struct {
 
 // Sandbox is an SSH-backed sandbox.Sandbox.
 type Sandbox struct {
-	client   *ssh.Client
-	sftp     *sftp.Client
-	opts     Options
+	client    *ssh.Client
+	sftp      *sftp.Client
+	opts      Options
 	agentConn net.Conn // SSH agent socket; nil when UseAgent is false
 }
 
