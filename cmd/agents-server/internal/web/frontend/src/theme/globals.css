@@ -1,0 +1,460 @@
+/* === Reset === */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    overscroll-behavior: none;
+}
+
+/* === Scrollbar === */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--borderColor-muted) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--borderColor-muted);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--bgColor-neutral-muted);
+}
+
+body {
+    font-family: var(--fontStack-sansSerif);
+    font-size: var(--base-text-size-sm);
+    color: var(--fgColor-default);
+    background: var(--bgColor-default);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+code, pre {
+    font-family: var(--fontStack-monospace);
+    font-size: var(--base-text-size-xs);
+}
+
+a {
+    color: var(--fgColor-accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+
+/* =============================================================
+   Layout — Primer PageLayout handles the sidebar | content split;
+   this wrapper just provides the viewport container.
+   ============================================================= */
+.app-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Mobile top bar — conditionally rendered via useNarrow() in AppShell */
+.mobile-header {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-8);
+    padding: var(--base-size-4) var(--base-size-8);
+    height: 48px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--borderColor-muted);
+    background: var(--bgColor-default);
+    z-index: 30;
+}
+.mobile-header-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: var(--base-text-size-md);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Sidebar backdrop — conditionally rendered via useNarrow() in AppShell */
+.sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 49;
+    display: none;
+}
+.sidebar-open .sidebar-backdrop {
+    display: block;
+}
+
+/* --- Sidebar --- */
+.sidebar-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bgColor-default);
+}
+/* PageLayout.Pane wraps content in intermediate divs — use :has() to target
+   all ancestors of .sidebar-container regardless of nesting depth */
+.app-sidebar-pane,
+.app-sidebar-pane :has(.sidebar-container) {
+    height: 100%;
+    background: var(--bgColor-default);
+}
+
+/* Sidebar body — flex column so fixed actions stay put and scroll area scrolls */
+.sidebar-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* Fixed action group at the top of the sidebar (New Chat, Automation, etc.) */
+.sidebar-actions {
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--borderColor-muted);
+}
+
+/* Session/file list scrollable area inside the body */
+.sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+
+/* Sidebar footer (settings + theme) */
+.sidebar-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--base-size-4) var(--base-size-8);
+    border-top: 1px solid var(--borderColor-muted);
+    flex-shrink: 0;
+}
+
+/* --- Main content area --- */
+.app-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    flex: 1;
+    overflow: hidden;
+    min-width: 0;
+}
+
+/* --- Responsive: narrow (< 768px) ---
+   PageLayout sets inline styles on its Pane (position, width, display), so
+   !important is required to override them for the mobile drawer pattern.
+   Everything else (mobile-header, backdrop, sidebar-footer) is handled by
+   conditional rendering in AppShell via useNarrow(). */
+@media (max-width: 767px) {
+    .app-sidebar-pane {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 300px !important;
+        max-width: 85vw;
+        border-right: 1px solid var(--borderColor-muted);
+        z-index: 50;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        display: flex !important;
+        overflow: hidden;
+    }
+    .sidebar-open .app-sidebar-pane {
+        transform: translateX(0);
+    }
+}
+
+
+/* --- Dialog body: fixed nav | scrollable content --- */
+.settings-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.settings-nav {
+    width: 184px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--borderColor-muted);
+    overflow-y: auto;
+}
+
+.settings-content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: var(--base-size-24);
+    padding-right: 0;
+}
+
+.settings-content > * {
+    margin-right: var(--base-size-24);
+}
+
+[class*="Dialog-Body"]:has(.settings-layout),
+[class*="DialogOverflowWrapper"]:has(.settings-layout) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0 !important;
+}
+
+/* --- List rows inside a Box card --- */
+.Box-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--base-size-8) var(--base-size-16);
+    border-top: none;
+    margin-top: 0;
+    border-bottom: 1px solid var(--borderColor-muted);
+}
+
+.Box-row:last-child {
+    border-bottom: none;
+}
+
+.Box-row:hover {
+    background: var(--bgColor-muted);
+}
+
+/* Resource list row — shared layout for every settings panel's `.Box-row`
+   items (title + meta + trailing actions), replacing per-panel inline style. */
+.resource-row-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.resource-row-title {
+    font-weight: 500;
+    font-size: var(--base-text-size-sm);
+    color: var(--fgColor-default);
+}
+
+.resource-row-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-4);
+    margin-top: 2px;
+    font-size: var(--base-text-size-xs);
+    color: var(--fgColor-muted);
+}
+
+.resource-row-sub {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--fgColor-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.resource-row-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-4);
+    flex-shrink: 0;
+}
+
+.resource-row-actions [class*="StatusText"] {
+    display: none;
+}
+
+/* --- Create / edit form ---
+   Forms use Primer <Stack gap="normal"> for vertical spacing between fields.
+   Legacy .form-group and .advanced-section still use margin for inner FormControls. */
+.form-group > .FormControl,
+.advanced-section > .FormControl {
+    margin-bottom: var(--base-size-16);
+}
+
+.form-group > .FormControl:last-child,
+.advanced-section > .FormControl:last-child {
+    margin-bottom: 0;
+}
+
+/* Field group — separated by space + one hairline, headed by a label.
+   Replaces ad-hoc divider stacks. */
+.form-group {
+    margin-top: var(--base-size-24);
+    padding-top: var(--base-size-24);
+    border-top: 1px solid var(--borderColor-muted);
+}
+
+.form-group-title {
+    font-size: var(--base-text-size-sm);
+    font-weight: 600;
+    color: var(--fgColor-default);
+    margin-bottom: var(--base-size-8);
+}
+
+/* Two controls side by side (e.g. Reasoning + Fast) */
+.form-inline-group {
+    display: flex;
+    gap: var(--base-size-24);
+    align-items: flex-start;
+}
+
+.form-inline-group > * {
+    margin-bottom: 0;
+}
+
+.form-inline-group > .FormControl:first-child {
+    flex: 1;
+}
+
+/* Status row (dot + text + action) */
+.form-status {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-8);
+}
+
+.form-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--borderRadius-full);
+    flex-shrink: 0;
+}
+
+.form-status-dot--success {
+    background: var(--fgColor-success);
+}
+
+.form-status-text {
+    font-size: var(--base-text-size-xs);
+    color: var(--fgColor-muted);
+}
+
+/* OAuth connect block */
+.form-oauth > .form-status,
+.form-oauth > .FormControl {
+    margin-bottom: var(--base-size-16);
+}
+
+/* Footer action row — set off from the fields above */
+.form-actions {
+    display: flex;
+    gap: var(--base-size-8);
+    margin-top: var(--base-size-24);
+    padding-top: var(--base-size-16);
+    border-top: 1px solid var(--borderColor-muted);
+}
+
+/* Advanced disclosure */
+.advanced-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-4);
+    margin-top: var(--base-size-16);
+    padding: var(--base-size-4) 0;
+    font-size: var(--base-text-size-xs);
+    font-weight: 600;
+    color: var(--fgColor-muted);
+    cursor: pointer;
+    user-select: none;
+    background: none;
+    border: none;
+}
+
+.advanced-toggle:hover {
+    color: var(--fgColor-default);
+}
+
+.advanced-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
+}
+
+.advanced-toggle svg {
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+}
+
+.advanced-toggle[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+}
+
+/* Advanced body */
+.advanced-section {
+    margin-top: var(--base-size-8);
+}
+
+.advanced-section > .form-group:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+/* Caption + checkbox list */
+.FormControl-caption {
+    font-size: 11px;
+    color: var(--fgColor-muted);
+    margin-top: 2px;
+}
+
+.form-checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--base-size-4);
+}
+
+/* Legacy hairline — kept for one-off separators */
+.divider {
+    height: 1px;
+    background: var(--borderColor-muted);
+    margin: var(--base-size-16) 0;
+}
+
+/* Cards — visual treatment borrowed from Primer React Card component */
+.Box {
+    background-color: var(--bgColor-default, var(--bgColor-default));
+    border: var(--borderWidth-thin, 1px) solid var(--borderColor-default, var(--borderColor-default));
+    border-radius: var(--borderRadius-medium);
+    box-shadow: var(--shadow-resting-small, 0 1px 1px 0 rgba(31, 35, 40, .04), 0 1px 2px 0 rgba(31, 35, 40, .03));
+    overflow: hidden;
+}
+
+
+.login-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: var(--bgColor-muted);
+}
+
+.login-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--base-size-16);
+}
+
+.login-card .form-control {
+    width: 240px;
+}

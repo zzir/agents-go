@@ -31,7 +31,9 @@ func extractToken(c *gin.Context) string {
 func TokenAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/api/auth/") {
+		if strings.HasPrefix(path, "/api/auth/") ||
+			path == "/api/mcp-servers/oauth/callback" ||
+			path == "/api/chatgpt/oauth/callback" {
 			c.Next()
 			return
 		}

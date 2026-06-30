@@ -11,20 +11,21 @@ servers, sandboxes, guardrails, memories, and skills.
 
 ```bash
 go build -o agents-server ./cmd/agents-server
-./agents-server --port 8080
+./agents-server --port 9527
 ```
 
 On startup the server prints an auto-generated auth token. Open
-`http://127.0.0.1:8080` to access the web UI.
+`http://127.0.0.1:9527` to access the web UI.
 
 ### Flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--port` | `8080` | HTTP listen port |
+| `--port` | `9527` | HTTP listen port |
 | `--db` | `data.db` | SQLite database file |
-| `--root-dir` | `.` | Root directory for skills and file browsing |
+| `--workspace` | `.` | Workspace directory for skills and file operations |
 | `--token` | auto | Auth token; randomly generated when omitted |
+| `--allow-local-sandbox` | `false` | Allow creating local (non-isolated) sandboxes |
 
 ## Authentication
 
@@ -79,14 +80,17 @@ Agent config fields:
 | GET | `/mcp-servers` | List servers with connection status |
 | POST | `/mcp-servers` | Create MCP config |
 | GET | `/mcp-servers/:id` | Get config |
-| PUT | `/mcp-servers/:id` | Update config |
+| PUT | `/mcp-servers/:id` | Update config (toggles connect/disconnect on `enabled` change) |
 | DELETE | `/mcp-servers/:id` | Delete and disconnect |
 | POST | `/mcp-servers/:id/connect` | Connect (may trigger OAuth) |
 | POST | `/mcp-servers/:id/disconnect` | Disconnect |
 | GET | `/mcp-servers/:id/tools` | List tools exposed by the server |
+| GET | `/mcp-servers/oauth/callback` | OAuth redirect callback |
 
 Transports: `stdio` and `streamable_http`. The HTTP transport supports
-`auth_mode` `header` or `oauth`.
+`auth_mode` `header` or `oauth`. Each server has an `enabled` flag (default
+`true`); enabled servers are connected automatically on startup. Disabling a
+server disconnects it; re-enabling triggers a reconnect.
 
 ### Memories — `/api/memories`
 
@@ -112,26 +116,17 @@ Memories can be scoped to a specific agent via `agent_config_id`.
 Known keys: `proxy_url` (HTTP proxy for model and MCP calls), `system_prompt`
 (global system prompt prefix), `brave_api_key` (injects a `brave_search` tool
 into all agents), `enable_editor_tools` (injects file-editing tools scoped to
-`--root-dir`).
+`--workspace`).
 
 ### Skills — `/api/skills`
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/skills` | Discover skills under `{root-dir}/skills/` |
+| GET | `/skills` | Discover skills under `{workspace}/skills/` |
 | GET | `/skills/*path` | Get SKILL.md content |
 | POST | `/skills/clone` | `git clone --depth=1` a skill repo |
 | PUT | `/skills/:name` | `git fetch && git reset --hard` to update |
 | DELETE | `/skills/:name` | Remove skill directory |
-
-### Files — `/api/files`
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/files?path=...` | List directory entries |
-| GET | `/files/*path` | Read file content (max 1 MB) |
-
-Paths are confined to `--root-dir`; directory traversal is rejected.
 
 ### Provider Routes — `/api/provider-routes`
 
@@ -171,9 +166,20 @@ Built-in: `content_filter` (input/regex — jailbreak keywords),
 | GET | `/sandboxes/:id` | Get sandbox |
 | PUT | `/sandboxes/:id` | Update sandbox |
 | DELETE | `/sandboxes/:id` | Delete sandbox |
-| POST | `/sandboxes/:id/exec` | Execute code |
+| POST | `/sandboxes/:id/test` | Run health-check command |
 
-Sandbox types: `local` (subprocess), `docker` (container), `ssh` (remote host).
+Sandbox types: `local` (subprocess — requires `--allow-local-sandbox`), `docker`
+(container), `ssh` (remote host). The `local` and `docker` host restrictions are
+enforced on both create and update.
+
+### ChatGPT OAuth — `/api/chatgpt`
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/chatgpt/login` | Initiate ChatGPT OAuth login |
+| GET | `/chatgpt/oauth/callback` | OAuth redirect callback |
+| GET | `/chatgpt/status` | Check login status |
+| POST | `/chatgpt/logout` | Logout |
 
 ## WebSocket protocol
 
@@ -225,7 +231,7 @@ cmd/agents-server/
 │   │   ├── sandbox_manager.go  sandbox instance cache
 │   │   ├── oauth.go            MCP OAuth coordinator
 │   │   └── ...                 hooks, tracer, guardrails, proxy
-│   ├── store/                  SQLite data layer (bun ORM, 9 tables)
+│   ├── store/                  SQLite data layer (bun ORM, 10 tables)
 │   ├── protocol/               WebSocket message types
 │   └── web/                    embedded SPA static files
 └── skills/                     agent skills managed via API
@@ -252,7 +258,7 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `sessions` | Chat sessions |
 | `messages` | Conversation message history |
 | `agent_configs` | Agent configurations |
-| `mcp_server_configs` | MCP server configurations |
+| `mcp_servers` | MCP server configurations |
 | `memories` | Agent memories |
 | `settings` | Global key-value settings |
 | `provider_routes` | Model-prefix routing rules |

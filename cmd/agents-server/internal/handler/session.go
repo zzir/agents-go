@@ -112,22 +112,33 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	}
 
 	var req struct {
-		MessageID int64 `json:"message_id"`
+		MessageID int64  `json:"message_id"`
+		Exclusive bool   `json:"exclusive"`
+		Label     string `json:"label"`
 	}
 	_ = c.ShouldBindJSON(&req)
 
+	label := req.Label
+	if label == "" {
+		label = "fork"
+	}
+
 	dst := &store.Session{
 		ID:            store.NewID(),
-		Name:          forkName(src.Name),
+		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
 	}
 	if err := h.sessions.Create(ctx, dst); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.messages.ForkMessages(ctx, srcID, dst.ID, req.MessageID); err != nil {
+	runIDs, err := h.messages.ForkMessages(ctx, srcID, dst.ID, req.MessageID, req.Exclusive)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if h.traces != nil {
+		_ = h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs)
 	}
 	c.JSON(http.StatusCreated, dst)
 }
@@ -158,20 +169,20 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 	c.JSON(http.StatusOK, msgs)
 }
 
-var forkSuffixRe = regexp.MustCompile(`\s*\(fork(?:\s+(\d+))?\)$`)
+var branchSuffixRe = regexp.MustCompile(`\s*\((fork|regen)(?:\s+(\d+))?\)$`)
 
-func forkName(name string) string {
-	base := forkSuffixRe.ReplaceAllString(name, "")
-	m := forkSuffixRe.FindStringSubmatch(name)
+func branchName(name, label string) string {
+	base := branchSuffixRe.ReplaceAllString(name, "")
+	m := branchSuffixRe.FindStringSubmatch(name)
 	n := 1
-	if m != nil && m[1] != "" {
-		n, _ = strconv.Atoi(m[1])
+	if m != nil && m[1] == label && m[2] != "" {
+		n, _ = strconv.Atoi(m[2])
 	}
-	if m != nil {
+	if m != nil && m[1] == label {
 		n++
 	}
 	if n <= 1 {
-		return fmt.Sprintf("%s (fork)", base)
+		return fmt.Sprintf("%s (%s)", base, label)
 	}
-	return fmt.Sprintf("%s (fork %d)", base, n)
+	return fmt.Sprintf("%s (%s %d)", base, label, n)
 }

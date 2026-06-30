@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -17,14 +16,14 @@ import (
 type SandboxManager struct {
 	mu        sync.RWMutex
 	sandboxes map[string]sandbox.Sandbox
-	rootDir   string
+	workspace string
 }
 
-// NewSandboxManager creates a SandboxManager that roots local sandboxes at rootDir.
-func NewSandboxManager(rootDir string) *SandboxManager {
+// NewSandboxManager creates a SandboxManager that roots local sandboxes at workspace.
+func NewSandboxManager(workspace string) *SandboxManager {
 	return &SandboxManager{
 		sandboxes: make(map[string]sandbox.Sandbox),
-		rootDir:   rootDir,
+		workspace: workspace,
 	}
 }
 
@@ -78,30 +77,26 @@ func (m *SandboxManager) CodeTool(cfg *store.SandboxConfig) (agents.Tool, error)
 	if err != nil {
 		return nil, err
 	}
-	toolCfg := sandbox.CodeToolConfig{
-		Filename: cfg.Filename,
-		RunCmd:   []string{"python3", "main.py"},
+	return sandbox.CodeTool(sb, sandbox.CodeToolConfig{}), nil
+}
+
+// SandboxTools returns exec_command plus read_file, write_file and list_files
+// tools for the given sandbox config.
+func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig) ([]agents.Tool, error) {
+	sb, err := m.GetOrCreate(cfg)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.Filename != "" {
-		toolCfg.RunCmd = []string{"python3", cfg.Filename}
-	}
-	if cfg.RunCmd != "" {
-		var cmd []string
-		if err := json.Unmarshal([]byte(cfg.RunCmd), &cmd); err == nil && len(cmd) > 0 {
-			toolCfg.RunCmd = cmd
-		}
-	}
-	if cfg.Timeout > 0 {
-		toolCfg.Timeout = time.Duration(cfg.Timeout) * time.Second
-	}
-	return sandbox.CodeTool(sb, toolCfg), nil
+	tools := []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+	tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
+	return tools, nil
 }
 
 func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox, error) {
 	switch cfg.Type {
 	case "local":
-		if m.rootDir != "" {
-			return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: m.rootDir}), nil
+		if m.workspace != "" {
+			return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: m.workspace}), nil
 		}
 		return sandbox.NewLocal(), nil
 	case "docker":
@@ -112,11 +107,17 @@ func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox
 		if dc.Image == "" {
 			return nil, fmt.Errorf("docker sandbox requires an image")
 		}
-		return dockersb.New(dockersb.Options{
-			Image:   dc.Image,
-			Host:    dc.Host,
-			Network: dc.Network,
-		})
+		opts := dockersb.Options{
+			Image:         dc.Image,
+			Runtime:       dc.Runtime,
+			Network:       dc.Network,
+			Persistent:    dc.Persistent,
+			ContainerName: dc.ContainerName,
+		}
+		if dc.Persistent && m.workspace != "" {
+			opts.WorkDir = m.workspace
+		}
+		return dockersb.New(opts)
 	case "ssh":
 		var sc store.SSHConfig
 		if err := unmarshalConfig(cfg.Config, &sc); err != nil {
@@ -140,6 +141,7 @@ func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox
 				KnownHostsFile:        sc.KnownHosts,
 				InsecureIgnoreHostKey: sc.InsecureHostKey,
 			},
+			WorkDir: sc.WorkDir,
 		})
 	default:
 		return nil, fmt.Errorf("unknown sandbox type: %s", cfg.Type)

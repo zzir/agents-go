@@ -27,9 +27,11 @@ type Message struct {
 
 	ID        int64     `bun:"id,pk,autoincrement"  json:"id"`
 	SessionID string    `bun:"session_id,notnull"   json:"session_id"`
+	RunID     string    `bun:"run_id"               json:"run_id,omitempty"`
 	Role      string    `bun:"role,notnull"         json:"role"`
 	Content   string    `bun:"content,notnull"      json:"content"`
 	Item      string    `bun:"item,notnull"         json:"item,omitempty"`
+	Compacted bool      `bun:"compacted"            json:"compacted"`
 	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
 }
 
@@ -83,6 +85,13 @@ type AgentConfig struct {
 	// Batch 6: HITL approval
 	ApproveTools string `bun:"approve_tools" json:"approve_tools,omitempty"` // JSON: ["*"] or ["tool_name",...]
 
+	// Batch 7: compaction
+	CompactionEnabled   bool   `bun:"compaction_enabled"   json:"compaction_enabled"`
+	CompactionThreshold int    `bun:"compaction_threshold" json:"compaction_threshold"`
+	CompactionWindow    int    `bun:"compaction_window"    json:"compaction_window"`
+	CompactionModel     string `bun:"compaction_model"     json:"compaction_model,omitempty"`
+	CompactionPrompt    string `bun:"compaction_prompt"    json:"compaction_prompt,omitempty"`
+
 	CreatedAt time.Time `bun:"created_at,notnull"    json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"    json:"updated_at"`
 }
@@ -96,7 +105,7 @@ type McpServerConfig struct {
 	ID            string `bun:"id,pk"                  json:"id"`
 	Name          string `bun:"name,notnull"           json:"name"`
 	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | streamable_http
-	AutoConnect   bool   `bun:"auto_connect"           json:"auto_connect"`
+	Enabled       bool   `bun:"enabled,default:true"    json:"enabled"`
 
 	// Config holds the transport-specific settings as JSON: StdioMcpConfig for
 	// "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
@@ -193,17 +202,13 @@ type TraceEvent struct {
 // SandboxConfig is the persisted definition of a code-execution sandbox backend.
 // Backend-specific settings live in Config (JSON, interpreted per Type), so a new
 // backend type needs no schema migration — only a new Config payload struct and a
-// case in the bridge. The top-level columns are the settings shared by every
-// backend (the CodeTool execution knobs).
+// case in the bridge.
 type SandboxConfig struct {
 	bun.BaseModel `bun:"table:sandbox_configs,alias:sb"`
 
-	ID       string `bun:"id,pk"          json:"id"`
-	Name     string `bun:"name,notnull"   json:"name"`
-	Type     string `bun:"type,notnull"   json:"type"` // local | docker | ssh
-	RunCmd   string `bun:"run_cmd"        json:"run_cmd"`
-	Filename string `bun:"filename"       json:"filename"`
-	Timeout  int    `bun:"timeout"        json:"timeout"`
+	ID   string `bun:"id,pk"        json:"id"`
+	Name string `bun:"name,notnull" json:"name"`
+	Type string `bun:"type,notnull" json:"type"` // local | docker | ssh
 
 	// Config holds the backend-specific settings as JSON: DockerConfig for
 	// "docker", SSHConfig for "ssh"; empty for "local". Stored as TEXT and sent
@@ -216,9 +221,11 @@ type SandboxConfig struct {
 
 // DockerConfig is the SandboxConfig.Config payload for Type == "docker".
 type DockerConfig struct {
-	Image   string `json:"image"`
-	Host    string `json:"host,omitempty"` // Docker daemon address
-	Network bool   `json:"network"`
+	Image         string `json:"image"`
+	Runtime       string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
+	Network       bool   `json:"network"`
+	Persistent    bool   `json:"persistent"`
+	ContainerName string `json:"container_name,omitempty"` // Docker container name (persistent mode only)
 }
 
 // SSHConfig is the SandboxConfig.Config payload for Type == "ssh".
@@ -230,6 +237,7 @@ type SSHConfig struct {
 	Password        string `json:"password,omitempty"`
 	KnownHosts      string `json:"known_hosts,omitempty"`
 	InsecureHostKey bool   `json:"insecure_host_key"`
+	WorkDir         string `json:"work_dir,omitempty"` // fixed remote working directory
 }
 
 // BeforeAppendModel hooks stamp id/timestamps for the CrudStore-backed entities

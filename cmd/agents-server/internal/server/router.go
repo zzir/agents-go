@@ -50,9 +50,6 @@ type Routes struct {
 	SkillUpdate gin.HandlerFunc
 	SkillDelete gin.HandlerFunc
 
-	FileList gin.HandlerFunc
-	FileRead gin.HandlerFunc
-
 	ProviderRouteList   gin.HandlerFunc
 	ProviderRouteCreate gin.HandlerFunc
 	ProviderRouteUpdate gin.HandlerFunc
@@ -69,7 +66,7 @@ type Routes struct {
 	SandboxGet    gin.HandlerFunc
 	SandboxUpdate gin.HandlerFunc
 	SandboxDelete gin.HandlerFunc
-	SandboxExec   gin.HandlerFunc
+	SandboxTest   gin.HandlerFunc
 
 	TraceListBySession gin.HandlerFunc
 
@@ -152,8 +149,6 @@ func (s *Server) RegisterRoutes(r Routes) {
 		guardrails.PUT("/:id", r.GuardrailUpdate)
 		guardrails.DELETE("/:id", r.GuardrailDelete)
 	}
-	api.GET("/files", r.FileList)
-	api.GET("/files/*path", r.FileRead)
 	{
 		sandboxes := api.Group("/sandboxes")
 		sandboxes.GET("", r.SandboxList)
@@ -161,7 +156,7 @@ func (s *Server) RegisterRoutes(r Routes) {
 		sandboxes.GET("/:id", r.SandboxGet)
 		sandboxes.PUT("/:id", r.SandboxUpdate)
 		sandboxes.DELETE("/:id", r.SandboxDelete)
-		sandboxes.POST("/:id/exec", r.SandboxExec)
+		sandboxes.POST("/:id/test", r.SandboxTest)
 	}
 	{
 		chatgpt := api.Group("/chatgpt")

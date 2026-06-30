@@ -38,6 +38,7 @@ func (s *MessageStore) GetMessages(ctx context.Context, sessionID string) ([]Mes
 type SessionAdapter struct {
 	db        *bun.DB
 	sessionID string
+	runID     string
 }
 
 // NewSessionAdapter returns a SessionAdapter bound to db and sessionID.
@@ -45,12 +46,16 @@ func NewSessionAdapter(db *bun.DB, sessionID string) *SessionAdapter {
 	return &SessionAdapter{db: db, sessionID: sessionID}
 }
 
+// SetRunID stamps all subsequent AddItems calls with the given run ID.
+func (a *SessionAdapter) SetRunID(runID string) { a.runID = runID }
+
 // GetItems returns the session's stored input items oldest first; a positive
 // limit returns only the most recent limit items (still in chronological order).
 func (a *SessionAdapter) GetItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
 	q := a.db.NewSelect().Model((*Message)(nil)).
 		Column("item").
-		Where("session_id = ?", a.sessionID)
+		Where("session_id = ?", a.sessionID).
+		Where("compacted = ?", false)
 
 	if limit > 0 {
 		q = q.OrderExpr("id DESC").Limit(limit)
@@ -98,6 +103,7 @@ func (a *SessionAdapter) AddItems(ctx context.Context, items []agents.TResponseI
 		role, content := extractRoleContent(item, raw)
 		msgs = append(msgs, Message{
 			SessionID: a.sessionID,
+			RunID:     a.runID,
 			Role:      role,
 			Content:   content,
 			Item:      string(raw),
@@ -219,32 +225,45 @@ func (a *SessionAdapter) Clear(ctx context.Context) error {
 }
 
 // ForkMessages copies messages from srcSessionID to dstSessionID. When
-// upToMessageID > 0, only messages with id <= upToMessageID are copied;
-// otherwise all messages are copied.
-func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessionID string, upToMessageID int64) error {
+// upToMessageID > 0, only messages with id up to that ID are copied (inclusive
+// by default, exclusive when exclusive is true); otherwise all messages are
+// copied. Returns the deduplicated run IDs found in the copied messages.
+func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessionID string, upToMessageID int64, exclusive bool) ([]string, error) {
 	var msgs []Message
 	q := s.db.NewSelect().Model(&msgs).
 		Where("session_id = ?", srcSessionID).
 		OrderExpr("id ASC")
 	if upToMessageID > 0 {
-		q = q.Where("id <= ?", upToMessageID)
+		if exclusive {
+			q = q.Where("id < ?", upToMessageID)
+		} else {
+			q = q.Where("id <= ?", upToMessageID)
+		}
 	}
 	if err := q.Scan(ctx); err != nil {
-		return fmt.Errorf("fork messages read: %w", err)
+		return nil, fmt.Errorf("fork messages read: %w", err)
 	}
 	if len(msgs) == 0 {
-		return nil
+		return nil, nil
 	}
+	seen := map[string]struct{}{}
+	var runIDs []string
 	now := time.Now().UTC()
 	for i := range msgs {
+		if rid := msgs[i].RunID; rid != "" {
+			if _, ok := seen[rid]; !ok {
+				seen[rid] = struct{}{}
+				runIDs = append(runIDs, rid)
+			}
+		}
 		msgs[i].ID = 0
 		msgs[i].SessionID = dstSessionID
 		msgs[i].CreatedAt = now
 	}
 	if _, err := s.db.NewInsert().Model(&msgs).Exec(ctx); err != nil {
-		return fmt.Errorf("fork messages write: %w", err)
+		return nil, fmt.Errorf("fork messages write: %w", err)
 	}
-	return nil
+	return runIDs, nil
 }
 
 // DeleteBySession removes all messages belonging to sessionID.

@@ -22,10 +22,11 @@ import (
 )
 
 var (
-	flagPort    int
-	flagDB      string
-	flagRootDir string
-	flagToken   string
+	flagPort              int
+	flagDB                string
+	flagWorkspace         string
+	flagToken             string
+	flagAllowLocalSandbox bool
 )
 
 var rootCmd = &cobra.Command{
@@ -35,10 +36,16 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.Flags().IntVar(&flagPort, "port", 8080, "HTTP server port")
+	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path")
-	rootCmd.Flags().StringVar(&flagRootDir, "root-dir", ".", "Project root directory")
+	rootCmd.Flags().StringVar(&flagWorkspace, "workspace", ".", "Workspace directory")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
+	rootCmd.Flags().BoolVar(&flagAllowLocalSandbox, "allow-local-sandbox", false, "Allow creating local (non-isolated) sandboxes")
+}
+
+// SetVersionInfo sets the version string shown by --version.
+func SetVersionInfo(version, commit, date string) {
+	rootCmd.Version = version + " (" + commit + " " + date + ")"
 }
 
 // Execute runs the root command.
@@ -80,8 +87,8 @@ func run(_ *cobra.Command, _ []string) error {
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
 	chatgptOAuth := bridge.NewChatGPTOAuth(agentConfigStore)
 	defer mcpManager.CloseAll()
-	go bridge.AutoConnectMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
-	sandboxManager := bridge.NewSandboxManager(flagRootDir)
+	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
+	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
 	deps := &bridge.AgentDeps{
@@ -97,7 +104,7 @@ func run(_ *cobra.Command, _ []string) error {
 		McpManager:     mcpManager,
 		SandboxManager: sandboxManager,
 		ChatGPTOAuth:   chatgptOAuth,
-		RootDir:        flagRootDir,
+		Workspace:      flagWorkspace,
 	}
 	runner := bridge.NewRunner(db, deps)
 
@@ -106,11 +113,10 @@ func run(_ *cobra.Command, _ []string) error {
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
 	settingHandler := handler.NewSettingHandler(settingStore)
-	skillHandler := handler.NewSkillHandler(flagRootDir)
-	fileHandler := handler.NewFileHandler(flagRootDir)
+	skillHandler := handler.NewSkillHandler(flagWorkspace)
 	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore)
 	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
-	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager)
+	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox)
 	traceHandler := handler.NewTraceHandler(traceStore)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
 	wsHandler := handler.NewWSHandler(runner)
@@ -166,9 +172,6 @@ func run(_ *cobra.Command, _ []string) error {
 		SkillUpdate: skillHandler.Update,
 		SkillDelete: skillHandler.Delete,
 
-		FileList: fileHandler.List,
-		FileRead: fileHandler.Read,
-
 		ProviderRouteList:   providerRouteHandler.List,
 		ProviderRouteCreate: providerRouteHandler.Create,
 		ProviderRouteUpdate: providerRouteHandler.Update,
@@ -185,7 +188,7 @@ func run(_ *cobra.Command, _ []string) error {
 		SandboxGet:    sandboxHandler.Get,
 		SandboxUpdate: sandboxHandler.Update,
 		SandboxDelete: sandboxHandler.Delete,
-		SandboxExec:   sandboxHandler.Exec,
+		SandboxTest:   sandboxHandler.Test,
 
 		TraceListBySession: traceHandler.ListBySession,
 
@@ -195,7 +198,7 @@ func run(_ *cobra.Command, _ []string) error {
 		ChatGPTLogout:   chatgptOAuthHandler.Logout,
 	})
 
-	staticFS, err := fs.Sub(web.StaticFS, "static")
+	staticFS, err := fs.Sub(web.StaticFS, "frontend/dist")
 	if err != nil {
 		return fmt.Errorf("embedding static files: %w", err)
 	}
@@ -205,7 +208,7 @@ func run(_ *cobra.Command, _ []string) error {
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Engine}
 
 	go func() {
-		log.Info().Str("addr", addr).Str("root_dir", flagRootDir).Msg("server started")
+		log.Info().Str("addr", addr).Str("workspace", flagWorkspace).Msg("server started")
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("server error")
 		}

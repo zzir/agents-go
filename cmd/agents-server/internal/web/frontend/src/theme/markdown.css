@@ -1,0 +1,75 @@
+/* Markdown body (base provided by Primer CSS, font-size override for chat) */
+.markdown-body { font-size: var(--base-text-size-sm); }
+.markdown-body p:first-child { margin-top: 0; }
+.markdown-body p:last-child { margin-bottom: 0; }
+.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }
+.markdown-body h1 { font-size: 1.2em; }
+.markdown-body h2 { font-size: 1.1em; }
+.markdown-body table { display: table; width: 100%; }
+.markdown-body thead th { background: var(--bgColor-muted); }
+.markdown-body hr { height: 1px; border: none; background: var(--borderColor-muted); }
+
+/* Code blocks */
+.markdown-body pre { background: none; }
+.code-block-wrapper {
+  position: relative;
+  margin: 16px 0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.code-block-wrapper .btn-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity var(--base-duration-200) var(--base-easing-easeInOut);
+  z-index: 1;
+  padding: 4px;
+  border-radius: 4px;
+  background: var(--bgColor-neutral-muted);
+}
+.code-block-wrapper:hover .btn-copy,
+.code-block-wrapper .btn-copy.copied { opacity: 1; }
+.streaming .btn-copy { display: none; }
+.code-block-wrapper .btn-copy.copied { color: var(--fgColor-success); }
+.code-block-wrapper .hljs-code-block {
+  margin: 0;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.code-block-wrapper .hljs-code-block.scrollable {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Mermaid diagrams */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  margin: var(--base-size-16) 0;
+  padding: var(--base-size-16);
+  overflow-x: auto;
+}
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-pending {
+  margin: var(--base-size-16) 0;
+  padding: var(--base-size-16);
+  background: var(--bgColor-muted);
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+  white-space: pre;
+}
+
+/* KaTeX math */
+.katex { font-size: 1em; }
+.math-block {
+  margin: var(--base-size-16) 0;
+  text-align: center;
+}
+.math-block .katex-display { margin: 0; }

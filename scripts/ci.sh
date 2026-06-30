@@ -20,6 +20,9 @@ if [ -n "$unformatted" ]; then
   echo "These files are not gofmt-ed:"; echo "$unformatted"; exit 1
 fi
 
+step "Frontend build"
+(cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build)
+
 step "Vet"
 go vet ./...
 

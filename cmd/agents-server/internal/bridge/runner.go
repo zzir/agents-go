@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -26,6 +27,15 @@ type Runner struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+}
+
+func compactionHook(hooks *wsRunHooks) store.CompactionCallback {
+	return func(before, after int) {
+		hooks.Emit(protocol.HookEvent{
+			Hook:   "compaction",
+			Detail: fmt.Sprintf("compacted %d→%d items", before, after),
+		})
+	}
 }
 
 // NewRunner creates a Runner backed by the given database and agent dependencies.
@@ -109,13 +119,23 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 
 	sendEvent("run.agent_start", protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
 
-	session := store.NewSessionAdapter(r.db, sessionID)
-
+	sa := store.NewSessionAdapter(r.db, sessionID)
+	sa.SetRunID(runID)
 	hooks := newWSRunHooks(sendEvent, r.Deps.Traces, sessionID, runID)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
 
+	var runSession agents.Session = sa
+	if built.CompactionEnabled && built.CompactionModel != "" && provider != nil {
+		if summaryModel, err := provider.GetModel(built.CompactionModel); err == nil && summaryModel != nil {
+			runSession = store.NewCompactionAdapter(sa, summaryModel,
+				built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
+				compactionHook(hooks),
+			)
+		}
+	}
+
 	opts := agents.RunOptions{
-		Session:               session,
+		Session:               runSession,
 		ModelProvider:         provider,
 		MaxTurns:              built.MaxTurns,
 		Hooks:                 hooks,
@@ -130,9 +150,11 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 
 	sr := agents.RunStreamed(ctx, agent, input, opts)
 
+	var streamedText strings.Builder
 	for event, err := range sr.Events() {
 		if err != nil {
 			if ctx.Err() != nil {
+				r.savePartialTurn(sessionID, input, streamedText.String())
 				sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 			} else {
 				sendEvent("run.error", protocol.RunError{
@@ -142,6 +164,11 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 				})
 			}
 			return mkResult()
+		}
+		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
+			if delta := extractDelta(raw.Data); delta != "" {
+				streamedText.WriteString(delta)
+			}
 		}
 		r.handleStreamEvent(event, runID, sendEvent)
 	}
@@ -207,12 +234,23 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
 
-	session := store.NewSessionAdapter(r.db, sessionID)
+	resumeSA := store.NewSessionAdapter(r.db, sessionID)
+	resumeSA.SetRunID(runID)
 	hooks := newWSRunHooks(sendEvent, r.Deps.Traces, sessionID, runID)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
 
+	var resumeSession agents.Session = resumeSA
+	if built.CompactionEnabled && built.CompactionModel != "" && provider != nil {
+		if summaryModel, err := provider.GetModel(built.CompactionModel); err == nil && summaryModel != nil {
+			resumeSession = store.NewCompactionAdapter(resumeSA, summaryModel,
+				built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
+				compactionHook(hooks),
+			)
+		}
+	}
+
 	res, err := agents.ResumeRun(ctx, state, agents.RunOptions{
-		Session:               session,
+		Session:               resumeSession,
 		ModelProvider:         provider,
 		MaxTurns:              built.MaxTurns,
 		Hooks:                 hooks,
@@ -346,6 +384,52 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 		SessionID: sessionID,
 		Title:     title,
 	})
+}
+
+// savePartialTurn persists the user input and any partial assistant response to
+// the session when a run is cancelled mid-stream. Without this, the entire turn
+// is lost on reload because the SDK only saves the session on successful completion.
+func (r *Runner) savePartialTurn(sessionID, userInput, partialText string) {
+	if userInput == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	msgs := make([]store.Message, 0, 2)
+
+	userItemJSON, _ := json.Marshal(map[string]any{
+		"role":    "user",
+		"content": userInput,
+	})
+	msgs = append(msgs, store.Message{
+		SessionID: sessionID,
+		Role:      "user",
+		Content:   userInput,
+		Item:      string(userItemJSON),
+		CreatedAt: now,
+	})
+
+	if partialText != "" {
+		assistantItemJSON, _ := json.Marshal(map[string]any{
+			"type": "message",
+			"role": "assistant",
+			"content": []map[string]string{
+				{"type": "output_text", "text": partialText},
+			},
+		})
+		msgs = append(msgs, store.Message{
+			SessionID: sessionID,
+			Role:      "assistant",
+			Content:   partialText,
+			Item:      string(assistantItemJSON),
+			CreatedAt: now,
+		})
+	}
+
+	_, _ = r.db.NewInsert().Model(&msgs).Exec(ctx)
 }
 
 // CancelRun cancels the in-flight run with the given run id, if one is active.

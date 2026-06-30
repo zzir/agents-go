@@ -55,6 +55,33 @@ func (s *TraceStore) ListBySession(ctx context.Context, sessionID string) ([]Tra
 	return events, nil
 }
 
+// ForkBySession copies trace events from srcSessionID to dstSessionID,
+// limited to the given run IDs.
+func (s *TraceStore) ForkBySession(ctx context.Context, srcSessionID, dstSessionID string, runIDs []string) error {
+	if len(runIDs) == 0 {
+		return nil
+	}
+	var events []TraceEvent
+	if err := s.db.NewSelect().Model(&events).
+		Where("session_id = ?", srcSessionID).
+		Where("run_id IN (?)", bun.List(runIDs)).
+		OrderExpr("id ASC").
+		Scan(ctx); err != nil {
+		return fmt.Errorf("fork traces read: %w", err)
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	for i := range events {
+		events[i].ID = 0
+		events[i].SessionID = dstSessionID
+	}
+	if _, err := s.db.NewInsert().Model(&events).Exec(ctx); err != nil {
+		return fmt.Errorf("fork traces write: %w", err)
+	}
+	return nil
+}
+
 // DeleteBySession removes all trace events for sessionID.
 func (s *TraceStore) DeleteBySession(ctx context.Context, sessionID string) error {
 	if _, err := s.db.NewDelete().Model((*TraceEvent)(nil)).

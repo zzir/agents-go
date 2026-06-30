@@ -35,7 +35,7 @@ type AgentDeps struct {
 	McpManager     *McpManager
 	SandboxManager *SandboxManager
 	ChatGPTOAuth   *ChatGPTOAuth
-	RootDir        string
+	Workspace      string
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -47,6 +47,11 @@ type BuildResult struct {
 	HandoffInputFilter    string
 	MaxToolConcurrency    int
 	ToolNotFoundBehavior  string
+	CompactionEnabled     bool
+	CompactionThreshold   int
+	CompactionWindow      int
+	CompactionModel       string
+	CompactionPrompt      string
 }
 
 // BuildFullAgent constructs an *agents.Agent from a config ID, loading all
@@ -88,6 +93,11 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	result.HandoffInputFilter = ac.HandoffInputFilter
 	result.MaxToolConcurrency = ac.MaxToolConcurrency
 	result.ToolNotFoundBehavior = ac.ToolNotFoundBehavior
+	result.CompactionEnabled = ac.CompactionEnabled
+	result.CompactionThreshold = ac.CompactionThreshold
+	result.CompactionWindow = ac.CompactionWindow
+	result.CompactionModel = ac.CompactionModel
+	result.CompactionPrompt = ac.CompactionPrompt
 
 	if ac.Instructions != "" {
 		agent.Instructions = agents.StaticInstructions(ac.Instructions)
@@ -96,6 +106,18 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		var ms agents.ModelSettings
 		if err := json.Unmarshal([]byte(ac.ModelSettings), &ms); err == nil {
 			agent.ModelSettings = &ms
+		}
+		var raw map[string]json.RawMessage
+		if json.Unmarshal([]byte(ac.ModelSettings), &raw) == nil {
+			if eb, ok := raw["extra_body"]; ok {
+				var extraBody map[string]any
+				if json.Unmarshal(eb, &extraBody) == nil && len(extraBody) > 0 {
+					if agent.ModelSettings == nil {
+						agent.ModelSettings = &agents.ModelSettings{}
+					}
+					agent.ModelSettings.ExtraBody = extraBody
+				}
+			}
 		}
 	}
 
@@ -192,27 +214,15 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		}
 	}
 
-	// Sandbox tools: "" = none, "__all__" = every configured sandbox, else = specific ID
-	if sandboxID == "__all__" {
-		sandboxes, err := deps.SandboxConfigs.List(ctx)
-		if err == nil {
-			for i := range sandboxes {
-				tool, err := deps.SandboxManager.CodeTool(&sandboxes[i])
-				if err != nil {
-					log.Warn().Err(err).Str("sandbox", sandboxes[i].Name).Msg("failed to create sandbox tool")
-					continue
-				}
-				agent.Tools = append(agent.Tools, tool)
-			}
-		}
-	} else if sandboxID != "" {
+	// Sandbox tools: "" = none, else = specific ID
+	if sandboxID != "" {
 		sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
 		if err == nil {
-			tool, err := deps.SandboxManager.CodeTool(sbCfg)
+			tools, err := deps.SandboxManager.SandboxTools(sbCfg)
 			if err != nil {
-				log.Warn().Err(err).Str("sandbox", sbCfg.Name).Msg("failed to create sandbox tool")
+				log.Warn().Err(err).Str("sandbox", sbCfg.Name).Msg("failed to create sandbox tools")
 			} else {
-				agent.Tools = append(agent.Tools, tool)
+				agent.Tools = append(agent.Tools, tools...)
 			}
 		}
 	}
@@ -232,15 +242,15 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	}
 
 	// Editor tools
-	if settingValue(ctx, deps.Settings, "enable_editor_tools") == "true" && deps.RootDir != "" {
-		agent.Tools = append(agent.Tools, editor.NewTools(deps.RootDir)...)
+	if settingValue(ctx, deps.Settings, "enable_editor_tools") == "true" && deps.Workspace != "" {
+		agent.Tools = append(agent.Tools, editor.NewTools(deps.Workspace)...)
 	}
 
 	// Skills — loaded from <root>/skills, matching where SkillHandler manages
 	// them. Load and ReadFileTool must share this root so the relative paths in
 	// the rendered index resolve correctly.
-	if deps.RootDir != "" {
-		skillsDir := filepath.Join(deps.RootDir, "skills")
+	if deps.Workspace != "" {
+		skillsDir := filepath.Join(deps.Workspace, "skills")
 		loadedSkills, err := skills.Load(skillsDir)
 		if err == nil && len(loadedSkills) > 0 {
 			agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))

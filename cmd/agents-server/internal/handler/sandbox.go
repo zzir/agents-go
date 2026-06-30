@@ -15,13 +15,15 @@ import (
 
 // SandboxHandler serves CRUD endpoints and code execution for sandboxes.
 type SandboxHandler struct {
-	store   *store.SandboxStore
-	manager *bridge.SandboxManager
+	store             *store.SandboxStore
+	manager           *bridge.SandboxManager
+	allowLocalSandbox bool
 }
 
 // NewSandboxHandler returns a handler backed by the given store and sandbox manager.
-func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager) *SandboxHandler {
-	return &SandboxHandler{store: s, manager: m}
+// allowLocal controls whether type "local" sandboxes may be created.
+func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager, allowLocal bool) *SandboxHandler {
+	return &SandboxHandler{store: s, manager: m, allowLocalSandbox: allowLocal}
 }
 
 // List responds with all sandbox configurations.
@@ -35,26 +37,37 @@ func (h *SandboxHandler) List(c *gin.Context) {
 }
 
 type createSandboxReq struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	RunCmd   string `json:"run_cmd"`
-	Filename string `json:"filename"`
-	Timeout  int    `json:"timeout"`
-	// Config is the backend-specific settings object, interpreted per Type
-	// (see store.DockerConfig / store.SSHConfig). Stored verbatim.
+	Name   string          `json:"name"`
+	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
 }
 
-// toConfig maps the request DTO onto a store model.
 func (r createSandboxReq) toConfig() *store.SandboxConfig {
 	return &store.SandboxConfig{
-		Name:     r.Name,
-		Type:     r.Type,
-		RunCmd:   r.RunCmd,
-		Filename: r.Filename,
-		Timeout:  r.Timeout,
-		Config:   r.Config,
+		Name:   r.Name,
+		Type:   r.Type,
+		Config: r.Config,
 	}
+}
+
+// validateSandboxReq checks type-level permissions. Returns an HTTP status and
+// error message on failure, or (0, "") when the request is acceptable.
+func (h *SandboxHandler) validateSandboxReq(req *createSandboxReq) (int, string) {
+	if req.Type == "local" && !h.allowLocalSandbox {
+		return http.StatusForbidden, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it"
+	}
+	if req.Type == "docker" {
+		var dc struct {
+			Host string `json:"host"`
+		}
+		if len(req.Config) > 0 {
+			_ = json.Unmarshal(req.Config, &dc)
+		}
+		if dc.Host != "" {
+			return http.StatusBadRequest, "remote Docker daemon is not supported; use a local daemon or the SSH sandbox for remote hosts"
+		}
+	}
+	return 0, ""
 }
 
 // Create persists a new sandbox configuration from the request body.
@@ -70,6 +83,10 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 	}
 	if req.Type == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type is required"})
+		return
+	}
+	if code, msg := h.validateSandboxReq(&req); code != 0 {
+		c.JSON(code, gin.H{"error": msg})
 		return
 	}
 	cfg := req.toConfig()
@@ -97,6 +114,10 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if code, msg := h.validateSandboxReq(&req); code != 0 {
+		c.JSON(code, gin.H{"error": msg})
+		return
+	}
 	id := c.Param("id")
 	h.manager.Remove(id)
 	cfg := req.toConfig()
@@ -118,31 +139,11 @@ func (h *SandboxHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-type execSandboxReq struct {
-	Code string `json:"code"`
-}
-
-type execSandboxResp struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
-	TimedOut bool   `json:"timed_out"`
-}
-
-// Exec runs the submitted code in the sandbox identified by the id path parameter.
-func (h *SandboxHandler) Exec(c *gin.Context) {
+// Test runs a fixed health-check command in the sandbox to verify connectivity.
+func (h *SandboxHandler) Test(c *gin.Context) {
 	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	var req execSandboxReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if req.Code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "code is required"})
 		return
 	}
 
@@ -152,42 +153,25 @@ func (h *SandboxHandler) Exec(c *gin.Context) {
 		return
 	}
 
-	filename := cfg.Filename
-	if filename == "" {
-		filename = "main.py"
-	}
-	var runCmd []string
-	if cfg.RunCmd != "" {
-		var parsed []string
-		if jsonErr := json.Unmarshal([]byte(cfg.RunCmd), &parsed); jsonErr == nil && len(parsed) > 0 {
-			runCmd = parsed
-		}
-	}
-	if len(runCmd) == 0 {
-		runCmd = []string{"python3", filename}
-	}
-
 	timeout := sandbox.DefaultTimeout
-	if cfg.Timeout > 0 {
-		timeout = time.Duration(cfg.Timeout) * time.Second
-	}
-
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout+5*time.Second)
 	defer cancel()
 
 	res, err := sb.Exec(ctx, sandbox.ExecRequest{
-		Cmd:     runCmd,
-		Files:   map[string]string{filename: req.Code},
+		Cmd:     []string{"bash", "-c", "echo ok"},
 		Timeout: timeout,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, execSandboxResp{
-		Stdout:   res.Stdout,
-		Stderr:   res.Stderr,
-		ExitCode: res.ExitCode,
-		TimedOut: res.TimedOut,
-	})
+	if res.ExitCode != 0 || res.TimedOut {
+		detail := res.Stderr
+		if res.TimedOut {
+			detail = "timed out"
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": false, "detail": detail})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

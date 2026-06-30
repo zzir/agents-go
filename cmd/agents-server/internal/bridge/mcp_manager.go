@@ -174,11 +174,12 @@ func (m *McpManager) CloseAll() {
 	}
 }
 
-// AutoConnectMcpServers connects every stored MCP server whose config has
-// AutoConnect set. For OAuth servers with a saved token it uses the coordinator
-// to reconnect silently. Failures are logged and skipped so one bad server
-// cannot block the others (or server startup). Intended to be run in a goroutine.
-func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
+// ConnectEnabledMcpServers connects every stored MCP server whose Enabled flag
+// is true. Disabled servers are skipped. For OAuth servers with a saved token
+// it uses the coordinator to reconnect silently. Failures are logged and
+// skipped so one bad server cannot block the others (or server startup).
+// Intended to be run in a goroutine.
+func ConnectEnabledMcpServers(ctx context.Context, mgr *McpManager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
 	log := zerolog.Ctx(ctx)
 	configs, err := servers.List(ctx)
 	if err != nil {
@@ -186,10 +187,10 @@ func AutoConnectMcpServers(ctx context.Context, mgr *McpManager, servers *store.
 		return
 	}
 	for i := range configs {
-		if !configs[i].AutoConnect {
+		cfg := &configs[i]
+		if !cfg.Enabled {
 			continue
 		}
-		cfg := &configs[i]
 		if cfg.TransportType == "streamable_http" && cfg.OAuthToken != "" {
 			var hc store.HTTPMcpConfig
 			if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {

@@ -28,6 +28,14 @@ func newWSRunHooks(send func(string, any), traces *store.TraceStore, sessionID, 
 	}
 }
 
+// Emit sends and persists an arbitrary hook event. Used by CompactionAdapter
+// so compaction trace events go through the same path as SDK hook events.
+func (h *wsRunHooks) Emit(ev protocol.HookEvent) {
+	ev.RunID = h.runID
+	h.send("hook.event", ev)
+	h.persist(ev)
+}
+
 func (h *wsRunHooks) persist(ev protocol.HookEvent) {
 	if h.traces == nil {
 		return

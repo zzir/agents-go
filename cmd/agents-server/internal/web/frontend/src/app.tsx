@@ -1,0 +1,346 @@
+import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
+import ReactDOM from 'react-dom/client';
+import { TextInput, Dialog, NavList as PrimerNavList, Flash } from '@primer/react';
+import {
+  DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon,
+  ContainerIcon, DatabaseIcon, GearIcon,
+} from '@primer/octicons-react';
+import type { Icon } from '@primer/octicons-react';
+import { ThemeProvider } from '@/theme/ThemeProvider';
+import { AppShell } from '@/layout/AppShell';
+import { SessionList } from '@/features/sessions/SessionList';
+import { ChatView } from '@/features/chat/ChatView';
+import { login, checkAuth, getToken, api } from '@/lib/api';
+import { useAgentSocket } from '@/lib/useAgentSocket';
+import { patchToolCall } from '@/lib/timeline';
+import { onToast } from '@/lib/toast';
+
+const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
+type FlashProps = React.ComponentProps<typeof Flash>;
+
+function GlobalToast() {
+  const [item, setItem] = useState<{ msg: string; type: string } | null>(null);
+  const [exiting, setExiting] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismiss = useCallback(() => {
+    setExiting(true);
+    setTimeout(() => { setItem(null); setExiting(false); }, 150);
+  }, []);
+
+  useEffect(() => {
+    onToast(({ msg, type }) => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setExiting(false);
+      setItem({ msg, type });
+      timerRef.current = setTimeout(() => { dismiss(); timerRef.current = null; }, 4000);
+    });
+    return () => onToast(null);
+  }, [dismiss]);
+
+  if (!item) return null;
+  return (
+    <Flash
+      variant={FLASH_VARIANT[item.type] || 'default'}
+      className={'global-toast' + (exiting ? ' global-toast-exit' : '')}
+      onClick={() => { if (timerRef.current) clearTimeout(timerRef.current); dismiss(); }}
+    >
+      {item.msg}
+    </Flash>
+  );
+}
+
+const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }> }[] = [
+  { key: 'agents',     label: 'Agents',     icon: DependabotIcon, load: () => import('@/features/agents/AgentConfigPanel') },
+  { key: 'mcp',        label: 'MCP',        icon: McpIcon,        load: () => import('@/features/mcp/McpServerPanel') },
+  { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
+  { key: 'skills',     label: 'Skills',     icon: ZapIcon,        load: () => import('@/features/skills/SkillsPanel') },
+  { key: 'sandbox',    label: 'Sandbox',    icon: ContainerIcon,  load: () => import('@/features/sandbox/SandboxPanel') },
+  { key: 'memory',     label: 'Memory',     icon: DatabaseIcon,   load: () => import('@/features/memory/MemoryPanel') },
+  { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
+];
+
+function SettingsDialog({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState('agents');
+  const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
+
+  useEffect(() => {
+    setTabComp(null);
+    const entry = DIALOG_TABS.find(t => t.key === tab);
+    if (!entry) return;
+    entry.load().then(mod => {
+      setTabComp(() => mod.default);
+    });
+  }, [tab]);
+
+  return (
+    <Dialog
+      title="Settings"
+      onClose={() => onClose()}
+      height="large"
+      style={{ width: 'min(960px, calc(100vw - 64px))' }}
+    >
+      <div className="settings-layout">
+        <nav className="settings-nav">
+          <PrimerNavList aria-label="Settings sections">
+            {DIALOG_TABS.map(t => (
+              <PrimerNavList.Item
+                key={t.key}
+                aria-current={tab === t.key ? 'page' : undefined}
+                onClick={() => setTab(t.key)}
+              >
+                <PrimerNavList.LeadingVisual><t.icon size={16} /></PrimerNavList.LeadingVisual>
+                {t.label}
+              </PrimerNavList.Item>
+            ))}
+          </PrimerNavList>
+        </nav>
+        <div className="settings-content">
+          {TabComp ? <TabComp /> : null}
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const [token, setTokenVal] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await login(token);
+      onLogin();
+    } catch {
+      setError('Invalid token');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogin]);
+
+  return (
+    <div className="login-page">
+      <form className="login-card" onSubmit={handleSubmit}>
+        <img src="/icon.svg" width={48} height={48} />
+        <TextInput
+          type="password"
+          placeholder="Token"
+          value={token}
+          autoFocus
+          loading={loading || undefined}
+          onChange={(e) => setTokenVal(e.target.value)}
+          validationStatus={error ? 'error' : undefined}
+        />
+      </form>
+    </div>
+  );
+}
+
+interface SessionState {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messages: any[];
+  streaming: string;
+  running: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  traceRuns: Record<string, any[]>;
+  liveRunId: string | null;
+  liveStartedAt: number | null;
+  loaded: boolean;
+  lastError?: string;
+}
+
+function defaultSS(): SessionState {
+  return { messages: [], streaming: '', running: false, traceRuns: {}, liveRunId: null, liveStartedAt: null, loaded: false };
+}
+const DEFAULT_SS = defaultSS();
+
+const MemoizedChatView = memo(ChatView);
+
+function App() {
+  const [authed, setAuthed] = useState(!!getToken());
+  const [checking, setChecking] = useState(true);
+  const [activeSession, setActiveSession] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sessionReloadKey, setSessionReloadKey] = useState(0);
+  const [settingsReloadKey, setSettingsReloadKey] = useState(0);
+
+  const [ss, setSS] = useState<Record<string, SessionState>>({});
+
+  useEffect(() => {
+    checkAuth().then(ok => { setAuthed(ok); setChecking(false); });
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setAuthed(false);
+    window.addEventListener('auth:logout', handler);
+    return () => window.removeEventListener('auth:logout', handler);
+  }, []);
+
+  const updateSS = useCallback((sid: string, fn: (s: SessionState) => SessionState) => {
+    setSS(prev => {
+      const cur = prev[sid] || defaultSS();
+      const next = fn(cur);
+      return next === cur ? prev : { ...prev, [sid]: next };
+    });
+  }, []);
+
+  const { wsRef, sessionRunRef, loadSession, deleteSession } = useAgentSocket(updateSS);
+
+  useEffect(() => {
+    if (activeSession) loadSession(activeSession);
+  }, [activeSession, loadSession]);
+
+  useEffect(() => {
+    if (!wsRef.current) return;
+    wsRef.current.on('session.title_updated', () => {
+      setSessionReloadKey(k => k + 1);
+    });
+  }, [wsRef]);
+
+  const handleSend = useCallback((text: string, agentConfigId?: string, sandboxId?: string) => {
+    if (!activeSession || !wsRef.current) return;
+    if (!wsRef.current.isConnected()) {
+      updateSS(activeSession, s => ({ ...s, lastError: 'WebSocket disconnected — message not sent' }));
+      return;
+    }
+    updateSS(activeSession, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }] }));
+    const payload: Record<string, any> = { session_id: activeSession, input: text, agent_config_id: agentConfigId };
+    if (sandboxId) payload.sandbox_id = sandboxId;
+    wsRef.current.send('run.create', payload);
+  }, [activeSession, updateSS, wsRef]);
+
+  const handleCancel = useCallback(() => {
+    if (!wsRef.current || !activeSession) return;
+    const runId = sessionRunRef.current[activeSession];
+    if (!runId) return;
+    wsRef.current.send('run.cancel', { run_id: runId });
+  }, [activeSession, wsRef, sessionRunRef]);
+
+  const updateToolCall = useCallback((toolCallId: string, patch: Record<string, any>) => {
+    if (!activeSession) return;
+    updateSS(activeSession, s => {
+      const patched = patchToolCall(s.messages, toolCallId, patch);
+      return patched ? { ...s, messages: patched } : s;
+    });
+  }, [activeSession, updateSS]);
+
+  const handleApprove = useCallback((toolCallId: string) => {
+    if (!wsRef.current) return;
+    updateToolCall(toolCallId, { status: 'approved' });
+    wsRef.current.send('tool.approve', { tool_call_id: toolCallId });
+  }, [updateToolCall, wsRef]);
+
+  const handleReject = useCallback((toolCallId: string) => {
+    if (!wsRef.current) return;
+    updateToolCall(toolCallId, { status: 'rejected' });
+    wsRef.current.send('tool.reject', { tool_call_id: toolCallId });
+  }, [updateToolCall, wsRef]);
+
+  const handleDeleteSession = useCallback((deletedId: string) => {
+    deleteSession(deletedId);
+    setSS(prev => {
+      if (!prev[deletedId]) return prev;
+      const next = { ...prev };
+      delete next[deletedId];
+      return next;
+    });
+  }, [deleteSession]);
+
+  const handleFork = useCallback(async (messageId: string | number) => {
+    if (!activeSession) return;
+    const forked = await api.sessions.fork(activeSession, Number(messageId));
+    setSessionReloadKey(k => k + 1);
+    setActiveSession(forked.id);
+  }, [activeSession]);
+
+  const handleRegenerate = useCallback(async (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => {
+    if (!activeSession || !wsRef.current) return;
+    try {
+      const forked = await api.sessions.fork(activeSession, Number(userMessageId), { exclusive: true, label: 'regen' });
+      setSessionReloadKey(k => k + 1);
+      setActiveSession(forked.id);
+      await loadSession(forked.id);
+      updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent }] }));
+      const payload: Record<string, any> = { session_id: forked.id, input: userContent, agent_config_id: agentConfigId };
+      if (sandboxId) payload.sandbox_id = sandboxId;
+      wsRef.current.send('run.create', payload);
+    } catch (e: any) {
+      updateSS(activeSession, s => ({ ...s, lastError: e.message || 'Regenerate failed' }));
+    }
+  }, [activeSession, wsRef, updateSS, loadSession]);
+
+  const runningSessions = useMemo(() => {
+    const set = new Set<string>();
+    for (const [sid, state] of Object.entries(ss)) {
+      if (state.running) set.add(sid);
+    }
+    return set;
+  }, [ss]);
+
+  const handleSessionCreated = useCallback(() => {
+    setTimeout(() => {
+      const el = document.querySelector('.chat-input-box textarea') as HTMLTextAreaElement | null;
+      if (el) el.focus();
+    }, 0);
+  }, []);
+
+  const handleSelectSession = useCallback((id: string | null) => {
+    setActiveSession(id);
+    if (window.innerWidth < 768) setSidebarOpen(false);
+  }, []);
+
+  if (checking) return <ThemeProvider>{null}</ThemeProvider>;
+  if (!authed) return <ThemeProvider><LoginPage onLogin={() => setAuthed(true)} /></ThemeProvider>;
+
+  const currentSS = ss[activeSession!] || DEFAULT_SS;
+
+  const sidebarPane = (
+    <SessionList
+      activeId={activeSession}
+      onSelect={handleSelectSession}
+      onDelete={handleDeleteSession}
+      onCreated={handleSessionCreated}
+      reloadKey={sessionReloadKey}
+      runningSessions={runningSessions}
+    />
+  );
+
+  const main = (
+    <MemoizedChatView
+      sessionId={activeSession}
+      messages={currentSS.messages}
+      loaded={currentSS.loaded}
+      streaming={currentSS.streaming}
+      running={currentSS.running}
+      traceRuns={currentSS.traceRuns}
+      liveRunId={currentSS.liveRunId}
+      liveStartedAt={currentSS.liveStartedAt}
+      lastError={currentSS.lastError}
+      onSend={handleSend}
+      onCancel={handleCancel}
+      onApprove={handleApprove}
+      onReject={handleReject}
+      onFork={handleFork}
+      onRegenerate={handleRegenerate}
+      settingsReloadKey={settingsReloadKey}
+    />
+  );
+
+  return (
+    <ThemeProvider>
+      <AppShell onSettingsOpen={() => setSettingsOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
+        {main}
+      </AppShell>
+      {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
+      <GlobalToast />
+    </ThemeProvider>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root')!);
+root.render(<App />);

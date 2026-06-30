@@ -51,7 +51,7 @@ func (h *McpServerHandler) List(c *gin.Context) {
 type mcpServerReq struct {
 	Name          string `json:"name"`
 	TransportType string `json:"transport_type"`
-	AutoConnect   bool   `json:"auto_connect"`
+	Enabled       bool   `json:"enabled"`
 	// Config is the transport-specific settings object, interpreted per
 	// TransportType (see store.StdioMcpConfig / store.HTTPMcpConfig).
 	Config json.RawMessage `json:"config"`
@@ -61,7 +61,7 @@ func (r *mcpServerReq) toModel() *store.McpServerConfig {
 	return &store.McpServerConfig{
 		Name:          r.Name,
 		TransportType: r.TransportType,
-		AutoConnect:   r.AutoConnect,
+		Enabled:       r.Enabled,
 		Config:        r.Config,
 	}
 }
@@ -103,15 +103,27 @@ func (h *McpServerHandler) Get(c *gin.Context) {
 }
 
 // Update overwrites the MCP server configuration identified by the id path parameter.
+// When enabled flips to false, the server is disconnected; when flipped to true, a
+// connection attempt is made automatically.
 func (h *McpServerHandler) Update(c *gin.Context) {
 	var req mcpServerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.store.Update(c.Request.Context(), c.Param("id"), req.toModel()); err != nil {
+	id := c.Param("id")
+	prev, _ := h.store.Get(c.Request.Context(), id)
+	if err := h.store.Update(c.Request.Context(), id, req.toModel()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if prev != nil && prev.Enabled && !req.Enabled {
+		_ = h.manager.Disconnect(id)
+	} else if prev != nil && !prev.Enabled && req.Enabled {
+		updated, err := h.store.Get(c.Request.Context(), id)
+		if err == nil {
+			go func() { _ = h.manager.Connect(c.Request.Context(), updated) }()
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

@@ -1,0 +1,484 @@
+/* Chat layout */
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Message fork button */
+.message-forkable {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* User message hover actions (edit, fork, trace) */
+.message-user-actions {
+  display: flex;
+  gap: 0;
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity var(--base-duration-100) var(--base-easing-easeInOut);
+}
+.message-user:hover .message-user-actions { opacity: 1; }
+.message-user-actions button,
+.turn-actions button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--fgColor-muted);
+}
+.message-user-actions button svg,
+.turn-actions button svg {
+  width: 14px;
+  height: 14px;
+}
+.message-user-actions button:hover,
+.turn-actions button:hover {
+  color: var(--fgColor-default);
+}
+
+/* Turn-level actions (copy, regenerate, duration) — uses Primer IconButton */
+.turn-actions {
+  display: flex;
+  gap: 0;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--base-duration-100) var(--base-easing-easeInOut);
+}
+.message-turn:hover .turn-actions { opacity: 1; }
+.turn-duration {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  line-height: 20px;
+  margin-left: 4px;
+  user-select: none;
+}
+.turn-duration-live {
+  display: block;
+  margin-left: 0;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scroll area wrapper — positions the "jump to latest" button */
+.chat-messages-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Chat messages area */
+.chat-messages {
+  height: 100%;
+  overflow-y: auto;
+  overflow-anchor: auto;
+  padding: var(--base-size-16) var(--base-size-24);
+  contain: layout style;
+}
+
+/* Jump to latest / Responding... floating button (Primer Button) */
+.scroll-to-bottom {
+  position: absolute !important;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin: 0 auto;
+  z-index: 10;
+  border-radius: var(--borderRadius-full) !important;
+  box-shadow: var(--shadow-floating-small);
+  animation: msg-in var(--base-duration-200) var(--base-easing-easeOut) both;
+}
+
+/* Message styles */
+.message {
+  padding: var(--base-size-8) 0;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+.message + .message { margin-top: var(--base-size-4); }
+
+/* User message — right-aligned bubble */
+.message-user {
+  display: flex;
+  justify-content: flex-end;
+}
+.message-user .message-body {
+  max-width: 75%;
+  font-size: var(--base-text-size-sm);
+  line-height: 1.6;
+  color: var(--fgColor-default);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bgColor-accent-muted);
+  padding: 8px 14px;
+  border-radius: var(--borderRadius-large) var(--borderRadius-large) var(--borderRadius-small) var(--borderRadius-large);
+  border: 1px solid var(--borderColor-muted);
+}
+
+/* Assistant message — left-aligned, no avatar */
+.message-assistant {
+  display: flex;
+}
+.message-assistant .message-body {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--base-text-size-sm);
+  line-height: 1.6;
+  color: var(--fgColor-default);
+}
+
+/* System message — centered Primer Label */
+.message-system {
+  text-align: center;
+  padding: var(--base-size-4) 0;
+}
+
+/* Compaction indicator (inline, like tool call groups) */
+.compaction-card {
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+.compaction-card-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: var(--base-size-4) 0;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.compaction-card-toggle:hover { color: var(--fgColor-default); }
+.compaction-card-toggle .process-icon { transition: transform 0.15s ease; }
+.compaction-card-toggle.expanded .process-icon { transform: rotate(90deg); }
+.compaction-card-body {
+  padding: var(--base-size-8) var(--base-size-12);
+  margin: 0 0 var(--base-size-8) var(--base-size-24);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  border-left: 2px solid var(--borderColor-muted);
+}
+
+/* Assistant turn (one run: text + tool calls as one block) */
+.message-turn {
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--base-size-8) 0;
+}
+.turn-text {
+  font-size: var(--base-text-size-sm);
+  line-height: 1.6;
+  color: var(--fgColor-default);
+}
+.turn-text + .process-group,
+.process-group + .turn-text { margin-top: var(--base-size-8); }
+.turn-text + .turn-text { margin-top: var(--base-size-8); }
+
+/* Process messages (tool calls) collapsible */
+.process-group {
+  margin: var(--base-size-8) 0;
+  width: 100%;
+  padding-left: 12px;
+  border-left: 2px solid var(--borderColor-muted);
+}
+.process-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--borderRadius-full);
+  background: var(--bgColor-muted);
+  border: 1px solid var(--borderColor-muted);
+  transition: background 0.1s, color 0.1s;
+}
+.process-group-toggle:hover { background: var(--bgColor-neutral-muted); color: var(--fgColor-default); }
+.process-group-toggle .process-icon {
+  width: 12px; height: 12px; flex-shrink: 0; color: var(--fgColor-muted);
+  transition: transform 0.15s;
+}
+.process-group-toggle.expanded .process-icon { transform: rotate(90deg); }
+.process-group-toggle .process-status {
+  margin-left: 4px;
+}
+.process-group-body {
+  padding: var(--base-size-4) 0 0;
+}
+
+/* Thinking indicator */
+.thinking-indicator {
+  margin: var(--base-size-4) 0;
+}
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  background: var(--bgColor-muted);
+  border: 1px solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-large);
+  box-shadow: var(--shadow-resting-xsmall);
+}
+.thinking-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fgColor-muted);
+  animation: thinking-bounce 1.4s infinite ease-in-out both;
+}
+.thinking-dots span:nth-child(1) { animation-delay: 0s; }
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* Chat input (unified box with toolbar) */
+.chat-input-container {
+  padding: var(--base-size-16) var(--base-size-16) var(--base-size-8);
+  background: var(--bgColor-default);
+  flex-shrink: 0;
+}
+.chat-input-box {
+  max-width: 860px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 16px;
+  background: var(--bgColor-default);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: var(--shadow-resting-xsmall);
+}
+.chat-input-box:focus-within {
+  border-color: var(--fgColor-accent);
+  box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
+}
+.chat-input-box textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 14px 16px 4px;
+  font-size: var(--base-text-size-sm);
+  font-family: var(--fontStack-sansSerif);
+  background: transparent;
+  color: var(--fgColor-default);
+  line-height: 1.5;
+  min-height: 50px;
+  /* 14 lines — inspired by the Shakespearean sonnet */
+  max-height: 315px;
+  overflow-y: auto;
+}
+.chat-input-box textarea::placeholder { color: var(--fgColor-muted); }
+
+/* Toolbar row inside the input box */
+.chat-input-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px 6px;
+  gap: 4px;
+}
+.chat-input-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-input-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.chat-input-toolbar-send {
+  display: flex;
+  align-items: center;
+}
+.chat-input-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--borderColor-muted);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.chat-input-toolbar-warn {
+  font-size: 11px;
+  color: var(--fgColor-danger);
+  padding: 0 8px;
+}
+
+/* Chat layout with trace drawer */
+.chat-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ToolCall card */
+.ToolCallCard {
+  border: 1px solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium);
+  margin: var(--base-size-4) 0;
+  overflow: hidden;
+}
+.ToolCallCard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--base-size-8) var(--base-size-16);
+  background: var(--bgColor-muted);
+  border-bottom: 1px solid var(--borderColor-muted);
+}
+.ToolCallCard-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ToolCallCard-name {
+  font-weight: 600;
+  font-size: 13px;
+  font-family: var(--fontStack-sansSerif);
+}
+.ToolCallCard-body {
+  padding: var(--base-size-8) var(--base-size-16);
+}
+.ToolCallCard pre {
+  margin: 0;
+  padding: var(--base-size-8);
+  background: var(--bgColor-inset);
+  border-radius: var(--borderRadius-small);
+  overflow: auto;
+  max-height: 150px;
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
+.ToolCallCard-output {
+  margin-top: 8px;
+}
+.ToolCallCard-output-label {
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  margin-bottom: 4px;
+}
+.ToolCallCard-output pre {
+  color: var(--fgColor-default);
+}
+.ToolCallCard-approval {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Empty session — input at optical center (≈40% from top) */
+.chat-content-centered {
+  justify-content: center;
+  align-items: center;
+  padding: var(--base-size-16);
+  padding-bottom: 18%;
+}
+.chat-content-centered .chat-input-container {
+  width: 100%;
+  max-width: 860px;
+  padding: 0;
+}
+
+/* Greeting slogan */
+.chat-greeting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--base-size-4);
+  margin-bottom: var(--base-size-24);
+  user-select: none;
+}
+.chat-greeting-emoji {
+  font-size: 40px;
+  line-height: 1;
+}
+.chat-greeting-text {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--fgColor-default);
+  font-family: var(--fontStack-sansSerif);
+}
+
+/* Empty state — vertically centered Blankslate */
+.chat-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-empty > * {
+  min-width: min(380px, 100%);
+}
+
+/* Message entrance — quiet staggered fade-up */
+.message,
+.message-turn,
+.ToolCallCard,
+.process-group {
+  animation: msg-in var(--base-duration-300) var(--base-easing-easeOut) both;
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Focus rings */
+.process-group-toggle:focus-visible,
+.chat-input-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
+}
+
+/* SVG viewer overlay — click mermaid diagram to view 1:1 */
+.svg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bgColor-default) 70%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: svg-overlay-in 0.15s ease-out;
+  cursor: zoom-out;
+}
+@keyframes svg-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.svg-overlay > div {
+  margin: auto 32px;
+  flex-shrink: 0;
+}
+.svg-overlay svg {
+  max-width: none;
+  height: auto;
+  display: block;
+  cursor: default;
+}
+.mermaid-diagram { cursor: zoom-in; }
+
+/* Mobile */
+@media (max-width: 767px) {
+  .chat-messages { padding: var(--base-size-8) var(--base-size-16); }
+  .chat-input-container { padding: var(--base-size-8) var(--base-size-16) var(--base-size-4); }
+}

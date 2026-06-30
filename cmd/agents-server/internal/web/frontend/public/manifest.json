@@ -1,0 +1,17 @@
+{
+  "name": "Agents Server",
+  "short_name": "Agents",
+  "description": "AI agent orchestration dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

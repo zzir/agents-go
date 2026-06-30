@@ -14,14 +14,14 @@ import (
 
 // SkillHandler manages skill directories, supporting listing, cloning, updating, and deletion.
 type SkillHandler struct {
-	rootDir string
+	skillsDir string
 }
 
-// NewSkillHandler returns a handler that stores skills under a "skills" directory within rootDir.
-func NewSkillHandler(rootDir string) *SkillHandler {
-	dir := filepath.Join(rootDir, "skills")
+// NewSkillHandler returns a handler that stores skills under a "skills" directory within workspace.
+func NewSkillHandler(workspace string) *SkillHandler {
+	dir := filepath.Join(workspace, "skills")
 	_ = os.MkdirAll(dir, 0o755) // best-effort; skill ops surface errors on use
-	return &SkillHandler{rootDir: dir}
+	return &SkillHandler{skillsDir: dir}
 }
 
 type skillEntry struct {
@@ -32,7 +32,7 @@ type skillEntry struct {
 
 // List responds with all discovered skills under the root directory.
 func (h *SkillHandler) List(c *gin.Context) {
-	skills := findAllSkills(h.rootDir)
+	skills := findAllSkills(h.skillsDir)
 	c.JSON(http.StatusOK, skills)
 }
 
@@ -45,8 +45,8 @@ func (h *SkillHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill path"})
 		return
 	}
-	resolved := filepath.Join(h.rootDir, clean, "SKILL.md")
-	if !strings.HasPrefix(resolved, h.rootDir) {
+	resolved := filepath.Join(h.skillsDir, clean, "SKILL.md")
+	if !strings.HasPrefix(resolved, h.skillsDir) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill path"})
 		return
 	}
@@ -86,7 +86,7 @@ func (h *SkillHandler) Clone(c *gin.Context) {
 		return
 	}
 
-	dest := filepath.Join(h.rootDir, name)
+	dest := filepath.Join(h.skillsDir, name)
 	if _, err := os.Stat(dest); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "directory already exists: " + name})
 		return
@@ -118,8 +118,8 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
 		return
 	}
-	target := filepath.Join(h.rootDir, clean)
-	if !strings.HasPrefix(target, h.rootDir) {
+	target := filepath.Join(h.skillsDir, clean)
+	if !strings.HasPrefix(target, h.skillsDir) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
 		return
 	}
@@ -142,8 +142,8 @@ func (h *SkillHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
 		return
 	}
-	target := filepath.Join(h.rootDir, clean)
-	if !strings.HasPrefix(target, h.rootDir) {
+	target := filepath.Join(h.skillsDir, clean)
+	if !strings.HasPrefix(target, h.skillsDir) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
 		return
 	}
