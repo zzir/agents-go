@@ -4,6 +4,7 @@ import { TextInput, Dialog, NavList as PrimerNavList, Flash } from '@primer/reac
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon,
   ContainerIcon, DatabaseIcon, GearIcon,
+  XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
@@ -16,23 +17,33 @@ import { patchToolCall } from '@/lib/timeline';
 import { onToast } from '@/lib/toast';
 
 const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
+const FLASH_ICON: Record<string, React.ReactNode> = {
+  error: <XCircleFillIcon size={16} />,
+  warning: <AlertFillIcon size={16} />,
+  success: <CheckCircleFillIcon size={16} />,
+  info: <InfoIcon size={16} />,
+};
 type FlashProps = React.ComponentProps<typeof Flash>;
 
 function GlobalToast() {
-  const [item, setItem] = useState<{ msg: string; type: string } | null>(null);
+  const [item, setItem] = useState<{ msg: string; type: string; seq: number } | null>(null);
   const [exiting, setExiting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seqRef = useRef(0);
 
   const dismiss = useCallback(() => {
     setExiting(true);
-    setTimeout(() => { setItem(null); setExiting(false); }, 150);
+    exitTimerRef.current = setTimeout(() => { setItem(null); setExiting(false); exitTimerRef.current = null; }, 150);
   }, []);
 
   useEffect(() => {
     onToast(({ msg, type }) => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (exitTimerRef.current) { clearTimeout(exitTimerRef.current); exitTimerRef.current = null; }
       setExiting(false);
-      setItem({ msg, type });
+      seqRef.current += 1;
+      setItem({ msg, type, seq: seqRef.current });
       timerRef.current = setTimeout(() => { dismiss(); timerRef.current = null; }, 4000);
     });
     return () => onToast(null);
@@ -41,11 +52,14 @@ function GlobalToast() {
   if (!item) return null;
   return (
     <Flash
+      key={item.seq}
       variant={FLASH_VARIANT[item.type] || 'default'}
       className={'global-toast' + (exiting ? ' global-toast-exit' : '')}
       onClick={() => { if (timerRef.current) clearTimeout(timerRef.current); dismiss(); }}
     >
-      {item.msg}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        {FLASH_ICON[item.type]}{item.msg}
+      </span>
     </Flash>
   );
 }
@@ -79,6 +93,11 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       onClose={() => onClose()}
       height="large"
       style={{ width: 'min(960px, calc(100vw - 64px))' }}
+      renderBody={({ children }) => (
+        <Dialog.Body className="settings-body" style={{ padding: 0 }}>
+          {children}
+        </Dialog.Body>
+      )}
     >
       <div className="settings-layout">
         <nav className="settings-nav">

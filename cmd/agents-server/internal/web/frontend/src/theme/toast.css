@@ -1,18 +1,16 @@
 .global-toast {
-  position: fixed;
-  bottom: 80px;
+  /* Primer's Flash sets position:relative at equal specificity; !important
+     guarantees the toast stays viewport-fixed regardless of CSS load order. */
+  position: fixed !important;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%);
   max-width: min(480px, calc(100vw - 32px));
-  z-index: 200;
+  z-index: 1100;
   cursor: pointer;
   animation: toast-in 0.2s ease-out;
   box-shadow: var(--shadow-floating-small);
 }
-@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
-@keyframes toast-out { from { opacity: 1; transform: translateX(-50%) translateY(0); } to { opacity: 0; transform: translateX(-50%) translateY(8px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+@keyframes toast-out { from { opacity: 1; transform: translateX(-50%) translateY(0); } to { opacity: 0; transform: translateX(-50%) translateY(-8px); } }
 .global-toast-exit { animation: toast-out 0.15s ease-in forwards; }
-
-@media (max-width: 767px) {
-  .global-toast { bottom: 16px; }
-}

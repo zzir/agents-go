@@ -156,14 +156,14 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
       )}
 
       {t === 'ssh' && fc('SSH host',
-        <TextInput value={form.addr} onChange={e => set('addr', e.target.value)} placeholder="dev-box:22" />,
+        <TextInput block value={form.addr} onChange={e => set('addr', e.target.value)} placeholder="dev-box:22" />,
         'Remote address as host or host:port (port defaults to 22).',
       )}
       {t === 'ssh' && fc('SSH user',
         <TextInput value={form.user} onChange={e => set('user', e.target.value)} placeholder="sandbox" />,
       )}
       {t === 'ssh' && fc('Private key file',
-        <TextInput value={form.key_file} onChange={e => set('key_file', e.target.value)} placeholder="~/.ssh/id_ed25519" />,
+        <TextInput block value={form.key_file} onChange={e => set('key_file', e.target.value)} placeholder="~/.ssh/id_ed25519" />,
         'Path on the server host. Tried before password. Leave empty to use a password or the SSH agent.',
       )}
       {t === 'ssh' && fc('Password',
@@ -176,7 +176,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         </FormControl>
       )}
       {t === 'ssh' && fc('Known hosts file',
-        <TextInput value={form.known_hosts} onChange={e => set('known_hosts', e.target.value)} placeholder="~/.ssh/known_hosts" />,
+        <TextInput block value={form.known_hosts} onChange={e => set('known_hosts', e.target.value)} placeholder="~/.ssh/known_hosts" />,
         'Path on the server host. Empty uses the default ~/.ssh/known_hosts.',
       )}
       {t === 'ssh' && (
@@ -186,7 +186,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         </FormControl>
       )}
       {t === 'ssh' && fc('Working directory',
-        <TextInput value={form.work_dir} onChange={e => set('work_dir', e.target.value)} placeholder="/home/sandbox/workspace" />,
+        <TextInput block value={form.work_dir} onChange={e => set('work_dir', e.target.value)} placeholder="/home/sandbox/workspace" />,
         'Fixed remote directory for command execution. Leave empty to use a temporary directory per execution.',
       )}
 

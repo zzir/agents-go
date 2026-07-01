@@ -4,6 +4,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -21,7 +22,8 @@
   opacity: 0;
   transition: opacity var(--base-duration-100) var(--base-easing-easeInOut);
 }
-.message-user:hover .message-user-actions { opacity: 1; }
+.message-user:hover .message-user-actions,
+.message-user-actions:focus-within { opacity: 1; }
 .message-user-actions button,
 .turn-actions button {
   width: 20px;
@@ -47,7 +49,8 @@
   opacity: 0;
   transition: opacity var(--base-duration-100) var(--base-easing-easeInOut);
 }
-.message-turn:hover .turn-actions { opacity: 1; }
+.message-turn:hover .turn-actions,
+.turn-actions:focus-within { opacity: 1; }
 .turn-duration {
   font-size: 12px;
   color: var(--fgColor-muted);
@@ -324,6 +327,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
