@@ -146,7 +146,14 @@ func (c *caller) run(ctx context.Context, _ *agents.ToolContext, args searchArgs
 		return "", fmt.Errorf("bravesearch: reading response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("bravesearch: API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		// Keep the error compact: the body cap above is 4 MiB, far too much to
+		// feed back to the model inside an error message.
+		const maxErrBody = 1 << 10 // 1 KiB
+		msg := strings.TrimSpace(string(body))
+		if len(msg) > maxErrBody {
+			msg = msg[:maxErrBody] + " [... truncated]"
+		}
+		return "", fmt.Errorf("bravesearch: API returned %s: %s", resp.Status, msg)
 	}
 	return formatResults(body)
 }

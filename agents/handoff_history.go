@@ -10,6 +10,15 @@ import (
 const (
 	defaultHistoryStartMarker = "<CONVERSATION HISTORY>"
 	defaultHistoryEndMarker   = "</CONVERSATION HISTORY>"
+
+	// historySummaryLeadIn is the fixed first line of every summary message
+	// produced by summaryMessage. flattenNestedHistory only expands assistant
+	// messages that begin with it, so an ordinary message that merely quotes
+	// the markers is never mistaken for a summary.
+	historySummaryLeadIn = "For context, here is the conversation so far between the user and the previous agent:"
+	// historyEmptyPlaceholder is the summary body emitted for an empty
+	// transcript; flattening recognizes it and yields an empty transcript.
+	historyEmptyPlaceholder = "(no previous turns recorded)"
 )
 
 // HandoffHistoryMapper folds a flattened transcript into the input items the
@@ -26,8 +35,11 @@ type NestHistoryOptions struct {
 	Mapper HandoffHistoryMapper
 	// StartMarker and EndMarker wrap the summary body so a subsequent handoff can
 	// flatten it back into a transcript instead of nesting summaries. They default
-	// to "<CONVERSATION HISTORY>" and "</CONVERSATION HISTORY>". A custom Mapper
-	// that wants flattening to work must wrap its output in these same markers.
+	// to "<CONVERSATION HISTORY>" and "</CONVERSATION HISTORY>". Flattening only
+	// recognizes the default summary shape: an assistant message that starts with
+	// the same fixed lead-in line summaryMessage emits and wraps its body in these
+	// markers. A custom Mapper that deviates from that shape still works, but its
+	// summaries are treated as opaque messages by later handoffs (no flattening).
 	StartMarker string
 	EndMarker   string
 }
@@ -77,11 +89,11 @@ func DefaultHandoffHistoryMapper(transcript []TResponseInputItem) []TResponseInp
 func summaryMessage(transcript []TResponseInputItem, start, end string) TResponseInputItem {
 	lines := make([]string, 0, len(transcript)+4)
 	lines = append(lines,
-		"For context, here is the conversation so far between the user and the previous agent:",
+		historySummaryLeadIn,
 		start,
 	)
 	if len(transcript) == 0 {
-		lines = append(lines, "(no previous turns recorded)")
+		lines = append(lines, historyEmptyPlaceholder)
 	} else {
 		for i, item := range transcript {
 			data, err := MarshalInputItem(item)
@@ -111,9 +123,19 @@ func flattenNestedHistory(items []TResponseInputItem, start, end string) []TResp
 
 // extractNestedTranscript parses an item that is a marker-wrapped summary back
 // into its transcript items. ok reports whether the item was such a summary.
+//
+// Only the SDK's own summary shape is expandable: an assistant message whose
+// text starts with the fixed lead-in line and contains the markers. Anything
+// else — in particular a user message quoting the markers — is left untouched;
+// expanding arbitrary marker-bearing text would let conversation content
+// inject or silently delete history.
 func extractNestedTranscript(item TResponseInputItem, start, end string) ([]TResponseInputItem, bool) {
-	content := inputItemText(item)
-	if content == "" {
+	m := item.OfMessage
+	if m == nil || m.Role != responses.EasyInputMessageRoleAssistant {
+		return nil, false
+	}
+	content := m.Content.OfString.Or("")
+	if !strings.HasPrefix(content, historySummaryLeadIn) {
 		return nil, false
 	}
 	si := strings.Index(content, start)
@@ -123,17 +145,24 @@ func extractNestedTranscript(item TResponseInputItem, start, end string) ([]TRes
 	}
 	body := content[si+len(start) : ei]
 	var parsed []TResponseInputItem
+	sawUnparsable := false
 	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || line == historyEmptyPlaceholder {
 			continue
 		}
 		line = stripLineNumber(line)
 		it, err := UnmarshalInputItem([]byte(line))
 		if err != nil {
+			sawUnparsable = true
 			continue
 		}
 		parsed = append(parsed, it)
+	}
+	if len(parsed) == 0 && sawUnparsable {
+		// Nothing decoded: keep the original item rather than silently
+		// dropping the whole message.
+		return nil, false
 	}
 	return parsed, true
 }

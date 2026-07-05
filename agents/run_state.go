@@ -30,6 +30,13 @@ type RunState struct {
 	Usage               *Usage
 	CurrentTurn         int
 
+	// MaxTurns is the turn budget of the interrupted run, so ResumeRun can
+	// continue under the same budget (a run started with MaxTurns 20 and
+	// interrupted at turn 12 would otherwise be unresumable past the default).
+	// Zero — e.g. states serialized before this field existed — falls back to
+	// DefaultMaxTurns unless RunOptions.MaxTurns overrides it.
+	MaxTurns int
+
 	// UserInput is the new input the interrupted Run was invoked with (without
 	// session history), so the resumed run can persist it to the session.
 	UserInput []TResponseInputItem
@@ -66,7 +73,17 @@ func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (*RunResul
 	if state == nil {
 		return nil, newUserError("ResumeRun: state must not be nil")
 	}
+	if err := validateServerState(opts); err != nil {
+		return nil, err
+	}
+	// Turn budget precedence: an explicit override in opts wins, then the
+	// interrupted run's own budget carried by the state, then the default
+	// (which is also the fallback for states serialized before MaxTurns
+	// existed — those round-trip as zero).
 	maxTurns := opts.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = state.MaxTurns
+	}
 	if maxTurns <= 0 {
 		maxTurns = DefaultMaxTurns
 	}
@@ -91,7 +108,13 @@ func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (*RunResul
 		defer r.trace.Finish()
 	}
 	rc.activeTrace = r.trace
-	return r.loop(ctx, state.CurrentAgent, state.OriginalInput)
+	res, err := r.loop(ctx, state.CurrentAgent, state.OriginalInput)
+	if err == nil && res != nil && res.State != nil {
+		// The resumed run interrupted again: carry the effective budget on the
+		// new state so repeated interrupt/resume cycles keep it.
+		res.State.MaxTurns = maxTurns
+	}
+	return res, err
 }
 
 // --- Serialization ---
@@ -126,6 +149,7 @@ type serialRunState struct {
 	SchemaVersion       string                    `json:"schema_version"`
 	CurrentAgent        string                    `json:"current_agent"`
 	CurrentTurn         int                       `json:"current_turn"`
+	MaxTurns            int                       `json:"max_turns,omitempty"`
 	OriginalInput       []json.RawMessage         `json:"original_input"`
 	UserInput           []json.RawMessage         `json:"user_input,omitempty"`
 	GeneratedItems      []serialItem              `json:"generated_items"`
@@ -143,6 +167,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 	out := serialRunState{
 		SchemaVersion: RunStateSchemaVersion,
 		CurrentTurn:   s.CurrentTurn,
+		MaxTurns:      s.MaxTurns,
 		Usage:         s.Usage,
 	}
 	if s.CurrentAgent != nil {
@@ -247,6 +272,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	st := &RunState{
 		CurrentAgent: lookup(in.CurrentAgent),
 		CurrentTurn:  in.CurrentTurn,
+		MaxTurns:     in.MaxTurns,
 		Usage:        in.Usage,
 		Approvals:    NewApprovalStore(),
 	}

@@ -32,12 +32,30 @@ type SpanHandle struct {
 	finished bool
 }
 
+// TraceOption customizes a Trace before it is handed to the processor.
+// Mutating a Trace after StartTrace races with background exporting; options
+// are the safe way to set fields like GroupID and Metadata.
+type TraceOption func(*Trace)
+
+// WithGroupID links this trace to a group of related traces (e.g. one chat
+// thread across several runs) — the counterpart of Python's RunConfig.group_id.
+func WithGroupID(id string) TraceOption { return func(tr *Trace) { tr.GroupID = id } }
+
+// WithMetadata attaches user metadata to the trace — the counterpart of
+// Python's RunConfig.trace_metadata.
+func WithMetadata(md map[string]any) TraceOption { return func(tr *Trace) { tr.Metadata = md } }
+
 // StartTrace begins a new trace for the given workflow. Finish it with Finish.
-func (t *Tracer) StartTrace(workflowName string) *TraceHandle {
+func (t *Tracer) StartTrace(workflowName string, opts ...TraceOption) *TraceHandle {
 	if t == nil || t.proc == nil {
 		return &TraceHandle{}
 	}
 	tr := &Trace{TraceID: NewTraceID(), WorkflowName: workflowName}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(tr)
+		}
+	}
 	t.proc.OnTraceStart(tr)
 	return &TraceHandle{Trace: tr, tracer: t}
 }
@@ -89,7 +107,14 @@ func (h *TraceHandle) StartGenerationSpan(name, parentID string) *SpanHandle {
 	return h.startSpan("generation:"+name, parentID, SpanTypeGeneration, map[string]any{"name": name})
 }
 
-// StartFunctionSpan begins a span for a function tool call (Type SpanTypeFunction).
+// StartCompactionSpan begins a span for a session-history compaction pass
+// (Type SpanTypeCompaction). The session implementation annotates it with
+// before/after item counts.
+func (h *TraceHandle) StartCompactionSpan(parentID string) *SpanHandle {
+	return h.startSpan("compaction", parentID, SpanTypeCompaction, nil)
+}
+
+// StartFunctionSpan begins a span for a tool invocation (Type SpanTypeFunction).
 func (h *TraceHandle) StartFunctionSpan(name, parentID string) *SpanHandle {
 	return h.startSpan("function:"+name, parentID, SpanTypeFunction, map[string]any{"name": name})
 }

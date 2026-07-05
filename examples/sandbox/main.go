@@ -41,7 +41,9 @@ func run() error {
 	defer func() { _ = os.RemoveAll(workDir) }()
 
 	// Dev-only, unisolated backend. See the package doc above for Docker.
-	sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workDir})
+	// MaxReadFileBytes caps what a single read_file can pull into memory
+	// (0 = the 8 MiB default); every backend has the same option.
+	sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workDir, MaxReadFileBytes: 1 << 20})
 	defer sb.Close()
 
 	// exec_command runs shell commands; read_file / write_file / list_files

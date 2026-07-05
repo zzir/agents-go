@@ -54,7 +54,7 @@ policy := agents.RetryPolicy{
 model := agents.NewRetryModel(primary, policy)
 ```
 
-Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation; `openai.RetryableError` adds OpenAI-aware status-code classification.
+Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation; `openai.RetryableError` adds OpenAI-aware status-code classification. `openai.RetryAfter` understands both `Retry-After-Ms` (milliseconds, checked first — what OpenAI actually sends on short rate limits) and `Retry-After` (seconds or HTTP-date), and a server-suggested delay is always capped at the policy's `MaxDelay`.
 
 > **Two layers of retry.** The `openai-go` client already retries transient failures on its own — by default `MaxRetries: 2` on 408/409/429/5xx and connection errors, honoring `Retry-After`. `NewRetryModel` sits *above* that: it wraps the whole `GetResponse`/stream call (including response handling) and is the unit that a fallback chain advances over. The two compose multiplicatively, so with the defaults a single transient error can be attempted up to `MaxAttempts × 3` times. To keep retry behavior in one place — more predictable and easier to observe — disable the client layer when building the provider and let `RetryModel` own it:
 >
@@ -71,6 +71,15 @@ model := agents.NewFallbackModel(
 )
 agent := &agents.Agent{Name: "assistant", ModelImpl: model}
 ```
+
+By default every error except context cancellation advances the chain. That is wasteful for deterministic failures (an invalid schema fails identically on every backend), so `WithShouldFallback` narrows the classification:
+
+```go
+model := agents.NewFallbackModel(primary, backup).
+    WithShouldFallback(openai.RetryableError) // only transient errors advance
+```
+
+`NewFallbackProvider` accepts the same configuration and propagates it to every model it produces.
 
 **Different vendors are just different providers** — same Responses protocol, different `base_url`/key:
 

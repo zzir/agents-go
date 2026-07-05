@@ -109,4 +109,8 @@ type ToolContext struct {
 	ToolCallID string
 	// ToolArguments is the raw JSON arguments string emitted by the model.
 	ToolArguments string
+	// functionSpanID is the tracing span ID of this tool call, letting a
+	// nested agent-as-tool run parent its agent spans under the function span
+	// instead of floating at the trace root.
+	functionSpanID string
 }

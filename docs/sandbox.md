@@ -39,14 +39,15 @@ The model writes code, `CodeTool` executes it in the sandbox, and the combined `
 
 ## CodeTool configuration
 
+`CodeTool` exposes one tool that runs a shell command (`bash -c <cmd>`) in the sandbox; the model picks the command, an optional `timeout_seconds` (capped at `MaxTimeout`) and an optional `workdir`.
+
 ```go
 sandbox.CodeToolConfig{
-	Name:           "run_python",                    // default "run_code"
-	Description:    "Execute Python in a sandbox.",
-	Filename:       "main.py",                       // where the code is written
-	RunCmd:         []string{"python", "main.py"},   // how it is executed
-	Timeout:        30 * time.Second,                // per execution (sandbox.DefaultTimeout)
-	MaxOutputBytes: 8192,                            // per-stream truncation toward the model
+	Name:           "run_python",       // default "exec_command"
+	Description:    "Execute shell commands in a Python sandbox.",
+	Timeout:        30 * time.Second,   // default per execution (sandbox.DefaultTimeout)
+	MaxTimeout:     10 * time.Minute,   // cap for model-requested timeout_seconds
+	MaxOutputBytes: 8192,               // per-stream truncation toward the model
 }
 ```
 
@@ -76,7 +77,9 @@ sb, err := docker.New(docker.Options{
 })
 ```
 
-Each `Exec` creates a locked-down container and removes it afterwards: no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, runs as `nobody`, writable `work` dir and `/tmp` (tmpfs), memory/CPU/PID limits, hard timeout (container killed). The command runs as the container entrypoint verbatim — image `ENTRYPOINT`/`CMD` never interfere.
+Each `Exec` creates a locked-down container and removes it afterwards: no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, runs as `nobody`, writable `work` dir and `/tmp` (tmpfs), memory/CPU/PID limits, hard timeout (container killed). The command runs as the container entrypoint verbatim — image `ENTRYPOINT`/`CMD` never interfere. Container stdout/stderr is additionally capped on the daemon side (`json-file` log driver, `max-size=10m`), so output floods cannot fill the host disk.
+
+With `Persistent: true` a single container is reused across `Exec` calls (state and installed files survive between calls) and the root filesystem is writable. The default user is still `65534:65534` (nobody), which **cannot install packages**; set `UserUnset: true` to run as the image's default user, or set `User` explicitly. Timeouts are enforced per exec: when the deadline passes the attached connection is closed and the exec's process tree is killed best-effort (exec processes are tagged with an `AGENTS_SANDBOX_EXEC` environment marker and matched via `/proc`; a process that re-execs itself with a scrubbed environment can evade the sweep — the container's PID/memory limits are the backstop).
 
 ### SSH (remote host)
 
@@ -90,7 +93,7 @@ sb, err := sshsb.New(sshsb.Options{
 })
 ```
 
-Each `Exec` writes the request files to a fresh `/tmp/agents-sandbox-*` directory on the remote host via **SFTP**, runs the command in a new SSH session (`cd … && exec …`, every argument shell-quoted), and removes the directory afterwards. `Stdin` is supported; timeouts close the session, which terminates the remote process (`TimedOut=true`, exit `-1`).
+Each `Exec` writes the request files to a fresh `/tmp/agents-sandbox-*` directory on the remote host via **SFTP**, runs the command in a new SSH session (`cd … && exec …`, every argument shell-quoted), and removes the directory afterwards. `Stdin` is supported; timeouts close the SSH session and return `TimedOut=true` with exit `-1` — whether the remote process actually dies is **best-effort** (it depends on the sshd implementation and configuration; the command may keep running on the remote host after a timeout).
 
 Authentication methods are tried in order — SSH agent (`UseAgent`), private key (`KeyFile`/`KeyBytes`, optionally `Passphrase`), then `Password`. Host keys are verified against `~/.ssh/known_hosts` by default; `HostKey.InsecureIgnoreHostKey` disables this (dev/test only), and `HostKey.Callback`/`KnownHostsFile` customize it.
 
@@ -106,6 +109,8 @@ sandbox.FileToolConfig{
 ```
 
 File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
+
+`ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 
 ## The Sandbox interface
 

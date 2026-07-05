@@ -61,6 +61,10 @@ type Options struct {
 	// KeepFiles, when true, leaves the per-execution working directory on the
 	// remote host instead of removing it after Exec. Useful for debugging.
 	KeepFiles bool
+	// MaxReadFileBytes caps how many bytes ReadFile returns; larger files fail
+	// with sandbox.ErrReadLimitExceeded instead of being loaded into local
+	// memory. Zero (or negative) means sandbox.DefaultMaxReadFileBytes.
+	MaxReadFileBytes int64
 }
 
 // AuthConfig selects how to authenticate to the SSH server. The methods are
@@ -241,8 +245,12 @@ func (s *Sandbox) exec(ctx context.Context, req sandbox.ExecRequest, stdout, std
 		}
 		return res, nil
 	case <-wctx.Done():
-		// Closing the session tears down the channel, which terminates the
-		// remote process; then drain Wait so the output copy has completed.
+		// Best-effort termination: closing the session tears down the SSH
+		// channel, but whether the remote process actually dies depends on the
+		// sshd implementation and configuration — many servers do not signal
+		// the process when the channel closes, so the command may keep running
+		// on the remote host after a timeout. Then drain Wait so the output
+		// copy has completed.
 		_ = session.Close()
 		<-waitCh
 		if cerr := ctx.Err(); cerr != nil {
@@ -257,7 +265,9 @@ func (s *Sandbox) exec(ctx context.Context, req sandbox.ExecRequest, stdout, std
 	}
 }
 
-// ReadFile implements sandbox.Sandbox.
+// ReadFile implements sandbox.Sandbox. Files larger than
+// Options.MaxReadFileBytes (default sandbox.DefaultMaxReadFileBytes) fail
+// with sandbox.ErrReadLimitExceeded instead of being loaded into local memory.
 func (s *Sandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir == "" {
 		return nil, sandbox.ErrNoWorkDir
@@ -267,7 +277,7 @@ func (s *Sandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	return sandbox.ReadAllLimited(f, s.opts.MaxReadFileBytes)
 }
 
 // WriteFile implements sandbox.Sandbox.

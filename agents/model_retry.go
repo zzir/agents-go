@@ -35,7 +35,8 @@ type RetryPolicy struct {
 
 	// RetryAfter, when non-nil, extracts a server-suggested delay from an error
 	// (e.g. an HTTP Retry-After header); when it reports ok, that delay replaces
-	// the computed backoff. Pair with openai.RetryAfter.
+	// the computed backoff, capped at MaxDelay so an oversized server hint
+	// cannot stall retries indefinitely. Pair with openai.RetryAfter.
 	RetryAfter func(error) (time.Duration, bool)
 
 	// Sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
@@ -105,6 +106,14 @@ func (p RetryPolicy) retryIf() func(error) bool {
 	return DefaultRetryIf
 }
 
+// maxDelay returns the effective backoff cap: MaxDelay, or 30s when unset.
+func (p RetryPolicy) maxDelay() time.Duration {
+	if p.MaxDelay <= 0 {
+		return 30 * time.Second
+	}
+	return p.MaxDelay
+}
+
 // backoff returns the delay before the given attempt number (1-based; attempt 1
 // is the first try and never waits, so callers pass attempt>=1 for the wait
 // preceding attempt+1). Equal jitter keeps the delay in [d/2, d].
@@ -113,10 +122,7 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 	if base <= 0 {
 		base = 500 * time.Millisecond
 	}
-	limit := p.MaxDelay
-	if limit <= 0 {
-		limit = 30 * time.Second
-	}
+	limit := p.maxDelay()
 	mult := p.Multiplier
 	if mult <= 1 {
 		mult = 2
@@ -130,11 +136,16 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 }
 
 // wait sleeps for the backoff (or server-suggested) delay before the next
-// attempt. attempt is the number of the attempt that just failed.
+// attempt. attempt is the number of the attempt that just failed. A
+// server-suggested delay is still clamped to maxDelay so the policy's cap
+// holds regardless of what the server sends.
 func (p RetryPolicy) wait(ctx context.Context, attempt int, err error) error {
 	delay := p.backoff(attempt)
 	if p.RetryAfter != nil {
 		if d, ok := p.RetryAfter(err); ok {
+			if limit := p.maxDelay(); d > limit {
+				d = limit
+			}
 			delay = d
 		}
 	}

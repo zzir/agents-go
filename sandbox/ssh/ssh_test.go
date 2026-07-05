@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"net"
-	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -49,9 +48,6 @@ func TestBuildCommand_WithEnvSorted(t *testing.T) {
 func TestBuildCommand_QuotesInjection(t *testing.T) {
 	// A malicious env value or argument must stay a single literal token.
 	got := buildCommand("/w", map[string]string{"X": "; rm -rf /"}, []string{"echo", "$(whoami)"})
-	if strings.Contains(got, "rm -rf /'") {
-		// fine: it is inside quotes
-	}
 	want := `cd '/w' && exec env 'X=; rm -rf /' 'echo' '$(whoami)'`
 	if got != want {
 		t.Errorf("buildCommand = %q, want %q", got, want)

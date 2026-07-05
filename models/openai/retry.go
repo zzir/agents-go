@@ -41,24 +41,32 @@ func RetryableError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
-// RetryAfter extracts a server-suggested delay from an error's Retry-After
-// response header (seconds or HTTP-date form), for use as
-// agents.RetryPolicy.RetryAfter. It reports ok=false when no usable header is
-// present, leaving the caller's computed backoff in effect.
+// RetryAfter extracts a server-suggested delay from an error's response
+// headers, for use as agents.RetryPolicy.RetryAfter. Matching openai-go's own
+// retry logic, headers are consulted in order of preference: Retry-After-Ms
+// (milliseconds, integer or float) first, then Retry-After (seconds as an
+// integer or float, or an HTTP-date). It reports ok=false when no usable
+// header is present, leaving the caller's computed backoff in effect.
 func RetryAfter(err error) (time.Duration, bool) {
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) || apiErr.Response == nil {
 		return 0, false
 	}
-	v := apiErr.Response.Header.Get("Retry-After")
+	header := apiErr.Response.Header
+	if v := header.Get("Retry-After-Ms"); v != "" {
+		if ms, e := strconv.ParseFloat(v, 64); e == nil && ms >= 0 {
+			return time.Duration(ms * float64(time.Millisecond)), true
+		}
+	}
+	v := header.Get("Retry-After")
 	if v == "" {
 		return 0, false
 	}
-	if secs, e := strconv.Atoi(v); e == nil {
+	if secs, e := strconv.ParseFloat(v, 64); e == nil {
 		if secs < 0 {
 			return 0, false
 		}
-		return time.Duration(secs) * time.Second, true
+		return time.Duration(secs * float64(time.Second)), true
 	}
 	if t, e := http.ParseTime(v); e == nil {
 		if d := time.Until(t); d > 0 {

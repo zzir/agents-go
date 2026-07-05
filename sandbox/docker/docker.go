@@ -15,6 +15,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +45,11 @@ const (
 	// logReadTimeout bounds reading the container logs after a timeout, when
 	// the request's own context is already spent.
 	logReadTimeout = 10 * time.Second
+	// logMaxSize caps the json-file container log on the daemon's disk so a
+	// flooding command cannot fill the host filesystem. Output returned to the
+	// caller is capped separately (ExecRequest.MaxOutputBytes), and well below
+	// this.
+	logMaxSize = "10m"
 )
 
 // Options configures the Docker sandbox.
@@ -76,6 +83,10 @@ type Options struct {
 	// When set, it replaces the anonymous volume so the container sees (and can
 	// modify) the host files directly. Typically used with Persistent mode.
 	WorkDir string
+	// MaxReadFileBytes caps how many bytes ReadFile returns; larger files fail
+	// with sandbox.ErrReadLimitExceeded instead of being loaded into host
+	// memory. Zero (or negative) means sandbox.DefaultMaxReadFileBytes.
+	MaxReadFileBytes int64
 }
 
 // Sandbox is a Docker-backed sandbox.Sandbox.
@@ -166,7 +177,9 @@ func (s *Sandbox) ensureContainer(ctx context.Context) (string, error) {
 		}
 		s.mu.Lock()
 		if s.containerID == id {
-			s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+			// WithoutCancel: a canceled ctx would skip the remove while the ID
+			// is dropped below, leaking the dead container forever.
+			_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 			s.containerID = ""
 		}
 	}
@@ -187,18 +200,22 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	}
 	id := created.ID
 
+	// Cleanup must not use ctx directly: when the failure was caused by ctx
+	// being canceled (or timing out), a ctx-bound remove would fail too and
+	// leak the container.
+	rmCtx := context.WithoutCancel(ctx)
 	tarball, terr := buildTar(nil)
 	if terr != nil {
-		s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		_, _ = s.cli.ContainerRemove(rmCtx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		return "", terr
 	}
 	if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: workDir, Content: tarball}); err != nil {
-		s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		_, _ = s.cli.ContainerRemove(rmCtx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		return "", fmt.Errorf("docker sandbox: copy files: %w", err)
 	}
 
 	if _, err := s.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
-		s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		_, _ = s.cli.ContainerRemove(rmCtx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		return "", fmt.Errorf("docker sandbox: start: %w", err)
 	}
 	s.containerID = id
@@ -221,10 +238,16 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest) (
 		}
 	}
 
+	// Tag the exec so killExec can find it inside the container on timeout;
+	// appended last so a request Env cannot override it.
+	marker, err := newExecMarker()
+	if err != nil {
+		return nil, err
+	}
 	execOpts := client.ExecCreateOptions{
 		Cmd:          req.Cmd,
 		WorkingDir:   workDir,
-		Env:          envSlice(req.Env),
+		Env:          append(envSlice(req.Env), execMarkerEnv+"="+marker),
 		AttachStdout: true,
 		AttachStderr: true,
 	}
@@ -243,20 +266,46 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest) (
 	}
 	defer attached.Close()
 
-	max := req.EffectiveMaxOutputBytes()
-	stdout, stderr, derr := demuxLogs(attached.Reader, max)
+	// The attach connection is a hijacked raw net.Conn: ectx only bounded the
+	// handshake above and does NOT interrupt reads on it. Demultiplex in a
+	// goroutine and, when the deadline fires, force-close the connection so
+	// the blocked read unblocks — otherwise a command that never exits (e.g.
+	// "sleep infinity") would hang this call forever.
+	maxOut := req.EffectiveMaxOutputBytes()
+	type demuxed struct {
+		stdout, stderr string
+		err            error
+	}
+	demuxCh := make(chan demuxed, 1)
+	go func() {
+		o, e, derr := demuxLogs(attached.Reader, maxOut)
+		demuxCh <- demuxed{stdout: o, stderr: e, err: derr}
+	}()
+
+	var d demuxed
+	select {
+	case d = <-demuxCh:
+	case <-ectx.Done():
+		attached.Close() // unblock the raw-conn read
+		d = <-demuxCh    // wait for the demuxer so the buffers are quiescent
+	}
 
 	res := &sandbox.ExecResult{}
 	if ectx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = -1
-		res.Stdout, res.Stderr = stdout, stderr
+		res.Stdout, res.Stderr = d.stdout, d.stderr
 		// Kill the exec process so it doesn't linger in the container.
-		s.killExec(ctx, id, created.ID)
+		s.killExec(context.WithoutCancel(ctx), id, marker)
 		return res, nil
 	}
-	if derr != nil {
-		return nil, fmt.Errorf("docker sandbox: exec read: %w", derr)
+	if cerr := ctx.Err(); cerr != nil {
+		// The caller's context was canceled; clean up the exec process too.
+		s.killExec(context.WithoutCancel(ctx), id, marker)
+		return nil, cerr
+	}
+	if d.err != nil {
+		return nil, fmt.Errorf("docker sandbox: exec read: %w", d.err)
 	}
 
 	inspect, ierr := s.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
@@ -264,7 +313,7 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest) (
 		return nil, fmt.Errorf("docker sandbox: exec inspect: %w", ierr)
 	}
 	res.ExitCode = inspect.ExitCode
-	res.Stdout, res.Stderr = stdout, stderr
+	res.Stdout, res.Stderr = d.stdout, d.stderr
 	return res, nil
 }
 
@@ -275,7 +324,9 @@ func (s *Sandbox) execEphemeral(ctx context.Context, req sandbox.ExecRequest) (*
 		return nil, fmt.Errorf("docker sandbox: create: %w", err)
 	}
 	id := created.ID
-	defer s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	defer func() {
+		_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	}()
 
 	// Always sent, even with no request files: the tarball also creates the
 	// writable working directory inside the root-owned volume.
@@ -332,7 +383,9 @@ func (s *Sandbox) execEphemeral(ctx context.Context, req sandbox.ExecRequest) (*
 }
 
 // buildHostConfig returns the HostConfig. Persistent mode relaxes the
-// read-only root filesystem so that package installs work.
+// read-only root filesystem; note that the process still runs as 65534:65534
+// by default (see New), so installing packages additionally requires
+// UserUnset: true (image default user) or an explicit privileged-enough User.
 func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 	netMode := container.NetworkMode("none")
 	if s.opts.Network {
@@ -352,6 +405,13 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 		SecurityOpt:    []string{"no-new-privileges"},
 		Mounts:         mounts,
 		Tmpfs:          map[string]string{"/tmp": "rw,noexec,size=64m,mode=1777"},
+		// Cap the container log on disk: without this, a flooding command
+		// ("yes" and friends) can write gigabytes into the daemon's log
+		// directory within a single timeout window.
+		LogConfig: container.LogConfig{
+			Type:   "json-file",
+			Config: map[string]string{"max-size": logMaxSize, "max-file": "1"},
+		},
 	}
 	hostCfg.Memory = s.opts.Limits.MemoryBytes
 	if s.opts.Limits.CPUs > 0 {
@@ -382,8 +442,11 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 
 // buildPersistentConfig assembles the container and host configuration for
 // persistent mode. The container runs "sleep infinity" so it stays alive.
-// When no explicit User is set and UserUnset is false, the image's default
-// user is used (typically a non-root user that can install packages).
+// The process runs as 65534:65534 (nobody) by default — New applies that
+// default when Options.User is empty and UserUnset is false — which cannot
+// install packages even though the root filesystem is writable in this mode.
+// To install packages, set UserUnset: true (image default user) or an
+// explicit User with sufficient permissions.
 func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostConfig) {
 	cfg := &container.Config{
 		Image:      s.opts.Image,
@@ -398,13 +461,13 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 }
 
 // readLogs fetches the container output, capping each stream at max bytes.
-func (s *Sandbox) readLogs(ctx context.Context, id string, max int64) (string, string, error) {
+func (s *Sandbox) readLogs(ctx context.Context, id string, maxBytes int64) (string, string, error) {
 	rc, err := s.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
 		return "", "", fmt.Errorf("docker sandbox: logs: %w", err)
 	}
 	defer rc.Close()
-	stdout, stderr, derr := demuxLogs(rc, max)
+	stdout, stderr, derr := demuxLogs(rc, maxBytes)
 	if derr != nil {
 		return "", "", fmt.Errorf("docker sandbox: read logs: %w", derr)
 	}
@@ -414,16 +477,22 @@ func (s *Sandbox) readLogs(ctx context.Context, id string, max int64) (string, s
 // demuxLogs splits a multiplexed docker log stream into stdout and stderr,
 // capping each at max bytes. Reading stops at the source only once BOTH
 // streams are full — a per-total limit would let a flooding stdout starve a
-// short stderr (or vice versa) that arrives later in the stream. Memory stays
+// short stderr (or vice versa) that arrives later in the stream. The flip
+// side: a single flooding stream does NOT end the read early; its excess is
+// read and discarded until the other stream also fills or the source ends
+// (or, for exec attaches, the timeout severs the connection). Memory stays
 // bounded throughout because each buffer discards beyond its cap.
-func demuxLogs(r io.Reader, max int64) (string, string, error) {
-	stdout := &sandbox.CappedBuffer{Max: max}
-	stderr := &sandbox.CappedBuffer{Max: max}
+//
+// The capped output collected so far is returned even when err is non-nil,
+// so a timed-out caller can surface the partial output.
+func demuxLogs(r io.Reader, maxBytes int64) (string, string, error) {
+	stdout := &sandbox.CappedBuffer{Max: maxBytes}
+	stderr := &sandbox.CappedBuffer{Max: maxBytes}
 	src := &stopWhenFull{r: r, full: func() bool { return stdout.Full() && stderr.Full() }}
 	// A cut mid-frame surfaces as ErrUnexpectedEOF, which just means "truncated".
 	if _, err := stdcopy.StdCopy(stdout, stderr, src); err != nil &&
-		err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", "", err
+		!errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return stdout.String(), stderr.String(), err
 	}
 	return stdout.String(), stderr.String(), nil
 }
@@ -442,22 +511,36 @@ func (s *stopWhenFull) Read(p []byte) (int, error) {
 	return s.r.Read(p)
 }
 
-// killExec finds the PID of a running exec process and kills its entire
-// process group inside the container so child processes don't linger.
-func (s *Sandbox) killExec(ctx context.Context, containerID, execID string) {
-	info, err := s.cli.ExecInspect(ctx, execID, client.ExecInspectOptions{})
-	if err != nil || !info.Running || info.PID == 0 {
-		return
+// execMarkerEnv tags each persistent-mode exec with a unique value so a
+// timed-out process can be found from inside the container. ExecInspect's
+// PID is a HOST-namespace PID, which is meaningless in the container's PID
+// namespace, so killing by inspected PID silently does nothing.
+const execMarkerEnv = "AGENTS_SANDBOX_EXEC"
+
+// newExecMarker returns a random per-exec marker value.
+func newExecMarker() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("docker sandbox: exec marker: %w", err)
 	}
-	// Kill the entire process group (-PID), falling back to the single PID.
-	killCmd := client.ExecCreateOptions{
-		Cmd: []string{"sh", "-c", fmt.Sprintf("kill -9 -%d 2>/dev/null; kill -9 %d 2>/dev/null", info.PID, info.PID)},
-	}
-	kill, err := s.cli.ExecCreate(ctx, containerID, killCmd)
+	return hex.EncodeToString(b), nil
+}
+
+// killExec best-effort terminates a timed-out exec process (and its
+// descendants) inside the container: it scans /proc/*/environ for the exec's
+// marker and SIGKILLs every match, plus each match's process group. The
+// environ snapshot is fixed at execve time, so a process cannot hide from the
+// scan by unsetting the variable; only a re-exec with a scrubbed environment
+// escapes, for which the container's pids/memory limits remain the backstop.
+func (s *Sandbox) killExec(ctx context.Context, containerID, marker string) {
+	script := fmt.Sprintf(
+		`for d in /proc/[0-9]*; do if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qxF %s; then p=${d#/proc/}; kill -9 -"$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; fi; done`,
+		shellQuote(execMarkerEnv+"="+marker))
+	kill, err := s.cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{Cmd: []string{"sh", "-c", script}})
 	if err != nil {
 		return
 	}
-	s.cli.ExecStart(ctx, kill.ID, client.ExecStartOptions{Detach: true})
+	_, _ = s.cli.ExecStart(ctx, kill.ID, client.ExecStartOptions{Detach: true})
 }
 
 // shellQuote returns s as a single-quoted shell token, safe for embedding in
@@ -469,10 +552,17 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// ReadFile implements sandbox.Sandbox.
+// ReadFile implements sandbox.Sandbox. Files larger than
+// Options.MaxReadFileBytes (default sandbox.DefaultMaxReadFileBytes) fail
+// with sandbox.ErrReadLimitExceeded instead of being loaded into host memory.
 func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir != "" {
-		return os.ReadFile(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+		f, err := os.Open(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		return sandbox.ReadAllLimited(f, s.opts.MaxReadFileBytes)
 	}
 	if s.opts.Persistent {
 		if err := s.ensureImage(ctx); err != nil {
@@ -494,7 +584,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 		if _, err := tr.Next(); err != nil {
 			return nil, fmt.Errorf("docker sandbox: read file: %w", err)
 		}
-		return io.ReadAll(tr)
+		return sandbox.ReadAllLimited(tr, s.opts.MaxReadFileBytes)
 	}
 	return nil, sandbox.ErrNoWorkDir
 }
@@ -620,10 +710,16 @@ func (s *Sandbox) streamPersistent(ctx context.Context, req sandbox.ExecRequest,
 		}
 	}
 
+	// Tag the exec so killExec can find it inside the container on timeout;
+	// appended last so a request Env cannot override it.
+	marker, err := newExecMarker()
+	if err != nil {
+		return nil, err
+	}
 	execOpts := client.ExecCreateOptions{
 		Cmd:          req.Cmd,
 		WorkingDir:   workDir,
-		Env:          envSlice(req.Env),
+		Env:          append(envSlice(req.Env), execMarkerEnv+"="+marker),
 		AttachStdout: true,
 		AttachStderr: true,
 	}
@@ -642,17 +738,34 @@ func (s *Sandbox) streamPersistent(ctx context.Context, req sandbox.ExecRequest,
 	}
 	defer attached.Close()
 
-	if _, err := stdcopy.StdCopy(stdout, stderr, attached.Reader); err != nil &&
-		err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
-		// ignore
+	// Same as execPersistent: the hijacked raw connection ignores tctx, so
+	// copy in a goroutine and force-close the connection on timeout to
+	// unblock the read. Copy errors from a severed stream are expected and
+	// intentionally dropped (partial output already reached the writers).
+	copyDone := make(chan struct{})
+	go func() {
+		defer close(copyDone)
+		_, _ = stdcopy.StdCopy(stdout, stderr, attached.Reader)
+	}()
+
+	select {
+	case <-copyDone:
+	case <-tctx.Done():
+		attached.Close() // unblock the raw-conn read
+		<-copyDone       // no writes to stdout/stderr after we return
 	}
 
 	res := &sandbox.ExecResult{}
 	if tctx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = -1
-		s.killExec(ctx, id, created.ID)
+		s.killExec(context.WithoutCancel(ctx), id, marker)
 		return res, nil
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		// The caller's context was canceled; clean up the exec process too.
+		s.killExec(context.WithoutCancel(ctx), id, marker)
+		return nil, cerr
 	}
 
 	inspect, ierr := s.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
@@ -670,7 +783,9 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 		return nil, fmt.Errorf("docker sandbox: create: %w", err)
 	}
 	id := created.ID
-	defer s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	defer func() {
+		_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	}()
 
 	tarball, terr := buildTar(req.Files)
 	if terr != nil {
@@ -698,10 +813,8 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 	}
 	defer rc.Close()
 
-	if _, err := stdcopy.StdCopy(stdout, stderr, rc); err != nil &&
-		err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
-		// ignore
-	}
+	// Copy errors here only lose already-truncated log bytes; ignore them.
+	_, _ = stdcopy.StdCopy(stdout, stderr, rc)
 
 	res := &sandbox.ExecResult{}
 	if tctx.Err() == context.DeadlineExceeded {
@@ -734,7 +847,7 @@ func (s *Sandbox) Close() error {
 	s.containerID = ""
 	s.mu.Unlock()
 	if id != "" {
-		s.cli.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		_, _ = s.cli.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	}
 	return s.cli.Close()
 }

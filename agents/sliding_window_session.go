@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/tracing"
 )
 
 const (
@@ -128,16 +130,39 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 		return nil
 	}
 
-	toSummarize := items[:len(items)-window]
-	toKeep := items[len(items)-window:]
+	// A pure count-based split can cut through a function_call / output pair
+	// or detach a reasoning item from its successor, producing sequences the
+	// Responses API rejects. Move the split so both sides stay self-consistent.
+	split := SafeSplitPoint(items, len(items)-window)
+	if split <= 0 {
+		// No self-consistent, non-empty prefix exists (the adjustment pulled
+		// everything into the keep side). Skip compaction rather than risk
+		// corrupting the history.
+		return nil
+	}
+	toSummarize := items[:split]
+	toKeep := items[split:]
 
 	if IsSingleSummary(toSummarize) {
 		return nil
 	}
 
+	var span *tracing.SpanHandle
+	if args.StartSpan != nil {
+		span = args.StartSpan()
+	}
+	span.Set("before_items", len(items))
+	span.Set("after_items", 1+len(toKeep))
+
 	summaryText, err := s.summarize(ctx, toSummarize)
 	if err != nil {
 		return fmt.Errorf("sliding window compaction: %w", err)
+	}
+	if summaryText == "" {
+		// The model returned no usable text (e.g. reasoning or refusal only).
+		// Rewriting history around an empty summary would silently discard the
+		// summarized items, so fail loudly and leave the session untouched.
+		return fmt.Errorf("sliding window compaction: summary model returned no output text")
 	}
 
 	summaryItem := responses.ResponseInputItemParamOfMessage(
@@ -149,13 +174,100 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 	replacement = append(replacement, summaryItem)
 	replacement = append(replacement, toKeep...)
 
-	if err := s.underlying.Clear(ctx); err != nil {
-		return fmt.Errorf("sliding window compaction: clearing history: %w", err)
-	}
-	if err := s.underlying.AddItems(ctx, replacement); err != nil {
-		return fmt.Errorf("sliding window compaction: writing compacted history: %w", err)
+	if err := ReplaceSessionItems(ctx, s.underlying, replacement); err != nil {
+		return fmt.Errorf("sliding window compaction: replacing history: %w", err)
 	}
 	return nil
+}
+
+// SafeSplitPoint refines an initial count-based split index so that both
+// items[:split] (summarized away) and items[split:] (kept verbatim) remain
+// self-consistent Responses sequences:
+//
+//   - a function_call and its function_call_output (paired by call_id) must
+//     land on the same side — splitting them makes the summarization request
+//     itself invalid, or leaves the rewritten history beginning with an
+//     orphaned function_call_output, and either way the next Run is rejected;
+//   - a reasoning item must stay with its successor (the message or
+//     function_call it precedes), so it cannot be the final prefix item.
+//
+// The split only ever moves toward keeping more items (it decreases): an
+// offending pair is kept whole on the keep side. It returns 0 when no valid
+// non-empty prefix exists, in which case the caller should skip compaction.
+// Only function tool pairs need handling here: the SDK executes function
+// tools exclusively, so histories contain no other call/output item kinds.
+//
+// It is exported for external Session implementations that rewrite history
+// (compaction, summarization, forking) and need the same pair-safety
+// guarantee; SlidingWindowSession uses it internally.
+func SafeSplitPoint(items []TResponseInputItem, split int) int {
+	if split < 0 {
+		return 0
+	}
+	if split > len(items) {
+		split = len(items)
+	}
+	for split > 0 {
+		moved := false
+
+		// Keep reasoning items with their successor: a reasoning item may not
+		// end the prefix while the item it belongs to starts the suffix.
+		for split > 0 && items[split-1].OfReasoning != nil {
+			split--
+			moved = true
+		}
+
+		// Keep function_call / function_call_output pairs on one side. When a
+		// pair straddles the split, pull the whole pair into the keep side.
+		if split > 0 {
+			if idx := earliestStraddlingPair(items, split); idx >= 0 {
+				split = idx
+				moved = true
+			}
+		}
+
+		if !moved {
+			break
+		}
+	}
+	return split
+}
+
+// earliestStraddlingPair returns the smallest index of a function_call /
+// function_call_output item whose call_id partner sits on the other side of
+// split, or -1 when no pair straddles the split. Items with a missing
+// counterpart (already-orphaned history) never straddle: their single index
+// is always on one side.
+func earliestStraddlingPair(items []TResponseInputItem, split int) int {
+	firstIdx := make(map[string]int)
+	lastIdx := make(map[string]int)
+	for i := range items {
+		var callID string
+		switch {
+		case items[i].OfFunctionCall != nil:
+			callID = items[i].OfFunctionCall.CallID
+		case items[i].OfFunctionCallOutput != nil:
+			callID = items[i].OfFunctionCallOutput.CallID
+		default:
+			continue
+		}
+		if callID == "" {
+			continue
+		}
+		if _, ok := firstIdx[callID]; !ok {
+			firstIdx[callID] = i
+		}
+		lastIdx[callID] = i
+	}
+	best := -1
+	for callID, lo := range firstIdx {
+		if hi := lastIdx[callID]; lo < split && hi >= split {
+			if best == -1 || lo < best {
+				best = lo
+			}
+		}
+	}
+	return best
 }
 
 func (s *SlidingWindowSession) summarize(ctx context.Context, items []TResponseInputItem) (string, error) {

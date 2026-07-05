@@ -29,6 +29,11 @@ type LocalOptions struct {
 	// written into it, but the directory is NOT removed afterwards. This
 	// allows the sandbox to operate on an existing project tree.
 	WorkDir string
+
+	// MaxReadFileBytes caps how many bytes ReadFile returns; larger files fail
+	// with ErrReadLimitExceeded instead of being loaded into memory. Zero (or
+	// negative) means DefaultMaxReadFileBytes.
+	MaxReadFileBytes int64
 }
 
 // LocalSandbox runs commands directly on the host in a temporary working
@@ -98,8 +103,13 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 	cmd.WaitDelay = localWaitDelay
 
 	runErr := cmd.Run()
-	if cmd.Process != nil {
-		// Best-effort sweep of any processes left behind in the group.
+	if cctx.Err() != nil && cmd.Process != nil {
+		// Best-effort sweep of any processes left behind in the group, but ONLY
+		// after the context fired (timeout or cancellation), i.e. when cmd.Cancel
+		// already SIGKILLed the group and stragglers are plausible. After a
+		// normal exit the group leader has been reaped, so its PID — and thus the
+		// process-group ID — may already have been reused; an unconditional
+		// sweep here could SIGKILL an unrelated process group.
 		_ = killProcessGroup(cmd.Process.Pid)
 	}
 	res := &ExecResult{}
@@ -143,12 +153,19 @@ func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, 
 	return s.exec(ctx, req, stdout, stderr)
 }
 
-// ReadFile reads a file relative to the sandbox working directory.
+// ReadFile reads a file relative to the sandbox working directory. Files
+// larger than LocalOptions.MaxReadFileBytes (default DefaultMaxReadFileBytes)
+// fail with ErrReadLimitExceeded.
 func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir
 	}
-	return os.ReadFile(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	f, err := os.Open(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return ReadAllLimited(f, s.opts.MaxReadFileBytes)
 }
 
 // WriteFile writes a file relative to the sandbox working directory.

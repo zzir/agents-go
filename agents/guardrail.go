@@ -1,6 +1,10 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"runtime/debug"
+)
 
 // GuardrailFunctionOutput is the result a guardrail function returns. If
 // TripwireTriggered is true the run is halted with a tripwire error.
@@ -50,35 +54,59 @@ type OutputGuardrailTripwireError struct {
 	Result OutputGuardrailResult
 }
 
-// runInputGuardrails runs all input guardrails concurrently, returning a
-// tripwire error (carrying the offending result) if any trips. It is invoked
-// alongside the first model call.
+// guardrailPanicError converts a panic recovered from a user guardrail callback
+// into an error carrying a truncated stack trace, so a buggy guardrail fails the
+// run instead of crashing the process.
+func guardrailPanicError(kind, name string, recovered any) error {
+	stack := debug.Stack()
+	const maxStack = 4096
+	if len(stack) > maxStack {
+		stack = append(stack[:maxStack:maxStack], "... (stack truncated)"...)
+	}
+	return fmt.Errorf("%s guardrail %q panicked: %v\n%s", kind, name, recovered, stack)
+}
+
+// runInputGuardrails runs all input guardrails concurrently. It fails fast,
+// matching the Python SDK: the first tripwire or error returned by any
+// guardrail ends the wait immediately and cancels the context passed to the
+// remaining guardrails. A panic inside a guardrail callback is recovered and
+// reported as that guardrail's error. It is invoked alongside the first model
+// call.
 func runInputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guardrails []InputGuardrail, input []TResponseInputItem) error {
 	if len(guardrails) == 0 {
 		return nil
 	}
-	results := make([]InputGuardrailResult, len(guardrails))
-	errs := make([]error, len(guardrails))
-	done := make(chan int, len(guardrails))
-	for i, g := range guardrails {
+	// Canceled on early return so still-running guardrails can stop promptly.
+	gctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type outcome struct {
+		result InputGuardrailResult
+		err    error
+	}
+	// Buffered to len(guardrails): every goroutine can deliver its outcome and
+	// exit even when this function has already returned, so none leaks.
+	done := make(chan outcome, len(guardrails))
+	for _, g := range guardrails {
 		go func() {
-			out, err := g.Run(ctx, rc, agent, input)
-			results[i] = InputGuardrailResult{Guardrail: g, Output: out}
-			errs[i] = err
-			done <- i
+			defer func() {
+				if rec := recover(); rec != nil {
+					done <- outcome{err: guardrailPanicError("input", g.Name, rec)}
+				}
+			}()
+			out, err := g.Run(gctx, rc, agent, input)
+			done <- outcome{result: InputGuardrailResult{Guardrail: g, Output: out}, err: err}
 		}()
 	}
 	for range guardrails {
-		<-done
-	}
-	for i := range guardrails {
-		if errs[i] != nil {
-			return errs[i]
+		oc := <-done
+		if oc.err != nil {
+			return oc.err
 		}
-		if results[i].Output.TripwireTriggered {
+		if oc.result.Output.TripwireTriggered {
 			return &InputGuardrailTripwireError{
-				AgentsError: AgentsError{Message: "input guardrail " + guardrails[i].Name + " tripwire triggered"},
-				Result:      results[i],
+				AgentsError: AgentsError{Message: "input guardrail " + oc.result.Guardrail.Name + " tripwire triggered"},
+				Result:      oc.result,
 			}
 		}
 	}
@@ -86,34 +114,41 @@ func runInputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guard
 }
 
 // runOutputGuardrails runs all output guardrails concurrently on the final
-// output, returning a tripwire error (carrying the offending result) if any
-// trips.
+// output. Like runInputGuardrails it fails fast on the first tripwire or error
+// (canceling the context handed to the remaining guardrails) and converts a
+// guardrail panic into that guardrail's error.
 func runOutputGuardrails(ctx context.Context, rc *RunContext, agent *Agent, guardrails []OutputGuardrail, output any) error {
 	if len(guardrails) == 0 {
 		return nil
 	}
-	results := make([]OutputGuardrailResult, len(guardrails))
-	errs := make([]error, len(guardrails))
-	done := make(chan int, len(guardrails))
-	for i, g := range guardrails {
+	gctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type outcome struct {
+		result OutputGuardrailResult
+		err    error
+	}
+	done := make(chan outcome, len(guardrails))
+	for _, g := range guardrails {
 		go func() {
-			out, err := g.Run(ctx, rc, agent, output)
-			results[i] = OutputGuardrailResult{Guardrail: g, Output: out}
-			errs[i] = err
-			done <- i
+			defer func() {
+				if rec := recover(); rec != nil {
+					done <- outcome{err: guardrailPanicError("output", g.Name, rec)}
+				}
+			}()
+			out, err := g.Run(gctx, rc, agent, output)
+			done <- outcome{result: OutputGuardrailResult{Guardrail: g, Output: out}, err: err}
 		}()
 	}
 	for range guardrails {
-		<-done
-	}
-	for i := range guardrails {
-		if errs[i] != nil {
-			return errs[i]
+		oc := <-done
+		if oc.err != nil {
+			return oc.err
 		}
-		if results[i].Output.TripwireTriggered {
+		if oc.result.Output.TripwireTriggered {
 			return &OutputGuardrailTripwireError{
-				AgentsError: AgentsError{Message: "output guardrail " + guardrails[i].Name + " tripwire triggered"},
-				Result:      results[i],
+				AgentsError: AgentsError{Message: "output guardrail " + oc.result.Guardrail.Name + " tripwire triggered"},
+				Result:      oc.result,
 			}
 		}
 	}

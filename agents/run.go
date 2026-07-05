@@ -3,6 +3,9 @@ package agents
 import (
 	"context"
 	"errors"
+	"os"
+	"slices"
+	"strings"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -81,6 +84,24 @@ type RunOptions struct {
 	// Build one with tracing.NewTracer(processor).
 	Tracer *tracing.Tracer
 
+	// TraceIncludeSensitiveData controls whether generation spans record the
+	// full model request (model, system instructions, input items) and output
+	// items. nil reads the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA
+	// environment variable, where anything but "false" means true — matching
+	// the Python SDK's RunConfig.trace_include_sensitive_data default. Set to
+	// false when trace exports must not carry conversation content.
+	TraceIncludeSensitiveData *bool
+
+	// TraceGroupID links this run's trace to a group of related traces (e.g.
+	// one chat thread across several runs) — the counterpart of Python's
+	// RunConfig.group_id. Only used when Tracer starts a new trace.
+	TraceGroupID string
+
+	// TraceMetadata attaches user metadata to the run's trace — the
+	// counterpart of Python's RunConfig.trace_metadata. Only used when Tracer
+	// starts a new trace.
+	TraceMetadata map[string]any
+
 	// UsePreviousResponseID opts into server-managed conversation state: instead
 	// of resending the full history each turn, the runner chains calls via the
 	// OpenAI Responses API's previous_response_id and sends only new items. This
@@ -98,6 +119,12 @@ type RunOptions struct {
 	// trace instead of starting (and finishing) its own. Set internally for
 	// nested agent-as-tool runs; not user-facing.
 	parentTrace *tracing.TraceHandle
+
+	// parentSpanID, when set alongside parentTrace, parents the nested run's
+	// agent spans under the function span of the agent-as-tool call that
+	// triggered it, so trace trees show which tool call owns the nested run.
+	// Set internally; not user-facing.
+	parentSpanID string
 }
 
 // Run executes the agent loop until the agent produces a final output, hands off
@@ -107,6 +134,22 @@ type RunOptions struct {
 //
 // It is the Go counterpart of the Python SDK's Runner.run.
 func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
+	r, modelInput, finishTrace, err := prepareRun(ctx, agent, input, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer finishTrace()
+	return r.loop(ctx, agent, modelInput)
+}
+
+// prepareRun builds the runner shared by Run and RunStreamed: it normalizes
+// the input, validates server-state options, wires the run context, starts
+// (or joins) the trace and prepends session history to the model input. The
+// returned finish func ends the trace — a no-op when the trace was joined
+// (nested run) or tracing is off — and must be deferred by the caller.
+// ResumeRun has its own entry construction (it seeds from a RunState) and
+// shares only the loop.
+func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []TResponseInputItem, func(), error) {
 	maxTurns := opts.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = DefaultMaxTurns
@@ -123,14 +166,15 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 
 	userInput, err := normalizeInput(input)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	if err := validateServerState(opts); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
 
+	finishTrace := func() {}
 	if opts.parentTrace != nil {
 		// Nested run (agent-as-tool): record spans into the parent's trace
 		// rather than starting an orphan root trace. The parent finishes it.
@@ -140,8 +184,15 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 		if workflow == "" {
 			workflow = "Agent workflow"
 		}
-		r.trace = opts.Tracer.StartTrace(workflow)
-		defer r.trace.Finish()
+		var topts []tracing.TraceOption
+		if opts.TraceGroupID != "" {
+			topts = append(topts, tracing.WithGroupID(opts.TraceGroupID))
+		}
+		if opts.TraceMetadata != nil {
+			topts = append(topts, tracing.WithMetadata(opts.TraceMetadata))
+		}
+		r.trace = opts.Tracer.StartTrace(workflow, topts...)
+		finishTrace = r.trace.Finish
 	}
 	rc.activeTrace = r.trace
 
@@ -150,7 +201,7 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 	if opts.Session != nil {
 		history, herr := opts.Session.GetItems(ctx, 0)
 		if herr != nil {
-			return nil, herr
+			return nil, nil, nil, herr
 		}
 		if len(history) > 0 {
 			modelInput = make([]TResponseInputItem, 0, len(history)+len(userInput))
@@ -159,7 +210,7 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunRes
 		}
 	}
 
-	return r.loop(ctx, agent, modelInput)
+	return r, modelInput, finishTrace, nil
 }
 
 // runner holds the mutable state for a single Run invocation.
@@ -171,6 +222,15 @@ type runner struct {
 	resume    *RunState            // non-nil when resuming from an interruption
 	trace     *tracing.TraceHandle // non-nil when tracing is enabled
 	agentSpan *tracing.SpanHandle  // current agent span, parent of generation/tool spans
+
+	// sr, when non-nil, makes loop run in streaming mode: raw model events
+	// and run-item/agent-updated events are emitted to it, the model is
+	// called via StreamResponse, and input guardrails run synchronously
+	// before the first model call instead of concurrently with it (the
+	// documented difference from blocking runs). These are the ONLY
+	// behavioral differences between Run and RunStreamed — everything else
+	// lives once in loop.
+	sr *StreamedResult
 
 	// sessionItems accumulates every generated item for session persistence.
 	// Unlike the loop's generatedItems it is never reset by a handoff input
@@ -198,6 +258,17 @@ func (r *runner) agentParentID() string {
 func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TResponseInputItem) (*RunResult, error) {
 	// Finish the active agent span when the loop ends (nil-safe when untraced).
 	defer func() { r.agentSpan.Finish() }()
+
+	// cancelInputGuardrails, when set, cancels the in-flight input-guardrail
+	// goroutine. Deferred so every early exit (e.g. a failed model call) stops
+	// an LLM-based guardrail instead of letting it run to completion after the
+	// run has already returned.
+	var cancelInputGuardrails context.CancelFunc
+	defer func() {
+		if cancelInputGuardrails != nil {
+			cancelInputGuardrails()
+		}
+	}()
 
 	currentAgent := startAgent
 	generatedItems := []RunItem{}
@@ -243,36 +314,39 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 		if shouldRunStartHooks {
 			if err := callAgentStart(ctx, r.opts.Hooks, currentAgent, r.rc); err != nil {
-				return nil, err
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			shouldRunStartHooks = false
 			// Start an agent span (parent of this agent's generation/tool spans).
 			if r.agentSpan != nil {
 				r.agentSpan.Finish()
 			}
-			r.agentSpan = r.trace.StartAgentSpan(currentAgent.Name, "")
+			r.agentSpan = r.trace.StartAgentSpan(currentAgent.Name, r.opts.parentSpanID)
 		}
 
 		model, err := r.resolveModel(currentAgent)
 		if err != nil {
-			return nil, err
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 		systemPrompt, err := currentAgent.GetSystemPrompt(ctx, r.rc)
 		if err != nil {
-			return nil, err
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 		prompt, err := currentAgent.GetPrompt(ctx, r.rc)
 		if err != nil {
-			return nil, err
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 		outputSchema := agentOutputSchema(currentAgent)
 		if err := outputSchemaError(outputSchema); err != nil {
-			return nil, err
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
-		handoffs := currentAgent.Handoffs
+		handoffs, err := r.enabledHandoffs(ctx, currentAgent)
+		if err != nil {
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+		}
 		tools, err := r.enabledTools(ctx, currentAgent)
 		if err != nil {
-			return nil, err
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 
 		// Build the model input. In previous_response_id mode, send only the
@@ -290,25 +364,43 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			modelInput, err = buildModelInput(originalInput, generatedItems)
 		}
 		if err != nil {
-			return nil, err
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 
-		// On the first turn, run input guardrails concurrently with the model
-		// call (matching the Python SDK). guardErrCh delivers a tripwire error.
-		// They already ran before an interruption, so a resumed run skips them.
+		// On the first turn, run input guardrails: concurrently with the model
+		// call for blocking runs (matching the Python SDK), synchronously
+		// before it for streaming runs (the documented difference). guardErrCh
+		// delivers the concurrent tripwire error. They already ran before an
+		// interruption, so a resumed run skips them. The goroutine gets its own
+		// cancelable context so early exits (see the deferred
+		// cancelInputGuardrails) stop a still-running guardrail.
 		var guardErrCh chan error
 		if turn == startTurn && r.resume == nil && len(startAgent.InputGuardrails) > 0 {
-			guardErrCh = make(chan error, 1)
-			parentID := r.agentParentID() // read before the goroutine races a handoff
-			go func() {
-				gspan := r.trace.StartGuardrailSpan("input", parentID)
+			if r.sr != nil {
+				gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
 				gerr := runInputGuardrails(ctx, r.rc, startAgent, startAgent.InputGuardrails, originalInput)
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)
 				}
 				gspan.Finish()
-				guardErrCh <- gerr
-			}()
+				if gerr != nil {
+					return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
+				}
+			} else {
+				guardErrCh = make(chan error, 1)
+				gctx, gcancel := context.WithCancel(ctx)
+				cancelInputGuardrails = gcancel
+				parentID := r.agentParentID() // read before the goroutine races a handoff
+				go func() {
+					gspan := r.trace.StartGuardrailSpan("input", parentID)
+					gerr := runInputGuardrails(gctx, r.rc, startAgent, startAgent.InputGuardrails, originalInput)
+					if gerr != nil {
+						gspan.SetError(gerr.Error(), nil)
+					}
+					gspan.Finish()
+					guardErrCh <- gerr
+				}()
+			}
 		}
 
 		var resp *ModelResponse
@@ -329,8 +421,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, r.rc, systemPrompt, modelInput); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			span := r.trace.StartGenerationSpan(currentAgent.Name, r.agentParentID())
-			resp, err = model.GetResponse(ctx, ModelRequest{
+			req := ModelRequest{
 				SystemInstructions: systemPrompt,
 				Prompt:             prompt,
 				Input:              modelInput,
@@ -341,15 +432,24 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Tracing:            ModelTracingDisabled,
 				PreviousResponseID: prevID,
 				ConversationID:     r.opts.ConversationID,
-			})
+			}
+			span := r.startGenerationSpan(currentAgent, req)
+			if r.sr != nil {
+				resp, err = r.streamOneModelCall(ctx, r.sr, span, model, req)
+			} else {
+				resp, err = model.GetResponse(ctx, req)
+			}
 			if err != nil {
 				span.SetError(err.Error(), nil)
 				span.Finish()
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			span.Set("response_id", resp.ResponseID)
-			setGenerationUsage(span, resp.Usage)
-			span.Finish()
+			r.finishGenerationSpan(span, resp)
+			// Usage and raw responses must reflect this call even when the
+			// OnLLMEnd hook or an input guardrail below aborts the turn
+			// (Python parity: the model call already happened and was billed).
+			r.rc.Usage.Add(resp.Usage)
+			rawResponses = append(rawResponses, resp)
 			if err := callLLMEnd(ctx, r.opts.Hooks, currentAgent, r.rc, resp); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
@@ -358,8 +458,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 			}
-			r.rc.Usage.Add(resp.Usage)
-			rawResponses = append(rawResponses, resp)
 		}
 		r.lastResponseID = resp.ResponseID
 		r.lastStore = r.resolveSettings(currentAgent).Store
@@ -369,10 +467,26 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 
+		// Streaming: emit events for the model-produced items.
+		if r.sr != nil {
+			for _, it := range processed.NewItems {
+				r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(it), Item: it})
+			}
+		}
+
 		lenBeforeStep := len(generatedItems)
 		step, err := r.executeToolsAndSideEffects(ctx, currentAgent, processed, outputSchema, resumedTurn)
 		if err != nil {
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+		}
+
+		// Streaming: emit events for items produced by side effects
+		// (tool/handoff outputs). Safe to slice: streaming never resumes, so
+		// NewStepItems always begins with processed.NewItems.
+		if r.sr != nil {
+			for _, it := range step.NewStepItems[len(processed.NewItems):] {
+				r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(it), Item: it})
+			}
 		}
 
 		generatedItems = append(generatedItems, step.NewStepItems...)
@@ -419,10 +533,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				}
 			}
 			if err := r.saveToSession(ctx); err != nil {
-				return nil, err
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			if err := callAgentEnd(ctx, r.opts.Hooks, currentAgent, r.rc, step.FinalOutput); err != nil {
-				return nil, err
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			return &RunResult{
 				Input:        originalInput,
@@ -434,7 +548,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}, nil
 		case stepHandoff:
 			if err := callHandoff(ctx, r.opts.Hooks, currentAgent, step.NewAgent, r.rc); err != nil {
-				return nil, err
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			if step.Handoff != nil {
 				if filter := r.handoffInputFilter(step.Handoff); filter != nil {
@@ -445,13 +559,18 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					originalInput = filtered
 					generatedItems = nil
 					// The server's stored history is unfiltered, so we can no longer
-					// chain via previous_response_id; resend the filtered input.
+					// chain via previous_response_id or send conversation deltas;
+					// resend the filtered input in full on the next turn.
 					previousResponseID = ""
 					serverItemCount = 0
+					serverCursorActive = false
 				}
 			}
 			currentAgent = step.NewAgent
 			shouldRunStartHooks = true
+			if r.sr != nil {
+				r.sr.emit(ctx, &AgentUpdatedStreamEvent{NewAgent: currentAgent})
+			}
 			continue
 		case stepInterruption:
 			state := &RunState{
@@ -466,6 +585,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Approvals:           r.rc.Approvals,
 				Usage:               r.rc.Usage,
 				CurrentTurn:         turn,
+				MaxTurns:            r.maxTurns,
 			}
 			return &RunResult{
 				Input:         originalInput,
@@ -483,6 +603,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 }
 
 func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, raw []*ModelResponse, last *Agent) error {
+	// Mark the current agent span failed so the error is visible in traces;
+	// child spans (generation, function) set their own errors at the source.
+	r.agentSpan.SetError(err.Error(), nil)
 	details := &RunErrorDetails{
 		Input:        input,
 		NewItems:     items,
@@ -519,8 +642,32 @@ func (r *runner) saveToSession(ctx context.Context) error {
 	// If the session can compact itself (e.g. via responses.compact), give it a
 	// chance now that the run's items are persisted. At run end there are no
 	// pending tool outputs, so compaction is always safe to attempt here.
+	// Compaction is best-effort housekeeping: the items are already saved and
+	// the final output produced, so a compaction failure is recorded on the
+	// trace instead of turning the successful run into an error.
 	if cs, ok := r.opts.Session.(CompactionAwareSession); ok {
-		return cs.RunCompaction(ctx, CompactionArgs{ResponseID: r.lastResponseID, Store: r.lastStore})
+		// The span starts lazily — only when the session actually compacts —
+		// so no-op passes don't clutter the trace.
+		var cspan *tracing.SpanHandle
+		cerr := cs.RunCompaction(ctx, CompactionArgs{
+			ResponseID: r.lastResponseID,
+			Store:      r.lastStore,
+			StartSpan: func() *tracing.SpanHandle {
+				cspan = r.trace.StartCompactionSpan(r.agentParentID())
+				return cspan
+			},
+		})
+		if cerr != nil && cspan == nil {
+			// Failed before the session opened the span; open one so the
+			// error is still visible on the trace.
+			cspan = r.trace.StartCompactionSpan(r.agentParentID())
+		}
+		if cspan != nil {
+			if cerr != nil {
+				cspan.SetError(cerr.Error(), nil)
+			}
+			cspan.Finish()
+		}
 	}
 	return nil
 }
@@ -529,14 +676,16 @@ func (r *runner) saveToSession(ctx context.Context) error {
 // conversation_id and previous_response_id both put history on the server, so
 // they cannot be combined with each other or with a local Session.
 func validateServerState(opts RunOptions) error {
-	if opts.ConversationID == "" {
-		return nil
+	if opts.ConversationID != "" {
+		if opts.UsePreviousResponseID {
+			return newUserError("ConversationID cannot be combined with UsePreviousResponseID")
+		}
+		if opts.Session != nil {
+			return newUserError("ConversationID cannot be combined with a local Session")
+		}
 	}
-	if opts.UsePreviousResponseID {
-		return newUserError("ConversationID cannot be combined with UsePreviousResponseID")
-	}
-	if opts.Session != nil {
-		return newUserError("ConversationID cannot be combined with a local Session")
+	if opts.UsePreviousResponseID && opts.Session != nil {
+		return newUserError("UsePreviousResponseID cannot be combined with a local Session")
 	}
 	return nil
 }
@@ -561,6 +710,105 @@ func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	span.Set("input_tokens", u.InputTokens)
 	span.Set("output_tokens", u.OutputTokens)
 	span.Set("total_tokens", u.TotalTokens)
+}
+
+// traceIncludeSensitiveData resolves RunOptions.TraceIncludeSensitiveData,
+// falling back to the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
+// variable where anything but "false" means true — the same default as the
+// Python SDK.
+func (r *runner) traceIncludeSensitiveData() bool {
+	if r.opts.TraceIncludeSensitiveData != nil {
+		return *r.opts.TraceIncludeSensitiveData
+	}
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA")), "false")
+}
+
+// traceTools projects the request's tools into a serializable form — the
+// function fields on FunctionTool cannot be marshaled.
+func traceTools(tools []Tool) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		m := map[string]any{"name": t.ToolName()}
+		if ft, ok := t.(*FunctionTool); ok {
+			if ft.Description != "" {
+				m["description"] = ft.Description
+			}
+			if ft.ParamsJSONSchema != nil {
+				m["parameters"] = ft.ParamsJSONSchema
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// traceHandoffs projects the request's handoffs into a serializable form.
+func traceHandoffs(handoffs []Handoff) []map[string]any {
+	out := make([]map[string]any, 0, len(handoffs))
+	for _, h := range handoffs {
+		out = append(out, map[string]any{
+			"tool_name":  h.ToolName,
+			"agent_name": h.AgentName,
+		})
+	}
+	return out
+}
+
+// startGenerationSpan opens the span for one model call and, unless
+// sensitive-data tracing is off, records the full request body: model name,
+// system instructions, input items, tool definitions, model settings (the
+// Extra* passthrough fields are excluded by their json tags), handoffs, and
+// output schema. Slices are cloned or projected because exporters serialize
+// asynchronously, after the runner may have modified the originals.
+func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.SpanHandle {
+	span := r.trace.StartGenerationSpan(agent.Name, r.agentParentID())
+	if span.Span == nil || !r.traceIncludeSensitiveData() {
+		return span
+	}
+	if agent.Model != "" {
+		span.Set("model", agent.Model)
+	}
+	if req.SystemInstructions != "" {
+		span.Set("system_instructions", req.SystemInstructions)
+	}
+	span.Set("input", slices.Clone(req.Input))
+	if len(req.Tools) > 0 {
+		span.Set("tools", traceTools(req.Tools))
+	}
+	if len(req.Handoffs) > 0 {
+		span.Set("handoffs", traceHandoffs(req.Handoffs))
+	}
+	if req.Settings != nil {
+		span.Set("model_settings", *req.Settings)
+	}
+	if req.OutputSchema != nil && !req.OutputSchema.IsPlainText() {
+		span.Set("output_schema", map[string]any{
+			"name":   req.OutputSchema.Name(),
+			"schema": req.OutputSchema.JSONSchema(),
+		})
+	}
+	if req.Prompt != nil {
+		span.Set("prompt", *req.Prompt)
+	}
+	if req.PreviousResponseID != "" {
+		span.Set("previous_response_id", req.PreviousResponseID)
+	}
+	if req.ConversationID != "" {
+		span.Set("conversation_id", req.ConversationID)
+	}
+	return span
+}
+
+// finishGenerationSpan records the model call's outcome — response id, usage,
+// and (unless sensitive-data tracing is off) the output items — and ends the
+// span.
+func (r *runner) finishGenerationSpan(span *tracing.SpanHandle, resp *ModelResponse) {
+	span.Set("response_id", resp.ResponseID)
+	setGenerationUsage(span, resp.Usage)
+	if span.Span != nil && r.traceIncludeSensitiveData() {
+		span.Set("output", slices.Clone(resp.Output))
+	}
+	span.Finish()
 }
 
 func (r *runner) resolveModel(agent *Agent) (Model, error) {
@@ -614,6 +862,40 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 			return nil, err
 		}
 		out = append(out, mcpTools...)
+	}
+	// Reject duplicate tool names instead of silently letting the last one
+	// shadow the others in the runner's dispatch map (the Python SDK raises a
+	// UserError for duplicates too).
+	seen := make(map[string]bool, len(out))
+	for _, t := range out {
+		ft, ok := t.(*FunctionTool)
+		if !ok {
+			continue
+		}
+		if seen[ft.Name] {
+			return nil, newUserError("duplicate tool name %q on agent %q: tool names must be unique across Agent.Tools and MCP server tools", ft.Name, agent.Name)
+		}
+		seen[ft.Name] = true
+	}
+	return out, nil
+}
+
+// enabledHandoffs returns the agent's handoffs, filtered by any IsEnabled
+// predicate (nil means enabled; a predicate error aborts the run). A disabled
+// handoff is not offered to the model and cannot be invoked.
+func (r *runner) enabledHandoffs(ctx context.Context, agent *Agent) ([]Handoff, error) {
+	out := make([]Handoff, 0, len(agent.Handoffs))
+	for _, h := range agent.Handoffs {
+		if h.IsEnabled != nil {
+			ok, err := h.IsEnabled(ctx, r.rc, agent)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		out = append(out, h)
 	}
 	return out, nil
 }

@@ -92,6 +92,72 @@ func TestLoad_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestLoadRecursive(t *testing.T) {
+	root := t.TempDir()
+	// A loose skill directly under root, same as Load would find.
+	writeSkill(t, root, "code-review", "---\nname: code-review\ndescription: Review code changes.\n---\nbody\n")
+	// A cloned multi-skill repo, one level deeper.
+	writeSkill(t, root, filepath.Join("some-repo", "docx"), "---\nname: docx\ndescription: Edit Word documents.\n---\nbody\n")
+	writeSkill(t, root, filepath.Join("some-repo", "pdf-processing"), pdfSkill)
+	// A skill nested three levels deep — beyond what a naive two-pass scan would find.
+	writeSkill(t, root, filepath.Join("outer", "inner", "deep-skill"), "---\nname: deep-skill\ndescription: Buried three levels down.\n---\nbody\n")
+	// A directory with no SKILL.md anywhere under it is skipped, not an error.
+	if err := os.MkdirAll(filepath.Join(root, "not-a-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := skills.LoadRecursive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("loaded %d skills, want 4: %+v", len(got), got)
+	}
+	byPath := make(map[string]skills.Skill, len(got))
+	for _, sk := range got {
+		byPath[sk.Path] = sk
+	}
+
+	loose, ok := byPath["code-review/SKILL.md"]
+	if !ok {
+		t.Fatalf("missing loose skill, got paths %v", pathsOf(got))
+	}
+	if loose.Dir != "code-review" {
+		t.Errorf("loose skill Dir = %q, want %q", loose.Dir, "code-review")
+	}
+
+	docx, ok := byPath["some-repo/docx/SKILL.md"]
+	if !ok {
+		t.Fatalf("missing nested repo skill, got paths %v", pathsOf(got))
+	}
+	if docx.Dir != "some-repo/docx" {
+		t.Errorf("nested skill Dir = %q, want %q", docx.Dir, "some-repo/docx")
+	}
+
+	deep, ok := byPath["outer/inner/deep-skill/SKILL.md"]
+	if !ok {
+		t.Fatalf("missing three-levels-deep skill, got paths %v", pathsOf(got))
+	}
+	if deep.Name != "deep-skill" {
+		t.Errorf("deep skill Name = %q, want %q", deep.Name, "deep-skill")
+	}
+
+	// Sorted by Path, not Name, so same-named skills from different repos don't collide.
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Path >= got[i].Path {
+			t.Errorf("results not sorted by Path: %q before %q", got[i-1].Path, got[i].Path)
+		}
+	}
+}
+
+func pathsOf(got []skills.Skill) []string {
+	out := make([]string, len(got))
+	for i, sk := range got {
+		out[i] = sk.Path
+	}
+	return out
+}
+
 func TestRenderIndex(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "pdf-processing", pdfSkill)

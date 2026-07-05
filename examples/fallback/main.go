@@ -44,10 +44,15 @@ func main() {
 		RetryIf:     openai.RetryableError,
 		RetryAfter:  openai.RetryAfter,
 	}
+	// By default every error except context cancellation advances the chain.
+	// WithShouldFallback narrows that: with openai.RetryableError only
+	// transient failures (429/5xx/network) try the backup — a deterministic
+	// 400 (bad schema, context too long) fails fast instead of burning a
+	// doomed call on every backend.
 	model := agents.NewFallbackModel(
 		agents.NewRetryModel(primary, policy),
 		agents.NewRetryModel(backup, policy),
-	)
+	).WithShouldFallback(openai.RetryableError)
 
 	agent := &agents.Agent{
 		Name:         "resilient-bot",

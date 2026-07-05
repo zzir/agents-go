@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/tracing"
 )
 
 // DefaultCompactionThreshold is the number of compaction-candidate items at
@@ -143,6 +144,14 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 		return nil
 	}
 
+	// Compaction is going to happen: open the tracing span (no-op paths above
+	// stay out of traces). The runner finishes it after RunCompaction returns.
+	var span *tracing.SpanHandle
+	if args.StartSpan != nil {
+		span = args.StartSpan()
+	}
+	span.Set("before_items", len(items))
+
 	mode := resolveCompactionMode(s.mode, args.ResponseID, args.Store)
 	params := responses.ResponseCompactParams{Model: responses.ResponseCompactParamsModel(s.model)}
 	if mode == CompactionModePreviousResponseID {
@@ -164,14 +173,12 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 		return fmt.Errorf("compaction: converting output: %w", err)
 	}
 	out = stripOrphanedAssistantIDs(out)
+	span.Set("after_items", len(out))
 
-	if err := s.underlying.Clear(ctx); err != nil {
-		return fmt.Errorf("compaction: clearing history: %w", err)
-	}
-	if len(out) > 0 {
-		if err := s.underlying.AddItems(ctx, out); err != nil {
-			return fmt.Errorf("compaction: writing compacted history: %w", err)
-		}
+	// ReplaceSessionItems swaps atomically when the underlying session supports
+	// it, so a failed write cannot leave the history cleared but empty.
+	if err := agents.ReplaceSessionItems(ctx, s.underlying, out); err != nil {
+		return fmt.Errorf("compaction: replacing history: %w", err)
 	}
 	return nil
 }

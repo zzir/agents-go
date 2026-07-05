@@ -31,23 +31,45 @@ type OutputSchema interface {
 // for use cases where the schema is loaded at runtime (e.g. from a database)
 // rather than derived from a Go type at compile time.
 type dynamicOutputSchema struct {
-	name   string
-	schema map[string]any
-	strict bool
+	name      string
+	schema    map[string]any
+	strict    bool
+	schemaErr error // deferred strict-normalization failure, surfaced by the runner
 }
 
 // NewDynamicOutputSchema returns an OutputSchema backed by the given JSON Schema
 // map. name is the schema identifier sent to the provider (e.g. "final_output").
-// When strict is true, IsStrictJSONSchema reports true.
+//
+// When strict is true, the schema is normalized to the strict subset via
+// EnsureStrictJSONSchema on a deep copy (the caller's map is not mutated),
+// matching what the SDK does for reflected schemas. If normalization fails,
+// the error surfaces before the first model call of any run using this schema
+// rather than as a 400 from the API.
 func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) OutputSchema {
-	return &dynamicOutputSchema{name: name, schema: schema, strict: strict}
+	s := &dynamicOutputSchema{name: name, schema: schema, strict: strict}
+	if strict {
+		normalized, err := ensureStrictSchemaCopy(schema)
+		if err != nil {
+			s.schema = nil
+			s.schemaErr = newUserError("dynamic output schema %q: strict schema normalization failed: %v", name, err)
+		} else {
+			s.schema = normalized
+		}
+	}
+	return s
 }
+
+// schemaError exposes a deferred strict-normalization failure to the runner.
+func (s *dynamicOutputSchema) schemaError() error { return s.schemaErr }
 
 func (s *dynamicOutputSchema) IsPlainText() bool          { return false }
 func (s *dynamicOutputSchema) Name() string               { return s.name }
 func (s *dynamicOutputSchema) JSONSchema() map[string]any { return s.schema }
 func (s *dynamicOutputSchema) IsStrictJSONSchema() bool   { return s.strict }
 func (s *dynamicOutputSchema) ValidateJSON(raw string) (any, error) {
+	if s.schemaErr != nil {
+		return nil, s.schemaErr
+	}
 	var v any
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
 		return nil, fmt.Errorf("dynamic output schema %q: invalid JSON: %w", s.name, err)

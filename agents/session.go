@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	"github.com/zzir/agents-go/tracing"
 )
 
 // Session persists conversation history across runs. When a Session is supplied
@@ -25,6 +27,29 @@ type Session interface {
 	Clear(ctx context.Context) error
 }
 
+// ItemsReplacer is an optional Session capability: atomically replace the
+// entire stored history with a new item list. Backends that can do this in one
+// step (a file rename, a DB transaction) should implement it so history
+// rewrites — compaction, summarization — cannot leave the session empty when
+// a failure lands between clearing and re-adding.
+type ItemsReplacer interface {
+	ReplaceItems(ctx context.Context, items []TResponseInputItem) error
+}
+
+// ReplaceSessionItems swaps a session's stored history for items. When the
+// session implements ItemsReplacer the swap is atomic; otherwise it falls back
+// to Clear followed by AddItems, which can leave the session empty if AddItems
+// fails or the process crashes between the two calls.
+func ReplaceSessionItems(ctx context.Context, s Session, items []TResponseInputItem) error {
+	if r, ok := s.(ItemsReplacer); ok {
+		return r.ReplaceItems(ctx, items)
+	}
+	if err := s.Clear(ctx); err != nil {
+		return err
+	}
+	return s.AddItems(ctx, items)
+}
+
 // CompactionArgs carry the context a CompactionAwareSession needs to decide
 // whether (and how) to compact its history after a run.
 type CompactionArgs struct {
@@ -34,6 +59,12 @@ type CompactionArgs struct {
 	Store *bool
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
+	// StartSpan, when non-nil, opens a compaction tracing span. Implementations
+	// call it right before actually compacting (not on the no-op path, so
+	// traces only show passes that did work) and may annotate the returned
+	// span (e.g. before/after item counts). The runner finishes the span —
+	// and records any RunCompaction error on it — after RunCompaction returns.
+	StartSpan func() *tracing.SpanHandle
 }
 
 // CompactionAwareSession is a Session that can compact its own stored history —
@@ -97,7 +128,19 @@ func (s *InMemorySession) Clear(_ context.Context) error {
 	return nil
 }
 
-var _ Session = (*InMemorySession)(nil)
+// ReplaceItems implements ItemsReplacer: the whole history is swapped under a
+// single lock acquisition.
+func (s *InMemorySession) ReplaceItems(_ context.Context, items []TResponseInputItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items = append([]TResponseInputItem(nil), items...)
+	return nil
+}
+
+var (
+	_ Session       = (*InMemorySession)(nil)
+	_ ItemsReplacer = (*InMemorySession)(nil)
+)
 
 // MarshalItems serializes a slice of input items to JSON, suitable for database
 // storage. It handles nil slices gracefully (returning "[]").

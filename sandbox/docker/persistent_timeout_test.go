@@ -1,0 +1,166 @@
+// Integration tests for the persistent-mode exec timeout. Unlike
+// integration_test.go (which is opt-in via the docker_integration build tag),
+// these probe the environment and skip when no Docker daemon is reachable or
+// the test image is not available locally, so plain `go test ./...` exercises
+// them on machines that have Docker without ever pulling images.
+package docker
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/moby/moby/client"
+
+	"github.com/zzir/agents-go/sandbox"
+)
+
+// testImage must provide a coreutils sleep (for the "sleep infinity"
+// persistent entrypoint) and a POSIX sh. It matches integration_test.go.
+const testImage = "python:3.12-slim"
+
+// newPersistentSandbox returns a persistent-mode sandbox against the local
+// daemon, skipping the test when the daemon or the image is unavailable.
+func newPersistentSandbox(t *testing.T, opts Options) *Sandbox {
+	t.Helper()
+	probe, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Skipf("docker client: %v", err)
+	}
+	defer probe.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := probe.Ping(ctx, client.PingOptions{}); err != nil {
+		t.Skipf("docker daemon unreachable: %v", err)
+	}
+	if _, err := probe.ImageInspect(ctx, opts.Image); err != nil {
+		t.Skipf("image %s not available locally: %v", opts.Image, err)
+	}
+
+	sb, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sb.Close() })
+	return sb
+}
+
+// Persistent-mode exec must honor the request timeout even when the command
+// never exits and stops producing output ("sleep 20", "sleep infinity"): the
+// hijacked attach connection has no deadline of its own, so the call must
+// return a timeout result in roughly Timeout time and kill the exec process.
+func TestPersistentExecTimeout(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
+
+	start := time.Now()
+	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+		// exec keeps it a single process so the post-timeout kill is
+		// pid-exact; "started" proves pre-timeout output is preserved.
+		Cmd:     []string{"sh", "-c", "echo started; exec sleep 20"},
+		Timeout: 2 * time.Second,
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut || res.ExitCode != -1 {
+		t.Errorf("TimedOut = %v, exit = %d; want true, -1", res.TimedOut, res.ExitCode)
+	}
+	// Well under the 20s the command would need: proves the deadline
+	// interrupted the blocked read (the container create adds a few seconds
+	// of setup on top of the 2s timeout).
+	if elapsed >= 10*time.Second {
+		t.Errorf("Exec took %v; the timeout did not interrupt the attach read", elapsed)
+	}
+	if !strings.Contains(res.Stdout, "started") {
+		t.Errorf("stdout = %q, want pre-timeout output preserved", res.Stdout)
+	}
+
+	// killExec must have terminated the timed-out process inside the
+	// container (it must not linger for the full 20s).
+	waitGone(t, sb, "sleep 20")
+
+	// The persistent container stays usable after a timed-out exec.
+	res2, err := sb.Exec(context.Background(), sandbox.ExecRequest{Cmd: []string{"echo", "still-alive"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.ExitCode != 0 || !strings.Contains(res2.Stdout, "still-alive") {
+		t.Errorf("follow-up exec: exit = %d, stdout = %q", res2.ExitCode, res2.Stdout)
+	}
+}
+
+// The streaming counterpart of TestPersistentExecTimeout: ExecStream shares
+// the same hijacked-connection read and needs the same interruption.
+func TestPersistentExecStreamTimeout(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
+
+	var stdout, stderr strings.Builder
+	start := time.Now()
+	res, err := sb.ExecStream(context.Background(), sandbox.ExecRequest{
+		Cmd:     []string{"sh", "-c", "echo streamed; exec sleep 20"},
+		Timeout: 2 * time.Second,
+	}, &stdout, &stderr)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut || res.ExitCode != -1 {
+		t.Errorf("TimedOut = %v, exit = %d; want true, -1", res.TimedOut, res.ExitCode)
+	}
+	if elapsed >= 10*time.Second {
+		t.Errorf("ExecStream took %v; the timeout did not interrupt the attach read", elapsed)
+	}
+	if !strings.Contains(stdout.String(), "streamed") {
+		t.Errorf("streamed stdout = %q, want pre-timeout output", stdout.String())
+	}
+	waitGone(t, sb, "sleep 20")
+}
+
+// ReadFile through the persistent (CopyFromContainer) path must enforce
+// MaxReadFileBytes.
+func TestPersistentReadFileLimit(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true, MaxReadFileBytes: 1024})
+
+	ctx := context.Background()
+	if err := sb.WriteFile(ctx, "big.bin", make([]byte, 4096)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sb.ReadFile(ctx, "big.bin"); !errors.Is(err, sandbox.ErrReadLimitExceeded) {
+		t.Errorf("ReadFile(big.bin) err = %v, want sandbox.ErrReadLimitExceeded", err)
+	}
+	if err := sb.WriteFile(ctx, "small.txt", []byte("fits")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := sb.ReadFile(ctx, "small.txt")
+	if err != nil {
+		t.Fatalf("ReadFile(small.txt): %v", err)
+	}
+	if string(data) != "fits" {
+		t.Errorf("data = %q", data)
+	}
+}
+
+// waitGone polls the container's /proc until no process command line contains
+// needle (the entrypoint "sleep infinity" never matches "sleep 20").
+func waitGone(t *testing.T, sb *Sandbox, needle string) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+			Cmd: []string{"sh", "-c", `for f in /proc/[0-9]*/cmdline; do tr '\0' ' ' <"$f" 2>/dev/null; echo; done`},
+		})
+		if err != nil {
+			t.Fatalf("proc scan: %v", err)
+		}
+		if !strings.Contains(res.Stdout, needle) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("process %q still running in the container:\n%s", needle, res.Stdout)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}

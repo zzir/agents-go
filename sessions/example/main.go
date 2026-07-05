@@ -21,17 +21,23 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
 
 	// A pure-Go (no CGO) SQLite file under the OS temp dir.
 	dbPath := filepath.Join(os.TempDir(), "agents-session-demo.db")
 	sess, db, err := sessions.NewSQLite("file:"+dbPath, "user-123")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close()
 	if err := sessions.CreateSchema(ctx, db); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	agent := &agents.Agent{
@@ -43,16 +49,17 @@ func main() {
 
 	res1, err := agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println("Q1:", res1.FinalOutputString())
 
 	// No history threading: the session replays turn 1 from SQLite.
 	res2, err := agents.Run(ctx, agent, "What state is it in?", opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println("Q2:", res2.FinalOutputString())
 
 	fmt.Printf("\nConversation persisted to %s\n", dbPath)
+	return nil
 }

@@ -127,30 +127,47 @@ func (s *Session) AddItems(ctx context.Context, items []agents.TResponseInputIte
 }
 
 // PopItem implements agents.Session, removing and returning the most recent
-// item (or nil if the session is empty). The select-and-delete runs in one
-// transaction so concurrent pops do not return the same row twice.
+// item (or nil if the session is empty).
+//
+// Concurrency: a plain transaction with SELECT max(id) then DELETE does not
+// stop two concurrent pops from reading the same row under PostgreSQL READ
+// COMMITTED (both see the same max, both "delete" it, both return it).
+// Instead each attempt selects a candidate row and then issues DELETE ...
+// WHERE id = ?, which is atomic at the row level on both SQLite and
+// PostgreSQL: exactly one deleter observes RowsAffected == 1. A loser
+// (RowsAffected == 0) retries with the next candidate. Every retry means some
+// other pop succeeded, so the loop is lock-free and terminates when the
+// session runs empty.
 func (s *Session) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
-	var row message
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := tx.NewSelect().Model(&row).
-			Where("session_id = ?", s.sessionID).
-			Order("id DESC").Limit(1).Scan(ctx); err != nil {
-			return err
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		_, err := tx.NewDelete().Model(&row).WherePK().Exec(ctx)
-		return err
-	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		var row message
+		err := s.db.NewSelect().Model(&row).
+			Where("session_id = ?", s.sessionID).
+			Order("id DESC").Limit(1).Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		res, err := s.db.NewDelete().Model((*message)(nil)).Where("id = ?", row.ID).Exec(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			// A concurrent pop claimed this row between our select and
+			// delete; try again with whatever is now the most recent item.
+			continue
+		}
+		item, err := agents.UnmarshalInputItem([]byte(row.Item))
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	item, err := agents.UnmarshalInputItem([]byte(row.Item))
-	if err != nil {
-		return nil, err
-	}
-	return &item, nil
 }
 
 // Clear implements agents.Session, removing every item for this session ID.
@@ -159,4 +176,32 @@ func (s *Session) Clear(ctx context.Context) error {
 	return err
 }
 
-var _ agents.Session = (*Session)(nil)
+// ReplaceItems implements agents.ItemsReplacer: the delete of the old history
+// and the insert of the new one run in a single transaction, so a failure
+// mid-rewrite rolls back to the previous history instead of leaving the
+// session empty. Only this session ID's rows are touched.
+func (s *Session) ReplaceItems(ctx context.Context, items []agents.TResponseInputItem) error {
+	rows := make([]message, 0, len(items))
+	for _, item := range items {
+		data, err := agents.MarshalInputItem(item)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, message{SessionID: s.sessionID, Item: string(data)})
+	}
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().Model((*message)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx); err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		_, err := tx.NewInsert().Model(&rows).Exec(ctx)
+		return err
+	})
+}
+
+var (
+	_ agents.Session       = (*Session)(nil)
+	_ agents.ItemsReplacer = (*Session)(nil)
+)

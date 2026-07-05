@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"strings"
@@ -33,6 +34,35 @@ func EnsureStrictJSONSchema(schema map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	return schema, nil
+}
+
+// ensureStrictSchemaCopy deep-copies schema (via a JSON round-trip) and runs
+// EnsureStrictJSONSchema on the copy, so callers holding a user-supplied map
+// get a normalized schema without mutating the caller's value.
+func ensureStrictSchemaCopy(schema map[string]any) (map[string]any, error) {
+	if len(schema) == 0 {
+		return emptyStrictSchema(), nil
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("schema is not JSON-marshalable: %w", err)
+	}
+	var copied map[string]any
+	if err := json.Unmarshal(raw, &copied); err != nil {
+		return nil, fmt.Errorf("copying schema: %w", err)
+	}
+	return EnsureStrictJSONSchema(copied)
+}
+
+// errBoolSchema builds the error for a boolean JSON Schema ("true"/"false"),
+// which typically comes from an any/interface{} Go field. Strict mode has no
+// way to express an unconstrained value, so surface the problem at
+// construction time instead of a 400 from the API at request time.
+func errBoolSchema(what string, path []string) error {
+	return fmt.Errorf(
+		"%s (path=%s) is a boolean schema: an unconstrained schema (any/interface{} field) is not supported in strict mode; "+
+			"use a concrete type (e.g. json.RawMessage or a struct) or disable strict mode",
+		what, strings.Join(path, "/"))
 }
 
 func ensureStrict(node map[string]any, path []string, root map[string]any) error {
@@ -80,6 +110,9 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		for key, prop := range props {
 			ps, ok := prop.(map[string]any)
 			if !ok {
+				if _, isBool := prop.(bool); isBool {
+					return errBoolSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
+				}
 				continue
 			}
 			if err := ensureStrict(ps, append(path, "properties", key), root); err != nil {
@@ -93,6 +126,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		if err := ensureStrict(items, append(path, "items"), root); err != nil {
 			return err
 		}
+	} else if _, isBool := node["items"].(bool); isBool {
+		return errBoolSchema("array items", append(path, "items"))
 	}
 
 	// Unions.

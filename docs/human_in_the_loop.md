@@ -74,6 +74,8 @@ res, err := agents.ResumeRun(ctx, state, opts)
 
 Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** mapping agent names back to your `*Agent` values. The format round-trips Go↔Go only — it is not compatible with the Python SDK's `RunState` JSON.
 
+The state also carries the original run's `MaxTurns`, so a run started with a raised budget (say 20) that pauses on turn 12 resumes under the same budget even in a fresh process — `ResumeRun` uses `opts.MaxTurns` when set, else the serialized budget, else the default. Note that on a resumed result, `NewItems` deserializes as generic raw items: `ItemType()` strings survive, but type assertions like `*MessageOutputItem` will not match.
+
 ## Sessions and approvals
 
 When the run uses a [Session](sessions.md), nothing is saved at the interruption point; the user input and all generated items are persisted once the resumed run completes. Pass the same `Session` in `ResumeRun`'s options.

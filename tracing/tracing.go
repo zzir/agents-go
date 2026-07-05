@@ -32,6 +32,7 @@ const (
 	SpanTypeFunction   = "function"
 	SpanTypeHandoff    = "handoff"
 	SpanTypeGuardrail  = "guardrail"
+	SpanTypeCompaction = "compaction"
 )
 
 // Span is a single unit of work within a trace (an agent turn, a model
@@ -65,6 +66,11 @@ type Processor interface {
 }
 
 // Exporter ships finished traces and spans to a destination.
+//
+// Export may be called concurrently (a periodic flush and an explicit
+// ForceFlush/Shutdown can overlap), so implementations must be safe for
+// concurrent use. Batches are never delivered twice, but ordering across
+// concurrent Export calls is not guaranteed.
 //
 // Each element of the items slice is either a *Trace (the root of a trace tree)
 // or a *Span (a single unit of work within a trace). Implementations should

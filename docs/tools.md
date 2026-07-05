@@ -55,7 +55,7 @@ t.FailureErrorFunction = nil // a tool error now aborts the whole run
 
 ### Timeouts
 
-`Timeout` bounds one invocation; on expiry the tool's context is canceled and the call fails with `*agents.ToolTimeoutError` (fed back to the model via `FailureErrorFunction` when set, fatal otherwise):
+`Timeout` bounds one invocation; on expiry the call fails with `*agents.ToolTimeoutError` immediately (fed back to the model via `FailureErrorFunction` when set, fatal otherwise). The deadline is enforced by the runner rather than by the tool's cooperation: a tool that ignores its context cannot stall the run — its goroutine keeps running in the background until it returns on its own and its late result is discarded. Tools should still honor `ctx` cancellation to release resources promptly:
 
 ```go
 t.Timeout = 30 * time.Second
@@ -170,4 +170,4 @@ agent := &agents.Agent{
 - `str_replace` — replace a snippet that occurs **exactly once** (the model includes surrounding context to make it unique); 0 or >1 matches are rejected so edits stay precise.
 - `insert_text` — insert a line after a given line number.
 
-Every read and write is confined to the directory passed to `NewTools` via Go's `os.Root`, so `../` traversal and symlink escapes are rejected, and reads are capped at 1 MiB.
+Every read and write is confined to the directory passed to `NewTools` via Go's `os.Root`, so `../` traversal and symlink escapes are rejected. Files over 1 MiB are handled conservatively: `view_file` shows the first 1 MiB with an explicit truncation marker, while `str_replace` and `insert_text` **refuse to edit** oversize files (editing through a truncated read would silently destroy the tail). Operations from one `NewTools` set are serialized with a mutex, so two same-turn edits to the same file cannot lose each other's update.

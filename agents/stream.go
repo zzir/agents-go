@@ -99,7 +99,14 @@ func RunStreamed(ctx context.Context, agent *Agent, input any, opts RunOptions) 
 		res, err := runStreamedLoop(ctx, agent, input, opts, sr)
 		sr.setFinal(res, err)
 		if err != nil {
-			sr.ch <- streamMsg{err: err}
+			// The error is already recorded via setFinal, so when the consumer
+			// has gone away (context canceled) and the buffer is full, dropping
+			// this send is safe. A bare send here would block forever and leak
+			// this goroutine, keeping the channel from ever closing.
+			select {
+			case sr.ch <- streamMsg{err: err}:
+			case <-ctx.Done():
+			}
 		}
 	}()
 

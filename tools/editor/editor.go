@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -23,12 +24,18 @@ const maxFileBytes = 1 << 20 // 1 MiB
 
 // NewTools returns the file-editing tools (view_file, create_file, str_replace,
 // insert_text) scoped to rootDir. Give them to an agent via Agent.Tools.
+//
+// The returned tools share one mutex that serializes every operation: the SDK
+// runs same-turn tool calls concurrently, and without the lock two edits of the
+// same file would both read the original content and the later write would
+// silently drop the earlier edit.
 func NewTools(rootDir string) []agents.Tool {
+	mu := &sync.Mutex{}
 	return []agents.Tool{
-		viewTool(rootDir),
-		createTool(rootDir),
-		strReplaceTool(rootDir),
-		insertTool(rootDir),
+		viewTool(rootDir, mu),
+		createTool(rootDir, mu),
+		strReplaceTool(rootDir, mu),
+		insertTool(rootDir, mu),
 	}
 }
 
@@ -42,15 +49,30 @@ func withRoot[T any](rootDir string, fn func(*os.Root) (T, error)) (T, error) {
 	return fn(root)
 }
 
+// readFile reads path in full for an edit (str_replace / insert_text). It
+// refuses files larger than maxFileBytes outright: edits write the whole
+// buffer back with O_TRUNC, so editing a partially-read file would silently
+// destroy everything past the cap.
 func readFile(root *os.Root, path string) (string, error) {
 	f, err := root.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxFileBytes))
+	info, err := f.Stat()
 	if err != nil {
 		return "", err
+	}
+	if info.Size() > maxFileBytes {
+		return "", fmt.Errorf("file is %d bytes, over the %d-byte edit limit; refusing to edit (a partial read would truncate the file on write)", info.Size(), maxFileBytes)
+	}
+	// Re-check via the read itself in case the file grew between Stat and here.
+	data, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxFileBytes {
+		return "", fmt.Errorf("file is over the %d-byte edit limit; refusing to edit (a partial read would truncate the file on write)", maxFileBytes)
 	}
 	return string(data), nil
 }
@@ -69,10 +91,12 @@ type viewArgs struct {
 	Path string `json:"path" jsonschema:"path to a file or directory under the working directory"`
 }
 
-func viewTool(rootDir string) agents.Tool {
+func viewTool(rootDir string, mu *sync.Mutex) agents.Tool {
 	return agents.NewFunctionTool("view_file",
 		"View a file's contents (with line numbers) or list a directory's entries.",
 		func(_ context.Context, _ *agents.ToolContext, args viewArgs) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
 			return withRoot(rootDir, func(root *os.Root) (string, error) {
 				f, err := root.Open(args.Path)
 				if err != nil {
@@ -102,7 +126,12 @@ func viewTool(rootDir string) agents.Tool {
 				if err != nil {
 					return "", err
 				}
-				return withLineNumbers(string(data)), nil
+				out := withLineNumbers(string(data))
+				// Never hand the model a silently incomplete file: flag the cut.
+				if info.Size() > int64(len(data)) {
+					out += fmt.Sprintf("[... truncated: file is %d bytes, showing first %d bytes]\n", info.Size(), len(data))
+				}
+				return out, nil
 			})
 		})
 }
@@ -112,10 +141,12 @@ type createArgs struct {
 	Content string `json:"content" jsonschema:"the file's contents"`
 }
 
-func createTool(rootDir string) agents.Tool {
+func createTool(rootDir string, mu *sync.Mutex) agents.Tool {
 	return agents.NewFunctionTool("create_file",
 		"Create a new file with the given contents. Fails if the file already exists (edit it with str_replace instead).",
 		func(_ context.Context, _ *agents.ToolContext, args createArgs) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
 			return withRoot(rootDir, func(root *os.Root) (string, error) {
 				f, err := root.OpenFile(args.Path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 				if err != nil {
@@ -136,10 +167,12 @@ type replaceArgs struct {
 	NewStr string `json:"new_str" jsonschema:"replacement text"`
 }
 
-func strReplaceTool(rootDir string) agents.Tool {
+func strReplaceTool(rootDir string, mu *sync.Mutex) agents.Tool {
 	return agents.NewFunctionTool("str_replace",
 		"Replace a unique snippet of text in a file. old_str must match exactly once; include surrounding context to make it unique.",
 		func(_ context.Context, _ *agents.ToolContext, args replaceArgs) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
 			return withRoot(rootDir, func(root *os.Root) (string, error) {
 				content, err := readFile(root, args.Path)
 				if err != nil {
@@ -168,10 +201,12 @@ type insertArgs struct {
 	Text string `json:"text" jsonschema:"text to insert (without a trailing newline)"`
 }
 
-func insertTool(rootDir string) agents.Tool {
+func insertTool(rootDir string, mu *sync.Mutex) agents.Tool {
 	return agents.NewFunctionTool("insert_text",
 		"Insert a line of text after the given line number in a file (line 0 inserts at the start).",
 		func(_ context.Context, _ *agents.ToolContext, args insertArgs) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
 			return withRoot(rootDir, func(root *os.Root) (string, error) {
 				content, err := readFile(root, args.Path)
 				if err != nil {

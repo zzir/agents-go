@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -62,6 +64,30 @@ type frontmatter struct {
 	AllowedTools  string            `yaml:"allowed-tools"`
 }
 
+// buildSkill parses a SKILL.md's content into a Skill, validating that its
+// frontmatter name matches relDir's own last path component. relDir must
+// already be slash-separated (callers on Windows should normalize via
+// filepath.ToSlash), since it becomes Path exactly as passed to ReadFileTool.
+func buildSkill(relDir string, data []byte) (Skill, error) {
+	fm, err := parseFrontmatter(data)
+	if err != nil {
+		return Skill{}, err
+	}
+	if err := validate(fm, path.Base(relDir)); err != nil {
+		return Skill{}, err
+	}
+	return Skill{
+		Name:          fm.Name,
+		Description:   fm.Description,
+		License:       fm.License,
+		Compatibility: fm.Compatibility,
+		Metadata:      fm.Metadata,
+		AllowedTools:  strings.Fields(fm.AllowedTools),
+		Dir:           relDir,
+		Path:          path.Join(relDir, "SKILL.md"),
+	}, nil
+}
+
 // Load scans rootDir for immediate subdirectories containing a SKILL.md, parses
 // each, and returns the skills sorted by name. Subdirectories without a SKILL.md
 // are skipped; a present-but-invalid SKILL.md is an error.
@@ -83,25 +109,64 @@ func Load(rootDir string) ([]Skill, error) {
 		if err != nil {
 			return nil, fmt.Errorf("skills: reading %s: %w", mdPath, err)
 		}
-		fm, err := parseFrontmatter(data)
+		sk, err := buildSkill(e.Name(), data)
 		if err != nil {
 			return nil, fmt.Errorf("skills: %s: %w", mdPath, err)
 		}
-		if err := validate(fm, e.Name()); err != nil {
-			return nil, fmt.Errorf("skills: %s: %w", mdPath, err)
-		}
-		out = append(out, Skill{
-			Name:          fm.Name,
-			Description:   fm.Description,
-			License:       fm.License,
-			Compatibility: fm.Compatibility,
-			Metadata:      fm.Metadata,
-			AllowedTools:  strings.Fields(fm.AllowedTools),
-			Dir:           e.Name(),
-			Path:          mdPath,
-		})
+		out = append(out, sk)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// LoadRecursive discovers skills under rootDir at any depth — a skill
+// directly under rootDir ("name/SKILL.md"), or nested one or more levels
+// deeper, as a cloned multi-skill repository typically is
+// ("some-repo/name/SKILL.md"). Dir and Path are still relative to rootDir
+// regardless of depth, so ReadFileTool resolves them the same way Load's
+// results do. Results are sorted by Path rather than Name, since two
+// differently-nested skills (e.g. from separate cloned repos) can share a name.
+func LoadRecursive(rootDir string) ([]Skill, error) {
+	var out []Skill
+	err := filepath.WalkDir(rootDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// An unreadable root is a caller error (typo'd path, missing
+			// mount) and must not silently yield zero skills; unreadable
+			// entries below it are skipped to keep walking.
+			if p == rootDir {
+				return fmt.Errorf("skills: reading root %s: %w", rootDir, err)
+			}
+			return nil // skip unreadable entries, keep walking
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != "SKILL.md" {
+			return nil
+		}
+		relDir, err := filepath.Rel(rootDir, filepath.Dir(p))
+		if err != nil {
+			return nil //nolint:nilerr // p came from walking rootDir, so this shouldn't happen
+		}
+		relDir = filepath.ToSlash(relDir)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("skills: reading %s: %w", p, err)
+		}
+		sk, err := buildSkill(relDir, data)
+		if err != nil {
+			return fmt.Errorf("skills: %s: %w", path.Join(relDir, "SKILL.md"), err)
+		}
+		out = append(out, sk)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
 }
 
@@ -175,11 +240,13 @@ type readArgs struct {
 // ReadFileTool returns a function tool named "read_skill_file" that lets the
 // model read a file under rootDir (a SKILL.md body, reference, asset, or script).
 // Reads are confined to rootDir via os.Root, so "../" traversal and symlink
-// escapes are rejected. Each read is capped at 256 KiB.
+// escapes are rejected. Each read is capped at 256 KiB; a capped read ends with
+// an explicit truncation marker so the model never mistakes a partial file for
+// the whole thing.
 func ReadFileTool(rootDir string) agents.Tool {
 	return agents.NewFunctionTool("read_skill_file",
 		"Read a file from the skills directory (a SKILL.md body, reference, asset, or script) to follow a skill's instructions.",
-		func(ctx context.Context, _ *agents.ToolContext, args readArgs) (string, error) {
+		func(_ context.Context, _ *agents.ToolContext, args readArgs) (string, error) {
 			root, err := os.OpenRoot(rootDir)
 			if err != nil {
 				return "", fmt.Errorf("opening skills root: %w", err)
@@ -190,9 +257,17 @@ func ReadFileTool(rootDir string) agents.Tool {
 				return "", fmt.Errorf("reading %q: %w", args.Path, err)
 			}
 			defer f.Close()
-			data, err := io.ReadAll(io.LimitReader(f, maxSkillFileBytes))
+			// Read one byte past the cap to detect truncation reliably.
+			data, err := io.ReadAll(io.LimitReader(f, maxSkillFileBytes+1))
 			if err != nil {
 				return "", fmt.Errorf("reading %q: %w", args.Path, err)
+			}
+			if len(data) > maxSkillFileBytes {
+				note := fmt.Sprintf("\n[... truncated: showing first %d bytes]", maxSkillFileBytes)
+				if info, statErr := f.Stat(); statErr == nil {
+					note = fmt.Sprintf("\n[... truncated: file is %d bytes, showing first %d bytes]", info.Size(), maxSkillFileBytes)
+				}
+				return string(data[:maxSkillFileBytes]) + note, nil
 			}
 			return string(data), nil
 		})

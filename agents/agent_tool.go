@@ -55,6 +55,9 @@ func (a *Agent) AsTool(cfg AgentToolConfig) Tool {
 				return nil, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, err)
 			}
 			nestedOpts := nestedRunOptions(tc.RunContext, cfg.MaxTurns)
+			// Parent the nested run's agent spans under this tool call's
+			// function span so the trace tree shows which call owns the run.
+			nestedOpts.parentSpanID = tc.functionSpanID
 			res, err := Run(ctx, a, args.Input, nestedOpts)
 			if err != nil {
 				return nil, fmt.Errorf("agent tool %q run failed: %w", name, err)
@@ -68,8 +71,10 @@ func (a *Agent) AsTool(cfg AgentToolConfig) Tool {
 }
 
 // nestedRunOptions builds the RunOptions for a nested run, inheriting the
-// parent's model provider/model/tracer but with a fresh approval store so nested
-// approvals don't leak into the parent.
+// parent's model provider/model/tracer plus side-effect-free execution options
+// (tool concurrency limit, tool-not-found behavior), but with a fresh approval
+// store so nested approvals don't leak into the parent. Stateful options
+// (Session, Hooks, guardrails, input filters) deliberately do not carry over.
 func nestedRunOptions(parent *RunContext, maxTurns int) RunOptions {
 	opts := RunOptions{MaxTurns: maxTurns}
 	if parent != nil && parent.inheritedOpts != nil {
@@ -77,6 +82,11 @@ func nestedRunOptions(parent *RunContext, maxTurns int) RunOptions {
 		opts.Model = parent.inheritedOpts.Model
 		opts.ModelSettings = parent.inheritedOpts.ModelSettings
 		opts.Tracer = parent.inheritedOpts.Tracer
+		opts.MaxToolConcurrency = parent.inheritedOpts.MaxToolConcurrency
+		opts.ToolNotFoundBehavior = parent.inheritedOpts.ToolNotFoundBehavior
+		// Inherit the sensitive-data gate so a parent that disabled span
+		// content cannot have it re-enabled by a nested agent-as-tool run.
+		opts.TraceIncludeSensitiveData = parent.inheritedOpts.TraceIncludeSensitiveData
 	}
 	if parent != nil {
 		// Join the parent's trace so the nested run's spans are attributed to

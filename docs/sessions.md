@@ -30,6 +30,16 @@ type Session interface {
 
 Implement it against any store (Postgres, Redis, …). Use `agents.MarshalInputItem` / `agents.UnmarshalInputItem` for encoding — they handle two openai-go serialization quirks (assistant messages and `"type"`-less easy messages) that naive JSON round-trips get wrong.
 
+Backends that can swap the whole history in one step should also implement the optional `agents.ItemsReplacer` capability:
+
+```go
+type ItemsReplacer interface {
+	ReplaceItems(ctx context.Context, items []TResponseInputItem) error // atomic swap
+}
+```
+
+History rewriters (compaction, summarization) go through `agents.ReplaceSessionItems`, which uses `ReplaceItems` when available and only falls back to the non-atomic `Clear`+`AddItems` otherwise — implementing it removes the failure window where a crash between the two calls leaves the session empty. All built-in backends (`InMemorySession`, `FileSession`, SQLite/PostgreSQL) implement it.
+
 ## Choosing an implementation
 
 The built-ins sit on a spectrum from "zero dependencies" to "full database". They all satisfy the same interface, so you can switch later:
@@ -123,6 +133,23 @@ agents.Run(ctx, agent, "…", agents.RunOptions{Session: sess, ModelProvider: op
 ```
 
 The runner calls compaction after persisting a completed run (Python compacts per turn; Go persists once per run, so compaction is attempted once per run). "Candidate" items exclude user messages and existing compaction items, matching the Python heuristic. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
+
+Compaction is best-effort housekeeping: by the time it runs, the run's items are already saved and the final output produced, so a compaction failure is recorded on the run's `compaction` trace span instead of failing the run. The rewrite goes through `ReplaceSessionItems`, so backends implementing `ItemsReplacer` swap history atomically.
+
+`agents.NewSlidingWindowSession(base, cfg)` is the provider-agnostic alternative: instead of `responses.compact` it summarizes older items with any `Model` you supply, keeping the most recent `WindowSize` items intact:
+
+```go
+sess := agents.NewSlidingWindowSession(base, agents.SlidingWindowConfig{
+	Threshold:    20,           // compact once ≥20 items accumulate beyond the window (default 20)
+	WindowSize:   10,           // keep the newest 10 items verbatim (default 10)
+	SummaryModel: summaryModel, // any Model; summarization is one blocking call
+	// SummaryPrompt / ShouldCompact override the defaults.
+})
+```
+
+The split point is pair-aware: a `function_call` and its `function_call_output` (and a reasoning item and its successor) always land on the same side, so neither the summarization request nor the rewritten history can contain a dangling half of a pair. An empty summary aborts the pass instead of overwriting history.
+
+The pair-safety logic is exported as `agents.SafeSplitPoint(items, split)` for custom Session implementations that rewrite history themselves: it moves a count-based split index toward 0 until both sides are self-consistent Responses sequences, returning 0 when no valid non-empty prefix exists (skip the rewrite).
 
 ## Session semantics
 

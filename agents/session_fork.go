@@ -28,6 +28,11 @@ func ForkSession(ctx context.Context, src, dst Session) error {
 // ForkSessionAt copies the first n items from src into dst, producing a
 // point-in-time fork. n is clamped to the source length: n <= 0 copies
 // nothing, n >= len(items) copies everything. dst is cleared first.
+//
+// Choose n on a paired-item boundary: cutting between a function_call and its
+// function_call_output leaves a dangling call in dst, and the API rejects such
+// a history on the next run. When forking after a tool call, include both the
+// call and its output.
 func ForkSessionAt(ctx context.Context, src, dst Session, n int) error {
 	items, err := src.GetItems(ctx, 0)
 	if err != nil {
@@ -53,10 +58,15 @@ func ForkSessionAt(ctx context.Context, src, dst Session, n int) error {
 // (output messages, function calls, function call outputs, reasoning items);
 // user-created "easy" messages have no ID and are never matched.
 //
-// Use this to convert a server-assigned ID into a fork-point index:
+// Use this to convert a server-assigned ID into a fork-point index. Always
+// check ok — forking with a not-found index would silently produce an empty
+// fork:
 //
 //	idx, ok := agents.IndexOfItemID(items, "msg_abc123")
-//	agents.ForkSessionAt(ctx, src, dst, idx+1) // include the matched item
+//	if !ok {
+//		return fmt.Errorf("item %q not in session", "msg_abc123")
+//	}
+//	err := agents.ForkSessionAt(ctx, src, dst, idx+1) // include the matched item
 func IndexOfItemID(items []TResponseInputItem, id string) (int, bool) {
 	for i := range items {
 		if itemID(&items[i]) == id {

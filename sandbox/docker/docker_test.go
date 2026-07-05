@@ -88,7 +88,7 @@ func readTar(t *testing.T, r io.Reader) (files map[string]string, modes map[stri
 			continue
 		}
 		var b bytes.Buffer
-		io.Copy(&b, tr)
+		_, _ = io.Copy(&b, tr)
 		files[hdr.Name] = b.String()
 	}
 	return files, modes, dirs
@@ -191,7 +191,7 @@ func TestDemuxLogs_SmallOutputUnchanged(t *testing.T) {
 func TestBuildConfig_CommandRunsAsEntrypoint(t *testing.T) {
 	s := &Sandbox{opts: Options{Image: "python:3.12-slim"}}
 	cfg, _ := s.buildConfig(sandbox.ExecRequest{Cmd: []string{"python", "main.py"}})
-	if got := []string(cfg.Entrypoint); len(got) != 2 || got[0] != "python" || got[1] != "main.py" {
+	if got := cfg.Entrypoint; len(got) != 2 || got[0] != "python" || got[1] != "main.py" {
 		t.Errorf("entrypoint = %v, want [python main.py]", got)
 	}
 	if len(cfg.Cmd) != 0 {

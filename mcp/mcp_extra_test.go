@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -114,20 +115,31 @@ func TestMCP_CacheToolsList(t *testing.T) {
 		t.Fatalf("got %d tools, want 1", len(first))
 	}
 
-	// Add a tool server-side; the cache should hide it until invalidated.
+	// Add a tool server-side. The server sends a (debounced) tools/list_changed
+	// notification and the client's handler invalidates the cache, so the new
+	// tool must show up without a manual InvalidateToolsCache call. Cache-hit
+	// behavior itself is pinned deterministically by TestMCP_CacheHitDoesNotRefetch.
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "echo2", Description: "echo2"},
 		func(_ context.Context, _ *mcpsdk.CallToolRequest, args echoArgs) (*mcpsdk.CallToolResult, any, error) {
 			return &mcpsdk.CallToolResult{}, nil, nil
 		})
 
-	cached, err := server.ListTools(ctx, rc, ag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cached) != 1 {
-		t.Errorf("cached ListTools = %d tools, want 1 (cache hit)", len(cached))
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		tools, err := server.ListTools(ctx, rc, ag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tools) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still %d tools; tools/list_changed never invalidated the cache", len(tools))
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
+	// Manual invalidation still forces a refetch.
 	server.InvalidateToolsCache()
 	fresh, err := server.ListTools(ctx, rc, ag)
 	if err != nil {

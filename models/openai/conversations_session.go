@@ -111,7 +111,13 @@ func (s *ConversationsSession) GetItems(ctx context.Context, limit int) ([]agent
 	return items, nil
 }
 
-// AddItems implements agents.Session.
+// conversationItemsBatchLimit is the Conversations API's per-request cap on
+// POST /conversations/{id}/items ("You may add up to 20 items at a time").
+const conversationItemsBatchLimit = 20
+
+// AddItems implements agents.Session. Items are appended in API-sized batches
+// (conversationItemsBatchLimit per request), since the runner saves a whole
+// run's items in one call and long runs easily exceed the per-request cap.
 func (s *ConversationsSession) AddItems(ctx context.Context, in []agents.TResponseInputItem) error {
 	if len(in) == 0 {
 		return nil
@@ -120,8 +126,11 @@ func (s *ConversationsSession) AddItems(ctx context.Context, in []agents.TRespon
 	if err != nil {
 		return err
 	}
-	if _, err := s.svc.Items.New(ctx, id, conversations.ItemNewParams{Items: in}); err != nil {
-		return fmt.Errorf("adding conversation items: %w", err)
+	for start := 0; start < len(in); start += conversationItemsBatchLimit {
+		batch := in[start:min(start+conversationItemsBatchLimit, len(in))]
+		if _, err := s.svc.Items.New(ctx, id, conversations.ItemNewParams{Items: batch}); err != nil {
+			return fmt.Errorf("adding conversation items: %w", err)
+		}
 	}
 	return nil
 }

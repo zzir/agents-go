@@ -33,9 +33,11 @@ type Options struct {
 	ClientVersion string
 
 	// CacheToolsList caches the server's tool list after the first fetch so a
-	// multi-turn run does not re-issue list_tools every turn. Call
-	// InvalidateToolsCache when the server's tools may have changed. Static and
-	// dynamic filters still run on every ListTools, against the cached list.
+	// multi-turn run does not re-issue list_tools every turn. The cache is
+	// invalidated automatically when the server sends a tools/list_changed
+	// notification; call InvalidateToolsCache to force a refetch for servers
+	// that change tools without announcing it. Static and dynamic filters still
+	// run on every ListTools, against the cached list.
 	CacheToolsList bool
 
 	// ToolFilter, when set, decides per call whether a tool is exposed, applied
@@ -98,7 +100,14 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 	if version == "" {
 		version = "0.1.0"
 	}
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, nil)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, &mcpsdk.ClientOptions{
+		// Drop the cached tool list when the server announces a change
+		// (notifications/tools/list_changed), so CacheToolsList can never serve
+		// a permanently stale list. No-op when caching is off.
+		ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
+			s.InvalidateToolsCache()
+		},
+	})
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return fmt.Errorf("mcp: connecting to %q: %w", s.name, err)
@@ -254,10 +263,16 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 		// MCP error would abort the whole run.
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
 		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
-			var args map[string]any
+			// Always send an "arguments" object — an empty {} rather than an
+			// omitted field — matching the Python SDK, which passes an empty
+			// dict; some servers reject calls with no arguments key.
+			args := map[string]any{}
 			if strings.TrimSpace(argsJSON) != "" {
 				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 					return nil, fmt.Errorf("mcp tool %q: invalid arguments: %w", exposedName, err)
+				}
+				if args == nil { // argsJSON was JSON null
+					args = map[string]any{}
 				}
 			}
 			// The server is always called with the original (unprefixed) name.

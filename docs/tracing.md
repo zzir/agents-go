@@ -22,14 +22,50 @@ res, err := agents.Run(ctx, agent, input, agents.RunOptions{
 | Span | `Type` | Covers |
 |---|---|---|
 | `agent:<name>` | `SpanTypeAgent` | One agent's tenure (per handoff segment); parent of the spans below |
-| `generation:<name>` | `SpanTypeGeneration` | One model call (records `response_id` and per-call `input_tokens`/`output_tokens`/`total_tokens`) |
+| `generation:<name>` | `SpanTypeGeneration` | One model call (records `response_id`, per-call `input_tokens`/`output_tokens`/`total_tokens`, and — see below — the full request/response) |
 | `function:<tool>` | `SpanTypeFunction` | One function tool invocation (errors recorded) |
 | `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution |
 | `guardrail:input` / `guardrail:output` | `SpanTypeGuardrail` | Guardrail batches (tripwires recorded as errors) |
 
 Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner creates these via the typed constructors (`StartAgentSpan`, `StartGenerationSpan`, `StartFunctionSpan`, `StartHandoffSpan`, `StartGuardrailSpan`); the untyped `StartSpan` remains for custom spans and leaves `Type` empty. This is the idiomatic-Go stand-in for Python's typed `SpanData` subclasses — a `Type` tag plus a `Data` map rather than a sealed union.
 
-Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own.
+Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own, and their agent spans are parented under the `function:` span of the tool call that triggered them, so the tree shows which call owns each nested run.
+
+`RunOptions.TraceGroupID` and `RunOptions.TraceMetadata` (the counterparts of Python's `RunConfig.group_id` / `trace_metadata`) stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
+
+### Sensitive data on generation spans
+
+When a run's session compacts its history (a `CompactionAwareSession`), the
+runner wraps the pass in a span of type `"compaction"` — opened lazily via
+`CompactionArgs.StartSpan` only when the session actually compacts, annotated
+by the session with `"before_items"`/`"after_items"`, and carrying any
+compaction error. No-op passes emit no span.
+
+By default each generation span also records the full request body: `"model"`,
+`"system_instructions"`, `"input"` (the exact items sent, after session
+history, compaction, and input filters were applied), `"tools"` (name,
+description, and parameter schema per tool), `"model_settings"` (the resolved
+settings; the `Extra*` passthrough fields are excluded), `"handoffs"`,
+`"output_schema"`, `"prompt"`, `"previous_response_id"`/`"conversation_id"`,
+and `"output"` (the items returned). Streamed calls additionally record
+`"time_to_first_token_ms"`. Function spans record the tool call's `"input"`
+(arguments JSON) and stringified `"output"`. This is what makes a trace answer
+"what did the model actually see?". Because spans flow through exporters, this
+content leaves the process — disable it when exporting somewhere conversation
+content must not go:
+
+```go
+include := false
+agents.Run(ctx, agent, input, agents.RunOptions{
+	Tracer:                    tracer,
+	TraceIncludeSensitiveData: &include, // nil reads the env var below
+})
+```
+
+When the option is nil, the `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA`
+environment variable decides: anything but `false` means include. This mirrors
+the Python SDK's `RunConfig.trace_include_sensitive_data`. Opting out keeps
+ids and token usage, drops content.
 
 IDs follow the Python SDK's format (`trace_<32 hex>`, `span_<24 hex>`) and are generated from `crypto/rand`.
 

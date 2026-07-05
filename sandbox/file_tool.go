@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -30,6 +32,37 @@ func (c FileToolConfig) effectiveTimeout() time.Duration {
 		return DefaultTimeout
 	}
 	return c.Timeout
+}
+
+// fileToolError renders a backend error for the model without leaking
+// host/remote absolute paths: only the operation, the path the model asked
+// for and the error kind survive. Raw backend errors routinely embed the
+// host-side working directory (e.g. *fs.PathError, SFTP or daemon messages),
+// which the model has no business seeing.
+func fileToolError(op, reqPath string, err error) string {
+	var kind string
+	var pathErr *fs.PathError
+	switch {
+	case errors.Is(err, ErrReadLimitExceeded):
+		kind = "file exceeds read limit"
+	case errors.Is(err, ErrNoWorkDir):
+		kind = "no persistent working directory configured"
+	case errors.Is(err, fs.ErrNotExist):
+		kind = "not found"
+	case errors.Is(err, fs.ErrPermission):
+		kind = "permission denied"
+	case errors.Is(err, fs.ErrExist):
+		kind = "already exists"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		kind = "timed out"
+	case errors.As(err, &pathErr):
+		// Keep the underlying errno text ("is a directory", ...) which carries
+		// no path, and drop the path-bearing wrapper.
+		kind = pathErr.Err.Error()
+	default:
+		kind = "operation failed"
+	}
+	return fmt.Sprintf("error: %s %s: %s", op, reqPath, kind)
 }
 
 // FileTools returns read_file, write_file and list_files tools backed by the
@@ -60,7 +93,7 @@ func ReadFileTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 			defer cancel()
 			data, err := sb.ReadFile(ctx, args.Path)
 			if err != nil {
-				return fmt.Sprintf("error: %s", err), nil
+				return fileToolError("read", args.Path, err), nil
 			}
 			return truncateWithInfo(string(data), cfg.MaxOutputBytes), nil
 		},
@@ -82,7 +115,7 @@ func WriteFileTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
 			defer cancel()
 			if err := sb.WriteFile(ctx, args.Path, []byte(args.Content)); err != nil {
-				return fmt.Sprintf("error: %s", err), nil
+				return fileToolError("write", args.Path, err), nil
 			}
 			return fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path), nil
 		},
@@ -108,7 +141,7 @@ func ListFilesTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 			}
 			entries, err := sb.ListDir(ctx, dir)
 			if err != nil {
-				return fmt.Sprintf("error: %s", err), nil
+				return fileToolError("list", dir, err), nil
 			}
 			var b strings.Builder
 			for _, e := range entries {

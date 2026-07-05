@@ -86,9 +86,11 @@ tools, handoffs, guardrails, hooks, output type). Everything orbits the **runner
    input/output guardrails, checks approval (HITL), evaluates `ToolUseBehavior`,
    and decides the `nextStepKind`: run the LLM again, hand off, or finish.
 
-`stream_run.go` is the streaming counterpart (`RunStreamed` → `Events()`
-iterator) and largely mirrors `run.go` — **changes to run semantics usually need
-to land in both files.**
+`RunStreamed` (`stream_run.go`) shares the same `runner.loop`: setting
+`runner.sr` switches the loop into streaming mode. The only differences are the
+ones gated on `r.sr != nil` inside `loop` (event emission, `StreamResponse` via
+`streamOneModelCall`, synchronous input guardrails) — run-semantics changes are
+written once in `run.go` and both paths get them.
 
 ### Model abstraction (`agents/model.go`, `models/openai/`)
 

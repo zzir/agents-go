@@ -20,13 +20,19 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	sb, err := docker.New(docker.Options{
 		Image:  "python:3.12-slim",
 		Limits: sandbox.Limits{MemoryBytes: 256 << 20, CPUs: 0.5}, // 256 MiB, half a core
 		// Network defaults to off; root fs is read-only; runs as nobody.
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer sb.Close()
 
@@ -47,7 +53,8 @@ func main() {
 			ModelProvider: openai.NewProvider(),
 		})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println(res.FinalOutputString())
+	return nil
 }

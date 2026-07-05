@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -25,10 +26,16 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	host := os.Getenv("SSH_HOST")
 	user := os.Getenv("SSH_USER")
 	if host == "" || user == "" {
-		log.Fatal("set SSH_HOST and SSH_USER")
+		return errors.New("set SSH_HOST and SSH_USER")
 	}
 
 	sb, err := sshsb.New(sshsb.Options{
@@ -43,7 +50,7 @@ func main() {
 		//   HostKey: sshsb.HostKeyConfig{InsecureIgnoreHostKey: true},
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer sb.Close()
 
@@ -64,7 +71,8 @@ func main() {
 			ModelProvider: openai.NewProvider(),
 		})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println(res.FinalOutputString())
+	return nil
 }

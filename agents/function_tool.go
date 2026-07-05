@@ -25,20 +25,19 @@ func NewFunctionTool[A any, R any](
 	name, description string,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
 ) *FunctionTool {
+	// Tool parameters must serialize to a JSON object, so A must be a struct
+	// (or pointer to one). Rejecting other kinds here surfaces the mistake at
+	// construction instead of a 400 from the API at request time.
+	if argType := reflect.TypeFor[A](); !isStructKind(argType) {
+		return failedFunctionTool(name, description,
+			fmt.Errorf("function tool %q: args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", name, argType))
+	}
 	schema, err := SchemaFor[A](true)
 	if err != nil {
-		// Schema generation only fails for pathological types; surface it as a
+		// Schema generation only fails for unsupported types; surface it as a
 		// tool that errors when invoked rather than panicking at construction.
-		return &FunctionTool{
-			Name:                 name,
-			Description:          description,
-			ParamsJSONSchema:     emptyStrictSchema(),
-			Strict:               true,
-			FailureErrorFunction: DefaultToolErrorFunction,
-			OnInvoke: func(context.Context, *ToolContext, string) (any, error) {
-				return nil, fmt.Errorf("function tool %q: schema generation failed: %w", name, err)
-			},
-		}
+		return failedFunctionTool(name, description,
+			fmt.Errorf("function tool %q: schema generation failed: %w", name, err))
 	}
 
 	return &FunctionTool{
@@ -53,6 +52,33 @@ func NewFunctionTool[A any, R any](
 				return nil, fmt.Errorf("function tool %q: invalid arguments: %w", name, err)
 			}
 			return fn(ctx, tc, args)
+		},
+	}
+}
+
+// isStructKind reports whether t is a struct or a pointer to a struct — the
+// only argument shapes NewFunctionTool accepts, since tool parameters must be
+// a JSON object.
+func isStructKind(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.Kind() == reflect.Struct
+}
+
+// failedFunctionTool is the shared construction-failure channel: a tool whose
+// schema (or argument type) is unusable is still returned as a valid value —
+// keeping constructors chainable in struct literals — but reports err on every
+// invocation instead of sending a broken schema to the API.
+func failedFunctionTool(name, description string, err error) *FunctionTool {
+	return &FunctionTool{
+		Name:                 name,
+		Description:          description,
+		ParamsJSONSchema:     emptyStrictSchema(),
+		Strict:               true,
+		FailureErrorFunction: DefaultToolErrorFunction,
+		OnInvoke: func(context.Context, *ToolContext, string) (any, error) {
+			return nil, err
 		},
 	}
 }
@@ -77,16 +103,28 @@ func unmarshalToolArgs(argsJSON string, dst any) error {
 // NewRawFunctionTool builds a FunctionTool from a pre-built JSON Schema map and
 // a function that receives raw JSON arguments. Use this when the schema is
 // loaded at runtime (e.g. from a database) rather than derived from a Go type.
-// Strict mode is enabled by default.
+//
+// Strict mode is enabled by default, and the schema is normalized to the
+// strict subset via EnsureStrictJSONSchema — the same treatment Python's
+// FunctionTool.__post_init__ applies — on a deep copy, so the caller's map is
+// not mutated. If normalization fails (e.g. the schema contains features
+// strict mode cannot express), the returned tool reports that error when
+// invoked. To use the schema verbatim without strict mode, set Strict = false
+// and ParamsJSONSchema on the returned tool.
 func NewRawFunctionTool(
 	name, description string,
 	paramsSchema map[string]any,
 	fn func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error),
 ) *FunctionTool {
+	normalized, err := ensureStrictSchemaCopy(paramsSchema)
+	if err != nil {
+		return failedFunctionTool(name, description,
+			fmt.Errorf("raw function tool %q: strict schema normalization failed: %w", name, err))
+	}
 	return &FunctionTool{
 		Name:                 name,
 		Description:          description,
-		ParamsJSONSchema:     paramsSchema,
+		ParamsJSONSchema:     normalized,
 		Strict:               true,
 		FailureErrorFunction: DefaultToolErrorFunction,
 		OnInvoke:             fn,

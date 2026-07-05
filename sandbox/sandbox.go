@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 )
@@ -22,6 +23,35 @@ const DefaultTimeout = 30 * time.Second
 // DefaultMaxOutputBytes caps each captured output stream when
 // ExecRequest.MaxOutputBytes is zero.
 const DefaultMaxOutputBytes int64 = 1 << 20 // 1 MiB
+
+// DefaultMaxReadFileBytes caps ReadFile when a backend's MaxReadFileBytes
+// option is zero. It keeps a single model-issued read_file call from loading
+// an arbitrarily large sandbox file into host memory.
+const DefaultMaxReadFileBytes int64 = 8 << 20 // 8 MiB
+
+// ErrReadLimitExceeded is returned (wrapped) by ReadFile when the file is
+// larger than the backend's read limit. An explicit error — rather than a
+// silent truncation — because callers may treat the returned bytes as the
+// complete file content.
+var ErrReadLimitExceeded = errors.New("file exceeds read limit")
+
+// ReadAllLimited reads r to completion but fails with ErrReadLimitExceeded
+// when the content exceeds limit bytes; limit <= 0 means
+// DefaultMaxReadFileBytes. At most limit+1 bytes are read, so memory stays
+// bounded regardless of the source size.
+func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		limit = DefaultMaxReadFileBytes
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("sandbox: %w (%d bytes)", ErrReadLimitExceeded, limit)
+	}
+	return data, nil
+}
 
 // Sandbox executes commands and performs file operations in an isolated
 // environment.
