@@ -242,7 +242,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 	result := r.processResult(sr, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 	if result.FinalText != "" {
-		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, input, sendEvent)
+		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, sendEvent)
 	}
 	return result
 }
@@ -334,7 +334,14 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		return mkResult()
 	}
 
-	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
+	result := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
+	// A resumed run that reaches a final answer is where an approval-gated
+	// first turn actually completes, so title generation must fire here too —
+	// the initial (interrupted) segment had no final output to trigger it.
+	if result.FinalText != "" {
+		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, sendEvent)
+	}
+	return result
 }
 
 func (r *Runner) processResult(sr *agents.StreamedResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunResult {
@@ -394,7 +401,12 @@ func (r *Runner) updateSessionMeta(sessionID, agentConfigID string) {
 		Exec(context.Background())
 }
 
-func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentConfigID, userInput string, sendEvent func(string, any)) {
+// maybeGenerateTitle names a still-default ("New Chat") session from its first
+// user message. It sources that message from the database rather than a passed
+// input so both the initial-run and the HITL-resume completion paths can call
+// it — the SDK persists the session (input included) on successful completion,
+// which is exactly when this fires.
+func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentConfigID string, sendEvent func(string, any)) {
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 	log := zerolog.Ctx(ctx)
@@ -405,6 +417,11 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
 	if err != nil || sess.Name != "New Chat" {
+		return
+	}
+
+	userInput := r.firstUserMessage(ctx, sessionID)
+	if userInput == "" {
 		return
 	}
 
@@ -454,6 +471,23 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 		SessionID: sessionID,
 		Title:     title,
 	})
+}
+
+// firstUserMessage returns the text content of the earliest user message in a
+// session, or "" if there is none. Used to seed title generation.
+func (r *Runner) firstUserMessage(ctx context.Context, sessionID string) string {
+	var msg store.Message
+	err := r.db.NewSelect().Model(&msg).
+		Column("content").
+		Where("session_id = ?", sessionID).
+		Where("role = ?", "user").
+		Order("id ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(msg.Content)
 }
 
 // savePartialTurn persists the user input and any partial assistant response
