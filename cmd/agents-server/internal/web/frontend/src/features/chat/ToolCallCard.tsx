@@ -1,4 +1,6 @@
 import { Button, Label } from '@primer/react';
+import { ToolsIcon } from '@primer/octicons-react';
+import { Disclosure } from '@/components/Disclosure';
 
 interface ToolCall {
   tool_call_id: string;
@@ -11,11 +13,12 @@ interface ToolCall {
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
+  live?: boolean;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
 }
 
-export function ToolCallCard({ toolCall, onApprove, onReject }: ToolCallCardProps) {
+export function ToolCallCard({ toolCall, live, onApprove, onReject }: ToolCallCardProps) {
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output } = toolCall;
 
   const sepIdx = tool_name.indexOf('__');
@@ -25,38 +28,52 @@ export function ToolCallCard({ toolCall, onApprove, onReject }: ToolCallCardProp
   let parsedArgs = args;
   try { parsedArgs = JSON.stringify(JSON.parse(args), null, 2); } catch (_e) { /* ignore */ }
 
-  const showStatus = status === 'approved' || status === 'rejected' || (needs_approval && !status);
-  const statusLabel = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'pending';
-  const statusVariant = status === 'approved' ? 'success' : status === 'rejected' ? 'danger' : 'accent';
+  const pendingApproval = !!needs_approval && !status;
+  const isRunning = !!live && !pendingApproval && !output && status !== 'completed' && status !== 'rejected';
+
+  const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning;
+  const statusLabel = status === 'approved' ? 'approved'
+    : status === 'rejected' ? 'rejected'
+    : pendingApproval ? 'pending'
+    : 'running…';
+  const statusVariant = status === 'approved' ? 'success'
+    : status === 'rejected' ? 'danger'
+    : pendingApproval ? 'attention'
+    : 'accent';
+
+  const headerLabel = (
+    <>
+      <span className="ToolCallCard-name">{displayName}</span>
+      {mcpServer && <Label variant="secondary">{mcpServer}</Label>}
+      {showStatus && <Label variant={statusVariant as any}>{statusLabel}</Label>}
+    </>
+  );
 
   return (
-    <div className="ToolCallCard">
-      <div className="ToolCallCard-header">
-        <div className="ToolCallCard-meta">
-          <span className="ToolCallCard-name">{displayName}</span>
-          {mcpServer && <Label variant="secondary">{mcpServer}</Label>}
-          {showStatus && <Label variant={statusVariant as any}>{statusLabel}</Label>}
+    <Disclosure
+      icon={ToolsIcon}
+      variant="done"
+      label={headerLabel}
+      forceOpen={pendingApproval || undefined}
+      className="ToolCallCard"
+    >
+      <pre>{parsedArgs}</pre>
+      {output && (
+        <div className="ToolCallCard-output">
+          <div className="ToolCallCard-output-label">Output:</div>
+          <pre>{output}</pre>
         </div>
-      </div>
-      <div className="ToolCallCard-body">
-        <pre>{parsedArgs}</pre>
-        {output && (
-          <div className="ToolCallCard-output">
-            <div className="ToolCallCard-output-label">Output:</div>
-            <pre>{output}</pre>
-          </div>
-        )}
-        {needs_approval && !status && (
-          <div className="ToolCallCard-approval">
-            <Button size="small" variant="primary" onClick={() => onApprove && onApprove(tool_call_id)}>
-              Approve
-            </Button>
-            <Button size="small" variant="danger" onClick={() => onReject && onReject(tool_call_id)}>
-              Reject
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+      {pendingApproval && (
+        <div className="ToolCallCard-approval">
+          <Button size="small" variant="primary" onClick={() => onApprove && onApprove(tool_call_id)}>
+            Approve
+          </Button>
+          <Button size="small" variant="danger" onClick={() => onReject && onReject(tool_call_id)}>
+            Reject
+          </Button>
+        </div>
+      )}
+    </Disclosure>
   );
 }

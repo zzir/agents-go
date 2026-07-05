@@ -3,17 +3,22 @@ package store
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/tracing"
 )
 
-// CompactionCallback is called after a successful compaction with the item
-// counts before and after the operation.
-type CompactionCallback func(before, after int)
+// CompactionNotifier receives compaction lifecycle notifications. OnStart
+// fires right before the (potentially slow) summarization request, so the UI
+// can tell the user why the run is still busy; OnDone fires after a
+// successful compaction with the item counts before and after.
+type CompactionNotifier struct {
+	OnStart func()
+	OnDone  func(before, after int)
+}
 
 // CompactionAdapter wraps a SessionAdapter with provider-agnostic compaction
 // that soft-deletes old messages (marks them compacted=true) rather than
@@ -24,7 +29,7 @@ type CompactionAdapter struct {
 	threshold     int
 	windowSize    int
 	summaryPrompt string
-	onCompaction  CompactionCallback
+	notify        CompactionNotifier
 }
 
 var (
@@ -38,7 +43,7 @@ func NewCompactionAdapter(
 	summaryModel agents.Model,
 	threshold, windowSize int,
 	summaryPrompt string,
-	onCompaction CompactionCallback,
+	notify CompactionNotifier,
 ) *CompactionAdapter {
 	if threshold <= 0 {
 		threshold = 20
@@ -55,7 +60,7 @@ func NewCompactionAdapter(
 		threshold:      threshold,
 		windowSize:     windowSize,
 		summaryPrompt:  summaryPrompt,
-		onCompaction:   onCompaction,
+		notify:         notify,
 	}
 }
 
@@ -80,31 +85,80 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return nil
 	}
 
-	toCompact := active[:len(active)-ca.windowSize]
-
-	items := make([]agents.TResponseInputItem, 0, len(toCompact))
-	for _, m := range toCompact {
+	// Convert every active message to its replayable item, remembering which
+	// message each item came from. Rows that don't convert (annotations,
+	// reasoning items dropped for foreign replay, malformed JSON) carry no
+	// pairing constraints; the message-split mapping below leaves them on the
+	// same side as their preceding convertible neighbor.
+	items := make([]agents.TResponseInputItem, 0, len(active))
+	itemMsgIdx := make([]int, 0, len(active))
+	for i := range active {
+		m := &active[i]
 		if m.Item == "" || m.Item == "{}" || m.Item == "null" {
 			continue
 		}
-		item, err := agents.UnmarshalInputItem([]byte(m.Item))
+		// The summary model is generally not the model that produced these
+		// items, so always adapt them for foreign replay (drop reasoning
+		// items, strip provider-assigned ids) before summarizing.
+		raw := adaptForeignItemJSON([]byte(m.Item))
+		if raw == nil {
+			continue
+		}
+		item, err := agents.UnmarshalInputItem(NormalizeItemJSON(raw))
 		if err != nil {
 			continue
 		}
 		items = append(items, item)
+		itemMsgIdx = append(itemMsgIdx, i)
 	}
 
-	if len(items) == 0 {
+	// The count-based split in message space, translated to item space.
+	msgSplit := len(active) - ca.windowSize
+	itemSplit := 0
+	for itemSplit < len(items) && itemMsgIdx[itemSplit] < msgSplit {
+		itemSplit++
+	}
+	if itemSplit == 0 {
+		return nil // nothing summarizable below the window
+	}
+
+	// A pure count-based split can cut through a function_call / output pair,
+	// making the summary request itself invalid or leaving the kept history
+	// starting with an orphaned output. Move the split so both sides stay
+	// self-consistent; 0 means no valid non-empty prefix exists, so skip this
+	// compaction pass rather than risk corrupting the history.
+	itemSplit = agents.SafeSplitPoint(items, itemSplit)
+	if itemSplit <= 0 {
+		return nil
+	}
+	toSummarize := items[:itemSplit]
+
+	if agents.IsSingleSummary(toSummarize) {
 		return nil
 	}
 
-	if agents.IsSingleSummary(items) {
-		return nil
+	// Map the safe item split back to message space: when the split moved,
+	// everything before the first kept item's message — including interleaved
+	// unconvertible rows, which follow their preceding item — is compacted.
+	// An unmoved split keeps the original count-based message boundary.
+	if itemSplit < len(itemMsgIdx) && itemMsgIdx[itemSplit] < msgSplit {
+		msgSplit = itemMsgIdx[itemSplit]
 	}
+	toCompact := active[:msgSplit]
+
+	if ca.notify.OnStart != nil {
+		ca.notify.OnStart()
+	}
+	var span *tracing.SpanHandle
+	if args.StartSpan != nil {
+		span = args.StartSpan()
+	}
+	span.Set("before_items", len(active))
+	span.Set("after_items", 1+(len(active)-len(toCompact)))
 
 	resp, err := ca.summaryModel.GetResponse(ctx, agents.ModelRequest{
 		SystemInstructions: ca.summaryPrompt,
-		Input:              items,
+		Input:              toSummarize,
 	})
 	if err != nil {
 		return fmt.Errorf("compaction adapter: summarizing: %w", err)
@@ -119,10 +173,14 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		agents.SummaryMarker+"\n\n"+summaryText,
 		responses.EasyInputMessageRoleSystem,
 	)
-	raw, err := agents.MarshalInputItem(summaryItem)
+	summaryMsg, err := NewItemMessage(ca.sessionID, ca.runID, ca.model, summaryItem)
 	if err != nil {
 		return fmt.Errorf("compaction adapter: marshaling summary: %w", err)
 	}
+	// Override the derived projection: the UI renders this row as a
+	// compaction marker, not a system message.
+	summaryMsg.Role = "compaction"
+	summaryMsg.Content = summaryText
 
 	beforeCount := len(active)
 
@@ -138,16 +196,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 			return err
 		}
 
-		now := time.Now().UTC()
-		summaryMsg := &Message{
-			SessionID: ca.sessionID,
-			RunID:     ca.runID,
-			Role:      "compaction",
-			Content:   summaryText,
-			Item:      string(raw),
-			CreatedAt: now,
-		}
-		if _, err := tx.NewInsert().Model(summaryMsg).Exec(ctx); err != nil {
+		if _, err := tx.NewInsert().Model(&summaryMsg).Exec(ctx); err != nil {
 			return err
 		}
 		return nil
@@ -157,8 +206,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	}
 
 	afterCount := 1 + (len(active) - len(toCompact))
-	if ca.onCompaction != nil {
-		ca.onCompaction(beforeCount, afterCount)
+	if ca.notify.OnDone != nil {
+		ca.notify.OnDone(beforeCount, afterCount)
 	}
 	return nil
 }

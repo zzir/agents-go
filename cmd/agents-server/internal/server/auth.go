@@ -21,30 +21,42 @@ func extractToken(c *gin.Context) string {
 	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return h[7:]
 	}
-	return c.Query("token")
+	return ""
 }
 
-// TokenAuth returns a gin middleware that requires a valid token on /api/*
-// paths. The token is read from Authorization header or query parameter.
-// Paths under /api/auth/ are excluded. /ws uses application-level auth
-// (first WS message).
+// authExempt reports whether path is reachable without a token: the login /
+// check endpoints themselves, the browser-facing OAuth redirect callbacks
+// (which cannot carry an Authorization header), and the OpenAPI document.
+func authExempt(path string) bool {
+	for _, p := range []string{"/api/v1", "/api"} {
+		switch {
+		case strings.HasPrefix(path, p+"/auth/"),
+			path == p+"/mcp-servers/oauth/callback",
+			path == p+"/chatgpt/oauth/callback",
+			path == p+"/openapi.yaml":
+			return true
+		}
+	}
+	return false
+}
+
+// TokenAuth returns a gin middleware that requires a valid Bearer token on
+// /api/* paths (query-string tokens are not accepted — they end up in
+// browser history and proxy logs). /ws uses application-level auth (first WS
+// message).
 func TokenAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/api/auth/") ||
-			path == "/api/mcp-servers/oauth/callback" ||
-			path == "/api/chatgpt/oauth/callback" {
-			c.Next()
-			return
-		}
-		if !strings.HasPrefix(path, "/api/") {
+		if authExempt(path) || !strings.HasPrefix(path, "/api/") {
 			c.Next()
 			return
 		}
 
 		provided := extractToken(c)
 		if token == "" || provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{"code": "unauthorized", "message": "unauthorized"},
+			})
 			return
 		}
 		c.Next()

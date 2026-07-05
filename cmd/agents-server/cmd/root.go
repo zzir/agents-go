@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -43,8 +44,13 @@ func init() {
 	rootCmd.Flags().BoolVar(&flagAllowLocalSandbox, "allow-local-sandbox", false, "Allow creating local (non-isolated) sandboxes")
 }
 
+// buildVersion is the plain version string (without commit/date), surfaced by
+// the /health endpoint.
+var buildVersion = "dev"
+
 // SetVersionInfo sets the version string shown by --version.
 func SetVersionInfo(version, commit, date string) {
+	buildVersion = version
 	rootCmd.Version = version + " (" + commit + " " + date + ")"
 }
 
@@ -82,34 +88,38 @@ func run(_ *cobra.Command, _ []string) error {
 	providerRouteStore := store.NewProviderRouteStore(db)
 	sandboxStore := store.NewSandboxStore(db)
 	guardrailStore := store.NewGuardrailStore(db)
+	pendingApprovalStore := store.NewPendingApprovalStore(db)
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
-	mcpManager := bridge.NewMcpManager(settingStore)
+	mcpManager := bridge.NewMcpManager(ctx, settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
 	chatgptOAuth := bridge.NewChatGPTOAuth(agentConfigStore)
 	defer mcpManager.CloseAll()
 	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
+	go bridge.RunTraceRetention(ctx, settingStore, traceStore)
+	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, messageStore)
 	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
 	deps := &bridge.AgentDeps{
-		AgentConfigs:   agentConfigStore,
-		McpServers:     mcpServerStore,
-		SandboxConfigs: sandboxStore,
-		Memories:       memoryStore,
-		Settings:       settingStore,
-		ProviderRoutes: providerRouteStore,
-		Sessions:       sessionStore,
-		Traces:         traceStore,
-		Guardrails:     guardrailResolver,
-		McpManager:     mcpManager,
-		SandboxManager: sandboxManager,
-		ChatGPTOAuth:   chatgptOAuth,
-		Workspace:      flagWorkspace,
+		AgentConfigs:     agentConfigStore,
+		McpServers:       mcpServerStore,
+		SandboxConfigs:   sandboxStore,
+		Memories:         memoryStore,
+		Settings:         settingStore,
+		ProviderRoutes:   providerRouteStore,
+		Sessions:         sessionStore,
+		Traces:           traceStore,
+		Guardrails:       guardrailResolver,
+		McpManager:       mcpManager,
+		SandboxManager:   sandboxManager,
+		ChatGPTOAuth:     chatgptOAuth,
+		PendingApprovals: pendingApprovalStore,
+		Workspace:        flagWorkspace,
 	}
-	runner := bridge.NewRunner(db, deps)
+	runner := bridge.NewRunner(ctx, db, deps)
 
-	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore)
-	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore)
+	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore, agentConfigStore)
+	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore)
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
 	settingHandler := handler.NewSettingHandler(settingStore)
@@ -118,7 +128,10 @@ func run(_ *cobra.Command, _ []string) error {
 	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
 	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox)
 	traceHandler := handler.NewTraceHandler(traceStore)
+	playgroundHandler := handler.NewPlaygroundHandler(deps)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
+	runHandler := handler.NewRunHandler(runner)
+	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, runner)
 	wsHandler := handler.NewWSHandler(runner)
 
 	token := flagToken
@@ -132,12 +145,20 @@ func run(_ *cobra.Command, _ []string) error {
 		SessionList:     sessionHandler.List,
 		SessionCreate:   sessionHandler.Create,
 		SessionGet:      sessionHandler.Get,
-		SessionUpdate:   sessionHandler.Update,
+		SessionPatch:    sessionHandler.Patch,
 		SessionDelete:   sessionHandler.Delete,
 		SessionMessages: sessionHandler.Messages,
 		SessionFork:     sessionHandler.Fork,
-		SessionPin:      sessionHandler.Pin,
 		WSHandler:       wsHandler.Handle,
+
+		RunCreate: runHandler.Create,
+		RunGet:    runHandler.Get,
+		RunCancel: runHandler.Cancel,
+		RunEvents: runHandler.Events,
+
+		ApprovalListBySession: approvalHandler.ListBySession,
+		ApprovalApprove:       approvalHandler.Approve,
+		ApprovalReject:        approvalHandler.Reject,
 
 		AgentList:   agentConfigHandler.List,
 		AgentCreate: agentConfigHandler.Create,
@@ -151,7 +172,7 @@ func run(_ *cobra.Command, _ []string) error {
 		McpServerUpdate:        mcpServerHandler.Update,
 		McpServerDelete:        mcpServerHandler.Delete,
 		McpServerConnect:       mcpServerHandler.Connect,
-		McpServerDisconnect:    mcpServerHandler.Disconnect,
+		McpServerClearOAuth:    mcpServerHandler.ClearOAuth,
 		McpServerTools:         mcpServerHandler.Tools,
 		McpServerOAuthCallback: mcpServerHandler.OAuthCallback,
 
@@ -166,14 +187,15 @@ func run(_ *cobra.Command, _ []string) error {
 		SettingSet:    settingHandler.Set,
 		SettingDelete: settingHandler.Delete,
 
-		SkillList:   skillHandler.List,
-		SkillGet:    skillHandler.Get,
-		SkillClone:  skillHandler.Clone,
-		SkillUpdate: skillHandler.Update,
-		SkillDelete: skillHandler.Delete,
+		SkillList:       skillHandler.List,
+		SkillGet:        skillHandler.Get,
+		SkillRepoClone:  skillHandler.Clone,
+		SkillRepoSync:   skillHandler.Sync,
+		SkillRepoDelete: skillHandler.Delete,
 
 		ProviderRouteList:   providerRouteHandler.List,
 		ProviderRouteCreate: providerRouteHandler.Create,
+		ProviderRouteGet:    providerRouteHandler.Get,
 		ProviderRouteUpdate: providerRouteHandler.Update,
 		ProviderRouteDelete: providerRouteHandler.Delete,
 
@@ -192,11 +214,16 @@ func run(_ *cobra.Command, _ []string) error {
 
 		TraceListBySession: traceHandler.ListBySession,
 
+		PlaygroundGenerate: playgroundHandler.Generate,
+
 		ChatGPTLogin:    chatgptOAuthHandler.Login,
 		ChatGPTCallback: chatgptOAuthHandler.Callback,
 		ChatGPTStatus:   chatgptOAuthHandler.Status,
 		ChatGPTLogout:   chatgptOAuthHandler.Logout,
 	})
+
+	srv.ServeHealth(buildVersion)
+	srv.ServeOpenAPI(docs.SpecYAML)
 
 	staticFS, err := fs.Sub(web.StaticFS, "frontend/dist")
 	if err != nil {

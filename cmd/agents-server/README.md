@@ -29,30 +29,160 @@ On startup the server prints an auto-generated auth token. Open
 
 ## Authentication
 
-All `/api/*` requests require a token, passed via:
+REST requests authenticate with a Bearer token in the `Authorization` header:
 
-- `Authorization: Bearer <token>` header
-- `?token=<token>` query parameter
+- `Authorization: Bearer <token>`
+
+The `?token=<token>` query parameter is no longer accepted for REST — it leaked
+into browser history and proxy logs. The WebSocket instead authenticates at the
+application level, via its first message (see [WebSocket protocol](#websocket-protocol)).
+
+Exempt from auth: the browser-facing OAuth callbacks, the OpenAPI document
+(`GET /api/v1/openapi.yaml`), the `/api/v1/auth/*` login/check endpoints, and
+`GET /health`.
 
 ## REST API
 
-Base path `/api/`. All request and response bodies are JSON.
+Base path `/api/v1`. The legacy `/api` prefix still resolves as a **deprecated
+alias** kept for one release — migrate to `/api/v1`. All request and response
+bodies are JSON.
 
-### Sessions — `/api/sessions`
+### Errors
+
+Every non-2xx response uses a single error envelope:
+
+```json
+{ "error": { "code": "not_found", "message": "not found" } }
+```
+
+`code` is a stable, machine-readable identifier; `message` is human-readable
+detail.
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `validation` | 400 | Malformed request body or invalid parameter |
+| `unauthorized` | 401 | Missing or invalid Bearer token |
+| `forbidden` | 403 | Operation disabled by server policy |
+| `not_found` | 404 | No such resource |
+| `conflict` | 409 | Resource is in the wrong state for the request |
+| `upstream` | 502 | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
+| `internal` | 500 | Unexpected server error (detail is logged, not returned) |
+
+### Response conventions
+
+- **Create** returns `201 Created` with the created resource.
+- **Update** (`PUT`/`PATCH`) returns `200 OK` with the full updated resource.
+- **Delete** returns `204 No Content`.
+- A write (update or delete) against a missing resource returns `404`.
+- Secret fields are write-only — see [Secret handling](#secret-handling).
+
+### Sessions — `/api/v1/sessions`
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/sessions` | List sessions |
-| POST | `/sessions` | Create session |
+| POST | `/sessions` | Create session (`{name?, agent_config_id?}`) |
 | GET | `/sessions/:id` | Get session |
-| PUT | `/sessions/:id` | Rename session |
-| DELETE | `/sessions/:id` | Delete session and its traces |
-| GET | `/sessions/:id/messages` | List conversation messages |
-| GET | `/sessions/:id/traces` | List trace events |
-| POST | `/sessions/:id/fork` | Fork session (optionally from a specific message) |
-| PATCH | `/sessions/:id/pin` | Pin or unpin a session |
+| PATCH | `/sessions/:id` | Partial update — `{name?, pinned?}`, returns the updated session |
+| DELETE | `/sessions/:id` | Delete session and its messages and traces |
+| GET | `/sessions/:id/messages` | List conversation messages (paginated) |
+| GET | `/sessions/:id/traces` | List trace events (paginated) |
+| POST | `/sessions/:id/fork` | Fork session |
+| POST | `/sessions/:id/runs` | Start a run on the session (see [Runs](#runs--apiv1runs)) |
+| GET | `/sessions/:id/approvals` | List pending approvals (see [Approvals](#approvals--apiv1approvals)) |
 
-### Agents — `/api/agents`
+`POST /sessions` accepts an optional `agent_config_id` to bind the session to an
+agent at creation (it must reference an existing agent). Rename and pin are a
+single `PATCH /sessions/:id` accepting a partial `{name?, pinned?}` body; both
+the separate `PUT` rename and `PATCH /sessions/:id/pin` endpoints are gone.
+
+`fork` copies the source session's messages (and their traces) into a new
+session. Its body is optional: `{message_id?, exclusive?, label?}`. Omit
+`message_id` to fork everything; supply it to bound the copy up to and including
+that message (`exclusive: true` excludes the boundary message itself). The
+session inherits the source's `agent_config_id`.
+
+**Pagination** — `messages` and `traces` accept optional `?limit=` and
+`?before_id=`. Without `limit` the full list is returned (oldest-first),
+backward-compatible with older clients. With `limit`, the newest `limit` items
+are returned; page backwards by passing the smallest id you received as
+`before_id` (an exclusive upper bound).
+
+### Runs — `/api/v1/runs`
+
+Runs are the REST surface for starting and observing agent executions. They share
+the same run hub as the WebSocket transport, so a run started over either
+transport is observable over both. Crucially, **runs execute server-side,
+independent of the connection that started them** — a dropped client or a page
+reload does NOT cancel the run. Reconnect and resubscribe (via
+`GET /runs/:id/events` or the WebSocket `run.subscribe`) to pick the stream back
+up without loss.
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?}` |
+| GET | `/runs/:id` | Get run status |
+| GET | `/runs/:id/events` | Stream run events (Server-Sent Events) |
+| POST | `/runs/:id/cancel` | Cancel the run — `204` |
+
+`POST /sessions/:id/runs` returns `201` with `{run_id, session_id, status}`. With
+`?wait=true` it blocks until the run ends and returns `200` with
+`{run_id, session_id, status, final_output}` — or, when the run pauses for tool
+approval, `{run_id, session_id, status: "interrupted"}` (list
+`/sessions/:id/approvals` and decide; the decision resumes execution under a new
+run id). It returns `409` if the session already has an active run.
+
+`GET /runs/:id` returns `{run_id, session_id, status, last_seq, agent_config_id?,
+sandbox_id?}`. `status` is one of `running`, `interrupted`, `completed`, `error`,
+or `cancelled`. Finished runs stay queryable and replayable for **15 minutes**
+after they end, then `GET /runs/:id` returns 404 (the conversation itself is
+always in `/sessions/:id/messages`).
+
+`GET /runs/:id/events` is a Server-Sent Events stream. (This is plain HTTP SSE
+for API consumers — unrelated to MCP's deprecated SSE transport, which this
+server does not expose.) Each event's `id:` is the hub sequence number;
+reconnect with the `Last-Event-ID` header (or `?from_seq=`) to resume without
+losing events. The stream closes after a terminal event: `run.output`,
+`run.error`, `run.cancelled`, or `run.interrupted` (paused for approval — after
+approving/rejecting, open a new stream on the returned continuation run id).
+Event payloads mirror the WebSocket [server→client events](#server--client).
+
+Start a run and stream it with plain curl (token from server startup):
+
+```bash
+TOKEN=...; H="Authorization: Bearer $TOKEN"; BASE=http://127.0.0.1:9527/api/v1
+SID=$(curl -s -H "$H" -X POST $BASE/sessions -d '{"name":"cli"}' | jq -r .id)
+RUN=$(curl -s -H "$H" -X POST $BASE/sessions/$SID/runs \
+      -d '{"input":"hello","agent_config_id":"<agent-id>"}' | jq -r .run_id)
+curl -N -H "$H" $BASE/runs/$RUN/events          # stream until run.output
+
+# or fire-and-wait in one call:
+curl -s -H "$H" -X POST "$BASE/sessions/$SID/runs?wait=true" \
+     -d '{"input":"hello","agent_config_id":"<agent-id>"}' | jq .final_output
+```
+
+### Approvals — `/api/v1/approvals`
+
+Human-in-the-loop tool approvals. When a tool requires approval the run pauses;
+the pending decision is **persisted to the database, so it survives a server
+restart** and is addressable over REST.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/sessions/:id/approvals` | List pending tool-call approvals for the session |
+| POST | `/approvals/:tool_call_id/approve` | Approve — resumes the run, `202` `{run_id, status}` |
+| POST | `/approvals/:tool_call_id/reject` | Reject — body `{reason?}`, resumes the run, `202` `{run_id, status}` |
+
+Approve/reject resume the run through the shared hub, so the resulting events
+stream over `GET /runs/:id/events` or the WebSocket. A decision on a session that
+already has an active run returns `409`.
+
+Unanswered approvals expire after the `approval_ttl_minutes` setting (default
+`1440` = 24h; `0` disables expiry). On timeout the pending record is dropped and
+an error annotation is written to the session so the timeout is visible rather
+than silently vanishing.
+
+### Agents — `/api/v1/agents`
 
 | Method | Path | Description |
 |---|---|---|
@@ -61,6 +191,9 @@ Base path `/api/`. All request and response bodies are JSON.
 | GET | `/agents/:id` | Get agent |
 | PUT | `/agents/:id` | Update agent |
 | DELETE | `/agents/:id` | Delete agent |
+| POST | `/agents/:id/chatgpt/login` | Start ChatGPT OAuth login for this agent |
+| POST | `/agents/:id/chatgpt/logout` | Clear this agent's ChatGPT token |
+| GET | `/agents/:id/chatgpt/status` | Check this agent's ChatGPT login status |
 
 Agent config fields:
 
@@ -73,7 +206,14 @@ Agent config fields:
 - **Prompt**: `prompt_id`, `prompt_version` (OpenAI stored prompt)
 - **Other**: `use_previous_response_id`, `max_tool_concurrency`, `tool_not_found_behavior`
 
-### MCP Servers — `/api/mcp-servers`
+Secret fields are masked on read — see [Secret handling](#secret-handling): the
+`api_key` and each `fallback_models[].api_key`.
+
+The ChatGPT OAuth routes are a per-agent capability (previously under `/chatgpt/*`
+with an `?agent_config_id=` query parameter). The browser OAuth redirect lands at
+`GET /api/v1/chatgpt/oauth/callback`.
+
+### MCP Servers — `/api/v1/mcp-servers`
 
 | Method | Path | Description |
 |---|---|---|
@@ -83,16 +223,28 @@ Agent config fields:
 | PUT | `/mcp-servers/:id` | Update config (toggles connect/disconnect on `enabled` change) |
 | DELETE | `/mcp-servers/:id` | Delete and disconnect |
 | POST | `/mcp-servers/:id/connect` | Connect (may trigger OAuth) |
-| POST | `/mcp-servers/:id/disconnect` | Disconnect |
+| DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out") |
 | GET | `/mcp-servers/:id/tools` | List tools exposed by the server |
 | GET | `/mcp-servers/oauth/callback` | OAuth redirect callback |
 
 Transports: `stdio` and `streamable_http`. The HTTP transport supports
 `auth_mode` `header` or `oauth`. Each server has an `enabled` flag (default
 `true`); enabled servers are connected automatically on startup. Disabling a
-server disconnects it; re-enabling triggers a reconnect.
+server disconnects it; re-enabling triggers a reconnect — the toggle is the
+on/off switch, there is no separate transient disconnect.
 
-### Memories — `/api/memories`
+OAuth tokens obtained during authorization are persisted, so reconnecting (or
+restarting the server) does not require re-authorizing. The list endpoint
+reports `auth_state` per OAuth server: `authorized` (connected or a saved token
+exists) or `unauthorized` (next connect opens the authorization popup). Use the
+`oauth-token` DELETE endpoint — the "Clear auth" button in the server's edit
+form — to drop the saved token, e.g. to re-authorize with a different account.
+
+For `streamable_http` servers, the secret-bearing config fields are masked on
+read — see [Secret handling](#secret-handling): every `headers` value and
+`oauth_client_secret`.
+
+### Memories — `/api/v1/memories`
 
 | Method | Path | Description |
 |---|---|---|
@@ -104,7 +256,7 @@ server disconnects it; re-enabling triggers a reconnect.
 
 Memories can be scoped to a specific agent via `agent_config_id`.
 
-### Settings — `/api/settings`
+### Settings — `/api/v1/settings`
 
 | Method | Path | Description |
 |---|---|---|
@@ -113,22 +265,44 @@ Memories can be scoped to a specific agent via `agent_config_id`.
 | PUT | `/settings/:key` | Set value |
 | DELETE | `/settings/:key` | Delete |
 
-Known keys: `proxy_url` (HTTP proxy for model and MCP calls), `system_prompt`
-(global system prompt prefix), `brave_api_key` (injects a `brave_search` tool
-into all agents), `enable_editor_tools` (injects file-editing tools scoped to
-`--workspace`).
+Known keys:
 
-### Skills — `/api/skills`
+- `proxy_url` — HTTP proxy for model and MCP calls
+- `system_prompt` — global system prompt prefix
+- `openai_api_key` — fallback provider key for agents that have no `api_key` of
+  their own (secret; masked on read — see [Secret handling](#secret-handling))
+- `brave_api_key` — injects a `brave_search` tool into all agents (secret; masked
+  on read — see [Secret handling](#secret-handling))
+- `enable_editor_tools` — injects file-editing tools scoped to `--workspace`
+- `trace_retention_days` — prune trace events older than N days (checked at
+  startup and once a day); empty or `0` disables pruning
+- `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
+  before it expires (default `1440` = 24h; `0` disables expiry)
+
+### Skills — `/api/v1/skills` (read-only)
+
+Discover skills under `{workspace}/skills/` and read their `SKILL.md`. This
+resource is read-only; repo management lives under `/skill-repos`.
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/skills` | Discover skills under `{workspace}/skills/` |
-| GET | `/skills/*path` | Get SKILL.md content |
-| POST | `/skills/clone` | `git clone --depth=1` a skill repo |
-| PUT | `/skills/:name` | `git fetch && git reset --hard` to update |
-| DELETE | `/skills/:name` | Remove skill directory |
+| GET | `/skills/*path` | Get SKILL.md content (path may be nested, e.g. `repo/sub-skill`) |
 
-### Provider Routes — `/api/provider-routes`
+### Skill repos — `/api/v1/skill-repos`
+
+Clone and maintain whole git repositories of skills.
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/skill-repos` | Clone — body `{url}` (http(s) only); `git clone --depth=1`, returns `201` with the discovered skills |
+| POST | `/skill-repos/:name/sync` | `git fetch && git reset --hard origin/HEAD` to update (discards local changes) |
+| DELETE | `/skill-repos/:name` | Remove the repo directory |
+
+Only `http(s)` remotes are accepted (`file://`, `ssh`, and git's `ext::`
+transport are rejected). `sync` replaces the former `PUT /skills/:name`.
+
+### Provider Routes — `/api/v1/provider-routes`
 
 Map model-name prefixes to different API keys and base URLs for multi-provider
 routing.
@@ -137,10 +311,13 @@ routing.
 |---|---|---|
 | GET | `/provider-routes` | List routes |
 | POST | `/provider-routes` | Create route |
+| GET | `/provider-routes/:id` | Get route |
 | PUT | `/provider-routes/:id` | Update route |
 | DELETE | `/provider-routes/:id` | Delete route |
 
-### Guardrails — `/api/guardrails`
+The `api_key` field is masked on read — see [Secret handling](#secret-handling).
+
+### Guardrails — `/api/v1/guardrails`
 
 | Method | Path | Description |
 |---|---|---|
@@ -157,7 +334,7 @@ Built-in: `content_filter` (input/regex — jailbreak keywords),
 `max_input_length` (input/max_length — 50k chars),
 `max_output_length` (output/max_length — 50k chars).
 
-### Sandboxes — `/api/sandboxes`
+### Sandboxes — `/api/v1/sandboxes`
 
 | Method | Path | Description |
 |---|---|---|
@@ -170,31 +347,73 @@ Built-in: `content_filter` (input/regex — jailbreak keywords),
 
 Sandbox types: `local` (subprocess — requires `--allow-local-sandbox`), `docker`
 (container), `ssh` (remote host). The `local` and `docker` host restrictions are
-enforced on both create and update.
+enforced on both create and update. For `ssh` sandboxes the `password` config
+field is masked on read — see [Secret handling](#secret-handling).
 
-### ChatGPT OAuth — `/api/chatgpt`
+### Playground — `/api/v1/playground`
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/chatgpt/login` | Initiate ChatGPT OAuth login |
-| GET | `/chatgpt/oauth/callback` | OAuth redirect callback |
-| GET | `/chatgpt/status` | Check login status |
-| POST | `/chatgpt/logout` | Logout |
+| POST | `/playground/generate` | One-off model call — `{agent_config_id, model?, system_instructions?, input_items, model_settings?, tools?}`; uses the agent's provider credentials, touches no session, records no run. `model_settings` overrides the agent's settings; `tools` are schema-only definitions (`{name, description?, parameters?}`) echoed from the traced request so the model can emit function calls — they are never executed. Backs the trace panel's "Replay" dialog. |
+
+### ChatGPT OAuth
+
+Login, logout, and status are per-agent, under the agent resource — see
+[Agents](#agents--apiv1agents). The browser OAuth redirect callback is the only
+top-level route:
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/chatgpt/oauth/callback` | OAuth redirect callback (auth-exempt) |
+
+### Secret handling
+
+Secret fields are **write-only**. GET responses return them masked as `********`;
+the plaintext is never sent to a client. On write:
+
+- sending the `********` mask back keeps the currently stored value,
+- sending a new value replaces it,
+- sending `""` clears it.
+
+This lets the UI round-trip whole objects without ever seeing the plaintext.
+Masked fields: agent `api_key` and each `fallback_models[].api_key`,
+provider-route `api_key`, MCP `headers` values and `oauth_client_secret`
+(`streamable_http` only), SSH sandbox `password`, and the `brave_api_key` setting.
+
+### Health
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Liveness probe (unauthenticated) — returns `{status, version}` |
+
+### OpenAPI
+
+A generated OpenAPI 3.1 document (YAML) is served at `GET /api/v1/openapi.yaml`
+(unauthenticated). It is generated from swag annotations on the handlers via
+`make openapi` in `cmd/agents-server`. There is intentionally no bundled
+Swagger/Redoc UI — import the YAML into your own tool.
 
 ## WebSocket protocol
 
-Endpoint: `GET /ws?token=<token>`
+Endpoint: `GET /ws`
 
-After connecting, the client must send `{"type":"auth","token":"..."}` as the
-first message. The server replies with `{"type":"auth.ok"}`.
+The WebSocket does not accept a token in the query string. After connecting, the
+client must authenticate at the application level by sending
+`{"type":"auth","token":"..."}` as the first message. The server replies with
+`{"type":"auth.ok"}`.
 
 All messages use the envelope format `{"type":"...", "payload":{...}}`.
+
+Runs live in the runner's hub, independent of the connection. A dropped socket
+does not cancel a run; after reconnecting, use `run.subscribe` to reattach to a
+run's event stream (replaying buffered events after `from_seq`).
 
 ### Client → Server
 
 | type | Description |
 |---|---|
 | `run.create` | Start a run — `{session_id, input, agent_config_id?, sandbox_id?}` |
+| `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel` | Cancel an in-flight run — `{run_id}` |
 | `tool.approve` | Approve a pending tool call — `{tool_call_id}` |
 | `tool.reject` | Reject a tool call — `{tool_call_id, reason?}` |
@@ -206,15 +425,26 @@ All messages use the envelope format `{"type":"...", "payload":{...}}`.
 | `run.started` | Run begun — `{run_id, session_id}` |
 | `run.agent_start` | Agent taking its turn — `{run_id, agent_name}` |
 | `run.step` | Streaming text delta — `{run_id, delta}` |
+| `run.reasoning` | Streaming reasoning delta — `{run_id, delta}` |
 | `run.tool_call` | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}` |
 | `run.tool_result` | Tool output — `{run_id, tool_call_id, output}` |
 | `run.handoff` | Agent handoff — `{run_id, from, to}` |
+| `run.compaction` | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}` |
 | `run.output` | Final output — `{run_id, final_output}` |
-| `run.error` | Error — `{run_id, code, message}` |
+| `run.interrupted` | Paused for tool approval (terminal for this run segment; the decision resumes under a new run id) — `{run_id}` |
+| `run.error` | Error — `{run_id?, session_id?, code, message}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`) |
 | `run.cancelled` | Cancelled — `{run_id}` |
 | `session.title_updated` | Title changed — `{session_id, title}` |
-| `hook.event` | Lifecycle hook — `{run_id, hook, agent_name?, ...}` |
-| `trace.span` | Trace span — `{run_id, trace_id, span_id, ...}` |
+| `trace.span` | Trace span — `{run_id, trace_id, span_id, error?, ...}` |
+
+Generation spans carry the full model request/response in their `data`
+(`model`, `system_instructions`, `input`, `tools`, `model_settings`,
+`handoffs`, `output_schema`, `output`) — the trace panel renders these when
+you expand a generation span, so you can see exactly what each call sent
+after compaction/filters, including MCP/skill tool definitions. Payloads past
+512KB are replaced with a truncation marker; set
+`OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=false` to keep conversation
+content out of traces entirely.
 
 ## Architecture
 
@@ -227,11 +457,14 @@ cmd/agents-server/
 │   ├── handler/                HTTP handlers (one file per resource)
 │   ├── bridge/                 business logic
 │   │   ├── runner.go           build agent, stream execution, resume after approval
+│   │   ├── run_hub.go          per-run event hub (buffering, seq resume, status)
 │   │   ├── mcp_manager.go      MCP server connection lifecycle
 │   │   ├── sandbox_manager.go  sandbox instance cache
 │   │   ├── oauth.go            MCP OAuth coordinator
+│   │   ├── retention.go        approval-expiry reaper & trace pruning
 │   │   └── ...                 hooks, tracer, guardrails, proxy
-│   ├── store/                  SQLite data layer (bun ORM, 10 tables)
+│   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
+│   ├── store/                  SQLite data layer (bun ORM, 11 tables)
 │   ├── protocol/               WebSocket message types
 │   └── web/                    embedded SPA static files
 └── skills/                     agent skills managed via API
@@ -239,15 +472,21 @@ cmd/agents-server/
 
 ### Request flow
 
-1. Client sends `run.create` over WebSocket
-2. `WSHandler` calls `runner.RunStreamed()`
-3. Runner loads config from the database and calls `BuildFullAgent` to assemble
-   the agent with its provider, MCP tools, sandbox, guardrails, memories, and hooks
-4. Calls the SDK's `agents.RunStreamed()` to execute
-5. Streaming events are pushed to the client as WebSocket envelopes
-6. If a tool requires approval, the run pauses until `tool.approve` / `tool.reject`
-7. On completion the message history is persisted and the session title is
-   auto-generated
+1. A client starts a run — `run.create` over WebSocket or `POST /sessions/:id/runs`
+   over REST. Both call `runner.StartRun`, which registers the run in the shared
+   run hub and executes it in the background, independent of the caller's
+   connection.
+2. The runner loads config from the database and calls `BuildFullAgent` to
+   assemble the agent with its provider, MCP tools, sandbox, guardrails,
+   memories, and hooks, then calls the SDK's `agents.RunStreamed()` to execute.
+3. Streaming events are published to the hub, which fans them out to every
+   subscriber (WebSocket connections and SSE streams) and buffers them for replay
+   so a reconnecting client can resume from a sequence number.
+4. If a tool requires approval, the run pauses and the pending approval is
+   persisted; it resumes on `approve`/`reject` (over either transport) and
+   survives a server restart.
+5. On completion the message history is persisted and the session title is
+   auto-generated.
 
 ## Database
 
@@ -264,7 +503,8 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `provider_routes` | Model-prefix routing rules |
 | `sandbox_configs` | Sandbox configurations |
 | `guardrails` | Custom guardrail definitions |
-| `trace_events` | Trace and hook events |
+| `trace_events` | Trace spans (agent, generation, function, handoff, compaction) |
+| `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 
 The database file can be deleted and recreated freely — there is no migration
 mechanism.

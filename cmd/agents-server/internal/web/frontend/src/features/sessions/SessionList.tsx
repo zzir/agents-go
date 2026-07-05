@@ -1,7 +1,7 @@
 import './sessions.css';
-import { useState, useEffect, useRef, type ReactElement, type MouseEvent, type RefObject } from 'react';
-import { ActionList, ActionMenu, IconButton } from '@primer/react';
-import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon, ZapIcon } from '@primer/octicons-react';
+import { useState, useEffect, useRef, type ReactElement, type RefObject } from 'react';
+import { ActionList, ActionMenu } from '@primer/react';
+import { ClockIcon, KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
@@ -44,17 +44,15 @@ function SessionItem({ s, activeId, isRunning, onSelect, onPin, onFork, onDelete
       {isRunning && <span className="session-running" hidden />}
       {isActive && <span className="session-selected" hidden />}
       {s.name}
-      <ActionList.TrailingVisual>
-        <IconButton
-          ref={anchorRef}
-          icon={KebabHorizontalIcon}
-          variant="invisible"
-          size="small"
-          aria-label=""
-          onMouseDown={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); e.preventDefault(); }}
-          onClick={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); e.preventDefault(); setMenuOpen(o => !o); }}
-        />
-      </ActionList.TrailingVisual>
+      {/* TrailingAction renders as a sibling of the item's button inside the
+          <li>, unlike TrailingVisual which would nest a button in a button. */}
+      <ActionList.TrailingAction
+        ref={anchorRef}
+        className="session-kebab"
+        icon={KebabHorizontalIcon}
+        label="Session actions"
+        onClick={() => setMenuOpen(o => !o)}
+      />
       <ActionMenu open={menuOpen} onOpenChange={setMenuOpen} anchorRef={anchorRef as RefObject<HTMLElement>}>
         <ActionMenu.Overlay>
           <ActionList>
@@ -120,6 +118,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
 
   const pinned = sessions ? sessions.filter(s => s.pinned) : [];
   const recents = sessions ? sessions.filter(s => !s.pinned) : [];
+  const loaded = sessions !== null;
 
   const renderItem = (s: Session) => (
     <SessionItem
@@ -143,33 +142,37 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
             New Chat
           </ActionList.Item>
           <ActionList.Item disabled>
-            <ActionList.LeadingVisual><ZapIcon size={16} /></ActionList.LeadingVisual>
+            <ActionList.LeadingVisual><ClockIcon size={16} /></ActionList.LeadingVisual>
             Automation
           </ActionList.Item>
         </ActionList>
       </div>
       <div className="sidebar-scroll">
-        <ActionList>
-          {pinned.length > 0 && (
-            <ActionList.Group>
-              <ActionList.GroupHeading>Pinned</ActionList.GroupHeading>
-              {pinned.map(renderItem)}
-            </ActionList.Group>
-          )}
-          {pinned.length > 0 ? (
-            <ActionList.Group>
-              <ActionList.GroupHeading>Recents</ActionList.GroupHeading>
-              {recents.length > 0
+        {loaded && (
+          <ActionList>
+            {pinned.length > 0 && (
+              <ActionList.Group>
+                {/* Primer requires an explicit heading level on list-role
+                    ActionLists; omitting `as` throws and unmounts the app. */}
+                <ActionList.GroupHeading as="h3">Pinned</ActionList.GroupHeading>
+                {pinned.map(renderItem)}
+              </ActionList.Group>
+            )}
+            {pinned.length > 0 ? (
+              <ActionList.Group>
+                <ActionList.GroupHeading as="h3">Recents</ActionList.GroupHeading>
+                {recents.length > 0
+                  ? recents.map(renderItem)
+                  : <div className="blankslate">No conversations yet</div>
+                }
+              </ActionList.Group>
+            ) : (
+              recents.length > 0
                 ? recents.map(renderItem)
                 : <div className="blankslate">No conversations yet</div>
-              }
-            </ActionList.Group>
-          ) : (
-            recents.length > 0
-              ? recents.map(renderItem)
-              : <div className="blankslate">No conversations yet</div>
-          )}
-        </ActionList>
+            )}
+          </ActionList>
+        )}
       </div>
     </>
   );

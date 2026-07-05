@@ -49,6 +49,8 @@ interface FlatForm {
   known_hosts: string;
   insecure_host_key: boolean;
   work_dir: string;
+  // all backends; kept as a string so the field can be empty (= server default)
+  max_read_file_bytes: string;
 }
 
 interface PackedForm {
@@ -57,9 +59,11 @@ interface PackedForm {
   config?: Record<string, unknown>;
 }
 
-// The shape of the nested `config` blob for the two configurable backends.
-// Both sets of fields are optional so one local cast covers any stored sandbox.
+// The shape of the nested `config` blob per backend type. All fields are
+// optional so one local cast covers any stored sandbox.
 interface SandboxConfigShape {
+  // all backends
+  max_read_file_bytes?: number;
   // docker
   image?: string;
   runtime?: string;
@@ -88,6 +92,7 @@ function flatten(s: Partial<SandboxConfig>): FlatForm {
     // ssh
     addr: c.addr || '', user: c.user || '', key_file: c.key_file || '', password: c.password || '',
     use_agent: !!c.use_agent, known_hosts: c.known_hosts || '', insecure_host_key: !!c.insecure_host_key, work_dir: c.work_dir || '',
+    max_read_file_bytes: c.max_read_file_bytes ? String(c.max_read_file_bytes) : '',
   };
 }
 
@@ -104,6 +109,11 @@ function pack(form: FlatForm): PackedForm {
       key_file: form.key_file, password: form.password,
       known_hosts: form.known_hosts, insecure_host_key: form.insecure_host_key, work_dir: form.work_dir,
     };
+  }
+  // Shared across all backends (local included, which otherwise has no config).
+  const maxRead = parseInt(form.max_read_file_bytes, 10);
+  if (Number.isFinite(maxRead) && maxRead > 0) {
+    config = { ...(config || {}), max_read_file_bytes: maxRead };
   }
   return config ? { ...base, config } : base;
 }
@@ -188,6 +198,11 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
       {t === 'ssh' && fc('Working directory',
         <TextInput block value={form.work_dir} onChange={e => set('work_dir', e.target.value)} placeholder="/home/sandbox/workspace" />,
         'Fixed remote directory for command execution. Leave empty to use a temporary directory per execution.',
+      )}
+
+      {fc('Max read_file bytes',
+        <TextInput type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
+        'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
 
       <div className="form-actions">

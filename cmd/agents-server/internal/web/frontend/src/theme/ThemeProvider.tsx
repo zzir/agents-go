@@ -26,7 +26,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const color = theme === 'night' ? '#0d1117' : '#ffffff';
+    const dark = theme === 'night';
+    // Keep <html data-color-mode> in sync so consumers keyed off it stay live:
+    // syntax.css ([data-color-mode="dark"] .hljs-*) flips code colors for free
+    // (pure CSS, no re-render), and MermaidBlock's MutationObserver fires so
+    // diagrams re-render with the new theme. theme-init.js only sets it once.
+    document.documentElement.setAttribute('data-color-mode', dark ? 'dark' : 'light');
+
+    const color = dark ? '#0d1117' : '#ffffff';
     const old = document.querySelector('meta[name="theme-color"]');
     if (old) old.remove();
     const meta = document.createElement('meta');

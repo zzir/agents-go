@@ -54,6 +54,7 @@ interface McpFormProps {
   onSave: (data: Partial<McpServer>) => void;
   onCancel?: () => void;
   onDelete?: () => void;
+  onClearAuth?: () => Promise<boolean>;
 }
 
 function flatten(s: Partial<McpServer>): McpFormData {
@@ -97,12 +98,23 @@ function pack(form: McpFormData): Partial<McpServer> {
   return { ...base, config };
 }
 
-function McpForm({ initial, onSave, onCancel, onDelete }: McpFormProps) {
+function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormProps) {
   const [form, setForm] = useState<McpFormData>(flatten(initial || {}));
+  const [authCleared, setAuthCleared] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const set = (k: keyof McpFormData, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }));
   const isStdio = form.transport_type === 'stdio';
   const isOAuth = form.auth_mode === 'oauth';
   const isHeader = form.auth_mode === 'header';
+  const canClearAuth = !!onClearAuth && !authCleared && !isStdio && isOAuth && initial?.auth_state === 'authorized';
+
+  const handleClearAuth = async () => {
+    if (!onClearAuth || clearing) return;
+    setClearing(true);
+    const ok = await onClearAuth();
+    setClearing(false);
+    if (ok) setAuthCleared(true);
+  };
 
   return (
     <Stack gap="normal">
@@ -131,6 +143,10 @@ function McpForm({ initial, onSave, onCancel, onDelete }: McpFormProps) {
       {!isStdio && isOAuth && fc('Scopes',
         <TextInput value={form.oauth_scopes} onChange={e => set('oauth_scopes', e.target.value)} placeholder="read write" monospace />,
         'Space-separated OAuth scopes to request.',
+      )}
+      {canClearAuth && fc('Saved authorization',
+        <Button onClick={handleClearAuth} variant="danger" disabled={clearing}>Clear auth</Button>,
+        'Disconnects and deletes the saved OAuth token; the next connect asks for authorization again.',
       )}
       <FormControl>
         <Checkbox checked={form.enabled} onChange={e => set('enabled', e.target.checked)} />
@@ -242,12 +258,15 @@ export function McpServerPanel() {
     setConnecting(prev => ({ ...prev, [id]: false }));
     reload();
   };
-  const handleDisconnect = async (id: string | number) => {
+  const handleClearAuth = async (id: string | number): Promise<boolean> => {
     try {
-      await api.mcpServers.disconnect(id);
+      await api.mcpServers.clearOAuth(id);
+      toast.success('Authorization cleared');
       reload();
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
+      return false;
     }
   };
 
@@ -269,7 +288,7 @@ export function McpServerPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
       {adding && <McpForm onSave={save} onCancel={cancel} />}
-      {editing && <McpForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} />}
+      {editing && <McpForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />}
       {!adding && !editing && <div className="Box">
         {servers.map(s => (
           <div key={s.id} className="Box-row">
@@ -284,17 +303,16 @@ export function McpServerPanel() {
               </div>
             </div>
             <div className="resource-row-actions">
-              <EnabledToggle server={s} onToggle={handleToggleEnabled} />
-              {!s.connected
-                ? <Button
-                    onClick={() => handleConnect(s.id)}
-                    disabled={connecting[s.id] || authorizing[s.id]}
-                    size="small"
-                    style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
-                  >{connectLabel(s, connecting[s.id] || authorizing[s.id])}</Button>
-                : <Button onClick={() => handleDisconnect(s.id)} size="small" variant="invisible" style={{ minWidth: 90, textAlign: 'center' }}>Disconnect</Button>
-              }
+              {!s.connected && (
+                <Button
+                  onClick={() => handleConnect(s.id)}
+                  disabled={connecting[s.id] || authorizing[s.id]}
+                  size="small"
+                  style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
+                >{connectLabel(s, connecting[s.id] || authorizing[s.id])}</Button>
+              )}
               <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
+              <EnabledToggle server={s} onToggle={handleToggleEnabled} />
             </div>
           </div>
         ))}

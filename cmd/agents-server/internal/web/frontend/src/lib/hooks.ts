@@ -1,5 +1,125 @@
-import { useState, useEffect, useCallback, useRef, type DependencyList, type RefCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, type DependencyList, type RefCallback, type PointerEvent, type KeyboardEvent } from 'react';
 import { toast } from '@/lib/toast';
+
+const NARROW_QUERY = '(max-width: 767px)';
+
+/** True below the app's mobile breakpoint (767px); tracks live via matchMedia. */
+export function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(NARROW_QUERY);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+  return narrow;
+}
+
+const RESIZE_ARROW_KEY_STEP = 10;
+
+function clampPaneWidth(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+function readStoredPaneWidth(storageKey: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw === null) return fallback;
+    const n = Math.round(Number(raw));
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function savePaneWidth(storageKey: string, width: number): void {
+  try {
+    localStorage.setItem(storageKey, String(Math.round(width)));
+  } catch {
+    // Ignore write errors (private browsing, quota exceeded, etc.)
+  }
+}
+
+interface UseResizablePaneOptions {
+  storageKey: string;
+  min: number;
+  max: number;
+  defaultWidth: number;
+  /** Which side of the viewport the pane is docked to — flips the drag sign:
+   *  a 'left'-docked pane (sidebar) grows when its edge is dragged right, a
+   *  'right'-docked one (a trace/detail drawer) grows when dragged left. */
+  edge: 'left' | 'right';
+}
+
+interface ResizablePane {
+  width: number;
+  handleProps: {
+    onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
+    onPointerMove: (e: PointerEvent<HTMLDivElement>) => void;
+    onPointerUp: (e: PointerEvent<HTMLDivElement>) => void;
+    onLostPointerCapture: (e: PointerEvent<HTMLDivElement>) => void;
+    onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+    onDoubleClick: () => void;
+  };
+}
+
+/**
+ * Drag-to-resize behavior shared by the sidebar and any right-docked panel
+ * (trace/detail drawers): pointer-drag width persisted per storageKey, with
+ * arrow-key nudging and double-click-to-reset. Spread `handleProps` onto the
+ * drag-handle element; apply `width` to the pane itself.
+ */
+export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: UseResizablePaneOptions): ResizablePane {
+  const [width, setWidth] = useState(() => clampPaneWidth(readStoredPaneWidth(storageKey, defaultWidth), min, max));
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(0);
+  const sign = edge === 'left' ? 1 : -1;
+
+  const onPointerDown = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture is a nice-to-have; ignore if unsupported/unavailable.
+    }
+    dragStartXRef.current = e.clientX;
+    dragStartWidthRef.current = widthRef.current;
+  }, []);
+
+  const onPointerMove = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    e.preventDefault();
+    const delta = (e.clientX - dragStartXRef.current) * sign;
+    const next = clampPaneWidth(dragStartWidthRef.current + delta, min, max);
+    if (next !== widthRef.current) setWidth(next);
+  }, [min, max, sign]);
+
+  const onPointerUp = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    savePaneWidth(storageKey, widthRef.current);
+  }, [storageKey]);
+
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const dir = e.key === 'ArrowLeft' ? -1 : 1;
+    const next = clampPaneWidth(widthRef.current + dir * RESIZE_ARROW_KEY_STEP * sign, min, max);
+    if (next !== widthRef.current) {
+      setWidth(next);
+      savePaneWidth(storageKey, next);
+    }
+  }, [min, max, sign, storageKey]);
+
+  const onDoubleClick = useCallback(() => {
+    setWidth(defaultWidth);
+    savePaneWidth(storageKey, defaultWidth);
+  }, [defaultWidth, storageKey]);
+
+  return { width, handleProps: { onPointerDown, onPointerMove, onPointerUp, onLostPointerCapture: onPointerUp, onKeyDown, onDoubleClick } };
+}
 
 interface UseApiResult<T> {
   data: T | null;
@@ -121,9 +241,16 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
     }
     elRef.current = node;
     if (node) {
+      // Trackpads fire scroll events well above frame rate; coalesce the
+      // layout reads (scrollHeight/scrollTop) to one per frame.
+      let rafId = 0;
       const handler = () => {
-        const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
-        updateSticky(dist < 80);
+        if (rafId) return;
+        rafId = requestAnimationFrame(() => {
+          rafId = 0;
+          const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
+          updateSticky(dist < 80);
+        });
       };
       handlerRef.current = handler;
       node.addEventListener('scroll', handler, { passive: true });
@@ -154,7 +281,7 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
 
   const scrollToBottom = useCallback(() => {
     if (elRef.current) {
-      elRef.current.scrollTop = elRef.current.scrollHeight;
+      elRef.current.scrollTo({ top: elRef.current.scrollHeight, behavior: 'smooth' });
       updateSticky(true);
     }
   }, [updateSticky]);

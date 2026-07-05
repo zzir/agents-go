@@ -7,6 +7,7 @@ import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { ChevronRightIcon } from '@primer/octicons-react';
+import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
 
 interface AgentFormData {
   name: string;
@@ -39,12 +40,14 @@ interface AgentFormData {
   compaction_model: string;
   compaction_prompt: string;
   tools?: string;
+  skills?: string;
   model_settings?: string;
 }
 
 interface McpServer {
   id: string | number;
   name: string;
+  enabled?: boolean;
   connected?: boolean;
 }
 
@@ -61,15 +64,24 @@ interface Agent {
 
 interface AgentFormProps {
   initial?: Partial<AgentFormData> & { id?: string | number };
-  onSave: (form: AgentFormData & { tools: string; model_settings: string }) => void;
+  onSave: (form: AgentFormData & { tools: string; skills: string; model_settings: string }) => void;
   onCancel?: () => void;
   onDelete?: () => void;
   mcpServers?: McpServer[];
+  skills?: Skill[];
 }
 
-function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFormProps) {
+function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: AgentFormProps) {
   const initTools = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
+  };
+  // undefined/absent `skills` means this agent predates per-agent skill
+  // scoping (or is brand new) — null here signals "not customized yet", so
+  // the effective set below defaults to every currently installed skill
+  // instead of none, preserving the old "every agent gets every skill" behavior.
+  const initSkills = (): string[] | null => {
+    if (!initial || typeof initial.skills !== 'string' || initial.skills === '') return null;
+    try { return JSON.parse(initial.skills); } catch { return null; }
   };
   const parseModelSettings = (): Record<string, unknown> => {
     try { return JSON.parse((initial && initial.model_settings) || '{}'); } catch { return {}; }
@@ -95,33 +107,62 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
   const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
   const [extraBody, setExtraBody] = useState(initMs.extra_body ? JSON.stringify(initMs.extra_body) : '');
   const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
+  const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
   const toggleMcp = (id: string | number) => {
     setSelectedMcp(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  // null selectedSkills = not customized yet -> effectively "every installed skill".
+  // Computed from the live `skills` prop (not stale state) so it's correct even
+  // before any effect/interaction has run.
+  const allSkillPaths = (skills || []).map(sk => sk.path);
+  const effectiveSkills = selectedSkills ?? allSkillPaths;
+  const toggleSkill = (path: string) => {
+    setSelectedSkills(prev => {
+      const base = prev ?? allSkillPaths;
+      return base.includes(path) ? base.filter(x => x !== path) : [...base, path];
+    });
+  };
+  // Skills are grouped by their top-level directory (a cloned repo can bundle
+  // dozens of skills) so the list stays manageable — collapsed by default,
+  // with a group-level checkbox to select/deselect the whole directory at once.
+  const skillGroups = groupByRepo(skills || []);
+  const [expandedSkillRepos, setExpandedSkillRepos] = useState<Set<string>>(new Set());
+  const toggleSkillRepoExpanded = (repo: string) => {
+    setExpandedSkillRepos(prev => {
+      const next = new Set(prev);
+      if (next.has(repo)) next.delete(repo); else next.add(repo);
+      return next;
+    });
+  };
+  const toggleSkillGroup = (group: SkillGroup) => {
+    const paths = group.skills.map(sk => sk.path);
+    const allSelected = paths.every(p => effectiveSkills.includes(p));
+    setSelectedSkills(prev => {
+      const base = prev ?? allSkillPaths;
+      return allSelected ? base.filter(p => !paths.includes(p)) : Array.from(new Set([...base, ...paths]));
+    });
   };
 
   return (
     <Stack gap="normal">
       {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
       {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} placeholder="gpt-5.5" block />)}
-
-      <div className="form-inline-group">
-        {fc('Reasoning effort', <Select value={reasoningEffort} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReasoningEffort(e.target.value)}>
-          <Select.Option value="">Not set</Select.Option>
-          <Select.Option value="low">Low</Select.Option>
-          <Select.Option value="medium">Medium</Select.Option>
-          <Select.Option value="high">High</Select.Option>
-          <Select.Option value="xhigh">Extra High</Select.Option>
-        </Select>)}
-        {fc('Service tier', <Select value={serviceTier} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setServiceTier(e.target.value)}>
-          <Select.Option value="">Not set</Select.Option>
-          <Select.Option value="auto">Auto</Select.Option>
-          <Select.Option value="default">Default</Select.Option>
-          <Select.Option value="flex">Flex</Select.Option>
-          <Select.Option value="priority">Priority</Select.Option>
-        </Select>)}
-      </div>
+      {fc('Reasoning effort', <Select value={reasoningEffort} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReasoningEffort(e.target.value)}>
+        <Select.Option value="">Not set</Select.Option>
+        <Select.Option value="low">Low</Select.Option>
+        <Select.Option value="medium">Medium</Select.Option>
+        <Select.Option value="high">High</Select.Option>
+        <Select.Option value="xhigh">Extra High</Select.Option>
+      </Select>)}
+      {fc('Service tier', <Select value={serviceTier} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setServiceTier(e.target.value)}>
+        <Select.Option value="">Not set</Select.Option>
+        <Select.Option value="auto">Auto</Select.Option>
+        <Select.Option value="default">Default</Select.Option>
+        <Select.Option value="flex">Flex</Select.Option>
+        <Select.Option value="priority">Priority</Select.Option>
+      </Select>)}
 
       <JsonField label="Extra body (JSON)" value={extraBody} onChange={setExtraBody} placeholder='{"enable_thinking": true, "thinking_budget": 1024}' caption="Provider-specific parameters injected into every API request" />
 
@@ -139,7 +180,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
         </SegmentedControl>, 'Choose authentication method')}
 
         {form.auth_mode !== 'chatgpt_login' && <>
-          {fc('API key', <TextInput value={form.api_key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('api_key', e.target.value)} placeholder="sk-..." type="password" block />)}
+          {fc('API key', <TextInput value={form.api_key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('api_key', e.target.value)} placeholder="sk-..." type="password" block />, 'Stored keys show as ******** — leave the mask to keep the current key, clear the field to remove it')}
           {fc('Base URL', <TextInput value={form.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('base_url', e.target.value)} placeholder="https://api.openai.com/v1 (leave empty for default)" block />)}
         </>}
 
@@ -155,17 +196,63 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
       {mcpServers && mcpServers.length > 0 && <div className="form-group">
         <div className="form-group-title">MCP Servers</div>
         <div className="form-checkbox-group">
-          {mcpServers.map(s => (
-            <FormControl key={s.id}>
-              <Checkbox checked={selectedMcp.includes(s.id)} onChange={() => toggleMcp(s.id)} />
-              <FormControl.Label>
-                {s.name}
-                {s.connected && <span className="form-status-dot form-status-dot--success" style={{ width: 6, height: 6, marginLeft: 4, display: 'inline-block' }} />}
-              </FormControl.Label>
-            </FormControl>
-          ))}
+          {mcpServers.map(s => {
+            const usable = !!s.connected;
+            return (
+              <FormControl key={s.id} disabled={!usable}>
+                <Checkbox checked={selectedMcp.includes(s.id)} disabled={!usable} onChange={() => toggleMcp(s.id)} />
+                <FormControl.Label>
+                  {s.name}
+                  {usable
+                    ? <span className="form-status-dot form-status-dot--success" style={{ width: 6, height: 6, marginLeft: 4, display: 'inline-block' }} />
+                    : <span className="resource-row-sub" style={{ marginLeft: 4 }}>({s.enabled === false ? 'disabled' : 'not connected'})</span>}
+                </FormControl.Label>
+              </FormControl>
+            );
+          })}
         </div>
-        <div className="FormControl-caption">Select which MCP servers this agent can use</div>
+        <div className="FormControl-caption">Select which MCP servers this agent can use — greyed-out servers are disabled or not currently connected</div>
+      </div>}
+
+      {skills && skills.length > 0 && <div className="form-group">
+        <div className="form-group-title">Skills</div>
+        <div className="form-checkbox-group">
+          {skillGroups.map(group => {
+            const paths = group.skills.map(sk => sk.path);
+            const selectedCount = paths.filter(p => effectiveSkills.includes(p)).length;
+            const allSelected = selectedCount === paths.length;
+            const expanded = expandedSkillRepos.has(group.repo);
+            return (
+              <div key={group.repo}>
+                <div className="checkbox-group-header">
+                  <Checkbox
+                    checked={allSelected}
+                    indeterminate={!allSelected && selectedCount > 0}
+                    aria-label={`Select all skills in ${group.repo}`}
+                    onChange={() => toggleSkillGroup(group)}
+                  />
+                  <button type="button" className="checkbox-group-toggle" aria-expanded={expanded} onClick={() => toggleSkillRepoExpanded(group.repo)}>
+                    <ChevronRightIcon size={12} />
+                    {group.repo}
+                  </button>
+                  <span className="checkbox-group-header-count">{selectedCount}/{paths.length}</span>
+                </div>
+                {expanded && (
+                  <div className="checkbox-group-body">
+                    {group.skills.map(sk => (
+                      <FormControl key={sk.path}>
+                        <Checkbox checked={effectiveSkills.includes(sk.path)} onChange={() => toggleSkill(sk.path)} />
+                        <FormControl.Label>{sk.name}</FormControl.Label>
+                        {sk.description && <FormControl.Caption>{sk.description}</FormControl.Caption>}
+                      </FormControl>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="FormControl-caption">Select which installed skills this agent can use</div>
       </div>}
 
       <button type="button" className="advanced-toggle" aria-expanded={showAdvanced} onClick={() => setShowAdvanced(!showAdvanced)}>
@@ -236,11 +323,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
               <FormControl.Label>Disable tool choice reset</FormControl.Label>
               <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
             </FormControl>
-            <FormControl>
-              <Checkbox checked={form.use_previous_response_id || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('use_previous_response_id', e.target.checked)} />
-              <FormControl.Label>Use previous response ID</FormControl.Label>
-              <FormControl.Caption>Chain responses server-side, send only deltas</FormControl.Caption>
-            </FormControl>
           </div>
         </div>
 
@@ -254,7 +336,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
           {form.compaction_enabled && <>
             {fc('Threshold', <TextInput type="number" min={0} value={String(form.compaction_threshold || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold', parseInt(e.target.value) || 0)} style={{ width: '120px' }} />, 'Item count that triggers compaction (0 = default 20)')}
             {fc('Window size', <TextInput type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} style={{ width: '120px' }} />, 'Recent items to keep intact (0 = default 10)')}
-            {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, 'Model used to generate conversation summaries')}
+            {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
             {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={3} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
           </>}
         </div>
@@ -272,11 +354,17 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
           const ms: Record<string, unknown> = {};
           if (reasoningEffort) ms.reasoning = { effort: reasoningEffort };
           if (serviceTier) ms.service_tier = serviceTier;
-          if (extraBody) {
-            try { ms.extra_body = JSON.parse(extraBody); } catch { /* validated by JsonField */ }
+          if (extraBody.trim()) {
+            // Block the save on malformed JSON — silently dropping the field
+            // would lose the user's input without any feedback.
+            try { ms.extra_body = JSON.parse(extraBody); }
+            catch { toast.error('Extra body is not valid JSON — fix or clear it before saving'); return; }
           }
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
-          onSave({ ...form, tools: JSON.stringify(selectedMcp), model_settings });
+          // use_previous_response_id is rejected by the server (incompatible
+          // with server-side session storage); always send false so legacy
+          // configs that still carry the flag are cleaned up on their next save.
+          onSave({ ...form, use_previous_response_id: false, tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings });
         }} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
@@ -287,8 +375,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers }: AgentFor
 
 export function AgentConfigPanel() {
   const { items: agents, adding, editing, startAdd, startEdit, cancel, save, remove, reload } =
-    useCrud<Agent, AgentFormData & { tools: string; model_settings: string }>(api.agents);
+    useCrud<Agent, AgentFormData & { tools: string; skills: string; model_settings: string }>(api.agents);
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
+  const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const [signingIn, setSigningIn] = useState<Record<string | number, boolean>>({});
   const pollRef = useRef<Record<string | number, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>({});
 
@@ -356,8 +445,8 @@ export function AgentConfigPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
 
-      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} />}
-      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} />}
+      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} />}
+      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} />}
 
       {!adding && !editing && <div className="Box">
         {agents.map(a => {

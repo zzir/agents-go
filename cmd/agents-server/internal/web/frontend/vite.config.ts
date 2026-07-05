@@ -37,9 +37,12 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
+        // Only libraries that actually land in the main bundle belong here.
+        // highlight.js is imported solely from markdown.worker.ts, which Vite
+        // emits as its own bundle (manualChunks doesn't apply), so a
+        // 'highlight' entry here only ever produced an empty chunk.
         manualChunks: {
           'primer': ['@primer/react', '@primer/octicons-react'],
-          'highlight': ['highlight.js'],
           'katex': ['katex'],
           'marked': ['marked'],
         },

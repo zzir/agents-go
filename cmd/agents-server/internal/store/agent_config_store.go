@@ -19,11 +19,15 @@ func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
 }
 
 // Update overwrites the agent config but preserves the chatgpt_token column.
+// Returns an ErrNotFound-wrapping error when the row doesn't exist.
 func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig) error {
-	_, err := s.db.NewUpdate().Model(m).
+	res, err := s.db.NewUpdate().Model(m).
 		ExcludeColumn("id", "created_at", "chatgpt_token").
 		Where("id = ?", id).
 		Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
 	if err != nil {
 		return fmt.Errorf("updating agent config %s: %w", id, err)
 	}

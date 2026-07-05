@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -20,32 +19,68 @@ import (
 // EventSink receives protocol envelopes emitted during a streamed run.
 type EventSink func(env *protocol.Envelope)
 
-// Runner executes and tracks streamed agent runs, keyed by run id for cancellation.
+// Runner executes streamed agent runs. Run lifecycle, cancellation, event
+// buffering, and fan-out are delegated to the hub, so a run outlives the
+// connection that started it.
 type Runner struct {
 	db   *bun.DB
 	Deps *AgentDeps
-
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
+	hub  *RunHub
 }
 
-func compactionHook(hooks *wsRunHooks) store.CompactionCallback {
-	return func(before, after int) {
-		hooks.Emit(protocol.HookEvent{
-			Hook:   "compaction",
-			Detail: fmt.Sprintf("compacted %d→%d items", before, after),
-		})
+// compactionNotifier drives the chat UI's live indicator with transient
+// run.compaction status events. Trace recording is the compaction span's job
+// (opened by the SDK runner via CompactionArgs.StartSpan), not the notifier's.
+func compactionNotifier(send func(string, any), runID string) store.CompactionNotifier {
+	return store.CompactionNotifier{
+		OnStart: func() {
+			send("run.compaction", protocol.RunCompaction{RunID: runID, Phase: "started"})
+		},
+		OnDone: func(before, after int) {
+			send("run.compaction", protocol.RunCompaction{
+				RunID:  runID,
+				Phase:  "finished",
+				Detail: fmt.Sprintf("compacted %d→%d items", before, after),
+			})
+		},
 	}
 }
 
-// NewRunner creates a Runner backed by the given database and agent dependencies.
-func NewRunner(db *bun.DB, deps *AgentDeps) *Runner {
+// wrapCompaction wraps sa with the compaction adapter when the agent config
+// enables it. An empty summary model falls back to the agent's own model, so
+// leaving the field blank does not silently disable compaction.
+func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) agents.Session {
+	if !built.CompactionEnabled || provider == nil {
+		return sa
+	}
+	modelName := built.CompactionModel
+	if modelName == "" {
+		modelName = built.Agent.Model
+	}
+	summaryModel, err := provider.GetModel(modelName)
+	if err != nil || summaryModel == nil {
+		return sa
+	}
+	return store.NewCompactionAdapter(sa, summaryModel,
+		built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
+		compactionNotifier(send, runID),
+	)
+}
+
+// NewRunner creates a Runner backed by the given database and agent
+// dependencies. rootCtx scopes every run's lifetime (see RunHub); cancelling
+// it stops all in-flight runs.
+func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	return &Runner{
-		db:      db,
-		Deps:    deps,
-		cancels: make(map[string]context.CancelFunc),
+		db:   db,
+		Deps: deps,
+		hub:  NewRunHub(rootCtx),
 	}
 }
+
+// Hub exposes the run hub so handlers can subscribe to run events, query
+// status, and cancel runs.
+func (r *Runner) Hub() *RunHub { return r.hub }
 
 // RunResult carries the outcome of a streamed run for the caller to persist.
 type RunResult struct {
@@ -59,22 +94,48 @@ type RunResult struct {
 	SDKState      *agents.RunState
 }
 
-// RunStreamed runs the agent for the given session, streaming events to the sink and returning the run outcome.
-func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, sandboxID, input string, sink EventSink) *RunResult {
+// StartRun registers a new run for the session and launches it in the
+// background under the hub's root context (so it survives the connection that
+// started it). It returns the run id; subscribe via Hub() to stream events.
+// onDone, if non-nil, is invoked once when the run terminates. It fails with
+// ErrSessionBusy when the session already has a live run.
+func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, input string, onDone func(*RunResult)) (string, error) {
+	// Reject unknown sessions up front so we never register a run (or write
+	// orphaned messages) against a non-existent session.
+	if _, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID); err != nil {
+		return "", err
+	}
 	runID := store.NewID()
-	ctx, cancel := context.WithCancel(connCtx)
-
-	r.mu.Lock()
-	r.cancels[runID] = cancel
-	r.mu.Unlock()
-
-	defer func() {
-		cancel()
-		r.mu.Lock()
-		delete(r.cancels, runID)
-		r.mu.Unlock()
+	_, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID)
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		result := r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
+		r.hub.finish(runID, result.Interrupted)
+		r.afterRun(runID, result)
+		if onDone != nil {
+			onDone(result)
+		}
 	}()
+	return runID, nil
+}
 
+// afterRun persists an interrupted run's approval state so it survives a
+// restart and is resumable over REST. Persistence failure is logged, not
+// fatal — the live hub still holds the run for the current process.
+func (r *Runner) afterRun(runID string, result *RunResult) {
+	if !result.Interrupted {
+		return
+	}
+	if err := r.persistInterruption(result); err != nil {
+		zerolog.Ctx(r.hub.rootCtx).Error().Err(err).Str("run_id", runID).Msg("persist pending approval")
+	}
+}
+
+// runStreamed executes one run segment to completion, publishing events to
+// the hub, and returns its outcome.
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, input string) *RunResult {
 	log := zerolog.Ctx(ctx)
 
 	sendEvent := func(typ string, payload any) {
@@ -83,13 +144,24 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 			log.Error().Err(err).Str("type", typ).Msg("marshal event")
 			return
 		}
-		sink(env)
+		r.hub.publish(runID, env)
 	}
 
 	sendEvent("run.started", protocol.RunStarted{RunID: runID, SessionID: sessionID})
 
 	mkResult := func() *RunResult {
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
+	}
+
+	// Refuse to run against a session that doesn't exist — otherwise the run
+	// would write orphaned messages under an arbitrary session id.
+	if _, err := r.Deps.Sessions.Get(ctx, sessionID); err != nil {
+		sendEvent("run.error", protocol.RunError{
+			RunID:   runID,
+			Code:    "session_not_found",
+			Message: "session not found: " + sessionID,
+		})
+		return mkResult()
 	}
 
 	// Build fully configured agent from DB config
@@ -121,24 +193,15 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 
 	sa := store.NewSessionAdapter(r.db, sessionID)
 	sa.SetRunID(runID)
-	hooks := newWSRunHooks(sendEvent, r.Deps.Traces, sessionID, runID)
+	sa.SetModel(agent.Model)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
 
-	var runSession agents.Session = sa
-	if built.CompactionEnabled && built.CompactionModel != "" && provider != nil {
-		if summaryModel, err := provider.GetModel(built.CompactionModel); err == nil && summaryModel != nil {
-			runSession = store.NewCompactionAdapter(sa, summaryModel,
-				built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
-				compactionHook(hooks),
-			)
-		}
-	}
+	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
 	opts := agents.RunOptions{
 		Session:               runSession,
 		ModelProvider:         provider,
 		MaxTurns:              built.MaxTurns,
-		Hooks:                 hooks,
 		Tracer:                tracer,
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
@@ -150,13 +213,14 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 
 	sr := agents.RunStreamed(ctx, agent, input, opts)
 
-	var streamedText strings.Builder
+	var streamedText, streamedReasoning strings.Builder
 	for event, err := range sr.Events() {
 		if err != nil {
 			if ctx.Err() != nil {
-				r.savePartialTurn(sessionID, input, streamedText.String())
+				r.savePartialTurn(sessionID, runID, agent.Model, input, streamedText.String(), streamedReasoning.String(), "")
 				sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 			} else {
+				r.savePartialTurn(sessionID, runID, agent.Model, input, streamedText.String(), streamedReasoning.String(), err.Error())
 				sendEvent("run.error", protocol.RunError{
 					RunID:   runID,
 					Code:    "stream_error",
@@ -166,8 +230,11 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 			return mkResult()
 		}
 		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
-			if delta := extractDelta(raw.Data); delta != "" {
-				streamedText.WriteString(delta)
+			switch raw.Data.Type {
+			case "response.output_text.delta":
+				streamedText.WriteString(raw.Data.Delta)
+			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+				streamedReasoning.WriteString(raw.Data.Delta)
 			}
 		}
 		r.handleStreamEvent(event, runID, sendEvent)
@@ -175,27 +242,36 @@ func (r *Runner) RunStreamed(connCtx context.Context, sessionID, agentConfigID, 
 
 	result := r.processResult(sr, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 	if result.FinalText != "" {
-		go r.maybeGenerateTitle(connCtx, sessionID, agentConfigID, input, sendEvent)
+		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, input, sendEvent)
 	}
 	return result
 }
 
-// ResumeStreamed continues a paused run after HITL approval/rejection.
-func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, sessionID, agentConfigID, sandboxID string, sink EventSink) *RunResult {
+// ResumeRun registers a continuation of a paused run (after HITL
+// approval/rejection) and launches it in the background under the hub root
+// context. It returns the new run id. onDone, if non-nil, fires once when the
+// continuation terminates. Fails with ErrSessionBusy if the session has a
+// live run.
+func (r *Runner) ResumeRun(state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunResult)) (string, error) {
 	runID := store.NewID()
-	ctx, cancel := context.WithCancel(ctx)
-
-	r.mu.Lock()
-	r.cancels[runID] = cancel
-	r.mu.Unlock()
-
-	defer func() {
-		cancel()
-		r.mu.Lock()
-		delete(r.cancels, runID)
-		r.mu.Unlock()
+	_, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID)
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		result := r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
+		r.hub.finish(runID, result.Interrupted)
+		r.afterRun(runID, result)
+		if onDone != nil {
+			onDone(result)
+		}
 	}()
+	return runID, nil
+}
 
+// resumeStreamed executes one resumed run segment to completion, publishing
+// events to the hub, and returns its outcome.
+func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string) *RunResult {
 	log := zerolog.Ctx(ctx)
 
 	sendEvent := func(typ string, payload any) {
@@ -204,7 +280,7 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 			log.Error().Err(err).Str("type", typ).Msg("marshal event")
 			return
 		}
-		sink(env)
+		r.hub.publish(runID, env)
 	}
 
 	mkResult := func() *RunResult {
@@ -236,24 +312,15 @@ func (r *Runner) ResumeStreamed(ctx context.Context, state *agents.RunState, ses
 
 	resumeSA := store.NewSessionAdapter(r.db, sessionID)
 	resumeSA.SetRunID(runID)
-	hooks := newWSRunHooks(sendEvent, r.Deps.Traces, sessionID, runID)
+	resumeSA.SetModel(built.Agent.Model)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
 
-	var resumeSession agents.Session = resumeSA
-	if built.CompactionEnabled && built.CompactionModel != "" && provider != nil {
-		if summaryModel, err := provider.GetModel(built.CompactionModel); err == nil && summaryModel != nil {
-			resumeSession = store.NewCompactionAdapter(resumeSA, summaryModel,
-				built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
-				compactionHook(hooks),
-			)
-		}
-	}
+	resumeSession := wrapCompaction(resumeSA, built, provider, sendEvent, runID)
 
 	res, err := agents.ResumeRun(ctx, state, agents.RunOptions{
 		Session:               resumeSession,
 		ModelProvider:         provider,
 		MaxTurns:              built.MaxTurns,
-		Hooks:                 hooks,
 		Tracer:                tracer,
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
@@ -295,6 +362,9 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 				NeedsApproval: true,
 			})
 		}
+		// Terminal marker for this run segment: waiters and SSE streams end
+		// here; the approval decision resumes under a new run id.
+		sendEvent("run.interrupted", protocol.RunInterrupted{RunID: runID})
 		return &RunResult{
 			RunID:         runID,
 			SessionID:     sessionID,
@@ -386,10 +456,15 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 	})
 }
 
-// savePartialTurn persists the user input and any partial assistant response to
-// the session when a run is cancelled mid-stream. Without this, the entire turn
-// is lost on reload because the SDK only saves the session on successful completion.
-func (r *Runner) savePartialTurn(sessionID, userInput, partialText string) {
+// savePartialTurn persists the user input and any partial assistant response
+// (reasoning + text) to the session when a run is cancelled or fails
+// mid-stream. Without this, the entire turn is lost on reload because the SDK
+// only saves the session on successful completion. The user input and partial
+// text go through the store's item chokepoint (canonical wire JSON,
+// replayable); the partial reasoning and error are annotations — shown in the
+// UI but never replayed (a fabricated reasoning item would be rejected by the
+// API).
+func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, partialText, partialReasoning, errMsg string) {
 	if userInput == "" {
 		return
 	}
@@ -397,20 +472,17 @@ func (r *Runner) savePartialTurn(sessionID, userInput, partialText string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	now := time.Now().UTC()
-	msgs := make([]store.Message, 0, 2)
+	msgs := make([]store.Message, 0, 4)
 
 	userItemJSON, _ := json.Marshal(map[string]any{
 		"role":    "user",
 		"content": userInput,
 	})
-	msgs = append(msgs, store.Message{
-		SessionID: sessionID,
-		Role:      "user",
-		Content:   userInput,
-		Item:      string(userItemJSON),
-		CreatedAt: now,
-	})
+	msgs = append(msgs, store.NewItemMessageRaw(sessionID, runID, model, userItemJSON))
+
+	if partialReasoning != "" {
+		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "reasoning", partialReasoning))
+	}
 
 	if partialText != "" {
 		assistantItemJSON, _ := json.Marshal(map[string]any{
@@ -420,13 +492,11 @@ func (r *Runner) savePartialTurn(sessionID, userInput, partialText string) {
 				{"type": "output_text", "text": partialText},
 			},
 		})
-		msgs = append(msgs, store.Message{
-			SessionID: sessionID,
-			Role:      "assistant",
-			Content:   partialText,
-			Item:      string(assistantItemJSON),
-			CreatedAt: now,
-		})
+		msgs = append(msgs, store.NewItemMessageRaw(sessionID, runID, model, assistantItemJSON))
+	}
+
+	if errMsg != "" {
+		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "error", errMsg))
 	}
 
 	_, _ = r.db.NewInsert().Model(&msgs).Exec(ctx)
@@ -434,12 +504,7 @@ func (r *Runner) savePartialTurn(sessionID, userInput, partialText string) {
 
 // CancelRun cancels the in-flight run with the given run id, if one is active.
 func (r *Runner) CancelRun(runID string) {
-	r.mu.Lock()
-	cancel, ok := r.cancels[runID]
-	r.mu.Unlock()
-	if ok {
-		cancel()
-	}
+	r.hub.Cancel(runID)
 }
 
 func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any)) {
@@ -448,9 +513,15 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 		if e.Data == nil {
 			return
 		}
-		delta := extractDelta(e.Data)
-		if delta != "" {
-			send("run.step", protocol.RunStep{RunID: runID, Delta: delta})
+		switch e.Data.Type {
+		case "response.output_text.delta":
+			if e.Data.Delta != "" {
+				send("run.step", protocol.RunStep{RunID: runID, Delta: e.Data.Delta})
+			}
+		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+			if e.Data.Delta != "" {
+				send("run.reasoning", protocol.RunReasoning{RunID: runID, Delta: e.Data.Delta})
+			}
 		}
 
 	case *agents.RunItemStreamEvent:
@@ -467,9 +538,14 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 			}
 		case "tool_output":
 			if to, ok := e.Item.(*agents.ToolCallOutputItem); ok {
+				callID := ""
+				if fco := to.Raw.OfFunctionCallOutput; fco != nil {
+					callID = fco.CallID
+				}
 				send("run.tool_result", protocol.RunToolResult{
-					RunID:  runID,
-					Output: fmt.Sprintf("%v", to.Output),
+					RunID:      runID,
+					ToolCallID: callID,
+					Output:     fmt.Sprintf("%v", to.Output),
 				})
 			}
 		case "handoff_requested":
@@ -495,11 +571,4 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 			AgentName: e.NewAgent.Name,
 		})
 	}
-}
-
-func extractDelta(event *agents.TResponseStreamEvent) string {
-	if event.Type == "response.output_text.delta" {
-		return event.Delta
-	}
-	return ""
 }

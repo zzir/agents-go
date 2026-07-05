@@ -19,10 +19,18 @@ func NewMemoryHandler(s *store.MemoryStore) *MemoryHandler {
 }
 
 // List responds with all stored memories.
+//
+//	@Summary	List memories
+//	@Tags		memories
+//	@Produce	json
+//	@Success	200	{array}		store.Memory
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/memories [get]
 func (h *MemoryHandler) List(c *gin.Context) {
 	memories, err := h.store.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, memories)
@@ -36,6 +44,16 @@ type memoryReq struct {
 	Metadata      string `json:"metadata"`
 }
 
+func (r *memoryReq) validate() string {
+	if r.Key == "" {
+		return "key is required"
+	}
+	if r.Content == "" {
+		return "content is required"
+	}
+	return ""
+}
+
 func (r *memoryReq) toModel() *store.Memory {
 	return &store.Memory{
 		AgentConfigID: r.AgentConfigID,
@@ -46,57 +64,108 @@ func (r *memoryReq) toModel() *store.Memory {
 }
 
 // Create persists a new memory from the request body.
+//
+//	@Summary	Create memory
+//	@Tags		memories
+//	@Accept		json
+//	@Produce	json
+//	@Param		memory	body		memoryReq	true	"Memory; agent_config_id scopes it to one agent, empty means global"
+//	@Success	201		{object}	store.Memory
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/memories [post]
 func (h *MemoryHandler) Create(c *gin.Context) {
 	var req memoryReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if req.Key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "key is required"})
-		return
-	}
-	if req.Content == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "content is required"})
+	if msg := req.validate(); msg != "" {
+		badRequest(c, msg)
 		return
 	}
 	m := req.toModel()
 	if err := h.store.Create(c.Request.Context(), m); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, m)
 }
 
 // Get responds with the memory identified by the id path parameter.
+//
+//	@Summary	Get memory
+//	@Tags		memories
+//	@Produce	json
+//	@Param		id	path		string	true	"Memory ID"
+//	@Success	200	{object}	store.Memory
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/memories/{id} [get]
 func (h *MemoryHandler) Get(c *gin.Context) {
 	m, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		storeError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, m)
 }
 
-// Update overwrites the memory identified by the id path parameter.
+// Update overwrites the memory identified by the id path parameter and
+// responds with the updated memory.
+//
+//	@Summary	Update memory
+//	@Tags		memories
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		string		true	"Memory ID"
+//	@Param		memory	body		memoryReq	true	"Memory"
+//	@Success	200		{object}	store.Memory
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/memories/{id} [put]
 func (h *MemoryHandler) Update(c *gin.Context) {
 	var req memoryReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if err := h.store.Update(c.Request.Context(), c.Param("id"), req.toModel()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if msg := req.validate(); msg != "" {
+		badRequest(c, msg)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if err := h.store.Update(ctx, id, req.toModel()); err != nil {
+		storeError(c, err)
+		return
+	}
+	m, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, m)
 }
 
 // Delete removes the memory identified by the id path parameter.
+//
+//	@Summary	Delete memory
+//	@Tags		memories
+//	@Param		id	path	string	true	"Memory ID"
+//	@Success	204	"deleted"
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/memories/{id} [delete]
 func (h *MemoryHandler) Delete(c *gin.Context) {
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.Status(http.StatusNoContent)
 }

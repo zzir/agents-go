@@ -23,19 +23,20 @@ import (
 
 // AgentDeps holds all the dependencies needed to build a fully configured agent.
 type AgentDeps struct {
-	AgentConfigs   *store.AgentConfigStore
-	McpServers     *store.McpServerStore
-	SandboxConfigs *store.SandboxStore
-	Memories       *store.MemoryStore
-	Settings       *store.SettingStore
-	ProviderRoutes *store.ProviderRouteStore
-	Sessions       *store.SessionStore
-	Traces         *store.TraceStore
-	Guardrails     *GuardrailResolver
-	McpManager     *McpManager
-	SandboxManager *SandboxManager
-	ChatGPTOAuth   *ChatGPTOAuth
-	Workspace      string
+	AgentConfigs     *store.AgentConfigStore
+	McpServers       *store.McpServerStore
+	SandboxConfigs   *store.SandboxStore
+	Memories         *store.MemoryStore
+	Settings         *store.SettingStore
+	ProviderRoutes   *store.ProviderRouteStore
+	Sessions         *store.SessionStore
+	Traces           *store.TraceStore
+	Guardrails       *GuardrailResolver
+	McpManager       *McpManager
+	SandboxManager   *SandboxManager
+	ChatGPTOAuth     *ChatGPTOAuth
+	PendingApprovals *store.PendingApprovalStore
+	Workspace        string
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -63,7 +64,20 @@ func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
 	visited := make(map[string]bool)
-	return buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, visited)
+	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, visited)
+	if err != nil {
+		return nil, err
+	}
+	// Safety net for configs saved before the API started rejecting the flag:
+	// agents-server always runs with a persisted session, and the SDK refuses
+	// Session + UsePreviousResponseID. Only the top-level config's flag is ever
+	// forwarded to RunOptions, so handoff targets are not checked here.
+	if result.UsePreviousResponseID {
+		return nil, fmt.Errorf(
+			"agent %q has use_previous_response_id enabled, which is incompatible with the server's session storage — edit the agent and disable use_previous_response_id",
+			result.Agent.Name)
+	}
+	return result, nil
 }
 
 func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandboxID string, visited map[string]bool) (*BuildResult, error) {
@@ -248,10 +262,30 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 	// Skills — loaded from <root>/skills, matching where SkillHandler manages
 	// them. Load and ReadFileTool must share this root so the relative paths in
-	// the rendered index resolve correctly.
+	// the rendered index resolve correctly. ac.SkillsJSON, when set, restricts
+	// which loaded skills are advertised to this agent (matched by Dir, e.g.
+	// "docx" or "some-repo/docx" — the same directory-relative id the Skills
+	// API and the Agent form's checkboxes use); an unset SkillsJSON (agents
+	// that pre-date per-agent scoping) still gets every installed skill.
 	if deps.Workspace != "" {
 		skillsDir := filepath.Join(deps.Workspace, "skills")
-		loadedSkills, err := skills.Load(skillsDir)
+		loadedSkills, err := skills.LoadRecursive(skillsDir)
+		if err == nil && ac.SkillsJSON != "" {
+			var selected []string
+			if json.Unmarshal([]byte(ac.SkillsJSON), &selected) == nil {
+				allowed := make(map[string]bool, len(selected))
+				for _, p := range selected {
+					allowed[p] = true
+				}
+				filtered := loadedSkills[:0]
+				for _, sk := range loadedSkills {
+					if allowed[sk.Dir] {
+						filtered = append(filtered, sk)
+					}
+				}
+				loadedSkills = filtered
+			}
+		}
 		if err == nil && len(loadedSkills) > 0 {
 			agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))
 			agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
@@ -275,6 +309,68 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 	result.Agent = agent
 	return result, nil
+}
+
+// staticLocalToolNames returns the fixed names of every tool the bridge
+// itself can attach to an agent in buildAgentFromConfig: the sandbox tools
+// (sandbox.CodeTool + sandbox.FileTools defaults), the Brave Search tool, the
+// editor tools, and the skills reader. MCP tools never appear here — they are
+// prefixed "<server name>__" at connect time (see McpManager.Connect).
+func staticLocalToolNames() []string {
+	return []string{
+		// sandbox
+		"exec_command", "read_file", "write_file", "list_files",
+		// brave_api_key setting
+		"brave_search",
+		// enable_editor_tools setting (tools/editor)
+		"view_file", "create_file", "str_replace", "insert_text",
+		// skills
+		"read_skill_file",
+	}
+}
+
+// ValidateAgentToolNames simulates the statically knowable part of an agent's
+// final tool list and reports name collisions that the SDK would otherwise
+// reject only at run time (duplicate tool names are a UserError). Statically
+// checkable are the bridge's own fixed tool names and the MCP servers
+// referenced by toolsJSON: every server's tools get the "<name>__" prefix, so
+// selecting the same server twice, or two servers that share a name, is a
+// guaranteed collision. The servers' actual tool lists are only known once
+// connected and cannot be validated here.
+func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStore, toolsJSON string) error {
+	seen := map[string]bool{}
+	for _, name := range staticLocalToolNames() {
+		if seen[name] {
+			return fmt.Errorf("duplicate built-in tool name %q", name)
+		}
+		seen[name] = true
+	}
+
+	if toolsJSON == "" || mcpServers == nil {
+		return nil
+	}
+	// Malformed tools JSON is ignored when the agent is built, so it is not a
+	// validation failure here either.
+	var ids []string
+	if json.Unmarshal([]byte(toolsJSON), &ids) == nil {
+		seenID := map[string]bool{}
+		nameOwner := map[string]string{} // server name -> config id
+		for _, id := range ids {
+			cfg, err := mcpServers.Get(ctx, id)
+			if err != nil {
+				continue // unknown/removed servers are skipped when the agent is built
+			}
+			if seenID[id] {
+				return fmt.Errorf("MCP server %q is selected twice; each of its tools would appear under the same name twice", cfg.Name)
+			}
+			seenID[id] = true
+			if otherID, taken := nameOwner[cfg.Name]; taken && otherID != id {
+				return fmt.Errorf("MCP servers %q and %q share the name %q: their tools would all get the %q prefix and collide — rename one of them", otherID, id, cfg.Name, cfg.Name+"__")
+			}
+			nameOwner[cfg.Name] = id
+		}
+	}
+	return nil
 }
 
 func buildMemoryBlock(memories []store.Memory) string {

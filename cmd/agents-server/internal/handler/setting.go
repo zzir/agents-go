@@ -18,22 +18,50 @@ func NewSettingHandler(s *store.SettingStore) *SettingHandler {
 	return &SettingHandler{store: s}
 }
 
-// List responds with all settings.
+// List responds with all settings, secret values masked.
+//
+//	@Summary		List settings
+//	@Description	Known keys: proxy_url, system_prompt, brave_api_key (secret, masked), enable_editor_tools.
+//	@Tags			settings
+//	@Produce		json
+//	@Success		200	{array}		store.Setting
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/settings [get]
 func (h *SettingHandler) List(c *gin.Context) {
 	settings, err := h.store.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
+	}
+	for i := range settings {
+		if secretSettingKeys[settings[i].Key] {
+			settings[i].Value = maskSecret(settings[i].Value)
+		}
 	}
 	c.JSON(http.StatusOK, settings)
 }
 
-// Get responds with the setting identified by the key path parameter.
+// Get responds with the setting identified by the key path parameter, secret
+// values masked.
+//
+//	@Summary	Get setting
+//	@Tags		settings
+//	@Produce	json
+//	@Param		key	path		string	true	"Setting key"
+//	@Success	200	{object}	store.Setting
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/settings/{key} [get]
 func (h *SettingHandler) Get(c *gin.Context) {
 	st, err := h.store.Get(c.Request.Context(), c.Param("key"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		storeError(c, err)
 		return
+	}
+	if secretSettingKeys[st.Key] {
+		st.Value = maskSecret(st.Value)
 	}
 	c.JSON(http.StatusOK, st)
 }
@@ -42,25 +70,61 @@ type setSettingReq struct {
 	Value string `json:"value"`
 }
 
-// Set writes the value for the setting identified by the key path parameter.
+// Set writes the value for the setting identified by the key path parameter
+// and responds with the stored setting (secret values masked). For secret
+// settings, a masked value keeps the stored one.
+//
+//	@Summary	Set setting
+//	@Tags		settings
+//	@Accept		json
+//	@Produce	json
+//	@Param		key		path		string			true	"Setting key"
+//	@Param		setting	body		setSettingReq	true	"Value to store"
+//	@Success	200		{object}	store.Setting
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/settings/{key} [put]
 func (h *SettingHandler) Set(c *gin.Context) {
 	var req setSettingReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if err := h.store.Set(c.Request.Context(), c.Param("key"), req.Value); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	ctx := c.Request.Context()
+	key := c.Param("key")
+	if secretSettingKeys[key] && req.Value == SecretMask {
+		var prevValue string
+		if prev, err := h.store.Get(ctx, key); err == nil {
+			prevValue = prev.Value
+		}
+		req.Value = prevValue
+	}
+	if err := h.store.Set(ctx, key, req.Value); err != nil {
+		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	st := store.Setting{Key: key, Value: req.Value}
+	if secretSettingKeys[key] {
+		st.Value = maskSecret(st.Value)
+	}
+	c.JSON(http.StatusOK, st)
 }
 
 // Delete removes the setting identified by the key path parameter.
+//
+//	@Summary	Delete setting
+//	@Tags		settings
+//	@Param		key	path	string	true	"Setting key"
+//	@Success	204	"deleted"
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/settings/{key} [delete]
 func (h *SettingHandler) Delete(c *gin.Context) {
 	if err := h.store.Delete(c.Request.Context(), c.Param("key")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.Status(http.StatusNoContent)
 }

@@ -26,12 +26,23 @@ func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager, allowLoc
 	return &SandboxHandler{store: s, manager: m, allowLocalSandbox: allowLocal}
 }
 
-// List responds with all sandbox configurations.
+// List responds with all sandbox configurations, secrets masked.
+//
+//	@Summary	List sandboxes
+//	@Tags		sandboxes
+//	@Produce	json
+//	@Success	200	{array}		store.SandboxConfig
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes [get]
 func (h *SandboxHandler) List(c *gin.Context) {
 	configs, err := h.store.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
+	}
+	for i := range configs {
+		configs[i] = sanitizeSandboxConfig(configs[i])
 	}
 	c.JSON(http.StatusOK, configs)
 }
@@ -50,11 +61,20 @@ func (r createSandboxReq) toConfig() *store.SandboxConfig {
 	}
 }
 
-// validateSandboxReq checks type-level permissions. Returns an HTTP status and
-// error message on failure, or (0, "") when the request is acceptable.
-func (h *SandboxHandler) validateSandboxReq(req *createSandboxReq) (int, string) {
+// validateSandbox checks required fields and type-level permissions. It
+// reports the failure to c and returns false when the request is rejected.
+func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) bool {
+	if req.Name == "" {
+		badRequest(c, "name is required")
+		return false
+	}
+	if req.Type == "" {
+		badRequest(c, "type is required")
+		return false
+	}
 	if req.Type == "local" && !h.allowLocalSandbox {
-		return http.StatusForbidden, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it"
+		forbidden(c, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it")
+		return false
 	}
 	if req.Type == "docker" {
 		var dc struct {
@@ -64,92 +84,156 @@ func (h *SandboxHandler) validateSandboxReq(req *createSandboxReq) (int, string)
 			_ = json.Unmarshal(req.Config, &dc)
 		}
 		if dc.Host != "" {
-			return http.StatusBadRequest, "remote Docker daemon is not supported; use a local daemon or the SSH sandbox for remote hosts"
+			badRequest(c, "remote Docker daemon is not supported; use a local daemon or the SSH sandbox for remote hosts")
+			return false
 		}
 	}
-	return 0, ""
+	return true
 }
 
 // Create persists a new sandbox configuration from the request body.
+//
+//	@Summary		Create sandbox
+//	@Description	type: local (requires --allow-local-sandbox), docker, or ssh. config is backend-specific; the SSH password is write-only (******** mask semantics). All backends accept an optional max_read_file_bytes cap for the read_file tool (0 = 8 MiB default).
+//	@Tags			sandboxes
+//	@Accept			json
+//	@Produce		json
+//	@Param			sandbox	body		createSandboxReq	true	"Sandbox configuration"
+//	@Success		201		{object}	store.SandboxConfig
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		403		{object}	ErrorResponse	"local sandbox disabled"
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sandboxes [post]
 func (h *SandboxHandler) Create(c *gin.Context) {
 	var req createSandboxReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
-		return
-	}
-	if req.Type == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type is required"})
-		return
-	}
-	if code, msg := h.validateSandboxReq(&req); code != 0 {
-		c.JSON(code, gin.H{"error": msg})
+	if !h.validateSandbox(c, &req) {
 		return
 	}
 	cfg := req.toConfig()
+	// No stored config yet: mask sentinels resolve to empty.
+	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, nil)
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, cfg)
+	c.JSON(http.StatusCreated, sanitizeSandboxConfig(*cfg))
 }
 
-// Get responds with the sandbox configuration identified by the id path parameter.
+// Get responds with the sandbox configuration identified by the id path
+// parameter, secrets masked.
+//
+//	@Summary	Get sandbox
+//	@Tags		sandboxes
+//	@Produce	json
+//	@Param		id	path		string	true	"Sandbox ID"
+//	@Success	200	{object}	store.SandboxConfig
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes/{id} [get]
 func (h *SandboxHandler) Get(c *gin.Context) {
 	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, cfg)
+	c.JSON(http.StatusOK, sanitizeSandboxConfig(*cfg))
 }
 
-// Update overwrites the sandbox configuration identified by the id path parameter.
+// Update overwrites the sandbox configuration identified by the id path
+// parameter and responds with the updated configuration. A masked SSH
+// password keeps the stored value.
+//
+//	@Summary	Update sandbox
+//	@Tags		sandboxes
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		string				true	"Sandbox ID"
+//	@Param		sandbox	body		createSandboxReq	true	"Sandbox configuration"
+//	@Success	200		{object}	store.SandboxConfig
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	403		{object}	ErrorResponse	"local sandbox disabled"
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes/{id} [put]
 func (h *SandboxHandler) Update(c *gin.Context) {
 	var req createSandboxReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if code, msg := h.validateSandboxReq(&req); code != 0 {
-		c.JSON(code, gin.H{"error": msg})
+	if !h.validateSandbox(c, &req) {
 		return
 	}
 	id := c.Param("id")
+	ctx := c.Request.Context()
+	var prevConfig json.RawMessage
+	if prev, err := h.store.Get(ctx, id); err == nil {
+		prevConfig = prev.Config
+	}
 	h.manager.Remove(id)
 	cfg := req.toConfig()
-	if err := h.store.Update(c.Request.Context(), id, cfg); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, prevConfig)
+	if err := h.store.Update(ctx, id, cfg); err != nil {
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	updated, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, sanitizeSandboxConfig(*updated))
 }
 
 // Delete removes the sandbox configuration identified by the id path parameter.
+//
+//	@Summary	Delete sandbox
+//	@Tags		sandboxes
+//	@Param		id	path	string	true	"Sandbox ID"
+//	@Success	204	"deleted"
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes/{id} [delete]
 func (h *SandboxHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	h.manager.Remove(id)
 	if err := h.store.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.Status(http.StatusNoContent)
 }
 
 // Test runs a fixed health-check command in the sandbox to verify connectivity.
+//
+//	@Summary		Test sandbox
+//	@Description	Runs "echo ok" in the sandbox. 200 with ok=false means the sandbox was reachable but the command failed.
+//	@Tags			sandboxes
+//	@Produce		json
+//	@Param			id	path		string	true	"Sandbox ID"
+//	@Success		200	{object}	sandboxTestResp
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		502	{object}	ErrorResponse	"sandbox unreachable"
+//	@Security		BearerAuth
+//	@Router			/sandboxes/{id}/test [post]
 func (h *SandboxHandler) Test(c *gin.Context) {
 	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		storeError(c, err)
 		return
 	}
 
 	sb, err := h.manager.GetOrCreate(cfg)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		upstreamError(c, err)
 		return
 	}
 
@@ -162,7 +246,7 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		Timeout: timeout,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		upstreamError(c, err)
 		return
 	}
 	if res.ExitCode != 0 || res.TimedOut {
@@ -170,8 +254,15 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		if res.TimedOut {
 			detail = "timed out"
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": false, "detail": detail})
+		c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: detail})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, sandboxTestResp{OK: true})
+}
+
+// sandboxTestResp is the Test response: whether the health-check command
+// succeeded, with failure detail when it didn't.
+type sandboxTestResp struct {
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
 }

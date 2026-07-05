@@ -1,9 +1,18 @@
+// Structured display data the server derives from tool-call items, so the
+// frontend never parses wire-format item JSON.
+interface ToolCallDisplay {
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  output?: string;
+}
+
 interface Message {
   id?: number;
   run_id?: string;
   role: string;
   content?: string;
-  item?: string;
+  display?: ToolCallDisplay;
   compacted?: boolean;
 }
 
@@ -37,7 +46,17 @@ interface TextPart {
   content: string;
 }
 
-type TurnPart = ToolsPart | TextPart;
+interface ErrorPart {
+  type: 'error';
+  content: string;
+}
+
+interface ThinkingPart {
+  type: 'thinking';
+  content: string;
+}
+
+type TurnPart = ToolsPart | TextPart | ErrorPart | ThinkingPart;
 
 interface UserEntry {
   role: 'user';
@@ -97,44 +116,43 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
       timeline.push({ role: 'compaction', content: m.content || '', messageId: m.id });
       continue;
     }
-    if (m.compacted && (m.role === 'user' || m.role === 'assistant')) {
-      finishTurn();
-      if (m.role === 'user' && m.content) {
-        timeline.push({ role: 'user', content: m.content, messageId: m.id, runId: m.run_id });
-      } else if (m.content) {
-        ensureTurn();
-        if (m.id) turn!.messageId = m.id;
-        if (m.run_id) turn!.runId = m.run_id;
-        turn!.parts.push({ type: 'text', content: m.content });
-        finishTurn();
-      }
-      continue;
-    }
-    if (m.compacted) continue;
+    // Compacted rows render exactly like live ones: compaction soft-deletes
+    // only the model's replay context (GetItems), never the visible history.
+    // Dropping them here made whole runs vanish after a compaction.
     if (m.role === 'user') {
       finishTurn();
       if (m.content) timeline.push({ role: 'user', content: m.content, messageId: m.id, runId: m.run_id });
     } else if (m.role === 'tool_call') {
-      try {
-        const item = JSON.parse(m.item!);
+      const d = m.display;
+      if (d?.call_id) {
         ensureTurn();
         if (m.id) turn!.messageId = m.id;
         if (m.run_id) turn!.runId = m.run_id;
-        const tc: ToolCall = { tool_call_id: item.call_id, tool_name: item.name, arguments: item.arguments || '', output: null, status: null };
-        pendingTC[item.call_id] = tc;
+        const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.name || '', arguments: d.arguments || '', output: null, status: null };
+        pendingTC[d.call_id] = tc;
         const last = turn!.parts[turn!.parts.length - 1];
         if (last && last.type === 'tools') { (last as ToolsPart).toolCalls.push(tc); }
         else { turn!.parts.push({ type: 'tools', toolCalls: [tc] }); }
-      } catch (_) {}
+      }
     } else if (m.role === 'tool_output') {
-      try {
-        const item = JSON.parse(m.item!);
-        if (turn && m.id) (turn as TurnEntry).messageId = m.id;
-        if (pendingTC[item.call_id]) {
-          pendingTC[item.call_id].output = item.output || m.content;
-          pendingTC[item.call_id].status = 'completed';
-        }
-      } catch (_) {}
+      const d = m.display;
+      if (turn && m.id) (turn as TurnEntry).messageId = m.id;
+      if (d?.call_id && pendingTC[d.call_id]) {
+        pendingTC[d.call_id].output = d.output || m.content || '';
+        pendingTC[d.call_id].status = 'completed';
+      }
+    } else if (m.role === 'error' && m.content) {
+      ensureTurn();
+      if (m.id) turn!.messageId = m.id;
+      if (m.run_id) turn!.runId = m.run_id;
+      turn!.parts.push({ type: 'error', content: m.content });
+    } else if (m.role === 'reasoning') {
+      if (m.content) {
+        ensureTurn();
+        if (m.id) turn!.messageId = m.id;
+        if (m.run_id) turn!.runId = m.run_id;
+        turn!.parts.push({ type: 'thinking', content: m.content });
+      }
     } else if (m.role === 'system' && m.content) {
       finishTurn();
       timeline.push({ role: 'system', content: m.content, messageId: m.id });
@@ -147,15 +165,6 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
   }
   finishTurn();
   return timeline;
-}
-
-export function formatHookDetail(ev: HookEvent): string {
-  const parts: string[] = [];
-  if (ev.agent_name) parts.push(ev.agent_name);
-  if (ev.tool_name) parts.push('→ ' + ev.tool_name);
-  if (ev.from && ev.to) parts.push(ev.from + ' → ' + ev.to);
-  if (ev.detail) parts.push(ev.detail);
-  return parts.join(' ');
 }
 
 export function patchToolCall(messages: TimelineEntry[], toolCallId: string, patch: ToolCallPatch): TimelineEntry[] | null {

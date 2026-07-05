@@ -1,4 +1,4 @@
-const BASE = '/api';
+const BASE = '/api/v1';
 
 export function getToken(): string {
   return sessionStorage.getItem('auth_token') || '';
@@ -25,7 +25,9 @@ async function request(path: string, opts: RequestInit = {}): Promise<any> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || res.statusText);
+    // Errors arrive as {"error": {"code", "message"}}.
+    const message = body.error?.message || (typeof body.error === 'string' ? body.error : '') || res.statusText;
+    throw new Error(message);
   }
   if (res.status === 204) return null;
   return res.json();
@@ -74,21 +76,33 @@ function crud(base: string): CrudMethods {
 export const api = {
   sessions: {
     ...crud('/sessions'),
-    create: (name: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name }) }),
-    update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+    create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
+    update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     messages: (id: string | number) => request(`/sessions/${id}/messages`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
-    fork: (id: string | number, messageId?: number, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ message_id: messageId || 0, ...opts }) }),
-    pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}/pin`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
+    approvals: (id: string | number) => request(`/sessions/${id}/approvals`),
+    fork: (id: string | number, messageId?: number, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
+    pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
   agents: crud('/agents'),
   mcpServers: {
     ...crud('/mcp-servers'),
     connect: (id: string | number) => request(`/mcp-servers/${id}/connect`, { method: 'POST' }),
-    disconnect: (id: string | number) => request(`/mcp-servers/${id}/disconnect`, { method: 'POST' }),
+    clearOAuth: (id: string | number) => request(`/mcp-servers/${id}/oauth-token`, { method: 'DELETE' }),
     tools: (id: string | number) => request(`/mcp-servers/${id}/tools`),
   },
   memories: crud('/memories'),
+  playground: {
+    generate: (body: {
+      agent_config_id: string;
+      model?: string;
+      system_instructions?: string;
+      input_items: unknown[];
+      model_settings?: Record<string, unknown>;
+      tools?: unknown[];
+    }) =>
+      request('/playground/generate', { method: 'POST', body: JSON.stringify(body) }),
+  },
   settings: {
     list: () => request('/settings'),
     get: (key: string) => request(`/settings/${key}`),
@@ -98,9 +112,10 @@ export const api = {
   skills: {
     list: () => request('/skills'),
     get: (path: string) => request(`/skills/${path}`),
-    clone: (url: string) => request('/skills/clone', { method: 'POST', body: JSON.stringify({ url }) }),
-    update: (name: string) => request(`/skills/${name}`, { method: 'PUT' }),
-    delete: (name: string) => request(`/skills/${name}`, { method: 'DELETE' }),
+    // Management operates on whole repos under /skill-repos.
+    clone: (url: string) => request('/skill-repos', { method: 'POST', body: JSON.stringify({ url }) }),
+    update: (name: string) => request(`/skill-repos/${name}/sync`, { method: 'POST' }),
+    delete: (name: string) => request(`/skill-repos/${name}`, { method: 'DELETE' }),
   },
   guardrails: {
     ...crud('/guardrails'),
@@ -112,8 +127,8 @@ export const api = {
     test: (id: string | number) => request(`/sandboxes/${id}/test`, { method: 'POST' }),
   },
   chatgpt: {
-    login: (agentConfigId: string | number) => request(`/chatgpt/login?agent_config_id=${agentConfigId}`, { method: 'POST' }),
-    logout: (agentConfigId: string | number) => request(`/chatgpt/logout?agent_config_id=${agentConfigId}`, { method: 'POST' }),
-    status: (agentConfigId: string | number) => request(`/chatgpt/status?agent_config_id=${agentConfigId}`),
+    login: (agentConfigId: string | number) => request(`/agents/${agentConfigId}/chatgpt/login`, { method: 'POST' }),
+    logout: (agentConfigId: string | number) => request(`/agents/${agentConfigId}/chatgpt/logout`, { method: 'POST' }),
+    status: (agentConfigId: string | number) => request(`/agents/${agentConfigId}/chatgpt/status`),
   },
 };

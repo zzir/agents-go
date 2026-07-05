@@ -200,6 +200,83 @@ a:hover {
     min-width: 0;
 }
 
+/* --- Generic resizable right-docked panel (SidePanel: trace/diff/image
+   detail views) --- mirrors .app-sidebar-pane/.app-sidebar-handle's drag
+   mechanics on the opposite edge. */
+.side-panel {
+    position: relative;
+    flex-shrink: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--borderColor-default);
+    background: var(--bgColor-default);
+    overflow: hidden;
+}
+
+.side-panel-handle {
+    position: absolute;
+    top: 0;
+    left: -2px;
+    bottom: 0;
+    width: 4px;
+    cursor: col-resize;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    z-index: 1;
+}
+
+.side-panel-handle::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-color: var(--bgColor-neutral-muted);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.side-panel-handle:hover::before,
+.side-panel-handle:focus-visible::before {
+    opacity: 1;
+}
+
+.side-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--borderColor-muted);
+    flex-shrink: 0;
+}
+
+.side-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fgColor-default);
+}
+
+.side-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+/* Mobile — full-height overlay below the mobile top bar (48px). SidePanel
+   suppresses the inline width style itself when narrow, so this plain class
+   width applies cleanly (no !important needed). */
+@media (max-width: 767px) {
+    .side-panel {
+        position: fixed;
+        inset: 48px 0 0;
+        width: 100%;
+        z-index: 40;
+    }
+}
+
 /* --- Responsive: narrow (< 768px) --- fixed-overlay drawer.
    Everything else (mobile-header, backdrop, sidebar-footer, drag handle)
    is handled by conditional rendering in AppShell via useNarrow(). */
@@ -360,21 +437,6 @@ a:hover {
     margin-bottom: var(--base-size-8);
 }
 
-/* Two controls side by side (e.g. Reasoning + Fast) */
-.form-inline-group {
-    display: flex;
-    gap: var(--base-size-24);
-    align-items: flex-start;
-}
-
-.form-inline-group > * {
-    margin-bottom: 0;
-}
-
-.form-inline-group > .FormControl:first-child {
-    flex: 1;
-}
-
 /* Status row (dot + text + action) */
 .form-status {
     display: flex;
@@ -469,6 +531,60 @@ a:hover {
     display: flex;
     flex-direction: column;
     gap: var(--base-size-4);
+}
+
+/* Expandable directory row inside a .form-checkbox-group (e.g. Skills grouped
+   by repo) — a group-level checkbox plus a disclosure button, same
+   chevron-rotate mechanics as .advanced-toggle but sized for a repeated list. */
+.checkbox-group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-4);
+}
+
+.checkbox-group-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-4);
+    padding: var(--base-size-4) 0;
+    font-size: var(--base-text-size-sm);
+    color: var(--fgColor-default);
+    cursor: pointer;
+    user-select: none;
+    background: none;
+    border: none;
+}
+
+.checkbox-group-toggle:hover {
+    color: var(--fgColor-accent);
+}
+
+.checkbox-group-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
+}
+
+.checkbox-group-toggle svg {
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+}
+
+.checkbox-group-toggle[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+}
+
+.checkbox-group-header-count {
+    font-size: 11px;
+    color: var(--fgColor-muted);
+    margin-left: auto;
+}
+
+.checkbox-group-body {
+    padding-left: var(--base-size-24);
+    display: flex;
+    flex-direction: column;
+    gap: var(--base-size-4);
+    margin-top: var(--base-size-4);
 }
 
 /* Legacy hairline — kept for one-off separators */

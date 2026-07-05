@@ -43,16 +43,43 @@ func (s *TraceStore) InsertBatch(ctx context.Context, events []TraceEvent) error
 	return nil
 }
 
-// ListBySession returns all trace events for sessionID ordered oldest first.
-func (s *TraceStore) ListBySession(ctx context.Context, sessionID string) ([]TraceEvent, error) {
+// ListBySession returns trace events for sessionID ordered oldest first.
+// limit > 0 selects the newest `limit` rows (optionally only those with
+// id < beforeID); limit <= 0 returns everything.
+func (s *TraceStore) ListBySession(ctx context.Context, sessionID string, beforeID int64, limit int) ([]TraceEvent, error) {
 	var events []TraceEvent
-	if err := s.db.NewSelect().Model(&events).
-		Where("session_id = ?", sessionID).
-		OrderExpr("id ASC").
-		Scan(ctx); err != nil {
+	q := s.db.NewSelect().Model(&events).
+		Where("session_id = ?", sessionID)
+	if beforeID > 0 {
+		q = q.Where("id < ?", beforeID)
+	}
+	if limit > 0 {
+		q = q.OrderExpr("id DESC").Limit(limit)
+	} else {
+		q = q.OrderExpr("id ASC")
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing trace events for session %s: %w", sessionID, err)
 	}
+	if limit > 0 {
+		for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+			events[i], events[j] = events[j], events[i]
+		}
+	}
 	return events, nil
+}
+
+// DeleteOlderThan removes trace events created before cutoff. Returns the
+// number of rows removed.
+func (s *TraceStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := s.db.NewDelete().Model((*TraceEvent)(nil)).
+		Where("created_at < ?", cutoff).
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deleting trace events before %s: %w", cutoff, err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // ForkBySession copies trace events from srcSessionID to dstSessionID,

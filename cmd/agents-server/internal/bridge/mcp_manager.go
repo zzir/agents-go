@@ -18,21 +18,32 @@ import (
 // McpManager manages MCP server connections. It maintains a map of active
 // connections keyed by config ID.
 type McpManager struct {
+	// rootCtx bounds the lifetime of the connections themselves (most
+	// importantly the stdio subprocesses), independent of whichever request
+	// context happened to trigger the connect.
+	rootCtx  context.Context
 	settings *store.SettingStore
 	mu       sync.RWMutex
 	servers  map[string]*mcp.Server
 }
 
-// NewMcpManager returns a new manager with no active connections.
-func NewMcpManager(settings *store.SettingStore) *McpManager {
+// NewMcpManager returns a new manager with no active connections. rootCtx
+// scopes connection lifetimes: cancelling it stops every stdio subprocess.
+func NewMcpManager(rootCtx context.Context, settings *store.SettingStore) *McpManager {
+	if rootCtx == nil {
+		rootCtx = context.Background()
+	}
 	return &McpManager{
+		rootCtx:  rootCtx,
 		settings: settings,
 		servers:  make(map[string]*mcp.Server),
 	}
 }
 
 // Connect creates and starts an MCP server connection from a stored config.
-// If the server is already connected, this is a no-op.
+// If the server is already connected, this is a no-op. ctx only bounds the
+// connection handshake; the connection itself lives until Disconnect,
+// CloseAll, or the manager's root context ends.
 func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,7 +62,10 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 		if cerr := unmarshalConfig(cfg.Config, &sc); cerr != nil {
 			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 		}
-		cmd := exec.CommandContext(ctx, sc.Command, sc.Args...)
+		// The command context governs the subprocess lifetime — it must be
+		// the manager's root context, NOT the caller's (a request context
+		// would kill the server as soon as the request ends).
+		cmd := exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)
 		srv, err = mcp.NewStdioServer(ctx, cfg.Name, cmd, opts)
 	case "streamable_http":
 		var hc store.HTTPMcpConfig

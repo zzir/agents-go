@@ -21,57 +21,127 @@ func NewGuardrailHandler(s *store.GuardrailStore, r *bridge.GuardrailResolver) *
 }
 
 // List responds with all available guardrails (stored + built-in).
+//
+//	@Summary	List guardrails
+//	@Tags		guardrails
+//	@Produce	json
+//	@Success	200	{array}	store.Guardrail
+//	@Security	BearerAuth
+//	@Router		/guardrails [get]
 func (h *GuardrailHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, h.resolver.ListGuardrails(c.Request.Context()))
 }
 
+func validateGuardrail(g *store.Guardrail) string {
+	if g.Name == "" || g.Type == "" || g.Mode == "" {
+		return "name, type, and mode are required"
+	}
+	return ""
+}
+
 // Create persists a new guardrail definition.
+//
+//	@Summary		Create guardrail
+//	@Description	type: input|output; mode: regex|max_length; config: {pattern} or {max_length}.
+//	@Tags			guardrails
+//	@Accept			json
+//	@Produce		json
+//	@Param			guardrail	body		store.Guardrail	true	"Guardrail definition"
+//	@Success		201			{object}	store.Guardrail
+//	@Failure		400			{object}	ErrorResponse
+//	@Failure		500			{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/guardrails [post]
 func (h *GuardrailHandler) Create(c *gin.Context) {
 	var g store.Guardrail
 	if err := c.ShouldBindJSON(&g); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if g.Name == "" || g.Type == "" || g.Mode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name, type, and mode are required"})
+	if msg := validateGuardrail(&g); msg != "" {
+		badRequest(c, msg)
 		return
 	}
 	if err := h.store.Create(c.Request.Context(), &g); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, g)
 }
 
 // Get responds with a single guardrail by ID.
+//
+//	@Summary	Get guardrail
+//	@Tags		guardrails
+//	@Produce	json
+//	@Param		id	path		string	true	"Guardrail ID"
+//	@Success	200	{object}	store.Guardrail
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/guardrails/{id} [get]
 func (h *GuardrailHandler) Get(c *gin.Context) {
 	g, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, g)
 }
 
-// Update overwrites a guardrail definition.
+// Update overwrites a guardrail definition and responds with the updated
+// guardrail.
+//
+//	@Summary	Update guardrail
+//	@Tags		guardrails
+//	@Accept		json
+//	@Produce	json
+//	@Param		id			path		string			true	"Guardrail ID"
+//	@Param		guardrail	body		store.Guardrail	true	"Guardrail definition"
+//	@Success	200			{object}	store.Guardrail
+//	@Failure	400			{object}	ErrorResponse
+//	@Failure	404			{object}	ErrorResponse
+//	@Failure	500			{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/guardrails/{id} [put]
 func (h *GuardrailHandler) Update(c *gin.Context) {
 	var g store.Guardrail
 	if err := c.ShouldBindJSON(&g); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if err := h.store.Update(c.Request.Context(), c.Param("id"), &g); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if msg := validateGuardrail(&g); msg != "" {
+		badRequest(c, msg)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if err := h.store.Update(ctx, id, &g); err != nil {
+		storeError(c, err)
+		return
+	}
+	updated, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, updated)
 }
 
 // Delete removes a guardrail by ID.
+//
+//	@Summary	Delete guardrail
+//	@Tags		guardrails
+//	@Param		id	path	string	true	"Guardrail ID"
+//	@Success	204	"deleted"
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/guardrails/{id} [delete]
 func (h *GuardrailHandler) Delete(c *gin.Context) {
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.Status(http.StatusNoContent)
 }

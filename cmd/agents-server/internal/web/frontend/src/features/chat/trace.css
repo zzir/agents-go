@@ -1,35 +1,8 @@
-/* Trace drawer (right panel) */
+/* Trace drawer (right panel) — the drawer chrome itself (width, header,
+   resize handle) is the generic .side-panel* in globals.css; this file only
+   styles trace-specific content. */
 .chat-main.trace-open {
   flex-direction: row;
-}
-.trace-drawer {
-  width: 340px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--borderColor-default);
-  background: var(--bgColor-default);
-  overflow: hidden;
-}
-.trace-drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--borderColor-muted);
-}
-.trace-drawer-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fgColor-default);
-}
-.trace-drawer-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
 }
 .trace-tab-live {
   display: inline-block;
@@ -45,40 +18,10 @@
   50% { opacity: 0.4; }
 }
 
-/* Vertical trace run sections */
-.trace-run {
-  border: 1px solid var(--borderColor-muted);
-  border-radius: var(--borderRadius-medium, 6px);
-  margin-bottom: 6px;
-  overflow: hidden;
-}
-.trace-run.expanded {
-  border-color: var(--borderColor-default);
-}
-.trace-run-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  background: var(--bgColor-muted);
-  color: var(--fgColor-default);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-}
-.trace-run-header:hover {
-  background: var(--bgColor-neutral-muted);
-}
-.trace-run-chevron {
-  flex-shrink: 0;
-  color: var(--fgColor-muted);
-  transition: transform 0.15s;
-}
-.trace-run.expanded .trace-run-chevron {
-  transform: rotate(90deg);
-}
+/* Trace run — content styles (shell is Disclosure) */
+.trace-run { margin-bottom: 6px; }
+.trace-run .disclosure-header { font-size: 12px; font-weight: normal; padding: 8px 10px; }
+.trace-run .disclosure-body { padding: 4px 6px; }
 .trace-run-label {
   flex: 1;
   min-width: 0;
@@ -93,9 +36,24 @@
   margin-left: auto;
   white-space: nowrap;
 }
-.trace-run-body {
-  padding: 4px 6px;
-  border-top: 1px solid var(--borderColor-muted);
+/* Jump-to-message control: hidden until the run header is hovered, so the
+   header stays quiet; sits between the label and the run meta. */
+.trace-run-jump {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: var(--borderRadius-small, 4px);
+  color: var(--fgColor-muted);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  flex-shrink: 0;
+}
+.trace-run .disclosure-header:hover .trace-run-jump {
+  opacity: 1;
+}
+.trace-run-jump:hover {
+  color: var(--fgColor-accent);
+  background: var(--bgColor-accent-muted);
 }
 .trace-empty {
   font-size: 12px;
@@ -103,37 +61,13 @@
   padding: 4px 0;
 }
 
-/* Timeline event */
-.trace-ev {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 3px 4px;
-  border-radius: var(--borderRadius-small, 4px);
-  font-size: 11px;
-  line-height: 1.5;
-  min-width: 0;
-}
-.trace-ev:hover { background: var(--bgColor-neutral-muted); }
+/* Shared bits for span rows and payload entries */
 .trace-ev-icon {
   flex-shrink: 0;
-  width: 16px;
+  width: 14px;
   text-align: center;
   font-size: 11px;
   line-height: 1.5;
-}
-.trace-ev-icon-span { color: var(--fgColor-success); }
-.trace-ev-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-.trace-ev-label {
-  font-weight: 500;
-  color: var(--fgColor-default);
-  white-space: nowrap;
 }
 .trace-ev-tag {
   font-size: 10px;
@@ -143,10 +77,6 @@
   background: var(--bgColor-neutral-muted);
   color: var(--fgColor-muted);
   white-space: nowrap;
-}
-.trace-ev-tag-tool {
-  background: var(--bgColor-done-muted);
-  color: var(--fgColor-done);
 }
 .trace-ev-tag-span {
   background: var(--bgColor-success-muted);
@@ -159,11 +89,82 @@
   font-family: var(--fontStack-monospace);
   color: var(--fgColor-muted);
 }
-.trace-ev-duration {
+/* Span tree + waterfall */
+.trace-section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8, 8px);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fgColor-muted);
+  padding: 6px 4px 2px;
+}
+/* Hairline extending from the label so Request/Response sections read as
+   distinct blocks. */
+.trace-section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--borderColor-muted);
+}
+.trace-span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: var(--borderRadius-small, 4px);
+  font-size: 11px;
+  line-height: 1.5;
+  min-width: 0;
+}
+.trace-span:hover { background: var(--bgColor-neutral-muted); }
+.trace-span-clickable { cursor: pointer; }
+.trace-span-name {
+  font-weight: 500;
+  color: var(--fgColor-default);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.trace-span-duration {
   font-size: 10px;
   font-family: var(--fontStack-monospace);
   color: var(--fgColor-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.trace-span-track {
+  position: relative;
+  flex: 1;
+  min-width: 40px;
+  height: 6px;
+  background: var(--bgColor-neutral-muted);
+  border-radius: 3px;
+  overflow: hidden;
   margin-left: auto;
+}
+.trace-span-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  opacity: 0.75;
+}
+.trace-span-data {
+  margin: 2px 4px 6px;
+  padding: var(--base-size-8);
+  background: var(--bgColor-inset);
+  border-radius: var(--borderRadius-small);
+  font-size: 10px;
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-muted);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .trace-ev-detail {
   font-size: 10px;
@@ -174,12 +175,264 @@
   max-width: 100%;
 }
 
-/* Mobile — full-height overlay below the mobile top bar (48px) */
-@media (max-width: 767px) {
-  .trace-drawer {
-    position: fixed;
-    inset: 48px 0 0;
-    width: 100%;
-    z-index: 40;
-  }
+/* In-progress spans: pulsing dot and bar until the end event replaces them */
+.trace-span-live-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fgColor-accent);
+  animation: trace-pulse 1.2s ease-in-out infinite;
+}
+.trace-span-bar.live {
+  animation: trace-pulse 1.2s ease-in-out infinite;
+}
+@keyframes trace-pulse {
+  50% { opacity: 0.3; }
+}
+
+/* Replay dialog: a two-pane playground — editable request on the left,
+   replay + original response on the right. Chrome and controls are Primer;
+   this is pure layout. */
+.trace-replay {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8, 8px);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.trace-replay-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8, 8px);
+  flex-shrink: 0;
+}
+.trace-replay-agent {
+  min-width: 140px;
+  max-width: 240px;
+}
+.trace-replay-model {
+  flex: 1;
+  min-width: 120px;
+  max-width: 320px;
+  font-family: var(--fontStack-monospace);
+}
+.trace-replay-tools-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.trace-replay-run {
+  margin-left: auto;
+}
+.trace-replay-cols {
+  display: flex;
+  gap: var(--base-size-16, 16px);
+  flex: 1;
+  min-height: 0;
+}
+.trace-replay-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-4, 4px);
+}
+/* Section headers share the trace-section-label look but lay out inline
+   extras: validation state, run meta, the Format action. */
+.trace-replay-sec {
+  display: flex;
+  align-items: baseline;
+  gap: var(--base-size-8, 8px);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fgColor-muted);
+  padding-top: 2px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.trace-replay-hint,
+.trace-replay-invalid {
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fgColor-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.trace-replay-invalid {
+  color: var(--fgColor-danger);
+}
+.trace-replay-format {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.trace-replay-settings textarea {
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+}
+.trace-replay-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.trace-replay-fill > * {
+  flex: 1;
+  display: flex;
+}
+.trace-replay-fill textarea {
+  height: 100%;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+}
+.trace-replay-error {
+  flex-shrink: 0;
+}
+.trace-replay-outbox {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  padding: var(--base-size-4, 4px);
+}
+
+/* Failed spans: red name, error tag, and the expanded error message */
+.trace-span-failed {
+  color: var(--fgColor-danger);
+}
+.trace-ev-tag-error {
+  color: var(--fgColor-danger);
+  background: var(--bgColor-danger-muted, rgba(207, 34, 46, 0.1));
+}
+.trace-span-error {
+  padding: 4px 8px;
+  margin: 2px 0 4px;
+  font-size: 11px;
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-danger);
+  background: var(--bgColor-danger-muted, rgba(207, 34, 46, 0.08));
+  border-radius: 4px;
+  word-break: break-word;
+}
+
+/* Expand indicator for spans carrying data (e.g. generation payloads) */
+.trace-span-chevron {
+  display: inline-flex;
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--fgColor-muted);
+  transition: transform 0.15s ease;
+}
+.trace-span-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* Generation span payload: the exact model request/response. Spacing, hover
+   and type treatments mirror the span rows above it (Primer tokens). */
+.trace-payload {
+  margin: 2px var(--base-size-4, 4px) var(--base-size-8, 8px);
+  padding: 2px 0 var(--base-size-4, 4px) var(--base-size-8, 8px);
+}
+.trace-payload-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-muted);
+  padding: 2px 0;
+  min-width: 0;
+}
+.trace-payload-meta-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-payload-item {
+  margin: 1px 0;
+}
+.trace-payload-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--borderRadius-small, 4px);
+  min-width: 0;
+}
+.trace-payload-line:hover {
+  background: var(--bgColor-neutral-muted);
+}
+/* Payload lists align as two columns via subgrid: the tag column sizes to
+   the longest tag in the list, so every preview starts at the same x. The
+   row box (line) is kept as a real element for hover/click. */
+.trace-payload-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  /* Rows pack at the top even when the list sits in a taller box (the
+     replay dialog's response panes); stretch would space them apart. */
+  align-content: start;
+}
+.trace-payload-list > .trace-payload-item {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+}
+.trace-payload-list .trace-payload-line {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  column-gap: 8px;
+}
+.trace-payload-list .trace-ev-tag {
+  justify-self: start;
+  width: calc(20ch + 8px);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trace-payload-list .trace-payload-full {
+  grid-column: 1 / -1;
+}
+.trace-payload-list > .trace-empty,
+.trace-payload-list > .trace-payload-preview,
+.trace-payload-list > .trace-section-label {
+  grid-column: 1 / -1;
+}
+/* Role variants for payload tags, following Primer Label colors */
+.trace-ev-tag-user      { background: var(--bgColor-accent-muted);    color: var(--fgColor-accent); }
+.trace-ev-tag-assistant { background: var(--bgColor-success-muted);   color: var(--fgColor-success); }
+.trace-ev-tag-system    { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
+.trace-ev-tag-fn        { background: var(--bgColor-done-muted);      color: var(--fgColor-done); }
+.trace-payload-preview {
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.trace-payload-full {
+  margin: 2px 0 4px;
+  max-height: 320px;
+  overflow-y: auto;
 }

@@ -45,6 +45,14 @@ step "Test skills module"
 step "Test agents-server module"
 (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
+step "OpenAPI spec up to date"
+(cd cmd/agents-server \
+  && go tool swag init --v3.1 -g main.go --parseDependency --parseInternal -o internal/docs --outputTypes yaml --quiet \
+  && git diff --exit-code internal/docs) || {
+  echo "internal/docs is stale — run 'make openapi' in cmd/agents-server and commit the result." >&2
+  exit 1
+}
+
 step "golangci-lint"
 if command -v golangci-lint >/dev/null; then
   golangci-lint run

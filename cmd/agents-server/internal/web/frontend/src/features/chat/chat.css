@@ -65,19 +65,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Scroll area wrapper — positions the "jump to latest" button */
+/* Scroll area wrapper — positions the "jump to latest" button. isolation
+   keeps the button's z-index scoped here, so it never paints above overlays
+   portaled to <body> (e.g. Primer Dialog, whose backdrop has no z-index). */
 .chat-messages-area {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 /* Chat messages area */
 .chat-messages {
   height: 100%;
   overflow-y: auto;
-  overflow-anchor: auto;
+  /* Native scroll anchoring OFF: useScrollToBottom owns anchoring, and the
+     browser's anchor re-selection jitters (~1px) during subpixel trackpad
+     scrolling across fractional-height content (KaTeX/SVG). New content only
+     appends at the bottom, so losing native anchoring costs nothing. */
+  overflow-anchor: none;
   padding: var(--base-size-16) var(--base-size-24);
   contain: layout style;
 }
@@ -102,6 +109,13 @@
   max-width: 860px;
   margin: 0 auto;
   width: 100%;
+  /* Chrome jank fix: skip layout/paint for off-screen messages. Long chats
+     with SVG-heavy content (KaTeX, mermaid) drop frames badly when the whole
+     26k-px page paints on every scroll. `auto` remembers each message's real
+     size after first render, so revisits don't shift; 400px approximates the
+     typical rendered height for the first pass. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
 }
 .message + .message { margin-top: var(--base-size-4); }
 
@@ -121,6 +135,15 @@
   padding: 8px 14px;
   border-radius: var(--borderRadius-large) var(--borderRadius-large) var(--borderRadius-small) var(--borderRadius-large);
   border: 1px solid var(--borderColor-muted);
+}
+
+/* Flash ring when the trace panel jumps to this message */
+@keyframes msg-jump-flash {
+  0%, 55% { box-shadow: 0 0 0 3px var(--borderColor-accent-emphasis, #0969da); }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+.msg-jump-flash .message-body {
+  animation: msg-jump-flash 1.8s ease-out;
 }
 
 /* Assistant message — left-aligned, no avatar */
@@ -188,8 +211,6 @@
 .process-group {
   margin: var(--base-size-8) 0;
   width: 100%;
-  padding-left: 12px;
-  border-left: 2px solid var(--borderColor-muted);
 }
 .process-group-toggle {
   display: inline-flex;
@@ -214,9 +235,36 @@
 .process-group-toggle .process-status {
   margin-left: 4px;
 }
-.process-group-body {
-  padding: var(--base-size-4) 0 0;
+
+/* Process timeline — thinking + tool calls + interim narration in one rail */
+.process-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+  margin: var(--base-size-8) 0 0 var(--base-size-8);
 }
+.pt-entry {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.pt-icon {
+  flex-shrink: 0;
+  color: var(--fgColor-muted);
+  margin-top: 2px;
+}
+.pt-thinking {
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pt-narration {
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+  line-height: 1.6;
+}
+.process-timeline .ToolCallCard { margin: 0; }
 
 /* Thinking indicator */
 .thinking-indicator {
@@ -253,6 +301,10 @@
   background: var(--bgColor-default);
   flex-shrink: 0;
 }
+/* Loaded chat view: flush against the message list, no gap above the input. */
+.chat-messages-area + .chat-input-container {
+  padding-top: 0;
+}
 .chat-input-box {
   max-width: 860px;
   margin: 0 auto;
@@ -266,7 +318,7 @@
 }
 .chat-input-box:focus-within {
   border-color: var(--fgColor-accent);
-  box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
+  box-shadow: inset 0 0 0 1px var(--fgColor-accent);
 }
 .chat-input-box textarea {
   width: 100%;
@@ -279,7 +331,7 @@
   background: transparent;
   color: var(--fgColor-default);
   line-height: 1.5;
-  min-height: 50px;
+  min-height: 60px;
   /* 14 lines — inspired by the Shakespearean sonnet */
   max-height: 315px;
   overflow-y: auto;
@@ -333,58 +385,35 @@
 }
 
 /* ToolCall card */
-.ToolCallCard {
-  border: 1px solid var(--borderColor-muted);
-  border-radius: var(--borderRadius-medium);
-  margin: var(--base-size-4) 0;
-  overflow: hidden;
-}
-.ToolCallCard-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--base-size-8) var(--base-size-16);
-  background: var(--bgColor-muted);
-  border-bottom: 1px solid var(--borderColor-muted);
-}
-.ToolCallCard-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* ToolCallCard — content styles (shell is Disclosure) */
+.ToolCallCard { margin: var(--base-size-4) 0; }
 .ToolCallCard-name {
   font-weight: 600;
   font-size: 13px;
   font-family: var(--fontStack-sansSerif);
 }
-.ToolCallCard-body {
-  padding: var(--base-size-8) var(--base-size-16);
-}
-.ToolCallCard pre {
-  margin: 0;
-  padding: var(--base-size-8);
-  background: var(--bgColor-inset);
-  border-radius: var(--borderRadius-small);
-  overflow: auto;
-  max-height: 150px;
-  font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted);
-}
-.ToolCallCard-output {
-  margin-top: 8px;
-}
+.ToolCallCard-output { margin-top: 8px; }
 .ToolCallCard-output-label {
   font-size: 11px;
   color: var(--fgColor-muted);
   margin-bottom: 4px;
 }
-.ToolCallCard-output pre {
-  color: var(--fgColor-default);
-}
+.ToolCallCard-output pre { color: var(--fgColor-default); }
 .ToolCallCard-approval {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+}
+
+/* Error card — content styles (shell is Disclosure with variant=danger) */
+.error-card { margin: var(--base-size-8) 0; }
+.error-card-body { color: var(--fgColor-danger); }
+
+/* Live agent name next to the thinking dots */
+.thinking-agent {
+  margin-left: 8px;
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
 }
 
 /* Empty session — input at optical center (≈40% from top) */
@@ -431,12 +460,14 @@
   min-width: min(380px, 100%);
 }
 
-/* Message entrance — quiet staggered fade-up */
+/* Message entrance — quiet staggered fade-up. `backwards` (not `both`) so
+   finished animations release their fill state instead of pinning styles on
+   every historical message forever. */
 .message,
 .message-turn,
 .ToolCallCard,
 .process-group {
-  animation: msg-in var(--base-duration-300) var(--base-easing-easeOut) both;
+  animation: msg-in var(--base-duration-300) var(--base-easing-easeOut) backwards;
 }
 @keyframes msg-in {
   from { opacity: 0; transform: translateY(6px); }

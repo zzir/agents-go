@@ -29,6 +29,7 @@
   background: var(--bgColor-neutral-muted);
 }
 .code-block-wrapper:hover .btn-copy,
+.code-block-wrapper .btn-copy:focus-visible,
 .code-block-wrapper .btn-copy.copied { opacity: 1; }
 .streaming .btn-copy { display: none; }
 .code-block-wrapper .btn-copy.copied { color: var(--fgColor-success); }
@@ -40,20 +41,89 @@
   line-height: 1.5;
   overflow-x: auto;
 }
-.code-block-wrapper .hljs-code-block.scrollable {
-  max-height: 400px;
-  overflow-y: auto;
+/* NOTE: no overflow-y:auto on code blocks — a nested y-scrollable element
+   latches macOS trackpad gestures that start over it and swallows the
+   momentum at its boundary, stalling page scroll for hundreds of ms.
+   Long blocks are instead CLIPPED (overflow:hidden — not scrollable, no
+   latch) with a fade + "Show all N lines" button; see .code-collapsed. */
+.code-block-wrapper.code-collapsed .hljs-code-block {
+  max-height: 460px;
+  overflow: hidden;
+}
+.code-block-wrapper.code-collapsed::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 90px;
+  background: linear-gradient(transparent, var(--bgColor-default));
+  border-radius: 0 0 6px 6px;
+  pointer-events: none;
+}
+.btn-code-expand {
+  display: none;
+}
+.code-block-wrapper.code-collapsed .btn-code-expand {
+  display: block;
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 3px 12px;
+  font-size: 12px;
+  color: var(--fgColor-default);
+  background: var(--bgColor-default);
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-full);
+  cursor: pointer;
+  box-shadow: var(--shadow-resting-small);
+}
+.code-block-wrapper.code-collapsed .btn-code-expand:hover {
+  background: var(--bgColor-muted);
 }
 
-/* Mermaid diagrams */
-.mermaid-diagram {
+/* Code block action buttons (React-rendered, for MermaidBlock) */
+.code-block-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--base-duration-200) var(--base-easing-easeInOut);
+  z-index: 1;
+}
+.code-block-wrapper:hover .code-block-actions,
+.code-block-actions:focus-within { opacity: 1; }
+.code-block-actions .btn-octicon {
+  padding: 4px;
+  border-radius: 4px;
+  background: var(--bgColor-neutral-muted);
+  cursor: pointer;
+  border: none;
+  color: var(--fgColor-default);
+  display: flex;
+  align-items: center;
+}
+.code-block-actions .btn-octicon:hover { background: var(--bgColor-neutral-emphasis); color: var(--fgColor-onEmphasis); }
+.code-block-actions .btn-copy-react.copied { color: var(--fgColor-success); }
+
+/* Mermaid SVG preview inside code block */
+.mermaid-preview {
   display: flex;
   justify-content: center;
-  margin: var(--base-size-16) 0;
   padding: var(--base-size-16);
-  overflow-x: auto;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: zoom-in;
 }
-.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-preview svg { max-width: 100%; max-height: 400px; height: auto; }
+
+/* Legacy mermaid styles (overlay viewer uses .mermaid-diagram) */
+.mermaid-diagram { cursor: zoom-in; }
 .mermaid-pending {
   margin: var(--base-size-16) 0;
   padding: var(--base-size-16);

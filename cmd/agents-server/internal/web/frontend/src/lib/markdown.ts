@@ -1,162 +1,117 @@
-import { Marked, type Tokens, type TokenizerExtension, type RendererExtension } from 'marked';
-import hljs from 'highlight.js/lib/core';
-import javascript from 'highlight.js/lib/languages/javascript';
-import typescript from 'highlight.js/lib/languages/typescript';
-import python from 'highlight.js/lib/languages/python';
-import go from 'highlight.js/lib/languages/go';
-import rust from 'highlight.js/lib/languages/rust';
-import java from 'highlight.js/lib/languages/java';
-import c from 'highlight.js/lib/languages/c';
-import cpp from 'highlight.js/lib/languages/cpp';
-import csharp from 'highlight.js/lib/languages/csharp';
-import swift from 'highlight.js/lib/languages/swift';
-import kotlin from 'highlight.js/lib/languages/kotlin';
-import ruby from 'highlight.js/lib/languages/ruby';
-import php from 'highlight.js/lib/languages/php';
-import lua from 'highlight.js/lib/languages/lua';
-import perl from 'highlight.js/lib/languages/perl';
-import r from 'highlight.js/lib/languages/r';
-import scala from 'highlight.js/lib/languages/scala';
-import shell from 'highlight.js/lib/languages/shell';
-import bash from 'highlight.js/lib/languages/bash';
-import sql from 'highlight.js/lib/languages/sql';
-import json from 'highlight.js/lib/languages/json';
-import yaml from 'highlight.js/lib/languages/yaml';
-import xml from 'highlight.js/lib/languages/xml';
-import css from 'highlight.js/lib/languages/css';
-import scss from 'highlight.js/lib/languages/scss';
-import markdown from 'highlight.js/lib/languages/markdown';
-import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import makefile from 'highlight.js/lib/languages/makefile';
-import nginx from 'highlight.js/lib/languages/nginx';
-import ini from 'highlight.js/lib/languages/ini';
-import properties from 'highlight.js/lib/languages/properties';
-import diff from 'highlight.js/lib/languages/diff';
-import protobuf from 'highlight.js/lib/languages/protobuf';
-import graphql from 'highlight.js/lib/languages/graphql';
-import katex from 'katex';
+// Markdown facade for the main thread.
+//
+// Two render paths:
+//  - renderMarkdownLite: synchronous, no hljs/KaTeX — for streaming text that
+//    changes every frame (cheap enough to run per animation frame).
+//  - renderMarkdownAsync / useAsyncMarkdown: full pipeline (marked + hljs +
+//    KaTeX) in a Web Worker; the main thread only sanitizes (DOMPurify needs
+//    a DOM) and serves an LRU cache. History re-renders are cache hits.
+import { useState, useEffect } from 'react';
 import DOMPurify from 'dompurify';
-import type { LanguageFn } from 'highlight.js';
+import { renderLiteCore } from './markdownShared';
 
-const langs: Record<string, LanguageFn> = {
-  javascript, js: javascript, jsx: javascript,
-  typescript, ts: typescript, tsx: typescript,
-  python, py: python,
-  go, rust, java, c, cpp, 'c++': cpp,
-  csharp, 'c#': csharp, cs: csharp,
-  swift, kotlin, ruby, rb: ruby,
-  php, lua, perl, r, scala,
-  shell, bash, sh: bash, zsh: bash,
-  sql, json, yaml, yml: yaml,
-  xml, html: xml, svg: xml,
-  css, scss, sass: scss,
-  markdown, md: markdown,
-  dockerfile, docker: dockerfile,
-  makefile, make: makefile,
-  nginx, ini, toml: ini, conf: ini,
-  properties, diff, patch: diff,
-  protobuf, proto: protobuf,
-  graphql, gql: graphql,
-};
+const SANITIZE_OPTS = { ADD_TAGS: ['math-inline'], ADD_ATTR: ['data-code', 'aria-label'] };
 
-for (const [name, lang] of Object.entries(langs)) {
-  hljs.registerLanguage(name, lang);
+const MD_CACHE_MAX = 500;
+const mdCache = new Map<string, string>();
+
+function lruGet(key: string): string | undefined {
+  const hit = mdCache.get(key);
+  if (hit !== undefined) {
+    mdCache.delete(key);
+    mdCache.set(key, hit);
+  }
+  return hit;
 }
 
-export { hljs };
-
-const COPY_ICON = '<svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg>';
-const CHECK_ICON = '<svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"></path></svg>';
-
-function wrapLines(html: string): string {
-  return html.split('\n').map((line, i) =>
-    `<span class="code-line" data-ln="${i + 1}">${line || ' '}</span>`
-  ).join('');
+function lruSet(key: string, value: string): void {
+  if (mdCache.size >= MD_CACHE_MAX) {
+    const first = mdCache.keys().next().value;
+    if (first !== undefined) mdCache.delete(first);
+  }
+  mdCache.set(key, value);
 }
 
-const MAX_VISIBLE_LINES = 20;
-
-interface MathToken {
-  type: string;
-  raw: string;
-  text: string;
-}
-
-const mathBlock: TokenizerExtension & RendererExtension = {
-  name: 'mathBlock',
-  level: 'block',
-  start(src: string) {
-    return src.indexOf('$$');
-  },
-  tokenizer(src: string) {
-    const match = src.match(/^\$\$([\s\S]+?)\$\$/);
-    if (match) {
-      return { type: 'mathBlock', raw: match[0], text: match[1].trim() };
-    }
-  },
-  renderer(token: Tokens.Generic) {
-    try {
-      return `<div class="math-block">${katex.renderToString(token.text, { displayMode: true, throwOnError: false })}</div>`;
-    } catch {
-      return `<div class="math-block"><code>${token.text}</code></div>`;
-    }
-  },
-};
-
-const mathInline: TokenizerExtension & RendererExtension = {
-  name: 'mathInline',
-  level: 'inline',
-  start(src: string) {
-    return src.indexOf('$');
-  },
-  tokenizer(src: string) {
-    const match = src.match(/^\$([^\$\s](?:[^\$]*[^\$\s])?)\$/);
-    if (match) {
-      return { type: 'mathInline', raw: match[0], text: match[1].trim() };
-    }
-  },
-  renderer(token: Tokens.Generic) {
-    try {
-      return katex.renderToString(token.text, { displayMode: false, throwOnError: false });
-    } catch {
-      return `<code>${token.text}</code>`;
-    }
-  },
-};
-
-const marked = new Marked({
-  renderer: {
-    code({ text, lang }: { text: string; lang?: string }) {
-      let highlighted: string;
-      if (lang === 'mermaid') {
-        highlighted = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      } else if (lang && hljs.getLanguage(lang)) {
-        highlighted = hljs.highlight(text, { language: lang }).value;
-      } else {
-        highlighted = hljs.highlightAuto(text).value;
-      }
-      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      const lineCount = text.split('\n').length;
-      const cls = 'hljs-code-block' + (lineCount > MAX_VISIBLE_LINES ? ' scrollable' : '');
-      return `<div class="code-block-wrapper"><button class="btn-octicon btn-copy" data-code="${escaped}" aria-label="Copy">${COPY_ICON}</button><pre class="${cls}"><code class="hljs">${highlighted}</code></pre></div>`;
-    },
-    codespan({ text }: { text: string }) {
-      return `<code class="inline-code">${text}</code>`;
-    },
-    html({ text }: { text: string }) {
-      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    },
-  },
-  breaks: true,
-  gfm: true,
-});
-
-marked.use({ extensions: [mathBlock, mathInline] });
-
-export function renderMarkdown(text: string): string {
+// Streaming path: synchronous and cheap (no highlighting, no math).
+export function renderMarkdownLite(text: string): string {
   if (!text) return '';
-  return DOMPurify.sanitize(marked.parse(text) as string, { ADD_TAGS: ['math-inline'], ADD_ATTR: ['data-code', 'data-ln', 'aria-label'] });
+  return DOMPurify.sanitize(renderLiteCore(text), SANITIZE_OPTS);
 }
+
+/* ---------- worker client ---------- */
+
+let worker: Worker | null = null;
+let workerBroken = false;
+let seq = 0;
+const inflight = new Map<number, (rawHtml: string) => void>();
+
+function ensureWorker(): Worker | null {
+  if (workerBroken) return null;
+  if (worker) return worker;
+  try {
+    worker = new Worker(new URL('./markdown.worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (e: MessageEvent<{ id: number; html: string }>) => {
+      const cb = inflight.get(e.data.id);
+      if (cb) {
+        inflight.delete(e.data.id);
+        cb(e.data.html);
+      }
+    };
+    worker.onerror = () => {
+      // Fall back to lite rendering permanently; resolve anything in flight.
+      workerBroken = true;
+      const cbs = Array.from(inflight.values());
+      inflight.clear();
+      worker?.terminate();
+      worker = null;
+      for (const cb of cbs) cb('');
+    };
+  } catch {
+    workerBroken = true;
+    worker = null;
+  }
+  return worker;
+}
+
+export function renderMarkdownAsync(text: string): Promise<string> {
+  if (!text) return Promise.resolve('');
+  const hit = lruGet(text);
+  if (hit !== undefined) return Promise.resolve(hit);
+  const w = ensureWorker();
+  if (!w) {
+    const html = renderMarkdownLite(text);
+    lruSet(text, html);
+    return Promise.resolve(html);
+  }
+  return new Promise((resolve) => {
+    const id = ++seq;
+    inflight.set(id, (rawHtml) => {
+      const clean = rawHtml
+        ? DOMPurify.sanitize(rawHtml, SANITIZE_OPTS)
+        : renderMarkdownLite(text); // worker died mid-flight
+      lruSet(text, clean);
+      resolve(clean);
+    });
+    w.postMessage({ id, text });
+  });
+}
+
+// React hook: returns cached HTML synchronously when available, otherwise ''
+// until the worker responds. Callers render into dangerouslySetInnerHTML.
+export function useAsyncMarkdown(text: string): string {
+  const [html, setHtml] = useState<string>(() => (text ? lruGet(text) ?? '' : ''));
+  useEffect(() => {
+    if (!text) { setHtml(''); return; }
+    const hit = lruGet(text);
+    if (hit !== undefined) { setHtml(hit); return; }
+    let cancelled = false;
+    renderMarkdownAsync(text).then((h) => { if (!cancelled) setHtml(h); });
+    return () => { cancelled = true; };
+  }, [text]);
+  return html;
+}
+
+/* ---------- SVG / mermaid helpers (unchanged) ---------- */
 
 export function sanitizeSVG(svg: string): string {
   const clean = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['foreignObject'] });

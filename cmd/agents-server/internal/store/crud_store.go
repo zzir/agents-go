@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -75,10 +77,14 @@ func (s *CrudStore[T]) List(ctx context.Context) ([]T, error) {
 	return out, nil
 }
 
-// Get returns the row with the given id.
+// Get returns the row with the given id, or an ErrNotFound-wrapping error
+// when it doesn't exist.
 func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
 	m := new(T)
 	if err := s.db.NewSelect().Model(m).Where("id = ?", id).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
 		return nil, fmt.Errorf("getting %s %s: %w", s.label, id, err)
 	}
 	return m, nil
@@ -86,19 +92,29 @@ func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
 
 // Update overwrites every column of the row except the immutable id and
 // created_at; updated_at is refreshed by the model's BeforeAppendModel hook.
+// Returns an ErrNotFound-wrapping error when the row doesn't exist.
 func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
-	if _, err := s.db.NewUpdate().Model(m).
+	res, err := s.db.NewUpdate().Model(m).
 		ExcludeColumn("id", "created_at").
 		Where("id = ?", id).
-		Exec(ctx); err != nil {
+		Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
+	if err != nil {
 		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
 	}
 	return nil
 }
 
-// Delete removes the row with the given id.
+// Delete removes the row with the given id. Returns an ErrNotFound-wrapping
+// error when the row doesn't exist.
 func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
-	if _, err := s.db.NewDelete().Model((*T)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
+	res, err := s.db.NewDelete().Model((*T)(nil)).Where("id = ?", id).Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
+	if err != nil {
 		return fmt.Errorf("deleting %s %s: %w", s.label, id, err)
 	}
 	return nil

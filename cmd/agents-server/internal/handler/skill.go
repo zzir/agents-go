@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bufio"
+	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -31,34 +32,51 @@ type skillEntry struct {
 }
 
 // List responds with all discovered skills under the root directory.
+//
+//	@Summary	List skills
+//	@Tags		skills
+//	@Produce	json
+//	@Success	200	{array}	skillEntry
+//	@Security	BearerAuth
+//	@Router		/skills [get]
 func (h *SkillHandler) List(c *gin.Context) {
 	skills := findAllSkills(h.skillsDir)
 	c.JSON(http.StatusOK, skills)
 }
 
 // Get responds with the SKILL.md contents for the skill at the requested path.
+//
+//	@Summary	Get skill content
+//	@Tags		skills
+//	@Produce	json
+//	@Param		path	path		string	true	"Skill path (may be nested, e.g. repo/sub-skill)"
+//	@Success	200		{object}	skillContentResp
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/skills/{path} [get]
 func (h *SkillHandler) Get(c *gin.Context) {
 	relPath := c.Param("path")
 	relPath = strings.TrimPrefix(relPath, "/")
 	clean := filepath.Clean(relPath)
 	if strings.Contains(clean, "..") || filepath.IsAbs(clean) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill path"})
+		badRequest(c, "invalid skill path")
 		return
 	}
 	resolved := filepath.Join(h.skillsDir, clean, "SKILL.md")
 	if !strings.HasPrefix(resolved, h.skillsDir) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill path"})
+		badRequest(c, "invalid skill path")
 		return
 	}
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "skill not found"})
+		notFound(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"name":    filepath.Base(clean),
-		"path":    clean,
-		"content": string(data),
+	c.JSON(http.StatusOK, skillContentResp{
+		Name:    filepath.Base(clean),
+		Path:    clean,
+		Content: string(data),
 	})
 }
 
@@ -66,106 +84,173 @@ type cloneRequest struct {
 	URL string `json:"url" binding:"required"`
 }
 
+// skillRepoResp is the Clone/Sync response: the repo name and the skills
+// discovered inside it.
+type skillRepoResp struct {
+	Name   string       `json:"name"`
+	Skills []skillEntry `json:"skills"`
+}
+
+// skillContentResp is the Get response: one skill's SKILL.md contents.
+type skillContentResp struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
 // Clone shallow-clones a git repository of skills into the root directory.
+// It responds with 201 and the discovered skills.
+//
+//	@Summary		Clone skill repo
+//	@Description	git clone --depth=1 of an http(s) repository containing SKILL.md files.
+//	@Tags			skill-repos
+//	@Accept			json
+//	@Produce		json
+//	@Param			repo	body		cloneRequest	true	"Repository URL (http/https only)"
+//	@Success		201		{object}	skillRepoResp
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"directory already exists"
+//	@Failure		502		{object}	ErrorResponse	"git clone failed"
+//	@Security		BearerAuth
+//	@Router			/skill-repos [post]
 func (h *SkillHandler) Clone(c *gin.Context) {
 	var req cloneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+		badRequest(c, "url is required")
 		return
 	}
 
 	repoURL := strings.TrimSpace(req.URL)
 	if repoURL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+		badRequest(c, "url is required")
+		return
+	}
+	// Only plain http(s) remotes: rejects file://, ssh, and git's ext::
+	// command transport, and (starting with a scheme) can't be mistaken for a
+	// git flag.
+	lower := strings.ToLower(repoURL)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+		badRequest(c, "only http(s) repository URLs are supported")
 		return
 	}
 
 	name := repoNameFromURL(repoURL)
 	if name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot determine repo name from url"})
+		badRequest(c, "cannot determine repo name from url")
 		return
 	}
 
 	dest := filepath.Join(h.skillsDir, name)
 	if _, err := os.Stat(dest); err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "directory already exists: " + name})
+		conflict(c, "directory already exists: "+name)
 		return
 	}
 
-	cmd := exec.CommandContext(c.Request.Context(), "git", "clone", "--depth=1", repoURL, dest)
+	cmd := exec.CommandContext(c.Request.Context(), "git", "clone", "--depth=1", "--", repoURL, dest)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.RemoveAll(dest)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "git clone failed: " + string(output)})
+		abortError(c, http.StatusBadGateway, CodeUpstream, "git clone failed: "+string(output))
 		return
 	}
 
 	skills := findAllSkills(dest)
 	if len(skills) == 0 {
 		_ = os.RemoveAll(dest)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cloned repo does not contain any SKILL.md"})
+		badRequest(c, "cloned repo does not contain any SKILL.md")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"name": name, "skills": skills})
+	c.JSON(http.StatusCreated, skillRepoResp{Name: name, Skills: skills})
 }
 
-// Delete removes the skill directory identified by the name path parameter.
-func (h *SkillHandler) Delete(c *gin.Context) {
+// repoDir validates the repo name path parameter and resolves it inside the
+// skills directory. It reports the failure to c and returns "" when invalid.
+func (h *SkillHandler) repoDir(c *gin.Context) string {
 	name := c.Param("name")
 	clean := filepath.Clean(name)
 	if strings.Contains(clean, "..") || filepath.IsAbs(clean) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
-		return
+		badRequest(c, "invalid skill repo name")
+		return ""
 	}
 	target := filepath.Join(h.skillsDir, clean)
 	if !strings.HasPrefix(target, h.skillsDir) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
+		badRequest(c, "invalid skill repo name")
+		return ""
+	}
+	return target
+}
+
+// Delete removes the skill repo directory identified by the name path parameter.
+//
+//	@Summary	Delete skill repo
+//	@Tags		skill-repos
+//	@Param		name	path	string	true	"Repo directory name"
+//	@Success	204		"deleted"
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/skill-repos/{name} [delete]
+func (h *SkillHandler) Delete(c *gin.Context) {
+	target := h.repoDir(c)
+	if target == "" {
 		return
 	}
 	if _, err := os.Stat(target); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "skill not found"})
+		notFound(c)
 		return
 	}
 	if err := os.RemoveAll(target); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.Status(http.StatusNoContent)
 }
 
-// Update fetches and resets the skill git repository identified by the name path parameter.
-func (h *SkillHandler) Update(c *gin.Context) {
-	name := c.Param("name")
-	clean := filepath.Clean(name)
-	if strings.Contains(clean, "..") || filepath.IsAbs(clean) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
+// Sync fetches and hard-resets the skill git repository identified by the
+// name path parameter, then responds with the refreshed skill list.
+//
+//	@Summary		Sync skill repo
+//	@Description	git fetch + reset --hard origin/HEAD; local changes in the repo are discarded.
+//	@Tags			skill-repos
+//	@Produce		json
+//	@Param			name	path		string	true	"Repo directory name"
+//	@Success		200		{object}	skillRepoResp
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"not a git repository"
+//	@Failure		502		{object}	ErrorResponse	"git fetch failed"
+//	@Security		BearerAuth
+//	@Router			/skill-repos/{name}/sync [post]
+func (h *SkillHandler) Sync(c *gin.Context) {
+	target := h.repoDir(c)
+	if target == "" {
 		return
 	}
-	target := filepath.Join(h.skillsDir, clean)
-	if !strings.HasPrefix(target, h.skillsDir) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skill name"})
+	if _, err := os.Stat(target); err != nil {
+		notFound(c)
 		return
 	}
 	if _, err := os.Stat(filepath.Join(target, ".git")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "not a git repository"})
+		conflict(c, "not a git repository")
 		return
 	}
 
 	ctx := c.Request.Context()
 	fetch := exec.CommandContext(ctx, "git", "-C", target, "fetch", "--depth=1")
 	if out, err := fetch.CombinedOutput(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "git fetch failed: " + string(out)})
+		abortError(c, http.StatusBadGateway, CodeUpstream, "git fetch failed: "+string(out))
 		return
 	}
 	reset := exec.CommandContext(ctx, "git", "-C", target, "reset", "--hard", "origin/HEAD")
 	if out, err := reset.CombinedOutput(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "git reset failed: " + string(out)})
+		internalError(c, errors.New("git reset failed: "+string(out)))
 		return
 	}
 
 	skills := findAllSkills(target)
-	c.JSON(http.StatusOK, gin.H{"name": name, "skills": skills})
+	c.JSON(http.StatusOK, skillRepoResp{Name: c.Param("name"), Skills: skills})
 }
 
 func findAllSkills(root string) []skillEntry {

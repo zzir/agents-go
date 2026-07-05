@@ -95,10 +95,15 @@ func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig) ([]agents.Tool, 
 func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox, error) {
 	switch cfg.Type {
 	case "local":
-		if m.workspace != "" {
-			return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: m.workspace}), nil
+		var lc store.LocalConfig
+		if err := unmarshalConfig(cfg.Config, &lc); err != nil {
+			return nil, fmt.Errorf("local sandbox: invalid config: %w", err)
 		}
-		return sandbox.NewLocal(), nil
+		opts := sandbox.LocalOptions{MaxReadFileBytes: lc.MaxReadFileBytes}
+		if m.workspace != "" {
+			opts.WorkDir = m.workspace
+		}
+		return sandbox.NewLocalWithOptions(opts), nil
 	case "docker":
 		var dc store.DockerConfig
 		if err := unmarshalConfig(cfg.Config, &dc); err != nil {
@@ -108,11 +113,12 @@ func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox
 			return nil, fmt.Errorf("docker sandbox requires an image")
 		}
 		opts := dockersb.Options{
-			Image:         dc.Image,
-			Runtime:       dc.Runtime,
-			Network:       dc.Network,
-			Persistent:    dc.Persistent,
-			ContainerName: dc.ContainerName,
+			Image:            dc.Image,
+			Runtime:          dc.Runtime,
+			Network:          dc.Network,
+			Persistent:       dc.Persistent,
+			ContainerName:    dc.ContainerName,
+			MaxReadFileBytes: dc.MaxReadFileBytes,
 		}
 		if dc.Persistent && m.workspace != "" {
 			opts.WorkDir = m.workspace
@@ -141,7 +147,8 @@ func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox
 				KnownHostsFile:        sc.KnownHosts,
 				InsecureIgnoreHostKey: sc.InsecureHostKey,
 			},
-			WorkDir: sc.WorkDir,
+			WorkDir:          sc.WorkDir,
+			MaxReadFileBytes: sc.MaxReadFileBytes,
 		})
 	default:
 		return nil, fmt.Errorf("unknown sandbox type: %s", cfg.Type)

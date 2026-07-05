@@ -10,16 +10,22 @@ export class WSClient {
   ws: WebSocket | null;
   handlers: Record<string, // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (payload: any) => void>;
+  // Fired once the socket re-authenticates after a drop (not on first connect),
+  // so callers can resync runs that kept executing server-side.
+  onReconnect: (() => void) | null;
   private _closed: boolean;
   private _retryDelay: number;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null;
+  private _everAuthed: boolean;
 
   constructor() {
     this.ws = null;
     this.handlers = {};
+    this.onReconnect = null;
     this._closed = false;
     this._retryDelay = 1000;
     this._reconnectTimer = null;
+    this._everAuthed = false;
   }
 
   connect(): void {
@@ -39,7 +45,13 @@ export class WSClient {
       try {
         const env: WSEnvelope = JSON.parse(e.data);
         if (!authed) {
-          if (env.type === 'auth.ok') { authed = true; }
+          if (env.type === 'auth.ok') {
+            authed = true;
+            // Re-auth after a prior session means we reconnected; let the
+            // caller resubscribe/resync. First-ever auth is not a reconnect.
+            if (this._everAuthed) this.onReconnect?.();
+            this._everAuthed = true;
+          }
           return;
         }
         const handler = this.handlers[env.type];

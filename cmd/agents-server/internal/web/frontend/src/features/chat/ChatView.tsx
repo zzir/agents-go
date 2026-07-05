@@ -1,17 +1,19 @@
 import './chat.css';
-import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, memo, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, IconButton, Label, ActionMenu, ActionList } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
-import { renderMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
+import { renderMarkdownLite, useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
+import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
-import { TraceDrawer } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon } from '@primer/octicons-react';
+import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
+import { ArrowDownIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon } from '@primer/octicons-react';
+import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
@@ -26,7 +28,7 @@ interface ToolCallData {
 }
 
 interface TurnPart {
-  type: 'text' | 'tools';
+  type: 'text' | 'tools' | 'error' | 'thinking';
   content?: string;
   toolCalls?: ToolCallData[];
 }
@@ -38,13 +40,6 @@ interface ChatMessage {
   parts?: TurnPart[];
 }
 
-interface TraceEventData {
-  kind?: string;
-  name: string;
-  detail?: string;
-  duration?: string;
-  [key: string]: unknown;
-}
 
 interface AgentConfig {
   id: string;
@@ -181,6 +176,8 @@ function MermaidBlock({ source }: { source: string }) {
   const [svg, setSvg] = useState<string | null>(() => cached || null);
   const [failed, setFailed] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [mode, setMode] = useState<'code' | 'svg'>('svg');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const target = getColorModeEl();
@@ -213,76 +210,183 @@ function MermaidBlock({ source }: { source: string }) {
     return () => { cancelled = true; };
   }, [source, cacheKey]);
 
-  if (svg) return (
-    <>
-      <div className="mermaid-diagram" onClick={() => setViewerOpen(true)} dangerouslySetInnerHTML={{ __html: svg }} />
-      {viewerOpen && <SvgOverlay svg={svg} onClose={() => setViewerOpen(false)} />}
-    </>
-  );
-  if (failed) {
-    return (
-      <div className="code-block-wrapper">
-        <pre className="hljs-code-block"><code className="hljs">{source}</code></pre>
-      </div>
-    );
-  }
-  return <pre className="mermaid-pending">{source}</pre>;
-}
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(source).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [source]);
 
-function TextContent({ content }: { content: string }) {
-  const segments: MermaidSegment[] = useMemo(() => splitMermaidBlocks(content), [content]);
-  if (segments.length === 1 && segments[0].type === 'md') {
-    return <div className="turn-text markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />;
-  }
+  const showSvg = mode === 'svg' && svg && !failed;
+
   return (
-    <div className="turn-text markdown-body">
-      {segments.map((seg, i) =>
-        seg.type === 'mermaid'
-          ? <MermaidBlock key={`m${i}`} source={seg.text} />
-          : <div key={`t${i}`} dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.text) }} />
+    <div className="code-block-wrapper">
+      <div className="code-block-actions">
+        {svg && !failed && (
+          <button
+            className="btn-octicon btn-toggle-mermaid"
+            aria-label={mode === 'svg' ? 'Show code' : 'Show diagram'}
+            onClick={() => setMode(m => m === 'svg' ? 'code' : 'svg')}
+          >
+            {mode === 'svg' ? <CodeIcon size={16} /> : <EyeIcon size={16} />}
+          </button>
+        )}
+        <button
+          className={'btn-octicon btn-copy-react' + (copied ? ' copied' : '')}
+          aria-label={copied ? 'Copied!' : 'Copy'}
+          onClick={handleCopy}
+        >
+          {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+        </button>
+      </div>
+      {showSvg ? (
+        <>
+          <div className="mermaid-preview" onClick={() => setViewerOpen(true)} dangerouslySetInnerHTML={{ __html: svg }} />
+          {viewerOpen && <SvgOverlay svg={svg} onClose={() => setViewerOpen(false)} />}
+        </>
+      ) : (
+        <pre className="hljs-code-block"><code className="hljs">{source}</code></pre>
       )}
     </div>
   );
 }
 
-interface ProcessGroupProps {
-  toolCalls: ToolCallData[];
+function ErrorCard({ message }: { message: string }) {
+  return (
+    <Disclosure icon={AlertIcon} label="Error" variant="danger" className="error-card">
+      <pre className="error-card-body">{message}</pre>
+    </Disclosure>
+  );
+}
+
+function MdSegment({ text }: { text: string }) {
+  const html = useAsyncMarkdown(text);
+  return <div dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function TextContent({ content }: { content: string }) {
+  const segments: MermaidSegment[] = useMemo(() => splitMermaidBlocks(content), [content]);
+  return (
+    <div className="turn-text markdown-body">
+      {segments.map((seg, i) =>
+        seg.type === 'mermaid'
+          ? <MermaidBlock key={`m${i}`} source={seg.text} />
+          : <MdSegment key={`t${i}`} text={seg.text} />
+      )}
+    </div>
+  );
+}
+
+/* ---------- process timeline (thinking + tools + interim narration) ---------- */
+
+// Split a turn's parts into the process timeline and the final answer: the
+// trailing text part is the answer; everything else (thinking, tools, interim
+// narration) is process. Errors render separately. While live, the eventual
+// answer is unknowable, so everything stays in the timeline.
+function splitTurnParts(parts: TurnPart[], live: boolean) {
+  const process: TurnPart[] = [];
+  const errors: TurnPart[] = [];
+  let finalText: string | null = null;
+  let finalTextIdx = -1;
+  if (!live) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i].type === 'error') continue;
+      if (parts[i].type === 'text') finalTextIdx = i;
+      break;
+    }
+  }
+  parts.forEach((p, i) => {
+    if (i === finalTextIdx) { finalText = p.content || null; return; }
+    if (p.type === 'error') { errors.push(p); return; }
+    process.push(p);
+  });
+  return { process, finalText, errors };
+}
+
+function TimelineThinking({ content }: { content: string }) {
+  return (
+    <div className="pt-entry">
+      <div className="pt-thinking">{content}</div>
+    </div>
+  );
+}
+
+function TimelineNarration({ content }: { content: string }) {
+  const html = useAsyncMarkdown(content);
+  return (
+    <div className="pt-narration markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
+  );
+}
+
+interface ProcessTimelineProps {
+  parts: TurnPart[];
+  live: boolean;
+  reasoning: string | null;
+  compacting?: boolean;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
 }
 
-function ProcessGroup({ toolCalls, onApprove, onReject }: ProcessGroupProps) {
-  const [expanded, setExpanded] = useState(false);
-  const count = toolCalls.length;
-  if (count === 0) return null;
+function ProcessTimeline({ parts, live, reasoning, compacting, onApprove, onReject }: ProcessTimelineProps) {
+  // null = auto (open while live, closed once done); true/false = user override.
+  const [expanded, setExpanded] = useState<boolean | null>(null);
 
-  const pendingCount = toolCalls.filter(tc => tc.needs_approval && !tc.status).length;
-  const completedCount = toolCalls.filter(tc => tc.status === 'completed' || tc.output).length;
-  const isRunning = completedCount < count && pendingCount === 0;
+  let stepCount = 0;
+  let pendingCount = 0;
+  let runningTool: string | null = null;
+  for (const p of parts) {
+    if (p.type === 'tools') {
+      stepCount += p.toolCalls!.length;
+      for (const tc of p.toolCalls!) {
+        if (tc.needs_approval && !tc.status) pendingCount++;
+        else if (!tc.output && tc.status !== 'completed' && tc.status !== 'rejected') runningTool = tc.tool_name;
+      }
+    } else {
+      stepCount++;
+    }
+  }
+  if (live && reasoning) stepCount++;
 
-  const shouldShow = expanded || pendingCount > 0;
+  if (stepCount === 0) return null;
+
+  const shouldShow = pendingCount > 0 || (expanded ?? live);
+
+  const label = live
+    ? (pendingCount > 0 ? 'Waiting for approval'
+      : compacting ? 'Compacting context…'
+      : runningTool ? 'Running ' + runningTool + '…'
+      : reasoning ? 'Thinking…' : 'Working…')
+    : stepCount + ' step' + (stepCount > 1 ? 's' : '');
 
   return (
     <div className="process-group">
       <div
         className={'process-group-toggle' + (shouldShow ? ' expanded' : '')}
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setExpanded(!shouldShow)}
       >
         <ChevronRightIcon size={16} className="process-icon" />
-        <span>{count + ' tool call' + (count > 1 ? 's' : '')}</span>
+        <span>{label}</span>
         {pendingCount > 0 && <Label variant="accent" className="process-status">{pendingCount + ' pending'}</Label>}
-        {isRunning && <Label variant="secondary" className="process-status">running...</Label>}
       </div>
       {shouldShow && (
-        <div className="process-group-body">
-          {toolCalls.map(tc => (
-            <ToolCallCard
-              key={tc.tool_call_id}
-              toolCall={tc}
-              onApprove={onApprove}
-              onReject={onReject}
-            />
-          ))}
+        <div className="process-timeline">
+          {parts.map((p, i) => {
+            if (p.type === 'thinking') return <TimelineThinking key={'pt-' + i} content={p.content || ''} />;
+            if (p.type === 'text') return <TimelineNarration key={'pt-' + i} content={p.content || ''} />;
+            if (p.type === 'tools') {
+              return p.toolCalls!.map(tc => (
+                <ToolCallCard
+                  key={tc.tool_call_id}
+                  toolCall={tc}
+                  live={live}
+                  onApprove={onApprove}
+                  onReject={onReject}
+                />
+              ));
+            }
+            return null;
+          })}
+          {live && reasoning && <TimelineThinking content={reasoning} />}
         </div>
       )}
     </div>
@@ -301,21 +405,35 @@ function LiveTimer({ startedAt }: { startedAt: number }) {
 interface TurnBlockProps {
   parts: TurnPart[];
   streaming: string | null;
+  reasoning: string | null;
   isLive: boolean;
+  liveAgentName?: string | null;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
-  turnText: string;
-  onRegenerate: (() => void) | null;
+  regenMessageId?: string | null;
+  regenContent?: string | null;
+  onRegenerate?: (messageId: string, content: string) => void;
   running: boolean;
+  compacting?: boolean;
   duration?: string;
   liveStartedAt?: number | null;
   messageId?: string | number;
   onFork?: (id: string) => void;
 }
 
-function TurnBlock({ parts, streaming, isLive, onApprove, onReject, turnText, onRegenerate, running, duration, liveStartedAt, messageId, onFork }: TurnBlockProps) {
-  const isEmpty = parts.length === 0 && !streaming;
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, duration, liveStartedAt, messageId, onFork }: TurnBlockProps) {
+  const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
+
+  const { process, finalText, errors } = useMemo(
+    () => splitTurnParts(parts, isLive),
+    [parts, isLive],
+  );
+
+  const turnText = useMemo(
+    () => parts.filter(p => p.type === 'text').map(p => p.content || '').join('\n\n'),
+    [parts],
+  );
 
   const handleCopy = useCallback(() => {
     if (!turnText) return;
@@ -325,28 +443,42 @@ function TurnBlock({ parts, streaming, isLive, onApprove, onReject, turnText, on
     });
   }, [turnText]);
 
+  const canRegen = !!(regenMessageId && regenContent && onRegenerate);
+
   return (
     <div className="message message-turn">
-      {parts.map((part, i) => {
-        if (part.type === 'text') {
-          return <TextContent key={'p-' + i} content={part.content!} />;
-        }
-        if (part.type === 'tools') {
-          return <ProcessGroup key={'p-' + i} toolCalls={part.toolCalls!} onApprove={onApprove} onReject={onReject} />;
-        }
-        return null;
-      })}
+      <ProcessTimeline
+        parts={process}
+        live={isLive}
+        reasoning={isLive ? reasoning : null}
+        compacting={isLive ? compacting : false}
+        onApprove={onApprove}
+        onReject={onReject}
+      />
+      {finalText && <TextContent content={finalText} />}
       {streaming && (
         <div
           className="turn-text markdown-body streaming"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(streaming + '▋') }}
+          dangerouslySetInnerHTML={{ __html: renderMarkdownLite(streaming + '▋') }}
         />
       )}
-      {isLive && isEmpty && (
+      {errors.map((part, i) => (
+        <ErrorCard key={'err-' + i} message={part.content || 'Unknown error'} />
+      ))}
+      {isLive && isEmpty && !compacting && (
         <div className="thinking-indicator">
           <div className="thinking-dots">
             <span /><span /><span />
           </div>
+          {liveAgentName && <span className="thinking-agent">{liveAgentName}</span>}
+        </div>
+      )}
+      {isLive && compacting && process.length === 0 && !reasoning && (
+        <div className="thinking-indicator">
+          <div className="thinking-dots">
+            <span /><span /><span />
+          </div>
+          <span className="thinking-agent">Compacting context…</span>
         </div>
       )}
       {isLive && liveStartedAt && <LiveTimer startedAt={liveStartedAt} />}
@@ -369,13 +501,13 @@ function TurnBlock({ parts, streaming, isLive, onApprove, onReject, turnText, on
               onClick={() => onFork(String(messageId))}
             />
           )}
-          {!running && onRegenerate && (
+          {!running && canRegen && (
             <IconButton
               icon={SyncIcon}
               variant="invisible"
               size="small"
               aria-label="Regenerate"
-              onClick={onRegenerate}
+              onClick={() => onRegenerate!(regenMessageId!, regenContent!)}
             />
           )}
           {duration && <span className="turn-duration">{duration}</span>}
@@ -383,12 +515,12 @@ function TurnBlock({ parts, streaming, isLive, onApprove, onReject, turnText, on
       )}
     </div>
   );
-}
+});
 
-function CompactionCard({ content }: { content: string }) {
+const CompactionCard = memo(function CompactionCard({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
   const summaryText = content.replace(/^\[Conversation Summary\]\s*/, '');
-  const summaryHtml = useMemo(() => renderMarkdown(summaryText), [summaryText]);
+  const summaryHtml = useAsyncMarkdown(expanded ? summaryText : '');
 
   return (
     <div className="compaction-card">
@@ -405,16 +537,15 @@ function CompactionCard({ content }: { content: string }) {
       )}
     </div>
   );
-}
+});
 
 interface UserMessageProps {
   content: string;
-  running: boolean;
-  onTrace?: () => void;
-  hasTrace: boolean;
+  traceRunId?: string | null;
+  onTrace?: (runId: string) => void;
 }
 
-function UserMessage({ content, onTrace, hasTrace }: UserMessageProps) {
+const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace }: UserMessageProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -426,16 +557,16 @@ function UserMessage({ content, onTrace, hasTrace }: UserMessageProps) {
   }, [content]);
 
   return (
-    <div className="message message-user message-forkable">
+    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined}>
       <div className="message-body">{content}</div>
       <div className="message-user-actions">
-        {hasTrace && onTrace && (
+        {traceRunId && onTrace && (
           <IconButton
             icon={PulseIcon}
             variant="invisible"
             size="small"
             aria-label="Trace"
-            onClick={onTrace}
+            onClick={() => onTrace(traceRunId)}
           />
         )}
         <IconButton
@@ -449,7 +580,7 @@ function UserMessage({ content, onTrace, hasTrace }: UserMessageProps) {
       </div>
     </div>
   );
-}
+});
 
 /* ---------- Greeting ---------- */
 
@@ -490,11 +621,13 @@ interface ChatViewProps {
   messages: ChatMessage[];
   loaded: boolean;
   streaming: string | null;
+  reasoning: string | null;
   running: boolean;
+  compacting: boolean;
   traceRuns: Record<string, TraceEventData[]>;
   liveRunId: string | null;
   liveStartedAt: number | null;
-  lastError?: string;
+  liveAgentName: string | null;
   onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
   onCancel: () => void;
   onApprove?: (id: string) => void;
@@ -505,8 +638,8 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, messages, loaded, streaming, running,
-  traceRuns, liveRunId, liveStartedAt, lastError,
+  sessionId, messages, loaded, streaming, reasoning, running, compacting,
+  traceRuns, liveRunId, liveStartedAt, liveAgentName,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigId] = useState('');
@@ -530,11 +663,12 @@ export function ChatView({
 
   const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(messages.length + (streaming ? 1 : 0), sessionId);
 
-  useEffect(() => {
-    if (lastError) toast.error(lastError);
-  }, [lastError]);
-
   const handleCopyClick = useCallback((e: MouseEvent<HTMLDivElement>) => {
+    const expand = (e.target as HTMLElement).closest('.btn-code-expand') as HTMLElement | null;
+    if (expand) {
+      expand.closest('.code-block-wrapper')?.classList.remove('code-collapsed');
+      return;
+    }
     const btn = (e.target as HTMLElement).closest('.btn-copy') as HTMLElement | null;
     if (!btn) return;
     const code = btn.getAttribute('data-code')
@@ -543,7 +677,7 @@ export function ChatView({
     navigator.clipboard.writeText(code).then(() => {
       btn.classList.add('copied');
       const svgContent = btn.innerHTML;
-      btn.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"></path></svg>';
+      btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = svgContent; }, 1500);
     });
   }, []);
@@ -565,19 +699,26 @@ export function ChatView({
     let turnIdx = 0;
     for (let i = 0; i < messages.length; i++) {
       const entry = messages[i] as any;
-      if (entry.role === 'turn') {
-        const rid = entry.runId;
+      const rid = entry.runId;
+      // Label runs from the user message directly, so a run whose reply
+      // produced no visible turn still shows its question in the trace panel.
+      if (entry.role === 'user' && rid && traceRuns[rid]) {
+        uMap[i] = rid;
+        if (entry.content && !labels[rid]) labels[rid] = entry.content;
+      } else if (entry.role === 'turn') {
         if (rid && traceRuns[rid]) {
           tMap[i] = rid;
-          let userContent: string | null = null;
-          for (let j = i - 1; j >= 0; j--) {
-            if (messages[j].role === 'user') {
-              userContent = messages[j].content ?? null;
-              uMap[j] = rid;
-              break;
+          if (!labels[rid]) {
+            let userContent: string | null = null;
+            for (let j = i - 1; j >= 0; j--) {
+              if (messages[j].role === 'user') {
+                userContent = messages[j].content ?? null;
+                if (uMap[j] === undefined) uMap[j] = rid;
+                break;
+              }
             }
+            labels[rid] = userContent || 'Turn ' + (turnIdx + 1);
           }
-          labels[rid] = userContent || 'Turn ' + (turnIdx + 1);
         }
         turnIdx++;
       }
@@ -589,6 +730,32 @@ export function ChatView({
     setTraceOpen(true);
     setTraceActiveRun(runId);
   }, []);
+
+  // Runs that have a user message in this conversation — gates the trace
+  // panel's jump-to-message control.
+  const messageRunIds = useMemo(() => new Set(Object.values(userRunMap)), [userRunMap]);
+
+  // Reverse navigation: scroll the chat to the run's user message and flash
+  // it, mirroring the message → trace direction of openTrace.
+  const jumpToRun = useCallback((runId: string) => {
+    const el = document.querySelector(`.chat-messages [data-run-id="${CSS.escape(runId)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('msg-jump-flash');
+    // Restart the animation even when jumping to the same message twice.
+    void (el as HTMLElement).offsetWidth;
+    el.classList.add('msg-jump-flash');
+    window.setTimeout(() => el.classList.remove('msg-jump-flash'), 1800);
+  }, []);
+
+  // Keep agent/sandbox selection in a ref so the regenerate callback stays
+  // referentially stable — a new closure per render would defeat TurnBlock's memo.
+  const regenConfigRef = useRef({ agentConfigId, sandboxId });
+  regenConfigRef.current = { agentConfigId, sandboxId };
+  const handleRegen = useCallback((messageId: string, content: string) => {
+    if (!onRegenerate) return;
+    onRegenerate(messageId, content, regenConfigRef.current.agentConfigId, regenConfigRef.current.sandboxId);
+  }, [onRegenerate]);
 
   if (!sessionId) {
     return (
@@ -686,7 +853,6 @@ export function ChatView({
           {loading ? null : messages.map((m, i) => {
             if (m.role === 'turn') {
               const isLive = running && i === messages.length - 1;
-              const turnText = (m.parts || []).filter(p => p.type === 'text').map(p => p.content || '').join('\n\n');
               let prevUserContent: string | null = null;
               let prevUserMessageId: string | undefined;
               for (let j = i - 1; j >= 0; j--) {
@@ -700,20 +866,21 @@ export function ChatView({
               const turnDuration = rid && traceRuns[rid]
                 ? traceRuns[rid].find(e => e.kind === 'span' && e.duration)?.duration
                 : undefined;
-              const regenHandler = prevUserContent && prevUserMessageId && onRegenerate
-                ? () => onRegenerate(prevUserMessageId!, prevUserContent!, agentConfigId, sandboxId)
-                : null;
               return (
                 <TurnBlock
                   key={'turn-' + i}
                   parts={m.parts || []}
                   streaming={isLive ? streaming : null}
+                  reasoning={isLive ? reasoning : null}
                   isLive={isLive}
+                  liveAgentName={isLive ? liveAgentName : null}
                   onApprove={onApprove}
                   onReject={onReject}
-                  turnText={turnText}
-                  onRegenerate={regenHandler}
+                  regenMessageId={prevUserMessageId ? String(prevUserMessageId) : null}
+                  regenContent={prevUserContent}
+                  onRegenerate={onRegenerate ? handleRegen : undefined}
                   running={running}
+                  compacting={isLive ? compacting : false}
                   duration={turnDuration}
                   liveStartedAt={isLive ? liveStartedAt : undefined}
                   messageId={m.messageId}
@@ -727,9 +894,8 @@ export function ChatView({
                 <UserMessage
                   key={i}
                   content={m.content || ''}
-                  running={running}
-                  hasTrace={!!rid}
-                  onTrace={rid ? () => openTrace(rid) : undefined}
+                  traceRunId={rid || null}
+                  onTrace={openTrace}
                 />
               );
             }
@@ -763,6 +929,8 @@ export function ChatView({
           activeRunId={traceActiveRun}
           runLabels={runLabels}
           onClose={() => setTraceOpen(false)}
+          onJumpToRun={jumpToRun}
+          messageRunIds={messageRunIds}
         />
       )}
     </div>

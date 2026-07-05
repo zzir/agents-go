@@ -1,20 +1,17 @@
-import { useMemo } from 'react';
+import { memo } from 'react';
 import { Label } from '@primer/react';
-import { renderMarkdown } from '@/lib/markdown';
+import { useAsyncMarkdown } from '@/lib/markdown';
 
 interface MessageBubbleProps {
   role: string;
   content: string;
 }
 
-export function MessageBubble({ role, content }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ role, content }: MessageBubbleProps) {
   const isUser = role === 'user';
   const isSystem = role === 'system';
 
-  const html = useMemo(() => {
-    if (isUser || isSystem) return null;
-    return renderMarkdown(content);
-  }, [content, isUser, isSystem]);
+  const html = useAsyncMarkdown(isUser || isSystem ? '' : content);
 
   if (isSystem) {
     return (
@@ -40,4 +37,4 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
       />
     </div>
   );
-}
+});

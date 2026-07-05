@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/uptrace/bun"
@@ -17,12 +19,16 @@ func NewSettingStore(db *bun.DB) *SettingStore {
 	return &SettingStore{db: db}
 }
 
-// Get returns the setting with the given key.
+// Get returns the setting with the given key, or an ErrNotFound-wrapping
+// error when it doesn't exist.
 func (s *SettingStore) Get(ctx context.Context, key string) (*Setting, error) {
 	st := new(Setting)
 	if err := s.db.NewSelect().Model(st).
 		Where("key = ?", key).
 		Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
 		return nil, fmt.Errorf("getting setting %s: %w", key, err)
 	}
 	return st, nil
@@ -51,11 +57,16 @@ func (s *SettingStore) List(ctx context.Context) ([]Setting, error) {
 	return settings, nil
 }
 
-// Delete removes the setting with the given key.
+// Delete removes the setting with the given key. Returns an
+// ErrNotFound-wrapping error when it doesn't exist.
 func (s *SettingStore) Delete(ctx context.Context, key string) error {
-	if _, err := s.db.NewDelete().Model((*Setting)(nil)).
+	res, err := s.db.NewDelete().Model((*Setting)(nil)).
 		Where("key = ?", key).
-		Exec(ctx); err != nil {
+		Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
+	if err != nil {
 		return fmt.Errorf("deleting setting %s: %w", key, err)
 	}
 	return nil

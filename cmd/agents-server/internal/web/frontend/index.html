@@ -9,6 +9,11 @@
   <link rel="apple-touch-icon" href="/icon.svg" />
   <meta name="theme-color" content="#ffffff" />
   <script src="/theme-init.js"></script>
+  <style>
+    #root:not(:has(> *)) { visibility: hidden; }
+    body { background: #fff; }
+    html[data-color-mode="dark"] body { background: #0d1117; }
+  </style>
 </head>
 <body>
   <div id="root"></div>

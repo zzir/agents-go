@@ -34,27 +34,40 @@ func New(log zerolog.Logger, token string) *Server {
 }
 
 func (s *Server) registerAuthRoutes() {
-	auth := s.Engine.Group("/api/auth")
-	auth.POST("/login", func(c *gin.Context) {
+	login := func(c *gin.Context) {
 		var req struct {
 			Token string `json:"token"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "validation", "message": "invalid request"}})
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.token)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthorized", "message": "invalid token"}})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-	auth.GET("/check", func(c *gin.Context) {
+	}
+	check := func(c *gin.Context) {
 		if subtle.ConstantTimeCompare([]byte(extractToken(c)), []byte(s.token)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthorized", "message": "unauthorized"}})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+	for _, prefix := range []string{"/api/v1/auth", "/api/auth"} {
+		auth := s.Engine.Group(prefix)
+		auth.POST("/login", login)
+		auth.GET("/check", check)
+	}
+}
+
+// ServeHealth mounts an unauthenticated liveness endpoint at /health that
+// reports the server status and build version — for container probes and load
+// balancers. It carries no sensitive data and is safe to expose.
+func (s *Server) ServeHealth(version string) {
+	s.Engine.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
 	})
 }
 
@@ -64,6 +77,12 @@ func (s *Server) registerAuthRoutes() {
 func (s *Server) ServeStatic(staticFS fs.FS) {
 	httpFS := http.FS(staticFS)
 	s.Engine.NoRoute(func(c *gin.Context) {
+		// Unmatched API paths are client errors, not SPA routes: answer with a
+		// JSON 404 so a removed/mistyped endpoint doesn't return index.html.
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "not found"}})
+			return
+		}
 		p := c.Request.URL.Path[1:]
 		if p == "" {
 			p = "index.html"
@@ -100,11 +119,14 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 }
 
 func cspMiddleware() gin.HandlerFunc {
+	// connect-src is same-origin: the SPA only talks to this server (REST over
+	// http(s), live updates over the ws/wss upgrade of the same origin), so
+	// 'self' already covers same-origin WebSockets in modern browsers.
 	const policy = "default-src 'self'; " +
 		"script-src 'self'; " +
 		"style-src 'self' 'unsafe-inline'; " +
 		"img-src 'self' data: blob:; " +
-		"connect-src 'self' ws: wss:; " +
+		"connect-src 'self'; " +
 		"font-src 'self' data:"
 	return func(c *gin.Context) {
 		c.Header("Content-Security-Policy", policy)
@@ -125,6 +147,9 @@ func redactQuery(u *url.URL) string {
 
 func zerologMiddleware(log zerolog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Make the logger reachable via zerolog.Ctx from handlers and from
+		// everything derived from the request context (e.g. WS connections).
+		c.Request = c.Request.WithContext(log.WithContext(c.Request.Context()))
 		c.Next()
 		log.Info().
 			Str("method", c.Request.Method).

@@ -1,0 +1,95 @@
+/* Disclosure — generic collapsible card.
+   Variants follow Primer's semantic color roles via data-variant. */
+
+.disclosure {
+  --_border: var(--borderColor-muted);
+  --_headerBg: var(--bgColor-muted);
+  --_headerBgHover: var(--bgColor-neutral-muted);
+  --_headerFg: var(--fgColor-default);
+  border: 1px solid var(--_border);
+  border-radius: var(--borderRadius-medium);
+  overflow: hidden;
+}
+/* default variant gets a stronger border when expanded */
+.disclosure[data-variant="default"].expanded { --_border: var(--borderColor-default); }
+
+/* Colored variants — header bg + fg + border all follow the same role */
+.disclosure[data-variant="accent"]    { --_border: var(--borderColor-accent-muted);    --_headerBg: var(--bgColor-accent-muted);    --_headerBgHover: var(--bgColor-accent-muted);    --_headerFg: var(--fgColor-accent); }
+.disclosure[data-variant="success"]   { --_border: var(--borderColor-success-muted);   --_headerBg: var(--bgColor-success-muted);   --_headerBgHover: var(--bgColor-success-muted);   --_headerFg: var(--fgColor-success); }
+.disclosure[data-variant="attention"] { --_border: var(--borderColor-attention-muted); --_headerBg: var(--bgColor-attention-muted); --_headerBgHover: var(--bgColor-attention-muted); --_headerFg: var(--fgColor-attention); }
+.disclosure[data-variant="severe"]    { --_border: var(--borderColor-severe-muted);    --_headerBg: var(--bgColor-severe-muted);    --_headerBgHover: var(--bgColor-severe-muted);    --_headerFg: var(--fgColor-severe); }
+.disclosure[data-variant="danger"]    { --_border: var(--borderColor-danger-muted);    --_headerBg: var(--bgColor-danger-muted);    --_headerBgHover: var(--bgColor-danger-muted);    --_headerFg: var(--fgColor-danger); }
+.disclosure[data-variant="done"]      { --_border: var(--borderColor-done-muted);      --_headerBg: var(--bgColor-done-muted);      --_headerBgHover: var(--bgColor-done-muted);      --_headerFg: var(--fgColor-done); }
+.disclosure[data-variant="open"]      { --_border: var(--borderColor-open-muted);      --_headerBg: var(--bgColor-open-muted);      --_headerBgHover: var(--bgColor-open-muted);      --_headerFg: var(--fgColor-open); }
+.disclosure[data-variant="closed"]    { --_border: var(--borderColor-closed-muted);    --_headerBg: var(--bgColor-closed-muted);    --_headerBgHover: var(--bgColor-closed-muted);    --_headerFg: var(--fgColor-closed); }
+
+/* Header */
+.disclosure-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: var(--base-size-8) var(--base-size-12);
+  border: none;
+  background: var(--_headerBg);
+  color: var(--_headerFg);
+  font-size: var(--base-text-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
+}
+.disclosure-header:hover {
+  background: var(--_headerBgHover);
+}
+.disclosure.expanded .disclosure-header {
+  border-bottom: 1px solid var(--_border);
+}
+
+/* Chevron */
+.disclosure-chevron {
+  flex-shrink: 0;
+  color: var(--_headerFg);
+  transition: transform 0.15s;
+}
+.disclosure.expanded .disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+/* Icon */
+.disclosure-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--_headerFg);
+}
+
+/* Label slot */
+.disclosure-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Body — text + code defaults aligned with Primer */
+.disclosure-body {
+  padding: var(--base-size-8) var(--base-size-12);
+  font-size: var(--base-text-size-sm);
+  line-height: 1.5;
+  color: var(--fgColor-default);
+}
+.disclosure-body pre {
+  margin: 0;
+  padding: var(--base-size-8);
+  background: var(--bgColor-inset);
+  border-radius: var(--borderRadius-medium);
+  /* x-only: a nested y-scroller would latch trackpad gestures and stall
+     page scrolling at its boundary (macOS momentum is not re-targeted) */
+  overflow-x: auto;
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

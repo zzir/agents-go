@@ -12,9 +12,9 @@ import { AppShell } from '@/layout/AppShell';
 import { SessionList } from '@/features/sessions/SessionList';
 import { ChatView } from '@/features/chat/ChatView';
 import { login, checkAuth, getToken, api } from '@/lib/api';
-import { useAgentSocket } from '@/lib/useAgentSocket';
+import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall } from '@/lib/timeline';
-import { onToast } from '@/lib/toast';
+import { onToast, toast } from '@/lib/toast';
 
 const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
 const FLASH_ICON: Record<string, React.ReactNode> = {
@@ -159,30 +159,27 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-interface SessionState {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messages: any[];
-  streaming: string;
-  running: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  traceRuns: Record<string, any[]>;
-  liveRunId: string | null;
-  liveStartedAt: number | null;
-  loaded: boolean;
-  lastError?: string;
-}
-
-function defaultSS(): SessionState {
-  return { messages: [], streaming: '', running: false, traceRuns: {}, liveRunId: null, liveStartedAt: null, loaded: false };
-}
 const DEFAULT_SS = defaultSS();
 
 const MemoizedChatView = memo(ChatView);
 
+function readHashSession(): string | null {
+  const h = window.location.hash;
+  const m = /^#\/session\/([a-zA-Z0-9_-]+)$/.exec(h);
+  return m ? m[1] : null;
+}
+
+function writeHashSession(id: string | null) {
+  const next = id ? `#/session/${id}` : '';
+  if (window.location.hash !== next) {
+    window.history.replaceState(null, '', next || window.location.pathname);
+  }
+}
+
 function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
-  const [activeSession, setActiveSession] = useState<string | null>(null);
+  const [activeSession, setActiveSession] = useState<string | null>(readHashSession);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
@@ -192,6 +189,19 @@ function App() {
 
   useEffect(() => {
     checkAuth().then(ok => { setAuthed(ok); setChecking(false); });
+  }, []);
+
+  useEffect(() => {
+    writeHashSession(activeSession);
+  }, [activeSession]);
+
+  useEffect(() => {
+    const onHash = () => {
+      const id = readHashSession();
+      setActiveSession(prev => prev === id ? prev : id);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   useEffect(() => {
@@ -224,7 +234,7 @@ function App() {
   const handleSend = useCallback((text: string, agentConfigId?: string, sandboxId?: string) => {
     if (!activeSession || !wsRef.current) return;
     if (!wsRef.current.isConnected()) {
-      updateSS(activeSession, s => ({ ...s, lastError: 'WebSocket disconnected — message not sent' }));
+      toast.error('WebSocket disconnected — message not sent');
       return;
     }
     updateSS(activeSession, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }] }));
@@ -289,7 +299,7 @@ function App() {
       if (sandboxId) payload.sandbox_id = sandboxId;
       wsRef.current.send('run.create', payload);
     } catch (e: any) {
-      updateSS(activeSession, s => ({ ...s, lastError: e.message || 'Regenerate failed' }));
+      toast.error(e.message || 'Regenerate failed');
     }
   }, [activeSession, wsRef, updateSS, loadSession]);
 
@@ -313,8 +323,8 @@ function App() {
     if (window.innerWidth < 768) setSidebarOpen(false);
   }, []);
 
-  if (checking) return <ThemeProvider>{null}</ThemeProvider>;
-  if (!authed) return <ThemeProvider><LoginPage onLogin={() => setAuthed(true)} /></ThemeProvider>;
+  if (!authed && !checking) return <ThemeProvider><LoginPage onLogin={() => setAuthed(true)} /></ThemeProvider>;
+  if (!authed) return <ThemeProvider>{null}</ThemeProvider>;
 
   const currentSS = ss[activeSession!] || DEFAULT_SS;
 
@@ -335,11 +345,13 @@ function App() {
       messages={currentSS.messages}
       loaded={currentSS.loaded}
       streaming={currentSS.streaming}
+      reasoning={currentSS.reasoning}
       running={currentSS.running}
+      compacting={currentSS.compacting}
       traceRuns={currentSS.traceRuns}
       liveRunId={currentSS.liveRunId}
       liveStartedAt={currentSS.liveStartedAt}
-      lastError={currentSS.lastError}
+      liveAgentName={currentSS.liveAgentName}
       onSend={handleSend}
       onCancel={handleCancel}
       onApprove={handleApprove}

@@ -2,72 +2,67 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
-	"time"
 
 	"github.com/rs/zerolog"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 )
 
-type pendingRun struct {
-	state         *agents.RunState
-	sessionID     string
-	agentConfigID string
-	sandboxID     string
-	createdAt     time.Time
-}
-
-const pendingTTL = 10 * time.Minute
-
-// WSHandler dispatches WebSocket messages to start runs and handle tool approvals and rejections.
+// WSHandler dispatches WebSocket messages to start runs and handle tool
+// approvals and rejections. Runs live in the runner's hub, independent of the
+// connection; the handler subscribes the connection to a run's event stream
+// and cleans its subscriptions up on disconnect. Approvals are persisted by
+// the runner, so approve/reject work across reconnects and restarts.
 type WSHandler struct {
 	runner *bridge.Runner
-
-	mu      sync.Mutex
-	pending map[string]*pendingRun
 }
 
 // NewWSHandler returns a WebSocket handler backed by the given runner.
 func NewWSHandler(runner *bridge.Runner) *WSHandler {
-	h := &WSHandler{
-		runner:  runner,
-		pending: make(map[string]*pendingRun),
-	}
-	go h.cleanupLoop()
-	return h
-}
-
-func (h *WSHandler) cleanupLoop() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		now := time.Now()
-		h.mu.Lock()
-		for id, p := range h.pending {
-			if now.Sub(p.createdAt) > pendingTTL {
-				delete(h.pending, id)
-			}
-		}
-		h.mu.Unlock()
-	}
+	return &WSHandler{runner: runner}
 }
 
 // wsSink returns an event sink that writes envelopes to conn. A write error
-// means the client went away mid-run; the run is cancelled when its context is
-// done, so the error is not actionable here.
+// means the client went away; the run keeps executing in the hub and can be
+// resubscribed after reconnect, so the error is not actionable here.
 func wsSink(conn *server.WSConn) bridge.EventSink {
 	return func(env *protocol.Envelope) {
 		_ = conn.WriteJSON(env)
 	}
 }
 
+// connSubs tracks a connection's live hub subscriptions so they can all be
+// detached when the socket closes.
+type connSubs struct {
+	hub  *bridge.RunHub
+	mu   sync.Mutex
+	subs map[string]int // runID -> subscriber id
+}
+
+func (cs *connSubs) add(runID string, subID int) {
+	cs.mu.Lock()
+	cs.subs[runID] = subID
+	cs.mu.Unlock()
+}
+
+func (cs *connSubs) closeAll() {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	for runID, subID := range cs.subs {
+		cs.hub.Unsubscribe(runID, subID)
+	}
+	cs.subs = map[string]int{}
+}
+
 // Handle reads and dispatches WebSocket messages on conn until the connection closes.
 func (h *WSHandler) Handle(conn *server.WSConn) {
 	log := zerolog.Ctx(conn.Context())
+	subs := &connSubs{hub: h.runner.Hub(), subs: map[string]int{}}
+	defer subs.closeAll()
 
 	for {
 		var env protocol.Envelope
@@ -83,7 +78,15 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal run.create")
 				continue
 			}
-			go h.handleRunCreate(conn, msg)
+			h.handleRunCreate(conn, subs, msg)
+
+		case "run.subscribe":
+			var msg protocol.RunSubscribe
+			if err := json.Unmarshal(env.Payload, &msg); err != nil {
+				log.Error().Err(err).Msg("unmarshal run.subscribe")
+				continue
+			}
+			h.subscribe(conn, subs, msg.RunID, msg.FromSeq)
 
 		case "tool.approve":
 			var msg protocol.ToolApprove
@@ -91,7 +94,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal tool.approve")
 				continue
 			}
-			go h.handleToolApprove(conn, msg)
+			go h.resolve(conn, subs, msg.ToolCallID, true, "")
 
 		case "tool.reject":
 			var msg protocol.ToolReject
@@ -99,7 +102,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal tool.reject")
 				continue
 			}
-			go h.handleToolReject(conn, msg)
+			go h.resolve(conn, subs, msg.ToolCallID, false, msg.Reason)
 
 		case "run.cancel":
 			var msg protocol.RunCancel
@@ -115,83 +118,56 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 	}
 }
 
-func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate) {
-	result := h.runner.RunStreamed(conn.Context(), msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.Input, wsSink(conn))
-	if result == nil {
+// subscribe attaches conn to runID's event stream (replaying from fromSeq),
+// tracking the subscription on subs for cleanup.
+func (h *WSHandler) subscribe(conn *server.WSConn, subs *connSubs, runID string, fromSeq int) {
+	subID, ok := h.runner.Hub().Subscribe(runID, fromSeq, wsSink(conn))
+	if !ok {
+		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
+			RunID: runID, Code: "run_not_found", Message: "run not found or expired",
+		})})
 		return
 	}
-	if result.Interrupted {
-		h.savePendingState(result)
-	}
+	subs.add(runID, subID)
 }
 
-func (h *WSHandler) handleToolApprove(conn *server.WSConn, msg protocol.ToolApprove) {
-	ctx := conn.Context()
-	log := zerolog.Ctx(ctx)
-
-	h.mu.Lock()
-	matchedRunID, matchedItem := h.findPendingItem(msg.ToolCallID)
-	p := h.pending[matchedRunID]
-	delete(h.pending, matchedRunID)
-	h.mu.Unlock()
-
-	if p == nil || matchedItem == nil {
-		log.Error().Str("tool_call_id", msg.ToolCallID).Msg("no pending state for approval")
-		return
-	}
-
-	p.state.Approve(matchedItem, false)
-
-	result := h.runner.ResumeStreamed(ctx, p.state, p.sessionID, p.agentConfigID, p.sandboxID, wsSink(conn))
-	if result != nil && result.Interrupted {
-		h.savePendingState(result)
-	}
-}
-
-func (h *WSHandler) handleToolReject(conn *server.WSConn, msg protocol.ToolReject) {
-	ctx := conn.Context()
-	log := zerolog.Ctx(ctx)
-
-	h.mu.Lock()
-	matchedRunID, matchedItem := h.findPendingItem(msg.ToolCallID)
-	p := h.pending[matchedRunID]
-	delete(h.pending, matchedRunID)
-	h.mu.Unlock()
-
-	if p == nil || matchedItem == nil {
-		log.Error().Str("tool_call_id", msg.ToolCallID).Msg("no pending state for rejection")
-		return
-	}
-
-	p.state.Reject(matchedItem, false, msg.Reason)
-
-	result := h.runner.ResumeStreamed(ctx, p.state, p.sessionID, p.agentConfigID, p.sandboxID, wsSink(conn))
-	if result != nil && result.Interrupted {
-		h.savePendingState(result)
-	}
-}
-
-// findPendingItem locates the pending run and interruption matching callID.
-// Must be called with h.mu held.
-func (h *WSHandler) findPendingItem(callID string) (string, *agents.ToolApprovalItem) {
-	for runID, p := range h.pending {
-		for _, item := range p.state.Interruptions {
-			if item.CallID == callID {
-				return runID, item
-			}
+func (h *WSHandler) handleRunCreate(conn *server.WSConn, subs *connSubs, msg protocol.RunCreate) {
+	runID, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.Input, nil)
+	if err != nil {
+		// These fire before any run.started, so no run→session mapping exists
+		// client-side yet: carry the session id so the error is attributable.
+		var busy bridge.ErrSessionBusy
+		if errors.As(err, &busy) {
+			_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
+				RunID: busy.RunID, SessionID: msg.SessionID, Code: "session_busy", Message: "session already has an active run",
+			})})
+			return
 		}
+		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
+			SessionID: msg.SessionID, Code: "session_not_found", Message: err.Error(),
+		})})
+		return
 	}
-	return "", nil
+	// Subscribe from 0 so the run.started already buffered is delivered.
+	h.subscribe(conn, subs, runID, 0)
 }
 
-func (h *WSHandler) savePendingState(result *bridge.RunResult) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.pending[result.RunID] = &pendingRun{
-		state:         result.SDKState,
-		sessionID:     result.SessionID,
-		agentConfigID: result.AgentConfigID,
-		sandboxID:     result.SandboxID,
-		createdAt:     time.Now(),
+// resolve applies an approve/reject decision (persisted by the runner) and
+// subscribes conn to the resumed run.
+func (h *WSHandler) resolve(conn *server.WSConn, subs *connSubs, toolCallID string, approve bool, reason string) {
+	log := zerolog.Ctx(conn.Context())
+	runID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, reason, nil)
+	if err != nil {
+		log.Error().Err(err).Str("tool_call_id", toolCallID).Msg("resolve approval failed")
+		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
+			Code: "approval_failed", Message: err.Error(),
+		})})
+		return
 	}
+	h.subscribe(conn, subs, runID, 0)
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }

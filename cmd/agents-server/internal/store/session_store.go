@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,12 +42,16 @@ func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 	return sessions, nil
 }
 
-// Get returns the session with the given id.
+// Get returns the session with the given id, or an ErrNotFound-wrapping error
+// when it doesn't exist.
 func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 	sess := new(Session)
 	if err := s.db.NewSelect().Model(sess).
 		Where("id = ?", id).
 		Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
 		return nil, fmt.Errorf("getting session %s: %w", id, err)
 	}
 	return sess, nil
@@ -53,30 +59,35 @@ func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 
 // Update renames the session with the given id and refreshes its updated_at.
 func (s *SessionStore) Update(ctx context.Context, id string, name string) error {
-	if _, err := s.db.NewUpdate().Model((*Session)(nil)).
-		Set("name = ?", name).
+	np := &name
+	return s.UpdateFields(ctx, id, np, nil)
+}
+
+// UpdateFields applies a partial update to the session: only non-nil fields
+// are written; updated_at is always refreshed. Returns an ErrNotFound-wrapping
+// error when the session doesn't exist.
+func (s *SessionStore) UpdateFields(ctx context.Context, id string, name *string, pinned *bool) error {
+	q := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Exec(ctx); err != nil {
+		Where("id = ?", id)
+	if name != nil {
+		q = q.Set("name = ?", *name)
+	}
+	if pinned != nil {
+		q = q.Set("pinned = ?", *pinned)
+	}
+	res, err := q.Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
+	if err != nil {
 		return fmt.Errorf("updating session %s: %w", id, err)
 	}
 	return nil
 }
 
-// SetPinned updates the pinned flag of the session with the given id.
-func (s *SessionStore) SetPinned(ctx context.Context, id string, pinned bool) error {
-	if _, err := s.db.NewUpdate().Model((*Session)(nil)).
-		Set("pinned = ?", pinned).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Exec(ctx); err != nil {
-		return fmt.Errorf("pinning session %s: %w", id, err)
-	}
-	return nil
-}
-
-// Delete removes the session with the given id and all of its messages in one
-// transaction.
+// Delete removes the session with the given id together with all of its
+// messages, trace events, and pending approvals in one transaction.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewDelete().Model((*Message)(nil)).
@@ -84,9 +95,23 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting messages for session %s: %w", id, err)
 		}
-		if _, err := tx.NewDelete().Model((*Session)(nil)).
-			Where("id = ?", id).
+		if _, err := tx.NewDelete().Model((*TraceEvent)(nil)).
+			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting trace events for session %s: %w", id, err)
+		}
+		if _, err := tx.NewDelete().Model((*PendingApproval)(nil)).
+			Where("session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting pending approvals for session %s: %w", id, err)
+		}
+		res, err := tx.NewDelete().Model((*Session)(nil)).
+			Where("id = ?", id).
+			Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		if err != nil {
 			return fmt.Errorf("deleting session %s: %w", id, err)
 		}
 		return nil

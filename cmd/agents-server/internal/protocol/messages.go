@@ -33,6 +33,14 @@ type RunCancel struct {
 	RunID string `json:"run_id"`
 }
 
+// RunSubscribe is the client request to (re)attach to a run's event stream,
+// replaying buffered events after FromSeq (0 replays everything retained).
+// Used after a reconnect to resume a run that kept executing server-side.
+type RunSubscribe struct {
+	RunID   string `json:"run_id"`
+	FromSeq int    `json:"from_seq,omitempty"`
+}
+
 // ToolApprove is the client's approval of a pending tool call awaiting human review.
 type ToolApprove struct {
 	ToolCallID string `json:"tool_call_id"`
@@ -60,6 +68,13 @@ type RunAgentStart struct {
 
 // RunStep streams an incremental chunk of the agent's output text.
 type RunStep struct {
+	RunID string `json:"run_id"`
+	Delta string `json:"delta"`
+}
+
+// RunReasoning streams an incremental chunk of the agent's reasoning
+// (thinking) text, when the model emits reasoning deltas.
+type RunReasoning struct {
 	RunID string `json:"run_id"`
 	Delta string `json:"delta"`
 }
@@ -94,15 +109,36 @@ type RunOutput struct {
 }
 
 // RunError reports that a run failed, with an error code and message.
+// SessionID is set when the failure happened before a run.started could
+// establish the run→session mapping (e.g. session_not_found, session_busy),
+// so the client can still attribute the error.
 type RunError struct {
-	RunID   string `json:"run_id"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	RunID     string `json:"run_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+}
+
+// RunInterrupted signals that the run paused for human tool approval. It is
+// terminal for this run segment's event stream — approving or rejecting
+// resumes execution under a new run id.
+type RunInterrupted struct {
+	RunID string `json:"run_id"`
 }
 
 // RunCancelled notifies the client that a run was cancelled.
 type RunCancelled struct {
 	RunID string `json:"run_id"`
+}
+
+// RunCompaction reports session-history compaction progress at the end of a
+// run: phase "started" when the summarization request begins (the run stays
+// busy until it completes), "finished" with item counts once history is
+// rewritten. Transient status — not persisted to traces.
+type RunCompaction struct {
+	RunID  string `json:"run_id"`
+	Phase  string `json:"phase"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // Session events
@@ -113,22 +149,10 @@ type SessionTitleUpdated struct {
 	Title     string `json:"title"`
 }
 
-// Hook lifecycle events
-
-// HookEvent reports a runner lifecycle hook firing (agent start/end, tool start/end, handoff, etc.).
-type HookEvent struct {
-	RunID     string `json:"run_id"`
-	Hook      string `json:"hook"`
-	AgentName string `json:"agent_name,omitempty"`
-	ToolName  string `json:"tool_name,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-}
-
 // Tracing events
 
-// TraceSpan carries a single tracing span (its IDs, name, type, timing, and data) to the client.
+// TraceSpan carries a single tracing span (its IDs, name, type, timing, error
+// state, and data) to the client.
 type TraceSpan struct {
 	RunID     string         `json:"run_id"`
 	TraceID   string         `json:"trace_id"`
@@ -136,6 +160,7 @@ type TraceSpan struct {
 	ParentID  string         `json:"parent_id,omitempty"`
 	Name      string         `json:"name"`
 	Type      string         `json:"type"`
+	Error     string         `json:"error,omitempty"`
 	StartedAt string         `json:"started_at"`
 	EndedAt   string         `json:"ended_at,omitempty"`
 	Data      map[string]any `json:"data,omitempty"`

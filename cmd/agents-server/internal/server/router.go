@@ -10,12 +10,23 @@ type Routes struct {
 	SessionList     gin.HandlerFunc
 	SessionCreate   gin.HandlerFunc
 	SessionGet      gin.HandlerFunc
-	SessionUpdate   gin.HandlerFunc
+	SessionPatch    gin.HandlerFunc
 	SessionDelete   gin.HandlerFunc
 	SessionMessages gin.HandlerFunc
 	SessionFork     gin.HandlerFunc
-	SessionPin      gin.HandlerFunc
 	WSHandler       WSHandlerFunc
+
+	// Runs are started on a session and observed by run id (REST + SSE),
+	// sharing the runner hub with the WebSocket transport.
+	RunCreate gin.HandlerFunc
+	RunGet    gin.HandlerFunc
+	RunCancel gin.HandlerFunc
+	RunEvents gin.HandlerFunc
+
+	// Approvals are the human-in-the-loop decisions a paused run is waiting on.
+	ApprovalListBySession gin.HandlerFunc
+	ApprovalApprove       gin.HandlerFunc
+	ApprovalReject        gin.HandlerFunc
 
 	AgentList   gin.HandlerFunc
 	AgentCreate gin.HandlerFunc
@@ -29,7 +40,7 @@ type Routes struct {
 	McpServerUpdate        gin.HandlerFunc
 	McpServerDelete        gin.HandlerFunc
 	McpServerConnect       gin.HandlerFunc
-	McpServerDisconnect    gin.HandlerFunc
+	McpServerClearOAuth    gin.HandlerFunc
 	McpServerTools         gin.HandlerFunc
 	McpServerOAuthCallback gin.HandlerFunc
 
@@ -44,14 +55,17 @@ type Routes struct {
 	SettingSet    gin.HandlerFunc
 	SettingDelete gin.HandlerFunc
 
-	SkillList   gin.HandlerFunc
-	SkillGet    gin.HandlerFunc
-	SkillClone  gin.HandlerFunc
-	SkillUpdate gin.HandlerFunc
-	SkillDelete gin.HandlerFunc
+	// Skills are read-only resources; management (clone/sync/delete) operates
+	// on whole repos under /skill-repos.
+	SkillList       gin.HandlerFunc
+	SkillGet        gin.HandlerFunc
+	SkillRepoClone  gin.HandlerFunc
+	SkillRepoSync   gin.HandlerFunc
+	SkillRepoDelete gin.HandlerFunc
 
 	ProviderRouteList   gin.HandlerFunc
 	ProviderRouteCreate gin.HandlerFunc
+	ProviderRouteGet    gin.HandlerFunc
 	ProviderRouteUpdate gin.HandlerFunc
 	ProviderRouteDelete gin.HandlerFunc
 
@@ -70,26 +84,57 @@ type Routes struct {
 
 	TraceListBySession gin.HandlerFunc
 
+	PlaygroundGenerate gin.HandlerFunc
+
+	// ChatGPT OAuth is a per-agent capability mounted under /agents/:id/chatgpt.
 	ChatGPTLogin    gin.HandlerFunc
 	ChatGPTCallback gin.HandlerFunc
 	ChatGPTStatus   gin.HandlerFunc
 	ChatGPTLogout   gin.HandlerFunc
 }
 
-// RegisterRoutes mounts every handler in r onto the server's gin engine at its API path.
+// RegisterRoutes mounts every handler in r under /api/v1 (canonical) and /api
+// (deprecated alias kept for one release), plus the WebSocket endpoint.
 func (s *Server) RegisterRoutes(r Routes) {
-	api := s.Engine.Group("/api")
+	registerAPIRoutes(s.Engine.Group("/api/v1"), r)
+	registerAPIRoutes(s.Engine.Group("/api"), r)
+	s.Engine.GET("/ws", HandleWSWithAuth(r.WSHandler, s.token))
+}
+
+// ServeOpenAPI mounts the OpenAPI document (auth-exempt) at
+// /api/v1/openapi.yaml and the /api alias.
+func (s *Server) ServeOpenAPI(spec []byte) {
+	h := func(c *gin.Context) {
+		c.Data(200, "application/yaml; charset=utf-8", spec)
+	}
+	s.Engine.GET("/api/v1/openapi.yaml", h)
+	s.Engine.GET("/api/openapi.yaml", h)
+}
+
+func registerAPIRoutes(api *gin.RouterGroup, r Routes) {
 	{
 		sessions := api.Group("/sessions")
 		sessions.GET("", r.SessionList)
 		sessions.POST("", r.SessionCreate)
 		sessions.GET("/:id", r.SessionGet)
-		sessions.PUT("/:id", r.SessionUpdate)
+		sessions.PATCH("/:id", r.SessionPatch)
 		sessions.DELETE("/:id", r.SessionDelete)
 		sessions.GET("/:id/messages", r.SessionMessages)
 		sessions.POST("/:id/fork", r.SessionFork)
-		sessions.PATCH("/:id/pin", r.SessionPin)
 		sessions.GET("/:id/traces", r.TraceListBySession)
+		sessions.POST("/:id/runs", r.RunCreate)
+		sessions.GET("/:id/approvals", r.ApprovalListBySession)
+	}
+	{
+		runs := api.Group("/runs")
+		runs.GET("/:id", r.RunGet)
+		runs.GET("/:id/events", r.RunEvents)
+		runs.POST("/:id/cancel", r.RunCancel)
+	}
+	{
+		approvals := api.Group("/approvals")
+		approvals.POST("/:tool_call_id/approve", r.ApprovalApprove)
+		approvals.POST("/:tool_call_id/reject", r.ApprovalReject)
 	}
 	{
 		agents := api.Group("/agents")
@@ -98,6 +143,9 @@ func (s *Server) RegisterRoutes(r Routes) {
 		agents.GET("/:id", r.AgentGet)
 		agents.PUT("/:id", r.AgentUpdate)
 		agents.DELETE("/:id", r.AgentDelete)
+		agents.POST("/:id/chatgpt/login", r.ChatGPTLogin)
+		agents.POST("/:id/chatgpt/logout", r.ChatGPTLogout)
+		agents.GET("/:id/chatgpt/status", r.ChatGPTStatus)
 	}
 	{
 		mcpServers := api.Group("/mcp-servers")
@@ -108,7 +156,7 @@ func (s *Server) RegisterRoutes(r Routes) {
 		mcpServers.PUT("/:id", r.McpServerUpdate)
 		mcpServers.DELETE("/:id", r.McpServerDelete)
 		mcpServers.POST("/:id/connect", r.McpServerConnect)
-		mcpServers.POST("/:id/disconnect", r.McpServerDisconnect)
+		mcpServers.DELETE("/:id/oauth-token", r.McpServerClearOAuth)
 		mcpServers.GET("/:id/tools", r.McpServerTools)
 	}
 	{
@@ -129,15 +177,18 @@ func (s *Server) RegisterRoutes(r Routes) {
 	{
 		skills := api.Group("/skills")
 		skills.GET("", r.SkillList)
-		skills.POST("/clone", r.SkillClone)
-		skills.PUT("/:name", r.SkillUpdate)
-		skills.DELETE("/:name", r.SkillDelete)
 		skills.GET("/*path", r.SkillGet)
+
+		repos := api.Group("/skill-repos")
+		repos.POST("", r.SkillRepoClone)
+		repos.POST("/:name/sync", r.SkillRepoSync)
+		repos.DELETE("/:name", r.SkillRepoDelete)
 	}
 	{
 		providerRoutes := api.Group("/provider-routes")
 		providerRoutes.GET("", r.ProviderRouteList)
 		providerRoutes.POST("", r.ProviderRouteCreate)
+		providerRoutes.GET("/:id", r.ProviderRouteGet)
 		providerRoutes.PUT("/:id", r.ProviderRouteUpdate)
 		providerRoutes.DELETE("/:id", r.ProviderRouteDelete)
 	}
@@ -158,12 +209,6 @@ func (s *Server) RegisterRoutes(r Routes) {
 		sandboxes.DELETE("/:id", r.SandboxDelete)
 		sandboxes.POST("/:id/test", r.SandboxTest)
 	}
-	{
-		chatgpt := api.Group("/chatgpt")
-		chatgpt.POST("/login", r.ChatGPTLogin)
-		chatgpt.GET("/oauth/callback", r.ChatGPTCallback)
-		chatgpt.GET("/status", r.ChatGPTStatus)
-		chatgpt.POST("/logout", r.ChatGPTLogout)
-	}
-	s.Engine.GET("/ws", HandleWSWithAuth(r.WSHandler, s.token))
+	api.POST("/playground/generate", r.PlaygroundGenerate)
+	api.GET("/chatgpt/oauth/callback", r.ChatGPTCallback)
 }

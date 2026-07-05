@@ -3,17 +3,7 @@ import { Button, TextInput, Label, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
-
-interface Skill {
-  name: string;
-  description: string;
-  path: string;
-}
-
-interface SkillGroup {
-  repo: string;
-  skills: Skill[];
-}
+import { type Skill, groupByRepo } from '@/lib/skills';
 
 export function SkillsPanel() {
   const [skills, setSkills] = useState<Skill[] | null>(null);
@@ -146,16 +136,6 @@ export function SkillsPanel() {
       </>}
     </Stack>
   );
-}
-
-function groupByRepo(skills: Skill[]): SkillGroup[] {
-  const map = new Map<string, Skill[]>();
-  for (const s of skills) {
-    const repo = s.path.includes('/') ? s.path.split('/')[0] : s.path;
-    if (!map.has(repo)) map.set(repo, []);
-    map.get(repo)!.push(s);
-  }
-  return Array.from(map.entries()).map(([repo, skills]) => ({ repo, skills }));
 }
 
 export default SkillsPanel;

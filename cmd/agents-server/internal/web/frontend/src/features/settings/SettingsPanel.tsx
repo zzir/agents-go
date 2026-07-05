@@ -22,6 +22,7 @@ const DEFAULT_KEYS: SettingDef[] = [
   { key: 'system_prompt', label: 'System prompt', placeholder: 'Optional instructions prepended to all agents', multiline: true },
   { key: 'brave_api_key', label: 'Brave Search API key', placeholder: 'BSA-xxxxxxxx', description: 'When set, a brave_search tool is injected into all agents. Get a key at brave.com/search/api.' },
   { key: 'enable_editor_tools', label: 'Editor tools', placeholder: 'true / false', description: 'When set to "true", injects file-editing tools (view_file, create_file, str_replace, insert_text) scoped to --root-dir.' },
+  { key: 'trace_retention_days', label: 'Trace retention (days)', placeholder: 'e.g. 30 — empty disables pruning', description: 'Trace events older than this many days are pruned daily. Leave empty (or 0) to keep everything.' },
 ];
 
 export function SettingsPanel() {
@@ -135,7 +136,7 @@ function RouteForm({ initial, onSave, onCancel, onDelete }: {
         <TextInput
           value={draft.api_key}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, api_key: e.target.value }))}
-          placeholder="API Key"
+          placeholder="API Key (******** keeps the stored key)"
           type="password"
           block
         />

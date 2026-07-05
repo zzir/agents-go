@@ -1,0 +1,3011 @@
+components:
+  schemas:
+    agents.InputTokensDetails:
+      description: InputTokensDetails aggregates the input token detail fields.
+      properties:
+        cached_tokens:
+          type: integer
+      type: object
+    agents.ModelSettings:
+      description: |-
+        ModelSettings, when set, replaces the agent's configured settings — the
+        replay dialog seeds it from the traced request so edits take effect.
+      properties:
+        frequency_penalty:
+          type: number
+        max_tokens:
+          description: MaxTokens is the maximum number of output tokens to generate.
+          type: integer
+        metadata:
+          additionalProperties:
+            type: string
+          description: Metadata is included with the model response call.
+          type: object
+        parallel_tool_calls:
+          description: |-
+            ParallelToolCalls controls whether the model may emit multiple tool calls
+            in a single turn. nil defers to the provider default.
+          type: boolean
+        presence_penalty:
+          type: number
+        prompt_cache_retention:
+          description: PromptCacheRetention is "in_memory" or "24h".
+          type: string
+        reasoning:
+          $ref: '#/components/schemas/agents.Reasoning'
+        response_include:
+          description: ResponseInclude lists additional output data to include in
+            the response.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        service_tier:
+          description: 'ServiceTier selects the processing tier: "auto", "default",
+            "flex" or "priority".'
+          type: string
+        store:
+          description: Store controls whether the provider stores the response for
+            later retrieval.
+          type: boolean
+        temperature:
+          type: number
+        tool_choice:
+          $ref: '#/components/schemas/agents.ToolChoice'
+        top_logprobs:
+          description: TopLogprobs requests logprobs for the top N tokens.
+          type: integer
+        top_p:
+          type: number
+        truncation:
+          description: Truncation is "auto" or "disabled". Empty means unset.
+          type: string
+        verbosity:
+          description: 'Verbosity constrains response verbosity: "low", "medium" or
+            "high".'
+          type: string
+      type: object
+    agents.OutputTokensDetails:
+      description: OutputTokensDetails aggregates the output token detail fields.
+      properties:
+        reasoning_tokens:
+          type: integer
+      type: object
+    agents.Reasoning:
+      description: Reasoning configures reasoning models.
+      properties:
+        effort:
+          description: Effort is "minimal", "low", "medium" or "high".
+          type: string
+        summary:
+          description: Summary is "auto", "concise" or "detailed".
+          type: string
+      type: object
+    agents.RequestUsage:
+      properties:
+        input_tokens:
+          type: integer
+        input_tokens_details:
+          $ref: '#/components/schemas/agents.InputTokensDetails'
+        output_tokens:
+          type: integer
+        output_tokens_details:
+          $ref: '#/components/schemas/agents.OutputTokensDetails'
+        total_tokens:
+          type: integer
+      type: object
+    agents.ToolChoice:
+      description: ToolChoice controls tool selection. Empty means unset.
+      enum:
+      - auto
+      - required
+      - none
+      type: string
+      x-enum-varnames:
+      - ToolChoiceAuto
+      - ToolChoiceRequired
+      - ToolChoiceNone
+    agents.Usage:
+      properties:
+        input_tokens:
+          description: InputTokens is the total input tokens sent across all requests.
+          type: integer
+        input_tokens_details:
+          $ref: '#/components/schemas/agents.InputTokensDetails'
+        output_tokens:
+          description: OutputTokens is the total output tokens received across all
+            requests.
+          type: integer
+        output_tokens_details:
+          $ref: '#/components/schemas/agents.OutputTokensDetails'
+        request_usage_entries:
+          description: RequestUsageEntries preserves the per-request usage breakdown.
+          items:
+            $ref: '#/components/schemas/agents.RequestUsage'
+          type: array
+          uniqueItems: false
+        requests:
+          description: Requests is the total number of LLM API calls made.
+          type: integer
+        total_tokens:
+          description: TotalTokens is the total tokens sent and received across all
+            requests.
+          type: integer
+      type: object
+    bridge.ChatGPTLoginResult:
+      properties:
+        authorize_url:
+          type: string
+        state:
+          type: string
+      type: object
+    bridge.RunInfo:
+      properties:
+        agent_config_id:
+          type: string
+        last_seq:
+          type: integer
+        run_id:
+          type: string
+        sandbox_id:
+          type: string
+        session_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/bridge.RunStatus'
+      type: object
+    bridge.RunStatus:
+      enum:
+      - running
+      - interrupted
+      - completed
+      - error
+      - cancelled
+      type: string
+      x-enum-varnames:
+      - RunRunning
+      - RunInterrupted
+      - RunCompleted
+      - RunErrored
+      - RunCancelled
+    handler.APIError:
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      type: object
+    handler.ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/handler.APIError'
+      type: object
+    handler.agentConfigReq:
+      properties:
+        api_key:
+          type: string
+        approve_tools:
+          type: string
+        auth_mode:
+          type: string
+        base_url:
+          type: string
+        compaction_enabled:
+          type: boolean
+        compaction_model:
+          type: string
+        compaction_prompt:
+          type: string
+        compaction_threshold:
+          type: integer
+        compaction_window:
+          type: integer
+        disable_tool_choice_reset:
+          type: boolean
+        fallback_models:
+          type: string
+        handoff_description:
+          type: string
+        handoff_input_filter:
+          type: string
+        handoffs:
+          type: string
+        input_guardrails:
+          type: string
+        instructions:
+          type: string
+        max_tool_concurrency:
+          type: integer
+        max_turns:
+          type: integer
+        model:
+          type: string
+        model_settings:
+          type: string
+        name:
+          type: string
+        output_guardrails:
+          type: string
+        output_schema:
+          type: string
+        prompt_id:
+          type: string
+        prompt_version:
+          type: string
+        provider_type:
+          type: string
+        retry_enabled:
+          type: boolean
+        retry_policy:
+          type: string
+        skills:
+          type: string
+        tool_not_found_behavior:
+          type: string
+        tool_use_behavior:
+          type: string
+        tools:
+          type: string
+        use_previous_response_id:
+          type: boolean
+      type: object
+    handler.approvalResultResp:
+      properties:
+        run_id:
+          type: string
+        status:
+          type: string
+      type: object
+    handler.chatgptStatusResp:
+      properties:
+        logged_in:
+          type: boolean
+      type: object
+    handler.cloneRequest:
+      properties:
+        url:
+          type: string
+      required:
+      - url
+      type: object
+    handler.createRunReq:
+      properties:
+        agent_config_id:
+          type: string
+        input:
+          type: string
+        sandbox_id:
+          type: string
+      type: object
+    handler.createRunResp:
+      properties:
+        run_id:
+          type: string
+        session_id:
+          type: string
+        status:
+          type: string
+      type: object
+    handler.createSandboxReq:
+      properties:
+        config:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        type:
+          type: string
+      type: object
+    handler.mcpConnectResp:
+      properties:
+        authorize_url:
+          type: string
+        state:
+          type: string
+        status:
+          type: string
+      type: object
+    handler.mcpServerListItem:
+      properties:
+        auth_state:
+          type: string
+        config:
+          description: |-
+            Config holds the transport-specific settings as JSON: StdioMcpConfig for
+            "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
+            exchanged with the API as a raw JSON object.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        connected:
+          type: boolean
+        created_at:
+          type: string
+        enabled:
+          type: boolean
+        id:
+          type: string
+        name:
+          type: string
+        transport_type:
+          description: stdio | streamable_http
+          type: string
+        updated_at:
+          type: string
+      type: object
+    handler.mcpServerReq:
+      properties:
+        config:
+          description: |-
+            Config is the transport-specific settings object, interpreted per
+            TransportType (see store.StdioMcpConfig / store.HTTPMcpConfig).
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        enabled:
+          type: boolean
+        name:
+          type: string
+        transport_type:
+          type: string
+      type: object
+    handler.mcpToolInfo:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+      type: object
+    handler.memoryReq:
+      properties:
+        agent_config_id:
+          type: string
+        content:
+          type: string
+        key:
+          type: string
+        metadata:
+          type: string
+      type: object
+    handler.playgroundReq:
+      properties:
+        agent_config_id:
+          description: AgentConfigID selects whose provider credentials and default
+            model to use.
+          type: string
+        input_items:
+          description: InputItems are Responses-format input items, as edited by the
+            user.
+          items:
+            items:
+              type: integer
+            type: array
+          type: array
+          uniqueItems: false
+        model:
+          description: Model optionally overrides the agent's model.
+          type: string
+        model_settings:
+          $ref: '#/components/schemas/agents.ModelSettings'
+        system_instructions:
+          description: SystemInstructions is the system prompt to send.
+          type: string
+        tools:
+          description: |-
+            Tools are schema-only tool definitions echoed back from the traced
+            request, so the model sees the same tool surface and can emit function
+            calls. They are never executed: a single GetResponse runs no tool loop.
+          items:
+            $ref: '#/components/schemas/handler.playgroundTool'
+          type: array
+          uniqueItems: false
+      type: object
+    handler.playgroundResp:
+      properties:
+        duration_ms:
+          type: integer
+        output:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        usage:
+          $ref: '#/components/schemas/agents.Usage'
+      type: object
+    handler.playgroundTool:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        parameters:
+          additionalProperties: {}
+          type: object
+      type: object
+    handler.providerRouteReq:
+      properties:
+        api_key:
+          type: string
+        base_url:
+          type: string
+        prefix:
+          type: string
+      type: object
+    handler.rejectReq:
+      properties:
+        reason:
+          type: string
+      type: object
+    handler.sandboxTestResp:
+      properties:
+        detail:
+          type: string
+        ok:
+          type: boolean
+      type: object
+    handler.sessionCreateReq:
+      properties:
+        agent_config_id:
+          description: AgentConfigID optionally binds the session to an agent up front.
+          type: string
+        name:
+          type: string
+      type: object
+    handler.sessionPatchReq:
+      properties:
+        name:
+          type: string
+        pinned:
+          type: boolean
+      type: object
+    handler.setSettingReq:
+      properties:
+        value:
+          type: string
+      type: object
+    handler.skillContentResp:
+      properties:
+        content:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+      type: object
+    handler.skillEntry:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+      type: object
+    handler.skillRepoResp:
+      properties:
+        name:
+          type: string
+        skills:
+          items:
+            $ref: '#/components/schemas/handler.skillEntry'
+          type: array
+          uniqueItems: false
+      type: object
+    store.AgentConfig:
+      properties:
+        api_key:
+          type: string
+        approve_tools:
+          description: 'Batch 6: HITL approval'
+          type: string
+        auth_mode:
+          type: string
+        base_url:
+          type: string
+        compaction_enabled:
+          description: 'Batch 7: compaction'
+          type: boolean
+        compaction_model:
+          type: string
+        compaction_prompt:
+          type: string
+        compaction_threshold:
+          type: integer
+        compaction_window:
+          type: integer
+        created_at:
+          type: string
+        disable_tool_choice_reset:
+          type: boolean
+        fallback_models:
+          type: string
+        handoff_description:
+          type: string
+        handoff_input_filter:
+          description: 'Batch 5: fine-grained control'
+          type: string
+        handoffs:
+          type: string
+        id:
+          type: string
+        input_guardrails:
+          description: 'Batch 3: guardrails + output type'
+          type: string
+        instructions:
+          type: string
+        max_tool_concurrency:
+          type: integer
+        max_turns:
+          description: 'Batch 1: basic correctness'
+          type: integer
+        model:
+          type: string
+        model_settings:
+          type: string
+        name:
+          type: string
+        output_guardrails:
+          type: string
+        output_schema:
+          type: string
+        prompt_id:
+          type: string
+        prompt_version:
+          type: string
+        provider_type:
+          type: string
+        retry_enabled:
+          description: 'Batch 2: model resilience'
+          type: boolean
+        retry_policy:
+          type: string
+        skills:
+          type: string
+        tool_not_found_behavior:
+          type: string
+        tool_use_behavior:
+          type: string
+        tools:
+          type: string
+        updated_at:
+          type: string
+        use_previous_response_id:
+          description: 'Batch 4: session features'
+          type: boolean
+      type: object
+    store.Guardrail:
+      properties:
+        config:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        created_at:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        mode:
+          description: regex | max_length
+          type: string
+        name:
+          type: string
+        type:
+          description: input | output
+          type: string
+        updated_at:
+          type: string
+      type: object
+    store.McpServerConfig:
+      properties:
+        config:
+          description: |-
+            Config holds the transport-specific settings as JSON: StdioMcpConfig for
+            "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
+            exchanged with the API as a raw JSON object.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        created_at:
+          type: string
+        enabled:
+          type: boolean
+        id:
+          type: string
+        name:
+          type: string
+        transport_type:
+          description: stdio | streamable_http
+          type: string
+        updated_at:
+          type: string
+      type: object
+    store.Memory:
+      properties:
+        agent_config_id:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: string
+        key:
+          type: string
+        metadata:
+          type: string
+        updated_at:
+          type: string
+      type: object
+    store.Message:
+      properties:
+        compacted:
+          type: boolean
+        content:
+          type: string
+        created_at:
+          type: string
+        display:
+          description: |-
+            Display carries the structured fields the UI renders for non-text rows
+            (tool call name/arguments/output), derived from Item at write time.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        id:
+          type: integer
+        kind:
+          type: string
+        role:
+          type: string
+        run_id:
+          type: string
+        session_id:
+          type: string
+      type: object
+    store.PendingApproval:
+      properties:
+        agent_config_id:
+          type: string
+        created_at:
+          type: string
+        run_id:
+          type: string
+        sandbox_id:
+          type: string
+        session_id:
+          type: string
+        tool_calls:
+          description: |-
+            ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
+            shown to the user.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+      type: object
+    store.ProviderRoute:
+      properties:
+        api_key:
+          type: string
+        base_url:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: string
+        prefix:
+          type: string
+        updated_at:
+          type: string
+      type: object
+    store.SandboxConfig:
+      properties:
+        config:
+          description: |-
+            Config holds the backend-specific settings as JSON: LocalConfig for
+            "local", DockerConfig for "docker", SSHConfig for "ssh". Stored as TEXT
+            and sent to/received from the API as a raw JSON object (no
+            double-encoding).
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          description: local | docker | ssh
+          type: string
+        updated_at:
+          type: string
+      type: object
+    store.Session:
+      properties:
+        agent_config_id:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        pinned:
+          type: boolean
+        updated_at:
+          type: string
+      type: object
+    store.Setting:
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      type: object
+    store.TraceEvent:
+      properties:
+        created_at:
+          type: string
+        data:
+          type: string
+        detail:
+          type: string
+        ended_at:
+          type: string
+        error:
+          type: string
+        id:
+          type: integer
+        kind:
+          type: string
+        name:
+          type: string
+        parent_id:
+          type: string
+        run_id:
+          type: string
+        session_id:
+          type: string
+        span_id:
+          type: string
+        started_at:
+          type: string
+      type: object
+  securitySchemes:
+    BearerAuth:
+      description: Value is "Bearer <token>" — the token printed at server startup
+        (or set via --token).
+      in: header
+      name: Authorization
+      type: apiKey
+externalDocs:
+  description: ""
+  url: ""
+info:
+  description: 'REST API of agents-server, the web server over the agents-go SDK:
+    sessions, agents, MCP servers, memories, settings, skills, provider routes, guardrails,
+    and sandboxes. Runs are started over the WebSocket protocol (see the README);
+    this spec covers the HTTP surface.'
+  title: agents-server API
+  version: "1.0"
+openapi: 3.1.0
+paths:
+  /agents:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.AgentConfig'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List agents
+      tags:
+      - agents
+    post:
+      description: 'Secret fields (api_key, fallback_models[].api_key) are write-only:
+        responses mask them with ********; sending the mask back keeps the stored
+        value, "" clears it. use_previous_response_id is rejected (incompatible with
+        the server-side session store), as are tool selections whose statically known
+        tool names would collide.'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.agentConfigReq'
+                description: Agent configuration
+                summary: agent
+        description: Agent configuration
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.AgentConfig'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create agent
+      tags:
+      - agents
+  /agents/{id}:
+    delete:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete agent
+      tags:
+      - agents
+    get:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.AgentConfig'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get agent
+      tags:
+      - agents
+    put:
+      description: 'Full replace. Secret fields are write-only: send back the ********
+        mask to keep the stored value, "" to clear it. use_previous_response_id is
+        rejected (incompatible with the server-side session store), as are tool selections
+        whose statically known tool names would collide.'
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.agentConfigReq'
+                description: Agent configuration
+                summary: agent
+        description: Agent configuration
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.AgentConfig'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update agent
+      tags:
+      - agents
+  /agents/{id}/chatgpt/login:
+    post:
+      description: Starts the OAuth flow; open authorize_url in a browser. The callback
+        is served by a temporary local server on port 1455.
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bridge.ChatGPTLoginResult'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Start ChatGPT login
+      tags:
+      - agents
+  /agents/{id}/chatgpt/logout:
+    post:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: logged out
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: ChatGPT logout
+      tags:
+      - agents
+  /agents/{id}/chatgpt/status:
+    get:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.chatgptStatusResp'
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: ChatGPT login status
+      tags:
+      - agents
+  /approvals/{tool_call_id}/approve:
+    post:
+      description: Approves a pending tool call and resumes the run. Returns the new
+        run id; stream it via GET /runs/{id}/events.
+      parameters:
+      - description: Tool call ID
+        in: path
+        name: tool_call_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.approvalResultResp'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: session already has an active run
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Approve tool call
+      tags:
+      - approvals
+  /approvals/{tool_call_id}/reject:
+    post:
+      description: Rejects a pending tool call and resumes the run so the model can
+        react. Returns the new run id.
+      parameters:
+      - description: Tool call ID
+        in: path
+        name: tool_call_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.rejectReq'
+                description: Optional rejection reason
+                summary: body
+        description: Optional rejection reason
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.approvalResultResp'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: session already has an active run
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reject tool call
+      tags:
+      - approvals
+  /guardrails:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Guardrail'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List guardrails
+      tags:
+      - guardrails
+    post:
+      description: 'type: input|output; mode: regex|max_length; config: {pattern}
+        or {max_length}.'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Guardrail'
+                description: Guardrail definition
+                summary: guardrail
+        description: Guardrail definition
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Guardrail'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create guardrail
+      tags:
+      - guardrails
+  /guardrails/{id}:
+    delete:
+      parameters:
+      - description: Guardrail ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete guardrail
+      tags:
+      - guardrails
+    get:
+      parameters:
+      - description: Guardrail ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Guardrail'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get guardrail
+      tags:
+      - guardrails
+    put:
+      parameters:
+      - description: Guardrail ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Guardrail'
+                description: Guardrail definition
+                summary: guardrail
+        description: Guardrail definition
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Guardrail'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update guardrail
+      tags:
+      - guardrails
+  /mcp-servers:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.mcpServerListItem'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List MCP servers
+      tags:
+      - mcp-servers
+    post:
+      description: 'config is transport-specific: {command, args} for stdio; {endpoint,
+        headers, auth_mode, oauth_*} for streamable_http. Header values and oauth_client_secret
+        are write-only (******** mask semantics).'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.mcpServerReq'
+                description: MCP server configuration
+                summary: server
+        description: MCP server configuration
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.McpServerConfig'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create MCP server
+      tags:
+      - mcp-servers
+  /mcp-servers/{id}:
+    delete:
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete MCP server
+      tags:
+      - mcp-servers
+    get:
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.mcpServerListItem'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get MCP server
+      tags:
+      - mcp-servers
+    put:
+      description: Full replace; flipping enabled disconnects/reconnects the server.
+        Masked secrets keep their stored values.
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.mcpServerReq'
+                description: MCP server configuration
+                summary: server
+        description: MCP server configuration
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.mcpServerListItem'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update MCP server
+      tags:
+      - mcp-servers
+  /mcp-servers/{id}/connect:
+    post:
+      description: Establishes the connection. OAuth-enabled servers may answer with
+        status "authorization_required" and an authorize_url to open in a browser
+        popup.
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.mcpConnectResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Connect MCP server
+      tags:
+      - mcp-servers
+  /mcp-servers/{id}/oauth-token:
+    delete:
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: token cleared
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Clear MCP OAuth token
+      tags:
+      - mcp-servers
+  /mcp-servers/{id}/tools:
+    get:
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.mcpToolInfo'
+                type: array
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: server not connected
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: List MCP server tools
+      tags:
+      - mcp-servers
+  /mcp-servers/oauth/callback:
+    get:
+      description: Browser-facing redirect target of the OAuth flow (no auth token
+        required). Renders an HTML result page, not JSON.
+      parameters:
+      - description: OAuth state
+        in: query
+        name: state
+        required: true
+        schema:
+          type: string
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        schema:
+          type: string
+      - description: Provider error, e.g. access_denied
+        in: query
+        name: error
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            text/html:
+              schema:
+                type: string
+          description: HTML result page
+        "400":
+          content:
+            text/html:
+              schema:
+                type: string
+          description: missing state or code parameter
+      summary: MCP OAuth callback
+      tags:
+      - mcp-servers
+  /memories:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Memory'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List memories
+      tags:
+      - memories
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.memoryReq'
+                description: Memory; agent_config_id scopes it to one agent, empty
+                  means global
+                summary: memory
+        description: Memory; agent_config_id scopes it to one agent, empty means global
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Memory'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create memory
+      tags:
+      - memories
+  /memories/{id}:
+    delete:
+      parameters:
+      - description: Memory ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete memory
+      tags:
+      - memories
+    get:
+      parameters:
+      - description: Memory ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Memory'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get memory
+      tags:
+      - memories
+    put:
+      parameters:
+      - description: Memory ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.memoryReq'
+                description: Memory
+                summary: memory
+        description: Memory
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Memory'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update memory
+      tags:
+      - memories
+  /playground/generate:
+    post:
+      description: One-off model call for replaying a traced generation with edited
+        inputs. Touches no session, records no run; tools are schema-only and never
+        executed.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.playgroundReq'
+                description: Generation request
+                summary: request
+        description: Generation request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.playgroundResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: model call failed
+      security:
+      - BearerAuth: []
+      summary: Playground generate
+      tags:
+      - playground
+  /provider-routes:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.ProviderRoute'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List provider routes
+      tags:
+      - provider-routes
+    post:
+      description: Maps a model-name prefix to an API key and base URL. api_key is
+        write-only (******** mask semantics).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.providerRouteReq'
+                description: Provider route
+                summary: route
+        description: Provider route
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.ProviderRoute'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create provider route
+      tags:
+      - provider-routes
+  /provider-routes/{id}:
+    delete:
+      parameters:
+      - description: Provider route ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete provider route
+      tags:
+      - provider-routes
+    get:
+      parameters:
+      - description: Provider route ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.ProviderRoute'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get provider route
+      tags:
+      - provider-routes
+    put:
+      parameters:
+      - description: Provider route ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.providerRouteReq'
+                description: Provider route
+                summary: route
+        description: Provider route
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.ProviderRoute'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update provider route
+      tags:
+      - provider-routes
+  /runs/{id}:
+    get:
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bridge.RunInfo'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get run status
+      tags:
+      - runs
+  /runs/{id}/cancel:
+    post:
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: cancelling
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Cancel run
+      tags:
+      - runs
+  /runs/{id}/events:
+    get:
+      description: 'Server-Sent Events stream. Each event id is the hub sequence number;
+        reconnect with the Last-Event-ID header or from_seq to resume. The stream
+        closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted
+        (paused for approval — deciding via /approvals resumes under a new run id;
+        open a new stream for it).'
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Resume after this sequence number
+        in: query
+        name: from_seq
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: SSE stream
+        "404":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Stream run events (SSE)
+      tags:
+      - runs
+  /sandboxes:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.SandboxConfig'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List sandboxes
+      tags:
+      - sandboxes
+    post:
+      description: 'type: local (requires --allow-local-sandbox), docker, or ssh.
+        config is backend-specific; the SSH password is write-only (******** mask
+        semantics). All backends accept an optional max_read_file_bytes cap for the
+        read_file tool (0 = 8 MiB default).'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.createSandboxReq'
+                description: Sandbox configuration
+                summary: sandbox
+        description: Sandbox configuration
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.SandboxConfig'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: local sandbox disabled
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create sandbox
+      tags:
+      - sandboxes
+  /sandboxes/{id}:
+    delete:
+      parameters:
+      - description: Sandbox ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete sandbox
+      tags:
+      - sandboxes
+    get:
+      parameters:
+      - description: Sandbox ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.SandboxConfig'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get sandbox
+      tags:
+      - sandboxes
+    put:
+      parameters:
+      - description: Sandbox ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.createSandboxReq'
+                description: Sandbox configuration
+                summary: sandbox
+        description: Sandbox configuration
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.SandboxConfig'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: local sandbox disabled
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update sandbox
+      tags:
+      - sandboxes
+  /sandboxes/{id}/test:
+    post:
+      description: Runs "echo ok" in the sandbox. 200 with ok=false means the sandbox
+        was reachable but the command failed.
+      parameters:
+      - description: Sandbox ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.sandboxTestResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: sandbox unreachable
+      security:
+      - BearerAuth: []
+      summary: Test sandbox
+      tags:
+      - sandboxes
+  /sessions:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Session'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List sessions
+      tags:
+      - sessions
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.sessionCreateReq'
+                description: Session; name defaults to \
+                summary: session
+        description: Session; name defaults to \
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Session'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create session
+      tags:
+      - sessions
+  /sessions/{id}:
+    delete:
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete session
+      tags:
+      - sessions
+    get:
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Session'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get session
+      tags:
+      - sessions
+    patch:
+      description: Applies a partial update; absent fields are unchanged.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.sessionPatchReq'
+                description: Fields to change
+                summary: session
+        description: Fields to change
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Session'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update session (partial)
+      tags:
+      - sessions
+  /sessions/{id}/approvals:
+    get:
+      description: Tool calls the session is paused on, awaiting a human decision.
+        Survives restarts.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.PendingApproval'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List pending approvals
+      tags:
+      - approvals
+  /sessions/{id}/fork:
+    post:
+      description: Copies messages (and their traces) into a new session. message_id
+        bounds the copy; omit it to copy everything. exclusive=true excludes the boundary
+        message itself.
+      parameters:
+      - description: Source session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+          text/plain:
+            schema:
+              title: fork
+              type: object
+        description: '{message_id?: number, exclusive?: bool, label?: string}'
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Session'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Fork session
+      tags:
+      - sessions
+  /sessions/{id}/messages:
+    get:
+      description: Without limit, returns all messages oldest-first. With limit, returns
+        the newest `limit` messages (still oldest-first); page backwards by passing
+        the smallest received id as before_id.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Max messages to return; 0 or absent returns all
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Only messages with id < before_id (backwards cursor)
+        in: query
+        name: before_id
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Message'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List session messages
+      tags:
+      - sessions
+  /sessions/{id}/runs:
+    post:
+      description: Starts an agent run on the session. Default returns 201 with a
+        run id; pass wait=true to block until the run ends and receive the final output
+        — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals).
+        Fails 409 if the session already has an active run.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Block until the run finishes
+        in: query
+        name: wait
+        schema:
+          type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.createRunReq'
+                description: Run input
+                summary: run
+        description: Run input
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Final result (wait=true)
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.createRunResp'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: session already has an active run
+      security:
+      - BearerAuth: []
+      summary: Start run
+      tags:
+      - runs
+  /sessions/{id}/traces:
+    get:
+      description: Without limit, returns all events oldest-first. With limit, returns
+        the newest `limit` events (still oldest-first); page backwards by passing
+        the smallest received id as before_id.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Max events to return; 0 or absent returns all
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Only events with id < before_id (backwards cursor)
+        in: query
+        name: before_id
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.TraceEvent'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List session traces
+      tags:
+      - sessions
+  /settings:
+    get:
+      description: 'Known keys: proxy_url, system_prompt, brave_api_key (secret, masked),
+        enable_editor_tools.'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Setting'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List settings
+      tags:
+      - settings
+  /settings/{key}:
+    delete:
+      parameters:
+      - description: Setting key
+        in: path
+        name: key
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete setting
+      tags:
+      - settings
+    get:
+      parameters:
+      - description: Setting key
+        in: path
+        name: key
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Setting'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get setting
+      tags:
+      - settings
+    put:
+      parameters:
+      - description: Setting key
+        in: path
+        name: key
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.setSettingReq'
+                description: Value to store
+                summary: setting
+        description: Value to store
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Setting'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Set setting
+      tags:
+      - settings
+  /skill-repos:
+    post:
+      description: git clone --depth=1 of an http(s) repository containing SKILL.md
+        files.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.cloneRequest'
+                description: Repository URL (http/https only)
+                summary: repo
+        description: Repository URL (http/https only)
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.skillRepoResp'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: directory already exists
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: git clone failed
+      security:
+      - BearerAuth: []
+      summary: Clone skill repo
+      tags:
+      - skill-repos
+  /skill-repos/{name}:
+    delete:
+      parameters:
+      - description: Repo directory name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete skill repo
+      tags:
+      - skill-repos
+  /skill-repos/{name}/sync:
+    post:
+      description: git fetch + reset --hard origin/HEAD; local changes in the repo
+        are discarded.
+      parameters:
+      - description: Repo directory name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.skillRepoResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: not a git repository
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: git fetch failed
+      security:
+      - BearerAuth: []
+      summary: Sync skill repo
+      tags:
+      - skill-repos
+  /skills:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.skillEntry'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List skills
+      tags:
+      - skills
+  /skills/{path}:
+    get:
+      parameters:
+      - description: Skill path (may be nested, e.g. repo/sub-skill)
+        in: path
+        name: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.skillContentResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get skill content
+      tags:
+      - skills
+servers:
+- url: /api/v1

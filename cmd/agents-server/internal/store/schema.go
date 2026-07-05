@@ -20,6 +20,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		(*SandboxConfig)(nil),
 		(*TraceEvent)(nil),
 		(*Guardrail)(nil),
+		(*PendingApproval)(nil),
 	}
 	for _, model := range models {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {

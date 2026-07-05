@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -16,111 +18,210 @@ type SessionHandler struct {
 	sessions *store.SessionStore
 	messages *store.MessageStore
 	traces   *store.TraceStore
+	agents   *store.AgentConfigStore
 }
 
-// NewSessionHandler returns a handler backed by the session, message, and trace stores.
-func NewSessionHandler(sessions *store.SessionStore, messages *store.MessageStore, traces *store.TraceStore) *SessionHandler {
-	return &SessionHandler{sessions: sessions, messages: messages, traces: traces}
+// NewSessionHandler returns a handler backed by the session, message, trace,
+// and agent-config stores.
+func NewSessionHandler(sessions *store.SessionStore, messages *store.MessageStore, traces *store.TraceStore, agents *store.AgentConfigStore) *SessionHandler {
+	return &SessionHandler{sessions: sessions, messages: messages, traces: traces, agents: agents}
 }
 
 // List responds with all sessions.
+//
+//	@Summary	List sessions
+//	@Tags		sessions
+//	@Produce	json
+//	@Success	200	{array}		store.Session
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sessions [get]
 func (h *SessionHandler) List(c *gin.Context) {
 	sessions, err := h.sessions.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sessions)
 }
 
-// sessionReq is the request body for both Create and Update.
-type sessionReq struct {
+// sessionCreateReq is the request body for Create.
+type sessionCreateReq struct {
 	Name string `json:"name"`
+	// AgentConfigID optionally binds the session to an agent up front.
+	AgentConfigID string `json:"agent_config_id"`
 }
 
 // Create persists a new session, defaulting its name when omitted.
+//
+//	@Summary	Create session
+//	@Tags		sessions
+//	@Accept		json
+//	@Produce	json
+//	@Param		session	body		sessionCreateReq	false	"Session; name defaults to \"New	Chat\", agent_config_id optionally binds an agent"
+//	@Success	201		{object}	store.Session
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sessions [post]
 func (h *SessionHandler) Create(c *gin.Context) {
-	var req sessionReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	var req sessionCreateReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		badRequest(c, err.Error())
 		return
 	}
 	if req.Name == "" {
 		req.Name = "New Chat"
 	}
-	sess := &store.Session{
-		ID:   store.NewID(),
-		Name: req.Name,
+	ctx := c.Request.Context()
+	if req.AgentConfigID != "" {
+		if _, err := h.agents.Get(ctx, req.AgentConfigID); err != nil {
+			badRequest(c, "agent_config_id does not reference an existing agent")
+			return
+		}
 	}
-	if err := h.sessions.Create(c.Request.Context(), sess); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	sess := &store.Session{
+		ID:            store.NewID(),
+		Name:          req.Name,
+		AgentConfigID: req.AgentConfigID,
+	}
+	if err := h.sessions.Create(ctx, sess); err != nil {
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, sess)
 }
 
 // Get responds with the session identified by the id path parameter.
+//
+//	@Summary	Get session
+//	@Tags		sessions
+//	@Produce	json
+//	@Param		id	path		string	true	"Session ID"
+//	@Success	200	{object}	store.Session
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sessions/{id} [get]
 func (h *SessionHandler) Get(c *gin.Context) {
 	sess, err := h.sessions.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sess)
 }
 
-// Update renames the session identified by the id path parameter.
-func (h *SessionHandler) Update(c *gin.Context) {
-	var req sessionReq
+// sessionPatchReq is the request body for Patch; absent fields are unchanged.
+type sessionPatchReq struct {
+	Name   *string `json:"name"`
+	Pinned *bool   `json:"pinned"`
+}
+
+// Patch applies a partial update (rename and/or pin) to the session
+// identified by the id path parameter and responds with the updated session.
+//
+//	@Summary		Update session (partial)
+//	@Description	Applies a partial update; absent fields are unchanged.
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string			true	"Session ID"
+//	@Param			session	body		sessionPatchReq	true	"Fields to change"
+//	@Success		200		{object}	store.Session
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id} [patch]
+func (h *SessionHandler) Patch(c *gin.Context) {
+	var req sessionPatchReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, err.Error())
 		return
 	}
-	if err := h.sessions.Update(c.Request.Context(), c.Param("id"), req.Name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if req.Name != nil && *req.Name == "" {
+		badRequest(c, "name cannot be empty")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// Delete removes the session identified by the id path parameter and its traces.
-func (h *SessionHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
 	ctx := c.Request.Context()
-	if err := h.sessions.Delete(ctx, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	id := c.Param("id")
+	if err := h.sessions.UpdateFields(ctx, id, req.Name, req.Pinned); err != nil {
+		storeError(c, err)
 		return
 	}
-	_ = h.messages.DeleteBySession(ctx, id)
-	if h.traces != nil {
-		_ = h.traces.DeleteBySession(ctx, id)
+	sess, err := h.sessions.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, sess)
 }
 
-// Fork creates a new session by copying messages from the source session up to
-// (and including) a given message ID. When message_id is 0 or omitted, all
-// messages are copied.
+// Delete removes the session identified by the id path parameter together
+// with its messages and traces (one transaction in the store).
+//
+//	@Summary	Delete session
+//	@Tags		sessions
+//	@Param		id	path	string	true	"Session ID"
+//	@Success	204	"deleted"
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sessions/{id} [delete]
+func (h *SessionHandler) Delete(c *gin.Context) {
+	if err := h.sessions.Delete(c.Request.Context(), c.Param("id")); err != nil {
+		storeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// Fork creates a new session by copying messages from the source session up
+// to (and including) a given message ID. When message_id is omitted (or 0),
+// all messages are copied.
+//
+//	@Summary		Fork session
+//	@Description	Copies messages (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary message itself.
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string	true	"Source session ID"
+//	@Param			fork	body		object	false	"{message_id?: number, exclusive?: bool, label?: string}"
+//	@Success		201		{object}	store.Session
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/fork [post]
 func (h *SessionHandler) Fork(c *gin.Context) {
 	srcID := c.Param("id")
 	ctx := c.Request.Context()
 
 	src, err := h.sessions.Get(ctx, srcID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		storeError(c, err)
 		return
 	}
 
 	var req struct {
-		MessageID int64  `json:"message_id"`
+		MessageID *int64 `json:"message_id"`
 		Exclusive bool   `json:"exclusive"`
 		Label     string `json:"label"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	// An empty body means "fork everything"; anything else must parse.
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		badRequest(c, err.Error())
+		return
+	}
 
 	label := req.Label
 	if label == "" {
 		label = "fork"
+	}
+	var upTo int64
+	if req.MessageID != nil {
+		upTo = *req.MessageID
 	}
 
 	dst := &store.Session{
@@ -129,12 +230,12 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		AgentConfigID: src.AgentConfigID,
 	}
 	if err := h.sessions.Create(ctx, dst); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
-	runIDs, err := h.messages.ForkMessages(ctx, srcID, dst.ID, req.MessageID, req.Exclusive)
+	runIDs, err := h.messages.ForkMessages(ctx, srcID, dst.ID, upTo, req.Exclusive)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
 	if h.traces != nil {
@@ -143,27 +244,24 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	c.JSON(http.StatusCreated, dst)
 }
 
-// Pin toggles the pinned state of the session identified by the id path parameter.
-func (h *SessionHandler) Pin(c *gin.Context) {
-	var req struct {
-		Pinned bool `json:"pinned"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.sessions.SetPinned(c.Request.Context(), c.Param("id"), req.Pinned); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
 // Messages responds with the messages for the session identified by the id path parameter.
+//
+//	@Summary		List session messages
+//	@Description	Without limit, returns all messages oldest-first. With limit, returns the newest `limit` messages (still oldest-first); page backwards by passing the smallest received id as before_id.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id			path		string	true	"Session ID"
+//	@Param			limit		query		int		false	"Max messages to return; 0 or absent returns all"
+//	@Param			before_id	query		int		false	"Only messages with id < before_id (backwards cursor)"
+//	@Success		200			{array}		store.Message
+//	@Failure		500			{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/messages [get]
 func (h *SessionHandler) Messages(c *gin.Context) {
-	msgs, err := h.messages.GetMessages(c.Request.Context(), c.Param("id"))
+	beforeID, limit := pageParams(c)
+	msgs, err := h.messages.GetMessages(c.Request.Context(), c.Param("id"), beforeID, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, msgs)

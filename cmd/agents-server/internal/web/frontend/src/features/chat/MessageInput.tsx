@@ -46,7 +46,7 @@ export function MessageInput({ onSend, onCancel, disabled, running, toolbar }: M
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="type something here…"
-          rows={1}
+          rows={2}
         />
         <div className="chat-input-toolbar">
           {toolbar}
