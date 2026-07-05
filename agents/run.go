@@ -67,6 +67,16 @@ type RunOptions struct {
 	// ToolNotFoundReturnToModel feeds an error back so the model can retry.
 	ToolNotFoundBehavior ToolNotFoundBehavior
 
+	// PreApprovalToolInputGuardrails, when true, runs a tool's input guardrails
+	// before surfacing a human-approval interruption for it: a guardrail
+	// rejection returns the guardrail message as the tool output without
+	// emitting an approval request or executing the tool. Calls that pass still
+	// re-run the same guardrails immediately before execution after approval,
+	// so time-sensitive checks are revalidated on resume. Off by default —
+	// the counterpart of Python's
+	// RunConfig.tool_execution.pre_approval_tool_input_guardrails.
+	PreApprovalToolInputGuardrails bool
+
 	// HandoffInputFilter is a run-level default applied to any handoff that does
 	// not set its own Handoff.InputFilter. Use NestHandoffHistory to fold prior
 	// history across all handoffs.

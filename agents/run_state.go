@@ -123,6 +123,9 @@ type serialItem struct {
 	Type  string          `json:"type"`
 	Agent string          `json:"agent"`
 	Input json.RawMessage `json:"input"`
+	// CustomData carries a ToolCallOutputItem's SDK-only custom data, so it
+	// survives HITL interruptions. Absent for other item kinds.
+	CustomData map[string]any `json:"custom_data,omitempty"`
 }
 
 type serialResponse struct {
@@ -242,7 +245,11 @@ func serializeItems(items []RunItem) ([]serialItem, error) {
 		if a := it.AgentRef(); a != nil {
 			agentName = a.Name
 		}
-		out = append(out, serialItem{Type: it.ItemType(), Agent: agentName, Input: raw})
+		si := serialItem{Type: it.ItemType(), Agent: agentName, Input: raw}
+		if o, ok := it.(*ToolCallOutputItem); ok && len(o.CustomData) > 0 {
+			si.CustomData = o.CustomData
+		}
+		out = append(out, si)
 	}
 	return out, nil
 }
@@ -343,6 +350,13 @@ func deserializeItems(items []serialItem, lookup func(string) *Agent) ([]RunItem
 		item, err := UnmarshalInputItem(si.Input)
 		if err != nil {
 			return nil, err
+		}
+		if len(si.CustomData) > 0 && si.Type == "tool_call_output" {
+			// Restore as a typed item so the SDK-only custom data stays
+			// reachable after a round-trip. Output is not serialized; only the
+			// replayed input form and the custom data survive.
+			out = append(out, &ToolCallOutputItem{Agent: lookup(si.Agent), Raw: item, CustomData: si.CustomData})
+			continue
 		}
 		out = append(out, &rawInputRunItem{Agent: lookup(si.Agent), RawInput: item, Kind: si.Type})
 	}

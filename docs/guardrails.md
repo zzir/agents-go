@@ -95,6 +95,8 @@ Three behaviors, built with helpers:
 | `agents.RejectToolContent(msg, info)` | Skip the tool / replace its output; `msg` goes to the model |
 | `agents.RaiseToolException(info)` | Halt the run with `*agents.ToolGuardrailTripwireError` |
 
+For approval-gated tools, input guardrails normally run only **after** the human approves. Set `RunOptions.PreApprovalToolInputGuardrails` to also run them **before** the approval interruption is surfaced, so a guardrail rejection resolves the call without a human round-trip — see [Human-in-the-loop](human_in_the_loop.md#pre-approval-guardrails).
+
 ## Errors vs tripwires
 
 Returning a non-nil `error` from any guardrail aborts the run with that error (it means the guardrail itself failed). A tripwire is a deliberate verdict and produces the typed tripwire error instead.

@@ -53,6 +53,20 @@ fmt.Println(res.FinalOutputString())
 - Pass `always=true` to `Approve`/`Reject` to apply the decision to **every future call of that tool** in the run.
 - A resumed run can pause again (new approval-gated calls), hence the loop. The turn budget continues counting from where the run paused.
 - Streamed runs pause the same way: drain `Events()`, then check `FinalResult()` and resume with `ResumeRun`.
+- Once a call has an explicit approve/reject decision, resuming does **not** re-invoke `NeedsApprovalFunc` for it — the checker's side effects and errors cannot re-fire for an already-resolved call.
+
+## Pre-approval guardrails
+
+By default a tool's [input guardrails](guardrails.md#tool-guardrails) run only after approval, right before execution. `RunOptions.PreApprovalToolInputGuardrails` also runs them **before** the approval interruption is surfaced:
+
+```go
+res, err := agents.Run(ctx, agent, input, agents.RunOptions{
+	PreApprovalToolInputGuardrails: true,
+	// ...
+})
+```
+
+If a guardrail rejects the call, its message is returned to the model as the tool output — no approval request is emitted and the tool never runs, sparing the human a pointless round-trip. Calls that pass still re-run the same guardrails immediately before execution after approval, so time-sensitive checks are revalidated on resume. This is the counterpart of Python's `RunConfig.tool_execution.pre_approval_tool_input_guardrails`.
 
 ## Approvals across processes
 

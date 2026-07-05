@@ -1,7 +1,7 @@
 # agents-go
 
 A Go port of [openai-agents-python](https://github.com/openai/openai-agents-python)
-(tracking **v0.17.4**). Build agents that call tools, hand off to one another,
+(tracking **v0.17.7**). Build agents that call tools, hand off to one another,
 enforce guardrails, stream events, persist sessions, pause for human approval,
 and emit traces — all with idiomatic Go APIs.
 
@@ -13,7 +13,8 @@ and emit traces — all with idiomatic Go APIs.
 go get github.com/zzir/agents-go
 ```
 
-Requires Go 1.26+.
+Requires Go 1.26+. Optional backends (Docker/SSH sandbox, SQL sessions, skills)
+are separate modules — see [Packages](#packages).
 
 ## Quick start
 
@@ -47,6 +48,8 @@ func main() {
 
 ## Features
 
+### Core
+
 | Capability | API |
 |---|---|
 | Agents | `agents.Agent{...}` |
@@ -54,25 +57,45 @@ func main() {
 | Streaming | `agents.RunStreamed(...)` → `Events()` iterator |
 | Function tools | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
 | Structured output | `agents.OutputType[T]()` |
-| Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` (tool returns native image/file input) |
+| Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |
+| Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` |
 | Handoffs | `agents.HandoffTo(targetAgent)` |
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
-| Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails |
-| Sessions | `agents.Session`, `InMemorySession`, `memory.FileSession`, `sessions` (SQLite/Postgres), `openai.ConversationsSession` (server-side), `openai.CompactionSession` (auto-summarize) |
+| Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails (incl. pre-approval via `RunOptions.PreApprovalToolInputGuardrails`) |
+| Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
+| SDK-only tool output metadata | `FunctionTool.CustomDataExtractor` → `ToolCallOutputItem.CustomData` (never sent to the model) |
+| Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
+| Composite hooks | `agents.CompositeRunHooks(hooks...)` |
+
+### Sessions & state
+
+| Capability | API |
+|---|---|
+| Sessions | `agents.Session`, `InMemorySession`, `memory.FileSession` (JSONL), `sessions` module (SQLite/Postgres) |
+| Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
+| History compaction | `openai.CompactionSession` (server-side `responses.compact`), `agents.NewSlidingWindowSession` (local summarize) |
 | Session forking | `agents.ForkSession` / `ForkSessionAt` / `IndexOfItemID` |
 | Server-side state | `RunOptions.UsePreviousResponseID` / `RunOptions.ConversationID` |
-| Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` (OpenAI stored prompt) |
-| Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
-| Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor` |
+| Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` |
+
+### Reliability & routing
+
+| Capability | API |
+|---|---|
+| Retry | `agents.NewRetryModel(...)` / `agents.NewRetryProvider(...)` (backoff + jitter) |
+| Fallback | `agents.NewFallbackModel(...)` / `agents.NewFallbackProvider(...)` (try backends in order) |
+| Multi-provider routing | `agents.NewRouterProvider(...)` (per-agent backend by model-name prefix) |
+
+### Integrations
+
+| Capability | API |
+|---|---|
+| Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor`; `RunOptions.TraceGroupID/TraceMetadata` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer` (`NewSSEServer` deprecated) |
+| Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 | File editing | `editor.NewTools(dir)` (str_replace editor, `os.Root`-confined) |
-| Retry / fallback | `agents.NewRetryModel(...)`, `agents.NewFallbackModel(...)` (model-level); `agents.NewRetryProvider(...)`, `agents.NewFallbackProvider(...)` (provider-level) |
-| Multi-provider routing | `agents.NewRouterProvider(...)` (per-agent backend by name) |
-| Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |
-| Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
-| Composite hooks | `agents.CompositeRunHooks(hooks...)` (fan out to multiple RunHooks) |
-| Skills | `skills.Load / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md` format) |
+| Skills | `skills.Load / LoadRecursive / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md`) |
 
 ## Tools
 
@@ -144,8 +167,9 @@ sess, _ := memory.NewFileSession("sessions", "user-123") // sessions/user-123.js
 agents.Run(ctx, agent, "remember my name is Ada", agents.RunOptions{Session: sess, ModelProvider: p})
 ```
 
-History is stored as JSONL with zero external dependencies. Implement the
-`agents.Session` interface yourself to back it with a database instead.
+History is stored as JSONL with zero external dependencies. The `sessions`
+module backs the same interface with SQLite/PostgreSQL, or implement
+`agents.Session` yourself.
 
 ## Tracing
 
@@ -187,34 +211,23 @@ agent := &agents.Agent{Name: "coder", Model: "gpt-4o",
 	Tools: []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{Name: "run_python"})}}
 ```
 
-The Docker backend defaults to: no network, read-only root fs, dropped
-capabilities, non-root user, and CPU/memory/PID/time limits.
-`sandbox.NewLocal()` runs on the host **without isolation** — for trusted
-dev/tests only. The `sandbox/ssh` backend (also a separate module) runs commands
-on a remote host over SSH, transferring files via SFTP — useful for offloading
-to a disposable VM, but it provides **no** isolation or resource limits of its
-own.
+Backends:
 
-## Packages
-
-Core module path: `github.com/zzir/agents-go`.
-
-- `.../agents` — core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks.
-- `.../models/openai` — OpenAI Responses API model provider (built on `openai-go` v3).
-- `.../memory` — `FileSession` (JSONL file store, zero dependencies).
-- `.../tracing` — traces, spans, processors and exporters.
-- `.../mcp` — Model Context Protocol client.
-- `.../sandbox` — `Sandbox` interface + `CodeTool` + local backend.
-- `.../sandbox/docker` — **separate module** with the Docker backend.
-- `.../sandbox/ssh` — **separate module** with the remote SSH backend.
-- `.../examples` — runnable examples (`hello`, `tools`, `handoffs`, `streaming`, `hitl`, `sandbox`).
+- **Docker** — defaults to no network, read-only root fs, dropped capabilities,
+  non-root user, and CPU/memory/PID/time limits.
+- **Local** (`sandbox.NewLocal()`) — runs on the host **without isolation**; for
+  trusted dev/tests only.
+- **SSH** (`sandbox/ssh`, separate module) — runs commands on a remote host over
+  SSH with files via SFTP; useful for a disposable VM, but provides **no**
+  isolation or resource limits of its own.
 
 ## agents-server
 
 A full-featured **[demo web app](cmd/agents-server/README.md)** that wraps the
-SDK with a REST API, WebSocket streaming, and an embedded browser UI. Configure
-agents, MCP servers, sandboxes, memories, and skills — then run conversations
-with streaming output, tool approval, and tracing, all from the browser.
+SDK with a versioned REST API, WebSocket streaming, and an embedded browser UI.
+Configure agents, MCP servers, sandboxes, memories, and skills — then run
+conversations with streaming output, tool approval, and tracing, all from the
+browser.
 
 ```bash
 go run ./cmd/agents-server --port 8080
@@ -224,6 +237,8 @@ go run ./cmd/agents-server --port 8080
 
 ## Examples
 
+See [docs/examples.md](docs/examples.md) for what each one demonstrates.
+
 ```bash
 export OPENAI_API_KEY=sk-...
 go run ./examples/hello
@@ -231,17 +246,43 @@ go run ./examples/tools
 go run ./examples/handoffs
 go run ./examples/streaming
 go run ./examples/hitl
+go run ./examples/tracing        # tracer → batch processor → console exporter
+go run ./examples/fallback       # retry + fallback model decorators
 go run ./examples/toolimage      # a tool returns a generated image to the model
 go run ./examples/conversations  # server-side history via the Conversations API
-go run ./examples/compaction      # auto-summarize long history via responses.compact
-OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt  # drive an agent from a stored prompt
-go run ./examples/sandbox   # writes & runs Python in a sandbox (host needs python3)
+go run ./examples/compaction     # auto-summarize long history via responses.compact
+go run ./examples/slidingwindow  # local sliding-window history compaction
+go run ./examples/sandbox        # writes & runs Python in a sandbox (host needs python3)
+OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt        # drive an agent from a stored prompt
+BRAVE_API_KEY=... go run ./examples/bravesearch           # web search tool
 
-# isolated / remote backends live in their own modules:
-(cd sandbox/docker && OPENAI_API_KEY=$OPENAI_API_KEY go run ./example)  # needs Docker
+# examples in the optional submodules:
+(cd sessions && go run ./example)   # SQLite-backed session
+(cd skills && go run ./example)     # Agent Skills (SKILL.md)
+(cd sandbox/docker && go run ./example)  # needs Docker
 (cd sandbox/ssh && SSH_HOST=host SSH_USER=user SSH_KEY=~/.ssh/id_ed25519 \
-	OPENAI_API_KEY=$OPENAI_API_KEY go run ./example)  # needs a reachable SSH host
+	go run ./example)  # needs a reachable SSH host
 ```
+
+## Packages
+
+Core module path: `github.com/zzir/agents-go`.
+
+| Package | What it is |
+|---|---|
+| `agents` | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
+| `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
+| `memory` | `FileSession` (JSONL file store, zero dependencies) |
+| `tracing` | Traces, spans, processors and exporters |
+| `mcp` | Model Context Protocol client |
+| `sandbox` | `Sandbox` interface + `CodeTool` + local backend |
+| `tools/bravesearch` | Brave Search web-search tool |
+| `tools/editor` | File-editing (str_replace) tools |
+| `sandbox/docker` | **separate module** — Docker sandbox backend |
+| `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
+| `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
+| `skills` | **separate module** — Agent Skills (`SKILL.md`) loader |
+| `cmd/agents-server` | **separate module** — demo web app (REST + WS + UI) |
 
 ## Design notes
 

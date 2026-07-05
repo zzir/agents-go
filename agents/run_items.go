@@ -74,6 +74,10 @@ type ToolCallOutputItem struct {
 	Agent  *Agent
 	Raw    TResponseInputItem
 	Output any
+	// CustomData is SDK-only data attached by the tool's CustomDataExtractor.
+	// It is not part of Raw and is never sent back to the model when this item
+	// is replayed as input. It survives RunState serialization.
+	CustomData map[string]any
 }
 
 // AgentRef implements RunItem.

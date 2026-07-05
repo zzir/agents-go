@@ -106,6 +106,19 @@ The three content parts mirror the Responses API:
 
 A runnable example lives in `examples/toolimage`. This is the Go counterpart of Python's `ToolOutputText` / `ToolOutputImage` / `ToolOutputFileContent`; it is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
 
+### SDK-only custom data
+
+`CustomDataExtractor` attaches JSON-compatible metadata — renderer hints, record IDs, anything your app needs alongside the tool result — to the tool's output item **without sending it to the model**:
+
+```go
+t := agents.NewFunctionTool("query_orders", "…", queryOrders)
+t.CustomDataExtractor = func(ctx context.Context, cdc agents.FunctionToolCustomDataContext) (map[string]any, error) {
+	return map[string]any{"renderer": "table", "row_count": countRows(cdc.Output)}, nil
+}
+```
+
+The extractor runs after a successful invocation and its output guardrails, receiving the invocation's `ToolContext`, the `Tool`, the model-visible `Output`, and the `RawItem` that will be replayed. The result lands on `ToolCallOutputItem.CustomData` (read it from `RunResult.NewItems`) and on `FunctionToolResult.CustomData` (visible to a `ToolUseBehaviorFunc`), and survives `RunState` serialization across [human-in-the-loop](human_in_the_loop.md) interruptions. The map must survive a JSON round-trip — non-JSON values (NaN/Inf floats, channels, cycles) fail the run with a `UserError`; an empty map normalizes to nil. This is the Go counterpart of Python's `custom_data_extractor`.
+
 ### Hand-built tools
 
 `FunctionTool` is an exported struct, so advanced callers can build one directly with a custom `ParamsJSONSchema` and raw-JSON `OnInvoke`:

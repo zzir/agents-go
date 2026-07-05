@@ -1,6 +1,6 @@
 # Differences from the Python SDK
 
-`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.17.4: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
+`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.17.7: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
 
 ## API mapping
 
@@ -26,6 +26,8 @@
 | exceptions (`MaxTurnsExceeded`, …) | error values (`*MaxTurnsError`, …) matched with `errors.As` |
 | `RunErrorDetails` on exceptions | `AgentsError.Details`, reachable via `agents.AsAgentsError(err)` |
 | `set_default_openai_key` / globals | none — pass `openai.NewProvider(...)` explicitly in `RunOptions` |
+| `custom_data_extractor=` (function tools) | `FunctionTool.CustomDataExtractor` (SDK-only tool output metadata; [tools](tools.md#sdk-only-custom-data)) |
+| `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.PreApprovalToolInputGuardrails` |
 
 ## Language-level differences
 
@@ -41,7 +43,7 @@
 
 ## Behavioral differences
 
-| Area | Python v0.17.4 | Go |
+| Area | Python v0.17.7 | Go |
 |---|---|---|
 | Tool errors | `failure_error_function` default feeds the error to the model | Same default (`DefaultToolErrorFunction`); set the field to `nil` for fatal |
 | Tool timeout | `timeout_seconds` + `timeout_behavior` (`error_as_result` / `raise_exception`) | `FunctionTool.Timeout` → `*ToolTimeoutError`, fed back via `FailureErrorFunction` when set (≈ `error_as_result`), else fatal (≈ `raise_exception`). Enforced by the runner: the call returns at the deadline even if the tool ignores its context (the tool goroutine finishes in the background, its late result discarded) |
@@ -70,6 +72,7 @@
 - **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others. (`OpenAIConversationsSession` and `OpenAIResponsesCompactionSession` **are** ported, as `openai.ConversationsSession` and `openai.CompactionSession`.)
 - **Realtime and voice agents**
 - **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
+- **MCP-level `custom_data_extractor`** — Python's MCP servers (and hosted tools) accept their own custom-data extractors with access to the raw `CallToolResult`; in Go only `FunctionTool.CustomDataExtractor` exists, and MCP-bridged tools don't expose the raw result to it
 
 ## Go-only additions
 
@@ -77,7 +80,7 @@
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
 - **`FileSession`**: zero-dependency JSONL persistence with per-path locking and atomic rewrites
 - **[Skills](skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills
-- **Session forking** (`ForkSession` / `ForkSessionAt` / `IndexOfItemID`): clone a conversation or branch at a specific point — works across any `Session` backend pair. Python has no built-in fork primitive
+- **Session forking** (`ForkSession` / `ForkSessionAt` / `IndexOfItemID`): clone a conversation or branch at a specific point — works across any `Session` backend pair. Python's closest is `AdvancedSQLiteSession`'s branch support, which is tied to that one backend
 - **`ItemsReplacer` / `ReplaceSessionItems`**: optional Session capability for atomically swapping the whole history, used by compaction and summarization so a failure mid-rewrite cannot leave the session empty; all built-in backends implement it
 - **`SlidingWindowSession`**: provider-agnostic history summarization (any `Model`, pair-aware split points) as an alternative to the OpenAI-only `responses.compact` decorator
 - **Provider-level decorators**: `NewRetryProvider(inner, policy)` and `NewFallbackProvider(primary, fallbacks...)` wrap a `ModelProvider` so every `Model` it produces automatically retries or falls back — the provider-level counterparts of `NewRetryModel` / `NewFallbackModel`, useful when you know the policy at configuration time but not the model name. Fallback error classification is configurable via `WithShouldFallback` (default: everything except context cancellation advances the chain)

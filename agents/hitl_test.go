@@ -8,7 +8,7 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-func approvalAgentAndModel(t *testing.T, ran *bool) (*Agent, *fakeModel) {
+func approvalAgentAndModel(t *testing.T, ran *bool) *Agent {
 	t.Helper()
 	tool := NewFunctionTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
@@ -20,13 +20,12 @@ func approvalAgentAndModel(t *testing.T, ran *bool) (*Agent, *fakeModel) {
 		modelResp(functionCallOutput(t, "delete_db", "call_1", `{}`)),
 		modelResp(messageOutput(t, "all done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
-	return agent, model
+	return &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 }
 
 func TestHITL_InterruptThenApprove(t *testing.T) {
 	var ran bool
-	agent, _ := approvalAgentAndModel(t, &ran)
+	agent := approvalAgentAndModel(t, &ran)
 
 	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
@@ -99,7 +98,7 @@ func TestHITL_InterruptThenReject(t *testing.T) {
 
 func TestHITL_StateSerializationRoundTrip(t *testing.T) {
 	var ran bool
-	agent, _ := approvalAgentAndModel(t, &ran)
+	agent := approvalAgentAndModel(t, &ran)
 
 	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
@@ -208,7 +207,7 @@ func TestHITL_ApproveToolsWildcard(t *testing.T) {
 
 func TestHITL_UnknownAgentInRegistry(t *testing.T) {
 	var ran bool
-	agent, _ := approvalAgentAndModel(t, &ran)
+	agent := approvalAgentAndModel(t, &ran)
 	res, _ := Run(context.Background(), agent, "go", RunOptions{})
 	data, _ := res.State.MarshalJSON()
 

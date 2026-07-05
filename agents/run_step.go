@@ -403,9 +403,27 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			if err := callToolEnd(gctx, r.opts.Hooks, agent, r.rc, run.Tool, out); err != nil {
 				return err
 			}
+			outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
+			// SDK-only custom data: extracted after guardrails from the final
+			// model-visible output, attached to the run item but never to the
+			// replayed input item.
+			if run.Tool.CustomDataExtractor != nil {
+				data, cerr := run.Tool.CustomDataExtractor(gctx, FunctionToolCustomDataContext{
+					ToolContext: tc,
+					Tool:        run.Tool,
+					Output:      out,
+					RawItem:     outputItem.Raw,
+				})
+				if cerr != nil {
+					return fmt.Errorf("tool %q custom data extractor failed: %w", run.Call.Name, cerr)
+				}
+				if outputItem.CustomData, cerr = normalizeCustomData(data); cerr != nil {
+					return cerr
+				}
+			}
 			results[i] = functionToolResult{
 				tool:       run.Tool,
-				outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, out),
+				outputItem: outputItem,
 				output:     out,
 			}
 			return nil
@@ -427,6 +445,24 @@ const DefaultRejectionMessage = "Tool execution was not approved."
 func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []toolRunFunction) (toRun []toolRunFunction, interruptions []*ToolApprovalItem, rejected []RunItem, err error) {
 	store := r.rc.Approvals
 	for _, run := range runs {
+		// An explicit approve/reject decision (typically on resume) wins before
+		// anything else: honoring it here skips re-invoking NeedsApprovalFunc,
+		// whose side effects or errors must not re-fire for a resolved call
+		// (Python parity: openai-agents-python #3229/#3259).
+		if store != nil {
+			if decision, decided := store.decisionFor(run.Call.Name, run.Call.CallID); decided {
+				if decision.rejected {
+					msg := decision.message
+					if msg == "" {
+						msg = DefaultRejectionMessage
+					}
+					rejected = append(rejected, newFunctionCallOutputItem(agent, run.Call.CallID, msg))
+				} else {
+					toRun = append(toRun, run)
+				}
+				continue
+			}
+		}
 		needs, aerr := run.Tool.requiresApproval(ctx, r.rc, run.Call.Arguments)
 		if aerr != nil {
 			return nil, nil, nil, aerr
@@ -438,28 +474,28 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 			toRun = append(toRun, run)
 			continue
 		}
-		decision, decided := approvalDecision{}, false
-		if store != nil {
-			decision, decided = store.decisionFor(run.Call.Name, run.Call.CallID)
-		}
-		switch {
-		case !decided:
-			interruptions = append(interruptions, &ToolApprovalItem{
-				Agent:     agent,
-				ToolName:  run.Call.Name,
-				CallID:    run.Call.CallID,
-				Arguments: run.Call.Arguments,
-				Raw:       run.Call.Raw,
-			})
-		case decision.rejected:
-			msg := decision.message
-			if msg == "" {
-				msg = DefaultRejectionMessage
+		// Pre-approval tool input guardrails (opt-in): run the tool's input
+		// guardrails before surfacing the approval interruption, so a guardrail
+		// rejection resolves the call without a human round-trip. Calls that
+		// pass still re-run the same guardrails right before execution after
+		// approval, so time-sensitive checks are revalidated on resume.
+		if r.opts.PreApprovalToolInputGuardrails {
+			preRejected, msg, gerr := r.runToolInputGuardrails(ctx, agent, run)
+			if gerr != nil {
+				return nil, nil, nil, gerr
 			}
-			rejected = append(rejected, newFunctionCallOutputItem(agent, run.Call.CallID, msg))
-		default: // approved
-			toRun = append(toRun, run)
+			if preRejected {
+				rejected = append(rejected, newFunctionCallOutputItem(agent, run.Call.CallID, msg))
+				continue
+			}
 		}
+		interruptions = append(interruptions, &ToolApprovalItem{
+			Agent:     agent,
+			ToolName:  run.Call.Name,
+			CallID:    run.Call.CallID,
+			Arguments: run.Call.Arguments,
+			Raw:       run.Call.Raw,
+		})
 	}
 	return toRun, interruptions, rejected, nil
 }
@@ -662,7 +698,7 @@ func (r *runner) checkToolUseBehavior(ctx context.Context, agent *Agent, results
 	case ToolUseBehaviorFunc:
 		public := make([]FunctionToolResult, len(results))
 		for i, res := range results {
-			public[i] = FunctionToolResult{ToolName: res.tool.Name, Output: res.output}
+			public[i] = FunctionToolResult{ToolName: res.tool.Name, Output: res.output, CustomData: res.outputItem.CustomData}
 		}
 		stop, output, err := b(ctx, r.rc, public)
 		return stop, output, err

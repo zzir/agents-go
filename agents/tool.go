@@ -26,6 +26,9 @@ type FunctionToolResult struct {
 	// Output is the value returned by the tool function. It is serialized to a
 	// string when sent back to the model.
 	Output any
+	// CustomData is the SDK-only data produced by the tool's
+	// CustomDataExtractor, if any. It is never sent to the model.
+	CustomData map[string]any
 }
 
 // FunctionTool is a tool backed by a Go function. The model is shown the tool's
@@ -76,6 +79,16 @@ type FunctionTool struct {
 	// nil, the error aborts the run. NewFunctionTool installs
 	// DefaultToolErrorFunction; set this field to nil to make tool errors fatal.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
+
+	// CustomDataExtractor, when non-nil, runs after a successful invocation
+	// (and its output guardrails) to produce SDK-only custom data — renderer
+	// hints, IDs, or other JSON-compatible metadata — attached to the resulting
+	// ToolCallOutputItem.CustomData and FunctionToolResult.CustomData but never
+	// sent back to the model. The returned map must survive a JSON round-trip;
+	// anything else (NaN/Inf floats, channels, cycles, ...) fails the run with
+	// a UserError. Returning an error aborts the run. The data survives
+	// RunState serialization across human-in-the-loop interruptions.
+	CustomDataExtractor func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error)
 }
 
 // DefaultToolErrorFunction is the default FailureErrorFunction: it returns a

@@ -84,6 +84,7 @@ func nestedRunOptions(parent *RunContext, maxTurns int) RunOptions {
 		opts.Tracer = parent.inheritedOpts.Tracer
 		opts.MaxToolConcurrency = parent.inheritedOpts.MaxToolConcurrency
 		opts.ToolNotFoundBehavior = parent.inheritedOpts.ToolNotFoundBehavior
+		opts.PreApprovalToolInputGuardrails = parent.inheritedOpts.PreApprovalToolInputGuardrails
 		// Inherit the sensitive-data gate so a parent that disabled span
 		// content cannot have it re-enabled by a nested agent-as-tool run.
 		opts.TraceIncludeSensitiveData = parent.inheritedOpts.TraceIncludeSensitiveData
