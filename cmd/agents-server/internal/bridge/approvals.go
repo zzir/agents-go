@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rs/zerolog"
 
@@ -40,7 +41,33 @@ func (r *Runner) persistInterruption(result *RunResult) error {
 		SandboxID:     result.SandboxID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
+		UserInput:     userInputText(result.SDKState.UserInput),
 	})
+}
+
+// userInputText renders the user-authored text of a paused turn's new input so
+// the UI can rebuild the user bubble on reload. It reuses the same item→role/
+// content extraction the messages table uses, so the reconstructed bubble is
+// byte-identical to the one the SDK persists once the turn completes.
+func userInputText(items []agents.TResponseInputItem) string {
+	raw, err := agents.MarshalItems(items)
+	if err != nil {
+		return ""
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, it := range arr {
+		m := store.NewItemMessageRaw("", "", "", it)
+		if m.Role == "user" {
+			if txt := strings.TrimSpace(m.Content); txt != "" {
+				parts = append(parts, txt)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // buildAgentRegistry builds the agent from its config and returns a name→agent
@@ -75,7 +102,7 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID string) (
 }
 
 // ResolveApproval applies an approve/reject decision to the pending tool call
-// and launches the run's continuation, returning the new run id. It loads the
+// and launches the run's continuation under the same run id. It loads the
 // persisted RunState (so it works after a restart and from any transport),
 // deletes the pending record, and resumes via the hub. onDone fires when the
 // continuation terminates (e.g. to persist a further interruption).
@@ -115,7 +142,9 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", fmt.Errorf("claiming pending approval: %w", err)
 	}
 
-	runID, err := r.ResumeRun(state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
+	// The continuation reopens the SAME run id, so the whole turn — both the
+	// interrupted and resumed halves — shares one event stream and trace group.
+	runID, err := r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
 	if err != nil {
 		// Give the approval back (e.g. the session has a live run right now)
 		// so the decision can be retried once the session frees up — losing

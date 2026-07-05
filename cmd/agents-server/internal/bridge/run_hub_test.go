@@ -122,3 +122,93 @@ func TestRunHubInterruptedEventIsTerminal(t *testing.T) {
 		t.Error("run.step must not be terminal")
 	}
 }
+
+// TestRunHubResumeSameID locks the same-id resume contract: an interrupted
+// run reopens under its own id, keeping the sequence counter, replay buffer,
+// and attached subscribers — one logical run, one event stream.
+func TestRunHubResumeSameID(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("run1", "sess1", "ac", "sb"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h.publish("run1", env("run.started"))
+	h.publish("run1", env("run.tool_call"))
+	h.publish("run1", env("run.interrupted"))
+
+	// A client attached during the first segment...
+	var got []string
+	if _, ok := h.Subscribe("run1", 3, func(e *protocol.Envelope) { got = append(got, e.Type) }); !ok {
+		t.Fatal("subscribe failed")
+	}
+
+	h.finish("run1", true)
+	if info, _ := h.Info("run1"); info.Status != RunInterrupted {
+		t.Fatalf("status after pause = %q, want interrupted", info.Status)
+	}
+	if _, busy := h.ActiveRunForSession("sess1"); busy {
+		t.Fatal("interrupted run must free the session slot")
+	}
+
+	// Resume reopens the same record: same id, seq continues, sub still fed.
+	ctx, err := h.resume("run1", "sess1", "ac", "sb")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if ctx == nil {
+		t.Fatal("resume returned nil context")
+	}
+	if info, _ := h.Info("run1"); info.Status != RunRunning {
+		t.Fatalf("status after resume = %q, want running", info.Status)
+	}
+	if id, ok := h.ActiveRunForSession("sess1"); !ok || id != "run1" {
+		t.Fatalf("session slot = %q,%v — want run1 reclaimed", id, ok)
+	}
+	h.publish("run1", env("run.started"))
+	h.publish("run1", env("run.output"))
+	if len(got) != 2 || got[0] != "run.started" || got[1] != "run.output" {
+		t.Fatalf("existing subscriber missed resumed events: %v", got)
+	}
+	if info, _ := h.Info("run1"); info.LastSeq != 5 {
+		t.Fatalf("seq restarted (LastSeq=%d), must continue from the first segment", info.LastSeq)
+	}
+	h.finish("run1", false)
+	if info, _ := h.Info("run1"); info.Status != RunCompleted {
+		t.Fatalf("final status = %q", info.Status)
+	}
+}
+
+// A resume must respect the one-live-run-per-session invariant.
+func TestRunHubResumeBusy(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("paused", "sess1", "", ""); err != nil {
+		t.Fatalf("register paused: %v", err)
+	}
+	h.finish("paused", true)
+	if _, _, err := h.register("blocker", "sess1", "", ""); err != nil {
+		t.Fatalf("register blocker: %v", err)
+	}
+	if _, err := h.resume("paused", "sess1", "", ""); !errors.As(err, &ErrSessionBusy{}) {
+		t.Fatalf("resume while busy: err = %v, want ErrSessionBusy", err)
+	}
+	h.finish("blocker", false)
+	if _, err := h.resume("paused", "sess1", "", ""); err != nil {
+		t.Fatalf("resume after free: %v", err)
+	}
+}
+
+// After a restart (or retention GC) the hub has no record: resume registers a
+// fresh one under the same id so the continuation still streams.
+func TestRunHubResumeAfterRestart(t *testing.T) {
+	h := NewRunHub(context.Background())
+	ctx, err := h.resume("ghost-run", "sess1", "ac", "")
+	if err != nil {
+		t.Fatalf("resume without record: %v", err)
+	}
+	if ctx == nil {
+		t.Fatal("nil context")
+	}
+	info, ok := h.Info("ghost-run")
+	if !ok || info.Status != RunRunning || info.SessionID != "sess1" {
+		t.Fatalf("fresh record wrong: %+v ok=%v", info, ok)
+	}
+}

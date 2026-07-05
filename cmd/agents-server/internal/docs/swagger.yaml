@@ -690,6 +690,13 @@ components:
             type: integer
           type: array
           uniqueItems: false
+        user_input:
+          description: |-
+            UserInput is the text of the message that started this paused turn. The
+            SDK only persists the turn to `messages` on completion, so during the
+            pause this is the only place the user's prompt is stored — the UI
+            reconstructs the user bubble from it on reload.
+          type: string
       type: object
     store.ProviderRoute:
       properties:
@@ -1052,8 +1059,8 @@ paths:
       - agents
   /approvals/{tool_call_id}/approve:
     post:
-      description: Approves a pending tool call and resumes the run. Returns the new
-        run id; stream it via GET /runs/{id}/events.
+      description: Approves a pending tool call and resumes the run under its original
+        run id; stream it via GET /runs/{id}/events (existing cursors stay valid).
       parameters:
       - description: Tool call ID
         in: path
@@ -1093,8 +1100,8 @@ paths:
       - approvals
   /approvals/{tool_call_id}/reject:
     post:
-      description: Rejects a pending tool call and resumes the run so the model can
-        react. Returns the new run id.
+      description: Rejects a pending tool call and resumes the run under its original
+        run id so the model can react.
       parameters:
       - description: Tool call ID
         in: path
@@ -2051,8 +2058,8 @@ paths:
       description: 'Server-Sent Events stream. Each event id is the hub sequence number;
         reconnect with the Last-Event-ID header or from_seq to resume. The stream
         closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted
-        (paused for approval — deciding via /approvals resumes under a new run id;
-        open a new stream for it).'
+        (paused for approval — deciding via /approvals resumes the SAME run id; reconnect
+        with Last-Event-ID to continue the stream).'
       parameters:
       - description: Run ID
         in: path

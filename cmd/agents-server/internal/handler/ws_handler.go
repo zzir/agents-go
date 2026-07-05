@@ -43,10 +43,26 @@ type connSubs struct {
 	subs map[string]int // runID -> subscriber id
 }
 
+// add records the connection's subscription for runID, detaching any previous
+// subscription to the same run first so re-subscribing (reconnect with a new
+// from_seq, approval resume) never leaves a duplicate hub sink delivering
+// every event twice.
 func (cs *connSubs) add(runID string, subID int) {
 	cs.mu.Lock()
+	prev, had := cs.subs[runID]
 	cs.subs[runID] = subID
 	cs.mu.Unlock()
+	if had && prev != subID {
+		cs.hub.Unsubscribe(runID, prev)
+	}
+}
+
+// has reports whether the connection already subscribes to runID.
+func (cs *connSubs) has(runID string) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	_, ok := cs.subs[runID]
+	return ok
 }
 
 func (cs *connSubs) closeAll() {
@@ -67,7 +83,13 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 	for {
 		var env protocol.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
-			log.Debug().Err(err).Msg("ws read error")
+			if server.IsNormalClose(err) {
+				// Client went away (tab closed, reload, navigate) — expected,
+				// not an error.
+				log.Debug().Msg("ws connection closed")
+			} else {
+				log.Debug().Err(err).Msg("ws read error")
+			}
 			return
 		}
 
@@ -164,7 +186,13 @@ func (h *WSHandler) resolve(conn *server.WSConn, subs *connSubs, toolCallID stri
 		})})
 		return
 	}
-	h.subscribe(conn, subs, runID, 0)
+	// The decision resumes the SAME run id. A connection that watched the
+	// interrupted run is still attached to it and keeps receiving the resumed
+	// events; only attach (with full replay) when this connection has no
+	// subscription yet — e.g. the approval came from a fresh tab or over REST.
+	if !subs.has(runID) {
+		h.subscribe(conn, subs, runID, 0)
+	}
 }
 
 func mustJSON(v any) json.RawMessage {

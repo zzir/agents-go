@@ -118,7 +118,7 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
 
   return (
     <Stack gap="normal">
-      {fc('Name', <TextInput value={form.name} onChange={e => set('name', e.target.value)} />)}
+      {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} />)}
       {fc('Transport',
         <Select value={form.transport_type} onChange={e => set('transport_type', e.target.value)}>
           {TRANSPORTS.map(t => <Select.Option key={t} value={t}>{t}</Select.Option>)}
@@ -134,14 +134,14 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
       )}
       {!isStdio && isHeader && <JsonField label="Headers (JSON object)" value={form.headers} onChange={v => set('headers', v)} placeholder='{"Authorization": "Bearer <token>"}' caption="Sent with every request, e.g. an auth or API-key header. Leave empty for none." />}
       {!isStdio && isOAuth && fc('Client ID',
-        <TextInput value={form.oauth_client_id} onChange={e => set('oauth_client_id', e.target.value)} placeholder="Leave empty for dynamic registration" monospace />,
+        <TextInput block value={form.oauth_client_id} onChange={e => set('oauth_client_id', e.target.value)} placeholder="Leave empty for dynamic registration" monospace />,
         'Pre-registered OAuth client ID. Leave empty to use dynamic client registration (DCR).',
       )}
       {!isStdio && isOAuth && form.oauth_client_id && fc('Client secret',
-        <TextInput value={form.oauth_client_secret} onChange={e => set('oauth_client_secret', e.target.value)} type="password" monospace />,
+        <TextInput block value={form.oauth_client_secret} onChange={e => set('oauth_client_secret', e.target.value)} type="password" monospace />,
       )}
       {!isStdio && isOAuth && fc('Scopes',
-        <TextInput value={form.oauth_scopes} onChange={e => set('oauth_scopes', e.target.value)} placeholder="read write" monospace />,
+        <TextInput block value={form.oauth_scopes} onChange={e => set('oauth_scopes', e.target.value)} placeholder="read write" monospace />,
         'Space-separated OAuth scopes to request.',
       )}
       {canClearAuth && fc('Saved authorization',

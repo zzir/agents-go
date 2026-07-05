@@ -121,7 +121,7 @@ type RunError struct {
 
 // RunInterrupted signals that the run paused for human tool approval. It is
 // terminal for this run segment's event stream — approving or rejecting
-// resumes execution under a new run id.
+// resumes execution under the same run id.
 type RunInterrupted struct {
 	RunID string `json:"run_id"`
 }

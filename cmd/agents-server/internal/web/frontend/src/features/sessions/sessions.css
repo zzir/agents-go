@@ -36,6 +36,22 @@
   background: var(--bgColor-muted) !important;
 }
 
+/* Awaiting approval — red indicator bar. Same ::after mechanism as running,
+   but Primer's danger color, because a paused run needs the user's attention.
+   The marker is mutually exclusive with .session-running (set in React), so
+   the red bar always wins over the orange one for a paused run. */
+.sidebar-scroll li:has(.session-awaiting)::after {
+  background-color: var(--bgColor-danger-emphasis) !important;
+}
+.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)) {
+  background: transparent !important;
+}
+.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)):hover,
+.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)):focus-within,
+.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)):active {
+  background: var(--bgColor-muted) !important;
+}
+
 /* Empty state — muted centered hint inside the sidebar */
 .sidebar-scroll .blankslate {
   padding: 24px 16px;

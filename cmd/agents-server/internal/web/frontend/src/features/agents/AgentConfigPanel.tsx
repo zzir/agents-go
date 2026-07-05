@@ -263,8 +263,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: 
       {showAdvanced && <div className="advanced-section">
         <div className="form-group">
           <div className="form-group-title">Limits</div>
-          {fc('Max turns', <TextInput type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} style={{ width: '120px' }} />, '0 = SDK default (10)')}
-          {fc('Max tool concurrency', <TextInput type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} style={{ width: '120px' }} />, '0 = unlimited')}
+          {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
+          {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
         </div>
 
         <div className="form-group">
@@ -334,8 +334,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: 
             <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
           </FormControl>
           {form.compaction_enabled && <>
-            {fc('Threshold', <TextInput type="number" min={0} value={String(form.compaction_threshold || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold', parseInt(e.target.value) || 0)} style={{ width: '120px' }} />, 'Item count that triggers compaction (0 = default 20)')}
-            {fc('Window size', <TextInput type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} style={{ width: '120px' }} />, 'Recent items to keep intact (0 = default 10)')}
+            {fc('Threshold', <TextInput block type="number" min={0} value={String(form.compaction_threshold || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold', parseInt(e.target.value) || 0)} />, 'Item count that triggers compaction (0 = default 20)')}
+            {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
             {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
             {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={3} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
           </>}

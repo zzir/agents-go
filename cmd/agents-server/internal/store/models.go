@@ -308,7 +308,12 @@ type PendingApproval struct {
 	// ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
 	// shown to the user.
 	ToolCalls json.RawMessage `bun:"tool_calls,type:text,nullzero" json:"tool_calls,omitempty"`
-	CreatedAt time.Time       `bun:"created_at,notnull"            json:"created_at"`
+	// UserInput is the text of the message that started this paused turn. The
+	// SDK only persists the turn to `messages` on completion, so during the
+	// pause this is the only place the user's prompt is stored — the UI
+	// reconstructs the user bubble from it on reload.
+	UserInput string    `bun:"user_input,type:text,nullzero" json:"user_input,omitempty"`
+	CreatedAt time.Time `bun:"created_at,notnull"            json:"created_at"`
 }
 
 // PendingToolCall is one tool call awaiting approval, projected from a run's

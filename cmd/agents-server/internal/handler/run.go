@@ -137,7 +137,7 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 			// The run paused for tool approval: waiting any longer would
 			// hang until a human acts. Report the state; the caller lists
 			// GET /sessions/{id}/approvals and decides, which resumes the
-			// run under a new run id.
+			// run under the same run id.
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunInterrupted)})
 		case res.code != "":
 			abortError(c, http.StatusBadGateway, CodeUpstream, res.msg)
@@ -199,7 +199,7 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 // resumes without loss. The stream ends after a terminal event.
 //
 //	@Summary		Stream run events (SSE)
-//	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted (paused for approval — deciding via /approvals resumes under a new run id; open a new stream for it).
+//	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted (paused for approval — deciding via /approvals resumes the SAME run id; reconnect with Last-Event-ID to continue the stream).
 //	@Tags			runs
 //	@Produce		text/event-stream
 //	@Param			id			path		string	true	"Run ID"

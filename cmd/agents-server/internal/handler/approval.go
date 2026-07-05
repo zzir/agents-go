@@ -59,7 +59,7 @@ type approvalResultResp struct {
 // parameter and resumes its run.
 //
 //	@Summary		Approve tool call
-//	@Description	Approves a pending tool call and resumes the run. Returns the new run id; stream it via GET /runs/{id}/events.
+//	@Description	Approves a pending tool call and resumes the run under its original run id; stream it via GET /runs/{id}/events (existing cursors stay valid).
 //	@Tags			approvals
 //	@Produce		json
 //	@Param			tool_call_id	path		string	true	"Tool call ID"
@@ -77,7 +77,7 @@ func (h *ApprovalHandler) Approve(c *gin.Context) {
 // parameter (with an optional reason) and resumes its run.
 //
 //	@Summary		Reject tool call
-//	@Description	Rejects a pending tool call and resumes the run so the model can react. Returns the new run id.
+//	@Description	Rejects a pending tool call and resumes the run under its original run id so the model can react.
 //	@Tags			approvals
 //	@Accept			json
 //	@Produce		json

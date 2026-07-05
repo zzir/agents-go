@@ -133,7 +133,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
 
   return (
     <Stack gap="normal">
-      {fc('Name', <TextInput value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. my-sandbox" />)}
+      {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. my-sandbox" />)}
       {fc('Type',
         <Select value={t} onChange={e => set('type', e.target.value)}>
           {TYPES.map(v => <Select.Option key={v} value={v}>{TYPE_LABELS[v]}</Select.Option>)}
@@ -142,7 +142,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
       )}
 
       {t === 'docker' && fc('Runtime',
-        <TextInput value={form.runtime} onChange={e => set('runtime', e.target.value)} placeholder="runc" />,
+        <TextInput block value={form.runtime} onChange={e => set('runtime', e.target.value)} placeholder="runc" />,
         'OCI runtime. Use "runsc" for gVisor isolation. Leave empty for the daemon default (runc).',
       )}
       {t === 'docker' && fc('Image',
@@ -161,7 +161,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         </FormControl>
       )}
       {t === 'docker' && form.persistent && fc('Container name',
-        <TextInput value={form.container_name} onChange={e => set('container_name', e.target.value)} placeholder="e.g. sandbox-dev" />,
+        <TextInput block value={form.container_name} onChange={e => set('container_name', e.target.value)} placeholder="e.g. sandbox-dev" />,
         'Docker container name. Leave empty for a random name.',
       )}
 
@@ -170,14 +170,14 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         'Remote address as host or host:port (port defaults to 22).',
       )}
       {t === 'ssh' && fc('SSH user',
-        <TextInput value={form.user} onChange={e => set('user', e.target.value)} placeholder="sandbox" />,
+        <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="sandbox" />,
       )}
       {t === 'ssh' && fc('Private key file',
         <TextInput block value={form.key_file} onChange={e => set('key_file', e.target.value)} placeholder="~/.ssh/id_ed25519" />,
         'Path on the server host. Tried before password. Leave empty to use a password or the SSH agent.',
       )}
       {t === 'ssh' && fc('Password',
-        <TextInput type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="(optional)" />,
+        <TextInput block type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="(optional)" />,
       )}
       {t === 'ssh' && (
         <FormControl>
@@ -201,7 +201,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
       )}
 
       {fc('Max read_file bytes',
-        <TextInput type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
+        <TextInput block type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
 

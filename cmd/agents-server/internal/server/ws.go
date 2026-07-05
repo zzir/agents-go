@@ -42,6 +42,18 @@ func (c *WSConn) ReadJSON(v any) error {
 	return c.conn.ReadJSON(v)
 }
 
+// IsNormalClose reports whether err is an ordinary WebSocket disconnect — the
+// client closing cleanly (1000), navigating away or reloading the tab (1001),
+// or dropping without a close frame (1005). These are expected lifecycle
+// events, not failures, so callers should not log them as read errors.
+func IsNormalClose(err error) bool {
+	return websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived,
+	)
+}
+
 // WriteJSON writes v as a JSON message, holding the write mutex so concurrent sends are safe.
 func (c *WSConn) WriteJSON(v any) error {
 	c.mu.Lock()

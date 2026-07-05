@@ -159,7 +159,8 @@ server does not expose.) Each event's `id:` is the hub sequence number;
 reconnect with the `Last-Event-ID` header (or `?from_seq=`) to resume without
 losing events. The stream closes after a terminal event: `run.output`,
 `run.error`, `run.cancelled`, or `run.interrupted` (paused for approval — after
-approving/rejecting, open a new stream on the returned continuation run id).
+approving/rejecting, reconnect to the SAME run id with your `Last-Event-ID`
+— the resumed events continue its sequence).
 Event payloads mirror the WebSocket [server→client events](#server--client).
 
 Start a run and stream it with plain curl (token from server startup):
@@ -450,7 +451,7 @@ run's event stream (replaying buffered events after `from_seq`).
 | `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |
 | `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
-| `run.interrupted`       | Paused for tool approval (terminal for this run segment; the decision resumes under a new run id) — `{run_id}`                                          |
+| `run.interrupted`       | Paused for tool approval (ends the stream for now; the decision resumes the SAME run id, continuing its event sequence) — `{run_id}`                                          |
 | `run.error`             | Error — `{run_id?, session_id?, code, message}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`) |
 | `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |

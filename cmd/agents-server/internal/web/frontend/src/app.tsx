@@ -261,13 +261,21 @@ function App() {
   const handleApprove = useCallback((toolCallId: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'approved' });
-    wsRef.current.send('tool.approve', { tool_call_id: toolCallId });
+    if (!wsRef.current.send('tool.approve', { tool_call_id: toolCallId })) {
+      // The socket is down: undo the optimistic status so the card stays
+      // actionable — a silently dropped approval would strand the paused run.
+      updateToolCall(toolCallId, { status: null });
+      toast.error('Not connected — approval not sent, try again');
+    }
   }, [updateToolCall, wsRef]);
 
   const handleReject = useCallback((toolCallId: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'rejected' });
-    wsRef.current.send('tool.reject', { tool_call_id: toolCallId });
+    if (!wsRef.current.send('tool.reject', { tool_call_id: toolCallId })) {
+      updateToolCall(toolCallId, { status: null });
+      toast.error('Not connected — rejection not sent, try again');
+    }
   }, [updateToolCall, wsRef]);
 
   const handleDeleteSession = useCallback((deletedId: string) => {
@@ -311,6 +319,26 @@ function App() {
     return set;
   }, [ss]);
 
+  // A session is awaiting approval when its latest turn holds a tool call that
+  // needs approval and has no decision yet. Derived from the messages (not a
+  // transient socket flag), so it survives a reload — the paused turn is rebuilt
+  // from the durable approvals — and self-clears the moment approve/reject sets
+  // a status.
+  const awaitingSessions = useMemo(() => {
+    const set = new Set<string>();
+    for (const [sid, state] of Object.entries(ss)) {
+      for (const m of state.messages) {
+        if (m.role !== 'turn') continue;
+        for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ needs_approval?: boolean; status?: string | null }> }> }).parts || []) {
+          if (part.type !== 'tools') continue;
+          if ((part.toolCalls || []).some(tc => tc.needs_approval && !tc.status)) { set.add(sid); break; }
+        }
+        if (set.has(sid)) break;
+      }
+    }
+    return set;
+  }, [ss]);
+
   const handleSessionCreated = useCallback(() => {
     setTimeout(() => {
       const el = document.querySelector('.chat-input-box textarea') as HTMLTextAreaElement | null;
@@ -336,6 +364,7 @@ function App() {
       onCreated={handleSessionCreated}
       reloadKey={sessionReloadKey}
       runningSessions={runningSessions}
+      awaitingSessions={awaitingSessions}
     />
   );
 

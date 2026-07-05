@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -252,9 +253,12 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // context. It returns the new run id. onDone, if non-nil, fires once when the
 // continuation terminates. Fails with ErrSessionBusy if the session has a
 // live run.
-func (r *Runner) ResumeRun(state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunResult)) (string, error) {
-	runID := store.NewID()
-	_, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID)
+// runID is the id of the interrupted run being continued: the resume reopens
+// the SAME hub run (same event stream, same sequence), so one logical run
+// keeps one id across interrupt/resume — events, traces, and messages all
+// stay under that id and the trace panel shows one group per turn.
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunResult)) (string, error) {
+	ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID)
 	if err != nil {
 		return "", err
 	}
@@ -269,8 +273,9 @@ func (r *Runner) ResumeRun(state *agents.RunState, sessionID, agentConfigID, san
 	return runID, nil
 }
 
-// resumeStreamed executes one resumed run segment to completion, publishing
-// events to the hub, and returns its outcome.
+// resumeStreamed continues an interrupted run to completion under its
+// original run id, publishing events to the (reopened) hub run, and returns
+// its outcome.
 func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string) *RunResult {
 	log := zerolog.Ctx(ctx)
 
@@ -289,23 +294,24 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 
 	sendEvent("run.started", protocol.RunStarted{RunID: runID, SessionID: sessionID})
 
+	// Any failed continuation must persist the user's prompt (and the error):
+	// the pending-approval row was consumed as the resume's claim and the SDK
+	// saves the turn only on success — without this, a failed resume would
+	// lose the whole turn from durable state. Mirrors runStreamed's
+	// partial-turn save.
+	failTurn := func(model, code string, err error) *RunResult {
+		r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "", "", err.Error())
+		sendEvent("run.error", protocol.RunError{RunID: runID, Code: code, Message: err.Error()})
+		return mkResult()
+	}
+
 	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
 	if err != nil {
-		sendEvent("run.error", protocol.RunError{
-			RunID:   runID,
-			Code:    "config_error",
-			Message: err.Error(),
-		})
-		return mkResult()
+		return failTurn("", "config_error", err)
 	}
 	provider := built.Provider
 	if provider == nil {
-		sendEvent("run.error", protocol.RunError{
-			RunID:   runID,
-			Code:    "config_error",
-			Message: "no API key configured for this agent",
-		})
-		return mkResult()
+		return failTurn(built.Agent.Model, "config_error", errors.New("no API key configured for this agent"))
 	}
 
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
@@ -326,12 +332,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		MaxToolConcurrency:    built.MaxToolConcurrency,
 	})
 	if err != nil {
-		sendEvent("run.error", protocol.RunError{
-			RunID:   runID,
-			Code:    "resume_error",
-			Message: err.Error(),
-		})
-		return mkResult()
+		return failTurn(built.Agent.Model, "resume_error", err)
 	}
 
 	result := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
@@ -370,7 +371,8 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 			})
 		}
 		// Terminal marker for this run segment: waiters and SSE streams end
-		// here; the approval decision resumes under a new run id.
+		// here; the approval decision reopens this same run id and continues
+		// its event sequence.
 		sendEvent("run.interrupted", protocol.RunInterrupted{RunID: runID})
 		return &RunResult{
 			RunID:         runID,

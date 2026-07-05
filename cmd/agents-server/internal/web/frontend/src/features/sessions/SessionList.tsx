@@ -17,6 +17,7 @@ interface SessionItemProps {
   s: Session;
   activeId: string | null;
   isRunning: boolean;
+  isAwaiting: boolean;
   onSelect: (id: string | null) => void;
   onPin: (id: string, pinned: boolean) => void;
   onFork: (id: string) => void;
@@ -30,18 +31,23 @@ interface SessionListProps {
   onCreated?: () => void;
   reloadKey: unknown;
   runningSessions?: Set<string>;
+  awaitingSessions?: Set<string>;
 }
 
-function SessionItem({ s, activeId, isRunning, onSelect, onPin, onFork, onDelete }: SessionItemProps): ReactElement {
+function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFork, onDelete }: SessionItemProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const isActive = s.id === activeId;
   return (
     <ActionList.Item
-      active={isActive || isRunning}
+      active={isActive || isRunning || isAwaiting}
       onSelect={() => onSelect(s.id)}
     >
-      {isRunning && <span className="session-running" hidden />}
+      {/* Awaiting approval (red) takes precedence over running (orange): a
+          paused run is still "running" live, but the red bar is the signal that
+          needs the user's attention, so the markers are mutually exclusive. */}
+      {isAwaiting && <span className="session-awaiting" hidden />}
+      {isRunning && !isAwaiting && <span className="session-running" hidden />}
       {isActive && <span className="session-selected" hidden />}
       {s.name}
       {/* TrailingAction renders as a sibling of the item's button inside the
@@ -78,7 +84,7 @@ function SessionItem({ s, activeId, isRunning, onSelect, onPin, onFork, onDelete
   );
 }
 
-export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions }: SessionListProps): ReactElement {
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions, awaitingSessions }: SessionListProps): ReactElement {
   const { data: sessions, reload } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
@@ -126,6 +132,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
       s={s}
       activeId={activeId}
       isRunning={!!(runningSessions && runningSessions.has(s.id))}
+      isAwaiting={!!(awaitingSessions && awaitingSessions.has(s.id))}
       onSelect={onSelect}
       onPin={handlePin}
       onFork={handleFork}

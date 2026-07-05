@@ -54,46 +54,62 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     }
   }, []);
 
+  // fetchTimeline is the single authority for a session's persisted timeline:
+  // messages from the DB merged with the paused turn rebuilt from any durable
+  // pending approval (the SDK persists a turn to `messages` only on completion,
+  // so during a pause the approval row is the only holder of the user's prompt
+  // and the pending tool calls). Fetching both together and applying the result
+  // as one state update removes the messages/approvals race that made the
+  // approval card appear or vanish depending on which response landed last.
+  const fetchTimeline = useCallback(async (sid: string): Promise<SessionState['messages']> => {
+    type PendingApproval = { run_id: string; user_input?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
+    const [msgs, pending] = await Promise.all([
+      api.sessions.messages(sid) as Promise<any[]>,
+      (api.sessions.approvals(sid) as Promise<PendingApproval[]>).catch(() => [] as PendingApproval[]),
+    ]);
+    const timeline = buildTimeline(msgs) as SessionState['messages'];
+    if (!pending || pending.length === 0) return timeline;
+    const seen = new Set<string>();
+    for (const m of timeline) {
+      if (m.role !== 'turn') continue;
+      for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ tool_call_id: string }> }> }).parts || []) {
+        if (part.type === 'tools') for (const tc of part.toolCalls || []) seen.add(tc.tool_call_id);
+      }
+    }
+    const toolCalls = pending.flatMap(p => (p.tool_calls || []).map(tc => ({
+      tool_call_id: tc.tool_call_id, tool_name: tc.tool_name, arguments: tc.arguments,
+      output: null as string | null, status: null as string | null, needs_approval: true,
+    }))).filter(tc => !seen.has(tc.tool_call_id));
+    if (toolCalls.length === 0) return timeline;
+    // The paused turn is always the latest: user bubble (held only by the
+    // approval row until the turn completes), then its tool-call card.
+    const runId = pending[0].run_id;
+    const userInput = pending[0].user_input || '';
+    const out = [...timeline];
+    if (userInput) out.push({ role: 'user', content: userInput, runId, messageId: Number.MAX_SAFE_INTEGER - 1 });
+    out.push({ role: 'turn' as const, parts: [{ type: 'tools' as const, toolCalls }], runId, messageId: Number.MAX_SAFE_INTEGER });
+    return out;
+  }, []);
+
   const reloadMessages = useCallback((sid: string) => {
-    api.sessions.messages(sid).then((msgs: any[]) => {
-      const timeline = buildTimeline(msgs);
-      updateSS(sid, s => ({ ...s, messages: timeline }));
-    });
-  }, [updateSS]);
+    fetchTimeline(sid).then(timeline => {
+      // Never clobber a running session: mid-resume the paused turn exists
+      // NEITHER in messages (saved on completion) nor in approvals (the row is
+      // deleted as the resume's claim), so a reload in that window would blank
+      // the conversation. Every terminal event sets running=false and reloads,
+      // so skipping here loses nothing.
+      updateSS(sid, s => s.running ? s : { ...s, messages: timeline });
+    }).catch(() => {});
+  }, [fetchTimeline, updateSS]);
 
   const loadSession = useCallback((sid: string): Promise<void> => {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
     loadedRef.current.add(sid);
-    const msgP = api.sessions.messages(sid).then((msgs: any[]) => {
-      const timeline = buildTimeline(msgs);
+    const msgP = fetchTimeline(sid).then(timeline => {
+      // Live events may have landed while fetching (loaded flipped true) —
+      // they are fresher than this snapshot, so keep them.
       updateSS(sid, s => s.loaded ? s : { ...s, messages: timeline, loaded: true });
     });
-    // A run paused for approval isn't persisted to messages (the SDK saves on
-    // completion), so rebuild any pending tool-call cards from the durable
-    // approvals so the user can act on them after a reload/restart.
-    api.sessions.approvals(sid).then((pending: Array<{ run_id: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> }>) => {
-      if (!pending || pending.length === 0) return;
-      const toolCalls = pending.flatMap(p => (p.tool_calls || []).map(tc => ({
-        tool_call_id: tc.tool_call_id, tool_name: tc.tool_name, arguments: tc.arguments,
-        output: null as string | null, status: null as string | null, needs_approval: true,
-      })));
-      if (toolCalls.length === 0) return;
-      const runId = pending[0].run_id;
-      updateSS(sid, s => {
-        // Don't duplicate a card the live stream already rendered.
-        const seen = new Set<string>();
-        for (const m of s.messages) {
-          if (m.role !== 'turn') continue;
-          for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ tool_call_id: string }> }> }).parts || []) {
-            if (part.type === 'tools') for (const tc of part.toolCalls || []) seen.add(tc.tool_call_id);
-          }
-        }
-        const fresh = toolCalls.filter(tc => !seen.has(tc.tool_call_id));
-        if (fresh.length === 0) return s;
-        const turn = { role: 'turn' as const, parts: [{ type: 'tools' as const, toolCalls: fresh }], runId, messageId: Number.MAX_SAFE_INTEGER };
-        return { ...s, messages: [...s.messages, turn] };
-      });
-    }).catch(() => {});
     api.sessions.traces(sid).then((events: Array<{ run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
@@ -123,7 +139,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       updateSS(sid, s => Object.keys(s.traceRuns).length > 0 ? s : { ...s, traceRuns: runs });
     }).catch(() => {});
     return msgP;
-  }, [updateSS]);
+  }, [fetchTimeline, updateSS]);
 
   const deleteSession = useCallback((deletedId: string) => {
     loadedRef.current.delete(deletedId);
@@ -141,11 +157,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       streamBufsRef.current[p.run_id] = '';
       reasoningBufsRef.current[p.run_id] = '';
       if (!loadedRef.current.has(sid)) loadedRef.current.add(sid);
-      updateSS(sid, s => ({
-        ...s, running: true, compacting: false, liveRunId: p.run_id, liveStartedAt: Date.now(), liveAgentName: null, loaded: true,
-        messages: [...s.messages, { role: 'turn', parts: [], runId: p.run_id }],
-        traceRuns: { ...s.traceRuns, [p.run_id]: [] },
-      }));
+      updateSS(sid, s => {
+        // Hub replays (reconnect / re-subscribe) re-deliver run.started; don't
+        // grow a second live turn for a run we already track.
+        const hasTurn = s.messages.some(m => m.role === 'turn' && (m as { runId?: string }).runId === p.run_id);
+        return {
+          ...s, running: true, compacting: false, liveRunId: p.run_id, liveStartedAt: Date.now(), liveAgentName: null, loaded: true,
+          messages: hasTurn ? s.messages : [...s.messages, { role: 'turn', parts: [], runId: p.run_id }],
+          traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
+        };
+      });
     });
 
     ws.on('run.step', (p: { run_id: string; delta: string }) => {
@@ -272,6 +293,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       streamBufsRef.current[p.run_id] = '';
       const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval, status: null as string | null, output: null as string | null };
       updateSS(sid, s => {
+        // Replays and the approval-rebuilt turn can already hold this call:
+        // update the existing card instead of appending a duplicate (a stray
+        // duplicate needs_approval card would pin the session red forever).
+        const patched = patchToolCall(s.messages, p.tool_call_id, { tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval });
+        if (patched) return { ...s, messages: patched, streaming: '' };
         const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string; toolCalls?: typeof tc[] }> }>;
         const last = msgs[msgs.length - 1];
         if (last?.role !== 'turn') return s;
@@ -295,6 +321,22 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         const patched = patchToolCall(s.messages, p.tool_call_id, { output: p.output, status: 'completed' });
         return patched ? { ...s, messages: patched } : s;
       });
+    });
+
+    // The run paused for tool approval: nothing is executing until the user
+    // decides, so live indicators come down and `running` reflects the truth
+    // (reloads merge the paused turn from the durable approvals meanwhile).
+    // The mappings stay: the approval decision RESUMES THE SAME run id, so a
+    // later run.started on this id flips the session back to live seamlessly.
+    ws.on('run.interrupted', (p: { run_id: string }) => {
+      const sid = runMapRef.current[p.run_id];
+      if (!sid) return;
+      delete streamBufsRef.current[p.run_id];
+      delete reasoningBufsRef.current[p.run_id];
+      updateSS(sid, s => ({
+        ...s, streaming: '', reasoning: '', running: false, compacting: false,
+        liveRunId: null, liveStartedAt: null, liveAgentName: null,
+      }));
     });
 
     ws.on('run.agent_start', (p: { run_id: string; agent_name?: string }) => {

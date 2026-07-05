@@ -108,12 +108,12 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
       )}
       {form.mode === 'max_length' && fc('Max length',
         <TextInput
+          block
           type="number"
           min={1}
           value={maxLength || ''}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setMaxLength(e.target.value)}
           placeholder="4096"
-          style={{ width: '120px' }}
         />,
         'Maximum character count',
       )}

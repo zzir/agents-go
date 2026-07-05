@@ -29,8 +29,20 @@ export class WSClient {
   }
 
   connect(): void {
+    if (this._closed) return;
     const token = getToken();
-    if (!token || this._closed) return;
+    if (!token) {
+      // Not logged in yet (first-ever visit mounts before the token exists).
+      // Poll at a fixed short interval instead of giving up forever — the
+      // socket comes up on its own right after login, no page reload needed.
+      // No exponential backoff here: this isn't a failing server, just a
+      // missing credential.
+      this._reconnectTimer = setTimeout(() => {
+        this._reconnectTimer = null;
+        this.connect();
+      }, 1000);
+      return;
+    }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${proto}//${location.host}/ws`);
 
@@ -88,10 +100,15 @@ export class WSClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  send(type: string, payload: unknown): void {
+  // send transmits when the socket is open and reports whether it did — a
+  // dropped socket must surface to the caller (roll back optimistic UI, show
+  // an error) instead of silently swallowing approvals or run requests.
+  send(type: string, payload: unknown): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type, payload }));
+      return true;
     }
+    return false;
   }
 
   close(): void {

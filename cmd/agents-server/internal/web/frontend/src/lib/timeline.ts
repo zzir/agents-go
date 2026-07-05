@@ -96,7 +96,10 @@ interface HookEvent {
 
 interface ToolCallPatch {
   output?: string;
-  status?: string;
+  status?: string | null;
+  tool_name?: string;
+  arguments?: string;
+  needs_approval?: boolean;
 }
 
 export type { Message, ToolCall, ToolsPart, TextPart, TurnPart, TimelineEntry, HookEvent, ToolCallPatch };

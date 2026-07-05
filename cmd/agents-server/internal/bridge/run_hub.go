@@ -35,9 +35,10 @@ const (
 	runRetention = 15 * time.Minute
 )
 
-// IsTerminalRunEvent reports whether typ ends a run segment's event stream:
+// IsTerminalRunEvent reports whether typ ends a run's event stream for now:
 // the run finished (output/error/cancelled) or paused for approval
-// (interrupted — the continuation streams under a new run id).
+// (interrupted — the approval decision resumes the SAME run id, continuing
+// its sequence, so subscribers can reattach with their existing cursor).
 func IsTerminalRunEvent(typ string) bool {
 	switch typ {
 	case "run.output", "run.error", "run.cancelled", "run.interrupted":
@@ -133,6 +134,43 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string) (*r
 	h.runs[runID] = rec
 	h.bySession[sessionID] = runID
 	return rec, ctx, nil
+}
+
+// resume reopens an interrupted run so its continuation streams under the
+// same run id: one logical run keeps one id across interrupt/resume, so
+// events, traces, and messages never need to be re-keyed. The record keeps
+// its sequence counter, replay buffer, and subscribers — attached clients
+// simply keep receiving events, and SSE Last-Event-ID cursors stay valid.
+// If the record is gone (server restart, retention GC), a fresh record is
+// created under the same id with the sequence restarting at zero.
+// It fails with ErrSessionBusy if the session already has a live run.
+func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string) (context.Context, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if existing, ok := h.bySession[sessionID]; ok {
+		return nil, ErrSessionBusy{RunID: existing}
+	}
+	ctx, cancel := context.WithCancel(h.rootCtx)
+	rec := h.runs[runID]
+	if rec == nil {
+		rec = &runRecord{
+			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning},
+			cancel: cancel,
+			subs:   make(map[int]SeqSink),
+			status: RunRunning,
+		}
+		h.runs[runID] = rec
+		h.bySession[sessionID] = runID
+		return ctx, nil
+	}
+	rec.mu.Lock()
+	rec.cancel = cancel
+	rec.status = RunRunning
+	rec.info.Status = RunRunning
+	rec.endedAt = time.Time{}
+	rec.mu.Unlock()
+	h.bySession[sessionID] = runID
+	return ctx, nil
 }
 
 // publish assigns the next sequence number to env, appends it to the run's
