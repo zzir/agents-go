@@ -7,6 +7,16 @@ servers, sandboxes, guardrails, memories, and skills.
 
 ![screenshot](screenshot.png)
 
+## Contents
+
+- [Quick start](#quick-start) — build, flags
+- [Authentication](#authentication)
+- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
+- [WebSocket protocol](#websocket-protocol)
+- [Architecture](#architecture)
+- [Database](#database)
+- [Roadmap](#roadmap)
+
 ## Quick start
 
 ```bash
@@ -19,13 +29,13 @@ On startup the server prints an auto-generated auth token. Open
 
 ### Flags
 
-| Flag | Default | Description |
-|---|---|---|
-| `--port` | `9527` | HTTP listen port |
-| `--db` | `data.db` | SQLite database file |
-| `--workspace` | `.` | Workspace directory for skills and file operations |
-| `--token` | auto | Auth token; randomly generated when omitted |
-| `--allow-local-sandbox` | `false` | Allow creating local (non-isolated) sandboxes |
+| Flag                    | Default   | Description                                        |
+|-------------------------|-----------|----------------------------------------------------|
+| `--port`                | `9527`    | HTTP listen port                                   |
+| `--db`                  | `data.db` | SQLite database file                               |
+| `--workspace`           | `.`       | Workspace directory for skills and file operations |
+| `--token`               | auto      | Auth token; randomly generated when omitted        |
+| `--allow-local-sandbox` | `false`   | Allow creating local (non-isolated) sandboxes      |
 
 ## Authentication
 
@@ -52,21 +62,26 @@ bodies are JSON.
 Every non-2xx response uses a single error envelope:
 
 ```json
-{ "error": { "code": "not_found", "message": "not found" } }
+{
+  "error": {
+    "code": "not_found",
+    "message": "not found"
+  }
+}
 ```
 
 `code` is a stable, machine-readable identifier; `message` is human-readable
 detail.
 
-| Code | HTTP | Meaning |
-|---|---|---|
-| `validation` | 400 | Malformed request body or invalid parameter |
-| `unauthorized` | 401 | Missing or invalid Bearer token |
-| `forbidden` | 403 | Operation disabled by server policy |
-| `not_found` | 404 | No such resource |
-| `conflict` | 409 | Resource is in the wrong state for the request |
-| `upstream` | 502 | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
-| `internal` | 500 | Unexpected server error (detail is logged, not returned) |
+| Code           | HTTP | Meaning                                                                       |
+|----------------|------|-------------------------------------------------------------------------------|
+| `validation`   | 400  | Malformed request body or invalid parameter                                   |
+| `unauthorized` | 401  | Missing or invalid Bearer token                                               |
+| `forbidden`    | 403  | Operation disabled by server policy                                           |
+| `not_found`    | 404  | No such resource                                                              |
+| `conflict`     | 409  | Resource is in the wrong state for the request                                |
+| `upstream`     | 502  | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
+| `internal`     | 500  | Unexpected server error (detail is logged, not returned)                      |
 
 ### Response conventions
 
@@ -78,18 +93,18 @@ detail.
 
 ### Sessions — `/api/v1/sessions`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/sessions` | List sessions |
-| POST | `/sessions` | Create session (`{name?, agent_config_id?}`) |
-| GET | `/sessions/:id` | Get session |
-| PATCH | `/sessions/:id` | Partial update — `{name?, pinned?}`, returns the updated session |
-| DELETE | `/sessions/:id` | Delete session and its messages and traces |
-| GET | `/sessions/:id/messages` | List conversation messages (paginated) |
-| GET | `/sessions/:id/traces` | List trace events (paginated) |
-| POST | `/sessions/:id/fork` | Fork session |
-| POST | `/sessions/:id/runs` | Start a run on the session (see [Runs](#runs--apiv1runs)) |
-| GET | `/sessions/:id/approvals` | List pending approvals (see [Approvals](#approvals--apiv1approvals)) |
+| Method | Path                      | Description                                                          |
+|--------|---------------------------|----------------------------------------------------------------------|
+| GET    | `/sessions`               | List sessions                                                        |
+| POST   | `/sessions`               | Create session (`{name?, agent_config_id?}`)                         |
+| GET    | `/sessions/:id`           | Get session                                                          |
+| PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session     |
+| DELETE | `/sessions/:id`           | Delete session and its messages and traces                           |
+| GET    | `/sessions/:id/messages`  | List conversation messages (paginated)                               |
+| GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
+| POST   | `/sessions/:id/fork`      | Fork session                                                         |
+| POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
+| GET    | `/sessions/:id/approvals` | List pending approvals (see [Approvals](#approvals--apiv1approvals)) |
 
 `POST /sessions` accepts an optional `agent_config_id` to bind the session to an
 agent at creation (it must reference an existing agent). Rename and pin are a
@@ -118,12 +133,12 @@ reload does NOT cancel the run. Reconnect and resubscribe (via
 `GET /runs/:id/events` or the WebSocket `run.subscribe`) to pick the stream back
 up without loss.
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?}` |
-| GET | `/runs/:id` | Get run status |
-| GET | `/runs/:id/events` | Stream run events (Server-Sent Events) |
-| POST | `/runs/:id/cancel` | Cancel the run — `204` |
+| Method | Path                 | Description                                            |
+|--------|----------------------|--------------------------------------------------------|
+| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?}` |
+| GET    | `/runs/:id`          | Get run status                                         |
+| GET    | `/runs/:id/events`   | Stream run events (Server-Sent Events)                 |
+| POST   | `/runs/:id/cancel`   | Cancel the run — `204`                                 |
 
 `POST /sessions/:id/runs` returns `201` with `{run_id, session_id, status}`. With
 `?wait=true` it blocks until the run ends and returns `200` with
@@ -167,11 +182,11 @@ Human-in-the-loop tool approvals. When a tool requires approval the run pauses;
 the pending decision is **persisted to the database, so it survives a server
 restart** and is addressable over REST.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/sessions/:id/approvals` | List pending tool-call approvals for the session |
-| POST | `/approvals/:tool_call_id/approve` | Approve — resumes the run, `202` `{run_id, status}` |
-| POST | `/approvals/:tool_call_id/reject` | Reject — body `{reason?}`, resumes the run, `202` `{run_id, status}` |
+| Method | Path                               | Description                                                          |
+|--------|------------------------------------|----------------------------------------------------------------------|
+| GET    | `/sessions/:id/approvals`          | List pending tool-call approvals for the session                     |
+| POST   | `/approvals/:tool_call_id/approve` | Approve — resumes the run, `202` `{run_id, status}`                  |
+| POST   | `/approvals/:tool_call_id/reject`  | Reject — body `{reason?}`, resumes the run, `202` `{run_id, status}` |
 
 Approve/reject resume the run through the shared hub, so the resulting events
 stream over `GET /runs/:id/events` or the WebSocket. A decision on a session that
@@ -184,16 +199,16 @@ than silently vanishing.
 
 ### Agents — `/api/v1/agents`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/agents` | List agent configs |
-| POST | `/agents` | Create agent |
-| GET | `/agents/:id` | Get agent |
-| PUT | `/agents/:id` | Update agent |
-| DELETE | `/agents/:id` | Delete agent |
-| POST | `/agents/:id/chatgpt/login` | Start ChatGPT OAuth login for this agent |
-| POST | `/agents/:id/chatgpt/logout` | Clear this agent's ChatGPT token |
-| GET | `/agents/:id/chatgpt/status` | Check this agent's ChatGPT login status |
+| Method | Path                         | Description                              |
+|--------|------------------------------|------------------------------------------|
+| GET    | `/agents`                    | List agent configs                       |
+| POST   | `/agents`                    | Create agent                             |
+| GET    | `/agents/:id`                | Get agent                                |
+| PUT    | `/agents/:id`                | Update agent                             |
+| DELETE | `/agents/:id`                | Delete agent                             |
+| POST   | `/agents/:id/chatgpt/login`  | Start ChatGPT OAuth login for this agent |
+| POST   | `/agents/:id/chatgpt/logout` | Clear this agent's ChatGPT token         |
+| GET    | `/agents/:id/chatgpt/status` | Check this agent's ChatGPT login status  |
 
 Agent config fields:
 
@@ -215,17 +230,17 @@ with an `?agent_config_id=` query parameter). The browser OAuth redirect lands a
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/mcp-servers` | List servers with connection status |
-| POST | `/mcp-servers` | Create MCP config |
-| GET | `/mcp-servers/:id` | Get config |
-| PUT | `/mcp-servers/:id` | Update config (toggles connect/disconnect on `enabled` change) |
-| DELETE | `/mcp-servers/:id` | Delete and disconnect |
-| POST | `/mcp-servers/:id/connect` | Connect (may trigger OAuth) |
-| DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out") |
-| GET | `/mcp-servers/:id/tools` | List tools exposed by the server |
-| GET | `/mcp-servers/oauth/callback` | OAuth redirect callback |
+| Method | Path                           | Description                                                    |
+|--------|--------------------------------|----------------------------------------------------------------|
+| GET    | `/mcp-servers`                 | List servers with connection status                            |
+| POST   | `/mcp-servers`                 | Create MCP config                                              |
+| GET    | `/mcp-servers/:id`             | Get config                                                     |
+| PUT    | `/mcp-servers/:id`             | Update config (toggles connect/disconnect on `enabled` change) |
+| DELETE | `/mcp-servers/:id`             | Delete and disconnect                                          |
+| POST   | `/mcp-servers/:id/connect`     | Connect (may trigger OAuth)                                    |
+| DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out")        |
+| GET    | `/mcp-servers/:id/tools`       | List tools exposed by the server                               |
+| GET    | `/mcp-servers/oauth/callback`  | OAuth redirect callback                                        |
 
 Transports: `stdio` and `streamable_http`. The HTTP transport supports
 `auth_mode` `header` or `oauth`. Each server has an `enabled` flag (default
@@ -246,24 +261,24 @@ read — see [Secret handling](#secret-handling): every `headers` value and
 
 ### Memories — `/api/v1/memories`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/memories` | List memories |
-| POST | `/memories` | Create memory (`key` + `content` required) |
-| GET | `/memories/:id` | Get memory |
-| PUT | `/memories/:id` | Update memory |
-| DELETE | `/memories/:id` | Delete memory |
+| Method | Path            | Description                                |
+|--------|-----------------|--------------------------------------------|
+| GET    | `/memories`     | List memories                              |
+| POST   | `/memories`     | Create memory (`key` + `content` required) |
+| GET    | `/memories/:id` | Get memory                                 |
+| PUT    | `/memories/:id` | Update memory                              |
+| DELETE | `/memories/:id` | Delete memory                              |
 
 Memories can be scoped to a specific agent via `agent_config_id`.
 
 ### Settings — `/api/v1/settings`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/settings` | List all key-value pairs |
-| GET | `/settings/:key` | Get value |
-| PUT | `/settings/:key` | Set value |
-| DELETE | `/settings/:key` | Delete |
+| Method | Path             | Description              |
+|--------|------------------|--------------------------|
+| GET    | `/settings`      | List all key-value pairs |
+| GET    | `/settings/:key` | Get value                |
+| PUT    | `/settings/:key` | Set value                |
+| DELETE | `/settings/:key` | Delete                   |
 
 Known keys:
 
@@ -284,20 +299,20 @@ Known keys:
 Discover skills under `{workspace}/skills/` and read their `SKILL.md`. This
 resource is read-only; repo management lives under `/skill-repos`.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/skills` | Discover skills under `{workspace}/skills/` |
-| GET | `/skills/*path` | Get SKILL.md content (path may be nested, e.g. `repo/sub-skill`) |
+| Method | Path            | Description                                                      |
+|--------|-----------------|------------------------------------------------------------------|
+| GET    | `/skills`       | Discover skills under `{workspace}/skills/`                      |
+| GET    | `/skills/*path` | Get SKILL.md content (path may be nested, e.g. `repo/sub-skill`) |
 
 ### Skill repos — `/api/v1/skill-repos`
 
 Clone and maintain whole git repositories of skills.
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/skill-repos` | Clone — body `{url}` (http(s) only); `git clone --depth=1`, returns `201` with the discovered skills |
-| POST | `/skill-repos/:name/sync` | `git fetch && git reset --hard origin/HEAD` to update (discards local changes) |
-| DELETE | `/skill-repos/:name` | Remove the repo directory |
+| Method | Path                      | Description                                                                                          |
+|--------|---------------------------|------------------------------------------------------------------------------------------------------|
+| POST   | `/skill-repos`            | Clone — body `{url}` (http(s) only); `git clone --depth=1`, returns `201` with the discovered skills |
+| POST   | `/skill-repos/:name/sync` | `git fetch && git reset --hard origin/HEAD` to update (discards local changes)                       |
+| DELETE | `/skill-repos/:name`      | Remove the repo directory                                                                            |
 
 Only `http(s)` remotes are accepted (`file://`, `ssh`, and git's `ext::`
 transport are rejected). `sync` replaces the former `PUT /skills/:name`.
@@ -307,25 +322,25 @@ transport are rejected). `sync` replaces the former `PUT /skills/:name`.
 Map model-name prefixes to different API keys and base URLs for multi-provider
 routing.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/provider-routes` | List routes |
-| POST | `/provider-routes` | Create route |
-| GET | `/provider-routes/:id` | Get route |
-| PUT | `/provider-routes/:id` | Update route |
+| Method | Path                   | Description  |
+|--------|------------------------|--------------|
+| GET    | `/provider-routes`     | List routes  |
+| POST   | `/provider-routes`     | Create route |
+| GET    | `/provider-routes/:id` | Get route    |
+| PUT    | `/provider-routes/:id` | Update route |
 | DELETE | `/provider-routes/:id` | Delete route |
 
 The `api_key` field is masked on read — see [Secret handling](#secret-handling).
 
 ### Guardrails — `/api/v1/guardrails`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/guardrails` | List all guardrails (built-in + custom) |
-| POST | `/guardrails` | Create custom guardrail |
-| GET | `/guardrails/:id` | Get guardrail |
-| PUT | `/guardrails/:id` | Update guardrail |
-| DELETE | `/guardrails/:id` | Delete guardrail |
+| Method | Path              | Description                             |
+|--------|-------------------|-----------------------------------------|
+| GET    | `/guardrails`     | List all guardrails (built-in + custom) |
+| POST   | `/guardrails`     | Create custom guardrail                 |
+| GET    | `/guardrails/:id` | Get guardrail                           |
+| PUT    | `/guardrails/:id` | Update guardrail                        |
+| DELETE | `/guardrails/:id` | Delete guardrail                        |
 
 Types: `input` (pre-model) and `output` (post-model). Modes: `regex` (pattern
 match triggers tripwire) and `max_length` (character limit).
@@ -334,16 +349,20 @@ Built-in: `content_filter` (input/regex — jailbreak keywords),
 `max_input_length` (input/max_length — 50k chars),
 `max_output_length` (output/max_length — 50k chars).
 
+Guardrails attach at the **run level** (the agent's `input_guardrails` /
+`output_guardrails` fields). Per-tool guardrails exist in the SDK but are not
+yet configurable here — see [Roadmap](#roadmap).
+
 ### Sandboxes — `/api/v1/sandboxes`
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/sandboxes` | List sandboxes |
-| POST | `/sandboxes` | Create sandbox |
-| GET | `/sandboxes/:id` | Get sandbox |
-| PUT | `/sandboxes/:id` | Update sandbox |
-| DELETE | `/sandboxes/:id` | Delete sandbox |
-| POST | `/sandboxes/:id/test` | Run health-check command |
+| Method | Path                  | Description              |
+|--------|-----------------------|--------------------------|
+| GET    | `/sandboxes`          | List sandboxes           |
+| POST   | `/sandboxes`          | Create sandbox           |
+| GET    | `/sandboxes/:id`      | Get sandbox              |
+| PUT    | `/sandboxes/:id`      | Update sandbox           |
+| DELETE | `/sandboxes/:id`      | Delete sandbox           |
+| POST   | `/sandboxes/:id/test` | Run health-check command |
 
 Sandbox types: `local` (subprocess — requires `--allow-local-sandbox`), `docker`
 (container), `ssh` (remote host). The `local` and `docker` host restrictions are
@@ -352,9 +371,9 @@ field is masked on read — see [Secret handling](#secret-handling).
 
 ### Playground — `/api/v1/playground`
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/playground/generate` | One-off model call — `{agent_config_id, model?, system_instructions?, input_items, model_settings?, tools?}`; uses the agent's provider credentials, touches no session, records no run. `model_settings` overrides the agent's settings; `tools` are schema-only definitions (`{name, description?, parameters?}`) echoed from the traced request so the model can emit function calls — they are never executed. Backs the trace panel's "Replay" dialog. |
+| Method | Path                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+|--------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| POST   | `/playground/generate` | One-off model call — `{agent_config_id, model?, system_instructions?, input_items, model_settings?, tools?}`; uses the agent's provider credentials, touches no session, records no run. `model_settings` overrides the agent's settings; `tools` are schema-only definitions (`{name, description?, parameters?}`) echoed from the traced request so the model can emit function calls — they are never executed. Backs the trace panel's "Replay" dialog. |
 
 ### ChatGPT OAuth
 
@@ -362,9 +381,9 @@ Login, logout, and status are per-agent, under the agent resource — see
 [Agents](#agents--apiv1agents). The browser OAuth redirect callback is the only
 top-level route:
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/chatgpt/oauth/callback` | OAuth redirect callback (auth-exempt) |
+| Method | Path                      | Description                           |
+|--------|---------------------------|---------------------------------------|
+| GET    | `/chatgpt/oauth/callback` | OAuth redirect callback (auth-exempt) |
 
 ### Secret handling
 
@@ -382,9 +401,9 @@ provider-route `api_key`, MCP `headers` values and `oauth_client_secret`
 
 ### Health
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/health` | Liveness probe (unauthenticated) — returns `{status, version}` |
+| Method | Path      | Description                                                    |
+|--------|-----------|----------------------------------------------------------------|
+| GET    | `/health` | Liveness probe (unauthenticated) — returns `{status, version}` |
 
 ### OpenAPI
 
@@ -410,32 +429,32 @@ run's event stream (replaying buffered events after `from_seq`).
 
 ### Client → Server
 
-| type | Description |
-|---|---|
-| `run.create` | Start a run — `{session_id, input, agent_config_id?, sandbox_id?}` |
+| type            | Description                                                                                                     |
+|-----------------|-----------------------------------------------------------------------------------------------------------------|
+| `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?}`                                              |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
-| `run.cancel` | Cancel an in-flight run — `{run_id}` |
-| `tool.approve` | Approve a pending tool call — `{tool_call_id}` |
-| `tool.reject` | Reject a tool call — `{tool_call_id, reason?}` |
+| `run.cancel`    | Cancel an in-flight run — `{run_id}`                                                                            |
+| `tool.approve`  | Approve a pending tool call — `{tool_call_id}`                                                                  |
+| `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
 
 ### Server → Client
 
-| type | Description |
-|---|---|
-| `run.started` | Run begun — `{run_id, session_id}` |
-| `run.agent_start` | Agent taking its turn — `{run_id, agent_name}` |
-| `run.step` | Streaming text delta — `{run_id, delta}` |
-| `run.reasoning` | Streaming reasoning delta — `{run_id, delta}` |
-| `run.tool_call` | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}` |
-| `run.tool_result` | Tool output — `{run_id, tool_call_id, output}` |
-| `run.handoff` | Agent handoff — `{run_id, from, to}` |
-| `run.compaction` | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}` |
-| `run.output` | Final output — `{run_id, final_output}` |
-| `run.interrupted` | Paused for tool approval (terminal for this run segment; the decision resumes under a new run id) — `{run_id}` |
-| `run.error` | Error — `{run_id?, session_id?, code, message}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`) |
-| `run.cancelled` | Cancelled — `{run_id}` |
-| `session.title_updated` | Title changed — `{session_id, title}` |
-| `trace.span` | Trace span — `{run_id, trace_id, span_id, error?, ...}` |
+| type                    | Description                                                                                                                                             |
+|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `run.started`           | Run begun — `{run_id, session_id}`                                                                                                                      |
+| `run.agent_start`       | Agent taking its turn — `{run_id, agent_name}`                                                                                                          |
+| `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
+| `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
+| `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
+| `run.tool_result`       | Tool output — `{run_id, tool_call_id, output}`                                                                                                          |
+| `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |
+| `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
+| `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
+| `run.interrupted`       | Paused for tool approval (terminal for this run segment; the decision resumes under a new run id) — `{run_id}`                                          |
+| `run.error`             | Error — `{run_id?, session_id?, code, message}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`) |
+| `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
+| `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
+| `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, ...}`                                                                                                 |
 
 Generation spans carry the full model request/response in their `data`
 (`model`, `system_instructions`, `input`, `tools`, `model_settings`,
@@ -456,13 +475,14 @@ cmd/agents-server/
 │   ├── server/                 Gin engine, routing, auth middleware, WS upgrade
 │   ├── handler/                HTTP handlers (one file per resource)
 │   ├── bridge/                 business logic
-│   │   ├── runner.go           build agent, stream execution, resume after approval
+│   │   ├── agent.go            assemble a full agent from DB config
+│   │   ├── runner.go           stream execution, resume after approval
 │   │   ├── run_hub.go          per-run event hub (buffering, seq resume, status)
+│   │   ├── approvals.go        HITL approval persistence & resolution
 │   │   ├── mcp_manager.go      MCP server connection lifecycle
 │   │   ├── sandbox_manager.go  sandbox instance cache
-│   │   ├── oauth.go            MCP OAuth coordinator
 │   │   ├── retention.go        approval-expiry reaper & trace pruning
-│   │   └── ...                 hooks, tracer, guardrails, proxy
+│   │   └── ...                 tracing, guardrails, proxy, MCP/ChatGPT OAuth
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
 │   ├── store/                  SQLite data layer (bun ORM, 11 tables)
 │   ├── protocol/               WebSocket message types
@@ -492,19 +512,34 @@ cmd/agents-server/
 
 SQLite in WAL mode. Tables are created automatically on startup:
 
-| Table | Description |
-|---|---|
-| `sessions` | Chat sessions |
-| `messages` | Conversation message history |
-| `agent_configs` | Agent configurations |
-| `mcp_servers` | MCP server configurations |
-| `memories` | Agent memories |
-| `settings` | Global key-value settings |
-| `provider_routes` | Model-prefix routing rules |
-| `sandbox_configs` | Sandbox configurations |
-| `guardrails` | Custom guardrail definitions |
-| `trace_events` | Trace spans (agent, generation, function, handoff, compaction) |
+| Table               | Description                                                                         |
+|---------------------|-------------------------------------------------------------------------------------|
+| `sessions`          | Chat sessions                                                                       |
+| `messages`          | Conversation message history                                                        |
+| `agent_configs`     | Agent configurations                                                                |
+| `mcp_servers`       | MCP server configurations                                                           |
+| `memories`          | Agent memories                                                                      |
+| `settings`          | Global key-value settings                                                           |
+| `provider_routes`   | Model-prefix routing rules                                                          |
+| `sandbox_configs`   | Sandbox configurations                                                              |
+| `guardrails`        | Custom guardrail definitions                                                        |
+| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction)                      |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 
 The database file can be deleted and recreated freely — there is no migration
 mechanism.
+
+## Roadmap
+
+- **Tool-level guardrail config.** The SDK supports per-tool guardrails
+  (`FunctionTool.InputGuardrails` / `OutputGuardrails`), but the server only
+  wires run-level ones today. Plan: let the agent config attach guardrails to
+  individual tools (by tool name), with matching UI in the agent panel. Once
+  that lands, also expose `RunOptions.PreApprovalToolInputGuardrails` as an
+  agent config field, so a guardrail rejection can resolve an approval-gated
+  call without a human round-trip.
+- **Render tool-output custom data.** The SDK's
+  `FunctionTool.CustomDataExtractor` attaches SDK-only metadata (renderer
+  hints, record IDs) to `ToolCallOutputItem.CustomData` without sending it to
+  the model. The chat UI's tool-call cards could consume it for rich rendering
+  (tables, charts) once any built-in or server-defined tool starts producing it.
