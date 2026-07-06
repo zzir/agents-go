@@ -81,9 +81,9 @@ func TestSanitizeChatGPTInput_Reasoning(t *testing.T) {
 	input := []any{
 		map[string]any{
 			"type": "reasoning", "content": []any{map[string]any{"type": "text", "text": "thinking..."}},
-			"summary": []any{map[string]any{"type": "text", "text": "summary"}},
+			"summary":           []any{map[string]any{"type": "text", "text": "summary"}},
 			"encrypted_content": "enc_data",
-			"id": "rs_1", "status": "completed",
+			"id":                "rs_1", "status": "completed",
 		},
 	}
 	out := sanitizeChatGPTInput(input)
