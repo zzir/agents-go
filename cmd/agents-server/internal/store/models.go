@@ -93,7 +93,7 @@ type AgentConfig struct {
 
 	// ChatGPT OAuth token (JSON-serialized). Hidden from API; preserved across
 	// regular CRUD updates so editing an agent doesn't erase its token.
-	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"-"`
+	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"chatgpt_token,omitempty"`
 
 	// Batch 5: fine-grained control
 	HandoffInputFilter   string `bun:"handoff_input_filter"     json:"handoff_input_filter,omitempty"`

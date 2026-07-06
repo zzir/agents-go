@@ -39,6 +39,7 @@ interface AgentFormData {
   compaction_window: number;
   compaction_model: string;
   compaction_prompt: string;
+  handoffs?: string;
   tools?: string;
   skills?: string;
   model_settings?: string;
@@ -58,20 +59,25 @@ interface Agent {
   base_url: string;
   auth_mode: string;
   instructions: string;
+  handoffs: string;
   tools: string;
   chatgpt_token: string;
 }
 
 interface AgentFormProps {
   initial?: Partial<AgentFormData> & { id?: string | number };
-  onSave: (form: AgentFormData & { tools: string; skills: string; model_settings: string }) => void;
+  onSave: (form: AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }) => void;
   onCancel?: () => void;
   onDelete?: () => void;
   mcpServers?: McpServer[];
   skills?: Skill[];
+  allAgents?: Agent[];
 }
 
-function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: AgentFormProps) {
+function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, allAgents }: AgentFormProps) {
+  const initHandoffs = (): (string | number)[] => {
+    try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
+  };
   const initTools = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
   };
@@ -106,10 +112,15 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: 
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
   const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
   const [extraBody, setExtraBody] = useState(initMs.extra_body ? JSON.stringify(initMs.extra_body) : '');
+  const [selectedHandoffs, setSelectedHandoffs] = useState<(string | number)[]>(initHandoffs);
   const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
+  const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id);
+  const toggleHandoff = (id: string | number) => {
+    setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
   const toggleMcp = (id: string | number) => {
     setSelectedMcp(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -284,6 +295,19 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: 
 
         <div className="form-group">
           <div className="form-group-title">Handoffs</div>
+          {handoffTargets.length > 0 && <>
+            <div className="form-checkbox-group">
+              {handoffTargets.map(a => (
+                <FormControl key={a.id}>
+                  <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
+                  <FormControl.Label>{a.name}</FormControl.Label>
+                  <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
+                </FormControl>
+              ))}
+            </div>
+            <div className="FormControl-caption">Select which agents this agent can hand off to</div>
+          </>}
+          {handoffTargets.length === 0 && <div className="FormControl-caption">Create other agents to enable handoffs</div>}
           {fc('Handoff input filter', <Select value={form.handoff_input_filter || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('handoff_input_filter', e.target.value)}>
             <Select.Option value="">None (default)</Select.Option>
             <Select.Option value="nest_history">Nest Handoff History</Select.Option>
@@ -364,7 +388,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: 
           // use_previous_response_id is rejected by the server (incompatible
           // with server-side session storage); always send false so legacy
           // configs that still carry the flag are cleaned up on their next save.
-          onSave({ ...form, use_previous_response_id: false, tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings });
+          onSave({ ...form, use_previous_response_id: false, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings });
         }} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
@@ -375,7 +399,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills }: 
 
 export function AgentConfigPanel() {
   const { items: agents, adding, editing, startAdd, startEdit, cancel, save, remove, reload } =
-    useCrud<Agent, AgentFormData & { tools: string; skills: string; model_settings: string }>(api.agents);
+    useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const [signingIn, setSigningIn] = useState<Record<string | number, boolean>>({});
@@ -427,6 +451,14 @@ export function AgentConfigPanel() {
     }
   };
 
+  const handoffNames = (handoffsJson: string): string | null => {
+    try {
+      const ids: (string | number)[] = JSON.parse(handoffsJson || '[]');
+      const names = ids.map(id => (agents.find(a => a.id === id) || {} as Agent).name).filter(Boolean);
+      return names.length ? 'Handoffs: ' + names.join(', ') : null;
+    } catch { return null; }
+  };
+
   const mcpNames = (toolsJson: string): string | null => {
     if (!mcpServers) return null;
     try {
@@ -445,11 +477,12 @@ export function AgentConfigPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
 
-      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} />}
-      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} />}
+      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} />}
+      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} />}
 
       {!adding && !editing && <div className="Box">
         {agents.map(a => {
+          const ho = handoffNames(a.handoffs);
           const mcp = mcpNames(a.tools);
           const isChatGPT = a.auth_mode === 'chatgpt_login';
           const loggedIn = isChatGPT && !!a.chatgpt_token;
@@ -467,6 +500,7 @@ export function AgentConfigPanel() {
                 {a.instructions && <div className="resource-row-sub">
                   {a.instructions.substring(0, 80) + (a.instructions.length > 80 ? '...' : '')}
                 </div>}
+                {ho && <div className="resource-row-meta">{ho}</div>}
                 {mcp && <div className="resource-row-meta">{mcp}</div>}
               </div>
               <div className="resource-row-actions">

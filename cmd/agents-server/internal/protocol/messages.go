@@ -44,6 +44,9 @@ type RunSubscribe struct {
 // ToolApprove is the client's approval of a pending tool call awaiting human review.
 type ToolApprove struct {
 	ToolCallID string `json:"tool_call_id"`
+	// Scope extends an exec_command approval: "once" (default), "same" (trust
+	// this exact command for the session) or "all" (trust every command).
+	Scope string `json:"scope,omitempty"`
 }
 
 // ToolReject is the client's rejection of a pending tool call, with an optional reason.
@@ -77,6 +80,25 @@ type RunStep struct {
 type RunReasoning struct {
 	RunID string `json:"run_id"`
 	Delta string `json:"delta"`
+}
+
+// RunMessage carries one completed assistant message — the full text of a
+// turn the moment the model finishes it: interim narration between tool calls
+// as well as the final answer. It is the authoritative form of what run.step
+// deltas previewed (and the only text signal on backends that stream no
+// deltas or on resumed runs whose earlier deltas predate the resume).
+type RunMessage struct {
+	RunID string `json:"run_id"`
+	Text  string `json:"text"`
+}
+
+// RunReasoningItem carries one completed reasoning (thinking) block — a
+// turn's full thinking text the moment the model finishes it. Authoritative
+// over run.reasoning deltas, and the only thinking signal on backends that
+// stream no reasoning deltas or on resumed segments.
+type RunReasoningItem struct {
+	RunID string `json:"run_id"`
+	Text  string `json:"text"`
 }
 
 // RunToolCall is emitted when the agent invokes a tool (or requests approval for one).

@@ -258,10 +258,10 @@ function App() {
     });
   }, [activeSession, updateSS]);
 
-  const handleApprove = useCallback((toolCallId: string) => {
+  const handleApprove = useCallback((toolCallId: string, scope?: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'approved' });
-    if (!wsRef.current.send('tool.approve', { tool_call_id: toolCallId })) {
+    if (!wsRef.current.send('tool.approve', { tool_call_id: toolCallId, scope })) {
       // The socket is down: undo the optimistic status so the card stays
       // actionable — a silently dropped approval would strand the paused run.
       updateToolCall(toolCallId, { status: null });

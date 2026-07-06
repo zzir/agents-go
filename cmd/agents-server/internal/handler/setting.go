@@ -21,7 +21,7 @@ func NewSettingHandler(s *store.SettingStore) *SettingHandler {
 // List responds with all settings, secret values masked.
 //
 //	@Summary		List settings
-//	@Description	Known keys: proxy_url, system_prompt, brave_api_key (secret, masked), enable_editor_tools.
+//	@Description	Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).
 //	@Tags			settings
 //	@Produce		json
 //	@Success		200	{array}		store.Setting

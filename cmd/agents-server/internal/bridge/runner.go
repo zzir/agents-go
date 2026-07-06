@@ -206,6 +206,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		Tracer:                tracer,
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
+		Context:               sessionID, // exec_command gate reads sessionID here
 	}
 	if built.HandoffInputFilter == "nest_history" {
 		opts.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
@@ -213,35 +214,30 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	opts.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
 
 	sr := agents.RunStreamed(ctx, agent, input, opts)
+	streamedText, streamedReasoning := r.drainStream(sr, runID, sendEvent)
 
-	var streamedText, streamedReasoning strings.Builder
-	for event, err := range sr.Events() {
-		if err != nil {
-			if ctx.Err() != nil {
-				r.savePartialTurn(sessionID, runID, agent.Model, input, streamedText.String(), streamedReasoning.String(), "")
-				sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
-			} else {
-				r.savePartialTurn(sessionID, runID, agent.Model, input, streamedText.String(), streamedReasoning.String(), err.Error())
-				sendEvent("run.error", protocol.RunError{
-					RunID:   runID,
-					Code:    "stream_error",
-					Message: err.Error(),
-				})
-			}
-			return mkResult()
+	// FinalResult is the source of truth for how the run ended. A terminal error
+	// can arrive via the event channel above OR — on a context-cancel race inside
+	// RunStreamed, where the error send loses the select to ctx.Done() and is
+	// dropped — surface only here. Consulting FinalResult catches both, so an
+	// aborted run always records its outcome (a marker plus any in-flight
+	// thinking) instead of vanishing.
+	res, err := sr.FinalResult()
+	if err != nil {
+		role, msg := "error", err.Error()
+		if isCancellation(ctx, err) {
+			role, msg = "cancelled", ""
 		}
-		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
-			switch raw.Data.Type {
-			case "response.output_text.delta":
-				streamedText.WriteString(raw.Data.Delta)
-			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-				streamedReasoning.WriteString(raw.Data.Delta)
-			}
+		r.savePartialTurn(sessionID, runID, agent.Model, input, role, msg, streamedReasoning, streamedText)
+		if role == "cancelled" {
+			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
+		} else {
+			sendEvent("run.error", protocol.RunError{RunID: runID, Code: "stream_error", Message: err.Error()})
 		}
-		r.handleStreamEvent(event, runID, sendEvent)
+		return mkResult()
 	}
 
-	result := r.processResult(sr, runID, sessionID, agentConfigID, sandboxID, sendEvent)
+	result := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 	if result.FinalText != "" {
 		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, sendEvent)
 	}
@@ -298,20 +294,28 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	// the pending-approval row was consumed as the resume's claim and the SDK
 	// saves the turn only on success — without this, a failed resume would
 	// lose the whole turn from durable state. Mirrors runStreamed's
-	// partial-turn save.
-	failTurn := func(model, code string, err error) *RunResult {
-		r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "", "", err.Error())
-		sendEvent("run.error", protocol.RunError{RunID: runID, Code: code, Message: err.Error()})
+	// partial-turn save, including the in-flight turn's streamed text/reasoning.
+	failTurn := func(model, code string, err error, partialReasoning, partialText string) *RunResult {
+		// The original run persisted the prompt and its completed turns under this
+		// same run id before pausing, so a failed resume only annotates why it
+		// stopped — cancelled or errored, mirroring runStreamed.
+		if isCancellation(ctx, err) {
+			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "cancelled", "", partialReasoning, partialText)
+			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
+		} else {
+			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText)
+			sendEvent("run.error", protocol.RunError{RunID: runID, Code: code, Message: err.Error()})
+		}
 		return mkResult()
 	}
 
 	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
 	if err != nil {
-		return failTurn("", "config_error", err)
+		return failTurn("", "config_error", err, "", "")
 	}
 	provider := built.Provider
 	if provider == nil {
-		return failTurn(built.Agent.Model, "config_error", errors.New("no API key configured for this agent"))
+		return failTurn(built.Agent.Model, "config_error", errors.New("no API key configured for this agent"), "", "")
 	}
 
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
@@ -323,16 +327,25 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 
 	resumeSession := wrapCompaction(resumeSA, built, provider, sendEvent, runID)
 
-	res, err := agents.ResumeRun(ctx, state, agents.RunOptions{
+	// Stream the continuation like a fresh run: the resumed segment's events
+	// (the approved tool's output, every later turn's text and tool calls) go
+	// live to the client instead of surfacing only in the terminal
+	// run.output — a resume that silently swallowed its middle turns is what
+	// made approved runs "jump" to their final answer.
+	sr := agents.ResumeRunStreamed(ctx, state, agents.RunOptions{
 		Session:               resumeSession,
 		ModelProvider:         provider,
 		MaxTurns:              built.MaxTurns,
 		Tracer:                tracer,
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
+		Context:               sessionID, // exec_command gate reads sessionID here
 	})
+	streamedText, streamedReasoning := r.drainStream(sr, runID, sendEvent)
+
+	res, err := sr.FinalResult()
 	if err != nil {
-		return failTurn(built.Agent.Model, "resume_error", err)
+		return failTurn(built.Agent.Model, "resume_error", err, streamedReasoning, streamedText)
 	}
 
 	result := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
@@ -343,20 +356,6 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, sendEvent)
 	}
 	return result
-}
-
-func (r *Runner) processResult(sr *agents.StreamedResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunResult {
-	res, err := sr.FinalResult()
-	if err != nil {
-		sendEvent("run.error", protocol.RunError{
-			RunID:   runID,
-			Code:    "run_error",
-			Message: err.Error(),
-		})
-		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
-	}
-
-	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 }
 
 func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunResult {
@@ -492,55 +491,111 @@ func (r *Runner) firstUserMessage(ctx context.Context, sessionID string) string 
 	return strings.TrimSpace(msg.Content)
 }
 
-// savePartialTurn persists the user input and any partial assistant response
-// (reasoning + text) to the session when a run is cancelled or fails
-// mid-stream. Without this, the entire turn is lost on reload because the SDK
-// only saves the session on successful completion. The user input and partial
-// text go through the store's item chokepoint (canonical wire JSON,
-// replayable); the partial reasoning and error are annotations — shown in the
-// UI but never replayed (a fabricated reasoning item would be rejected by the
-// API).
-func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, partialText, partialReasoning, errMsg string) {
-	if userInput == "" {
-		return
-	}
-
+// savePartialTurn records what the SDK cannot save itself when a run is
+// cancelled or fails mid-stream. The SDK persists the user input and every
+// completed turn incrementally (see agents.runner.persistSessionItems), so
+// completed segments and tool calls survive on their own. This adds, all as
+// display-only annotations that are never replayed:
+//   - the in-flight turn's streamed reasoning and text, so a cancel during the
+//     thinking phase (before that turn completed) still shows what the model was
+//     doing instead of vanishing;
+//   - a trailing marker for why the run stopped (annRole "cancelled"/"error",
+//     annMsg its optional detail);
+//
+// and, only when the run died before the SDK persisted anything under this run
+// id (e.g. cancelled before the first turn completed), the prompt as a
+// replayable fallback so it is not lost.
+func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, annMsg, partialReasoning, partialText string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	msgs := make([]store.Message, 0, 4)
 
-	userItemJSON, _ := json.Marshal(map[string]any{
-		"role":    "user",
-		"content": userInput,
-	})
-	msgs = append(msgs, store.NewItemMessageRaw(sessionID, runID, model, userItemJSON))
+	if userInput != "" && !r.runHasPersistedItems(ctx, sessionID, runID) {
+		userItemJSON, _ := json.Marshal(map[string]any{
+			"role":    "user",
+			"content": userInput,
+		})
+		msgs = append(msgs, store.NewItemMessageRaw(sessionID, runID, model, userItemJSON))
+	}
 
+	// The in-flight turn's thinking and narration — display-only (a fabricated
+	// reasoning item would be rejected on replay, and an abandoned turn should
+	// not enter the model's history).
 	if partialReasoning != "" {
 		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "reasoning", partialReasoning))
 	}
-
 	if partialText != "" {
-		assistantItemJSON, _ := json.Marshal(map[string]any{
-			"type": "message",
-			"role": "assistant",
-			"content": []map[string]string{
-				{"type": "output_text", "text": partialText},
-			},
-		})
-		msgs = append(msgs, store.NewItemMessageRaw(sessionID, runID, model, assistantItemJSON))
+		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "assistant", partialText))
 	}
 
-	if errMsg != "" {
-		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "error", errMsg))
+	if annRole != "" {
+		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, annRole, annMsg))
 	}
 
+	if len(msgs) == 0 {
+		return
+	}
 	_, _ = r.db.NewInsert().Model(&msgs).Exec(ctx)
+}
+
+// isCancellation reports whether a run stopped because it was cancelled (or its
+// deadline elapsed) rather than failing — whether the signal is the run's own
+// context or a context error bubbled up (and wrapped) by the model provider.
+func isCancellation(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// runHasPersistedItems reports whether the SDK already wrote any replayable item
+// row (user input or a completed turn's items) for this run id. Used to avoid
+// duplicating the prompt the SDK's per-turn persistence normally saves.
+func (r *Runner) runHasPersistedItems(ctx context.Context, sessionID, runID string) bool {
+	exists, err := r.db.NewSelect().Model((*store.Message)(nil)).
+		Where("session_id = ?", sessionID).
+		Where("run_id = ?", runID).
+		Where("kind = ?", store.MessageKindItem).
+		Exists(ctx)
+	if err != nil {
+		// On a query error, assume something was saved: skipping a possibly
+		// duplicate prompt is safer than writing a guaranteed duplicate.
+		return true
+	}
+	return exists
 }
 
 // CancelRun cancels the in-flight run with the given run id, if one is active.
 func (r *Runner) CancelRun(runID string) {
 	r.hub.Cancel(runID)
+}
+
+// drainStream forwards a streamed run's events to the hub and accumulates
+// only the CURRENT turn's reasoning/text, resetting at each turn boundary
+// (response.completed): the SDK persists a turn's items once it completes, so
+// the returned strings hold just the in-flight turn the SDK has not saved
+// yet. On an abort they become display-only annotations so a cancel during
+// the thinking phase still shows what the model was doing. A terminal error
+// on the event channel stops consumption; the caller reads the run's outcome
+// from FinalResult.
+func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, send func(string, any)) (streamedText, streamedReasoning string) {
+	var text, reasoning strings.Builder
+	for event, err := range sr.Events() {
+		if err != nil {
+			break
+		}
+		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
+			switch raw.Data.Type {
+			case "response.completed":
+				text.Reset()
+				reasoning.Reset()
+			case "response.output_text.delta":
+				text.WriteString(raw.Data.Delta)
+			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+				reasoning.WriteString(raw.Data.Delta)
+			}
+		}
+		r.handleStreamEvent(event, runID, send)
+	}
+	return text.String(), reasoning.String()
 }
 
 func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any)) {
@@ -562,6 +617,25 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 
 	case *agents.RunItemStreamEvent:
 		switch e.Name {
+		case "message_output_created":
+			// The completed turn text, authoritative over the run.step deltas
+			// that previewed it. Interim messages between tool calls only exist
+			// as deltas plus this event — resumed segments and backends that
+			// stream no deltas rely on it entirely.
+			if mo, ok := e.Item.(*agents.MessageOutputItem); ok {
+				if text := mo.Text(); text != "" {
+					send("run.message", protocol.RunMessage{RunID: runID, Text: text})
+				}
+			}
+		case "reasoning_item_created":
+			// The completed thinking block, authoritative over the run.reasoning
+			// deltas that previewed it — and the only thinking signal when the
+			// backend streams no reasoning deltas or the segment was resumed.
+			if ri, ok := e.Item.(*agents.ReasoningItem); ok {
+				if text := ri.Text(); text != "" {
+					send("run.reasoning_item", protocol.RunReasoningItem{RunID: runID, Text: text})
+				}
+			}
 		case "tool_called":
 			if tc, ok := e.Item.(*agents.ToolCallItem); ok {
 				fc := tc.FunctionCall()

@@ -236,7 +236,7 @@
   margin-left: 4px;
 }
 
-/* Process timeline — thinking + tool calls + interim narration in one rail */
+/* Process timeline — thinking + tool calls in one rail */
 .process-timeline {
   display: flex;
   flex-direction: column;
@@ -259,10 +259,16 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
-.pt-narration {
+.pt-handoff {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted);
-  line-height: 1.6;
+  color: var(--fgColor-severe);
+  padding: 2px 8px;
+  background: var(--bgColor-severe-muted);
+  border: 1px solid var(--borderColor-severe-muted);
+  border-radius: var(--borderRadius-full);
 }
 .process-timeline .ToolCallCard { margin: 0; }
 
@@ -399,8 +405,16 @@
   margin-bottom: 4px;
 }
 .ToolCallCard-output pre { color: var(--fgColor-default); }
+
+/* apply_patch preview: highlighted as a ```diff block via the markdown pipeline
+   (same hljs theme + dark mode as every other code block) */
+.ToolCallCard-diff { margin: 0; }
+.ToolCallCard-diff pre { margin: 0; }
+.ToolCallCard-file { font-family: var(--fontStack-monospace, monospace); font-size: 12px; color: var(--fgColor-muted); }
+
 .ToolCallCard-approval {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
@@ -408,6 +422,21 @@
 /* Error card — content styles (shell is Disclosure with variant=danger) */
 .error-card { margin: var(--base-size-8) 0; }
 .error-card-body { color: var(--fgColor-danger); }
+
+/* Cancelled marker — softer than an error: the run was stopped, not broken */
+.cancelled-card {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  margin: var(--base-size-8) 0;
+  padding: var(--base-size-4) var(--base-size-8);
+  border: 1px solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-muted);
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small);
+}
+.cancelled-card-icon { color: var(--fgColor-muted); flex-shrink: 0; }
 
 /* Live agent name next to the thinking dots */
 .thinking-agent {

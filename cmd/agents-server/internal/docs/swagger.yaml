@@ -256,6 +256,11 @@ components:
         status:
           type: string
       type: object
+    handler.approveReq:
+      properties:
+        scope:
+          type: string
+      type: object
     handler.chatgptStatusResp:
       properties:
         logged_in:
@@ -1059,8 +1064,10 @@ paths:
       - agents
   /approvals/{tool_call_id}/approve:
     post:
-      description: Approves a pending tool call and resumes the run under its original
+      description: 'Approves a pending tool call and resumes the run under its original
         run id; stream it via GET /runs/{id}/events (existing cursors stay valid).
+        For exec_command, the optional body scope extends the approval: "once" (default),
+        "same" (trust this exact command for the session), or "all" (trust every command).'
       parameters:
       - description: Tool call ID
         in: path
@@ -1068,6 +1075,16 @@ paths:
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.approveReq'
+                description: Optional approval scope
+                summary: body
+        description: Optional approval scope
       responses:
         "202":
           content:
@@ -2712,8 +2729,7 @@ paths:
       - sessions
   /settings:
     get:
-      description: 'Known keys: proxy_url, system_prompt, brave_api_key (secret, masked),
-        enable_editor_tools.'
+      description: 'Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).'
       responses:
         "200":
           content:

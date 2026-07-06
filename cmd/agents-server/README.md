@@ -186,12 +186,22 @@ restart** and is addressable over REST.
 | Method | Path                               | Description                                                          |
 |--------|------------------------------------|----------------------------------------------------------------------|
 | GET    | `/sessions/:id/approvals`          | List pending tool-call approvals for the session                     |
-| POST   | `/approvals/:tool_call_id/approve` | Approve — resumes the run, `202` `{run_id, status}`                  |
+| POST   | `/approvals/:tool_call_id/approve` | Approve — body `{scope?}`, resumes the run, `202` `{run_id, status}` |
 | POST   | `/approvals/:tool_call_id/reject`  | Reject — body `{reason?}`, resumes the run, `202` `{run_id, status}` |
 
 Approve/reject resume the run through the shared hub, so the resulting events
 stream over `GET /runs/:id/events` or the WebSocket. A decision on a session that
 already has an active run returns `409`.
+
+**exec_command session approval.** An agent whose `approve_tools` includes
+`exec_command` gates each shell command through a per-session trust store instead
+of approving every call. The approval surfaces the command itself; the approve
+body `scope` decides how far it extends: `once` (default — just this call),
+`same` (trust this exact command for the rest of the session), or `all` (trust
+every command this session). Trust is in-memory and per session: it survives
+interrupt/resume and resets on restart. The WebSocket `tool.approve` message
+carries the same `scope` field. Matching is exact, so approving `go test` never
+green-lights `go test && rm -rf`.
 
 Unanswered approvals expire after the `approval_ttl_minutes` setting (default
 `1440` = 24h; `0` disables expiry). On timeout the pending record is dropped and
@@ -289,7 +299,6 @@ Known keys:
   their own (secret; masked on read — see [Secret handling](#secret-handling))
 - `brave_api_key` — injects a `brave_search` tool into all agents (secret; masked
   on read — see [Secret handling](#secret-handling))
-- `enable_editor_tools` — injects file-editing tools scoped to `--workspace`
 - `trace_retention_days` — prune trace events older than N days (checked at
   startup and once a day); empty or `0` disables pruning
 - `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
@@ -446,6 +455,8 @@ run's event stream (replaying buffered events after `from_seq`).
 | `run.agent_start`       | Agent taking its turn — `{run_id, agent_name}`                                                                                                          |
 | `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
 | `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
+| `run.message`           | One completed assistant message: a turn's full text, interim narration or final answer, authoritative over its `run.step` deltas — `{run_id, text}`     |
+| `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text}`                            |
 | `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
 | `run.tool_result`       | Tool output — `{run_id, tool_call_id, output}`                                                                                                          |
 | `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -17,6 +18,9 @@ type SandboxManager struct {
 	mu        sync.RWMutex
 	sandboxes map[string]sandbox.Sandbox
 	workspace string
+	// trust holds per-session exec_command approval grants, consulted by the
+	// commandGate and updated by the approval resolver.
+	trust *TrustStore
 }
 
 // NewSandboxManager creates a SandboxManager that roots local sandboxes at workspace.
@@ -24,7 +28,26 @@ func NewSandboxManager(workspace string) *SandboxManager {
 	return &SandboxManager{
 		sandboxes: make(map[string]sandbox.Sandbox),
 		workspace: workspace,
+		trust:     NewTrustStore(),
 	}
+}
+
+// Trust exposes the session command-trust store so the approval resolver can
+// record "allow this command" / "allow all" grants for a session.
+func (m *SandboxManager) Trust() *TrustStore { return m.trust }
+
+// commandGate is exec_command's per-call approval gate: approval is required
+// unless the run's session has already trusted this exact command (or all
+// commands). The session id rides in RunContext.Context, set by the runner.
+func (m *SandboxManager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string) (bool, error) {
+	if rc == nil {
+		return true, nil
+	}
+	sid, _ := rc.Context.(string)
+	if sid == "" {
+		return true, nil // no session context → be safe, require approval
+	}
+	return !m.trust.forSession(sid).trusted(commandHash(argsJSON)), nil
 }
 
 // GetOrCreate returns the cached sandbox for the config, building and caching one if absent.
@@ -80,15 +103,24 @@ func (m *SandboxManager) CodeTool(cfg *store.SandboxConfig) (agents.Tool, error)
 	return sandbox.CodeTool(sb, sandbox.CodeToolConfig{}), nil
 }
 
-// SandboxTools returns exec_command plus read_file, write_file and list_files
-// tools for the given sandbox config.
-func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig) ([]agents.Tool, error) {
+// SandboxTools returns exec_command plus read_file, write_file, list_files and
+// apply_patch tools for the given sandbox config. apply_patch (Codex-style
+// multi-file edits) and the file tools all edit through the same Sandbox, so
+// they target the same filesystem exec_command runs in. When commandApproval is
+// set, exec_command is gated per call through the session command-trust store:
+// a command is approved on first use, then trusted per the user's choice.
+func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, commandApproval bool) ([]agents.Tool, error) {
 	sb, err := m.GetOrCreate(cfg)
 	if err != nil {
 		return nil, err
 	}
-	tools := []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+	codeCfg := sandbox.CodeToolConfig{}
+	if commandApproval {
+		codeCfg.NeedsApprovalFunc = m.commandGate
+	}
+	tools := []agents.Tool{sandbox.CodeTool(sb, codeCfg)}
 	tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
+	tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{}))
 	return tools, nil
 }
 

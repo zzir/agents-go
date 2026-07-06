@@ -12,7 +12,7 @@ import { MessageBubble } from '@/features/chat/MessageBubble';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -28,7 +28,7 @@ interface ToolCallData {
 }
 
 interface TurnPart {
-  type: 'text' | 'tools' | 'error' | 'thinking';
+  type: 'text' | 'tools' | 'error' | 'thinking' | 'cancelled' | 'handoff';
   content?: string;
   toolCalls?: ToolCallData[];
 }
@@ -259,6 +259,15 @@ function ErrorCard({ message }: { message: string }) {
   );
 }
 
+function CancelledCard() {
+  return (
+    <div className="cancelled-card">
+      <StopIcon size={16} className="cancelled-card-icon" />
+      <span>Run cancelled</span>
+    </div>
+  );
+}
+
 function MdSegment({ text }: { text: string }) {
   const html = useAsyncMarkdown(text);
   return <div dangerouslySetInnerHTML={{ __html: html }} />;
@@ -277,30 +286,32 @@ function TextContent({ content }: { content: string }) {
   );
 }
 
-/* ---------- process timeline (thinking + tools + interim narration) ---------- */
+/* ---------- process timeline (thinking + tool calls) ---------- */
 
-// Split a turn's parts into the process timeline and the final answer: the
-// trailing text part is the answer; everything else (thinking, tools, interim
-// narration) is process. Errors render separately. While live, the eventual
-// answer is unknowable, so everything stays in the timeline.
-function splitTurnParts(parts: TurnPart[], live: boolean) {
-  const process: TurnPart[] = [];
-  const errors: TurnPart[] = [];
-  let finalText: string | null = null;
-  let finalTextIdx = -1;
-  if (!live) {
-    for (let i = parts.length - 1; i >= 0; i--) {
-      if (parts[i].type === 'error') continue;
-      if (parts[i].type === 'text') finalTextIdx = i;
-      break;
+// Group a turn's parts into render segments: every text part is assistant
+// prose said to the user — interim narration and final answer alike — and
+// renders flat in chronological order; each unbroken run of thinking/tools
+// parts between texts collapses into one process group. Notices (errors,
+// cancellation) render separately at the end. Empty texts are dropped without
+// splitting the group around them.
+type TurnSegment =
+  | { kind: 'text'; content: string }
+  | { kind: 'process'; parts: TurnPart[] };
+
+function buildSegments(parts: TurnPart[]): { segments: TurnSegment[]; notices: TurnPart[] } {
+  const segments: TurnSegment[] = [];
+  const notices: TurnPart[] = [];
+  for (const p of parts) {
+    if (p.type === 'error' || p.type === 'cancelled') { notices.push(p); continue; }
+    if (p.type === 'text') {
+      if (p.content) segments.push({ kind: 'text', content: p.content });
+      continue;
     }
+    const last = segments[segments.length - 1];
+    if (last?.kind === 'process') last.parts.push(p);
+    else segments.push({ kind: 'process', parts: [p] });
   }
-  parts.forEach((p, i) => {
-    if (i === finalTextIdx) { finalText = p.content || null; return; }
-    if (p.type === 'error') { errors.push(p); return; }
-    process.push(p);
-  });
-  return { process, finalText, errors };
+  return { segments, notices };
 }
 
 function TimelineThinking({ content }: { content: string }) {
@@ -311,10 +322,14 @@ function TimelineThinking({ content }: { content: string }) {
   );
 }
 
-function TimelineNarration({ content }: { content: string }) {
-  const html = useAsyncMarkdown(content);
+function TimelineHandoff({ content }: { content: string }) {
   return (
-    <div className="pt-narration markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
+    <div className="pt-entry">
+      <div className="pt-handoff">
+        <ArrowSwitchIcon size={14} />
+        <span>{content}</span>
+      </div>
+    </div>
   );
 }
 
@@ -323,10 +338,13 @@ interface ProcessTimelineProps {
   live: boolean;
   reasoning: string | null;
   compacting?: boolean;
-  onApprove?: (id: string) => void;
+  onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
 }
 
+// One collapsible group of thinking + tool-call parts. `live` marks the group
+// still executing (the trailing one while its run is live): it stays open and
+// shows a status label; settled groups collapse to "N steps".
 function ProcessTimeline({ parts, live, reasoning, compacting, onApprove, onReject }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
@@ -372,7 +390,7 @@ function ProcessTimeline({ parts, live, reasoning, compacting, onApprove, onReje
         <div className="process-timeline">
           {parts.map((p, i) => {
             if (p.type === 'thinking') return <TimelineThinking key={'pt-' + i} content={p.content || ''} />;
-            if (p.type === 'text') return <TimelineNarration key={'pt-' + i} content={p.content || ''} />;
+            if (p.type === 'handoff') return <TimelineHandoff key={'pt-' + i} content={p.content || ''} />;
             if (p.type === 'tools') {
               return p.toolCalls!.map(tc => (
                 <ToolCallCard
@@ -408,7 +426,7 @@ interface TurnBlockProps {
   reasoning: string | null;
   isLive: boolean;
   liveAgentName?: string | null;
-  onApprove?: (id: string) => void;
+  onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   regenMessageId?: string | null;
   regenContent?: string | null;
@@ -425,10 +443,15 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
-  const { process, finalText, errors } = useMemo(
-    () => splitTurnParts(parts, isLive),
-    [parts, isLive],
-  );
+  const { segments, notices } = useMemo(() => buildSegments(parts), [parts]);
+
+  // While live, the trailing process group is the one still executing — live
+  // reasoning and the status label attach there; earlier groups have settled.
+  // When the trailing segment is text (or the turn is empty) but reasoning is
+  // already streaming, a tail group holds it until the next part arrives.
+  const lastSeg = segments[segments.length - 1];
+  const activeIdx = isLive && lastSeg?.kind === 'process' ? segments.length - 1 : -1;
+  const liveTail = isLive && activeIdx === -1 && !!reasoning;
 
   const turnText = useMemo(
     () => parts.filter(p => p.type === 'text').map(p => p.content || '').join('\n\n'),
@@ -447,23 +470,39 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
 
   return (
     <div className="message message-turn">
-      <ProcessTimeline
-        parts={process}
-        live={isLive}
-        reasoning={isLive ? reasoning : null}
-        compacting={isLive ? compacting : false}
-        onApprove={onApprove}
-        onReject={onReject}
-      />
-      {finalText && <TextContent content={finalText} />}
+      {segments.map((seg, i) =>
+        seg.kind === 'text'
+          ? <TextContent key={'seg-' + i} content={seg.content} />
+          : <ProcessTimeline
+              key={'seg-' + i}
+              parts={seg.parts}
+              live={i === activeIdx}
+              reasoning={i === activeIdx ? reasoning : null}
+              compacting={i === activeIdx ? compacting : false}
+              onApprove={onApprove}
+              onReject={onReject}
+            />
+      )}
+      {liveTail && (
+        <ProcessTimeline
+          parts={[]}
+          live
+          reasoning={reasoning}
+          compacting={compacting}
+          onApprove={onApprove}
+          onReject={onReject}
+        />
+      )}
       {streaming && (
         <div
           className="turn-text markdown-body streaming"
           dangerouslySetInnerHTML={{ __html: renderMarkdownLite(streaming + '▋') }}
         />
       )}
-      {errors.map((part, i) => (
-        <ErrorCard key={'err-' + i} message={part.content || 'Unknown error'} />
+      {notices.map((part, i) => (
+        part.type === 'cancelled'
+          ? <CancelledCard key={'notice-' + i} />
+          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} />
       ))}
       {isLive && isEmpty && !compacting && (
         <div className="thinking-indicator">
@@ -473,7 +512,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           {liveAgentName && <span className="thinking-agent">{liveAgentName}</span>}
         </div>
       )}
-      {isLive && compacting && process.length === 0 && !reasoning && (
+      {isLive && compacting && activeIdx === -1 && !liveTail && (
         <div className="thinking-indicator">
           <div className="thinking-dots">
             <span /><span /><span />
@@ -630,7 +669,7 @@ interface ChatViewProps {
   liveAgentName: string | null;
   onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
   onCancel: () => void;
-  onApprove?: (id: string) => void;
+  onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onFork?: (id: string) => void;
   onRegenerate?: (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => void;

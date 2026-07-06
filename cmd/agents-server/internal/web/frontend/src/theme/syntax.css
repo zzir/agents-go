@@ -36,6 +36,12 @@
 .hljs-regexp { color: #116329; }
 .hljs-deletion { color: #82071e; background: #ffebe9; }
 .hljs-addition { background: #dafbe1; }
+/* GitHub-style full-row diff background. hljs emits one span per +/- line with
+   the newline OUTSIDE the span, so `display: block` would double the breaks
+   (block wrap + the pre newline) and leave a blank line between rows.
+   inline-block + width:100% tints the whole row with no extra blank line. */
+.hljs-addition,
+.hljs-deletion { display: inline-block; width: 100%; }
 .hljs-subst { color: #24292e; }
 .hljs-params { color: #24292e; }
 .hljs-property { color: #0550ae; }

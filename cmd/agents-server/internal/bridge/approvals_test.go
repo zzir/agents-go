@@ -93,7 +93,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 		t.Fatalf("register blocker: %v", err)
 	}
 
-	_, err = runner.ResolveApproval(ctx, "call-busy-1", true, "", nil)
+	_, err = runner.ResolveApproval(ctx, "call-busy-1", true, ApprovalOnce, "", nil)
 	var busy ErrSessionBusy
 	if !errors.As(err, &busy) {
 		t.Fatalf("want ErrSessionBusy, got %v", err)
@@ -105,7 +105,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	// Once the session frees up, the same decision goes through and consumes
 	// the row.
 	runner.hub.finish("blocker-run", false)
-	runID, err := runner.ResolveApproval(ctx, "call-busy-1", true, "", nil)
+	runID, err := runner.ResolveApproval(ctx, "call-busy-1", true, ApprovalOnce, "", nil)
 	if err != nil {
 		t.Fatalf("resolve after free: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 
 	// A second decision for the same call is not found (single execution).
-	if _, err := runner.ResolveApproval(ctx, "call-busy-1", true, "", nil); !errors.Is(err, store.ErrNotFound) {
+	if _, err := runner.ResolveApproval(ctx, "call-busy-1", true, ApprovalOnce, "", nil); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("second resolve: want ErrNotFound, got %v", err)
 	}
 }

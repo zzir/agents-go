@@ -51,12 +51,25 @@ interface ErrorPart {
   content: string;
 }
 
+interface CancelledPart {
+  type: 'cancelled';
+  content?: string;
+}
+
 interface ThinkingPart {
   type: 'thinking';
   content: string;
 }
 
-type TurnPart = ToolsPart | TextPart | ErrorPart | ThinkingPart;
+// A live-only marker for an agent switch (run.handoff), rendered inside the
+// turn's process timeline. Never persisted — on reload the transfer_to_* tool
+// call card conveys the same information.
+interface HandoffPart {
+  type: 'handoff';
+  content: string;
+}
+
+type TurnPart = ToolsPart | TextPart | ErrorPart | CancelledPart | ThinkingPart | HandoffPart;
 
 interface UserEntry {
   role: 'user';
@@ -149,6 +162,13 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
       if (m.id) turn!.messageId = m.id;
       if (m.run_id) turn!.runId = m.run_id;
       turn!.parts.push({ type: 'error', content: m.content });
+    } else if (m.role === 'cancelled') {
+      // A run stopped by the user (or a deadline). Content is optional — the
+      // card renders a fixed label — so this branch does not gate on it.
+      ensureTurn();
+      if (m.id) turn!.messageId = m.id;
+      if (m.run_id) turn!.runId = m.run_id;
+      turn!.parts.push({ type: 'cancelled', content: m.content || '' });
     } else if (m.role === 'reasoning') {
       if (m.content) {
         ensureTurn();

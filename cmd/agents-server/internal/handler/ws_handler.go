@@ -123,7 +123,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal tool.approve")
 				continue
 			}
-			go h.resolve(conn, subs, msg.ToolCallID, true, "")
+			go h.resolve(conn, subs, msg.ToolCallID, true, bridge.ParseApprovalScope(msg.Scope), "")
 
 		case "tool.reject":
 			var msg protocol.ToolReject
@@ -131,7 +131,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal tool.reject")
 				continue
 			}
-			go h.resolve(conn, subs, msg.ToolCallID, false, msg.Reason)
+			go h.resolve(conn, subs, msg.ToolCallID, false, bridge.ApprovalOnce, msg.Reason)
 
 		case "run.cancel":
 			var msg protocol.RunCancel
@@ -183,9 +183,9 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, subs *connSubs, msg pro
 
 // resolve applies an approve/reject decision (persisted by the runner) and
 // subscribes conn to the resumed run.
-func (h *WSHandler) resolve(conn *server.WSConn, subs *connSubs, toolCallID string, approve bool, reason string) {
+func (h *WSHandler) resolve(conn *server.WSConn, subs *connSubs, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := zerolog.Ctx(conn.Context())
-	runID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, reason, nil)
+	runID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		log.Error().Err(err).Str("tool_call_id", toolCallID).Msg("resolve approval failed")
 		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{

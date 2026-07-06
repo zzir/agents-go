@@ -110,7 +110,7 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxI
 // persisted RunState (so it works after a restart and from any transport),
 // deletes the pending record, and resumes via the hub. onDone fires when the
 // continuation terminates (e.g. to persist a further interruption).
-func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, reason string, onDone func(*RunResult)) (string, error) {
+func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunResult)) (string, error) {
 	if r.Deps.PendingApprovals == nil {
 		return "", errors.New("approvals are not persisted")
 	}
@@ -134,6 +134,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	if approve {
 		state.Approve(item, false)
+		r.applyCommandTrust(scope, item, pending.SessionID)
 	} else {
 		state.Reject(item, false, reason)
 	}
@@ -170,4 +171,49 @@ func findApprovalItem(state *agents.RunState, callID string) *agents.ToolApprova
 		}
 	}
 	return nil
+}
+
+// ApprovalScope controls how far an approve decision extends for exec_command:
+// once = just this call; same = trust this exact command for the rest of the
+// session; all = trust every command for the session. Ignored for other tools.
+type ApprovalScope string
+
+// Approval scopes for ResolveApproval — how far an approve decision extends.
+const (
+	ApprovalOnce        ApprovalScope = "once"
+	ApprovalSameCommand ApprovalScope = "same"
+	ApprovalAll         ApprovalScope = "all"
+)
+
+// ParseApprovalScope maps a client scope string to an ApprovalScope, defaulting
+// to once for an empty or unknown value.
+func ParseApprovalScope(s string) ApprovalScope {
+	switch ApprovalScope(s) {
+	case ApprovalSameCommand:
+		return ApprovalSameCommand
+	case ApprovalAll:
+		return ApprovalAll
+	default:
+		return ApprovalOnce
+	}
+}
+
+// execCommandToolName is the fixed name of the sandbox shell tool whose
+// executions carry per-session command-trust grants.
+const execCommandToolName = "exec_command"
+
+// applyCommandTrust records a session-level exec_command grant per the approval
+// scope. It is a no-op for non-exec_command tools, an empty session, or the
+// once scope.
+func (r *Runner) applyCommandTrust(scope ApprovalScope, item *agents.ToolApprovalItem, sessionID string) {
+	if item.ToolName != execCommandToolName || sessionID == "" || r.Deps.SandboxManager == nil {
+		return
+	}
+	trust := r.Deps.SandboxManager.Trust().forSession(sessionID)
+	switch scope {
+	case ApprovalSameCommand:
+		trust.allowCommand(commandHash(item.Arguments))
+	case ApprovalAll:
+		trust.allowAll()
+	}
 }

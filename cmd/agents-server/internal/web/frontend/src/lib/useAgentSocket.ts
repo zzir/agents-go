@@ -162,7 +162,9 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         // grow a second live turn for a run we already track.
         const hasTurn = s.messages.some(m => m.role === 'turn' && (m as { runId?: string }).runId === p.run_id);
         return {
-          ...s, running: true, compacting: false, liveRunId: p.run_id, liveStartedAt: Date.now(), liveAgentName: null, loaded: true,
+          ...s, running: true, compacting: false, liveRunId: p.run_id,
+          liveStartedAt: hasTurn ? (s.liveStartedAt ?? Date.now()) : Date.now(),
+          liveAgentName: null, loaded: true,
           messages: hasTurn ? s.messages : [...s.messages, { role: 'turn', parts: [], runId: p.run_id }],
           traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
         };
@@ -189,6 +191,55 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       });
     });
 
+    // One completed assistant message — a turn's full text, interim narration
+    // and final answer alike. Authoritative over the run.step deltas that
+    // previewed it: the delta buffer is dropped so the tool_call flush (and
+    // run.output) cannot append the same text again.
+    ws.on('run.message', (p: { run_id: string; text: string }) => {
+      const sid = runMapRef.current[p.run_id];
+      if (!sid || !p.text) return;
+      streamBufsRef.current[p.run_id] = '';
+      updateSS(sid, s => {
+        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
+        const last = msgs[msgs.length - 1];
+        if (last?.role !== 'turn') return { ...s, streaming: '' };
+        const parts = [...(last.parts || [])];
+        // Hub replays (reconnect / re-subscribe) re-deliver run.message for
+        // turns already in the timeline: appending again would duplicate.
+        if (parts.some(pt => pt.type === 'text' && pt.content === p.text)) {
+          return { ...s, streaming: '' };
+        }
+        parts.push({ type: 'text', content: p.text });
+        msgs[msgs.length - 1] = { ...last, parts };
+        return { ...s, messages: msgs, streaming: '' };
+      });
+    });
+
+    // One completed reasoning block — a turn's full thinking text,
+    // authoritative over the run.reasoning deltas that previewed it. Freezing
+    // it as a thinking part (and resetting the delta buffer) scopes the live
+    // "Thinking…" preview to the current turn and is the only thinking signal
+    // on backends that stream no reasoning deltas.
+    ws.on('run.reasoning_item', (p: { run_id: string; text: string }) => {
+      const sid = runMapRef.current[p.run_id];
+      if (!sid || !p.text) return;
+      reasoningBufsRef.current[p.run_id] = '';
+      updateSS(sid, s => {
+        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
+        const last = msgs[msgs.length - 1];
+        if (last?.role !== 'turn') return { ...s, reasoning: '' };
+        const parts = [...(last.parts || [])];
+        // Hub replays re-deliver run.reasoning_item for turns already in the
+        // timeline: appending again would duplicate.
+        if (parts.some(pt => pt.type === 'thinking' && pt.content === p.text)) {
+          return { ...s, reasoning: '' };
+        }
+        parts.push({ type: 'thinking', content: p.text });
+        msgs[msgs.length - 1] = { ...last, parts };
+        return { ...s, messages: msgs, reasoning: '' };
+      });
+    });
+
     ws.on('run.output', (p: { run_id: string; final_output?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
@@ -203,7 +254,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         if (last?.role === 'turn' && (text || thinking)) {
           const parts = [...(last.parts || [])];
           if (thinking) parts.push({ type: 'thinking', content: thinking });
-          if (text) parts.push({ type: 'text', content: text });
+          // run.message already appended the final turn's text; only add it
+          // here when that event did not (older server, no-item edge cases).
+          if (text && !parts.some(pt => pt.type === 'text' && pt.content === text)) {
+            parts.push({ type: 'text', content: text });
+          }
           msgs[msgs.length - 1] = { ...last, parts };
         }
         return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
@@ -333,9 +388,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
       delete reasoningBufsRef.current[p.run_id];
+      // Keep liveStartedAt so the timer resumes from the original start when
+      // the run continues after approval. running=false already hides the
+      // live timer; clearing liveStartedAt would lose the original timestamp.
       updateSS(sid, s => ({
         ...s, streaming: '', reasoning: '', running: false, compacting: false,
-        liveRunId: null, liveStartedAt: null, liveAgentName: null,
+        liveRunId: null, liveAgentName: null,
       }));
     });
 
@@ -351,12 +409,21 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       updateSS(sid, s => ({ ...s, compacting: p.phase === 'started' }));
     });
 
-    ws.on('run.handoff', (p: { run_id: string; from: string; to: string }) => {
+    // The completed agent switch becomes a part INSIDE the live turn: the turn
+    // must stay the last message — every stream handler above and ChatView's
+    // isLive check anchor on it, so a message appended after it would freeze
+    // live rendering for the rest of the run. handoff_requested events (no
+    // `to` yet) are preview noise and are skipped.
+    ws.on('run.handoff', (p: { run_id: string; from: string; to?: string }) => {
       const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
-      updateSS(sid, s => ({
-        ...s, messages: [...s.messages, { role: 'system', content: 'Handoff: ' + p.from + ' → ' + p.to }],
-      }));
+      if (!sid || !p.to) return;
+      updateSS(sid, s => {
+        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
+        const last = msgs[msgs.length - 1];
+        if (last?.role !== 'turn') return s;
+        msgs[msgs.length - 1] = { ...last, parts: [...(last.parts || []), { type: 'handoff', content: p.from + ' → ' + p.to }] };
+        return { ...s, messages: msgs };
+      });
     });
 
     ws.on('trace.span', (p: { run_id: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {

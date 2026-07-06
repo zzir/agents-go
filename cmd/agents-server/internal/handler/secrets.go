@@ -225,6 +225,7 @@ func restoreSandboxConfig(typ string, incoming, prev json.RawMessage) json.RawMe
 func sanitizeAgentConfig(ac *store.AgentConfig) {
 	ac.APIKey = maskSecret(ac.APIKey)
 	ac.FallbackModels = maskFallbackModels(ac.FallbackModels)
+	ac.ChatGPTToken = maskSecret(ac.ChatGPTToken)
 }
 
 // secretSettingKeys are the settings whose values are secrets and therefore

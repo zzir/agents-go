@@ -19,7 +19,6 @@ import (
 	openaiProvider "github.com/zzir/agents-go/models/openai"
 	"github.com/zzir/agents-go/skills"
 	"github.com/zzir/agents-go/tools/bravesearch"
-	"github.com/zzir/agents-go/tools/editor"
 )
 
 // AgentDeps holds all the dependencies needed to build a fully configured agent.
@@ -173,8 +172,23 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	}
 
 	// HITL tool approval and structured-output schema — decoded in spec.
+	// "exec_command" in the approve list opts INTO per-command session approval,
+	// but must not ride the SDK's ApproveTools OR — that forces approval on every
+	// call and defeats session trust. Route it to the sandbox command gate
+	// instead and strip it from the SDK list.
+	approveCommands := false
 	if len(spec.ApproveTools) > 0 {
-		agent.ApproveTools = spec.ApproveTools
+		filtered := make([]string, 0, len(spec.ApproveTools))
+		for _, name := range spec.ApproveTools {
+			if name == "exec_command" {
+				approveCommands = true
+				continue
+			}
+			filtered = append(filtered, name)
+		}
+		if len(filtered) > 0 {
+			agent.ApproveTools = filtered
+		}
 	}
 	agent.OutputType = spec.OutputType
 
@@ -243,7 +257,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	if sandboxID != "" {
 		sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
 		if err == nil {
-			tools, err := deps.SandboxManager.SandboxTools(sbCfg)
+			tools, err := deps.SandboxManager.SandboxTools(sbCfg, approveCommands)
 			if err != nil {
 				log.Warn().Err(err).Str("sandbox", sbCfg.Name).Msg("failed to create sandbox tools")
 			} else {
@@ -264,11 +278,6 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		} else {
 			log.Warn().Err(err).Msg("failed to create brave_search tool")
 		}
-	}
-
-	// Editor tools
-	if settingValue(ctx, deps.Settings, "enable_editor_tools") == "true" && deps.Workspace != "" {
-		agent.Tools = append(agent.Tools, editor.NewTools(deps.Workspace)...)
 	}
 
 	// Skills — loaded from <root>/skills, matching where SkillHandler manages
@@ -302,7 +311,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		}
 	}
 
-	// Handoffs — recursive build over the decoded target ids.
+	// Handoffs — recursive build over the decoded target ids. Each target that
+	// carries its own provider gets its model pre-resolved into ModelImpl so the
+	// run loop uses the target's backend, not the run-level (main agent's) one.
 	if len(spec.Handoffs) > 0 {
 		for _, hID := range spec.Handoffs {
 			hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, bc)
@@ -316,6 +327,13 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 				}
 				return nil, fmt.Errorf("agent %q handoff %q: %w", ac.Name, hID, err)
 			}
+			if hResult.Provider != nil && hResult.Agent.Model != "" && hResult.Agent.ModelImpl == nil {
+				m, merr := hResult.Provider.GetModel(hResult.Agent.Model)
+				if merr != nil {
+					return nil, fmt.Errorf("agent %q handoff %q: resolve model: %w", ac.Name, hID, merr)
+				}
+				hResult.Agent.ModelImpl = m
+			}
 			agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
 		}
 	}
@@ -327,17 +345,15 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 // staticLocalToolNames returns the fixed names of every tool the bridge
 // itself can attach to an agent in buildAgentFromConfig: the sandbox tools
-// (sandbox.CodeTool + sandbox.FileTools defaults), the Brave Search tool, the
-// editor tools, and the skills reader. MCP tools never appear here — they are
-// prefixed "<server name>__" at connect time (see McpManager.Connect).
+// (sandbox.CodeTool + sandbox.FileTools + apply_patch), the Brave Search tool,
+// and the skills reader. MCP tools never appear here — they are prefixed
+// "<server name>__" at connect time (see McpManager.Connect).
 func staticLocalToolNames() []string {
 	return []string{
-		// sandbox
-		"exec_command", "read_file", "write_file", "list_files",
+		// sandbox (exec + file tools + apply_patch)
+		"exec_command", "read_file", "write_file", "list_files", "apply_patch",
 		// brave_api_key setting
 		"brave_search",
-		// enable_editor_tools setting (tools/editor)
-		"view_file", "create_file", "str_replace", "insert_text",
 		// skills
 		"read_skill_file",
 	}
@@ -439,17 +455,7 @@ func newChatGPTMiddleware(accountID string) option.Middleware {
 					body["store"] = false
 					delete(body, "previous_response_id")
 					if input, ok := body["input"].([]any); ok {
-						cleaned := make([]any, 0, len(input))
-						for _, item := range input {
-							if m, ok := item.(map[string]any); ok {
-								delete(m, "id")
-								if m["type"] == "item_reference" {
-									continue
-								}
-							}
-							cleaned = append(cleaned, item)
-						}
-						body["input"] = cleaned
+						body["input"] = sanitizeChatGPTInput(input)
 					}
 					patched, _ := json.Marshal(body)
 					raw = patched
