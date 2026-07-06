@@ -13,7 +13,9 @@ type AgentConfigStore struct {
 	*CrudStore[AgentConfig]
 }
 
-// NewAgentConfigStore returns an AgentConfigStore backed by db.
+// NewAgentConfigStore returns an AgentConfigStore backed by db. Agent-name
+// uniqueness is enforced by the DB (idx_agent_configs_name); a duplicate
+// surfaces as a UNIQUE-constraint error that handlers map to 409.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
 	return &AgentConfigStore{NewCrudStore[AgentConfig](db, "agent config", "updated_at DESC")}
 }
@@ -35,17 +37,11 @@ func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig
 }
 
 // SaveChatGPTToken persists the serialized ChatGPT OAuth token for the given
-// agent, updating only the chatgpt_token column.
+// agent, updating only the chatgpt_token column. updateColumn enforces the row
+// exists (ErrNotFound otherwise) so a token for a non-existent agent doesn't
+// silently vanish.
 func (s *AgentConfigStore) SaveChatGPTToken(ctx context.Context, id, tokenJSON string) error {
-	_, err := s.db.NewUpdate().
-		Model((*AgentConfig)(nil)).
-		Set("chatgpt_token = ?", tokenJSON).
-		Where("id = ?", id).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("saving chatgpt token for agent %s: %w", id, err)
-	}
-	return nil
+	return updateColumn(ctx, s.db, (*AgentConfig)(nil), "agent chatgpt token", id, "chatgpt_token", tokenJSON)
 }
 
 // ClearChatGPTToken removes the ChatGPT OAuth token for the given agent.

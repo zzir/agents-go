@@ -1,6 +1,13 @@
 package store
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/uptrace/bun"
+)
 
 // ErrNotFound reports that the requested row does not exist. Store methods
 // wrap it (errors.Is-compatible) so handlers can map it to a 404 instead of
@@ -17,6 +24,65 @@ type rowsAffected interface {
 func requireRows(res rowsAffected) error {
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// UniqueViolation reports the offending column list (e.g. "name" or
+// "type, name", table prefixes stripped) and true when err is a SQLite UNIQUE
+// constraint failure, letting handlers map a duplicate to 409 without a
+// racy pre-check. Best-effort by message, so it works across sqlite drivers.
+func UniqueViolation(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	const marker = "UNIQUE constraint failed: "
+	i := strings.Index(err.Error(), marker)
+	if i < 0 {
+		return "", false
+	}
+	rest := err.Error()[i+len(marker):]
+	if end := strings.IndexAny(rest, "\n\r"); end >= 0 {
+		rest = rest[:end]
+	}
+	// rest is "table.col[, table.col...]", sometimes with a trailing driver
+	// suffix like " (2067)". Strip table prefixes and keep only the column
+	// identifiers.
+	cols := make([]string, 0, 2)
+	for part := range strings.SplitSeq(rest, ",") {
+		part = strings.TrimSpace(part)
+		if dot := strings.LastIndex(part, "."); dot >= 0 {
+			part = part[dot+1:]
+		}
+		part = identifierPrefix(part)
+		if part != "" {
+			cols = append(cols, part)
+		}
+	}
+	return strings.Join(cols, ", "), len(cols) > 0
+}
+
+// identifierPrefix returns the leading run of identifier characters, dropping
+// any trailing driver noise (e.g. a " (2067)" error-code suffix).
+func identifierPrefix(s string) string {
+	for i, r := range s {
+		if r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// updateColumn sets a single column on the row identified by id, enforcing
+// that the row existed (ErrNotFound otherwise) so a silent no-op update can't
+// masquerade as success. label names the entity for error messages.
+func updateColumn(ctx context.Context, db *bun.DB, model any, label, id, column string, value any) error {
+	res, err := db.NewUpdate().Model(model).Set(column+" = ?", value).Where("id = ?", id).Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
+	if err != nil {
+		return fmt.Errorf("updating %s %s: %w", label, id, err)
 	}
 	return nil
 }

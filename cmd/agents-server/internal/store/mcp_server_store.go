@@ -12,7 +12,10 @@ type McpServerStore struct {
 	*CrudStore[McpServerConfig]
 }
 
-// NewMcpServerStore returns an McpServerStore backed by db.
+// NewMcpServerStore returns an McpServerStore backed by db. Server-name
+// uniqueness (the name is the tool-prefix namespace) is enforced by the DB
+// (idx_mcp_servers_name); a duplicate surfaces as a UNIQUE-constraint error
+// that handlers map to 409.
 func NewMcpServerStore(db *bun.DB) *McpServerStore {
 	return &McpServerStore{NewCrudStore[McpServerConfig](db, "mcp server config", "updated_at DESC")}
 }
@@ -37,15 +40,10 @@ func (s *McpServerStore) Update(ctx context.Context, id string, m *McpServerConf
 // updating only the oauth_token column so it is not cleared by regular CRUD
 // updates.
 func (s *McpServerStore) SaveOAuthToken(ctx context.Context, id, tokenJSON string) error {
-	_, err := s.db.NewUpdate().
-		Model((*McpServerConfig)(nil)).
-		Set("oauth_token = ?", tokenJSON).
-		Where("id = ?", id).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("saving oauth token for %s: %w", id, err)
-	}
-	return nil
+	// updateColumn enforces the row exists, so a token written for a deleted
+	// server surfaces as ErrNotFound instead of a silent no-op the OAuth flow
+	// would mistake for success.
+	return updateColumn(ctx, s.db, (*McpServerConfig)(nil), "mcp server oauth token", id, "oauth_token", tokenJSON)
 }
 
 // ClearOAuthToken removes the persisted OAuth token for the given server.

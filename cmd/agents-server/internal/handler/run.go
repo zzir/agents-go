@@ -220,12 +220,15 @@ func (h *RunHandler) Events(c *gin.Context) {
 	// The events buffer matches the hub's replay buffer so replaying a full
 	// history is lossless; live events beyond that are dropped under
 	// backpressure (client backfills via from_seq after reconnecting).
-	// Terminal events travel on their own guaranteed channel — a run emits
-	// exactly one per segment — so a slow client can never miss the ending.
+	// Only a FINAL event (output/error/cancelled) closes the stream, via its
+	// own guaranteed channel. run.interrupted is NOT final under same-id
+	// resume — a replayed historical interrupt must flow as an ordinary event,
+	// or a late subscriber to a resumed+completed run would be cut off at the
+	// old pause and miss the real output.
 	events := make(chan bridge.SeqEnvelope, bridge.EventBufferCap)
 	terminal := make(chan bridge.SeqEnvelope, 1)
 	sink := func(item bridge.SeqEnvelope) {
-		if bridge.IsTerminalRunEvent(item.Env.Type) {
+		if bridge.IsFinalRunEvent(item.Env.Type) {
 			select {
 			case terminal <- item:
 			default:

@@ -36,6 +36,12 @@ func validateGuardrail(g *store.Guardrail) string {
 	if g.Name == "" || g.Type == "" || g.Mode == "" {
 		return "name, type, and mode are required"
 	}
+	// Enforce the type/mode enums and the mode's config (regex compiles, etc.)
+	// at save time so a definition can't be stored in a state that only fails
+	// when an agent references it.
+	if err := bridge.ValidateGuardrailDef(g); err != nil {
+		return err.Error()
+	}
 	return ""
 }
 
@@ -63,7 +69,7 @@ func (h *GuardrailHandler) Create(c *gin.Context) {
 		return
 	}
 	if err := h.store.Create(c.Request.Context(), &g); err != nil {
-		internalError(c, err)
+		saveError(c, err) // duplicate (type, name) -> 409
 		return
 	}
 	c.JSON(http.StatusCreated, g)
@@ -117,7 +123,7 @@ func (h *GuardrailHandler) Update(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	if err := h.store.Update(ctx, id, &g); err != nil {
-		storeError(c, err)
+		saveError(c, err) // duplicate (type, name) -> 409, not-found -> 404
 		return
 	}
 	updated, err := h.store.Get(ctx, id)

@@ -16,6 +16,9 @@ type AgentConfigHandler struct {
 	// mcpServers, when set, lets save-time validation resolve the MCP server
 	// ids referenced by the tools field and predict tool-name collisions.
 	mcpServers *store.McpServerStore
+	// guardrails, when set, lets save-time validation reject unresolvable
+	// guardrail names before they silently no-op at run time.
+	guardrails *bridge.GuardrailResolver
 }
 
 // NewAgentConfigHandler returns a handler backed by the given store.
@@ -30,9 +33,17 @@ func (h *AgentConfigHandler) WithMcpStore(m *store.McpServerStore) *AgentConfigH
 	return h
 }
 
+// WithGuardrails attaches the guardrail resolver used to validate the guardrail
+// names referenced by an agent config. It returns h for chaining.
+func (h *AgentConfigHandler) WithGuardrails(g *bridge.GuardrailResolver) *AgentConfigHandler {
+	h.guardrails = g
+	return h
+}
+
 // validateAgentConfig checks an incoming Create/Update body against the
 // constraints the run would otherwise only hit at run time. It reports the
-// failure to c and returns false when the request is rejected.
+// failure to c and returns false when the request is rejected. Name uniqueness
+// is enforced by the DB (mapped to 409 by saveError), not checked here.
 func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, req *agentConfigReq) bool {
 	if req.Name == "" {
 		badRequest(c, "name is required")
@@ -45,6 +56,20 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, req *agentConfi
 	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, req.ToolsJSON); err != nil {
 		badRequest(c, err.Error())
 		return false
+	}
+	// Reject config whose JSON-encoded fields don't parse/resolve, rather than
+	// silently no-op'ing at run time (a guardrail or output schema that "looks
+	// enabled" but never runs is the dangerous case). The same decode backs the
+	// build, so the structural contract lives in exactly one place.
+	if _, err := bridge.DecodeAgentSpec(req.toModel()); err != nil {
+		badRequest(c, err.Error())
+		return false
+	}
+	if h.guardrails != nil {
+		if err := h.guardrails.ValidateNames(c.Request.Context(), req.InputGuardrails, req.OutputGuardrails); err != nil {
+			badRequest(c, err.Error())
+			return false
+		}
 	}
 	return true
 }
@@ -180,7 +205,7 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 	ac.APIKey = resolveSecret(ac.APIKey, "")
 	ac.FallbackModels = restoreFallbackModels(ac.FallbackModels, "")
 	if err := h.store.Create(c.Request.Context(), ac); err != nil {
-		internalError(c, err)
+		saveError(c, err) // duplicate name -> 409
 		return
 	}
 	sanitizeAgentConfig(ac)
@@ -245,7 +270,7 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	ac.APIKey = resolveSecret(ac.APIKey, prevKey)
 	ac.FallbackModels = restoreFallbackModels(ac.FallbackModels, prevFallback)
 	if err := h.store.Update(ctx, id, ac); err != nil {
-		storeError(c, err)
+		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
 	}
 	updated, err := h.store.Get(ctx, id)

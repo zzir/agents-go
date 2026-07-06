@@ -74,31 +74,20 @@ func TestAgentConfigRejectsUsePreviousResponseID(t *testing.T) {
 // Two selected MCP servers sharing a name would prefix all their tools
 // identically ("<name>__"), a guaranteed run-time collision — rejected at
 // save time with the offending name in the message.
-func TestAgentConfigRejectsDuplicateMcpServerNames(t *testing.T) {
+func TestAgentConfigRejectsDoubleSelectedMcpServer(t *testing.T) {
 	engine, mcpStore := newAgentEngine(t)
 	ctx := context.Background()
 
 	s1 := &store.McpServerConfig{Name: "files", TransportType: "stdio"}
-	s2 := &store.McpServerConfig{Name: "files", TransportType: "stdio"}
 	if err := mcpStore.Create(ctx, s1); err != nil {
 		t.Fatal(err)
 	}
-	if err := mcpStore.Create(ctx, s2); err != nil {
-		t.Fatal(err)
-	}
 
-	body := `{"name":"a","tools":"[\"` + s1.ID + `\",\"` + s2.ID + `\"]"}`
+	// Cross-server name collisions are prevented by the unique server name, so
+	// the remaining case is the same server selected twice, which would
+	// duplicate every one of its tools.
+	body := `{"name":"a","tools":"[\"` + s1.ID + `\",\"` + s1.ID + `\"]"}`
 	w := doJSON(t, engine, http.MethodPost, "/agents", body)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("create: got %d, want 400 (body %s)", w.Code, w.Body.String())
-	}
-	if msg := errMessage(t, w.Body.Bytes()); !strings.Contains(msg, `"files"`) {
-		t.Errorf("error should name the colliding server name: %q", msg)
-	}
-
-	// The same server selected twice duplicates every one of its tools.
-	body = `{"name":"a","tools":"[\"` + s1.ID + `\",\"` + s1.ID + `\"]"}`
-	w = doJSON(t, engine, http.MethodPost, "/agents", body)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("create with doubled id: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
@@ -122,14 +111,20 @@ func TestAgentConfigAcceptsValidToolSelections(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Distinct names and unknown ids save (the validator only rejects statically
+	// certain collisions); a malformed tools list is now rejected rather than
+	// silently dropping every MCP tool at run time.
 	for name, body := range map[string]string{
 		"distinct names": `{"name":"a","tools":"[\"` + s1.ID + `\",\"` + s2.ID + `\"]"}`,
 		"unknown id":     `{"name":"b","tools":"[\"` + s1.ID + `\",\"gone\"]"}`,
-		"malformed json": `{"name":"c","tools":"not-json"}`,
 		"no tools":       `{"name":"d"}`,
 	} {
 		if w := doJSON(t, engine, http.MethodPost, "/agents", body); w.Code != http.StatusCreated {
 			t.Errorf("%s: got %d, want 201 (body %s)", name, w.Code, w.Body.String())
 		}
+	}
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"c","tools":"not-json"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed tools: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
 }

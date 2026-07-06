@@ -72,9 +72,13 @@ func userInputText(items []agents.TResponseInputItem) string {
 
 // buildAgentRegistry builds the agent from its config and returns a name→agent
 // registry covering it and all reachable handoff targets, as required by
-// agents.RunStateFromJSON.
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID string) (map[string]*agents.Agent, error) {
-	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, "")
+// agents.RunStateFromJSON. It must build with the run's sandboxID: the
+// restored state's CurrentAgent is resolved FROM this registry and is the very
+// agent the SDK re-runs, so omitting the sandbox here strips its
+// sandbox-backed tools (exec_command, read_file, …) and the approved call
+// fails with "tool not found on agent".
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID string) (map[string]*agents.Agent, error) {
+	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +119,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", err
 	}
 
-	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID)
+	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID)
 	if err != nil {
 		return "", fmt.Errorf("rebuilding agent: %w", err)
 	}

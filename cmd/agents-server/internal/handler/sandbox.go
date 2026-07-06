@@ -68,25 +68,47 @@ func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) 
 		badRequest(c, "name is required")
 		return false
 	}
-	if req.Type == "" {
-		badRequest(c, "type is required")
-		return false
-	}
-	if req.Type == "local" && !h.allowLocalSandbox {
-		forbidden(c, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it")
-		return false
-	}
-	if req.Type == "docker" {
+	switch req.Type {
+	case "local":
+		if !h.allowLocalSandbox {
+			forbidden(c, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it")
+			return false
+		}
+	case "docker":
 		var dc struct {
 			Host string `json:"host"`
 		}
 		if len(req.Config) > 0 {
-			_ = json.Unmarshal(req.Config, &dc)
+			// A malformed docker config must be rejected, not ignored: swallowing
+			// the error would leave dc.Host empty and let a remote-host config
+			// slip past the block below.
+			if err := json.Unmarshal(req.Config, &dc); err != nil {
+				badRequest(c, "config is not valid JSON: "+err.Error())
+				return false
+			}
 		}
 		if dc.Host != "" {
 			badRequest(c, "remote Docker daemon is not supported; use a local daemon or the SSH sandbox for remote hosts")
 			return false
 		}
+	case "ssh":
+		var sc store.SSHConfig
+		if len(req.Config) > 0 {
+			if err := json.Unmarshal(req.Config, &sc); err != nil {
+				badRequest(c, "config is not valid JSON: "+err.Error())
+				return false
+			}
+		}
+		if sc.Addr == "" {
+			badRequest(c, "ssh sandbox requires config.addr")
+			return false
+		}
+	case "":
+		badRequest(c, "type is required")
+		return false
+	default:
+		badRequest(c, "type must be local, docker, or ssh, got "+req.Type)
+		return false
 	}
 	return true
 }
@@ -177,13 +199,17 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	if prev, err := h.store.Get(ctx, id); err == nil {
 		prevConfig = prev.Config
 	}
-	h.manager.Remove(id)
 	cfg := req.toConfig()
 	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, prevConfig)
+	// Persist first, then drop the cached instance: if the DB write fails, the
+	// live sandbox must stay as it was rather than be torn down for a change
+	// that never landed. Remove() forces a rebuild with the new config on next
+	// use.
 	if err := h.store.Update(ctx, id, cfg); err != nil {
 		storeError(c, err)
 		return
 	}
+	h.manager.Remove(id)
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
@@ -204,11 +230,14 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 //	@Router		/sandboxes/{id} [delete]
 func (h *SandboxHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	h.manager.Remove(id)
+	// Delete from the DB first: only tear down the live instance once the row
+	// is gone, so a failed delete doesn't leave a persisted sandbox with its
+	// running instance already closed.
 	if err := h.store.Delete(c.Request.Context(), id); err != nil {
 		storeError(c, err)
 		return
 	}
+	h.manager.Remove(id)
 	c.Status(http.StatusNoContent)
 }
 

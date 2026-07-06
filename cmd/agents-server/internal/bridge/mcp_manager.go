@@ -2,10 +2,12 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,6 +27,11 @@ type McpManager struct {
 	settings *store.SettingStore
 	mu       sync.RWMutex
 	servers  map[string]*mcp.Server
+	// connecting marks servers whose handshake is in flight. The handshake
+	// runs OUTSIDE mu (it does network/subprocess I/O and must not block
+	// Get/IsConnected/Disconnect); this set dedups concurrent Connect calls
+	// for the same server without holding the lock across the handshake.
+	connecting map[string]bool
 }
 
 // NewMcpManager returns a new manager with no active connections. rootCtx
@@ -34,10 +41,54 @@ func NewMcpManager(rootCtx context.Context, settings *store.SettingStore) *McpMa
 		rootCtx = context.Background()
 	}
 	return &McpManager{
-		rootCtx:  rootCtx,
-		settings: settings,
-		servers:  make(map[string]*mcp.Server),
+		rootCtx:    rootCtx,
+		settings:   settings,
+		servers:    make(map[string]*mcp.Server),
+		connecting: make(map[string]bool),
 	}
+}
+
+// ErrConnectInProgress is returned by Connect/ConnectHTTPWithOAuth when another
+// goroutine is already handshaking the same server.
+var ErrConnectInProgress = fmt.Errorf("mcp connection already in progress")
+
+// mcpAutoConnectTimeout bounds a single server's handshake during startup
+// auto-connect, so one hung server can't delay the others.
+const mcpAutoConnectTimeout = 30 * time.Second
+
+// beginConnect claims the right to handshake id. It returns done=true if the
+// server is already connected (caller should no-op), or ErrConnectInProgress if
+// another goroutine holds the claim. On a nil error with done=false the caller
+// owns the claim and MUST call finishConnect.
+func (m *McpManager) beginConnect(id string) (done bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.servers[id]; ok {
+		return true, nil
+	}
+	if m.connecting[id] {
+		return false, ErrConnectInProgress
+	}
+	m.connecting[id] = true
+	return false, nil
+}
+
+// finishConnect releases the claim and, on success, stores srv. A server that
+// appeared meanwhile (should not happen given the claim) is closed rather than
+// leaked.
+func (m *McpManager) finishConnect(id string, srv *mcp.Server, connErr error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.connecting, id)
+	if connErr != nil {
+		return connErr
+	}
+	if _, ok := m.servers[id]; ok {
+		_ = srv.Close()
+		return nil
+	}
+	m.servers[id] = srv
+	return nil
 }
 
 // Connect creates and starts an MCP server connection from a stored config.
@@ -45,17 +96,11 @@ func NewMcpManager(rootCtx context.Context, settings *store.SettingStore) *McpMa
 // connection handshake; the connection itself lives until Disconnect,
 // CloseAll, or the manager's root context ends.
 func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, ok := m.servers[cfg.ID]; ok {
-		return nil // already connected
-	}
-
-	var srv *mcp.Server
-	var err error
+	// Validate config before claiming the connect slot so a bad config fails
+	// fast and can't strand the in-progress flag.
 	opts := mcp.Options{ToolNamePrefix: cfg.Name + "__"}
-
+	var cmd *exec.Cmd
+	var transport *mcpsdk.StreamableClientTransport
 	switch cfg.TransportType {
 	case "stdio":
 		var sc store.StdioMcpConfig
@@ -65,25 +110,75 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 		// The command context governs the subprocess lifetime — it must be
 		// the manager's root context, NOT the caller's (a request context
 		// would kill the server as soon as the request ends).
-		cmd := exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)
-		srv, err = mcp.NewStdioServer(ctx, cfg.Name, cmd, opts)
+		cmd = exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)
 	case "streamable_http":
 		var hc store.HTTPMcpConfig
 		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
 			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 		}
-		transport := &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint}
+		transport = &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint}
 		transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
-		srv, err = mcp.NewWithTransport(ctx, cfg.Name, transport, opts)
 	default:
 		return fmt.Errorf("unknown transport type: %s", cfg.TransportType)
 	}
-	if err != nil {
-		return fmt.Errorf("connecting MCP server %s: %w", cfg.Name, err)
+
+	done, err := m.beginConnect(cfg.ID)
+	if err != nil || done {
+		return err // already connected (nil) or another connect is in flight
 	}
 
-	m.servers[cfg.ID] = srv
-	return nil
+	// Handshake OUTSIDE the lock: this does subprocess spawn / network I/O and
+	// a slow server here must not block Get/IsConnected/Disconnect/Connect.
+	var srv *mcp.Server
+	switch cfg.TransportType {
+	case "stdio":
+		srv, err = mcp.NewStdioServer(ctx, cfg.Name, cmd, opts)
+	case "streamable_http":
+		srv, err = mcp.NewWithTransport(ctx, cfg.Name, transport, opts)
+	}
+	if err != nil {
+		err = fmt.Errorf("connecting MCP server %s: %w", cfg.Name, err)
+	}
+	return m.finishConnect(cfg.ID, srv, err)
+}
+
+// Reconcile makes the live connection match a server's desired config after a
+// config write: it always drops the current connection (so a changed endpoint /
+// command / headers can't keep serving stale config) and, for an enabled
+// non-OAuth server, reconnects in the background under a bounded deadline off
+// the manager root context (the request context is already gone). A disabled
+// server is left disconnected. OAuth servers are reconnected through the OAuth
+// coordinator (a saved token connects silently), not here — the plain Connect
+// path carries no token and would fail. Centralizing this here keeps handlers
+// from imperatively sequencing Disconnect/Connect and getting the order wrong.
+func (m *McpManager) Reconcile(desired *store.McpServerConfig) {
+	if desired == nil {
+		return
+	}
+	_ = m.Disconnect(desired.ID)
+	if !desired.Enabled || isOAuthConfig(desired) {
+		return
+	}
+	cfg := *desired
+	go func() {
+		ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
+		defer cancel()
+		_ = m.Connect(ctx, &cfg)
+	}()
+}
+
+// isOAuthConfig reports whether cfg is a streamable_http server using OAuth,
+// which must be (re)connected through the OAuth coordinator rather than the
+// plain Connect path.
+func isOAuthConfig(cfg *store.McpServerConfig) bool {
+	if cfg.TransportType != "streamable_http" {
+		return false
+	}
+	var hc store.HTTPMcpConfig
+	if len(cfg.Config) > 0 {
+		_ = json.Unmarshal(cfg.Config, &hc)
+	}
+	return hc.AuthMode == "oauth"
 }
 
 func (m *McpManager) proxyClient(ctx context.Context) *http.Client {
@@ -127,12 +222,10 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 // OAuth handler. It is called from OAuthCoordinator in a goroutine and blocks
 // until the OAuth flow completes (or the context is cancelled).
 func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
-	m.mu.Lock()
-	if _, ok := m.servers[cfg.ID]; ok {
-		m.mu.Unlock()
-		return nil
+	done, err := m.beginConnect(cfg.ID)
+	if err != nil || done {
+		return err
 	}
-	m.mu.Unlock()
 
 	transport := &mcpsdk.StreamableClientTransport{
 		Endpoint:     hc.Endpoint,
@@ -140,15 +233,11 @@ func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpSer
 	}
 	transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 
-	srv, err := mcp.NewWithTransport(ctx, cfg.Name, transport, mcp.Options{ToolNamePrefix: cfg.Name + "__"})
-	if err != nil {
-		return fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, err)
+	srv, cerr := mcp.NewWithTransport(ctx, cfg.Name, transport, mcp.Options{ToolNamePrefix: cfg.Name + "__"})
+	if cerr != nil {
+		cerr = fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, cerr)
 	}
-
-	m.mu.Lock()
-	m.servers[cfg.ID] = srv
-	m.mu.Unlock()
-	return nil
+	return m.finishConnect(cfg.ID, srv, cerr)
 }
 
 // Disconnect closes an MCP server connection and removes it from the manager.
@@ -200,28 +289,38 @@ func ConnectEnabledMcpServers(ctx context.Context, mgr *McpManager, servers *sto
 		log.Warn().Err(err).Msg("listing mcp servers for auto-connect")
 		return
 	}
+	// Connect concurrently, each under its own handshake timeout: a hung or
+	// unreachable server must not stall the others' auto-connect (it fails its
+	// own deadline and the rest come up regardless). The timeout bounds only
+	// the handshake — a stdio subprocess's lifetime is the manager root context.
+	var wg sync.WaitGroup
 	for i := range configs {
 		cfg := &configs[i]
 		if !cfg.Enabled {
 			continue
 		}
-		if cfg.TransportType == "streamable_http" && cfg.OAuthToken != "" {
-			var hc store.HTTPMcpConfig
-			if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
-				result, err := oauth.ConnectWithOAuth(ctx, mgr, cfg, &hc, "")
-				switch {
-				case err != nil:
-					log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth auto-connect failed")
-				case result.Connected:
-					log.Info().Str("mcp", cfg.Name).Msg("mcp oauth auto-connected with saved token")
-				default:
-					log.Warn().Str("mcp", cfg.Name).Msg("mcp oauth auto-connect needs user authorization, skipping")
+		wg.Go(func() {
+			cctx, cancel := context.WithTimeout(ctx, mcpAutoConnectTimeout)
+			defer cancel()
+			if cfg.TransportType == "streamable_http" && cfg.OAuthToken != "" {
+				var hc store.HTTPMcpConfig
+				if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
+					result, err := oauth.ConnectWithOAuth(cctx, mgr, cfg, &hc, "")
+					switch {
+					case err != nil:
+						log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth auto-connect failed")
+					case result.Connected:
+						log.Info().Str("mcp", cfg.Name).Msg("mcp oauth auto-connected with saved token")
+					default:
+						log.Warn().Str("mcp", cfg.Name).Msg("mcp oauth auto-connect needs user authorization, skipping")
+					}
+					return
 				}
-				continue
 			}
-		}
-		if err := mgr.Connect(ctx, cfg); err != nil {
-			log.Warn().Err(err).Str("mcp", configs[i].Name).Msg("mcp auto-connect failed")
-		}
+			if err := mgr.Connect(cctx, cfg); err != nil {
+				log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp auto-connect failed")
+			}
+		})
 	}
+	wg.Wait()
 }

@@ -96,7 +96,7 @@ func (h *ProviderRouteHandler) Create(c *gin.Context) {
 		BaseURL: req.BaseURL,
 	}
 	if err := h.store.Create(c.Request.Context(), pr); err != nil {
-		internalError(c, err)
+		saveError(c, err) // duplicate prefix -> 409
 		return
 	}
 	pr.APIKey = maskSecret(pr.APIKey)
@@ -141,7 +141,7 @@ func (h *ProviderRouteHandler) Update(c *gin.Context) {
 		BaseURL: req.BaseURL,
 	}
 	if err := h.store.Update(ctx, id, pr); err != nil {
-		storeError(c, err)
+		saveError(c, err) // duplicate prefix -> 409, not-found -> 404
 		return
 	}
 	updated, err := h.store.Get(ctx, id)

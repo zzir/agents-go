@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -429,26 +431,34 @@ func extractJSONString(raw []byte, key string) string {
 	return string(v)
 }
 
-// PopItem removes and returns the most recently added item, or an error if the
-// session is empty.
+// PopItem removes and returns the most recent REPLAYABLE item, or (nil, nil)
+// when the session holds no such item — the contract the SDK's Session
+// interface requires for an "empty" session. It matches GetItems' filter
+// (non-compacted, non-annotation, non-empty item) so it never pops and deletes
+// a UI-only annotation row or a soft-deleted/compacted row, which would corrupt
+// history or fail to deserialize.
 func (a *SessionAdapter) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
 	var msg Message
 	err := a.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := tx.NewSelect().Model(&msg).
 			Where("session_id = ?", a.sessionID).
+			Where("compacted = ?", false).
+			Where("kind IS NULL OR kind <> ?", MessageKindAnnotation).
+			Where("item <> ''").
 			OrderExpr("id DESC").
 			Limit(1).
 			Scan(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewDelete().Model((*Message)(nil)).
+		_, err := tx.NewDelete().Model((*Message)(nil)).
 			Where("id = ?", msg.ID).
-			Exec(ctx); err != nil {
-			return err
-		}
-		return nil
+			Exec(ctx)
+		return err
 	})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // empty session: the Session contract wants (nil, nil)
+		}
 		return nil, fmt.Errorf("session adapter pop item: %w", err)
 	}
 	item, err := agents.UnmarshalInputItem(NormalizeItemJSON([]byte(msg.Item)))

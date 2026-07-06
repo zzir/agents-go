@@ -1,13 +1,11 @@
 package handler
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"html"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -83,8 +81,33 @@ func (r *mcpServerReq) validate() string {
 	if r.Name == "" {
 		return "name is required"
 	}
-	if r.TransportType == "" {
+	// Validate transport + its config here so a broken server can't sit in the
+	// DB looking configured until the first connect attempt fails.
+	switch r.TransportType {
+	case "stdio":
+		var sc store.StdioMcpConfig
+		if len(r.Config) > 0 {
+			if err := json.Unmarshal(r.Config, &sc); err != nil {
+				return "config is not valid JSON: " + err.Error()
+			}
+		}
+		if sc.Command == "" {
+			return "stdio transport requires config.command"
+		}
+	case "streamable_http":
+		var hc store.HTTPMcpConfig
+		if len(r.Config) > 0 {
+			if err := json.Unmarshal(r.Config, &hc); err != nil {
+				return "config is not valid JSON: " + err.Error()
+			}
+		}
+		if hc.Endpoint == "" {
+			return "streamable_http transport requires config.endpoint"
+		}
+	case "":
 		return "transport_type is required"
+	default:
+		return "transport_type must be stdio or streamable_http, got " + r.TransportType
 	}
 	return ""
 }
@@ -116,7 +139,7 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 	// No stored config yet: mask sentinels resolve to empty.
 	cfg.Config = restoreMcpConfig(cfg.TransportType, cfg.Config, nil)
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
-		internalError(c, err)
+		saveError(c, err) // duplicate name -> 409
 		return
 	}
 	c.JSON(http.StatusCreated, sanitizeMcpConfig(*cfg))
@@ -184,28 +207,17 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	}
 	cfg.Config = restoreMcpConfig(cfg.TransportType, cfg.Config, prevConfig)
 	if err := h.store.Update(ctx, id, cfg); err != nil {
-		storeError(c, err)
+		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
-	}
-	if prev != nil && prev.Enabled && !req.Enabled {
-		_ = h.manager.Disconnect(id)
-	} else if prev != nil && !prev.Enabled && req.Enabled {
-		if updated, err := h.store.Get(ctx, id); err == nil {
-			// Reconnect in the background with its own handshake deadline —
-			// the request context is cancelled as soon as this response is
-			// written and must not bound the connection attempt.
-			go func() {
-				hctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-				defer cancel()
-				_ = h.manager.Connect(hctx, updated)
-			}()
-		}
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
+	// Make the live connection match the newly persisted config (drop stale,
+	// reconnect an enabled non-OAuth server). The manager owns the ordering.
+	h.manager.Reconcile(updated)
 	c.JSON(http.StatusOK, mcpServerListItem{
 		McpServerConfig: sanitizeMcpConfig(*updated),
 		Connected:       h.manager.IsConnected(updated.ID),
@@ -225,15 +237,13 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 //	@Router		/mcp-servers/{id} [delete]
 func (h *McpServerHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	// Disconnect first if connected.
-	if err := h.manager.Disconnect(id); err != nil {
-		internalError(c, err)
-		return
-	}
+	// Delete the row first, then disconnect: a failed delete must not leave a
+	// persisted server whose live connection has already been torn down.
 	if err := h.store.Delete(c.Request.Context(), id); err != nil {
 		storeError(c, err)
 		return
 	}
+	_ = h.manager.Disconnect(id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -313,8 +323,7 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 //	@Router		/mcp-servers/{id}/oauth-token [delete]
 func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := h.store.Get(c.Request.Context(), id); err != nil {
-		storeError(c, err)
+	if !requireResource(c, h.store.Get, id) {
 		return
 	}
 	if err := h.manager.Disconnect(id); err != nil {
@@ -429,7 +438,13 @@ type mcpToolInfo struct {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/tools [get]
 func (h *McpServerHandler) Tools(c *gin.Context) {
-	srv := h.manager.Get(c.Param("id"))
+	id := c.Param("id")
+	// Distinguish "no such server" (404) from "exists but not connected" (409):
+	// querying the manager alone can't tell them apart.
+	if !requireResource(c, h.store.Get, id) {
+		return
+	}
+	srv := h.manager.Get(id)
 	if srv == nil {
 		conflict(c, "server not connected")
 		return

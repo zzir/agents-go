@@ -196,6 +196,53 @@ func TestRunHubResumeBusy(t *testing.T) {
 	}
 }
 
+// The SSE close decision must key off IsFinalRunEvent, not IsTerminalRunEvent:
+// a same-id resume leaves a historical run.interrupted in the buffer, and a
+// late subscriber replaying from 0 must flow past it to the real run.output —
+// treating the old interrupt as final would cut the stream short.
+func TestFinalVsTerminalRunEvent(t *testing.T) {
+	// run.interrupted is "terminal" (ends a segment) but NOT "final" (the run
+	// resumes under the same id).
+	if !IsTerminalRunEvent("run.interrupted") {
+		t.Error("run.interrupted should be terminal (segment end)")
+	}
+	if IsFinalRunEvent("run.interrupted") {
+		t.Error("run.interrupted must NOT be final — same-id resume continues the stream")
+	}
+	for _, typ := range []string{"run.output", "run.error", "run.cancelled"} {
+		if !IsFinalRunEvent(typ) {
+			t.Errorf("%s should be final", typ)
+		}
+	}
+	if IsFinalRunEvent("run.step") {
+		t.Error("run.step is not final")
+	}
+
+	// A resumed+completed run's buffer: interrupted (seq 2) then output (seq 4).
+	// Replaying from 0, only the output is a final event — the SSE would close
+	// on it, delivering everything including the resume's output.
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("r", "s", "", ""); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h.publish("r", env("run.started"))
+	h.publish("r", env("run.interrupted"))
+	h.finish("r", true)
+	_, _ = h.resume("r", "s", "", "")
+	h.publish("r", env("run.started"))
+	h.publish("r", env("run.output"))
+
+	var finals []int
+	h.SubscribeSeq("r", 0, func(item SeqEnvelope) {
+		if IsFinalRunEvent(item.Env.Type) {
+			finals = append(finals, item.Seq)
+		}
+	})
+	if len(finals) != 1 || finals[0] != 4 {
+		t.Fatalf("final events on replay = %v, want [4] (the run.output, not the old interrupt)", finals)
+	}
+}
+
 // After a restart (or retention GC) the hub has no record: resume registers a
 // fresh one under the same id so the continuation still streams.
 func TestRunHubResumeAfterRestart(t *testing.T) {

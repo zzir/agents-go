@@ -35,16 +35,41 @@ const (
 	runRetention = 15 * time.Minute
 )
 
+// terminalStatusForEvent maps a run's terminal event type to the RunStatus it
+// drives, reporting false for any non-terminal event. It is the single
+// authority for the run lifecycle: publish advances a run's status through it,
+// and the IsTerminal/IsFinal predicates below derive from it, so the state
+// machine is defined in exactly one place.
+func terminalStatusForEvent(typ string) (RunStatus, bool) {
+	switch typ {
+	case "run.output":
+		return RunCompleted, true
+	case "run.error":
+		return RunErrored, true
+	case "run.cancelled":
+		return RunCancelled, true
+	case "run.interrupted":
+		return RunInterrupted, true
+	}
+	return "", false
+}
+
 // IsTerminalRunEvent reports whether typ ends a run's event stream for now:
 // the run finished (output/error/cancelled) or paused for approval
 // (interrupted — the approval decision resumes the SAME run id, continuing
 // its sequence, so subscribers can reattach with their existing cursor).
 func IsTerminalRunEvent(typ string) bool {
-	switch typ {
-	case "run.output", "run.error", "run.cancelled", "run.interrupted":
-		return true
-	}
-	return false
+	_, ok := terminalStatusForEvent(typ)
+	return ok
+}
+
+// IsFinalRunEvent reports whether typ ends a run for good — as opposed to
+// run.interrupted, which only PAUSES it (same-id resume continues the stream).
+// A stream that closes on a replayed run.interrupted would cut off before the
+// resumed run.output; only a final event should terminate a live stream.
+func IsFinalRunEvent(typ string) bool {
+	st, ok := terminalStatusForEvent(typ)
+	return ok && st != RunInterrupted
 }
 
 // SeqEnvelope is a hub event tagged with its per-run sequence number, used as
@@ -80,7 +105,6 @@ type runRecord struct {
 	buffer  []SeqEnvelope
 	subs    map[int]SeqSink
 	nextSub int
-	status  RunStatus
 	endedAt time.Time
 }
 
@@ -129,7 +153,6 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string) (*r
 		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning},
 		cancel: cancel,
 		subs:   make(map[int]SeqSink),
-		status: RunRunning,
 	}
 	h.runs[runID] = rec
 	h.bySession[sessionID] = runID
@@ -157,7 +180,6 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string) (cont
 			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning},
 			cancel: cancel,
 			subs:   make(map[int]SeqSink),
-			status: RunRunning,
 		}
 		h.runs[runID] = rec
 		h.bySession[sessionID] = runID
@@ -165,7 +187,6 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string) (cont
 	}
 	rec.mu.Lock()
 	rec.cancel = cancel
-	rec.status = RunRunning
 	rec.info.Status = RunRunning
 	rec.endedAt = time.Time{}
 	rec.mu.Unlock()
@@ -191,17 +212,9 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 	if len(rec.buffer) > EventBufferCap {
 		rec.buffer = rec.buffer[len(rec.buffer)-EventBufferCap:]
 	}
-	switch env.Type {
-	case "run.output":
-		rec.status = RunCompleted
-	case "run.error":
-		rec.status = RunErrored
-	case "run.cancelled":
-		rec.status = RunCancelled
-	case "run.interrupted":
-		rec.status = RunInterrupted
+	if st, ok := terminalStatusForEvent(env.Type); ok {
+		rec.info.Status = st
 	}
-	rec.info.Status = rec.status
 	rec.info.LastSeq = rec.seq
 	subs := make([]SeqSink, 0, len(rec.subs))
 	for _, s := range rec.subs {
@@ -275,11 +288,10 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 	}
 	rec.mu.Lock()
 	if interrupted {
-		rec.status = RunInterrupted
-	} else if rec.status == RunRunning {
-		rec.status = RunCompleted
+		rec.info.Status = RunInterrupted
+	} else if rec.info.Status == RunRunning {
+		rec.info.Status = RunCompleted
 	}
-	rec.info.Status = rec.status
 	rec.endedAt = time.Now()
 	rec.mu.Unlock()
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -74,7 +75,15 @@ func (h *persistentOAuthHandler) Authorize(ctx context.Context, req *http.Reques
 	h.mu.Unlock()
 
 	if encoded := encodeToken(tok); encoded != "" {
-		_ = h.store.SaveOAuthToken(context.Background(), h.configID, encoded)
+		// Surface a failed persist instead of swallowing it: the token works
+		// for this session (it's in memory above), but a lost write means it
+		// won't survive a restart — and store.ErrNotFound means the server row
+		// is gone. Don't fail the authorize over it (the live connection is
+		// valid), but make the failure loud.
+		if err := h.store.SaveOAuthToken(context.Background(), h.configID, encoded); err != nil {
+			log.Error().Err(err).Str("mcp", h.configID).
+				Msg("persisting MCP OAuth token failed; connection works now but won't survive a restart")
+		}
 	}
 	return nil
 }

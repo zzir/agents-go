@@ -65,13 +65,20 @@ type ConnectResult struct {
 // creates the auth handler, kicks off the connection in a goroutine, and
 // returns immediately with either a Connected result or an AuthorizeURL that
 // the frontend should open.
+// ctx bounds the SILENT paths — the saved-token direct connect below — so a
+// caller's deadline (e.g. startup auto-connect's per-server timeout) actually
+// applies. It must NOT bound the interactive full flow, which outlives the
+// request that started it (see connectCtx below).
 func (c *OAuthCoordinator) ConnectWithOAuth(
-	_ context.Context,
+	ctx context.Context,
 	mgr *McpManager,
 	cfg *store.McpServerConfig,
 	hc *store.HTTPMcpConfig,
 	requestOrigin string,
 ) (*ConnectResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var preregistered *oauthex.ClientCredentials
 	if hc.OAuthClientID != "" {
 		preregistered = &oauthex.ClientCredentials{
@@ -133,9 +140,12 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	handler := newPersistentOAuthHandler(authHandler, cfg.ID, c.store, cfg.OAuthToken)
 
 	// If we have a valid saved token, try connecting directly — no popup needed.
-	if ts, _ := handler.TokenSource(context.Background()); ts != nil {
+	// This is a silent, synchronous path, so it honors the caller's ctx: startup
+	// auto-connect passes a per-server timeout, so one hung server can't stall
+	// the others.
+	if ts, _ := handler.TokenSource(ctx); ts != nil {
 		if tok, _ := ts.Token(); tok != nil && tok.Valid() {
-			if err := mgr.ConnectHTTPWithOAuth(context.Background(), cfg, hc, handler); err == nil {
+			if err := mgr.ConnectHTTPWithOAuth(ctx, cfg, hc, handler); err == nil {
 				return &ConnectResult{Connected: true}, nil
 			}
 			// Token rejected (expired / revoked) — fall through to full OAuth flow.

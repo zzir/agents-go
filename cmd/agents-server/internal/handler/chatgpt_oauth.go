@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // ChatGPTOAuthHandler exposes HTTP endpoints for per-agent ChatGPT OAuth.
@@ -32,8 +34,12 @@ func NewChatGPTOAuthHandler(oauth *bridge.ChatGPTOAuth) *ChatGPTOAuthHandler {
 //	@Security		BearerAuth
 //	@Router			/agents/{id}/chatgpt/login [post]
 func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
-	result, err := h.oauth.StartLogin(c.Param("id"))
+	result, err := h.oauth.StartLogin(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			notFound(c)
+			return
+		}
 		// The message is actionable local detail (e.g. callback port in use).
 		abortError(c, http.StatusInternalServerError, CodeInternal, err.Error())
 		return
@@ -63,7 +69,11 @@ type chatgptStatusResp struct {
 //	@Security	BearerAuth
 //	@Router		/agents/{id}/chatgpt/status [get]
 func (h *ChatGPTOAuthHandler) Status(c *gin.Context) {
-	loggedIn := h.oauth.IsLoggedIn(c.Request.Context(), c.Param("id"))
+	loggedIn, err := h.oauth.IsLoggedIn(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err) // ErrNotFound -> 404, else 500
+		return
+	}
 	c.JSON(http.StatusOK, chatgptStatusResp{LoggedIn: loggedIn})
 }
 
@@ -79,7 +89,7 @@ func (h *ChatGPTOAuthHandler) Status(c *gin.Context) {
 //	@Router		/agents/{id}/chatgpt/logout [post]
 func (h *ChatGPTOAuthHandler) Logout(c *gin.Context) {
 	if err := h.oauth.Logout(c.Request.Context(), c.Param("id")); err != nil {
-		internalError(c, err)
+		storeError(c, err) // ErrNotFound -> 404, else 500
 		return
 	}
 	c.Status(http.StatusNoContent)

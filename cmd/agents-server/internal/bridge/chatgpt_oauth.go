@@ -59,10 +59,16 @@ type ChatGPTLoginResult struct {
 	State        string `json:"state"`
 }
 
-// StartLogin begins the ChatGPT OAuth PKCE flow for the given agent.
-func (o *ChatGPTOAuth) StartLogin(agentConfigID string) (*ChatGPTLoginResult, error) {
+// StartLogin begins the ChatGPT OAuth PKCE flow for the given agent. It fails
+// with store.ErrNotFound if the agent does not exist — otherwise the flow
+// would run to completion and then silently lose the token on the final
+// (no-op) update to a missing row.
+func (o *ChatGPTOAuth) StartLogin(ctx context.Context, agentConfigID string) (*ChatGPTLoginResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
+	}
+	if _, err := o.agents.Get(ctx, agentConfigID); err != nil {
+		return nil, err
 	}
 
 	state, err := randomString(32)
@@ -267,12 +273,19 @@ func decodeAccountID(jwt string) string {
 }
 
 // IsLoggedIn returns whether the given agent has a ChatGPT token stored.
-func (o *ChatGPTOAuth) IsLoggedIn(ctx context.Context, agentConfigID string) bool {
+// IsLoggedIn reports whether the agent has a stored ChatGPT token. It returns
+// the store error (e.g. store.ErrNotFound) so callers can distinguish "agent
+// does not exist" from "exists but not logged in" — matching the 404 the
+// login/logout endpoints give for a missing agent.
+func (o *ChatGPTOAuth) IsLoggedIn(ctx context.Context, agentConfigID string) (bool, error) {
 	if agentConfigID == "" {
-		return false
+		return false, fmt.Errorf("agent_config_id is required")
 	}
 	ac, err := o.agents.Get(ctx, agentConfigID)
-	return err == nil && ac.ChatGPTToken != ""
+	if err != nil {
+		return false, err
+	}
+	return ac.ChatGPTToken != "", nil
 }
 
 // Logout clears the ChatGPT token for the given agent.

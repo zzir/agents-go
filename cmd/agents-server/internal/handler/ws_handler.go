@@ -26,12 +26,16 @@ func NewWSHandler(runner *bridge.Runner) *WSHandler {
 	return &WSHandler{runner: runner}
 }
 
-// wsSink returns an event sink that writes envelopes to conn. A write error
-// means the client went away; the run keeps executing in the hub and can be
-// resubscribed after reconnect, so the error is not actionable here.
+// wsSink returns an event sink that enqueues envelopes onto the connection's
+// bounded outbound queue. It never blocks the producer (the hub / run
+// goroutine): if the queue is full, the client is genuinely stuck, so the
+// connection is closed — the run keeps executing in the hub and the client
+// resubscribes and replays after reconnecting.
 func wsSink(conn *server.WSConn) bridge.EventSink {
 	return func(env *protocol.Envelope) {
-		_ = conn.WriteJSON(env)
+		if !conn.WriteAsync(env) {
+			conn.Close()
+		}
 	}
 }
 
@@ -77,6 +81,9 @@ func (cs *connSubs) closeAll() {
 // Handle reads and dispatches WebSocket messages on conn until the connection closes.
 func (h *WSHandler) Handle(conn *server.WSConn) {
 	log := zerolog.Ctx(conn.Context())
+	// Drain outbound events through a bounded queue + writer goroutine so a
+	// slow client can't back-pressure the hub/run goroutines that publish them.
+	conn.StartWriter()
 	subs := &connSubs{hub: h.runner.Hub(), subs: map[string]int{}}
 	defer subs.closeAll()
 

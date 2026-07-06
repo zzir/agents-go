@@ -119,7 +119,7 @@ func run(_ *cobra.Command, _ []string) error {
 	runner := bridge.NewRunner(ctx, db, deps)
 
 	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore, agentConfigStore)
-	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore)
+	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver)
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
 	settingHandler := handler.NewSettingHandler(settingStore)

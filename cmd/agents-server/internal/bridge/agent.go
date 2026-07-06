@@ -4,6 +4,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,8 +64,11 @@ func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
-	visited := make(map[string]bool)
-	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, visited)
+	bc := &agentBuildCtx{
+		stack: make(map[string]bool),
+		cache: make(map[string]*BuildResult),
+	}
+	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err != nil {
 		return nil, err
 	}
@@ -80,11 +84,31 @@ func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	return result, nil
 }
 
-func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandboxID string, visited map[string]bool) (*BuildResult, error) {
-	if visited[configID] {
-		return nil, fmt.Errorf("cycle detected in handoff chain: %s", configID)
+// agentBuildCtx threads two maps through a recursive handoff build:
+//   - stack is the current recursion PATH, used purely for cycle detection; a
+//     config is removed on the way out, so a legitimately shared descendant
+//     (a diamond: A→B→D and A→C→D) is not mistaken for a back-edge.
+//   - cache holds already-built agents so a shared descendant is built once and
+//     reused across paths (also avoids the redundant rebuild).
+type agentBuildCtx struct {
+	stack map[string]bool
+	cache map[string]*BuildResult
+}
+
+// errHandoffCycle marks a back-edge in the handoff graph. It is recoverable —
+// the offending edge is dropped and the rest of the graph builds — unlike a
+// genuine build failure (bad config), which must propagate.
+var errHandoffCycle = fmt.Errorf("cycle detected in handoff chain")
+
+func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandboxID string, bc *agentBuildCtx) (*BuildResult, error) {
+	if r, ok := bc.cache[configID]; ok {
+		return r, nil // already built on another path (shared / diamond node)
 	}
-	visited[configID] = true
+	if bc.stack[configID] {
+		return nil, fmt.Errorf("%w: %s", errHandoffCycle, configID)
+	}
+	bc.stack[configID] = true
+	defer delete(bc.stack, configID)
 
 	log := zerolog.Ctx(ctx)
 	result := &BuildResult{}
@@ -113,51 +137,46 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	result.CompactionModel = ac.CompactionModel
 	result.CompactionPrompt = ac.CompactionPrompt
 
+	// Decode every JSON-encoded config field once, up front. A structural error
+	// fails the build loudly (the operator would otherwise think a malformed
+	// guardrail / schema / settings block took effect); the same decode backs
+	// save-time validation, so the contract lives in one place (DecodeAgentSpec).
+	spec, err := DecodeAgentSpec(ac)
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: %w", ac.Name, err)
+	}
+
 	if ac.Instructions != "" {
 		agent.Instructions = agents.StaticInstructions(ac.Instructions)
 	}
-	if ac.ModelSettings != "" {
-		var ms agents.ModelSettings
-		if err := json.Unmarshal([]byte(ac.ModelSettings), &ms); err == nil {
-			agent.ModelSettings = &ms
-		}
-		var raw map[string]json.RawMessage
-		if json.Unmarshal([]byte(ac.ModelSettings), &raw) == nil {
-			if eb, ok := raw["extra_body"]; ok {
-				var extraBody map[string]any
-				if json.Unmarshal(eb, &extraBody) == nil && len(extraBody) > 0 {
-					if agent.ModelSettings == nil {
-						agent.ModelSettings = &agents.ModelSettings{}
-					}
-					agent.ModelSettings.ExtraBody = extraBody
-				}
-			}
-		}
-	}
+	agent.ModelSettings = spec.ModelSettings
 
 	// ToolUseBehavior
 	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.ToolUseBehavior)
 
-	// Guardrails
+	// Guardrails — a configured guardrail that can't be resolved fails the
+	// build rather than running unprotected (security config must not silently
+	// no-op).
 	if ac.InputGuardrails != "" && deps.Guardrails != nil {
-		agent.InputGuardrails = deps.Guardrails.BuildInputGuardrails(ctx, ac.InputGuardrails)
+		ig, gerr := deps.Guardrails.BuildInputGuardrails(ctx, ac.InputGuardrails)
+		if gerr != nil {
+			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
+		}
+		agent.InputGuardrails = ig
 	}
 	if ac.OutputGuardrails != "" && deps.Guardrails != nil {
-		agent.OutputGuardrails = deps.Guardrails.BuildOutputGuardrails(ctx, ac.OutputGuardrails)
-	}
-
-	// HITL tool approval
-	if ac.ApproveTools != "" {
-		var names []string
-		if json.Unmarshal([]byte(ac.ApproveTools), &names) == nil && len(names) > 0 {
-			agent.ApproveTools = names
+		og, gerr := deps.Guardrails.BuildOutputGuardrails(ctx, ac.OutputGuardrails)
+		if gerr != nil {
+			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
+		agent.OutputGuardrails = og
 	}
 
-	// Output schema (structured output)
-	if ac.OutputSchema != "" {
-		agent.OutputType = BuildOutputSchema(ac.OutputSchema)
+	// HITL tool approval and structured-output schema — decoded in spec.
+	if len(spec.ApproveTools) > 0 {
+		agent.ApproveTools = spec.ApproveTools
 	}
+	agent.OutputType = spec.OutputType
 
 	// Stored prompt
 	if ac.PromptID != "" {
@@ -190,14 +209,10 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		}
 		provider := buildProviderFromConfig(ac, chatgptCreds, proxyClient)
 		if ac.RetryEnabled {
-			var policy agents.RetryPolicy
-			if ac.RetryPolicy != "" {
-				_ = json.Unmarshal([]byte(ac.RetryPolicy), &policy)
-			}
-			provider = agents.NewRetryProvider(provider, policy)
+			provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 		}
-		if ac.FallbackModels != "" {
-			provider = wrapFallbackProvider(provider, ac.FallbackModels, proxyClient)
+		if len(spec.FallbackModels) > 0 {
+			provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient)
 		}
 		result.Provider = provider
 	}
@@ -213,18 +228,14 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", buildMemoryBlock(memories))
 	}
 
-	// MCP servers
-	if ac.ToolsJSON != "" {
-		var mcpServerIDs []string
-		if err := json.Unmarshal([]byte(ac.ToolsJSON), &mcpServerIDs); err == nil {
-			for _, id := range mcpServerIDs {
-				srv := deps.McpManager.Get(id)
-				if srv != nil {
-					agent.MCPServers = append(agent.MCPServers, srv)
-				} else {
-					log.Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
-				}
-			}
+	// MCP servers — the selected ids are decoded in spec; an id whose server
+	// isn't currently connected is skipped (the tool set reflects live state).
+	for _, id := range spec.Tools {
+		srv := deps.McpManager.Get(id)
+		if srv != nil {
+			agent.MCPServers = append(agent.MCPServers, srv)
+		} else {
+			log.Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
 		}
 	}
 
@@ -270,21 +281,20 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	if deps.Workspace != "" {
 		skillsDir := filepath.Join(deps.Workspace, "skills")
 		loadedSkills, err := skills.LoadRecursive(skillsDir)
-		if err == nil && ac.SkillsJSON != "" {
-			var selected []string
-			if json.Unmarshal([]byte(ac.SkillsJSON), &selected) == nil {
-				allowed := make(map[string]bool, len(selected))
-				for _, p := range selected {
-					allowed[p] = true
-				}
-				filtered := loadedSkills[:0]
-				for _, sk := range loadedSkills {
-					if allowed[sk.Dir] {
-						filtered = append(filtered, sk)
-					}
-				}
-				loadedSkills = filtered
+		if err == nil && spec.SkillsSet {
+			// spec.Skills restricts which loaded skills this agent advertises;
+			// an unset selection (SkillsSet == false) keeps every installed skill.
+			allowed := make(map[string]bool, len(spec.Skills))
+			for _, p := range spec.Skills {
+				allowed[p] = true
 			}
+			filtered := loadedSkills[:0]
+			for _, sk := range loadedSkills {
+				if allowed[sk.Dir] {
+					filtered = append(filtered, sk)
+				}
+			}
+			loadedSkills = filtered
 		}
 		if err == nil && len(loadedSkills) > 0 {
 			agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))
@@ -292,22 +302,26 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		}
 	}
 
-	// Handoffs — recursive build
-	if ac.HandoffsJSON != "" {
-		var handoffIDs []string
-		if err := json.Unmarshal([]byte(ac.HandoffsJSON), &handoffIDs); err == nil {
-			for _, hID := range handoffIDs {
-				hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, visited)
-				if err != nil {
-					log.Warn().Err(err).Str("handoff_id", hID).Msg("handoff agent build failed, skipping")
+	// Handoffs — recursive build over the decoded target ids.
+	if len(spec.Handoffs) > 0 {
+		for _, hID := range spec.Handoffs {
+			hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, bc)
+			if err != nil {
+				// A cycle is recoverable: drop the back-edge and keep going.
+				// Any other failure means the target's config is broken, and
+				// silently dropping the handoff would hide it — propagate.
+				if errors.Is(err, errHandoffCycle) {
+					log.Warn().Err(err).Str("handoff_id", hID).Msg("handoff cycle, skipping edge")
 					continue
 				}
-				agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
+				return nil, fmt.Errorf("agent %q handoff %q: %w", ac.Name, hID, err)
 			}
+			agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
 		}
 	}
 
 	result.Agent = agent
+	bc.cache[configID] = result
 	return result, nil
 }
 
@@ -349,26 +363,25 @@ func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStor
 	if toolsJSON == "" || mcpServers == nil {
 		return nil
 	}
-	// Malformed tools JSON is ignored when the agent is built, so it is not a
-	// validation failure here either.
+	// A malformed tools list is rejected here (and at build time) rather than
+	// silently dropping every MCP tool the agent was meant to have.
 	var ids []string
-	if json.Unmarshal([]byte(toolsJSON), &ids) == nil {
-		seenID := map[string]bool{}
-		nameOwner := map[string]string{} // server name -> config id
-		for _, id := range ids {
-			cfg, err := mcpServers.Get(ctx, id)
-			if err != nil {
-				continue // unknown/removed servers are skipped when the agent is built
-			}
-			if seenID[id] {
-				return fmt.Errorf("MCP server %q is selected twice; each of its tools would appear under the same name twice", cfg.Name)
-			}
-			seenID[id] = true
-			if otherID, taken := nameOwner[cfg.Name]; taken && otherID != id {
-				return fmt.Errorf("MCP servers %q and %q share the name %q: their tools would all get the %q prefix and collide — rename one of them", otherID, id, cfg.Name, cfg.Name+"__")
-			}
-			nameOwner[cfg.Name] = id
+	if err := json.Unmarshal([]byte(toolsJSON), &ids); err != nil {
+		return fmt.Errorf("tools selection is invalid: %w", err)
+	}
+	// Cross-server name collisions can't happen — mcp_servers.name is unique —
+	// so only the same server selected twice needs catching here (that would
+	// duplicate every one of its tools under the same prefix).
+	seenID := map[string]bool{}
+	for _, id := range ids {
+		cfg, err := mcpServers.Get(ctx, id)
+		if err != nil {
+			continue // unknown/removed servers are skipped when the agent is built
 		}
+		if seenID[id] {
+			return fmt.Errorf("MCP server %q is selected twice; each of its tools would appear under the same name twice", cfg.Name)
+		}
+		seenID[id] = true
 	}
 	return nil
 }
@@ -456,11 +469,23 @@ type fallbackEntry struct {
 	BaseURL string `json:"base_url"`
 }
 
-func wrapFallbackProvider(primary agents.ModelProvider, fallbackJSON string, proxyClient *http.Client) agents.ModelProvider {
-	var entries []fallbackEntry
-	if json.Unmarshal([]byte(fallbackJSON), &entries) != nil || len(entries) == 0 {
-		return primary
-	}
+// fixedModelProvider pins a provider to one model name, ignoring the name the
+// run requests. The SDK's FallbackProvider asks every fallback for the SAME
+// (primary) model name, so without this a configured fallback model would never
+// be used — the fallback would just retry the primary's model name elsewhere.
+type fixedModelProvider struct {
+	inner agents.ModelProvider
+	model string
+}
+
+func (f fixedModelProvider) GetModel(string) (agents.Model, error) {
+	return f.inner.GetModel(f.model)
+}
+
+// wrapFallbackProvider chains one fixed-model provider per decoded fallback
+// entry behind primary. The entries are decoded up front (DecodeAgentSpec), so
+// this is pure construction — callers gate it on len(entries) > 0.
+func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client) agents.ModelProvider {
 	var fallbacks []agents.ModelProvider
 	for _, e := range entries {
 		var opts []option.RequestOption
@@ -473,7 +498,11 @@ func wrapFallbackProvider(primary agents.ModelProvider, fallbackJSON string, pro
 		if proxyClient != nil {
 			opts = append(opts, option.WithHTTPClient(proxyClient))
 		}
-		fallbacks = append(fallbacks, openaiProvider.NewProvider(opts...))
+		var fp agents.ModelProvider = openaiProvider.NewProvider(opts...)
+		if e.Model != "" {
+			fp = fixedModelProvider{inner: fp, model: e.Model}
+		}
+		fallbacks = append(fallbacks, fp)
 	}
 	return agents.NewFallbackProvider(primary, fallbacks...)
 }

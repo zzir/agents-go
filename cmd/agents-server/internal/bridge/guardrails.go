@@ -23,34 +23,93 @@ func NewGuardrailResolver(s *store.GuardrailStore) *GuardrailResolver {
 	return &GuardrailResolver{store: s}
 }
 
-// BuildInputGuardrails resolves a JSON array of guardrail names into input guardrails.
-func (r *GuardrailResolver) BuildInputGuardrails(ctx context.Context, namesJSON string) []agents.InputGuardrail {
+// BuildInputGuardrails resolves a JSON array of guardrail names into input
+// guardrails. A malformed list or an unknown name is a config error rather than
+// a silent drop: a guardrail that appears enabled but never runs is a security
+// hole, so the caller fails the build instead.
+func (r *GuardrailResolver) BuildInputGuardrails(ctx context.Context, namesJSON string) ([]agents.InputGuardrail, error) {
 	var names []string
-	if json.Unmarshal([]byte(namesJSON), &names) != nil || len(names) == 0 {
-		return nil
+	if namesJSON == "" {
+		return nil, nil
+	}
+	if err := json.Unmarshal([]byte(namesJSON), &names); err != nil {
+		return nil, fmt.Errorf("input_guardrails is not valid JSON: %w", err)
 	}
 	var out []agents.InputGuardrail
 	for _, name := range names {
-		if g := r.resolveInput(ctx, name); g != nil {
-			out = append(out, *g)
+		g := r.resolveInput(ctx, name)
+		if g == nil {
+			return nil, fmt.Errorf("input guardrail %q not found", name)
 		}
+		out = append(out, *g)
 	}
-	return out
+	return out, nil
 }
 
-// BuildOutputGuardrails resolves a JSON array of guardrail names into output guardrails.
-func (r *GuardrailResolver) BuildOutputGuardrails(ctx context.Context, namesJSON string) []agents.OutputGuardrail {
+// BuildOutputGuardrails resolves a JSON array of guardrail names into output
+// guardrails, with the same fail-loud contract as BuildInputGuardrails.
+func (r *GuardrailResolver) BuildOutputGuardrails(ctx context.Context, namesJSON string) ([]agents.OutputGuardrail, error) {
 	var names []string
-	if json.Unmarshal([]byte(namesJSON), &names) != nil || len(names) == 0 {
-		return nil
+	if namesJSON == "" {
+		return nil, nil
+	}
+	if err := json.Unmarshal([]byte(namesJSON), &names); err != nil {
+		return nil, fmt.Errorf("output_guardrails is not valid JSON: %w", err)
 	}
 	var out []agents.OutputGuardrail
 	for _, name := range names {
-		if g := r.resolveOutput(ctx, name); g != nil {
-			out = append(out, *g)
+		g := r.resolveOutput(ctx, name)
+		if g == nil {
+			return nil, fmt.Errorf("output guardrail %q not found", name)
+		}
+		out = append(out, *g)
+	}
+	return out, nil
+}
+
+// ValidateGuardrailDef checks a guardrail definition at save time so a config
+// that would silently no-op (empty/invalid regex, unknown mode/type) is
+// rejected up front instead of failing — or resolving to "not found" — only
+// when an agent later references it.
+func ValidateGuardrailDef(g *store.Guardrail) error {
+	switch g.Type {
+	case "input", "output":
+	default:
+		return fmt.Errorf("type must be input or output, got %q", g.Type)
+	}
+	var cfg store.GuardrailConfig
+	if len(g.Config) > 0 {
+		if err := json.Unmarshal(g.Config, &cfg); err != nil {
+			return fmt.Errorf("config is not valid JSON: %w", err)
 		}
 	}
-	return out
+	switch g.Mode {
+	case "regex":
+		if cfg.Pattern == "" {
+			return fmt.Errorf("regex guardrail requires a non-empty config.pattern")
+		}
+		if _, err := regexp.Compile(cfg.Pattern); err != nil {
+			return fmt.Errorf("invalid regex pattern: %w", err)
+		}
+	case "max_length":
+		if cfg.MaxLength < 0 {
+			return fmt.Errorf("max_length must not be negative")
+		}
+	default:
+		return fmt.Errorf("mode must be regex or max_length, got %q", g.Mode)
+	}
+	return nil
+}
+
+// ValidateNames reports the first input/output guardrail name that is malformed
+// or unresolvable, for save-time rejection of a config that would otherwise run
+// unprotected.
+func (r *GuardrailResolver) ValidateNames(ctx context.Context, inputJSON, outputJSON string) error {
+	if _, err := r.BuildInputGuardrails(ctx, inputJSON); err != nil {
+		return err
+	}
+	_, err := r.BuildOutputGuardrails(ctx, outputJSON)
+	return err
 }
 
 // ListGuardrails returns the combined catalog of stored and built-in guardrails.
