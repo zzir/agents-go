@@ -28,6 +28,7 @@
 | `set_default_openai_key` / globals | none — pass `openai.NewProvider(...)` explicitly in `RunOptions` |
 | `custom_data_extractor=` (function tools) | `FunctionTool.CustomDataExtractor` (SDK-only tool output metadata; [tools](tools.md#sdk-only-custom-data)) |
 | `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.PreApprovalToolInputGuardrails` |
+| resume a paused run (state as input to `Runner.run` / `Runner.run_streamed`) | `agents.ResumeRun(ctx, state, opts)` / `agents.ResumeRunStreamed(ctx, state, opts)` |
 
 ## Language-level differences
 
@@ -66,7 +67,7 @@
 
 ## Not implemented in Go
 
-- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing without the hosted `apply_patch`, see `tools/editor`'s provider-agnostic str_replace tools; [tools](tools.md))
+- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing, Go provides `apply_patch` as a **sandbox-backed** function tool — Codex-style patches applied through the `Sandbox` abstraction, not the hosted OpenAI `apply_patch`; [tools](tools.md))
 - **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
 - **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
 - **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others. (`OpenAIConversationsSession` and `OpenAIResponsesCompactionSession` **are** ported, as `openai.ConversationsSession` and `openai.CompactionSession`.)

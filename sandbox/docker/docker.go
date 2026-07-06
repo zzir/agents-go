@@ -619,6 +619,62 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 	return sandbox.ErrNoWorkDir
 }
 
+// RemoveFile implements sandbox.Sandbox.
+func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
+	if s.opts.WorkDir != "" {
+		return os.Remove(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	}
+	if s.opts.Persistent {
+		clean := path.Clean("/" + p)[1:]
+		if clean == "" {
+			return fmt.Errorf("docker sandbox: invalid file path %q", p)
+		}
+		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"rm", "--", clean}})
+		if err != nil {
+			return err
+		}
+		if res.ExitCode != 0 {
+			return fmt.Errorf("docker sandbox: rm %q: %s", p, res.Stderr)
+		}
+		return nil
+	}
+	return sandbox.ErrNoWorkDir
+}
+
+// Rename implements sandbox.Sandbox.
+func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
+	if s.opts.WorkDir != "" {
+		to := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+newPath))
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			return err
+		}
+		return os.Rename(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+oldPath)), to)
+	}
+	if s.opts.Persistent {
+		oc := path.Clean("/" + oldPath)[1:]
+		nc := path.Clean("/" + newPath)[1:]
+		if oc == "" || nc == "" {
+			return fmt.Errorf("docker sandbox: invalid rename %q -> %q", oldPath, newPath)
+		}
+		if parent := path.Dir(nc); parent != "." {
+			if res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
+				return err
+			} else if res.ExitCode != 0 {
+				return fmt.Errorf("docker sandbox: mkdir %s: %s", parent, res.Stderr)
+			}
+		}
+		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mv", "--", oc, nc}})
+		if err != nil {
+			return err
+		}
+		if res.ExitCode != 0 {
+			return fmt.Errorf("docker sandbox: mv %q -> %q: %s", oldPath, newPath, res.Stderr)
+		}
+		return nil
+	}
+	return sandbox.ErrNoWorkDir
+}
+
 // ListDir implements sandbox.Sandbox.
 func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, error) {
 	if s.opts.WorkDir != "" {

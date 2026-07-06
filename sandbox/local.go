@@ -180,6 +180,28 @@ func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) er
 	return os.WriteFile(full, content, 0o644)
 }
 
+// RemoveFile removes a file relative to the sandbox working directory.
+func (s *LocalSandbox) RemoveFile(_ context.Context, p string) error {
+	if s.opts.WorkDir == "" {
+		return ErrNoWorkDir
+	}
+	return os.Remove(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+}
+
+// Rename moves a file within the sandbox working directory, creating the
+// destination's parent directories.
+func (s *LocalSandbox) Rename(_ context.Context, oldPath, newPath string) error {
+	if s.opts.WorkDir == "" {
+		return ErrNoWorkDir
+	}
+	from := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+oldPath))
+	to := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+newPath))
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(from, to)
+}
+
 // ListDir lists entries in a directory relative to the sandbox working directory.
 func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) {
 	if s.opts.WorkDir == "" {

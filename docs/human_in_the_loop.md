@@ -52,7 +52,7 @@ fmt.Println(res.FinalOutputString())
 - `Reject`'s message (default: `"Tool execution was not approved."`) is sent to the model as the tool output so it can adapt.
 - Pass `always=true` to `Approve`/`Reject` to apply the decision to **every future call of that tool** in the run.
 - A resumed run can pause again (new approval-gated calls), hence the loop. The turn budget continues counting from where the run paused.
-- Streamed runs pause the same way: drain `Events()`, then check `FinalResult()` and resume with `ResumeRun`.
+- Streamed runs pause the same way: drain `Events()`, then check `FinalResult()` and resume with `ResumeRunStreamed` to keep streaming (or `ResumeRun` for a blocking continuation). The resumed stream does not re-emit the paused turn's own items — it picks up with the approved tools' outputs and every later turn.
 - Once a call has an explicit approve/reject decision, resuming does **not** re-invoke `NeedsApprovalFunc` for it — the checker's side effects and errors cannot re-fire for an already-resolved call.
 
 ## Pre-approval guardrails
@@ -92,4 +92,4 @@ The state also carries the original run's `MaxTurns`, so a run started with a ra
 
 ## Sessions and approvals
 
-When the run uses a [Session](sessions.md), nothing is saved at the interruption point; the user input and all generated items are persisted once the resumed run completes. Pass the same `Session` in `ResumeRun`'s options.
+When the run uses a [Session](sessions.md), the user input and every completed turn are already persisted by the time the run pauses; only the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` in `ResumeRun`'s options.

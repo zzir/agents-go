@@ -247,6 +247,17 @@ type runner struct {
 	// filter, so the session keeps the full conversation.
 	sessionItems []RunItem
 
+	// persistedSessionItems counts how many leading sessionItems have already
+	// been written to the session. The loop persists incrementally — after each
+	// turn and at an interruption — so a cancelled or failed run keeps every
+	// completed turn instead of losing the whole run (matching Python's per-turn
+	// save_result_to_session). Carried across interrupt/resume in RunState.
+	persistedSessionItems int
+
+	// userInputSaved guards the one-time persistence of userInput at loop start
+	// so a per-turn save never rewrites it.
+	userInputSaved bool
+
 	// toolsUsedBy tracks which agents have called tools this run, driving the
 	// tool_choice reset (Agent.DisableToolChoiceReset).
 	toolsUsedBy map[*Agent]bool
@@ -300,6 +311,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			sessionSeed = r.resume.GeneratedItems
 		}
 		r.sessionItems = append([]RunItem{}, sessionSeed...)
+		// The interrupted run already persisted its user input and every turn up
+		// to the pause (holding back the pending, output-less tool calls), so the
+		// resume continues from that cursor instead of re-saving.
+		r.persistedSessionItems = r.resume.PersistedSessionItems
+		r.userInputSaved = true
 		// Continue counting turns where the interrupted run stopped, so repeated
 		// interrupt/resume cycles cannot exceed the turn budget.
 		if r.resume.CurrentTurn > 1 {
@@ -313,6 +329,15 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	var previousResponseID string
 	var serverItemCount int
 	var serverCursorActive bool
+
+	// Persist the new user input up front (original run only; a resume's input
+	// was saved before it paused). Mirrors Python persisting input before the
+	// loop, so a run that fails on its very first turn still records the prompt.
+	if r.resume == nil {
+		if err := r.persistUserInput(ctx); err != nil {
+			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+		}
+	}
 
 	for turn := startTurn; ; turn++ {
 		if turn > r.maxTurns {
@@ -477,8 +502,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 
-		// Streaming: emit events for the model-produced items.
-		if r.sr != nil {
+		// Streaming: emit events for the model-produced items. A resumed turn
+		// re-processes the interrupted response whose items the paused segment
+		// already emitted, so only a fresh model call emits here.
+		if r.sr != nil && !resumedTurn {
 			for _, it := range processed.NewItems {
 				r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(it), Item: it})
 			}
@@ -491,10 +518,15 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		}
 
 		// Streaming: emit events for items produced by side effects
-		// (tool/handoff outputs). Safe to slice: streaming never resumes, so
-		// NewStepItems always begins with processed.NewItems.
+		// (tool/handoff outputs). On a fresh turn NewStepItems begins with
+		// processed.NewItems (already emitted above); on a resumed turn it
+		// holds only side-effect items, so everything is new to the stream.
 		if r.sr != nil {
-			for _, it := range step.NewStepItems[len(processed.NewItems):] {
+			emitFrom := len(processed.NewItems)
+			if resumedTurn {
+				emitFrom = 0
+			}
+			for _, it := range step.NewStepItems[emitFrom:] {
 				r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(it), Item: it})
 			}
 		}
@@ -542,9 +574,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 			}
-			if err := r.saveToSession(ctx); err != nil {
+			if err := r.persistSessionItems(ctx); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
+			r.maybeCompact(ctx)
 			if err := callAgentEnd(ctx, r.opts.Hooks, currentAgent, r.rc, step.FinalOutput); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
@@ -557,6 +590,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Usage:        r.rc.Usage,
 			}, nil
 		case stepHandoff:
+			// Persist this turn before switching agents. sessionItems is the
+			// unfiltered log, so the handoff input filter below (which rewrites
+			// generatedItems) never affects what the session keeps.
+			if err := r.persistSessionItems(ctx); err != nil {
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			}
 			if err := callHandoff(ctx, r.opts.Hooks, currentAgent, step.NewAgent, r.rc); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
@@ -583,19 +622,27 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			continue
 		case stepInterruption:
+			// Persist the completed part of this turn before pausing. The pending
+			// tool calls have no outputs yet, so persistSessionItems holds them
+			// back (they would break replay); they save with their outputs once
+			// the run resumes. The cursor rides along in RunState.
+			if err := r.persistSessionItems(ctx); err != nil {
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			}
 			state := &RunState{
-				CurrentAgent:        currentAgent,
-				OriginalInput:       originalInput,
-				GeneratedItems:      generatedItems,
-				SessionItems:        r.sessionItems,
-				UserInput:           r.userInput,
-				RawResponses:        rawResponses,
-				InterruptedResponse: resp,
-				Interruptions:       step.Interruptions,
-				Approvals:           r.rc.Approvals,
-				Usage:               r.rc.Usage,
-				CurrentTurn:         turn,
-				MaxTurns:            r.maxTurns,
+				CurrentAgent:          currentAgent,
+				OriginalInput:         originalInput,
+				GeneratedItems:        generatedItems,
+				SessionItems:          r.sessionItems,
+				PersistedSessionItems: r.persistedSessionItems,
+				UserInput:             r.userInput,
+				RawResponses:          rawResponses,
+				InterruptedResponse:   resp,
+				Interruptions:         step.Interruptions,
+				Approvals:             r.rc.Approvals,
+				Usage:                 r.rc.Usage,
+				CurrentTurn:           turn,
+				MaxTurns:              r.maxTurns,
 			}
 			return &RunResult{
 				Input:         originalInput,
@@ -607,6 +654,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				State:         state,
 			}, nil
 		case stepRunAgain:
+			// Persist the just-completed turn (all tool calls have their outputs)
+			// before looping, so a later cancel keeps this turn's work.
+			if err := r.persistSessionItems(ctx); err != nil {
+				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			}
 			continue
 		}
 	}
@@ -631,30 +683,101 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 	return err
 }
 
-// saveToSession persists the new user input and the run's generated items to
-// the session, if one is configured. It saves r.sessionItems — the full item
-// log, unaffected by handoff input filters — so the stored conversation never
-// loses pre-handoff items.
-func (r *runner) saveToSession(ctx context.Context) error {
+// persistUserInput writes the run's new user input to the session once, at loop
+// start. Later per-turn saves persist only generated items, so the prompt is
+// never rewritten. No-op without a session or when there is no new input.
+func (r *runner) persistUserInput(ctx context.Context) error {
+	if r.opts.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
+		return nil
+	}
+	if err := r.opts.Session.AddItems(ctx, r.userInput); err != nil {
+		return err
+	}
+	r.userInputSaved = true
+	return nil
+}
+
+// persistSessionItems incrementally saves the sessionItems produced since the
+// last save. It persists only the "safe" leading prefix: a trailing
+// function_call still awaiting its output (a HITL pause) is held back so the
+// stored conversation never contains a call without its output, which would be
+// rejected on replay. The held-back calls save on the next turn, once their
+// outputs arrive. sessionItems is the unfiltered log, so handoff input filters
+// never affect what is stored.
+func (r *runner) persistSessionItems(ctx context.Context) error {
 	if r.opts.Session == nil {
 		return nil
 	}
-	genInput, err := itemsToInputList(r.sessionItems)
+	end := safePersistBoundary(r.sessionItems, r.persistedSessionItems)
+	if end <= r.persistedSessionItems {
+		return nil
+	}
+	toSave, err := itemsToInputList(r.sessionItems[r.persistedSessionItems:end])
 	if err != nil {
 		return err
 	}
-	toSave := make([]TResponseInputItem, 0, len(r.userInput)+len(genInput))
-	toSave = append(toSave, r.userInput...)
-	toSave = append(toSave, genInput...)
-	if err := r.opts.Session.AddItems(ctx, toSave); err != nil {
-		return err
+	if len(toSave) > 0 {
+		if err := r.opts.Session.AddItems(ctx, toSave); err != nil {
+			return err
+		}
 	}
-	// If the session can compact itself (e.g. via responses.compact), give it a
-	// chance now that the run's items are persisted. At run end there are no
-	// pending tool outputs, so compaction is always safe to attempt here.
-	// Compaction is best-effort housekeeping: the items are already saved and
-	// the final output produced, so a compaction failure is recorded on the
-	// trace instead of turning the successful run into an error.
+	r.persistedSessionItems = end
+	return nil
+}
+
+// safePersistBoundary returns the exclusive end index up to which
+// items[start:] can be safely persisted: it stops at the first function_call
+// whose matching function_call_output is absent from items[start:], holding
+// back that call and everything after it. All other turns leave every call
+// paired with its output, so the boundary is len(items).
+func safePersistBoundary(items []RunItem, start int) int {
+	if start >= len(items) {
+		return len(items)
+	}
+	haveOutput := map[string]struct{}{}
+	for i := start; i < len(items); i++ {
+		if id, _, isOutput := runItemCallID(items[i]); isOutput {
+			haveOutput[id] = struct{}{}
+		}
+	}
+	for i := start; i < len(items); i++ {
+		if id, isCall, _ := runItemCallID(items[i]); isCall {
+			if _, ok := haveOutput[id]; !ok {
+				return i
+			}
+		}
+	}
+	return len(items)
+}
+
+// runItemCallID reports a run item's function-call correlation id and whether it
+// is a call or an output, by inspecting its input-item form. Non-function items
+// (messages, reasoning, handoffs) report isCall=isOutput=false. Works uniformly
+// for live items and items rebuilt from serialized RunState.
+func runItemCallID(it RunItem) (callID string, isCall, isOutput bool) {
+	in, err := it.ToInputItem()
+	if err != nil {
+		return "", false, false
+	}
+	switch {
+	case in.OfFunctionCall != nil:
+		return in.OfFunctionCall.CallID, true, false
+	case in.OfFunctionCallOutput != nil:
+		return in.OfFunctionCallOutput.CallID, false, true
+	}
+	return "", false, false
+}
+
+// maybeCompact gives a self-compacting session a chance to compact now that the
+// run's items are persisted and the final output is produced. At run end there
+// are no pending tool outputs, so compaction is always safe here. It is
+// best-effort housekeeping: a failure is recorded on the trace instead of
+// turning the successful run into an error. Called once, at final output — Go
+// compacts per run, not per turn (see docs/python_differences.md).
+func (r *runner) maybeCompact(ctx context.Context) {
+	if r.opts.Session == nil {
+		return
+	}
 	if cs, ok := r.opts.Session.(CompactionAwareSession); ok {
 		// The span starts lazily — only when the session actually compacts —
 		// so no-op passes don't clutter the trace.
@@ -679,7 +802,6 @@ func (r *runner) saveToSession(ctx context.Context) error {
 			cspan.Finish()
 		}
 	}
-	return nil
 }
 
 // validateServerState rejects incompatible server-managed conversation options.

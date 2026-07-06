@@ -94,7 +94,7 @@ func main() {
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer` (`NewSSEServer` deprecated) |
 | Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
-| File editing | `editor.NewTools(dir)` (str_replace editor, `os.Root`-confined) |
+| File editing | `sandbox.ApplyPatchTool` (Codex-style patches, edits through the sandbox) |
 | Skills | `skills.Load / LoadRecursive / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md`) |
 
 ## Tools
@@ -275,9 +275,8 @@ Core module path: `github.com/zzir/agents-go`.
 | `memory` | `FileSession` (JSONL file store, zero dependencies) |
 | `tracing` | Traces, spans, processors and exporters |
 | `mcp` | Model Context Protocol client |
-| `sandbox` | `Sandbox` interface + `CodeTool` + local backend |
+| `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
 | `tools/bravesearch` | Brave Search web-search tool |
-| `tools/editor` | File-editing (str_replace) tools |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
 | `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |

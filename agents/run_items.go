@@ -148,6 +148,36 @@ func (i *ReasoningItem) ToInputItem() (TResponseInputItem, error) {
 	return outputItemToInput(i.Raw)
 }
 
+// Text returns the item's thinking text: the standard summary parts, falling
+// back to the content parts some Responses-compatible backends use for raw
+// reasoning text. Encrypted-only reasoning yields "".
+func (i *ReasoningItem) Text() string {
+	r := i.Raw.AsReasoning()
+	var b strings.Builder
+	for _, s := range r.Summary {
+		if s.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(s.Text)
+	}
+	if b.Len() > 0 {
+		return b.String()
+	}
+	for _, c := range r.Content {
+		if c.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(c.Text)
+	}
+	return b.String()
+}
+
 // rawInputRunItem is a RunItem reconstituted from serialized state. It carries
 // only the input-item form (and its original discriminator), which is all the
 // runner needs to resume: history is rebuilt from input items.

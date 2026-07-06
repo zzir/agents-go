@@ -58,7 +58,7 @@ A few control knobs worth calling out:
 
 Each `Run` is one logical turn of a conversation. To carry history across runs you can:
 
-1. **Use a [Session](sessions.md)** — history is loaded before the run and saved after it:
+1. **Use a [Session](sessions.md)** — history is loaded before the run and saved incrementally as it proceeds (each turn as it completes):
 
    ```go
    sess := agents.NewInMemorySession()

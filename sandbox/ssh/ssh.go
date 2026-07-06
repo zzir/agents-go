@@ -307,6 +307,37 @@ func (s *Sandbox) WriteFile(_ context.Context, p string, content []byte) error {
 	return cerr
 }
 
+// RemoveFile implements sandbox.Sandbox.
+func (s *Sandbox) RemoveFile(_ context.Context, p string) error {
+	if s.opts.WorkDir == "" {
+		return sandbox.ErrNoWorkDir
+	}
+	clean := path.Clean("/" + p)[1:]
+	if clean == "" {
+		return fmt.Errorf("ssh sandbox: invalid file path %q", p)
+	}
+	return s.sftp.Remove(path.Join(s.opts.WorkDir, clean))
+}
+
+// Rename implements sandbox.Sandbox.
+func (s *Sandbox) Rename(_ context.Context, oldPath, newPath string) error {
+	if s.opts.WorkDir == "" {
+		return sandbox.ErrNoWorkDir
+	}
+	oc := path.Clean("/" + oldPath)[1:]
+	nc := path.Clean("/" + newPath)[1:]
+	if oc == "" || nc == "" {
+		return fmt.Errorf("ssh sandbox: invalid rename %q -> %q", oldPath, newPath)
+	}
+	to := path.Join(s.opts.WorkDir, nc)
+	if parent := path.Dir(to); parent != "." {
+		if err := s.sftp.MkdirAll(parent); err != nil {
+			return fmt.Errorf("ssh sandbox: mkdir %s: %w", parent, err)
+		}
+	}
+	return s.sftp.Rename(path.Join(s.opts.WorkDir, oc), to)
+}
+
 // ListDir implements sandbox.Sandbox.
 func (s *Sandbox) ListDir(_ context.Context, p string) ([]sandbox.DirEntry, error) {
 	if s.opts.WorkDir == "" {

@@ -29,6 +29,11 @@ type CodeToolConfig struct {
 	// a tool result carries at most about twice this many output bytes).
 	// Defaults to 8192. The cut never splits a multi-byte UTF-8 sequence.
 	MaxOutputBytes int
+	// NeedsApprovalFunc, when set, is forwarded to the tool as its per-call
+	// approval gate: given the command in argsJSON it decides whether this
+	// execution must be approved first. nil = never gate. The sandbox package
+	// attaches no policy of its own — the caller supplies the decision.
+	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string) (bool, error)
 }
 
 const defaultMaxTimeout = 10 * time.Minute
@@ -77,10 +82,11 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 		}
 	}
 	return &agents.FunctionTool{
-		Name:             cfg.Name,
-		Description:      cfg.Description,
-		ParamsJSONSchema: schema,
-		Strict:           true,
+		Name:              cfg.Name,
+		Description:       cfg.Description,
+		ParamsJSONSchema:  schema,
+		Strict:            true,
+		NeedsApprovalFunc: cfg.NeedsApprovalFunc,
 		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {

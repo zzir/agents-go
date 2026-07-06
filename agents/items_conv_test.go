@@ -109,3 +109,27 @@ func TestUnmarshalInputItemRejectsGarbage(t *testing.T) {
 		t.Fatalf("expected OfMessage, got %+v", in)
 	}
 }
+
+func TestReasoningItem_Text(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"summary", `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"a"},{"type":"summary_text","text":"b"}]}`, "a\n\nb"},
+		{"content fallback", `{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"raw"}]}`, "raw"},
+		{"summary wins over content", `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"s"}],"content":[{"type":"reasoning_text","text":"c"}]}`, "s"},
+		{"encrypted only", `{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"opaque"}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var item responses.ResponseOutputItemUnion
+			if err := json.Unmarshal([]byte(tc.raw), &item); err != nil {
+				t.Fatal(err)
+			}
+			if got := (&ReasoningItem{Raw: item}).Text(); got != tc.want {
+				t.Errorf("Text() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -47,7 +47,9 @@ func run() error {
 	defer sb.Close()
 
 	// exec_command runs shell commands; read_file / write_file / list_files
-	// give the agent native file I/O (no shell needed).
+	// give the agent native file I/O; apply_patch applies Codex-style multi-file
+	// patches. All of them edit through the same Sandbox, so they share the
+	// filesystem exec_command runs in.
 	tools := []agents.Tool{
 		sandbox.CodeTool(sb, sandbox.CodeToolConfig{
 			Name:        "exec_command",
@@ -55,6 +57,7 @@ func run() error {
 		}),
 	}
 	tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
+	tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{}))
 
 	agent := &agents.Agent{
 		Name: "coder",

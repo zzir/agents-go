@@ -45,6 +45,14 @@ type RunState struct {
 	// GeneratedItems only when a handoff input filter rewrote the conversation.
 	// Nil means it equals GeneratedItems.
 	SessionItems []RunItem
+
+	// PersistedSessionItems counts how many leading SessionItems the interrupted
+	// run already wrote to the session before pausing (the pending, output-less
+	// tool calls are held back). The resumed run continues persisting from here.
+	// Zero — including states serialized before this field existed — makes the
+	// resume re-persist from the start, which is safe: an old interrupted run
+	// saved nothing, so there is nothing to double up.
+	PersistedSessionItems int
 }
 
 // Approve records approval for a pending tool call. Pass always=true to approve
@@ -70,6 +78,39 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 // state. It re-processes the interrupted model response (now that decisions are
 // available) and runs the loop to completion or the next interruption.
 func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (*RunResult, error) {
+	return resumeLoop(ctx, state, opts, nil)
+}
+
+// ResumeRunStreamed is ResumeRun in streaming mode: it continues a paused run
+// and streams events as they are produced, exactly like RunStreamed does for a
+// fresh run. Items the interrupted segment already emitted before pausing (the
+// paused turn's message and tool-call items) are not re-emitted; the stream
+// picks up with the side effects of the approval decisions (tool outputs) and
+// every later turn.
+func ResumeRunStreamed(ctx context.Context, state *RunState, opts RunOptions) *StreamedResult {
+	sr := &StreamedResult{ch: make(chan streamMsg, 64)}
+
+	go func() {
+		defer close(sr.ch)
+		res, err := resumeLoop(ctx, state, opts, sr)
+		sr.setFinal(res, err)
+		if err != nil {
+			// Same rationale as RunStreamed: the error is recorded via setFinal,
+			// so when the consumer has gone away and the buffer is full, dropping
+			// this send avoids leaking the goroutine.
+			select {
+			case sr.ch <- streamMsg{err: err}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	return sr
+}
+
+// resumeLoop is the shared body of ResumeRun and ResumeRunStreamed; a non-nil
+// sr switches the loop into streaming mode.
+func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, sr *StreamedResult) (*RunResult, error) {
 	if state == nil {
 		return nil, newUserError("ResumeRun: state must not be nil")
 	}
@@ -98,7 +139,7 @@ func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (*RunResul
 		rc.Usage = state.Usage
 	}
 	rc.inheritedOpts = &opts
-	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput}
+	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, sr: sr}
 	if opts.Tracer != nil {
 		workflow := state.CurrentAgent.Name
 		if workflow == "" {
@@ -149,29 +190,31 @@ type serialInterruption struct {
 }
 
 type serialRunState struct {
-	SchemaVersion       string                    `json:"schema_version"`
-	CurrentAgent        string                    `json:"current_agent"`
-	CurrentTurn         int                       `json:"current_turn"`
-	MaxTurns            int                       `json:"max_turns,omitempty"`
-	OriginalInput       []json.RawMessage         `json:"original_input"`
-	UserInput           []json.RawMessage         `json:"user_input,omitempty"`
-	GeneratedItems      []serialItem              `json:"generated_items"`
-	SessionItems        []serialItem              `json:"session_items,omitempty"`
-	ModelResponses      []serialResponse          `json:"model_responses"`
-	InterruptedResponse *serialResponse           `json:"interrupted_response"`
-	Interruptions       []serialInterruption      `json:"interruptions"`
-	Approvals           map[string]serialApproval `json:"approvals_by_call_id"`
-	ApprovalsByTool     map[string]serialApproval `json:"approvals_by_tool"`
-	Usage               *Usage                    `json:"usage,omitempty"`
+	SchemaVersion         string                    `json:"schema_version"`
+	CurrentAgent          string                    `json:"current_agent"`
+	CurrentTurn           int                       `json:"current_turn"`
+	MaxTurns              int                       `json:"max_turns,omitempty"`
+	OriginalInput         []json.RawMessage         `json:"original_input"`
+	UserInput             []json.RawMessage         `json:"user_input,omitempty"`
+	GeneratedItems        []serialItem              `json:"generated_items"`
+	SessionItems          []serialItem              `json:"session_items,omitempty"`
+	PersistedSessionItems int                       `json:"persisted_session_items,omitempty"`
+	ModelResponses        []serialResponse          `json:"model_responses"`
+	InterruptedResponse   *serialResponse           `json:"interrupted_response"`
+	Interruptions         []serialInterruption      `json:"interruptions"`
+	Approvals             map[string]serialApproval `json:"approvals_by_call_id"`
+	ApprovalsByTool       map[string]serialApproval `json:"approvals_by_tool"`
+	Usage                 *Usage                    `json:"usage,omitempty"`
 }
 
 // MarshalJSON serializes the run state to JSON for persistence.
 func (s *RunState) MarshalJSON() ([]byte, error) {
 	out := serialRunState{
-		SchemaVersion: RunStateSchemaVersion,
-		CurrentTurn:   s.CurrentTurn,
-		MaxTurns:      s.MaxTurns,
-		Usage:         s.Usage,
+		SchemaVersion:         RunStateSchemaVersion,
+		CurrentTurn:           s.CurrentTurn,
+		MaxTurns:              s.MaxTurns,
+		PersistedSessionItems: s.PersistedSessionItems,
+		Usage:                 s.Usage,
 	}
 	if s.CurrentAgent != nil {
 		out.CurrentAgent = s.CurrentAgent.Name
@@ -277,11 +320,12 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	lookup := func(name string) *Agent { return registry[name] }
 
 	st := &RunState{
-		CurrentAgent: lookup(in.CurrentAgent),
-		CurrentTurn:  in.CurrentTurn,
-		MaxTurns:     in.MaxTurns,
-		Usage:        in.Usage,
-		Approvals:    NewApprovalStore(),
+		CurrentAgent:          lookup(in.CurrentAgent),
+		CurrentTurn:           in.CurrentTurn,
+		MaxTurns:              in.MaxTurns,
+		PersistedSessionItems: in.PersistedSessionItems,
+		Usage:                 in.Usage,
+		Approvals:             NewApprovalStore(),
 	}
 	if st.CurrentAgent == nil {
 		return nil, newUserError("run state references unknown agent %q; add it to the registry", in.CurrentAgent)

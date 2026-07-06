@@ -166,21 +166,37 @@ The model controls only the `query`; `Count`, `Country`, `SearchLang`, `SafeSear
 
 ## File editing
 
-`tools/editor` gives an agent file-editing tools following the `str_replace` editor pattern — provider-agnostic function tools, no hosted `apply_patch` and no diff parser (the SDK does not model OpenAI's hosted `apply_patch`/`local_shell` tools):
+File editing is a **sandbox** capability: `apply_patch` (Codex-style multi-file
+patches) edits through the `Sandbox` abstraction, so it targets the same
+filesystem `exec_command` and the file tools use — a local dir, a bind-mounted
+container, or a remote host over SFTP. There is no separate local-path editor
+and no hosted OpenAI `apply_patch`.
 
 ```go
-import "github.com/zzir/agents-go/tools/editor"
-
-agent := &agents.Agent{
-    Name:  "coder",
-    Model: "gpt-4o",
-    Tools: editor.NewTools("./workspace"), // view_file, create_file, str_replace, insert_text
-}
+tools := []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)   // read_file, write_file, list_files
+tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{})) // apply_patch
 ```
 
-- `view_file` — print a file with line numbers, or list a directory.
-- `create_file` — create a new file (fails if it exists, so edits never clobber).
-- `str_replace` — replace a snippet that occurs **exactly once** (the model includes surrounding context to make it unique); 0 or >1 matches are rejected so edits stay precise.
-- `insert_text` — insert a line after a given line number.
+The patch format carries **no line numbers** — a change is located by its
+surrounding context lines and an optional `@@` anchor, so the model never
+computes offsets:
 
-Every read and write is confined to the directory passed to `NewTools` via Go's `os.Root`, so `../` traversal and symlink escapes are rejected. Files over 1 MiB are handled conservatively: `view_file` shows the first 1 MiB with an explicit truncation marker, while `str_replace` and `insert_text` **refuse to edit** oversize files (editing through a truncated read would silently destroy the tail). Operations from one `NewTools` set are serialized with a mutex, so two same-turn edits to the same file cannot lose each other's update.
+```
+*** Begin Patch
+*** Update File: main.go
+@@ func main()
+ 	fmt.Println("start")
+-	x := 1
++	x := 2
+*** Add File: notes.md
++created
+*** Delete File: stale.txt
+*** End Patch
+```
+
+- Prefix context lines with a space, removals with `-`, additions with `+`; include enough context to locate each change.
+- Rename a file by putting `*** Move to: new/path` right after its `*** Update File:` line.
+- **Atomic**: new content is computed entirely in memory first, so a hunk that can't be located changes nothing; if a write fails mid-commit, the already-applied files are rolled back from an in-memory snapshot.
+
+Editing needs a sandbox with a working directory (`ReadFile`/`WriteFile` fail with `ErrNoWorkDir` otherwise). A runnable example lives in `examples/sandbox`.

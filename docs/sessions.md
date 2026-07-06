@@ -1,6 +1,6 @@
 # Sessions
 
-A `Session` persists conversation history across runs, so multi-turn chat needs no manual item threading: prior items are prepended to the input before the run, and the new input plus everything the run generated is saved after it completes.
+A `Session` persists conversation history across runs, so multi-turn chat needs no manual item threading: prior items are prepended to the input before the run, and the new input plus everything the run generates is saved incrementally as the run proceeds.
 
 ```go
 sess := agents.NewInMemorySession()
@@ -132,7 +132,7 @@ sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
 agents.Run(ctx, agent, "…", agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()})
 ```
 
-The runner calls compaction after persisting a completed run (Python compacts per turn; Go persists once per run, so compaction is attempted once per run). "Candidate" items exclude user messages and existing compaction items, matching the Python heuristic. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
+The runner attempts compaction once, after the final output is persisted (Python compacts per turn; Go persists items per turn but compacts once per run). "Candidate" items exclude user messages and existing compaction items, matching the Python heuristic. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
 
 Compaction is best-effort housekeeping: by the time it runs, the run's items are already saved and the final output produced, so a compaction failure is recorded on the run's `compaction` trace span instead of failing the run. The rewrite goes through `ReplaceSessionItems`, so backends implementing `ItemsReplacer` swap history atomically.
 
@@ -153,8 +153,8 @@ The pair-safety logic is exported as `agents.SafeSplitPoint(items, split)` for c
 
 ## Session semantics
 
-- History is loaded once at run start and saved once on successful completion — a failed run saves nothing.
-- When a run pauses for [tool approval](human_in_the_loop.md), nothing is saved until the resumed run completes; pass the same `Session` to `ResumeRun`.
+- History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (matching Python's per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run.
+- When a run pauses for [tool approval](human_in_the_loop.md), the completed part of the turn is already saved; the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` to `ResumeRun`.
 - [Handoff input filters](handoffs.md#input-filters) do not affect what is saved: the session keeps the unfiltered conversation.
 - Corrections: use `PopItem` to remove the last item (e.g. let a user edit their question):
 

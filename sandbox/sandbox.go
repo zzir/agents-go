@@ -65,6 +65,11 @@ type Sandbox interface {
 	WriteFile(ctx context.Context, path string, content []byte) error
 	// ListDir lists entries in a sandbox directory (empty path = working dir).
 	ListDir(ctx context.Context, path string) ([]DirEntry, error)
+	// RemoveFile removes a file in the sandbox's persistent working directory.
+	RemoveFile(ctx context.Context, path string) error
+	// Rename moves a file within the sandbox's persistent working directory,
+	// creating the destination's parent directories.
+	Rename(ctx context.Context, oldPath, newPath string) error
 	// Close releases any resources held by the sandbox.
 	Close() error
 }
