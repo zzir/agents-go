@@ -82,6 +82,13 @@ type RunOptions struct {
 	// history across all handoffs.
 	HandoffInputFilter func(HandoffInputData) HandoffInputData
 
+	// ErrorHandlers supplies per-error-kind recovery handlers that can turn a
+	// failing run — max turns exceeded, a model refusal, or an invalid
+	// structured final output — into a normal completion with a fallback final
+	// output. The zero value leaves every error fatal. The counterpart of
+	// Python's Runner.run(..., error_handlers={...}).
+	ErrorHandlers RunErrorHandlers
+
 	// Hooks receives run-scoped lifecycle callbacks.
 	Hooks RunHooks
 
@@ -341,7 +348,15 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 	for turn := startTurn; ; turn++ {
 		if turn > r.maxTurns {
-			return nil, r.fail(newMaxTurnsError(r.maxTurns), originalInput, generatedItems, rawResponses, currentAgent)
+			maxErr := newMaxTurnsError(r.maxTurns)
+			res, rerr := r.recoverMaxTurns(ctx, maxErr, originalInput, generatedItems, rawResponses, currentAgent)
+			if rerr != nil {
+				return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
+			}
+			if res != nil {
+				return res, nil
+			}
+			return nil, r.fail(maxErr, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -512,7 +527,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		}
 
 		lenBeforeStep := len(generatedItems)
-		step, err := r.executeToolsAndSideEffects(ctx, currentAgent, processed, outputSchema, resumedTurn)
+		step, err := r.executeToolsAndSideEffects(ctx, currentAgent, processed, outputSchema, resumedTurn, originalInput, generatedItems, resp)
 		if err != nil {
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
@@ -563,32 +578,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 		switch step.NextStep {
 		case stepFinalOutput:
-			if len(currentAgent.OutputGuardrails) > 0 {
-				gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
-				gerr := runOutputGuardrails(ctx, r.rc, currentAgent, currentAgent.OutputGuardrails, step.FinalOutput)
-				if gerr != nil {
-					gspan.SetError(gerr.Error(), nil)
-				}
-				gspan.Finish()
-				if gerr != nil {
-					return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
-				}
+			res, ferr := r.finishRun(ctx, currentAgent, originalInput, generatedItems, rawResponses, step.FinalOutput)
+			if ferr != nil {
+				return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			if err := r.persistSessionItems(ctx); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-			}
-			r.maybeCompact(ctx)
-			if err := callAgentEnd(ctx, r.opts.Hooks, currentAgent, r.rc, step.FinalOutput); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-			}
-			return &RunResult{
-				Input:        originalInput,
-				NewItems:     generatedItems,
-				RawResponses: rawResponses,
-				FinalOutput:  step.FinalOutput,
-				LastAgent:    currentAgent,
-				Usage:        r.rc.Usage,
-			}, nil
+			return res, nil
 		case stepHandoff:
 			// Persist this turn before switching agents. sessionItems is the
 			// unfiltered log, so the handoff input filter below (which rewrites
@@ -662,6 +656,64 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			continue
 		}
 	}
+}
+
+// finishRun is the final-output tail shared by the normal completion path and
+// a max-turns recovery: output guardrails, session persistence, compaction,
+// the agent-end hook, then the RunResult.
+func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TResponseInputItem, items []RunItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
+	if len(agent.OutputGuardrails) > 0 {
+		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
+		gerr := runOutputGuardrails(ctx, r.rc, agent, agent.OutputGuardrails, finalOutput)
+		if gerr != nil {
+			gspan.SetError(gerr.Error(), nil)
+		}
+		gspan.Finish()
+		if gerr != nil {
+			return nil, gerr
+		}
+	}
+	if err := r.persistSessionItems(ctx); err != nil {
+		return nil, err
+	}
+	r.maybeCompact(ctx)
+	if err := callAgentEnd(ctx, r.opts.Hooks, agent, r.rc, finalOutput); err != nil {
+		return nil, err
+	}
+	return &RunResult{
+		Input:        originalInput,
+		NewItems:     items,
+		RawResponses: raw,
+		FinalOutput:  finalOutput,
+		LastAgent:    agent,
+		Usage:        r.rc.Usage,
+	}, nil
+}
+
+// recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn a turn-budget
+// overrun into a normal completion. It returns (nil, nil) when there is no
+// handler or it declines — the caller then fails with the MaxTurnsError. On
+// recovery the agent span still records the overrun (Python parity: the error
+// is traced even when handled), the synthesized fallback message joins the
+// run's items and session unless the handler opted out, and the run finishes
+// through the same guardrail/persist/hook tail as a normal final output.
+func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []TResponseInputItem, generatedItems []RunItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
+	// Handlers see the session view of the run (never reset by handoff input
+	// filters), like Python's session_items-based RunErrorData for max_turns.
+	rec, err := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
+	if err != nil || rec == nil {
+		return nil, err
+	}
+	r.agentSpan.SetError(cause.Error(), map[string]any{"max_turns": r.maxTurns})
+	items := generatedItems
+	if rec.message != nil {
+		items = append(items, rec.message)
+		r.sessionItems = append(r.sessionItems, rec.message)
+		if r.sr != nil {
+			r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(rec.message), Item: rec.message})
+		}
+	}
+	return r.finishRun(ctx, agent, originalInput, items, rawResponses, rec.finalOutput)
 }
 
 func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, raw []*ModelResponse, last *Agent) error {

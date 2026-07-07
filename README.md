@@ -1,7 +1,7 @@
 # agents-go
 
 A Go port of [openai-agents-python](https://github.com/openai/openai-agents-python)
-(tracking **v0.17.7**). Build agents that call tools, hand off to one another,
+(tracking **v0.17.8**). Build agents that call tools, hand off to one another,
 enforce guardrails, stream events, persist sessions, pause for human approval,
 and emit traces — all with idiomatic Go APIs.
 
@@ -63,6 +63,7 @@ func main() {
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
 | Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails (incl. pre-approval via `RunOptions.PreApprovalToolInputGuardrails`) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
+| Error recovery | `RunOptions.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
 | SDK-only tool output metadata | `FunctionTool.CustomDataExtractor` → `ToolCallOutputItem.CustomData` (never sent to the model) |
 | Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
 | Composite hooks | `agents.CompositeRunHooks(hooks...)` |

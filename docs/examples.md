@@ -15,6 +15,7 @@ go run ./examples/hello
 | [`examples/handoffs`](../examples/handoffs/main.go) | A triage agent delegating to specialists with `HandoffTo` |
 | [`examples/streaming`](../examples/streaming/main.go) | Consuming `RunStreamed` events with `range` |
 | [`examples/hitl`](../examples/hitl/main.go) | Human-in-the-loop: interrupt, approve/reject, resume |
+| [`examples/errorhandlers`](../examples/errorhandlers/main.go) | `RunOptions.ErrorHandlers`: fallback final outputs for max-turns and invalid structured output |
 | [`examples/tracing`](../examples/tracing/main.go) | The tracing pipeline: tracer → batch processor → console exporter, plus `TraceGroupID`/`TraceMetadata` |
 | [`examples/fallback`](../examples/fallback/main.go) | Retry + fallback model decorators, with `WithShouldFallback` classification |
 | [`examples/compaction`](../examples/compaction/main.go) | `openai.CompactionSession`: server-side history compaction via `responses.compact` |

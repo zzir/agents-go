@@ -1,6 +1,6 @@
 # Differences from the Python SDK
 
-`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.17.7: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
+`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.17.8: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
 
 ## API mapping
 
@@ -29,6 +29,7 @@
 | `custom_data_extractor=` (function tools) | `FunctionTool.CustomDataExtractor` (SDK-only tool output metadata; [tools](tools.md#sdk-only-custom-data)) |
 | `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.PreApprovalToolInputGuardrails` |
 | resume a paused run (state as input to `Runner.run` / `Runner.run_streamed`) | `agents.ResumeRun(ctx, state, opts)` / `agents.ResumeRunStreamed(ctx, state, opts)` |
+| `error_handlers={"max_turns": ..., "model_refusal": ..., "invalid_final_output": ...}` | `RunOptions.ErrorHandlers` struct (`MaxTurns` / `ModelRefusal` / `InvalidFinalOutput` fields); handlers return `(*RunErrorHandlerResult, error)` — `(nil, nil)` declines like Python's `None`; `include_in_history=True` default becomes the `ExcludeFromHistory` zero value |
 
 ## Language-level differences
 
@@ -44,13 +45,13 @@
 
 ## Behavioral differences
 
-| Area | Python v0.17.7 | Go |
+| Area | Python v0.17.8 | Go |
 |---|---|---|
 | Tool errors | `failure_error_function` default feeds the error to the model | Same default (`DefaultToolErrorFunction`); set the field to `nil` for fatal |
 | Tool timeout | `timeout_seconds` + `timeout_behavior` (`error_as_result` / `raise_exception`) | `FunctionTool.Timeout` → `*ToolTimeoutError`, fed back via `FailureErrorFunction` when set (≈ `error_as_result`), else fatal (≈ `raise_exception`). Enforced by the runner: the call returns at the deadline even if the tool ignores its context (the tool goroutine finishes in the background, its late result discarded) |
 | Tool panics | tool exceptions flow into `failure_error_function` | same: a panicking tool (or guardrail) is recovered and converted to an error instead of crashing the process |
 | HITL interruption scope | tools not needing approval still execute in the interrupted turn; only approval-gated calls pause | **all** tool calls in the turn wait until `ResumeRun` when any of them needs approval (keeps `RunState` free of partial results; side effect: "safe" tools run with post-approval context) |
-| Model refusal | refusal text surfaces as plain content | run fails with `*ModelRefusalError` carrying the refusal |
+| Model refusal | raises `ModelRefusalError` (recoverable via `error_handlers`) | same: `*ModelRefusalError` carrying the refusal, recoverable via `RunOptions.ErrorHandlers.ModelRefusal` |
 | Handoff input filter | receives `input_history` / `pre_handoff_items` / `new_items` separately | receives one flattened `InputHistory`; the session always keeps the unfiltered conversation. `NestHandoffHistory` ports `nest_handoff_history` (fold + flatten) on top of this |
 | HITL state | `RunState` JSON (Python format) | `RunState` JSON round-trips **Go↔Go only**, and rebuilding needs an agent-name registry (Go functions don't serialize). The state carries `max_turns` so `ResumeRun` continues under the original budget; resumed `NewItems` deserialize as raw items (`ItemType()` survives, concrete type assertions don't) |
 | Input guardrail timing | parallel with the first model call | same for `Run`; `RunStreamed` runs them synchronously before the first call |

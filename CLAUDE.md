@@ -5,7 +5,7 @@ Guidance for Claude Code when working in this repository.
 ## What this is
 
 A Go port of [openai-agents-python](https://github.com/openai/openai-agents-python)
-(tracking **v0.17.7**). Goal: behavioral parity with idiomatic Go APIs. The Python
+(tracking **v0.17.8**). Goal: behavioral parity with idiomatic Go APIs. The Python
 source is the reference spec — match its semantics. Intentional divergences and
 open gaps are cataloged in [docs/python_differences.md](docs/python_differences.md);
 keep it current when you close or open a gap.

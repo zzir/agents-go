@@ -79,6 +79,11 @@ func newOutputType[T any](strict bool) OutputSchema {
 // schemaError exposes a deferred schema-generation failure to the runner.
 func (s *typedOutputSchema[T]) schemaError() error { return s.schemaErr }
 
+// wrappedSchema reports the {"response": ...} envelope to the runner, so a
+// run-error handler's fallback output can be wrapped the same way the model's
+// own output would be (see wrappedOutputSchema).
+func (s *typedOutputSchema[T]) wrappedSchema() bool { return s.wrapped }
+
 // outputSchemaError returns the deferred schema-generation failure of an
 // OutputSchema, if it carries one.
 func outputSchemaError(s OutputSchema) error {

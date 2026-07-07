@@ -23,7 +23,7 @@ res, err := agents.Run(ctx, agent, "Write a haiku about recursion.", agents.RunO
 3. If the model requested a handoff, switch the current agent and loop.
 4. Otherwise execute the tool calls (concurrently), append their results, and loop.
 
-If the number of turns exceeds the budget, the run fails with `*agents.MaxTurnsError`.
+If the number of turns exceeds the budget, the run fails with `*agents.MaxTurnsError` — unless a [`MaxTurns` error handler](#error-handlers) recovers it with a fallback final output.
 
 ## Run options
 
@@ -39,6 +39,7 @@ type RunOptions struct {
 	MaxToolConcurrency    int              // cap parallel function tools per turn; 0 = unlimited
 	ToolNotFoundBehavior  ToolNotFoundBehavior // unknown tool call: abort (default) or return error to model
 	HandoffInputFilter    func(HandoffInputData) HandoffInputData // default filter for handoffs without their own
+	ErrorHandlers         RunErrorHandlers // recover from max-turns/refusal/invalid-output failures (below)
 	Hooks                 RunHooks         // run-scoped lifecycle callbacks
 	Session               Session          // conversation persistence (docs: Sessions)
 	Tracer                *tracing.Tracer  // opt-in tracing (docs: Tracing)
@@ -120,3 +121,44 @@ All failures come back as Go errors. The SDK's typed errors embed `agents.Agents
 | `*InputGuardrailTripwireError` / `*OutputGuardrailTripwireError` / `*ToolGuardrailTripwireError` | A guardrail tripped |
 
 Every SDK error carries `Details *RunErrorDetails` (input, items generated so far, raw responses, last agent, usage) so you can inspect partial progress — see [Results](results.md#errors).
+
+## Error handlers
+
+`RunOptions.ErrorHandlers` — the counterpart of Python's `Runner.run(..., error_handlers={...})` — turns selected failures into a normal completion with a fallback final output instead of an error:
+
+- **`MaxTurns`** fires when the run exceeds its turn budget (`*MaxTurnsError`).
+- **`ModelRefusal`** fires when the model refuses to respond (`*ModelRefusalError`).
+- **`InvalidFinalOutput`** fires when an agent with an output type produces a final message that fails schema validation, or no final text at all (`*ModelBehaviorError`). Other model-behavior errors (e.g. an unknown tool call) are not routed here.
+
+A handler receives the error and a `RunErrorData` snapshot (input, items so far, their input-item form, raw responses, last agent) and returns the fallback:
+
+```go
+res, err := agents.Run(ctx, agent, "Analyze this long transcript", agents.RunOptions{
+	ModelProvider: provider,
+	MaxTurns:      3,
+	ErrorHandlers: agents.RunErrorHandlers{
+		MaxTurns: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
+			return &agents.RunErrorHandlerResult{
+				FinalOutput:        "I couldn't finish within the turn limit. Please narrow the request.",
+				ExcludeFromHistory: true,
+			}, nil
+		},
+	},
+})
+```
+
+The run then completes normally: output guardrails and `OnAgentEnd` hooks run on the fallback, and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session (Python's `include_in_history=True` default). For an agent with an output type, `FinalOutput` must marshal to JSON that validates against the output schema — anything else fails the run with a `*UserError`.
+
+Return `(nil, nil)` to decline recovery and keep the original error. A declined (or missing) `InvalidFinalOutput` handler keeps the empty-output default: when the model returns no final text for a structured output type, the runner runs the model again rather than failing.
+
+```go
+ErrorHandlers: agents.RunErrorHandlers{
+	ModelRefusal: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
+		var refusal *agents.ModelRefusalError
+		errors.As(in.Error, &refusal)
+		return &agents.RunErrorHandlerResult{
+			FinalOutput: Recipe{Ingredients: nil, RefusalReason: refusal.Refusal},
+		}, nil
+	},
+},
+```

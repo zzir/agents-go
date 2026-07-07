@@ -163,13 +163,17 @@ func processModelResponse(
 //
 // resumed marks the first turn after a HITL resume: the interrupted response's
 // own items were already recorded before the run paused, so they must not be
-// appended a second time.
+// appended a second time. originalInput, preStepItems and resp feed the
+// RunErrorData snapshot when an ErrorHandlers recovery fires.
 func (r *runner) executeToolsAndSideEffects(
 	ctx context.Context,
 	agent *Agent,
 	pr *processedResponse,
 	outputSchema OutputSchema,
 	resumed bool,
+	originalInput []TResponseInputItem,
+	preStepItems []RunItem,
+	resp *ModelResponse,
 ) (*singleStepResult, error) {
 	newStepItems := make([]RunItem, 0, len(pr.NewItems))
 	if !resumed {
@@ -229,42 +233,96 @@ func (r *runner) executeToolsAndSideEffects(
 		}, nil
 	}
 
-	// Determine whether the model produced a final output this turn.
+	// Determine whether the model produced a final output this turn. The branch
+	// structure mirrors Python's execute_tools_and_side_effects tail.
 	lastMessage := lastMessageItem(newStepItems)
 	if !pr.hasToolsToRun() {
-		// No tools to run: this is a candidate final output.
-		if lastMessage != nil {
-			text := lastMessage.Text()
-			// A message with no text but a refusal is a refusal, not an empty
-			// (or unparsable) final output.
-			if text == "" {
+		// Tool activity without any message (e.g. only rejected calls): the
+		// results must go back to the model.
+		hasToolActivityWithoutMessage := lastMessage == nil && len(pr.ToolsUsed) > 0
+		if !hasToolActivityWithoutMessage {
+			var text string
+			if lastMessage != nil {
+				text = lastMessage.Text()
+				// A refusal fails the run (recoverable via
+				// ErrorHandlers.ModelRefusal), taking precedence over any text
+				// or structured content in the same message.
 				if refusal := extractMessageRefusal(lastMessage.Raw); refusal != "" {
-					return nil, &ModelRefusalError{
+					refErr := &ModelRefusalError{
 						AgentsError: AgentsError{Message: "model refused to respond: " + refusal},
 						Refusal:     refusal,
 					}
+					rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.ModelRefusal, refErr, agent,
+						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
+					if herr != nil {
+						return nil, herr
+					}
+					if rec == nil {
+						return nil, refErr
+					}
+					if rec.message != nil {
+						newStepItems = append(newStepItems, rec.message)
+					}
+					return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: rec.finalOutput}, nil
 				}
 			}
 			if outputSchema != nil && !outputSchema.IsPlainText() {
-				final, err := outputSchema.ValidateJSON(text)
-				if err != nil {
-					return nil, newModelBehaviorError("failed to parse structured output: %v", err)
+				var final any
+				if text != "" {
+					var err error
+					final, err = outputSchema.ValidateJSON(text)
+					if err != nil {
+						mbErr := newModelBehaviorError("failed to parse structured output: %v", err)
+						rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
+							originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
+						if herr != nil {
+							return nil, herr
+						}
+						if rec == nil {
+							return nil, mbErr
+						}
+						if rec.message != nil {
+							newStepItems = append(newStepItems, rec.message)
+						}
+						final = rec.finalOutput
+					}
+				} else {
+					// No final text for a structured output type: recover via the
+					// handler, or run the model again (never a hard failure —
+					// Python parity).
+					mbErr := newModelBehaviorError("model returned no final output for the structured output type")
+					rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
+						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
+					if herr != nil {
+						return nil, herr
+					}
+					if rec == nil {
+						return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
+					}
+					if rec.message != nil {
+						newStepItems = append(newStepItems, rec.message)
+					}
+					final = rec.finalOutput
 				}
 				return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
 			}
+			// Plain text: the message text (or "", when the model produced
+			// nothing actionable at all) is the final output.
 			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: text}, nil
-		}
-		// No message and no tools: nothing actionable. Treat empty string as
-		// final output for plain-text agents to avoid an infinite loop.
-		if outputSchema == nil || outputSchema.IsPlainText() {
-			if len(pr.ToolsUsed) == 0 {
-				return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: ""}, nil
-			}
 		}
 	}
 
 	// Otherwise, feed tool results back to the model for another turn.
 	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
+}
+
+// concatRunItems returns a fresh slice of pre followed by post, for the
+// RunErrorData snapshot handed to error handlers.
+func concatRunItems(pre, post []RunItem) []RunItem {
+	out := make([]RunItem, 0, len(pre)+len(post))
+	out = append(out, pre...)
+	out = append(out, post...)
+	return out
 }
 
 // functionToolResult bundles a tool's output item with the tool and raw value.

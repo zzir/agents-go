@@ -1,6 +1,6 @@
 # OpenAI Agents SDK for Go
 
-`agents-go` is a Go port of the [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/) (tracking v0.17.7). It lets you build agentic AI apps with a small set of primitives and very few abstractions:
+`agents-go` is a Go port of the [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/) (tracking v0.17.8). It lets you build agentic AI apps with a small set of primitives and very few abstractions:
 
 - **Agents**: LLMs configured with instructions, tools, guardrails and handoffs
 - **Handoffs**: let an agent delegate the conversation to another agent
