@@ -130,6 +130,7 @@ type agentConfigReq struct {
 	HandoffInputFilter   string `json:"handoff_input_filter"`
 	MaxToolConcurrency   int    `json:"max_tool_concurrency"`
 	ToolNotFoundBehavior string `json:"tool_not_found_behavior"`
+	ErrorHandlers        string `json:"error_handlers"`
 
 	CompactionEnabled   bool   `json:"compaction_enabled"`
 	CompactionThreshold int    `json:"compaction_threshold"`
@@ -169,6 +170,7 @@ func (r *agentConfigReq) toModel() *store.AgentConfig {
 		HandoffInputFilter:     r.HandoffInputFilter,
 		MaxToolConcurrency:     r.MaxToolConcurrency,
 		ToolNotFoundBehavior:   r.ToolNotFoundBehavior,
+		ErrorHandlers:          r.ErrorHandlers,
 		CompactionEnabled:      r.CompactionEnabled,
 		CompactionThreshold:    r.CompactionThreshold,
 		CompactionWindow:       r.CompactionWindow,

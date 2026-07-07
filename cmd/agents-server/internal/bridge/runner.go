@@ -206,6 +206,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		Tracer:                tracer,
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
+		ErrorHandlers:         built.ErrorHandlers,
 		Context:               sessionID, // exec_command gate reads sessionID here
 	}
 	if built.HandoffInputFilter == "nest_history" {
@@ -339,6 +340,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		Tracer:                tracer,
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
+		ErrorHandlers:         built.ErrorHandlers,
 		Context:               sessionID, // exec_command gate reads sessionID here
 	})
 	streamedText, streamedReasoning := r.drainStream(sr, runID, sendEvent)

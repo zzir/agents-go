@@ -27,6 +27,7 @@ interface AgentFormData {
   input_guardrails: string;
   output_guardrails: string;
   output_schema: string;
+  error_handlers: string;
   use_previous_response_id: boolean;
   prompt_id: string;
   prompt_version: string;
@@ -100,7 +101,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     disable_tool_choice_reset: false, tool_use_behavior: '',
     retry_enabled: false, retry_policy: '',
     fallback_models: '',
-    input_guardrails: '', output_guardrails: '', output_schema: '',
+    input_guardrails: '', output_guardrails: '', output_schema: '', error_handlers: '',
     use_previous_response_id: false,
     prompt_id: '', prompt_version: '',
     handoff_input_filter: '', max_tool_concurrency: 0,
@@ -332,6 +333,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           <JsonField label="Input guardrails (JSON)" value={form.input_guardrails || ''} onChange={v => set('input_guardrails', v)} placeholder='["content_filter","max_input_length"]' caption="JSON array of guardrail names" />
           <JsonField label="Output guardrails (JSON)" value={form.output_guardrails || ''} onChange={v => set('output_guardrails', v)} placeholder='["max_output_length"]' caption="JSON array of guardrail names" />
           <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
+          <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
         </div>
 
         <div className="form-group">

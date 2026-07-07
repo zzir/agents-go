@@ -48,11 +48,14 @@ type BuildResult struct {
 	HandoffInputFilter    string
 	MaxToolConcurrency    int
 	ToolNotFoundBehavior  string
-	CompactionEnabled     bool
-	CompactionThreshold   int
-	CompactionWindow      int
-	CompactionModel       string
-	CompactionPrompt      string
+	// ErrorHandlers are the run-level recovery handlers built from the
+	// top-level config's error_handlers field (zero value when unconfigured).
+	ErrorHandlers       agents.RunErrorHandlers
+	CompactionEnabled   bool
+	CompactionThreshold int
+	CompactionWindow    int
+	CompactionModel     string
+	CompactionPrompt    string
 }
 
 // BuildFullAgent constructs an *agents.Agent from a config ID, loading all
@@ -149,6 +152,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		agent.Instructions = agents.StaticInstructions(ac.Instructions)
 	}
 	agent.ModelSettings = spec.ModelSettings
+	result.ErrorHandlers = spec.ErrorHandlers.BuildErrorHandlers()
 
 	// ToolUseBehavior
 	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.ToolUseBehavior)

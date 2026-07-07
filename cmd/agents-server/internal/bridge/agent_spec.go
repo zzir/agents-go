@@ -1,8 +1,10 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -40,6 +42,102 @@ type AgentSpec struct {
 	RetryPolicy agents.RetryPolicy
 	// FallbackModels is the decoded fallback provider chain (nil when unset).
 	FallbackModels []fallbackEntry
+	// ErrorHandlers is the declarative run-error recovery config (nil when
+	// unset): per-error-kind static fallback outputs.
+	ErrorHandlers *ErrorHandlersSpec
+}
+
+// ErrorHandlersSpec is the decoded error_handlers config field: for each run
+// error kind, a static fallback that turns the failure into a normal
+// completion. Only the top-level agent's spec applies — like max_turns it is
+// forwarded to run-level options, so handoff targets share the run's handlers.
+type ErrorHandlersSpec struct {
+	MaxTurns           *ErrorHandlerEntry `json:"max_turns,omitempty"`
+	ModelRefusal       *ErrorHandlerEntry `json:"model_refusal,omitempty"`
+	InvalidFinalOutput *ErrorHandlerEntry `json:"invalid_final_output,omitempty"`
+}
+
+// ErrorHandlerEntry is one kind's static fallback: the final output the run
+// completes with (a JSON value — a string for plain-text agents, an object
+// matching the output schema for structured ones) and whether to keep the
+// synthesized assistant message out of the conversation history.
+type ErrorHandlerEntry struct {
+	FinalOutput        json.RawMessage `json:"final_output"`
+	ExcludeFromHistory bool            `json:"exclude_from_history,omitempty"`
+}
+
+// decodeErrorHandlers parses and validates the error_handlers JSON. Unknown
+// keys are rejected (a typo like "max_turn" must not silently leave the error
+// fatal), every configured entry needs a final_output, and a plain-text agent's
+// final_output must be a JSON string — the SDK would accept any value, but the
+// chat UI renders the final text, so a structured fallback on a plain-text
+// agent is a config mistake worth failing at save time.
+func decodeErrorHandlers(raw string, outputType agents.OutputSchema) (*ErrorHandlersSpec, error) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var spec ErrorHandlersSpec
+	if err := dec.Decode(&spec); err != nil {
+		return nil, fmt.Errorf("error_handlers is invalid: %w", err)
+	}
+	for _, kind := range []struct {
+		name  string
+		entry *ErrorHandlerEntry
+	}{
+		{"max_turns", spec.MaxTurns},
+		{"model_refusal", spec.ModelRefusal},
+		{"invalid_final_output", spec.InvalidFinalOutput},
+	} {
+		if kind.entry == nil {
+			continue
+		}
+		if len(kind.entry.FinalOutput) == 0 {
+			return nil, fmt.Errorf("error_handlers.%s: final_output is required", kind.name)
+		}
+		if !json.Valid(kind.entry.FinalOutput) {
+			return nil, fmt.Errorf("error_handlers.%s: final_output is not valid JSON", kind.name)
+		}
+		if outputType == nil {
+			var s string
+			if err := json.Unmarshal(kind.entry.FinalOutput, &s); err != nil {
+				return nil, fmt.Errorf("error_handlers.%s: final_output must be a JSON string for a plain-text agent (configure output_schema for structured fallbacks)", kind.name)
+			}
+		}
+	}
+	return &spec, nil
+}
+
+// BuildErrorHandlers converts the declarative spec into the SDK's run-level
+// handlers: each configured kind returns its static fallback. A nil spec (or
+// kind) leaves that error fatal. The fallback of an agent with an output
+// schema is validated against it by the SDK when the handler fires.
+func (s *ErrorHandlersSpec) BuildErrorHandlers() agents.RunErrorHandlers {
+	if s == nil {
+		return agents.RunErrorHandlers{}
+	}
+	return agents.RunErrorHandlers{
+		MaxTurns:           s.MaxTurns.staticHandler(),
+		ModelRefusal:       s.ModelRefusal.staticHandler(),
+		InvalidFinalOutput: s.InvalidFinalOutput.staticHandler(),
+	}
+}
+
+// staticHandler returns a RunErrorHandler that always recovers with the
+// entry's fallback, or nil when the entry is not configured.
+func (e *ErrorHandlerEntry) staticHandler() agents.RunErrorHandler {
+	if e == nil {
+		return nil
+	}
+	// Decode once: json.RawMessage would round-trip fine for structured
+	// outputs, but a plain-text agent's final output must be the string value
+	// itself, and RunErrorData consumers expect plain Go values.
+	var v any
+	if err := json.Unmarshal(e.FinalOutput, &v); err != nil {
+		return nil // unreachable: decodeErrorHandlers validated the JSON
+	}
+	exclude := e.ExcludeFromHistory
+	return func(_ context.Context, _ agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
+		return &agents.RunErrorHandlerResult{FinalOutput: v, ExcludeFromHistory: exclude}, nil
+	}
 }
 
 // DecodeAgentSpec decodes every JSON-encoded field of an agent config into typed
@@ -107,6 +205,16 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		if err := json.Unmarshal([]byte(ac.FallbackModels), &spec.FallbackModels); err != nil {
 			return nil, fmt.Errorf("fallback_models is not valid JSON: %w", err)
 		}
+	}
+
+	if ac.ErrorHandlers != "" {
+		// Depends on spec.OutputType (decoded above): a plain-text agent's
+		// fallback must be a JSON string.
+		eh, err := decodeErrorHandlers(ac.ErrorHandlers, spec.OutputType)
+		if err != nil {
+			return nil, err
+		}
+		spec.ErrorHandlers = eh
 	}
 
 	return spec, nil

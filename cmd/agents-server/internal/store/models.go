@@ -110,6 +110,12 @@ type AgentConfig struct {
 	CompactionModel     string `bun:"compaction_model"     json:"compaction_model,omitempty"`
 	CompactionPrompt    string `bun:"compaction_prompt"    json:"compaction_prompt,omitempty"`
 
+	// Batch 8: run-error recovery. JSON object keyed by error kind
+	// (max_turns / model_refusal / invalid_final_output), each entry carrying a
+	// static final_output (a JSON value) and an optional exclude_from_history
+	// flag. Empty means every run error stays fatal.
+	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
+
 	CreatedAt time.Time `bun:"created_at,notnull"    json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"    json:"updated_at"`
 }

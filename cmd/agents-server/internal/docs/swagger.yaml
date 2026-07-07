@@ -202,6 +202,8 @@ components:
           type: integer
         disable_tool_choice_reset:
           type: boolean
+        error_handlers:
+          type: string
         fallback_models:
           type: string
         handoff_description:
@@ -531,6 +533,13 @@ components:
           type: string
         disable_tool_choice_reset:
           type: boolean
+        error_handlers:
+          description: |-
+            Batch 8: run-error recovery. JSON object keyed by error kind
+            (max_turns / model_refusal / invalid_final_output), each entry carrying a
+            static final_output (a JSON value) and an optional exclude_from_history
+            flag. Empty means every run error stays fatal.
+          type: string
         fallback_models:
           type: string
         handoff_description:
