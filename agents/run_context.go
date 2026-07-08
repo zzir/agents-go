@@ -94,8 +94,7 @@ type approvalEntry struct {
 
 type approvalDecision struct {
 	approved bool
-	rejected bool
-	message  string // rejection message, when rejected
+	message  string // rejection message, when !approved
 }
 
 // NewApprovalStore returns an empty approval store.
@@ -171,13 +170,13 @@ func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, 
 		return approvalDecision{approved: true}, true
 	}
 	if e.rejectedAll {
-		return approvalDecision{rejected: true, message: e.stickyMessage}, true
+		return approvalDecision{message: e.stickyMessage}, true
 	}
 	if e.approvedIDs[callID] {
 		return approvalDecision{approved: true}, true
 	}
 	if e.rejectedIDs[callID] {
-		return approvalDecision{rejected: true, message: e.messages[callID]}, true
+		return approvalDecision{message: e.messages[callID]}, true
 	}
 	return approvalDecision{}, false
 }
@@ -197,7 +196,7 @@ func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem
 		if d, ok := s.decisionFor(it.ToolName, it.CallID); ok {
 			if d.approved {
 				dst.Approve(it, false)
-			} else if d.rejected {
+			} else {
 				dst.Reject(it, false, d.message)
 			}
 		}

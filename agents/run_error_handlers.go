@@ -200,14 +200,14 @@ func validateHandlerFinalOutput(agent *Agent, v any) (any, error) {
 		return v, nil
 	}
 	payload, err := marshalFinalOutputPayload(schema, v)
-	if err == nil {
-		validated, verr := schema.ValidateJSON(payload)
-		if verr == nil {
-			return validated, nil
-		}
-		err = verr
+	if err != nil {
+		return nil, newUserError("invalid run error handler FinalOutput for structured output: %v", err)
 	}
-	return nil, newUserError("invalid run error handler FinalOutput for structured output: %v", err)
+	validated, err := schema.ValidateJSON(payload)
+	if err != nil {
+		return nil, newUserError("invalid run error handler FinalOutput for structured output: %v", err)
+	}
+	return validated, nil
 }
 
 // formatFinalOutputText renders a final output as the text of the synthesized

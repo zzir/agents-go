@@ -1174,11 +1174,7 @@ func toolsUsedList(m map[string]bool) []string {
 	if len(m) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(m))
-	for name := range m {
-		out = append(out, name)
-	}
-	return out
+	return slices.Sorted(maps.Keys(m))
 }
 
 // markToolsUsed records that agent called tools this run (for tool_choice reset).

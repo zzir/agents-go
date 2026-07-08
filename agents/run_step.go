@@ -663,7 +663,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 		// (Python parity: openai-agents-python #3229/#3259).
 		if store != nil {
 			if decision, decided := store.decisionFor(run.Call.Name, run.Call.CallID); decided {
-				if decision.rejected {
+				if !decision.approved {
 					msg := decision.message
 					if msg == "" {
 						msg = DefaultRejectionMessage

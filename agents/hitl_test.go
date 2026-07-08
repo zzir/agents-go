@@ -330,7 +330,7 @@ func TestApprovalStore_Precedence(t *testing.T) {
 		s.Approve(item("t", "c1"), true)       // always-approve t
 		s.Reject(item("t", "c2"), false, "no") // reject a specific later call
 		d, ok := s.decisionFor("t", "c2")
-		if !ok || !d.approved || d.rejected {
+		if !ok || !d.approved {
 			t.Errorf("c2 decision = %+v (ok=%v), want approved (permanent approval wins)", d, ok)
 		}
 	})
@@ -340,7 +340,7 @@ func TestApprovalStore_Precedence(t *testing.T) {
 		s.Reject(item("t", "c1"), true, "denied")
 		s.Approve(item("t", "c2"), false)
 		d, ok := s.decisionFor("t", "c2")
-		if !ok || d.approved || !d.rejected {
+		if !ok || d.approved {
 			t.Errorf("c2 decision = %+v (ok=%v), want rejected (permanent rejection wins)", d, ok)
 		}
 	})
