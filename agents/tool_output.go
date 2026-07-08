@@ -38,14 +38,26 @@ func (t ToolOutputText) toContentParam() responses.ResponseFunctionCallOutputIte
 	return responses.ResponseFunctionCallOutputItemParamOfInputText(t.Text)
 }
 
+// ToolOutputImageDetail is the requested fidelity of a ToolOutputImage. Use the
+// DetailLow, DetailHigh, DetailAuto or DetailOriginal constants.
+type ToolOutputImageDetail string
+
+// The predefined image-detail levels.
+const (
+	DetailLow      ToolOutputImageDetail = "low"
+	DetailHigh     ToolOutputImageDetail = "high"
+	DetailAuto     ToolOutputImageDetail = "auto"
+	DetailOriginal ToolOutputImageDetail = "original"
+)
+
 // ToolOutputImage is an image content part handed to the model as native image
 // input. Set exactly one of ImageURL (a fully-qualified URL, or a data: URL
 // carrying base64 image data) or FileID (an already-uploaded OpenAI file).
-// Detail is optional: "low", "high", "auto" or "original".
+// Detail is optional: DetailLow, DetailHigh, DetailAuto or DetailOriginal.
 type ToolOutputImage struct {
 	ImageURL string
 	FileID   string
-	Detail   string
+	Detail   ToolOutputImageDetail
 }
 
 func (ToolOutputImage) isToolOutputContent() {}
@@ -59,7 +71,7 @@ func (im ToolOutputImage) toContentParam() responses.ResponseFunctionCallOutputI
 		p.FileID = param.NewOpt(im.FileID)
 	}
 	if im.Detail != "" {
-		p.Detail = responses.ResponseInputImageContentDetail(im.Detail)
+		p.Detail = responses.ResponseInputImageContentDetail(string(im.Detail))
 	}
 	return responses.ResponseFunctionCallOutputItemUnionParam{OfInputImage: &p}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 )
 
@@ -137,7 +138,7 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 			if !ok {
 				continue
 			}
-			if err := ensureStrict(vs, append(path, "anyOf", itoa(i)), root); err != nil {
+			if err := ensureStrict(vs, append(path, "anyOf", strconv.Itoa(i)), root); err != nil {
 				return err
 			}
 		}
@@ -148,7 +149,7 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		existing, _ := node["anyOf"].([]any)
 		for i, variant := range oneOf {
 			if vs, ok := variant.(map[string]any); ok {
-				if err := ensureStrict(vs, append(path, "oneOf", itoa(i)), root); err != nil {
+				if err := ensureStrict(vs, append(path, "oneOf", strconv.Itoa(i)), root); err != nil {
 					return err
 				}
 			}
@@ -171,7 +172,7 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		} else {
 			for i, entry := range allOf {
 				if es, ok := entry.(map[string]any); ok {
-					if err := ensureStrict(es, append(path, "allOf", itoa(i)), root); err != nil {
+					if err := ensureStrict(es, append(path, "allOf", strconv.Itoa(i)), root); err != nil {
 						return err
 					}
 				}

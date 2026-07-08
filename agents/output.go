@@ -10,8 +10,7 @@ import (
 // class. The OpenAI model adapter uses it to build the response_format payload
 // and to validate/parse the model's final output.
 //
-// The full reflection-based implementation lands in Phase 2; this interface is
-// defined here because the Model interface depends on it.
+// It is defined here because the Model interface depends on it.
 type OutputSchema interface {
 	// IsPlainText reports whether the output is unstructured text (no schema).
 	IsPlainText() bool

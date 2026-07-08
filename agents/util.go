@@ -2,10 +2,7 @@ package agents
 
 import (
 	"sort"
-	"strconv"
 )
-
-func itoa(i int) string { return strconv.Itoa(i) }
 
 // sortAnyStrings sorts a slice of any whose elements are strings, in place.
 // Used to keep generated "required" lists deterministic (Go's json.Marshal

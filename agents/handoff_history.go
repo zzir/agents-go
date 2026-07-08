@@ -167,15 +167,6 @@ func extractNestedTranscript(item TResponseInputItem, start, end string) ([]TRes
 	return parsed, true
 }
 
-// inputItemText returns the plain-text content of an easy (role) input message,
-// or "" for any other item shape.
-func inputItemText(item TResponseInputItem) string {
-	if m := item.OfMessage; m != nil {
-		return m.Content.OfString.Or("")
-	}
-	return ""
-}
-
 // stripLineNumber removes a leading "N. " prefix produced by summaryMessage.
 func stripLineNumber(line string) string {
 	if dot := strings.Index(line, ". "); dot > 0 {

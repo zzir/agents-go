@@ -31,12 +31,12 @@ func normalizeStoredInput(items []TResponseInputItem) []TResponseInputItem {
 	// One shared raw-JSON projection per item: the openai-go input union has no
 	// uniform accessors across its variants, and the JSON form also covers
 	// item types Go never constructs itself.
-	maps := make([]map[string]any, len(items))
+	itemMaps := make([]map[string]any, len(items))
 	for i := range items {
-		maps[i] = inputItemAsMap(items[i])
+		itemMaps[i] = inputItemAsMap(items[i])
 	}
-	items, maps = dropOrphanToolCalls(items, maps)
-	return dedupeInputItemsPreferringLatest(items, maps)
+	items, itemMaps = dropOrphanToolCalls(items, itemMaps)
+	return dedupeInputItemsPreferringLatest(items, itemMaps)
 }
 
 // inputItemAsMap projects an input item to a generic map via its JSON form;
@@ -60,9 +60,9 @@ func inputItemAsMap(item TResponseInputItem) map[string]any {
 // rejects reasoning "without its required following item". Calls without a
 // call_id are kept (only hosted anonymous tool_search calls lack one; better
 // to let the server decide than to over-prune).
-func dropOrphanToolCalls(items []TResponseInputItem, maps []map[string]any) ([]TResponseInputItem, []map[string]any) {
+func dropOrphanToolCalls(items []TResponseInputItem, itemMaps []map[string]any) ([]TResponseInputItem, []map[string]any) {
 	completed := map[string]bool{} // outputType + call id
-	for _, m := range maps {
+	for _, m := range itemMaps {
 		if m == nil {
 			continue
 		}
@@ -78,8 +78,9 @@ func dropOrphanToolCalls(items []TResponseInputItem, maps []map[string]any) ([]T
 		}
 	}
 
-	dropped := map[int]bool{}
-	for i, m := range maps {
+	dropped := make([]bool, len(items))
+	droppedCount := 0
+	for i, m := range itemMaps {
 		if m == nil {
 			continue
 		}
@@ -93,18 +94,19 @@ func dropOrphanToolCalls(items []TResponseInputItem, maps []map[string]any) ([]T
 			continue
 		}
 		dropped[i] = true
+		droppedCount++
 	}
-	if len(dropped) == 0 {
-		return items, maps
+	if droppedCount == 0 {
+		return items, itemMaps
 	}
 
 	// A reasoning item is tied to the next non-reasoning item; if that item was
 	// just dropped, the reasoning item dangles too. Scan backward so chained
 	// reasoning items collapse together (Python parity:
 	// _drop_reasoning_items_preceding_dropped_calls).
-	dropReasoning := map[int]bool{}
+	dropReasoning := make([]bool, len(items))
 	for i := len(items) - 1; i >= 0; i-- {
-		m := maps[i]
+		m := itemMaps[i]
 		if m == nil || m["type"] != "reasoning" || dropped[i] {
 			continue
 		}
@@ -112,7 +114,7 @@ func dropOrphanToolCalls(items []TResponseInputItem, maps []map[string]any) ([]T
 			if dropReasoning[next] {
 				continue
 			}
-			nm := maps[next]
+			nm := itemMaps[next]
 			if nm != nil && nm["type"] == "reasoning" {
 				continue
 			}
@@ -124,13 +126,13 @@ func dropOrphanToolCalls(items []TResponseInputItem, maps []map[string]any) ([]T
 	}
 
 	outItems := make([]TResponseInputItem, 0, len(items))
-	outMaps := make([]map[string]any, 0, len(maps))
+	outMaps := make([]map[string]any, 0, len(itemMaps))
 	for i := range items {
 		if dropped[i] || dropReasoning[i] {
 			continue
 		}
 		outItems = append(outItems, items[i])
-		outMaps = append(outMaps, maps[i])
+		outMaps = append(outMaps, itemMaps[i])
 	}
 	return outItems, outMaps
 }
@@ -165,12 +167,12 @@ func inputItemDedupeKey(m map[string]any) string {
 
 // dedupeInputItemsPreferringLatest collapses items sharing a stable identity,
 // keeping the LATEST occurrence (a re-sent item supersedes the stored copy).
-func dedupeInputItemsPreferringLatest(items []TResponseInputItem, maps []map[string]any) []TResponseInputItem {
+func dedupeInputItemsPreferringLatest(items []TResponseInputItem, itemMaps []map[string]any) []TResponseInputItem {
 	seen := map[string]bool{}
 	keep := make([]bool, len(items))
 	kept := 0
 	for i := len(items) - 1; i >= 0; i-- {
-		key := inputItemDedupeKey(maps[i])
+		key := inputItemDedupeKey(itemMaps[i])
 		if key != "" && seen[key] {
 			continue
 		}
