@@ -177,6 +177,10 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	// Build fully configured agent from DB config
 	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
 	if err != nil {
+		// Persist the prompt + error so the user's message and the failure survive
+		// the reload the client runs on run.error (the run never reached the SDK's
+		// per-turn save). Mirrors the post-start error path below.
+		r.savePartialTurn(sessionID, runID, "", input, "error", err.Error(), "", "")
 		sendEvent("run.error", protocol.RunError{
 			RunID:   runID,
 			Code:    "config_error",
@@ -188,10 +192,12 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	agent := built.Agent
 	provider := built.Provider
 	if provider == nil {
+		const msg = "no API key configured for this agent"
+		r.savePartialTurn(sessionID, runID, agent.Model, input, "error", msg, "", "")
 		sendEvent("run.error", protocol.RunError{
 			RunID:   runID,
 			Code:    "config_error",
-			Message: "no API key configured for this agent",
+			Message: msg,
 		})
 		return mkResult()
 	}
