@@ -137,25 +137,25 @@ type Limits struct {
 // CappedBuffer is an io.Writer that keeps at most Max bytes and silently
 // discards the rest, so a runaway process cannot exhaust memory.
 type CappedBuffer struct {
-	Buf bytes.Buffer
+	buf bytes.Buffer
 	Max int64
 }
 
 func (b *CappedBuffer) Write(p []byte) (int, error) {
-	if remain := b.Max - int64(b.Buf.Len()); remain > 0 {
+	if remain := b.Max - int64(b.buf.Len()); remain > 0 {
 		if int64(len(p)) > remain {
-			b.Buf.Write(p[:remain])
+			b.buf.Write(p[:remain])
 		} else {
-			b.Buf.Write(p)
+			b.buf.Write(p)
 		}
 	}
 	return len(p), nil
 }
 
-func (b *CappedBuffer) String() string { return b.Buf.String() }
+func (b *CappedBuffer) String() string { return b.buf.String() }
 
 // Full reports whether the buffer has reached its cap.
-func (b *CappedBuffer) Full() bool { return int64(b.Buf.Len()) >= b.Max }
+func (b *CappedBuffer) Full() bool { return int64(b.buf.Len()) >= b.Max }
 
 // DirEntry describes one entry returned by Sandbox.ListDir.
 type DirEntry struct {

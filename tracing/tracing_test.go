@@ -110,7 +110,7 @@ func TestBatchProcessor_DropsAfterShutdown(t *testing.T) {
 func TestBatchProcessor_ThresholdFlush(t *testing.T) {
 	var mu sync.Mutex
 	exported := 0
-	exp := FuncExporter(func(items []any) {
+	exp := FuncExporter(func(items []Item) {
 		mu.Lock()
 		exported += len(items)
 		mu.Unlock()

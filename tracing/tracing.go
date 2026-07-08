@@ -18,6 +18,8 @@ type Trace struct {
 	Metadata     map[string]any
 }
 
+func (*Trace) isTraceItem() {}
+
 // SpanError describes an error attached to a span.
 type SpanError struct {
 	Message string
@@ -52,6 +54,8 @@ type Span struct {
 	Data      map[string]any
 }
 
+func (*Span) isTraceItem() {}
+
 // Processor receives trace and span lifecycle notifications. Implementations
 // must be safe for concurrent use.
 type Processor interface {
@@ -72,11 +76,11 @@ type Processor interface {
 // concurrent use. Batches are never delivered twice, but ordering across
 // concurrent Export calls is not guaranteed.
 //
-// Each element of the items slice is either a *Trace (the root of a trace tree)
-// or a *Span (a single unit of work within a trace). Implementations should
-// type-switch to distinguish them:
+// Each element of the items slice is an Item — either a *Trace (the root of a
+// trace tree) or a *Span (a single unit of work within a trace). The Item union
+// is sealed, so implementations should type-switch to distinguish them:
 //
-//	func (e *myExporter) Export(items []any) {
+//	func (e *myExporter) Export(items []Item) {
 //	    for _, item := range items {
 //	        switch v := item.(type) {
 //	        case *Trace:
@@ -87,7 +91,7 @@ type Processor interface {
 //	    }
 //	}
 type Exporter interface {
-	Export(items []any)
+	Export(items []Item)
 }
 
 // randHex returns 2n random hex characters from n crypto/rand bytes. As of

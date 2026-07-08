@@ -6,19 +6,27 @@ import (
 	"sync"
 )
 
+// Item is the sealed union of things an Exporter can receive: a *Trace or a
+// *Span. The interface is closed — only this package's Trace and Span implement
+// the unexported isTraceItem marker — so a type switch over an Item is
+// exhaustive, mirroring how the core seals the Tool interface.
+type Item interface {
+	isTraceItem()
+}
+
 // NoopExporter discards all items. It is the default when tracing is enabled
 // without a configured destination.
 type NoopExporter struct{}
 
 // Export implements Exporter.
-func (NoopExporter) Export([]any) {}
+func (NoopExporter) Export([]Item) {}
 
 // FuncExporter adapts a function to the Exporter interface, convenient for tests
 // and custom sinks.
-type FuncExporter func(items []any)
+type FuncExporter func(items []Item)
 
 // Export implements Exporter.
-func (f FuncExporter) Export(items []any) { f(items) }
+func (f FuncExporter) Export(items []Item) { f(items) }
 
 // ConsoleExporter writes each item as a line of JSON to an io.Writer. It is
 // goroutine-safe.
@@ -31,7 +39,7 @@ type ConsoleExporter struct {
 func NewConsoleExporter(w io.Writer) *ConsoleExporter { return &ConsoleExporter{w: w} }
 
 // Export implements Exporter.
-func (e *ConsoleExporter) Export(items []any) {
+func (e *ConsoleExporter) Export(items []Item) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	enc := json.NewEncoder(e.w)
@@ -44,21 +52,21 @@ func (e *ConsoleExporter) Export(items []any) {
 // for tests. It is goroutine-safe.
 type CollectingExporter struct {
 	mu    sync.Mutex
-	items []any
+	items []Item
 }
 
 // Export implements Exporter.
-func (e *CollectingExporter) Export(items []any) {
+func (e *CollectingExporter) Export(items []Item) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.items = append(e.items, items...)
 }
 
 // Items returns a snapshot of all collected items.
-func (e *CollectingExporter) Items() []any {
+func (e *CollectingExporter) Items() []Item {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]any(nil), e.items...)
+	return append([]Item(nil), e.items...)
 }
 
 // Len returns the number of collected items.

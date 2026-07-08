@@ -53,7 +53,7 @@ type httpPayload struct {
 // Export implements Exporter. Failed batches — including non-2xx responses —
 // are dropped without retry (telemetry should never break the application) and
 // counted (see Dropped); wrap the exporter to add logging or retries.
-func (e *HTTPExporter) Export(items []any) {
+func (e *HTTPExporter) Export(items []Item) {
 	if len(items) == 0 {
 		return
 	}

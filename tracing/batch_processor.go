@@ -27,7 +27,7 @@ type BatchProcessor struct {
 	opts     BatchProcessorOptions
 
 	mu       sync.Mutex
-	queue    []any
+	queue    []Item
 	dropped  int
 	shutdown bool
 
@@ -60,7 +60,7 @@ func NewBatchProcessor(exporter Exporter, opts BatchProcessorOptions) *BatchProc
 	return p
 }
 
-func (p *BatchProcessor) enqueue(item any) {
+func (p *BatchProcessor) enqueue(item Item) {
 	p.mu.Lock()
 	if p.shutdown || len(p.queue) >= p.opts.MaxQueueSize {
 		p.dropped++
@@ -117,7 +117,7 @@ func (p *BatchProcessor) flush() {
 			return
 		}
 		n := min(len(p.queue), p.opts.MaxBatchSize)
-		batch := make([]any, n)
+		batch := make([]Item, n)
 		copy(batch, p.queue[:n])
 		p.queue = p.queue[n:]
 		p.mu.Unlock()

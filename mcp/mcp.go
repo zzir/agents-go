@@ -5,6 +5,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -547,24 +549,16 @@ func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
 
 	// Allocate names in a deterministic order (initial name, seed, index) so a
 	// collision is resolved the same way regardless of the server's tool order.
-	order := make([]int, len(cands))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		ca, cb := cands[order[a]], cands[order[b]]
-		if ca.initialName != cb.initialName {
-			return ca.initialName < cb.initialName
-		}
-		if ca.seed != cb.seed {
-			return ca.seed < cb.seed
-		}
-		return ca.index < cb.index
+	slices.SortStableFunc(cands, func(a, b candidate) int {
+		return cmp.Or(
+			cmp.Compare(a.initialName, b.initialName),
+			cmp.Compare(a.seed, b.seed),
+			cmp.Compare(a.index, b.index),
+		)
 	})
 
 	used := map[string]bool{}
-	for _, oi := range order {
-		c := cands[oi]
+	for _, c := range cands {
 		public := c.initialName
 		for collision := 1; used[public]; collision++ {
 			public = shortenToolName(c.base, fmt.Sprintf("%s\x00%d", c.seed, collision), true)

@@ -63,7 +63,7 @@ func TestHTTPExporter_Non2xxDropsBatch(t *testing.T) {
 	defer srv.Close()
 
 	exp := NewHTTPExporter(srv.URL, HTTPExporterOptions{})
-	exp.Export([]any{&Trace{TraceID: "t"}, &Span{SpanID: "s"}})
+	exp.Export([]Item{&Trace{TraceID: "t"}, &Span{SpanID: "s"}})
 	if exp.Dropped() != 2 {
 		t.Errorf("non-2xx response should drop the batch, Dropped() = %d", exp.Dropped())
 	}
