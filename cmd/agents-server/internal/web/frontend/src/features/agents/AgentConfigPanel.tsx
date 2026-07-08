@@ -65,6 +65,7 @@ interface AgentFormData {
   use_previous_response_id: boolean;
   prompt_id: string;
   prompt_version: string;
+  history_limit: number;
   handoff_input_filter: string;
   max_tool_concurrency: number;
   tool_not_found_behavior: string;
@@ -92,8 +93,8 @@ interface Agent {
   id: string | number;
   name: string;
   model: string;
-  base_url: string;
-  auth_mode: string;
+  // Provider settings are nested under the provider group in the API response.
+  provider?: { base_url?: string; auth_mode?: string };
   instructions: string;
   handoffs: string;
   tools: string;
@@ -138,7 +139,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     fallback_models: '',
     input_guardrails: '', output_guardrails: '', output_schema: '', error_handlers: '',
     use_previous_response_id: false,
-    prompt_id: '', prompt_version: '',
+    prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
     tool_not_found_behavior: '', reasoning_item_id_policy: '', approve_tools: '',
     compaction_enabled: false, compaction_threshold: 0,
@@ -309,13 +310,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
 
       {showAdvanced && <div className="advanced-section">
         <div className="form-group">
-          <div className="form-group-title">Limits</div>
+          <div className="form-group-title">Behavior</div>
           {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
           {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
-        </div>
-
-        <div className="form-group">
-          <div className="form-group-title">Tool behavior</div>
           {fc('Tool use behavior', <Select value={form.tool_use_behavior || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('tool_use_behavior', e.target.value)}>
             <Select.Option value="">Run LLM Again (default)</Select.Option>
             <Select.Option value="stop_on_first">Stop on First Tool</Select.Option>
@@ -331,6 +328,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
             <Select.Option value="">Preserve (default)</Select.Option>
             <Select.Option value="omit">Omit</Select.Option>
           </Select>, 'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
+          <div className="form-checkbox-group">
+            <FormControl>
+              <Checkbox checked={form.disable_tool_choice_reset || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_tool_choice_reset', e.target.checked)} />
+              <FormControl.Label>Disable tool choice reset</FormControl.Label>
+              <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
+            </FormControl>
+          </div>
         </div>
 
         <div className="form-group">
@@ -381,17 +385,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         </div>
 
         <div className="form-group">
-          <div className="form-group-title">Flags</div>
-          <div className="form-checkbox-group">
-            <FormControl>
-              <Checkbox checked={form.disable_tool_choice_reset || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_tool_choice_reset', e.target.checked)} />
-              <FormControl.Label>Disable tool choice reset</FormControl.Label>
-              <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
-            </FormControl>
-          </div>
-        </div>
-
-        <div className="form-group">
           <div className="form-group-title">Compaction</div>
           <FormControl>
             <Checkbox checked={form.compaction_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_enabled', e.target.checked)} />
@@ -407,7 +400,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         </div>
 
         <div className="form-group">
-          <div className="form-group-title">Stored prompt</div>
+          <div className="form-group-title">Session</div>
+          {fc('History limit', <TextInput block type="number" min={0} value={String(form.history_limit || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', parseInt(e.target.value) || 0)} />, 'Max recent session items loaded per turn (0 = full history)')}
           {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID')}
           {form.prompt_id && fc('Prompt version', <TextInput value={form.prompt_version || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_version', e.target.value)} placeholder="Optional version pin" block />)}
         </div>
@@ -526,7 +520,7 @@ export function AgentConfigPanel() {
         {agents.map(a => {
           const ho = handoffNames(a.handoffs);
           const mcp = mcpNames(a.tools);
-          const isChatGPT = a.auth_mode === 'chatgpt_login';
+          const isChatGPT = a.provider?.auth_mode === 'chatgpt_login';
           const loggedIn = isChatGPT && !!a.chatgpt_token;
           return (
             <div key={a.id} className="Box-row">
@@ -536,7 +530,7 @@ export function AgentConfigPanel() {
                   <span className="resource-row-title">{a.name}</span>
                 </div>
                 <div className="resource-row-meta">
-                  <span>{[a.model || 'default model', a.base_url && ('@ ' + a.base_url)].filter(Boolean).join(' ')}</span>
+                  <span>{[a.model || 'default model', a.provider?.base_url && ('@ ' + a.provider.base_url)].filter(Boolean).join(' ')}</span>
                   {isChatGPT && <Label variant={loggedIn ? 'success' : 'secondary'}>ChatGPT</Label>}
                 </div>
                 {a.instructions && <div className="resource-row-sub">
