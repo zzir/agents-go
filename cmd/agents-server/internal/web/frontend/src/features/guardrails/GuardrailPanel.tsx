@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent } from 'react';
-import { Button, TextInput, Label, SegmentedControl, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Label, SegmentedControl, Stack, PageHeader, Checkbox, FormControl } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
@@ -12,6 +12,7 @@ interface Guardrail {
   type: string;
   mode: string;
   config: string;
+  blocking: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +23,7 @@ interface GuardrailFormData {
   type: string;
   mode: string;
   config?: string;
+  blocking?: boolean;
 }
 
 interface GuardrailFormProps {
@@ -37,7 +39,7 @@ const MODE_LABELS: Record<string, string> = { regex: 'Regex Pattern', max_length
 
 function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormProps) {
   const [form, setForm] = useState<GuardrailFormData>(initial || {
-    name: '', description: '', type: 'input', mode: 'regex',
+    name: '', description: '', type: 'input', mode: 'regex', blocking: false,
   });
   const [pattern, setPattern] = useState<string>(() => {
     try { const c = JSON.parse((initial && initial.config) || '{}'); return c.pattern || ''; } catch { return ''; }
@@ -45,7 +47,7 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
   const [maxLength, setMaxLength] = useState<string | number>(() => {
     try { const c = JSON.parse((initial && initial.config) || '{}'); return c.max_length || 0; } catch { return 0; }
   });
-  const set = (k: keyof GuardrailFormData, v: string) => setForm(prev => ({ ...prev, [k]: v }));
+  const set = (k: keyof GuardrailFormData, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }));
 
   const handleSave = () => {
     const config = form.mode === 'regex'
@@ -116,6 +118,13 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
           placeholder="4096"
         />,
         'Maximum character count',
+      )}
+      {form.type === 'input' && (
+        <FormControl>
+          <Checkbox checked={!!form.blocking} onChange={(e: ChangeEvent<HTMLInputElement>) => set('blocking', e.target.checked)} />
+          <FormControl.Label>Blocking</FormControl.Label>
+          <FormControl.Caption>Run before the model call (a gate) instead of racing it — a tripwire then prevents the call and any token spend</FormControl.Caption>
+        </FormControl>
       )}
       <div className="form-actions">
         <Button onClick={handleSave} variant="primary">Save</Button>

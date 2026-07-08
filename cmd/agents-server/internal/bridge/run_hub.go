@@ -99,6 +99,10 @@ type SeqSink func(SeqEnvelope)
 type runRecord struct {
 	info   RunInfo
 	cancel context.CancelFunc
+	// stopAfterTurn, when set by the run goroutine, requests a graceful stop:
+	// the in-flight turn finishes (tools + session save) and the run ends cleanly
+	// before the next turn. Distinct from cancel (a hard context abort).
+	stopAfterTurn func()
 
 	mu      sync.Mutex
 	seq     int
@@ -306,6 +310,34 @@ func (h *RunHub) Cancel(runID string) bool {
 		return false
 	}
 	rec.cancel()
+	return true
+}
+
+// setStopHook records the graceful-stop callback for a live run (the run
+// goroutine calls this once its StreamedResult exists).
+func (h *RunHub) setStopHook(runID string, stop func()) {
+	h.mu.Lock()
+	if rec := h.runs[runID]; rec != nil {
+		rec.stopAfterTurn = stop
+	}
+	h.mu.Unlock()
+}
+
+// StopAfterTurn requests a graceful stop of a live run: the current turn
+// finishes and the run ends cleanly before the next one. Reports whether a live
+// run with a stop hook existed. Falls back to nothing (returns false) for a run
+// that has not yet installed its hook.
+func (h *RunHub) StopAfterTurn(runID string) bool {
+	h.mu.Lock()
+	var stop func()
+	if rec := h.runs[runID]; rec != nil {
+		stop = rec.stopAfterTurn
+	}
+	h.mu.Unlock()
+	if stop == nil {
+		return false
+	}
+	stop()
 	return true
 }
 

@@ -20,6 +20,41 @@ func messageItem(t *testing.T, contentJSON string) *agents.MessageOutputItem {
 	return &agents.MessageOutputItem{Raw: item}
 }
 
+func toolCallItem(t *testing.T, name, callID string) *agents.ToolCallItem {
+	t.Helper()
+	var item responses.ResponseOutputItemUnion
+	raw := `{"type":"function_call","id":"fc_1","call_id":"` + callID + `","name":"` + name + `","arguments":"{}","status":"completed"}`
+	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+		t.Fatal(err)
+	}
+	return &agents.ToolCallItem{Raw: item}
+}
+
+// A handoff now surfaces as a tool_called event (wrapping the transfer_to_X
+// call) in addition to handoff_requested. It carries no tool_output, so the
+// bridge must suppress it when the name is a known handoff — otherwise the UI
+// shows a tool card that never completes.
+func TestHandleStreamEvent_HandoffToolCalledSuppressed(t *testing.T) {
+	ev := &agents.RunItemStreamEvent{Name: "tool_called", Item: toolCallItem(t, "transfer_to_billing", "h1")}
+	handoffs := map[string]bool{"transfer_to_billing": true}
+
+	// With the name in the handoff set: suppressed, no run.tool_call.
+	called := false
+	(&Runner{}).handleStreamEvent(ev, "run_1", handoffs, func(string, any) { called = true })
+	if called {
+		t.Error("handoff tool_called should be suppressed (no run.tool_call)")
+	}
+
+	// A real tool of the same shape (not in the set) still emits run.tool_call.
+	gotType := ""
+	(&Runner{}).handleStreamEvent(
+		&agents.RunItemStreamEvent{Name: "tool_called", Item: toolCallItem(t, "get_weather", "c1")},
+		"run_1", handoffs, func(typ string, _ any) { gotType = typ })
+	if gotType != "run.tool_call" {
+		t.Errorf("regular tool event type = %q, want run.tool_call", gotType)
+	}
+}
+
 // handleStreamEvent must bridge message_output_created into a run.message
 // event carrying the turn's full text: interim messages between tool calls
 // have no other authoritative live signal — run.step deltas may be absent on
@@ -32,7 +67,7 @@ func TestHandleStreamEvent_MessageOutputCreated(t *testing.T) {
 
 	var gotType string
 	var gotPayload any
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, payload any) {
+	(&Runner{}).handleStreamEvent(ev, "run_1", nil, func(typ string, payload any) {
 		gotType = typ
 		gotPayload = payload
 	})
@@ -58,7 +93,7 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 	}
 
 	called := false
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true })
+	(&Runner{}).handleStreamEvent(ev, "run_1", nil, func(string, any) { called = true })
 	if called {
 		t.Error("expected no event for an empty message")
 	}
@@ -94,7 +129,7 @@ func TestHandleStreamEvent_ReasoningItemCreated(t *testing.T) {
 			}
 			var gotType string
 			var gotPayload any
-			(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, payload any) {
+			(&Runner{}).handleStreamEvent(ev, "run_1", nil, func(typ string, payload any) {
 				gotType = typ
 				gotPayload = payload
 			})
@@ -121,7 +156,7 @@ func TestHandleStreamEvent_EmptyReasoningSkipped(t *testing.T) {
 	}
 
 	called := false
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true })
+	(&Runner{}).handleStreamEvent(ev, "run_1", nil, func(string, any) { called = true })
 	if called {
 		t.Error("expected no event for empty reasoning")
 	}

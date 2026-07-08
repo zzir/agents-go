@@ -12,7 +12,7 @@ import { MessageBubble } from '@/features/chat/MessageBubble';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -31,6 +31,10 @@ interface TurnPart {
   type: 'text' | 'tools' | 'error' | 'thinking' | 'cancelled' | 'handoff';
   content?: string;
   toolCalls?: ToolCallData[];
+  // Set on an error part when the run was blocked by a guardrail: the guardrail
+  // name and whether it fired on the input or the final output.
+  guardrail?: string;
+  stage?: string;
 }
 
 interface ChatMessage {
@@ -251,7 +255,21 @@ function MermaidBlock({ source }: { source: string }) {
   );
 }
 
-function ErrorCard({ message }: { message: string }) {
+function ErrorCard({ message, guardrail, stage }: { message: string; guardrail?: string; stage?: string }) {
+  // A guardrail block is not a system failure — render it as a distinct
+  // "blocked" state. An output-stage trip means the answer already streamed and
+  // was retracted, so say so.
+  if (guardrail) {
+    const label = `Blocked by guardrail “${guardrail}”`;
+    const note = stage === 'output'
+      ? 'The response above was blocked before delivery.'
+      : 'The request was blocked before the model ran.';
+    return (
+      <Disclosure icon={ShieldIcon} label={label} variant="attention" className="error-card">
+        <pre className="error-card-body">{note + '\n\n' + message}</pre>
+      </Disclosure>
+    );
+  }
   return (
     <Disclosure icon={AlertIcon} label="Error" variant="danger" className="error-card">
       <pre className="error-card-body">{message}</pre>
@@ -502,7 +520,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
       {notices.map((part, i) => (
         part.type === 'cancelled'
           ? <CancelledCard key={'notice-' + i} />
-          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} />
+          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} guardrail={part.guardrail} stage={part.stage} />
       ))}
       {isLive && isEmpty && !compacting && (
         <div className="thinking-indicator">
@@ -668,7 +686,7 @@ interface ChatViewProps {
   liveStartedAt: number | null;
   liveAgentName: string | null;
   onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
-  onCancel: () => void;
+  onCancel: (graceful?: boolean) => void;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onFork?: (id: string) => void;
@@ -726,9 +744,9 @@ export function ChatView({
     onSend(text, agentConfigId, sandboxId);
   }, [sessionId, agentConfigId, sandboxId, onSend]);
 
-  const handleCancel = useCallback(() => {
-    onCancel();
-    toast.info('Run cancelled');
+  const handleCancel = useCallback((graceful?: boolean) => {
+    onCancel(graceful);
+    toast.info(graceful ? 'Stopping after the current turn…' : 'Run cancelled');
   }, [onCancel]);
 
   const { turnRunMap, userRunMap, runLabels } = useMemo(() => {

@@ -29,7 +29,7 @@ func TestRestContract(t *testing.T) {
 	engine.DELETE("/agents/:id", ah.Delete)
 
 	// Writes against a missing resource are 404 with the error envelope.
-	w := doJSON(t, engine, http.MethodPut, "/agents/nope", `{"name":"x"}`)
+	w := doJSON(t, engine, http.MethodPut, "/agents/nope", `{"name":"x","model":"gpt-4o"}`)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("PUT missing agent: got %d, want 404 (body %s)", w.Code, w.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestRestContract(t *testing.T) {
 
 	// Update validation parity: PUT with empty name is rejected before
 	// touching the store.
-	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a1"}`)
+	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a1","model":"gpt-4o"}`)
 	var agent struct {
 		ID string `json:"id"`
 	}

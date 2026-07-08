@@ -4,7 +4,7 @@ import { PaperAirplaneIcon, SquareCircleIcon } from '@primer/octicons-react';
 
 interface MessageInputProps {
   onSend: (text: string) => void;
-  onCancel: () => void;
+  onCancel: (graceful?: boolean) => void;
   disabled: boolean;
   running: boolean;
   toolbar?: ReactNode;
@@ -56,8 +56,8 @@ export function MessageInput({ onSend, onCancel, disabled, running, toolbar }: M
               <IconButton
                 icon={SquareCircleIcon}
                 variant="invisible"
-                aria-label="Stop"
-                onClick={(e) => { e.preventDefault(); onCancel(); }}
+                aria-label="Stop (Shift-click to finish the current turn first)"
+                onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
                 style={{ color: 'var(--fgColor-danger)' }}
               />
             ) : (

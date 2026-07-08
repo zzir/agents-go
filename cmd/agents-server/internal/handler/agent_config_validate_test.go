@@ -39,13 +39,42 @@ func errMessage(t *testing.T, body []byte) string {
 	return envelope.Error.Message
 }
 
+// The OpenAI provider ships no default model, so a config with no model would
+// only fail at run time — it is rejected at save time instead, on create and
+// on update.
+func TestAgentConfigRejectsEmptyModel(t *testing.T) {
+	engine, _ := newAgentEngine(t)
+
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create: got %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+	if msg := errMessage(t, w.Body.Bytes()); !strings.Contains(msg, "model") {
+		t.Errorf("error should name the model field: %q", msg)
+	}
+
+	// A valid create, then an update clearing the model: also rejected.
+	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: got %d: %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a","model":""}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("update clearing model: got %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+}
+
 // use_previous_response_id cannot be combined with the server's always-on
 // session persistence, so saving it is rejected with a message that names the
 // field — on create and on update.
 func TestAgentConfigRejectsUsePreviousResponseID(t *testing.T) {
 	engine, _ := newAgentEngine(t)
 
-	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","use_previous_response_id":true}`)
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o","session":{"use_previous_response_id":true}}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("create: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
@@ -54,7 +83,7 @@ func TestAgentConfigRejectsUsePreviousResponseID(t *testing.T) {
 	}
 
 	// A clean create then an update flipping the flag on: also rejected.
-	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a"}`)
+	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: got %d: %s", w.Code, w.Body.String())
 	}
@@ -62,7 +91,7 @@ func TestAgentConfigRejectsUsePreviousResponseID(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a","use_previous_response_id":true}`)
+	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a","model":"gpt-4o","session":{"use_previous_response_id":true}}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("update: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
@@ -86,7 +115,7 @@ func TestAgentConfigRejectsDoubleSelectedMcpServer(t *testing.T) {
 	// Cross-server name collisions are prevented by the unique server name, so
 	// the remaining case is the same server selected twice, which would
 	// duplicate every one of its tools.
-	body := `{"name":"a","tools":"[\"` + s1.ID + `\",\"` + s1.ID + `\"]"}`
+	body := `{"name":"a","model":"gpt-4o","tools":"[\"` + s1.ID + `\",\"` + s1.ID + `\"]"}`
 	w := doJSON(t, engine, http.MethodPost, "/agents", body)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("create with doubled id: got %d, want 400 (body %s)", w.Code, w.Body.String())
@@ -115,15 +144,15 @@ func TestAgentConfigAcceptsValidToolSelections(t *testing.T) {
 	// certain collisions); a malformed tools list is now rejected rather than
 	// silently dropping every MCP tool at run time.
 	for name, body := range map[string]string{
-		"distinct names": `{"name":"a","tools":"[\"` + s1.ID + `\",\"` + s2.ID + `\"]"}`,
-		"unknown id":     `{"name":"b","tools":"[\"` + s1.ID + `\",\"gone\"]"}`,
-		"no tools":       `{"name":"d"}`,
+		"distinct names": `{"name":"a","model":"gpt-4o","tools":"[\"` + s1.ID + `\",\"` + s2.ID + `\"]"}`,
+		"unknown id":     `{"name":"b","model":"gpt-4o","tools":"[\"` + s1.ID + `\",\"gone\"]"}`,
+		"no tools":       `{"name":"d","model":"gpt-4o"}`,
 	} {
 		if w := doJSON(t, engine, http.MethodPost, "/agents", body); w.Code != http.StatusCreated {
 			t.Errorf("%s: got %d, want 201 (body %s)", name, w.Code, w.Body.String())
 		}
 	}
-	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"c","tools":"not-json"}`)
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"c","model":"gpt-4o","tools":"not-json"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("malformed tools: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}

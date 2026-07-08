@@ -117,3 +117,27 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// buildMcpOptions is the single assembly point for an MCP connection's options:
+// it sets the per-server tool-name prefix and maps the stored retry policy.
+func TestBuildMcpOptions(t *testing.T) {
+	opts := buildMcpOptions("github", store.McpRetryConfig{MaxRetryAttempts: 3, RetryBackoffMs: 500}, true)
+	if opts.ToolNamePrefix != "github__" {
+		t.Errorf("prefix = %q, want github__", opts.ToolNamePrefix)
+	}
+	if opts.MaxRetryAttempts != 3 {
+		t.Errorf("MaxRetryAttempts = %d, want 3", opts.MaxRetryAttempts)
+	}
+	if opts.RetryBackoffBase != 500*time.Millisecond {
+		t.Errorf("RetryBackoffBase = %v, want 500ms", opts.RetryBackoffBase)
+	}
+	if !opts.UseStructuredContent {
+		t.Error("UseStructuredContent = false, want true")
+	}
+
+	// Defaults: no retries, no backoff override, content blocks.
+	def := buildMcpOptions("x", store.McpRetryConfig{}, false)
+	if def.MaxRetryAttempts != 0 || def.RetryBackoffBase != 0 {
+		t.Errorf("default opts = %+v, want zero retry/backoff", def)
+	}
+}

@@ -122,9 +122,14 @@ func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.App
 
 func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 	var busy bridge.ErrSessionBusy
+	var stale *bridge.StaleApprovalStateError
 	switch {
 	case errors.As(err, &busy):
 		conflict(c, "session already has an active run: "+busy.RunID)
+	case errors.As(err, &stale):
+		// Unresumable-by-version: a clear 409 with the reason, not a masked 500.
+		// The stale record was already discarded, so the run is gone.
+		conflict(c, stale.Error())
 	case errors.Is(err, store.ErrNotFound):
 		notFound(c)
 	default:

@@ -92,7 +92,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	}
 
 	// Target B has a broken output_schema; A hands off to B.
-	bad := &store.AgentConfig{Name: "B", Model: "gpt-test", OutputSchema: "{not json"}
+	bad := &store.AgentConfig{Name: "B", Model: "gpt-test", Guardrails: store.GuardrailGroup{OutputSchema: "{not json"}}
 	if err := s.Create(ctx, bad); err != nil {
 		t.Fatalf("create B: %v", err)
 	}

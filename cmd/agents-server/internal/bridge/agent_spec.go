@@ -169,16 +169,16 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		spec.ModelSettings = &ms
 	}
 
-	if ac.OutputSchema != "" {
+	if ac.Guardrails.OutputSchema != "" {
 		// BuildOutputSchema's error already names output_schema.
-		os, err := BuildOutputSchema(ac.OutputSchema)
+		os, err := BuildOutputSchema(ac.Guardrails.OutputSchema)
 		if err != nil {
 			return nil, err
 		}
 		spec.OutputType = os
 	}
 
-	if err := decodeStringList(ac.ApproveTools, "approve_tools", &spec.ApproveTools); err != nil {
+	if err := decodeStringList(ac.Approval.ApproveTools, "approve_tools", &spec.ApproveTools); err != nil {
 		return nil, err
 	}
 	if err := decodeStringList(ac.ToolsJSON, "tools", &spec.Tools); err != nil {
@@ -196,13 +196,13 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		spec.SkillsSet = true
 	}
 
-	if ac.RetryPolicy != "" {
-		if err := json.Unmarshal([]byte(ac.RetryPolicy), &spec.RetryPolicy); err != nil {
+	if ac.Resilience.RetryPolicy != "" {
+		if err := json.Unmarshal([]byte(ac.Resilience.RetryPolicy), &spec.RetryPolicy); err != nil {
 			return nil, fmt.Errorf("retry_policy is invalid: %w", err)
 		}
 	}
-	if ac.FallbackModels != "" {
-		if err := json.Unmarshal([]byte(ac.FallbackModels), &spec.FallbackModels); err != nil {
+	if ac.Resilience.FallbackModels != "" {
+		if err := json.Unmarshal([]byte(ac.Resilience.FallbackModels), &spec.FallbackModels); err != nil {
 			return nil, fmt.Errorf("fallback_models is not valid JSON: %w", err)
 		}
 	}

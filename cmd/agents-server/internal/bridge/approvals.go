@@ -119,6 +119,18 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", err
 	}
 
+	// A RunState written by an older server binary can never be resumed — its
+	// schema version no longer matches, and RunStateFromJSON enforces strict
+	// equality. Detect that up front so it surfaces as a clear, actionable error
+	// instead of a masked 500, and discard the stale row so it stops wedging the
+	// session (a masked 500 on every approve/reject retry, row never deleted).
+	if v := pendingStateSchemaVersion(pending.State); v != agents.RunStateSchemaVersion {
+		if delErr := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); delErr != nil {
+			zerolog.Ctx(ctx).Error().Err(delErr).Str("run_id", pending.RunID).Msg("discarding stale pending approval")
+		}
+		return "", &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
+	}
+
 	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID)
 	if err != nil {
 		return "", fmt.Errorf("rebuilding agent: %w", err)
@@ -161,6 +173,35 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", err
 	}
 	return runID, nil
+}
+
+// StaleApprovalStateError is returned when a persisted RunState cannot be
+// resumed because it was written by an older server binary — its schema version
+// no longer matches the current one. The stale record is discarded before this
+// is returned, so the caller should re-initiate the run rather than retry.
+type StaleApprovalStateError struct {
+	RunID       string
+	HaveVersion string
+	WantVersion string
+}
+
+func (e *StaleApprovalStateError) Error() string {
+	have := e.HaveVersion
+	if have == "" {
+		have = "unknown"
+	}
+	return fmt.Sprintf("paused run %s predates the current server version (state schema %s, want %s) and cannot be resumed — re-initiate the run",
+		e.RunID, have, e.WantVersion)
+}
+
+// pendingStateSchemaVersion reads just the schema_version field of a serialized
+// RunState, so a version mismatch is detected without a full (failing) decode.
+func pendingStateSchemaVersion(stateJSON string) string {
+	var probe struct {
+		SchemaVersion string `json:"schema_version"`
+	}
+	_ = json.Unmarshal([]byte(stateJSON), &probe)
+	return probe.SchemaVersion
 }
 
 // findApprovalItem returns the interruption in state matching callID, or nil.

@@ -57,67 +57,39 @@ type Message struct {
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
-	ID            string `bun:"id,pk"                json:"id"`
-	Name          string `bun:"name,notnull"          json:"name"`
-	Instructions  string `bun:"instructions"          json:"instructions"`
-	Model         string `bun:"model"                 json:"model"`
-	ProviderType  string `bun:"provider_type"         json:"provider_type,omitempty"`
-	AuthMode      string `bun:"auth_mode"             json:"auth_mode,omitempty"`
-	APIKey        string `bun:"api_key"               json:"api_key,omitempty"`
-	BaseURL       string `bun:"base_url"              json:"base_url,omitempty"`
-	ModelSettings string `bun:"model_settings"        json:"model_settings,omitempty"`
-	ToolsJSON     string `bun:"tools"                 json:"tools,omitempty"`
-	SkillsJSON    string `bun:"skills"                json:"skills,omitempty"`
-	HandoffsJSON  string `bun:"handoffs"              json:"handoffs,omitempty"`
+	ID           string `bun:"id,pk"          json:"id"`
+	Name         string `bun:"name,notnull"   json:"name"`
+	Instructions string `bun:"instructions"   json:"instructions"`
+	Model        string `bun:"model"          json:"model"`
 
-	// Batch 1: basic correctness
-	MaxTurns               int    `bun:"max_turns"                json:"max_turns"`
-	HandoffDescription     string `bun:"handoff_description"      json:"handoff_description,omitempty"`
-	DisableToolChoiceReset bool   `bun:"disable_tool_choice_reset" json:"disable_tool_choice_reset"`
-	ToolUseBehavior        string `bun:"tool_use_behavior"        json:"tool_use_behavior,omitempty"`
+	// The remaining knobs are grouped into JSON category columns (see
+	// agent_config_groups.go) so the table holds only category columns and a new
+	// setting needs no schema change. In the REST API each is a nested object.
+	Provider   ProviderGroup   `bun:"provider,type:text,nullzero"   json:"provider"`
+	Behavior   BehaviorGroup   `bun:"behavior,type:text,nullzero"   json:"behavior"`
+	Resilience ResilienceGroup `bun:"resilience,type:text,nullzero" json:"resilience"`
+	Guardrails GuardrailGroup  `bun:"guardrails,type:text,nullzero" json:"guardrails"`
+	Session    SessionGroup    `bun:"session,type:text,nullzero"    json:"session"`
+	Approval   ApprovalGroup   `bun:"approval,type:text,nullzero"   json:"approval"`
+	Compaction CompactionGroup `bun:"compaction,type:text,nullzero" json:"compaction"`
 
-	// Batch 2: model resilience
-	RetryEnabled   bool   `bun:"retry_enabled"    json:"retry_enabled"`
-	RetryPolicy    string `bun:"retry_policy"     json:"retry_policy,omitempty"`
-	FallbackModels string `bun:"fallback_models"  json:"fallback_models,omitempty"`
-
-	// Batch 3: guardrails + output type
-	InputGuardrails  string `bun:"input_guardrails"  json:"input_guardrails,omitempty"`
-	OutputGuardrails string `bun:"output_guardrails" json:"output_guardrails,omitempty"`
-	OutputSchema     string `bun:"output_schema"     json:"output_schema,omitempty"`
-
-	// Batch 4: session features
-	UsePreviousResponseID bool   `bun:"use_previous_response_id" json:"use_previous_response_id"`
-	PromptID              string `bun:"prompt_id"                json:"prompt_id,omitempty"`
-	PromptVersion         string `bun:"prompt_version"           json:"prompt_version,omitempty"`
+	// The following are already single JSON blobs, kept as their own columns.
+	ModelSettings string `bun:"model_settings" json:"model_settings,omitempty"`
+	ToolsJSON     string `bun:"tools"          json:"tools,omitempty"`
+	SkillsJSON    string `bun:"skills"         json:"skills,omitempty"`
+	HandoffsJSON  string `bun:"handoffs"       json:"handoffs,omitempty"`
+	// ErrorHandlers is a JSON object keyed by error kind (max_turns /
+	// model_refusal / invalid_final_output), each entry carrying a static
+	// final_output (a JSON value) and an optional exclude_from_history flag.
+	// Empty means every run error stays fatal.
+	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 
 	// ChatGPT OAuth token (JSON-serialized). Hidden from API; preserved across
 	// regular CRUD updates so editing an agent doesn't erase its token.
 	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"chatgpt_token,omitempty"`
 
-	// Batch 5: fine-grained control
-	HandoffInputFilter   string `bun:"handoff_input_filter"     json:"handoff_input_filter,omitempty"`
-	MaxToolConcurrency   int    `bun:"max_tool_concurrency"     json:"max_tool_concurrency"`
-	ToolNotFoundBehavior string `bun:"tool_not_found_behavior"  json:"tool_not_found_behavior,omitempty"`
-
-	// Batch 6: HITL approval
-	ApproveTools string `bun:"approve_tools" json:"approve_tools,omitempty"` // JSON: ["*"] or ["tool_name",...]
-
-	// Batch 7: compaction
-	CompactionEnabled   bool   `bun:"compaction_enabled"   json:"compaction_enabled"`
-	CompactionThreshold int    `bun:"compaction_threshold" json:"compaction_threshold"`
-	CompactionWindow    int    `bun:"compaction_window"    json:"compaction_window"`
-	CompactionModel     string `bun:"compaction_model"     json:"compaction_model,omitempty"`
-	CompactionPrompt    string `bun:"compaction_prompt"    json:"compaction_prompt,omitempty"`
-
-	// Batch 8: run-error recovery. JSON object keyed by error kind
-	// (max_turns / model_refusal / invalid_final_output), each entry carrying a
-	// static final_output (a JSON value) and an optional exclude_from_history
-	// flag. Empty means every run error stays fatal.
-	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
-
-	CreatedAt time.Time `bun:"created_at,notnull"    json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull"    json:"updated_at"`
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // McpServerConfig is the persisted connection definition for an MCP server.
@@ -145,10 +117,27 @@ type McpServerConfig struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
 }
 
+// McpRetryConfig holds the per-request retry settings common to every MCP
+// transport, embedded in the transport-specific config payloads. A single
+// transient failure on list_tools/call_tool otherwise aborts the whole run.
+type McpRetryConfig struct {
+	// MaxRetryAttempts retries a failed list_tools/call_tool this many times.
+	// 0 (default) disables retries; -1 retries indefinitely.
+	MaxRetryAttempts int `json:"max_retry_attempts,omitempty"`
+	// RetryBackoffMs is the base delay (milliseconds) for exponential backoff
+	// between retries. 0 leaves the SDK default (1s) when retries are enabled.
+	RetryBackoffMs int `json:"retry_backoff_ms,omitempty"`
+}
+
 // StdioMcpConfig is the McpServerConfig.Config payload for TransportType == "stdio".
 type StdioMcpConfig struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+	Command        string   `json:"command"`
+	Args           []string `json:"args,omitempty"`
+	McpRetryConfig          // max_retry_attempts / retry_backoff_ms
+	// UseStructuredContent uses a tool result's structuredContent field
+	// exclusively (default: use the content blocks). For servers that only
+	// populate the structured field.
+	UseStructuredContent bool `json:"use_structured_content,omitempty"`
 }
 
 // HTTPMcpConfig is the McpServerConfig.Config payload for the "streamable_http"
@@ -169,6 +158,11 @@ type HTTPMcpConfig struct {
 	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
 	// OAuthScopes are the OAuth scopes to request during authorization.
 	OAuthScopes string `json:"oauth_scopes,omitempty"`
+
+	McpRetryConfig // max_retry_attempts / retry_backoff_ms
+	// UseStructuredContent uses a tool result's structuredContent exclusively
+	// (default: the content blocks). See StdioMcpConfig.UseStructuredContent.
+	UseStructuredContent bool `json:"use_structured_content,omitempty"`
 }
 
 // Memory is a stored key/content fact, either global or scoped to an agent config.
@@ -288,8 +282,12 @@ type Guardrail struct {
 	Type        string          `bun:"type,notnull"       json:"type"` // input | output
 	Mode        string          `bun:"mode,notnull"       json:"mode"` // regex | max_length
 	Config      json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
-	CreatedAt   time.Time       `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt   time.Time       `bun:"updated_at,notnull" json:"updated_at"`
+	// Blocking, for an input guardrail, runs it to completion BEFORE the first
+	// model call (a gate) instead of racing it — a tripwire then prevents the
+	// call and any token spend. No effect on output guardrails.
+	Blocking  bool      `bun:"blocking" json:"blocking"`
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // GuardrailConfig is the parsed Config payload for a Guardrail.

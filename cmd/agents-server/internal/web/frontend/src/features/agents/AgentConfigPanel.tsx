@@ -9,6 +9,40 @@ import { toast } from '@/lib/toast';
 import { ChevronRightIcon } from '@primer/octicons-react';
 import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
 
+// The agent-config REST payload nests these scalar settings under JSON group
+// objects. The form state stays flat, so flattenConfig lifts a loaded config's
+// group keys to the top level and nestConfig folds them back before saving.
+const CONFIG_GROUPS: Record<string, string[]> = {
+  provider: ['provider_type', 'auth_mode', 'api_key', 'base_url'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'tool_use_behavior', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
+  resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
+  guardrails: ['input_guardrails', 'output_guardrails', 'output_schema'],
+  session: ['use_previous_response_id', 'prompt_id', 'prompt_version', 'history_limit'],
+  approval: ['approve_tools'],
+  compaction: ['compaction_enabled', 'compaction_threshold', 'compaction_window', 'compaction_model', 'compaction_prompt'],
+};
+
+function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!c) return {};
+  const out: Record<string, unknown> = { ...c };
+  for (const [group, keys] of Object.entries(CONFIG_GROUPS)) {
+    const g = c[group] as Record<string, unknown> | undefined;
+    delete out[group];
+    if (g && typeof g === 'object') for (const k of keys) if (g[k] !== undefined) out[k] = g[k];
+  }
+  return out;
+}
+
+function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...flat };
+  for (const [group, keys] of Object.entries(CONFIG_GROUPS)) {
+    const g: Record<string, unknown> = {};
+    for (const k of keys) if (flat[k] !== undefined) { g[k] = flat[k]; delete out[k]; }
+    out[group] = g;
+  }
+  return out;
+}
+
 interface AgentFormData {
   name: string;
   instructions: string;
@@ -34,6 +68,7 @@ interface AgentFormData {
   handoff_input_filter: string;
   max_tool_concurrency: number;
   tool_not_found_behavior: string;
+  reasoning_item_id_policy: string;
   approve_tools: string;
   compaction_enabled: boolean;
   compaction_threshold: number;
@@ -105,10 +140,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     use_previous_response_id: false,
     prompt_id: '', prompt_version: '',
     handoff_input_filter: '', max_tool_concurrency: 0,
-    tool_not_found_behavior: '', approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', approve_tools: '',
     compaction_enabled: false, compaction_threshold: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
-    ...initial,
+    ...flattenConfig(initial as Record<string, unknown> | undefined),
   });
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
   const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
@@ -292,6 +327,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
             <Select.Option value="">Error (default)</Select.Option>
             <Select.Option value="return_to_model">Return to Model</Select.Option>
           </Select>)}
+          {fc('Reasoning item ID policy', <Select value={form.reasoning_item_id_policy || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('reasoning_item_id_policy', e.target.value)}>
+            <Select.Option value="">Preserve (default)</Select.Option>
+            <Select.Option value="omit">Omit</Select.Option>
+          </Select>, 'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
         </div>
 
         <div className="form-group">
@@ -390,7 +429,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           // use_previous_response_id is rejected by the server (incompatible
           // with server-side session storage); always send false so legacy
           // configs that still carry the flag are cleaned up on their next save.
-          onSave({ ...form, use_previous_response_id: false, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings });
+          const flatPayload = { ...form, use_previous_response_id: false, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
+          onSave(nestConfig(flatPayload) as unknown as AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string });
         }} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}

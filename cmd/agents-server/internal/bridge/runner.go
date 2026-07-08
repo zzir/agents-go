@@ -47,6 +47,15 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 	}
 }
 
+// sessionSettingsFor returns the run-level SessionSettings for a history-item
+// cap, or nil to leave the full history loaded (limit <= 0).
+func sessionSettingsFor(limit int) *agents.SessionSettings {
+	if limit > 0 {
+		return &agents.SessionSettings{Limit: limit}
+	}
+	return nil
+}
+
 // wrapCompaction wraps sa with the compaction adapter when the agent config
 // enables it. An empty summary model falls back to the agent's own model, so
 // leaving the field blank does not silently disable compaction.
@@ -212,10 +221,15 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	if built.HandoffInputFilter == "nest_history" {
 		opts.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
+	opts.SessionSettings = sessionSettingsFor(built.HistoryLimit)
+	opts.ReasoningItemIDPolicy = built.ReasoningItemIDPolicy
+	opts.InputGuardrails = built.RunInputGuardrails
+	opts.OutputGuardrails = built.RunOutputGuardrails
 	opts.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
 
 	sr := agents.RunStreamed(ctx, agent, input, opts)
-	streamedText, streamedReasoning := r.drainStream(sr, runID, sendEvent)
+	r.hub.setStopHook(runID, sr.StopAfterTurn)
+	streamedText, streamedReasoning := r.drainStream(sr, runID, built.HandoffToolNames, sendEvent)
 
 	// FinalResult is the source of truth for how the run ended. A terminal error
 	// can arrive via the event channel above OR — on a context-cancel race inside
@@ -233,7 +247,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		if role == "cancelled" {
 			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 		} else {
-			sendEvent("run.error", protocol.RunError{RunID: runID, Code: "stream_error", Message: err.Error()})
+			sendEvent("run.error", guardrailRunError(runID, err, "stream_error"))
 		}
 		return mkResult()
 	}
@@ -305,7 +319,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 		} else {
 			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText)
-			sendEvent("run.error", protocol.RunError{RunID: runID, Code: code, Message: err.Error()})
+			sendEvent("run.error", guardrailRunError(runID, err, code))
 		}
 		return mkResult()
 	}
@@ -341,9 +355,14 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
 		ErrorHandlers:         built.ErrorHandlers,
+		SessionSettings:       sessionSettingsFor(built.HistoryLimit),
+		ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
+		InputGuardrails:       built.RunInputGuardrails,
+		OutputGuardrails:      built.RunOutputGuardrails,
 		Context:               sessionID, // exec_command gate reads sessionID here
 	})
-	streamedText, streamedReasoning := r.drainStream(sr, runID, sendEvent)
+	r.hub.setStopHook(runID, sr.StopAfterTurn)
+	streamedText, streamedReasoning := r.drainStream(sr, runID, built.HandoffToolNames, sendEvent)
 
 	res, err := sr.FinalResult()
 	if err != nil {
@@ -565,6 +584,15 @@ func (r *Runner) runHasPersistedItems(ctx context.Context, sessionID, runID stri
 	return exists
 }
 
+// StopRunAfterTurn asks the in-flight run to stop gracefully after its current
+// turn (tools + session save) instead of aborting mid-turn. Falls back to a hard
+// cancel when the run has no live stop hook (e.g. between turns).
+func (r *Runner) StopRunAfterTurn(runID string) {
+	if !r.hub.StopAfterTurn(runID) {
+		r.hub.Cancel(runID)
+	}
+}
+
 // CancelRun cancels the in-flight run with the given run id, if one is active.
 func (r *Runner) CancelRun(runID string) {
 	r.hub.Cancel(runID)
@@ -578,7 +606,7 @@ func (r *Runner) CancelRun(runID string) {
 // the thinking phase still shows what the model was doing. A terminal error
 // on the event channel stops consumption; the caller reads the run's outcome
 // from FinalResult.
-func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, send func(string, any)) (streamedText, streamedReasoning string) {
+func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNames map[string]bool, send func(string, any)) (streamedText, streamedReasoning string) {
 	var text, reasoning strings.Builder
 	for event, err := range sr.Events() {
 		if err != nil {
@@ -595,12 +623,30 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, send func(
 				reasoning.WriteString(raw.Data.Delta)
 			}
 		}
-		r.handleStreamEvent(event, runID, send)
+		r.handleStreamEvent(event, runID, handoffNames, send)
 	}
 	return text.String(), reasoning.String()
 }
 
-func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any)) {
+// guardrailRunError builds the run.error for a terminal run failure. A guardrail
+// tripwire gets a distinct "guardrail_tripwire" code plus the guardrail name and
+// stage (input/output) so the UI can render a "blocked by guardrail X" state
+// instead of a generic red error — and, on an output trip, mark the answer that
+// already streamed as retracted. Any other error keeps the caller's fallback code.
+func guardrailRunError(runID string, err error, fallback string) protocol.RunError {
+	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
+	var ig *agents.InputGuardrailTripwireError
+	var og *agents.OutputGuardrailTripwireError
+	switch {
+	case errors.As(err, &ig):
+		e.Code, e.Guardrail, e.Stage = "guardrail_tripwire", ig.Result.Guardrail.Name, "input"
+	case errors.As(err, &og):
+		e.Code, e.Guardrail, e.Stage = "guardrail_tripwire", og.Result.Guardrail.Name, "output"
+	}
+	return e
+}
+
+func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, handoffNames map[string]bool, send func(string, any)) {
 	switch e := event.(type) {
 	case *agents.RawResponsesStreamEvent:
 		if e.Data == nil {
@@ -641,6 +687,13 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 		case "tool_called":
 			if tc, ok := e.Item.(*agents.ToolCallItem); ok {
 				fc := tc.FunctionCall()
+				// The SDK emits tool_called for a handoff too (wrapping the
+				// transfer_to_X call); it has no tool_output, so a run.tool_call
+				// here would leave a tool card spinning forever. run.handoff already
+				// conveys the transfer, so drop it.
+				if handoffNames[fc.Name] {
+					return
+				}
 				send("run.tool_call", protocol.RunToolCall{
 					RunID:      runID,
 					ToolCallID: fc.CallID,

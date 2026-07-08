@@ -26,19 +26,21 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 
 	// Create with a real key.
 	w := doJSON(t, engine, http.MethodPost, "/agents",
-		`{"name":"a","api_key":"sk-real-123","fallback_models":"[{\"model\":\"m1\",\"api_key\":\"sk-fb-1\"}]"}`)
+		`{"name":"a","model":"gpt-4o","provider":{"api_key":"sk-real-123"},"resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"sk-fb-1\"}]"}}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: got %d: %s", w.Code, w.Body.String())
 	}
 	var created struct {
-		ID     string `json:"id"`
-		APIKey string `json:"api_key"`
+		ID       string `json:"id"`
+		Provider struct {
+			APIKey string `json:"api_key"`
+		} `json:"provider"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatalf("unmarshal create response: %v", err)
 	}
-	if created.APIKey != SecretMask {
-		t.Errorf("create response api_key = %q, want mask", created.APIKey)
+	if created.Provider.APIKey != SecretMask {
+		t.Errorf("create response api_key = %q, want mask", created.Provider.APIKey)
 	}
 
 	// GET must mask both the key and the fallback-model keys.
@@ -53,7 +55,7 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 
 	// PUT sending the mask back keeps the stored values.
 	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a2","api_key":"`+SecretMask+`","fallback_models":"[{\"model\":\"m1\",\"api_key\":\"`+SecretMask+`\"}]"}`)
+		`{"name":"a2","model":"gpt-4o","provider":{"api_key":"`+SecretMask+`"},"resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"`+SecretMask+`\"}]"}}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: got %d: %s", w.Code, w.Body.String())
 	}
@@ -61,23 +63,23 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get stored: %v", err)
 	}
-	if stored.APIKey != "sk-real-123" {
-		t.Errorf("mask round-trip lost api_key: %q", stored.APIKey)
+	if stored.Provider.APIKey != "sk-real-123" {
+		t.Errorf("mask round-trip lost api_key: %q", stored.Provider.APIKey)
 	}
-	if !strings.Contains(stored.FallbackModels, "sk-fb-1") {
-		t.Errorf("mask round-trip lost fallback key: %q", stored.FallbackModels)
+	if !strings.Contains(stored.Resilience.FallbackModels, "sk-fb-1") {
+		t.Errorf("mask round-trip lost fallback key: %q", stored.Resilience.FallbackModels)
 	}
 
 	// PUT with a new value replaces, PUT with "" clears.
-	doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a2","api_key":"sk-new"}`)
+	doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a2","model":"gpt-4o","provider":{"api_key":"sk-new"}}`)
 	stored, _ = st.Get(ctx, created.ID)
-	if stored.APIKey != "sk-new" {
-		t.Errorf("new value not stored: %q", stored.APIKey)
+	if stored.Provider.APIKey != "sk-new" {
+		t.Errorf("new value not stored: %q", stored.Provider.APIKey)
 	}
-	doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a2","api_key":""}`)
+	doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a2","model":"gpt-4o","provider":{"api_key":""}}`)
 	stored, _ = st.Get(ctx, created.ID)
-	if stored.APIKey != "" {
-		t.Errorf("empty value should clear the key: %q", stored.APIKey)
+	if stored.Provider.APIKey != "" {
+		t.Errorf("empty value should clear the key: %q", stored.Provider.APIKey)
 	}
 }
 

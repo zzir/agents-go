@@ -259,3 +259,28 @@ func TestRunHubResumeAfterRestart(t *testing.T) {
 		t.Fatalf("fresh record wrong: %+v ok=%v", info, ok)
 	}
 }
+
+// StopAfterTurn invokes the run's graceful-stop hook once installed, and reports
+// false for a run that has none yet (the caller then falls back to a hard cancel).
+func TestRunHubStopAfterTurn(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("run1", "sess1", "", ""); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	// No hook installed yet.
+	if h.StopAfterTurn("run1") {
+		t.Error("StopAfterTurn should report false before a hook is installed")
+	}
+	called := 0
+	h.setStopHook("run1", func() { called++ })
+	if !h.StopAfterTurn("run1") {
+		t.Error("StopAfterTurn should report true once a hook is installed")
+	}
+	if called != 1 {
+		t.Errorf("stop hook called %d times, want 1", called)
+	}
+	// Unknown run.
+	if h.StopAfterTurn("nope") {
+		t.Error("StopAfterTurn on an unknown run should report false")
+	}
+}

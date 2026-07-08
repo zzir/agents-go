@@ -139,7 +139,11 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal run.cancel")
 				continue
 			}
-			h.runner.CancelRun(msg.RunID)
+			if msg.Mode == "graceful" {
+				h.runner.StopRunAfterTurn(msg.RunID)
+			} else {
+				h.runner.CancelRun(msg.RunID)
+			}
 
 		default:
 			log.Warn().Str("type", env.Type).Msg("unknown ws message type")

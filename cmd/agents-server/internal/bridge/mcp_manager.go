@@ -98,15 +98,17 @@ func (m *McpManager) finishConnect(id string, srv *mcp.Server, connErr error) er
 func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
 	// Validate config before claiming the connect slot so a bad config fails
 	// fast and can't strand the in-progress flag.
-	opts := mcp.Options{ToolNamePrefix: cfg.Name + "__"}
 	var cmd *exec.Cmd
 	var transport *mcpsdk.StreamableClientTransport
+	var retry store.McpRetryConfig
+	var useStructured bool
 	switch cfg.TransportType {
 	case "stdio":
 		var sc store.StdioMcpConfig
 		if cerr := unmarshalConfig(cfg.Config, &sc); cerr != nil {
 			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 		}
+		retry, useStructured = sc.McpRetryConfig, sc.UseStructuredContent
 		// The command context governs the subprocess lifetime — it must be
 		// the manager's root context, NOT the caller's (a request context
 		// would kill the server as soon as the request ends).
@@ -116,11 +118,13 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
 			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 		}
+		retry, useStructured = hc.McpRetryConfig, hc.UseStructuredContent
 		transport = &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint}
 		transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 	default:
 		return fmt.Errorf("unknown transport type: %s", cfg.TransportType)
 	}
+	opts := buildMcpOptions(cfg.Name, retry, useStructured)
 
 	done, err := m.beginConnect(cfg.ID)
 	if err != nil || done {
@@ -233,11 +237,27 @@ func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpSer
 	}
 	transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 
-	srv, cerr := mcp.NewWithTransport(ctx, cfg.Name, transport, mcp.Options{ToolNamePrefix: cfg.Name + "__"})
+	srv, cerr := mcp.NewWithTransport(ctx, cfg.Name, transport, buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent))
 	if cerr != nil {
 		cerr = fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, cerr)
 	}
 	return m.finishConnect(cfg.ID, srv, cerr)
+}
+
+// buildMcpOptions is the single place every MCP connection's mcp.Options is
+// assembled, so a new option can't be silently missed on the OAuth path. It sets
+// the per-server tool-name prefix, retry policy and structured-content mode from
+// the stored config.
+func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredContent bool) mcp.Options {
+	opts := mcp.Options{
+		ToolNamePrefix:       name + "__",
+		MaxRetryAttempts:     retry.MaxRetryAttempts,
+		UseStructuredContent: useStructuredContent,
+	}
+	if retry.RetryBackoffMs > 0 {
+		opts.RetryBackoffBase = time.Duration(retry.RetryBackoffMs) * time.Millisecond
+	}
+	return opts
 }
 
 // Disconnect closes an MCP server connection and removes it from the manager.

@@ -180,9 +180,10 @@ func (h *RunHandler) Get(c *gin.Context) {
 //
 //	@Summary	Cancel run
 //	@Tags		runs
-//	@Param		id	path	string	true	"Run ID"
-//	@Success	204	"cancelling"
-//	@Failure	404	{object}	ErrorResponse
+//	@Param		id		path	string	true	"Run ID"
+//	@Param		mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
+//	@Success	204		"cancelling"
+//	@Failure	404		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/runs/{id}/cancel [post]
 func (h *RunHandler) Cancel(c *gin.Context) {
@@ -190,7 +191,11 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 		notFound(c)
 		return
 	}
-	h.runner.CancelRun(c.Param("id"))
+	if c.Query("mode") == "graceful" {
+		h.runner.StopRunAfterTurn(c.Param("id"))
+	} else {
+		h.runner.CancelRun(c.Param("id"))
+	}
 	c.Status(http.StatusNoContent)
 }
 

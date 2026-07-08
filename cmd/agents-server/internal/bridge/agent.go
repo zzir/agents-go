@@ -56,6 +56,27 @@ type BuildResult struct {
 	CompactionWindow    int
 	CompactionModel     string
 	CompactionPrompt    string
+
+	// HistoryLimit caps how many recent session items each turn loads (0 = all).
+	HistoryLimit int
+
+	// ReasoningItemIDPolicy controls whether reasoning-item ids survive across
+	// turns (default preserve).
+	ReasoningItemIDPolicy agents.ReasoningItemIDPolicy
+
+	// HandoffToolNames is the set of every transfer_to_* tool name across the
+	// whole built agent graph (root + all reachable handoff targets). The stream
+	// bridge uses it to drop the tool_called event the SDK now emits for a
+	// handoff, which would otherwise render as a tool card that never completes.
+	HandoffToolNames map[string]bool
+
+	// RunInputGuardrails / RunOutputGuardrails are the entry (root) agent's
+	// guardrails, lifted to the RUN level so they cover the whole run — crucially,
+	// the final output regardless of which agent produced it after a handoff.
+	// Handoff-target agents keep their own agent-level guardrails; the root's are
+	// moved here (and cleared off the root agent) to avoid double-running.
+	RunInputGuardrails  []agents.InputGuardrail
+	RunOutputGuardrails []agents.OutputGuardrail
 }
 
 // BuildFullAgent constructs an *agents.Agent from a config ID, loading all
@@ -73,6 +94,30 @@ func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err != nil {
 		return nil, err
+	}
+	// Collect every handoff transfer tool name across the whole graph — the cache
+	// holds each built agent (root + shared/diamond descendants) exactly once —
+	// so the stream bridge can suppress the SDK's handoff tool_called at any depth.
+	handoffNames := map[string]bool{}
+	for _, br := range bc.cache {
+		if br.Agent == nil {
+			continue
+		}
+		for _, h := range br.Agent.Handoffs {
+			handoffNames[h.ToolName] = true
+		}
+	}
+	result.HandoffToolNames = handoffNames
+	// Lift the entry agent's guardrails to the run level so they protect the
+	// whole conversation — the final output is checked even after a handoff to an
+	// agent that carries no guardrails of its own. Cleared off the root agent so
+	// they run once (the SDK merges run-level + producing-agent guardrails).
+	// Handoff targets, built recursively, keep their own agent-level guardrails.
+	if result.Agent != nil {
+		result.RunInputGuardrails = result.Agent.InputGuardrails
+		result.RunOutputGuardrails = result.Agent.OutputGuardrails
+		result.Agent.InputGuardrails = nil
+		result.Agent.OutputGuardrails = nil
 	}
 	// Safety net for configs saved before the API started rejecting the flag:
 	// agents-server always runs with a persisted session, and the SDK refuses
@@ -125,19 +170,23 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	agent := &agents.Agent{
 		Name:                   ac.Name,
 		Model:                  ac.Model,
-		HandoffDescription:     ac.HandoffDescription,
-		DisableToolChoiceReset: ac.DisableToolChoiceReset,
+		HandoffDescription:     ac.Behavior.HandoffDescription,
+		DisableToolChoiceReset: ac.Behavior.DisableToolChoiceReset,
 	}
-	result.MaxTurns = ac.MaxTurns
-	result.UsePreviousResponseID = ac.UsePreviousResponseID
-	result.HandoffInputFilter = ac.HandoffInputFilter
-	result.MaxToolConcurrency = ac.MaxToolConcurrency
-	result.ToolNotFoundBehavior = ac.ToolNotFoundBehavior
-	result.CompactionEnabled = ac.CompactionEnabled
-	result.CompactionThreshold = ac.CompactionThreshold
-	result.CompactionWindow = ac.CompactionWindow
-	result.CompactionModel = ac.CompactionModel
-	result.CompactionPrompt = ac.CompactionPrompt
+	result.MaxTurns = ac.Behavior.MaxTurns
+	result.UsePreviousResponseID = ac.Session.UsePreviousResponseID
+	result.HandoffInputFilter = ac.Behavior.HandoffInputFilter
+	result.MaxToolConcurrency = ac.Behavior.MaxToolConcurrency
+	result.ToolNotFoundBehavior = ac.Behavior.ToolNotFoundBehavior
+	result.CompactionEnabled = ac.Compaction.Enabled
+	result.CompactionThreshold = ac.Compaction.Threshold
+	result.CompactionWindow = ac.Compaction.Window
+	result.CompactionModel = ac.Compaction.Model
+	result.CompactionPrompt = ac.Compaction.Prompt
+	result.HistoryLimit = ac.Session.HistoryLimit
+	if ac.Behavior.ReasoningItemIDPolicy == "omit" {
+		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
+	}
 
 	// Decode every JSON-encoded config field once, up front. A structural error
 	// fails the build loudly (the operator would otherwise think a malformed
@@ -155,20 +204,20 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	result.ErrorHandlers = spec.ErrorHandlers.BuildErrorHandlers()
 
 	// ToolUseBehavior
-	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.ToolUseBehavior)
+	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.Behavior.ToolUseBehavior)
 
 	// Guardrails — a configured guardrail that can't be resolved fails the
 	// build rather than running unprotected (security config must not silently
 	// no-op).
-	if ac.InputGuardrails != "" && deps.Guardrails != nil {
-		ig, gerr := deps.Guardrails.BuildInputGuardrails(ctx, ac.InputGuardrails)
+	if ac.Guardrails.InputGuardrails != "" && deps.Guardrails != nil {
+		ig, gerr := deps.Guardrails.BuildInputGuardrails(ctx, ac.Guardrails.InputGuardrails)
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
 		agent.InputGuardrails = ig
 	}
-	if ac.OutputGuardrails != "" && deps.Guardrails != nil {
-		og, gerr := deps.Guardrails.BuildOutputGuardrails(ctx, ac.OutputGuardrails)
+	if ac.Guardrails.OutputGuardrails != "" && deps.Guardrails != nil {
+		og, gerr := deps.Guardrails.BuildOutputGuardrails(ctx, ac.Guardrails.OutputGuardrails)
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
@@ -197,18 +246,18 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	agent.OutputType = spec.OutputType
 
 	// Stored prompt
-	if ac.PromptID != "" {
+	if ac.Session.PromptID != "" {
 		agent.Prompt = agents.StaticPrompt(agents.Prompt{
-			ID:      ac.PromptID,
-			Version: ac.PromptVersion,
+			ID:      ac.Session.PromptID,
+			Version: ac.Session.PromptVersion,
 		})
 	}
 
 	// Provider + retry/fallback decorators
 	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
-	apiKey := ac.APIKey
+	apiKey := ac.Provider.APIKey
 	var chatgptCreds *ChatGPTCredentials
-	if ac.AuthMode == "chatgpt_login" && deps.ChatGPTOAuth != nil {
+	if ac.Provider.AuthMode == "chatgpt_login" && deps.ChatGPTOAuth != nil {
 		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, configID); err == nil {
 			apiKey = creds.AccessToken
 			chatgptCreds = creds
@@ -221,12 +270,12 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		apiKey = settingValue(ctx, deps.Settings, "openai_api_key")
 	}
 	if apiKey != "" {
-		ac.APIKey = apiKey
-		if chatgptCreds != nil && ac.BaseURL == "" {
-			ac.BaseURL = ChatGPTBaseURL
+		ac.Provider.APIKey = apiKey
+		if chatgptCreds != nil && ac.Provider.BaseURL == "" {
+			ac.Provider.BaseURL = ChatGPTBaseURL
 		}
 		provider := buildProviderFromConfig(ac, chatgptCreds, proxyClient)
-		if ac.RetryEnabled {
+		if ac.Resilience.RetryEnabled {
 			provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 		}
 		if len(spec.FallbackModels) > 0 {
@@ -428,11 +477,11 @@ func settingValue(ctx context.Context, settings *store.SettingStore, key string)
 
 func buildProviderFromConfig(ac *store.AgentConfig, chatgptCreds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
 	var opts []option.RequestOption
-	if ac.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(ac.APIKey))
+	if ac.Provider.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(ac.Provider.APIKey))
 	}
-	if ac.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(ac.BaseURL))
+	if ac.Provider.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(ac.Provider.BaseURL))
 	}
 	if chatgptCreds != nil {
 		opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(chatgptCreds.AccountID)))

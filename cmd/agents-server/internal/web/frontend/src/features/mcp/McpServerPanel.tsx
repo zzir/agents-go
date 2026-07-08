@@ -23,6 +23,9 @@ interface McpServerConfig {
   oauth_client_id?: string;
   oauth_client_secret?: string;
   oauth_scopes?: string;
+  max_retry_attempts?: number;
+  retry_backoff_ms?: number;
+  use_structured_content?: boolean;
 }
 
 interface McpServer {
@@ -47,6 +50,9 @@ interface McpFormData {
   oauth_client_id: string;
   oauth_client_secret: string;
   oauth_scopes: string;
+  max_retry_attempts: number;
+  retry_backoff_ms: number;
+  use_structured_content: boolean;
 }
 
 interface McpFormProps {
@@ -69,6 +75,9 @@ function flatten(s: Partial<McpServer>): McpFormData {
     oauth_client_id: c.oauth_client_id || '',
     oauth_client_secret: c.oauth_client_secret || '',
     oauth_scopes: c.oauth_scopes || '',
+    max_retry_attempts: c.max_retry_attempts || 0,
+    retry_backoff_ms: c.retry_backoff_ms || 0,
+    use_structured_content: c.use_structured_content || false,
   };
 }
 
@@ -95,6 +104,10 @@ function pack(form: McpFormData): Partial<McpServer> {
       config.auth_mode = 'header';
     }
   }
+  // Common resilience/behavior settings apply to both transports.
+  if (form.max_retry_attempts) config.max_retry_attempts = form.max_retry_attempts;
+  if (form.retry_backoff_ms) config.retry_backoff_ms = form.retry_backoff_ms;
+  if (form.use_structured_content) config.use_structured_content = true;
   return { ...base, config };
 }
 
@@ -102,7 +115,7 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
   const [form, setForm] = useState<McpFormData>(flatten(initial || {}));
   const [authCleared, setAuthCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const set = (k: keyof McpFormData, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }));
+  const set = (k: keyof McpFormData, v: string | boolean | number) => setForm(prev => ({ ...prev, [k]: v }));
   const isStdio = form.transport_type === 'stdio';
   const isOAuth = form.auth_mode === 'oauth';
   const isHeader = form.auth_mode === 'header';
@@ -148,6 +161,13 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
         <Button onClick={handleClearAuth} variant="danger" disabled={clearing}>Clear auth</Button>,
         'Disconnects and deletes the saved OAuth token; the next connect asks for authorization again.',
       )}
+      {fc('Max retry attempts', <TextInput block type="number" min={0} value={String(form.max_retry_attempts || 0)} onChange={e => set('max_retry_attempts', parseInt(e.target.value) || 0)} />, '0 = no retries, -1 = retry indefinitely on a failed list_tools/call_tool')}
+      {form.max_retry_attempts !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={String(form.retry_backoff_ms || 0)} onChange={e => set('retry_backoff_ms', parseInt(e.target.value) || 0)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
+      <FormControl>
+        <Checkbox checked={form.use_structured_content} onChange={e => set('use_structured_content', e.target.checked)} />
+        <FormControl.Label>Use structured content</FormControl.Label>
+        <FormControl.Caption>Use a tool result's structuredContent field exclusively (for servers that only populate it)</FormControl.Caption>
+      </FormControl>
       <FormControl>
         <Checkbox checked={form.enabled} onChange={e => set('enabled', e.target.checked)} />
         <FormControl.Label>Enabled</FormControl.Label>

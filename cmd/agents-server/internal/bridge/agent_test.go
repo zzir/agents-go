@@ -18,7 +18,7 @@ func TestBuildFullAgentRejectsUsePreviousResponseID(t *testing.T) {
 	db := newTestDB(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 
-	ac := &store.AgentConfig{Name: "legacy", Model: "gpt-test", UsePreviousResponseID: true}
+	ac := &store.AgentConfig{Name: "legacy", Model: "gpt-test", Session: store.SessionGroup{UsePreviousResponseID: true}}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestBuildFullAgentRejectsUsePreviousResponseID(t *testing.T) {
 	}
 
 	// Clearing the flag makes the same config build again.
-	ac.UsePreviousResponseID = false
+	ac.Session.UsePreviousResponseID = false
 	if err := agentConfigs.Update(ctx, ac.ID, ac); err != nil {
 		t.Fatalf("update agent config: %v", err)
 	}

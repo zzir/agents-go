@@ -31,6 +31,10 @@ type RunCreate struct {
 // RunCancel is the client request to cancel an in-flight run.
 type RunCancel struct {
 	RunID string `json:"run_id"`
+	// Mode selects how to stop: "" / "abort" cancels immediately (mid-turn);
+	// "graceful" lets the current turn finish (tools + session save) and stops
+	// cleanly before the next one.
+	Mode string `json:"mode,omitempty"`
 }
 
 // RunSubscribe is the client request to (re)attach to a run's event stream,
@@ -139,6 +143,12 @@ type RunError struct {
 	SessionID string `json:"session_id,omitempty"`
 	Code      string `json:"code"`
 	Message   string `json:"message"`
+	// Guardrail and Stage are set only when Code is "guardrail_tripwire": the
+	// name of the guardrail that blocked the run and whether it fired on the
+	// input ("input") or the final output ("output"). An output trip means the
+	// answer already streamed to the client and should be marked retracted.
+	Guardrail string `json:"guardrail,omitempty"`
+	Stage     string `json:"stage,omitempty"`
 }
 
 // RunInterrupted signals that the run paused for human tool approval. It is

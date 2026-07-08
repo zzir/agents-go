@@ -176,7 +176,8 @@ func buildInputFromDef(g *store.Guardrail) *agents.InputGuardrail {
 			return nil
 		}
 		return &agents.InputGuardrail{
-			Name: g.Name,
+			Name:     g.Name,
+			Blocking: g.Blocking,
 			Run: func(_ context.Context, _ *agents.RunContext, _ *agents.Agent, input []agents.TResponseInputItem) (agents.GuardrailFunctionOutput, error) {
 				for _, item := range input {
 					raw, _ := json.Marshal(item)
@@ -196,7 +197,8 @@ func buildInputFromDef(g *store.Guardrail) *agents.InputGuardrail {
 			limit = 50000
 		}
 		return &agents.InputGuardrail{
-			Name: g.Name,
+			Name:     g.Name,
+			Blocking: g.Blocking,
 			Run: func(_ context.Context, _ *agents.RunContext, _ *agents.Agent, input []agents.TResponseInputItem) (agents.GuardrailFunctionOutput, error) {
 				raw, _ := json.Marshal(input)
 				if len(raw) > limit {

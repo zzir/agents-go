@@ -266,7 +266,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       reloadMessages(sid);
     });
 
-    ws.on('run.error', (p: { run_id?: string; session_id?: string; code?: string; message: string }) => {
+    ws.on('run.error', (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
       // The session already has a live run (e.g. double-send from another
       // tab): the run this error names is still executing — a toast, not a
       // terminal error on the live turn.
@@ -299,17 +299,22 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete streamBufsRef.current[rid];
       delete reasoningBufsRef.current[rid];
       delete sessionRunRef.current[sid];
+      // A guardrail block carries the guardrail name + stage so the turn renders
+      // a distinct "blocked" card instead of a generic error.
+      const errPart = p.code === 'guardrail_tripwire'
+        ? { type: 'error', content: p.message, guardrail: p.guardrail, stage: p.stage }
+        : { type: 'error', content: p.message };
       updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; content?: string; parts?: Array<{ type: string; content?: string }> }>;
+        const msgs = [...s.messages] as Array<{ role: string; content?: string; parts?: Array<{ type: string; content?: string; guardrail?: string; stage?: string }> }>;
         const last = msgs[msgs.length - 1];
         if (last?.role === 'turn') {
           const parts = [...(last.parts || [])];
           if (thinking) parts.push({ type: 'thinking', content: thinking });
           if (remaining) parts.push({ type: 'text', content: remaining });
-          parts.push({ type: 'error', content: p.message });
+          parts.push(errPart);
           msgs[msgs.length - 1] = { ...last, parts };
         } else {
-          msgs.push({ role: 'turn', parts: [{ type: 'error', content: p.message }] });
+          msgs.push({ role: 'turn', parts: [errPart] });
         }
         return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
       });

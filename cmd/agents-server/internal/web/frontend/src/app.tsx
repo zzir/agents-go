@@ -243,11 +243,11 @@ function App() {
     wsRef.current.send('run.create', payload);
   }, [activeSession, updateSS, wsRef]);
 
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback((graceful?: boolean) => {
     if (!wsRef.current || !activeSession) return;
     const runId = sessionRunRef.current[activeSession];
     if (!runId) return;
-    wsRef.current.send('run.cancel', { run_id: runId });
+    wsRef.current.send('run.cancel', { run_id: runId, mode: graceful ? 'graceful' : '' });
   }, [activeSession, wsRef, sessionRunRef]);
 
   const updateToolCall = useCallback((toolCallId: string, patch: Record<string, any>) => {

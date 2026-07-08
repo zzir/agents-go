@@ -25,7 +25,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	s := NewAgentConfigStore(newTestDB(t))
 
 	// Create stamps id + timestamps via the BeforeAppendModel hook.
-	ac := &AgentConfig{Name: "first", Model: "gpt-5.5", MaxTurns: 5, RetryEnabled: true}
+	ac := &AgentConfig{Name: "first", Model: "gpt-5.5", Behavior: BehaviorGroup{MaxTurns: 5}, Resilience: ResilienceGroup{RetryEnabled: true}}
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -37,12 +37,12 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Name != "first" || got.MaxTurns != 5 || !got.RetryEnabled {
+	if got.Name != "first" || got.Behavior.MaxTurns != 5 || !got.Resilience.RetryEnabled {
 		t.Fatalf("get mismatch: %+v", got)
 	}
 
 	// Update is a full-row replace except id/created_at; updated_at is refreshed.
-	upd := &AgentConfig{Name: "second", Model: "o4-mini", MaxTurns: 9}
+	upd := &AgentConfig{Name: "second", Model: "o4-mini", Behavior: BehaviorGroup{MaxTurns: 9}}
 	if err := s.Update(ctx, ac.ID, upd); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -50,10 +50,10 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
-	if got2.Name != "second" || got2.Model != "o4-mini" || got2.MaxTurns != 9 {
+	if got2.Name != "second" || got2.Model != "o4-mini" || got2.Behavior.MaxTurns != 9 {
 		t.Fatalf("update not applied: %+v", got2)
 	}
-	if got2.RetryEnabled {
+	if got2.Resilience.RetryEnabled {
 		t.Fatalf("update did not clear RetryEnabled (full-row replace expected)")
 	}
 	if !got2.CreatedAt.Equal(got.CreatedAt) {
