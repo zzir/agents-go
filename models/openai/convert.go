@@ -70,7 +70,7 @@ func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToo
 	default:
 		// A specific function tool name.
 		return responses.ResponseNewParamsToolChoiceUnion{
-			OfFunctionTool: &responses.ToolChoiceFunctionParam{Name: choice},
+			OfFunctionTool: &responses.ToolChoiceFunctionParam{Name: string(choice)},
 		}, true
 	}
 }
@@ -126,7 +126,7 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 	if len(s.ContextManagement) > 0 {
 		entries := make([]responses.ResponseNewParamsContextManagement, len(s.ContextManagement))
 		for i, cm := range s.ContextManagement {
-			entries[i] = responses.ResponseNewParamsContextManagement{Type: cm.Type}
+			entries[i] = responses.ResponseNewParamsContextManagement{Type: string(cm.Type)}
 			if cm.CompactThreshold != nil {
 				entries[i].CompactThreshold = oai.Int(*cm.CompactThreshold)
 			}

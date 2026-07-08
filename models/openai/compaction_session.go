@@ -64,7 +64,6 @@ type CompactionSession struct {
 	svc        responses.ResponseService
 	model      string
 	mode       CompactionMode
-	threshold  int
 	should     func(int) bool
 }
 
@@ -106,7 +105,6 @@ func NewCompactionSession(underlying agents.Session, opts CompactionOptions, cli
 		svc:        c.Responses,
 		model:      model,
 		mode:       mode,
-		threshold:  threshold,
 		should:     should,
 	}, nil
 }
@@ -259,29 +257,15 @@ func itemShape(it agents.TResponseInputItem) (typ, role string, hasContent bool)
 }
 
 // withoutID returns the item with its top-level "id" removed, or ok=false if it
-// has none.
+// has none. It is only ever called on assistant items (OfOutputMessage); it
+// makes a shallow copy so the shared session-history pointee is never mutated.
 func withoutID(it agents.TResponseInputItem) (agents.TResponseInputItem, bool) {
-	b, err := agents.MarshalInputItem(it)
-	if err != nil {
-		return it, false
+	if it.OfOutputMessage != nil {
+		msg := *it.OfOutputMessage
+		msg.ID = ""
+		return agents.TResponseInputItem{OfOutputMessage: &msg}, true
 	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(b, &m); err != nil {
-		return it, false
-	}
-	if _, ok := m["id"]; !ok {
-		return it, false
-	}
-	delete(m, "id")
-	nb, err := json.Marshal(m)
-	if err != nil {
-		return it, false
-	}
-	cleaned, err := agents.UnmarshalInputItem(nb)
-	if err != nil {
-		return it, false
-	}
-	return cleaned, true
+	return it, false
 }
 
 // isOpenAIModelName mirrors Python's is_openai_model_name: gpt-*, o<digit>*, or

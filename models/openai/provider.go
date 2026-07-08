@@ -38,9 +38,7 @@ func (p *Provider) GetModel(modelName string) (agents.Model, error) {
 		modelName = p.defaultModel
 	}
 	if modelName == "" {
-		return nil, &agents.UserError{AgentsError: agents.AgentsError{
-			Message: "openai: no model specified — set Agent.Model or Provider.WithDefaultModel",
-		}}
+		return nil, agents.NewUserError("openai: no model specified — set Agent.Model or Provider.WithDefaultModel")
 	}
 	return NewResponsesModel(modelName, p.client.Responses), nil
 }

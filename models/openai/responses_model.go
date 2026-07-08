@@ -272,7 +272,7 @@ func settingsToolChoice(s *agents.ModelSettings) agents.ToolChoice {
 	return s.ToolChoice
 }
 
-func settingsVerbosity(s *agents.ModelSettings) string {
+func settingsVerbosity(s *agents.ModelSettings) agents.Verbosity {
 	if s == nil {
 		return ""
 	}

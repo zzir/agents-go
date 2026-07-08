@@ -4,8 +4,8 @@ package agents
 //
 // Use the predefined constants ("auto", "required", "none") or a specific tool
 // name. The zero value (empty string) means "leave unset" and defers to the
-// provider default.
-type ToolChoice = string
+// provider default. It is an open set: any tool name is a valid value.
+type ToolChoice string
 
 // The predefined tool-choice modes.
 const (
@@ -14,10 +14,79 @@ const (
 	ToolChoiceNone     ToolChoice = "none"
 )
 
+// Truncation is a truncation strategy for the Responses API: "auto" or
+// "disabled". Empty means unset.
+type Truncation string
+
 // Truncation strategies for the Responses API.
 const (
-	TruncationAuto     = "auto"
-	TruncationDisabled = "disabled"
+	TruncationAuto     Truncation = "auto"
+	TruncationDisabled Truncation = "disabled"
+)
+
+// Verbosity constrains response verbosity: "low", "medium" or "high". Empty
+// means unset.
+type Verbosity string
+
+// The predefined verbosity levels.
+const (
+	VerbosityLow    Verbosity = "low"
+	VerbosityMedium Verbosity = "medium"
+	VerbosityHigh   Verbosity = "high"
+)
+
+// ServiceTier selects the processing tier: "auto", "default", "flex" or
+// "priority". Empty means unset.
+type ServiceTier string
+
+// The predefined service tiers.
+const (
+	ServiceTierAuto     ServiceTier = "auto"
+	ServiceTierDefault  ServiceTier = "default"
+	ServiceTierFlex     ServiceTier = "flex"
+	ServiceTierPriority ServiceTier = "priority"
+)
+
+// PromptCacheRetention controls prompt-cache retention: "in_memory" or "24h".
+// Empty means unset.
+type PromptCacheRetention string
+
+// The predefined prompt-cache retention policies.
+const (
+	PromptCacheRetentionInMemory PromptCacheRetention = "in_memory"
+	PromptCacheRetention24h      PromptCacheRetention = "24h"
+)
+
+// ReasoningEffort constrains reasoning effort: "minimal", "low", "medium" or
+// "high". Empty means unset.
+type ReasoningEffort string
+
+// The predefined reasoning-effort levels.
+const (
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+)
+
+// ReasoningSummary selects the reasoning summary style: "auto", "concise" or
+// "detailed". Empty means unset.
+type ReasoningSummary string
+
+// The predefined reasoning-summary styles.
+const (
+	ReasoningSummaryAuto     ReasoningSummary = "auto"
+	ReasoningSummaryConcise  ReasoningSummary = "concise"
+	ReasoningSummaryDetailed ReasoningSummary = "detailed"
+)
+
+// ContextManagementType is a server-side context-management entry type.
+// Currently only "compaction" is supported.
+type ContextManagementType string
+
+// The predefined context-management entry types.
+const (
+	ContextManagementCompaction ContextManagementType = "compaction"
 )
 
 // ContextManagement is a single server-side context-management entry forwarded
@@ -25,7 +94,7 @@ const (
 // ContextManagement passthrough.
 type ContextManagement struct {
 	// Type is the entry type. Currently only "compaction" is supported.
-	Type string `json:"type"`
+	Type ContextManagementType `json:"type"`
 	// CompactThreshold is the token threshold at which compaction triggers for
 	// this entry. nil leaves it unset.
 	CompactThreshold *int64 `json:"compact_threshold,omitempty"`
@@ -35,9 +104,9 @@ type ContextManagement struct {
 // shared Reasoning object that the runner forwards to the provider.
 type Reasoning struct {
 	// Effort is "minimal", "low", "medium" or "high".
-	Effort string `json:"effort,omitempty"`
+	Effort ReasoningEffort `json:"effort,omitempty"`
 	// Summary is "auto", "concise" or "detailed".
-	Summary string `json:"summary,omitempty"`
+	Summary ReasoningSummary `json:"summary,omitempty"`
 }
 
 // ModelSettings holds optional model configuration parameters (temperature,
@@ -60,7 +129,7 @@ type ModelSettings struct {
 	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
 
 	// Truncation is "auto" or "disabled". Empty means unset.
-	Truncation string `json:"truncation,omitempty"`
+	Truncation Truncation `json:"truncation,omitempty"`
 
 	// MaxTokens is the maximum number of output tokens to generate.
 	MaxTokens *int64 `json:"max_tokens,omitempty"`
@@ -69,19 +138,19 @@ type ModelSettings struct {
 	Reasoning *Reasoning `json:"reasoning,omitempty"`
 
 	// Verbosity constrains response verbosity: "low", "medium" or "high".
-	Verbosity string `json:"verbosity,omitempty"`
+	Verbosity Verbosity `json:"verbosity,omitempty"`
 
 	// Metadata is included with the model response call.
 	Metadata map[string]string `json:"metadata,omitempty"`
 
 	// ServiceTier selects the processing tier: "auto", "default", "flex" or "priority".
-	ServiceTier string `json:"service_tier,omitempty"`
+	ServiceTier ServiceTier `json:"service_tier,omitempty"`
 
 	// Store controls whether the provider stores the response for later retrieval.
 	Store *bool `json:"store,omitempty"`
 
 	// PromptCacheRetention is "in_memory" or "24h".
-	PromptCacheRetention string `json:"prompt_cache_retention,omitempty"`
+	PromptCacheRetention PromptCacheRetention `json:"prompt_cache_retention,omitempty"`
 
 	// PromptCacheKey is forwarded as the Responses API prompt_cache_key to
 	// improve prompt-cache hit rates. Empty means unset. Unlike the Python SDK,

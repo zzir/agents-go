@@ -106,7 +106,7 @@ Both store one row per item in an `agent_messages` table, encoded with `agents.M
 import "github.com/zzir/agents-go/models/openai"
 
 sess := openai.NewConversationsSession() // reads OPENAI_API_KEY; or pass option.WithAPIKey(...)
-// sess = sess.WithConversationID("conv_existing")     // resume a known conversation
+// sess.SetConversationID("conv_existing")             // resume a known conversation
 // id, _ := sess.ConversationID(ctx)                   // read/create the server-side ID
 
 agents.Run(ctx, agent, "remember my name is Ada",

@@ -18,7 +18,7 @@ import (
 // ConversationsSession is an agents.Session backed by the OpenAI Conversations
 // API: history lives server-side under a conversation ID rather than in a local
 // store. The conversation is created lazily on first use unless an existing ID
-// is supplied via WithConversationID. It is the Go counterpart of the Python
+// is supplied via SetConversationID. It is the Go counterpart of the Python
 // SDK's OpenAIConversationsSession.
 //
 // Item conversion reuses agents.UnmarshalInputItem, so the common item kinds
@@ -41,14 +41,12 @@ func NewConversationsSession(opts ...option.RequestOption) *ConversationsSession
 	return &ConversationsSession{svc: c.Conversations}
 }
 
-// WithConversationID attaches the session to an existing server-side
-// conversation instead of creating a new one on first use. It returns the
-// session for chaining.
-func (s *ConversationsSession) WithConversationID(id string) *ConversationsSession {
+// SetConversationID attaches the session to an existing server-side
+// conversation instead of creating a new one on first use.
+func (s *ConversationsSession) SetConversationID(id string) {
 	s.mu.Lock()
 	s.id = id
 	s.mu.Unlock()
-	return s
 }
 
 // ConversationID returns the server-side conversation ID, creating the

@@ -8,9 +8,15 @@ components:
             this entry. nil leaves it unset.
           type: integer
         type:
-          description: Type is the entry type. Currently only "compaction" is supported.
-          type: string
+          $ref: '#/components/schemas/agents.ContextManagementType'
       type: object
+    agents.ContextManagementType:
+      description: Type is the entry type. Currently only "compaction" is supported.
+      enum:
+      - compaction
+      type: string
+      x-enum-varnames:
+      - ContextManagementCompaction
     agents.InputTokensDetails:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
@@ -55,8 +61,7 @@ components:
             the runner never generates a key: callers set this (or ExtraBody) themselves.
           type: string
         prompt_cache_retention:
-          description: PromptCacheRetention is "in_memory" or "24h".
-          type: string
+          $ref: '#/components/schemas/agents.PromptCacheRetention'
         reasoning:
           $ref: '#/components/schemas/agents.Reasoning'
         response_include:
@@ -67,9 +72,7 @@ components:
           type: array
           uniqueItems: false
         service_tier:
-          description: 'ServiceTier selects the processing tier: "auto", "default",
-            "flex" or "priority".'
-          type: string
+          $ref: '#/components/schemas/agents.ServiceTier'
         store:
           description: Store controls whether the provider stores the response for
             later retrieval.
@@ -84,12 +87,9 @@ components:
         top_p:
           type: number
         truncation:
-          description: Truncation is "auto" or "disabled". Empty means unset.
-          type: string
+          $ref: '#/components/schemas/agents.Truncation'
         verbosity:
-          description: 'Verbosity constrains response verbosity: "low", "medium" or
-            "high".'
-          type: string
+          $ref: '#/components/schemas/agents.Verbosity'
       type: object
     agents.OutputTokensDetails:
       description: OutputTokensDetails aggregates the output token detail fields.
@@ -97,16 +97,47 @@ components:
         reasoning_tokens:
           type: integer
       type: object
+    agents.PromptCacheRetention:
+      description: PromptCacheRetention is "in_memory" or "24h".
+      enum:
+      - in_memory
+      - 24h
+      type: string
+      x-enum-varnames:
+      - PromptCacheRetentionInMemory
+      - PromptCacheRetention24h
     agents.Reasoning:
       description: Reasoning configures reasoning models.
       properties:
         effort:
-          description: Effort is "minimal", "low", "medium" or "high".
-          type: string
+          $ref: '#/components/schemas/agents.ReasoningEffort'
         summary:
-          description: Summary is "auto", "concise" or "detailed".
-          type: string
+          $ref: '#/components/schemas/agents.ReasoningSummary'
       type: object
+    agents.ReasoningEffort:
+      description: Effort is "minimal", "low", "medium" or "high".
+      enum:
+      - minimal
+      - low
+      - medium
+      - high
+      type: string
+      x-enum-varnames:
+      - ReasoningEffortMinimal
+      - ReasoningEffortLow
+      - ReasoningEffortMedium
+      - ReasoningEffortHigh
+    agents.ReasoningSummary:
+      description: Summary is "auto", "concise" or "detailed".
+      enum:
+      - auto
+      - concise
+      - detailed
+      type: string
+      x-enum-varnames:
+      - ReasoningSummaryAuto
+      - ReasoningSummaryConcise
+      - ReasoningSummaryDetailed
     agents.RequestUsage:
       properties:
         input_tokens:
@@ -120,6 +151,20 @@ components:
         total_tokens:
           type: integer
       type: object
+    agents.ServiceTier:
+      description: 'ServiceTier selects the processing tier: "auto", "default", "flex"
+        or "priority".'
+      enum:
+      - auto
+      - default
+      - flex
+      - priority
+      type: string
+      x-enum-varnames:
+      - ServiceTierAuto
+      - ServiceTierDefault
+      - ServiceTierFlex
+      - ServiceTierPriority
     agents.ToolChoice:
       description: ToolChoice controls tool selection. Empty means unset.
       enum:
@@ -131,6 +176,15 @@ components:
       - ToolChoiceAuto
       - ToolChoiceRequired
       - ToolChoiceNone
+    agents.Truncation:
+      description: Truncation is "auto" or "disabled". Empty means unset.
+      enum:
+      - auto
+      - disabled
+      type: string
+      x-enum-varnames:
+      - TruncationAuto
+      - TruncationDisabled
     agents.Usage:
       properties:
         input_tokens:
@@ -158,6 +212,17 @@ components:
             requests.
           type: integer
       type: object
+    agents.Verbosity:
+      description: 'Verbosity constrains response verbosity: "low", "medium" or "high".'
+      enum:
+      - low
+      - medium
+      - high
+      type: string
+      x-enum-varnames:
+      - VerbosityLow
+      - VerbosityMedium
+      - VerbosityHigh
     bridge.ChatGPTLoginResult:
       properties:
         authorize_url:
