@@ -221,7 +221,21 @@ function App() {
   const { wsRef, sessionRunRef, loadSession, deleteSession } = useAgentSocket(updateSS);
 
   useEffect(() => {
-    if (activeSession) loadSession(activeSession);
+    if (!activeSession) return;
+    let cancelled = false;
+    // The session id can come from the URL hash and may not exist (stale link,
+    // deleted session, hand-typed id). The messages endpoint returns [] for an
+    // unknown session rather than 404, so validate existence explicitly: a 404
+    // means drop the id — the app falls back to the empty state and typing then
+    // starts a new chat instead of running against a non-existent session.
+    api.sessions.get(activeSession)
+      .then(() => { if (!cancelled) loadSession(activeSession); })
+      .catch((e: { status?: number }) => {
+        if (cancelled) return;
+        if (e?.status === 404) setActiveSession(null);
+        else loadSession(activeSession); // transient error — try loading anyway
+      });
+    return () => { cancelled = true; };
   }, [activeSession, loadSession]);
 
   useEffect(() => {
@@ -231,14 +245,32 @@ function App() {
     });
   }, [wsRef]);
 
-  const handleSend = useCallback((text: string, agentConfigId?: string, sandboxId?: string) => {
-    if (!activeSession || !wsRef.current) return;
+  const handleSend = useCallback(async (text: string, agentConfigId?: string, sandboxId?: string) => {
+    if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('WebSocket disconnected — message not sent');
       return;
     }
-    updateSS(activeSession, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }] }));
-    const payload: Record<string, any> = { session_id: activeSession, input: text, agent_config_id: agentConfigId };
+    // Typing straight into the box with no active session starts a new chat,
+    // instead of silently dropping the message. The freshly-created session has
+    // no history, so mark it loaded to protect the optimistic message from the
+    // load-session effect.
+    let sid = activeSession;
+    let isNew = false;
+    if (!sid) {
+      try {
+        const sess = await api.sessions.create('New Chat', agentConfigId) as { id: string };
+        sid = sess.id;
+        isNew = true;
+        setActiveSession(sid);
+        setSessionReloadKey(k => k + 1);
+      } catch {
+        toast.error('Could not start a new chat');
+        return;
+      }
+    }
+    updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }], ...(isNew ? { loaded: true } : {}) }));
+    const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
     if (sandboxId) payload.sandbox_id = sandboxId;
     wsRef.current.send('run.create', payload);
   }, [activeSession, updateSS, wsRef]);

@@ -27,7 +27,9 @@ async function request(path: string, opts: RequestInit = {}): Promise<any> {
     const body = await res.json().catch(() => ({}));
     // Errors arrive as {"error": {"code", "message"}}.
     const message = body.error?.message || (typeof body.error === 'string' ? body.error : '') || res.statusText;
-    throw new Error(message);
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   if (res.status === 204) return null;
   return res.json();
