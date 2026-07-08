@@ -227,6 +227,10 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	opts.OutputGuardrails = built.RunOutputGuardrails
 	opts.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
 
+	// Name the session in parallel with the run — the title needs only the user's
+	// first message, not the answer, so it need not wait for the run to finish.
+	go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, input, provider, sendEvent)
+
 	sr := agents.RunStreamed(ctx, agent, input, opts)
 	r.hub.setStopHook(runID, sr.StopAfterTurn)
 	streamedText, streamedReasoning := r.drainStream(sr, runID, built.HandoffToolNames, sendEvent)
@@ -252,11 +256,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		return mkResult()
 	}
 
-	result := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
-	if result.FinalText != "" {
-		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, sendEvent)
-	}
-	return result
+	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 }
 
 // ResumeRun registers a continuation of a paused run (after HITL
@@ -369,14 +369,10 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		return failTurn(built.Agent.Model, "resume_error", err, streamedReasoning, streamedText)
 	}
 
-	result := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
-	// A resumed run that reaches a final answer is where an approval-gated
-	// first turn actually completes, so title generation must fire here too —
-	// the initial (interrupted) segment had no final output to trigger it.
-	if result.FinalText != "" {
-		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agentConfigID, sendEvent)
-	}
-	return result
+	// Title generation is not triggered here: the original run already fired it
+	// in parallel at its start (even for an approval-gated first turn, which
+	// pauses before finishing), so a resume never needs to.
+	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
 }
 
 func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunResult {
@@ -423,12 +419,13 @@ func (r *Runner) updateSessionMeta(sessionID, agentConfigID string) {
 		Exec(context.Background())
 }
 
-// maybeGenerateTitle names a still-default ("New Chat") session from its first
-// user message. It sources that message from the database rather than a passed
-// input so both the initial-run and the HITL-resume completion paths can call
-// it — the SDK persists the session (input included) on successful completion,
-// which is exactly when this fires.
-func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentConfigID string, sendEvent func(string, any)) {
+// maybeGenerateTitle names a still-default ("New Chat") session from the user's
+// first message. It runs IN PARALLEL with the run — the title depends only on
+// the user's message, not the answer — so it is fired at run start and takes the
+// input, model and provider directly rather than reading them back after the run
+// (at run start the SDK has not persisted anything yet). It runs on the hub root
+// context so it survives the client disconnecting.
+func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model, userInput string, provider agents.ModelProvider, sendEvent func(string, any)) {
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 	log := zerolog.Ctx(ctx)
@@ -437,34 +434,24 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 		log = &nop
 	}
 
+	// Only name an unnamed session. Checked first so a re-run on an already-named
+	// session (every message after the first) is a cheap Get + return.
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
 	if err != nil || sess.Name != "New Chat" {
 		return
 	}
-
-	userInput := r.firstUserMessage(ctx, sessionID)
-	if userInput == "" {
-		return
-	}
-
-	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, "")
-	if err != nil {
-		log.Warn().Err(err).Msg("title gen: build agent failed")
-		return
-	}
-	if built.Provider == nil {
-		log.Warn().Msg("title gen: no provider available")
+	if userInput == "" || provider == nil {
 		return
 	}
 
 	titleAgent := &agents.Agent{
 		Name:         "title_gen",
-		Model:        built.Agent.Model,
+		Model:        model,
 		Instructions: agents.StaticInstructions("You generate concise chat titles. Reply with ONLY the title text, nothing else. No quotes. Under 30 characters."),
 	}
 	prompt := "Generate a short title for this chat:\n\n" + userInput
 	sr := agents.RunStreamed(ctx, titleAgent, prompt, agents.RunOptions{
-		ModelProvider: built.Provider,
+		ModelProvider: provider,
 		MaxTurns:      1,
 	})
 	for _, err := range sr.Events() {
@@ -485,6 +472,8 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 		return
 	}
 
+	// The run's own updateSessionMeta only ever sets agent_config_id, never the
+	// name, so this parallel name Update cannot conflict with it.
 	if err := r.Deps.Sessions.Update(ctx, sessionID, title); err != nil {
 		log.Warn().Err(err).Msg("title gen: save failed")
 		return
@@ -493,23 +482,6 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, agentC
 		SessionID: sessionID,
 		Title:     title,
 	})
-}
-
-// firstUserMessage returns the text content of the earliest user message in a
-// session, or "" if there is none. Used to seed title generation.
-func (r *Runner) firstUserMessage(ctx context.Context, sessionID string) string {
-	var msg store.Message
-	err := r.db.NewSelect().Model(&msg).
-		Column("content").
-		Where("session_id = ?", sessionID).
-		Where("role = ?", "user").
-		Order("id ASC").
-		Limit(1).
-		Scan(ctx)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(msg.Content)
 }
 
 // savePartialTurn records what the SDK cannot save itself when a run is
