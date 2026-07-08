@@ -120,6 +120,19 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 	if s.PromptCacheRetention != "" {
 		params.PromptCacheRetention = responses.ResponseNewParamsPromptCacheRetention(s.PromptCacheRetention)
 	}
+	if s.PromptCacheKey != "" {
+		params.PromptCacheKey = oai.String(s.PromptCacheKey)
+	}
+	if len(s.ContextManagement) > 0 {
+		entries := make([]responses.ResponseNewParamsContextManagement, len(s.ContextManagement))
+		for i, cm := range s.ContextManagement {
+			entries[i] = responses.ResponseNewParamsContextManagement{Type: cm.Type}
+			if cm.CompactThreshold != nil {
+				entries[i].CompactThreshold = oai.Int(*cm.CompactThreshold)
+			}
+		}
+		params.ContextManagement = entries
+	}
 	// parallel_tool_calls only applies when tools are present, matching the
 	// Python SDK's gating.
 	if s.ParallelToolCalls != nil {
@@ -144,10 +157,10 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 }
 
 // convertPrompt translates an agents.Prompt into the Responses API prompt
-// parameter. Variable values that are strings become text substitutions; other
-// values are stringified (the Responses API also accepts image/file content
-// variables, which are not modeled here).
-func convertPrompt(p *agents.Prompt) responses.ResponsePromptParam {
+// parameter. Variable values must be strings (text substitutions); a non-string
+// value (e.g. an intended image/file content variable, which is not modeled
+// here) is rejected with a *UserError rather than silently stringified.
+func convertPrompt(p *agents.Prompt) (responses.ResponsePromptParam, error) {
 	out := responses.ResponsePromptParam{ID: p.ID}
 	if p.Version != "" {
 		out.Version = oai.String(p.Version)
@@ -157,10 +170,11 @@ func convertPrompt(p *agents.Prompt) responses.ResponsePromptParam {
 		for k, v := range p.Variables {
 			s, ok := v.(string)
 			if !ok {
-				s = fmt.Sprintf("%v", v)
+				return responses.ResponsePromptParam{}, agents.NewUserError(
+					"prompt variable %q has unsupported type %T: only string values are supported", k, v)
 			}
 			out.Variables[k] = responses.ResponsePromptVariableUnionParam{OfString: oai.String(s)}
 		}
 	}
-	return out
+	return out, nil
 }

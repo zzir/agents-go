@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -118,21 +119,106 @@ const conversationItemsBatchLimit = 20
 // AddItems implements agents.Session. Items are appended in API-sized batches
 // (conversationItemsBatchLimit per request), since the runner saves a whole
 // run's items in one call and long runs easily exceed the per-request cap.
+//
+// Each item is sanitized for the Conversations API before persistence
+// (sanitizeConversationItem): provider-only fields are dropped, stale top-level
+// ids are stripped except where the create-item schema requires them, and
+// reasoning items lacking both an id and encrypted content are omitted entirely.
 func (s *ConversationsSession) AddItems(ctx context.Context, in []agents.TResponseInputItem) error {
 	if len(in) == 0 {
+		return nil
+	}
+	sanitized := make([]agents.TResponseInputItem, 0, len(in))
+	for _, item := range in {
+		clean, keep, err := sanitizeConversationItem(item)
+		if err != nil {
+			return fmt.Errorf("sanitizing conversation item: %w", err)
+		}
+		if !keep {
+			continue
+		}
+		sanitized = append(sanitized, clean)
+	}
+	if len(sanitized) == 0 {
 		return nil
 	}
 	id, err := s.lockedEnsureID(ctx)
 	if err != nil {
 		return err
 	}
-	for start := 0; start < len(in); start += conversationItemsBatchLimit {
-		batch := in[start:min(start+conversationItemsBatchLimit, len(in))]
+	for start := 0; start < len(sanitized); start += conversationItemsBatchLimit {
+		batch := sanitized[start:min(start+conversationItemsBatchLimit, len(sanitized))]
 		if _, err := s.svc.Items.New(ctx, id, conversations.ItemNewParams{Items: batch}); err != nil {
 			return fmt.Errorf("adding conversation items: %w", err)
 		}
 	}
 	return nil
+}
+
+// conversationItemTypesWithRequiredID lists the Responses input item types whose
+// top-level id the Conversations create-item schema requires; every other type's
+// id is stripped before persistence. Mirrors the Python SDK's
+// _OPENAI_CONVERSATION_ITEM_TYPES_WITH_REQUIRED_ID.
+var conversationItemTypesWithRequiredID = map[string]bool{
+	"file_search_call":        true,
+	"web_search_call":         true,
+	"computer_call":           true,
+	"code_interpreter_call":   true,
+	"image_generation_call":   true,
+	"local_shell_call":        true,
+	"local_shell_call_output": true,
+	"mcp_list_tools":          true,
+	"mcp_approval_request":    true,
+	"mcp_call":                true,
+	"item_reference":          true,
+}
+
+// sanitizeConversationItem strips provider-specific fields from an item before
+// it is persisted through the Conversations API, mirroring the Python SDK's
+// _sanitize_openai_conversation_item / _is_unpersistable_for_openai_conversation.
+//
+// It returns the sanitized item and whether it should be persisted at all: a
+// reasoning item lacking both a server id and encrypted content is unpersistable
+// (keep == false). Non-object items pass through unchanged.
+func sanitizeConversationItem(item agents.TResponseInputItem) (agents.TResponseInputItem, bool, error) {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return item, false, err
+	}
+	var m map[string]any
+	// raw is a freshly marshaled item, so only non-object JSON can fail to decode
+	// into a map; either way m stays nil and the item passes through untouched.
+	_ = json.Unmarshal(raw, &m)
+	if m == nil {
+		return item, true, nil
+	}
+
+	typ, _ := m["type"].(string)
+	if typ == "reasoning" {
+		// Reasoning items keep their id (required to remain persistable), but are
+		// dropped when they carry neither an id nor encrypted content.
+		if !isNonEmptyString(m["id"]) && !isNonEmptyString(m["encrypted_content"]) {
+			return item, false, nil
+		}
+	} else if !conversationItemTypesWithRequiredID[typ] {
+		delete(m, "id")
+	}
+	delete(m, "provider_data")
+
+	cleanRaw, err := json.Marshal(m)
+	if err != nil {
+		return item, false, err
+	}
+	clean, err := agents.UnmarshalInputItem(cleanRaw)
+	if err != nil {
+		return item, false, err
+	}
+	return clean, true, nil
+}
+
+func isNonEmptyString(v any) bool {
+	s, ok := v.(string)
+	return ok && s != ""
 }
 
 // PopItem implements agents.Session: it removes and returns the most recent

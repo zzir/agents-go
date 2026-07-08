@@ -31,28 +31,28 @@ func TestCommandGate(t *testing.T) {
 	rc := &agents.RunContext{Context: "sess1"}
 
 	// nil rc / no session context → require approval (fail safe).
-	if need, _ := m.commandGate(context.Background(), nil, args); !need {
+	if need, _ := m.commandGate(context.Background(), nil, args, ""); !need {
 		t.Fatal("nil rc → should require approval")
 	}
-	if need, _ := m.commandGate(context.Background(), &agents.RunContext{}, args); !need {
+	if need, _ := m.commandGate(context.Background(), &agents.RunContext{}, args, ""); !need {
 		t.Fatal("no session → should require approval")
 	}
 	// Fresh session, untrusted → require approval.
-	if need, _ := m.commandGate(context.Background(), rc, args); !need {
+	if need, _ := m.commandGate(context.Background(), rc, args, ""); !need {
 		t.Fatal("untrusted → should require approval")
 	}
 	// Trust this exact command → no approval; a different command still requires it.
 	m.Trust().forSession("sess1").allowCommand(commandHash(args))
-	if need, _ := m.commandGate(context.Background(), rc, args); need {
+	if need, _ := m.commandGate(context.Background(), rc, args, ""); need {
 		t.Fatal("trusted command → should NOT require approval")
 	}
-	if need, _ := m.commandGate(context.Background(), rc, `{"cmd":"rm -rf x"}`); !need {
+	if need, _ := m.commandGate(context.Background(), rc, `{"cmd":"rm -rf x"}`, ""); !need {
 		t.Fatal("different command in trusted session → should still require approval")
 	}
 	// allowAll → nothing in that session requires approval.
 	m.Trust().forSession("sess2").allowAll()
 	rc2 := &agents.RunContext{Context: "sess2"}
-	if need, _ := m.commandGate(context.Background(), rc2, `{"cmd":"anything"}`); need {
+	if need, _ := m.commandGate(context.Background(), rc2, `{"cmd":"anything"}`, ""); need {
 		t.Fatal("approveAll → should NOT require approval")
 	}
 }

@@ -1,5 +1,7 @@
 package agents
 
+import "sync"
+
 // InputTokensDetails mirrors the OpenAI Responses API usage breakdown for input
 // tokens. Only the fields the runner cares about are modeled.
 type InputTokensDetails struct {
@@ -41,6 +43,12 @@ type Usage struct {
 	TotalTokens int64 `json:"total_tokens"`
 	// RequestUsageEntries preserves the per-request usage breakdown.
 	RequestUsageEntries []RequestUsage `json:"request_usage_entries,omitempty"`
+
+	// mu guards Add so concurrent accumulation is safe — e.g. several
+	// agent-as-tool nested runs completing in parallel and folding their usage
+	// into the shared parent Usage. The zero value is an unlocked mutex, so a
+	// Usage literal (or NewUsage) needs no initialization.
+	mu sync.Mutex
 }
 
 // NewUsage returns a zero-valued Usage ready to accumulate.
@@ -55,6 +63,8 @@ func (u *Usage) Add(other *Usage) {
 	if other == nil {
 		return
 	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.Requests += other.Requests
 	u.InputTokens += other.InputTokens
 	u.OutputTokens += other.OutputTokens

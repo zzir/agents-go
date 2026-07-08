@@ -74,4 +74,31 @@ type ToolGuardrailTripwireError struct {
 	AgentsError
 	GuardrailName string
 	ToolName      string
+	// Output is the guardrail's returned output (carrying its OutputInfo), so a
+	// caller catching the tripwire can inspect what the guardrail reported —
+	// Python parity with ToolGuardrail{Input,Output}GuardrailTripwireTriggered.
+	Output ToolGuardrailFunctionOutput
+}
+
+// ToolInputGuardrailResult pairs a tool input guardrail with the output it
+// produced for one tool call. Every executed guardrail is recorded — allow,
+// reject and raise alike — so a caller reading RunResult.ToolInputGuardrailResults
+// can inspect even non-tripping decisions (e.g. the guardrail's OutputInfo). It
+// is the Go counterpart of the Python SDK's ToolInputGuardrailResult; ToolName
+// and ToolCallID are Go-only conveniences identifying which call produced it.
+type ToolInputGuardrailResult struct {
+	Guardrail  ToolInputGuardrail
+	ToolName   string
+	ToolCallID string
+	Output     ToolGuardrailFunctionOutput
+}
+
+// ToolOutputGuardrailResult pairs a tool output guardrail with the output it
+// produced for one tool call (see ToolInputGuardrailResult). It is the Go
+// counterpart of the Python SDK's ToolOutputGuardrailResult.
+type ToolOutputGuardrailResult struct {
+	Guardrail  ToolOutputGuardrail
+	ToolName   string
+	ToolCallID string
+	Output     ToolGuardrailFunctionOutput
 }

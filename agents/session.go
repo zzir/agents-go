@@ -27,6 +27,97 @@ type Session interface {
 	Clear(ctx context.Context) error
 }
 
+// SessionSettings configures how a run reads a Session. It is the Go counterpart
+// of Python's SessionSettings.
+type SessionSettings struct {
+	// Limit caps how many of the most recent items GetItems loads at run start.
+	// Zero (the default) means no limit — the full history is loaded.
+	Limit int
+}
+
+// SessionSettingsAware is an optional Session capability: expose a default
+// SessionSettings that a run applies unless RunOptions.SessionSettings overrides
+// it. It mirrors Python reading session.session_settings.
+type SessionSettingsAware interface {
+	DefaultSessionSettings() SessionSettings
+}
+
+// SessionInputCallback combines a session's stored history with the run's new
+// input into the item list sent to the model. Returning an error aborts the run.
+// It is the Go counterpart of Python's SessionInputCallback: the default (nil)
+// simply appends new input to history, while a custom callback may reorder,
+// filter or fold history. Only items that are genuinely new — not carried over
+// from history — are persisted back to the session.
+type SessionInputCallback func(history, newInput []TResponseInputItem) ([]TResponseInputItem, error)
+
+// resolveSessionLimit resolves the effective GetItems limit: an explicit
+// RunOptions.SessionSettings.Limit wins, then a Session-level default, else 0
+// (no limit). Mirrors Python's resolve_session_limit.
+func resolveSessionLimit(override *SessionSettings, session Session) int {
+	if override != nil && override.Limit > 0 {
+		return override.Limit
+	}
+	if sa, ok := session.(SessionSettingsAware); ok {
+		if d := sa.DefaultSessionSettings(); d.Limit > 0 {
+			return d.Limit
+		}
+	}
+	return 0
+}
+
+// sessionAppendedItems returns the subset of a SessionInputCallback's output
+// that should be persisted to the session: the genuinely new items, excluding
+// those carried over from history. It mirrors Python's content-frequency diffing
+// in session_persistence.prepare_input_with_session — new input is preferred over
+// history, and items matching neither (produced by the callback) are treated as
+// new. Go lacks Python's object identity, so it diffs purely by serialized
+// content.
+func sessionAppendedItems(history, newInput, combined []TResponseInputItem) []TResponseInputItem {
+	historyCounts := fingerprintCounts(history)
+	newCounts := fingerprintCounts(newInput)
+	var appended []TResponseInputItem
+	for _, item := range combined {
+		key := fingerprintInputItem(item)
+		if key == "" {
+			// Unfingerprintable: cannot match history, treat as new.
+			appended = append(appended, item)
+			continue
+		}
+		if newCounts[key] > 0 {
+			newCounts[key]--
+			appended = append(appended, item)
+			continue
+		}
+		if historyCounts[key] > 0 {
+			historyCounts[key]--
+			continue
+		}
+		appended = append(appended, item)
+	}
+	return appended
+}
+
+// fingerprintInputItem returns a stable content key for an input item, or "" if
+// it cannot be serialized.
+func fingerprintInputItem(item TResponseInputItem) string {
+	b, err := MarshalInputItem(item)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// fingerprintCounts builds a multiset of input-item fingerprints.
+func fingerprintCounts(items []TResponseInputItem) map[string]int {
+	counts := make(map[string]int, len(items))
+	for _, it := range items {
+		if key := fingerprintInputItem(it); key != "" {
+			counts[key]++
+		}
+	}
+	return counts
+}
+
 // ItemsReplacer is an optional Session capability: atomically replace the
 // entire stored history with a new item list. Backends that can do this in one
 // step (a file rename, a DB transaction) should implement it so history

@@ -29,6 +29,10 @@ type singleStepResult struct {
 	NewAgent      *Agent
 	Handoff       *Handoff // the handoff taken, when NextStep is stepHandoff
 	Interruptions []*ToolApprovalItem
+	// NestedStates carries the paused RunState of any agent-as-tool nested run
+	// that interrupted this turn, keyed by the parent tool call id, so the
+	// runner can stash it on the parent RunState for ResumeRun.
+	NestedStates map[string]*RunState
 }
 
 // toolRunFunction pairs a function tool call with the tool that handles it.
@@ -64,11 +68,11 @@ const (
 )
 
 // ParseToolNotFoundBehavior converts a string to a ToolNotFoundBehavior.
-// Recognized values: "error" (or ""), "return_to_model". Unknown values return
-// ToolNotFoundError.
+// Recognized values: "error" (or ""), "return_to_model" and its upstream alias
+// "return_error_to_model". Unknown values return ToolNotFoundError.
 func ParseToolNotFoundBehavior(s string) ToolNotFoundBehavior {
 	switch s {
-	case "return_to_model":
+	case "return_to_model", "return_error_to_model":
 		return ToolNotFoundReturnToModel
 	default:
 		return ToolNotFoundError
@@ -175,14 +179,24 @@ func (r *runner) executeToolsAndSideEffects(
 	preStepItems []RunItem,
 	resp *ModelResponse,
 ) (*singleStepResult, error) {
+	// Refresh the run context's turn input so tools, guardrails and hooks can
+	// inspect the conversation that led to the current tool calls (Python parity:
+	// context_wrapper.turn_input, set at the start of each turn). The runner does
+	// not thread the fully prepared model input into this function, so it is
+	// reconstructed from the new input persisted this run plus the generated
+	// conversation so far; session history loaded before the run is not included.
+	if turnInput, terr := r.currentTurnInput(); terr == nil {
+		r.rc.TurnInput = turnInput
+	}
+
 	newStepItems := make([]RunItem, 0, len(pr.NewItems))
 	if !resumed {
 		newStepItems = append(newStepItems, pr.NewItems...)
 	}
 
 	// Human-in-the-loop: partition function calls into those ready to run, those
-	// awaiting approval, and synthetic outputs for rejected calls.
-	toRun, interruptions, rejectedItems, err := r.partitionByApproval(ctx, agent, pr.Functions)
+	// awaiting approval, and rejected calls (already resolved to results).
+	toRun, interruptions, rejected, err := r.partitionByApproval(ctx, agent, pr.Functions)
 	if err != nil {
 		return nil, err
 	}
@@ -197,21 +211,60 @@ func (r *runner) executeToolsAndSideEffects(
 		}, nil
 	}
 
-	newStepItems = append(newStepItems, rejectedItems...)
-
-	// Run the approved/no-approval-needed function tools in parallel.
-	functionResults, err := r.runFunctionTools(ctx, agent, toRun)
+	// Run the approved/no-approval-needed function tools in parallel, then merge
+	// with the rejected results in original call order so item order and
+	// ToolUseBehavior see every call (Python parity: results built in tool_runs
+	// order).
+	executed, err := r.runFunctionTools(ctx, agent, toRun)
 	if err != nil {
 		return nil, err
 	}
+	functionResults := orderToolResults(pr.Functions, executed, rejected)
+
+	var nestedInterruptions []*ToolApprovalItem
+	var nestedStates map[string]*RunState
 	for _, fr := range functionResults {
-		newStepItems = append(newStepItems, fr.outputItem)
+		if len(fr.nestedInterruptions) > 0 {
+			// An agent-as-tool's nested run paused for approval: gather its
+			// interruptions and cache its state by call id. Its output is
+			// withheld (fr.outputItem is nil) until the parent run resumes.
+			nestedInterruptions = append(nestedInterruptions, fr.nestedInterruptions...)
+			if fr.nestedState != nil {
+				if nestedStates == nil {
+					nestedStates = map[string]*RunState{}
+				}
+				nestedStates[fr.callID] = fr.nestedState
+			}
+			continue
+		}
+		if fr.outputItem != nil {
+			newStepItems = append(newStepItems, fr.outputItem)
+		}
+	}
+
+	// If any nested agent-as-tool run paused, pause the parent run too: surface
+	// the nested interruptions as the parent's own and carry the paused nested
+	// states so ResumeRun continues them. Sibling tools that completed keep
+	// their outputs in newStepItems (Python parity: their FunctionToolResults
+	// are recorded; only the interrupted call's output is withheld).
+	if len(nestedInterruptions) > 0 {
+		return &singleStepResult{
+			NewStepItems:  newStepItems,
+			NextStep:      stepInterruption,
+			Interruptions: nestedInterruptions,
+			NestedStates:  nestedStates,
+		}, nil
 	}
 
 	// Unknown tool calls (ToolNotFoundReturnToModel): feed an error output back so
 	// the model can correct itself. hasToolsToRun stays true, forcing another turn.
 	for _, call := range pr.UnknownTools {
-		msg := fmt.Sprintf("Error: tool %q not found.", call.Name)
+		// Attach the tool-not-found error to the current agent span (Python
+		// parity: attach_error_to_current_span with {"tool_name": ...}). The tool
+		// name is model-chosen metadata, not user data, so it is recorded
+		// regardless of the sensitive-data setting.
+		r.agentSpan.SetError("Tool not found", map[string]any{"tool_name": call.Name})
+		msg := fmt.Sprintf("Tool '%s' not found.", call.Name)
 		newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, msg))
 	}
 
@@ -316,6 +369,38 @@ func (r *runner) executeToolsAndSideEffects(
 	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
 }
 
+// orderToolResults merges the executed and rejected tool results back into the
+// original call order given by calls, so run items and ToolUseBehavior observe
+// every call in the sequence the model emitted (Python builds its
+// FunctionToolResults in tool_runs order). Results are matched by call id; any
+// unmatched executed/rejected results are appended defensively.
+func orderToolResults(calls []toolRunFunction, executed, rejected []functionToolResult) []functionToolResult {
+	byCallID := make(map[string]functionToolResult, len(executed)+len(rejected))
+	for _, r := range executed {
+		byCallID[r.callID] = r
+	}
+	for _, r := range rejected {
+		byCallID[r.callID] = r
+	}
+	out := make([]functionToolResult, 0, len(byCallID))
+	seen := make(map[string]bool, len(byCallID))
+	for _, c := range calls {
+		if res, ok := byCallID[c.Call.CallID]; ok && !seen[c.Call.CallID] {
+			out = append(out, res)
+			seen[c.Call.CallID] = true
+		}
+	}
+	// Defensive: include any result whose call id was not in calls (should not
+	// happen, but never drop a produced output).
+	for _, r := range append(executed, rejected...) {
+		if !seen[r.callID] {
+			out = append(out, r)
+			seen[r.callID] = true
+		}
+	}
+	return out
+}
+
 // concatRunItems returns a fresh slice of pre followed by post, for the
 // RunErrorData snapshot handed to error handlers.
 func concatRunItems(pre, post []RunItem) []RunItem {
@@ -326,10 +411,16 @@ func concatRunItems(pre, post []RunItem) []RunItem {
 }
 
 // functionToolResult bundles a tool's output item with the tool and raw value.
+// When an agent-as-tool's nested run paused for approval, outputItem is nil and
+// the nested fields carry the surfaced interruptions and the paused nested
+// state (keyed by this call's id) so the parent run can pause and later resume.
 type functionToolResult struct {
-	tool       *FunctionTool
-	outputItem *ToolCallOutputItem
-	output     any
+	tool                *FunctionTool
+	outputItem          *ToolCallOutputItem
+	output              any
+	callID              string
+	nestedInterruptions []*ToolApprovalItem
+	nestedState         *RunState
 }
 
 // toolPanicError is what a panic recovered from user tool code (the tool
@@ -361,17 +452,33 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 		return nil, nil
 	}
 	results := make([]functionToolResult, len(runs))
+	// fatalErrs records each call's aborting error by call index. errgroup still
+	// cancels the siblings on the first failure, but the error surfaced to the
+	// run is chosen deterministically — the lowest call index — rather than
+	// whichever goroutine happened to finish first (Python parity: a stable
+	// winner by call order).
+	fatalErrs := make([]error, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
 	if r.opts.MaxToolConcurrency > 0 {
 		g.SetLimit(r.opts.MaxToolConcurrency)
 	}
 	for i, run := range runs {
 		g.Go(func() (err error) {
+			// Record this call's aborting error (if any) by index for the
+			// deterministic pick below. Registered first so it runs last —
+			// after the panic-recovery defer may have set err.
+			defer func() {
+				if err != nil {
+					fatalErrs[i] = err
+				}
+			}()
 			tc := &ToolContext{
 				RunContext:    r.rc,
 				ToolName:      run.Call.Name,
 				ToolCallID:    run.Call.CallID,
 				ToolArguments: run.Call.Arguments,
+				Agent:         agent,
+				ToolCall:      run.Call.Raw,
 			}
 			// This goroutine runs user code (the tool itself, its guardrails,
 			// hook callbacks) and errgroup does not recover panics, so an
@@ -394,14 +501,14 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 					tool:       run.Tool,
 					outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
 					output:     msg,
+					callID:     run.Call.CallID,
 				}
 				err = nil
 			}()
-			if err := callToolStart(gctx, r.opts.Hooks, agent, r.rc, run.Tool); err != nil {
-				return err
-			}
 
-			// Tool input guardrails: may reject (substitute content) or raise.
+			// Tool input guardrails run BEFORE the OnToolStart hooks (Python
+			// parity): a reject_content guardrail resolves the call with a
+			// substituted output and fires no tool hooks at all.
 			if rejected, msg, err := r.runToolInputGuardrails(gctx, agent, run); err != nil {
 				return err
 			} else if rejected {
@@ -409,8 +516,13 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 					tool:       run.Tool,
 					outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
 					output:     msg,
+					callID:     run.Call.CallID,
 				}
 				return nil
+			}
+
+			if err := callToolStart(gctx, r.opts.Hooks, agent, tc, run.Tool); err != nil {
+				return err
 			}
 
 			span := r.trace.StartFunctionSpan(run.Call.Name, r.agentParentID())
@@ -426,10 +538,29 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			}
 			out, err := invokeTool(gctx, run.Tool, tc, run.Call.Arguments)
 			if err != nil {
-				span.SetError(err.Error(), nil)
+				// An agent-as-tool whose nested run paused for approval is not a
+				// failure: record the surfaced interruptions and the paused
+				// nested state (no output item) so the parent run pauses too.
+				if ni, ok := errors.AsType[*nestedRunInterrupt](err); ok {
+					span.Finish()
+					results[i] = functionToolResult{
+						tool:                run.Tool,
+						callID:              run.Call.CallID,
+						nestedInterruptions: ni.interruptions,
+						nestedState:         ni.state,
+					}
+					return nil
+				}
+				// Tool errors routinely embed the call arguments, so the span
+				// error is gated like input/output (Python parity:
+				// get_trace_tool_error / REDACTED_TOOL_ERROR_MESSAGE).
+				if logToolData {
+					span.SetError(err.Error(), nil)
+				} else {
+					span.SetError(redactedToolErrorMessage, nil)
+				}
 				span.Finish()
-				// A FailureErrorFunction feeds the error back to the model as the
-				// tool output so it can recover; otherwise the error aborts the run.
+				// Without a FailureErrorFunction the error aborts the run.
 				if run.Tool.FailureErrorFunction == nil {
 					// A panic recovered inside invokeTool's timeout goroutine
 					// gets its stack attached here, like the direct path above.
@@ -438,19 +569,19 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 					}
 					return fmt.Errorf("tool %q failed: %w", run.Call.Name, err)
 				}
-				msg := run.Tool.FailureErrorFunction(gctx, tc, err)
-				results[i] = functionToolResult{
-					tool:       run.Tool,
-					outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
-					output:     msg,
+				// The failure message becomes the tool output and flows through
+				// the same tail as a success — output guardrails, custom data,
+				// and OnToolEnd all see it (Python parity: the error is converted
+				// inside the invocation, then handled like a normal result).
+				out = run.Tool.FailureErrorFunction(gctx, tc, err)
+			} else {
+				if logToolData {
+					span.Set("output", stringifyToolOutput(out))
 				}
-				return nil
+				span.Finish()
 			}
-			if logToolData {
-				span.Set("output", stringifyToolOutput(out))
-			}
-			span.Finish()
 
+			// Common tail for success and handled-error outputs.
 			// Tool output guardrails: may reject (substitute content) or raise.
 			if rejected, msg, err := r.runToolOutputGuardrails(gctx, agent, run, out); err != nil {
 				return err
@@ -458,7 +589,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				out = msg
 			}
 
-			if err := callToolEnd(gctx, r.opts.Hooks, agent, r.rc, run.Tool, out); err != nil {
+			if err := callToolEnd(gctx, r.opts.Hooks, agent, tc, run.Tool, out); err != nil {
 				return err
 			}
 			outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
@@ -480,6 +611,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				}
 			}
 			results[i] = functionToolResult{
+				callID:     run.Call.CallID,
 				tool:       run.Tool,
 				outputItem: outputItem,
 				output:     out,
@@ -487,8 +619,15 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
-		return nil, err
+	if werr := g.Wait(); werr != nil {
+		// Prefer the lowest-index call's error so the reported failure is stable
+		// across runs regardless of goroutine scheduling.
+		for _, fe := range fatalErrs {
+			if fe != nil {
+				return nil, fe
+			}
+		}
+		return nil, werr
 	}
 	return results, nil
 }
@@ -497,10 +636,25 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 // without a custom message.
 const DefaultRejectionMessage = "Tool execution was not approved."
 
+// redactedToolErrorMessage replaces a tool error's text on its function span
+// when sensitive-data tracing is off — error strings routinely embed the call
+// arguments. Matches Python's REDACTED_TOOL_ERROR_MESSAGE.
+const redactedToolErrorMessage = "Tool execution failed. Error details are redacted."
+
 // partitionByApproval splits function tool calls into those ready to run, those
-// awaiting human approval (interruptions), and synthetic outputs for rejected
-// calls. It consults the run context's ApprovalStore.
-func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []toolRunFunction) (toRun []toolRunFunction, interruptions []*ToolApprovalItem, rejected []RunItem, err error) {
+// awaiting human approval (interruptions), and rejected calls. It consults the
+// run context's ApprovalStore. Rejected calls come back as functionToolResults
+// (output = rejection message) so they keep their place in call order and take
+// part in ToolUseBehavior, matching Python.
+func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []toolRunFunction) (toRun []toolRunFunction, interruptions []*ToolApprovalItem, rejected []functionToolResult, err error) {
+	rejectResult := func(run toolRunFunction, msg string) functionToolResult {
+		return functionToolResult{
+			tool:       run.Tool,
+			outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
+			output:     msg,
+			callID:     run.Call.CallID,
+		}
+	}
 	store := r.rc.Approvals
 	for _, run := range runs {
 		// An explicit approve/reject decision (typically on resume) wins before
@@ -514,14 +668,14 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 					if msg == "" {
 						msg = DefaultRejectionMessage
 					}
-					rejected = append(rejected, newFunctionCallOutputItem(agent, run.Call.CallID, msg))
+					rejected = append(rejected, rejectResult(run, msg))
 				} else {
 					toRun = append(toRun, run)
 				}
 				continue
 			}
 		}
-		needs, aerr := run.Tool.requiresApproval(ctx, r.rc, run.Call.Arguments)
+		needs, aerr := run.Tool.requiresApproval(ctx, r.rc, run.Call.Arguments, run.Call.CallID)
 		if aerr != nil {
 			return nil, nil, nil, aerr
 		}
@@ -543,7 +697,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 				return nil, nil, nil, gerr
 			}
 			if preRejected {
-				rejected = append(rejected, newFunctionCallOutputItem(agent, run.Call.CallID, msg))
+				rejected = append(rejected, rejectResult(run, msg))
 				continue
 			}
 		}
@@ -581,13 +735,19 @@ func (r *runner) runToolInputGuardrails(ctx context.Context, agent *Agent, run t
 		if err != nil {
 			return false, "", err
 		}
+		// Record every guardrail's result — allow, reject and raise alike — so
+		// RunResult.ToolInputGuardrailResults surfaces non-tripping decisions too
+		// (Python parity: tool_execution appends before the behavior switch).
+		r.recordToolInputGuardrailResult(ToolInputGuardrailResult{
+			Guardrail: g, ToolName: run.Call.Name, ToolCallID: run.Call.CallID, Output: out,
+		})
 		switch out.Behavior {
 		case ToolGuardrailRejectContent:
 			return true, out.Message, nil
 		case ToolGuardrailRaiseException:
 			return false, "", &ToolGuardrailTripwireError{
 				AgentsError:   AgentsError{Message: "tool input guardrail " + g.Name + " tripwire triggered"},
-				GuardrailName: g.Name, ToolName: run.Call.Name,
+				GuardrailName: g.Name, ToolName: run.Call.Name, Output: out,
 			}
 		}
 	}
@@ -607,13 +767,17 @@ func (r *runner) runToolOutputGuardrails(ctx context.Context, agent *Agent, run 
 		if err != nil {
 			return false, "", err
 		}
+		// Record every guardrail's result (see runToolInputGuardrails).
+		r.recordToolOutputGuardrailResult(ToolOutputGuardrailResult{
+			Guardrail: g, ToolName: run.Call.Name, ToolCallID: run.Call.CallID, Output: out,
+		})
 		switch out.Behavior {
 		case ToolGuardrailRejectContent:
 			return true, out.Message, nil
 		case ToolGuardrailRaiseException:
 			return false, "", &ToolGuardrailTripwireError{
 				AgentsError:   AgentsError{Message: "tool output guardrail " + g.Name + " tripwire triggered"},
-				GuardrailName: g.Name, ToolName: run.Call.Name,
+				GuardrailName: g.Name, ToolName: run.Call.Name, Output: out,
 			}
 		}
 	}
@@ -701,6 +865,14 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 	}
 	span := r.trace.StartHandoffSpan(run.Handoff.ToolName, r.agentParentID())
 	defer span.Finish()
+	// Validate the handoff arguments against the handoff's input schema before it
+	// fires, so a handoff that expects input but receives none (or invalid input)
+	// is rejected as a *ModelBehaviorError instead of silently transferring with
+	// zero-valued input (Python parity: handoffs/__init__.py:278-307).
+	if verr := validateHandoffInput(&run.Handoff, run.Call.Arguments); verr != nil {
+		span.SetError(verr.Error(), map[string]any{"details": "invalid handoff input"})
+		return nil, verr
+	}
 	if run.Handoff.OnInvoke == nil {
 		return nil, newUserError("handoff %q has no OnInvoke", run.Handoff.ToolName)
 	}
@@ -745,24 +917,43 @@ func (r *runner) checkToolUseBehavior(ctx context.Context, agent *Agent, results
 	case nil, RunLLMAgain:
 		return false, nil, nil
 	case StopOnFirstTool:
-		return true, results[0].output, nil
+		return true, coerceToolFinalOutput(agent, results[0].output), nil
 	case StopAtTools:
 		for _, res := range results {
 			if slices.Contains(b.Names, res.tool.Name) {
-				return true, res.output, nil
+				return true, coerceToolFinalOutput(agent, res.output), nil
 			}
 		}
 		return false, nil, nil
 	case ToolUseBehaviorFunc:
 		public := make([]FunctionToolResult, len(results))
 		for i, res := range results {
-			public[i] = FunctionToolResult{ToolName: res.tool.Name, Output: res.output, CustomData: res.outputItem.CustomData}
+			var custom map[string]any
+			if res.outputItem != nil {
+				custom = res.outputItem.CustomData
+			}
+			public[i] = FunctionToolResult{ToolName: res.tool.Name, Output: res.output, CustomData: custom}
 		}
 		stop, output, err := b(ctx, r.rc, public)
 		return stop, output, err
 	default:
 		return false, nil, nil
 	}
+}
+
+// coerceToolFinalOutput renders a tool's output as the run's final output when
+// ToolUseBehavior stops the run. For a plain-text agent (no output type) the
+// value is coerced to a string so the final output is a string, not a raw Go
+// value — matching Python's `str(final_output)` for str/plain-text agents.
+// Agents with an output type keep the raw value for the caller to decode.
+func coerceToolFinalOutput(agent *Agent, output any) any {
+	if agent.OutputType != nil {
+		return output
+	}
+	if s, ok := output.(string); ok {
+		return s
+	}
+	return fmt.Sprint(output)
 }
 
 // applyHandoffInputFilter builds the full conversation input and runs filter
@@ -784,6 +975,23 @@ func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffIn
 		return h.InputFilter
 	}
 	return r.opts.HandoffInputFilter
+}
+
+// currentTurnInput reconstructs the model input for the current turn from the
+// runner's state: the new input persisted this run followed by the generated
+// conversation so far. It is the closest approximation to Python's
+// context_wrapper.turn_input available without the runner threading the fully
+// prepared model input into the step. Session history loaded before the run is
+// not represented (see RunContext.TurnInput).
+func (r *runner) currentTurnInput() ([]TResponseInputItem, error) {
+	generated, err := itemsToInputList(r.sessionItems)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TResponseInputItem, 0, len(r.userInput)+len(generated))
+	out = append(out, r.userInput...)
+	out = append(out, generated...)
+	return out, nil
 }
 
 func lastMessageItem(items []RunItem) *MessageOutputItem {

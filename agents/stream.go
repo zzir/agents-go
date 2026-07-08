@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"sync"
+	"sync/atomic"
 )
 
 // StreamEvent is the sealed interface for events emitted during a streamed run.
@@ -45,9 +46,51 @@ func (*AgentUpdatedStreamEvent) streamEvent() {}
 type StreamedResult struct {
 	ch chan streamMsg
 
-	mu    sync.Mutex
-	final *RunResult
-	err   error
+	mu           sync.Mutex
+	final        *RunResult
+	err          error
+	currentAgent *Agent
+	currentTurn  int
+
+	// stopAfterTurn, when set via StopAfterTurn, asks the run loop to stop after
+	// the current turn finishes (tools and session save included). Atomic because
+	// the consumer sets it while the run loop reads it concurrently.
+	stopAfterTurn atomic.Bool
+}
+
+// StopAfterTurn requests a graceful stop of a streaming run: the in-flight turn
+// finishes — including its tool calls and session save — and then the run stops
+// cleanly, with no error and a nil FinalOutput, before the next turn begins. To
+// stop immediately instead, cancel the run's context. It is the Go counterpart
+// of Python's StreamedResult.cancel(mode="after_turn"); the "immediate" mode is
+// covered by context cancellation.
+func (s *StreamedResult) StopAfterTurn() { s.stopAfterTurn.Store(true) }
+
+// stopRequested reports whether StopAfterTurn was called.
+func (s *StreamedResult) stopRequested() bool { return s.stopAfterTurn.Load() }
+
+// CurrentAgent returns the agent handling the turn currently in progress, or nil
+// before the first turn starts. Safe to call from the event-consuming goroutine.
+func (s *StreamedResult) CurrentAgent() *Agent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentAgent
+}
+
+// CurrentTurn returns the 1-based number of the turn currently in progress, or 0
+// before the first turn starts. Safe to call from the event-consuming goroutine.
+func (s *StreamedResult) CurrentTurn() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentTurn
+}
+
+// setCurrent records the live agent and turn number for CurrentAgent/CurrentTurn.
+func (s *StreamedResult) setCurrent(agent *Agent, turn int) {
+	s.mu.Lock()
+	s.currentAgent = agent
+	s.currentTurn = turn
+	s.mu.Unlock()
 }
 
 type streamMsg struct {

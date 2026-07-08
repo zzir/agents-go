@@ -12,10 +12,13 @@ type RunHooks interface {
 	OnAgentEnd(ctx context.Context, rc *RunContext, agent *Agent, output any) error
 	// OnHandoff fires when control passes from one agent to another.
 	OnHandoff(ctx context.Context, rc *RunContext, from, to *Agent) error
-	// OnToolStart fires before a tool is invoked.
-	OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error
-	// OnToolEnd fires after a tool returns, with its result.
-	OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error
+	// OnToolStart fires before a tool is invoked. The ToolContext identifies the
+	// specific call (name, call id, arguments) so concurrent invocations are
+	// distinguishable.
+	OnToolStart(ctx context.Context, tc *ToolContext, agent *Agent, tool Tool) error
+	// OnToolEnd fires after a tool returns, with its result. The ToolContext
+	// identifies the specific call.
+	OnToolEnd(ctx context.Context, tc *ToolContext, agent *Agent, tool Tool, result any) error
 	// OnLLMStart fires just before the agent's model is invoked, with the
 	// resolved system prompt (empty if none) and the input items being sent. It
 	// does not fire on a HITL-resumed turn, which reuses the interrupted
@@ -40,10 +43,10 @@ func (BaseRunHooks) OnAgentEnd(context.Context, *RunContext, *Agent, any) error 
 func (BaseRunHooks) OnHandoff(context.Context, *RunContext, *Agent, *Agent) error { return nil }
 
 // OnToolStart is a no-op.
-func (BaseRunHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) error { return nil }
+func (BaseRunHooks) OnToolStart(context.Context, *ToolContext, *Agent, Tool) error { return nil }
 
 // OnToolEnd is a no-op.
-func (BaseRunHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
+func (BaseRunHooks) OnToolEnd(context.Context, *ToolContext, *Agent, Tool, any) error {
 	return nil
 }
 
@@ -67,10 +70,12 @@ type AgentHooks interface {
 	// OnHandoff fires on the receiving agent's hooks when control is handed to
 	// it; source is the agent that delegated.
 	OnHandoff(ctx context.Context, rc *RunContext, agent, source *Agent) error
-	// OnToolStart fires before one of this agent's tools is invoked.
-	OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error
+	// OnToolStart fires before one of this agent's tools is invoked. The
+	// ToolContext identifies the specific call.
+	OnToolStart(ctx context.Context, tc *ToolContext, agent *Agent, tool Tool) error
 	// OnToolEnd fires after one of this agent's tools returns, with its result.
-	OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error
+	// The ToolContext identifies the specific call.
+	OnToolEnd(ctx context.Context, tc *ToolContext, agent *Agent, tool Tool, result any) error
 	// OnLLMStart fires just before this agent's model is invoked, with the
 	// resolved system prompt (empty if none) and the input items being sent.
 	OnLLMStart(ctx context.Context, rc *RunContext, agent *Agent, systemPrompt string, input []TResponseInputItem) error
@@ -92,10 +97,10 @@ func (BaseAgentHooks) OnEnd(context.Context, *RunContext, *Agent, any) error { r
 func (BaseAgentHooks) OnHandoff(context.Context, *RunContext, *Agent, *Agent) error { return nil }
 
 // OnToolStart is a no-op.
-func (BaseAgentHooks) OnToolStart(context.Context, *RunContext, *Agent, Tool) error { return nil }
+func (BaseAgentHooks) OnToolStart(context.Context, *ToolContext, *Agent, Tool) error { return nil }
 
 // OnToolEnd is a no-op.
-func (BaseAgentHooks) OnToolEnd(context.Context, *RunContext, *Agent, Tool, any) error {
+func (BaseAgentHooks) OnToolEnd(context.Context, *ToolContext, *Agent, Tool, any) error {
 	return nil
 }
 
@@ -146,36 +151,41 @@ func callHandoff(ctx context.Context, hooks RunHooks, from, to *Agent, rc *RunCo
 			return err
 		}
 	}
-	if to.Hooks != nil {
-		if err := to.Hooks.OnHandoff(ctx, rc, to, from); err != nil {
+	// Agent-level OnHandoff fires on the SOURCE agent's hooks (the one that
+	// delegated), passing agent=target and source=from. This matches the Python
+	// SDK's runtime behavior (public_agent.hooks.on_handoff, where public_agent
+	// is the from-agent) — note Python's own docstring says the opposite, but
+	// the code fires on the source.
+	if from.Hooks != nil {
+		if err := from.Hooks.OnHandoff(ctx, rc, to, from); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func callToolStart(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContext, tool Tool) error {
+func callToolStart(ctx context.Context, hooks RunHooks, agent *Agent, tc *ToolContext, tool Tool) error {
 	if hooks != nil {
-		if err := hooks.OnToolStart(ctx, rc, agent, tool); err != nil {
+		if err := hooks.OnToolStart(ctx, tc, agent, tool); err != nil {
 			return err
 		}
 	}
 	if agent.Hooks != nil {
-		if err := agent.Hooks.OnToolStart(ctx, rc, agent, tool); err != nil {
+		if err := agent.Hooks.OnToolStart(ctx, tc, agent, tool); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func callToolEnd(ctx context.Context, hooks RunHooks, agent *Agent, rc *RunContext, tool Tool, result any) error {
+func callToolEnd(ctx context.Context, hooks RunHooks, agent *Agent, tc *ToolContext, tool Tool, result any) error {
 	if hooks != nil {
-		if err := hooks.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+		if err := hooks.OnToolEnd(ctx, tc, agent, tool, result); err != nil {
 			return err
 		}
 	}
 	if agent.Hooks != nil {
-		if err := agent.Hooks.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+		if err := agent.Hooks.OnToolEnd(ctx, tc, agent, tool, result); err != nil {
 			return err
 		}
 	}
@@ -250,18 +260,18 @@ func (c *compositeRunHooks) OnHandoff(ctx context.Context, rc *RunContext, from,
 	return nil
 }
 
-func (c *compositeRunHooks) OnToolStart(ctx context.Context, rc *RunContext, agent *Agent, tool Tool) error {
+func (c *compositeRunHooks) OnToolStart(ctx context.Context, tc *ToolContext, agent *Agent, tool Tool) error {
 	for _, h := range c.hooks {
-		if err := h.OnToolStart(ctx, rc, agent, tool); err != nil {
+		if err := h.OnToolStart(ctx, tc, agent, tool); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *compositeRunHooks) OnToolEnd(ctx context.Context, rc *RunContext, agent *Agent, tool Tool, result any) error {
+func (c *compositeRunHooks) OnToolEnd(ctx context.Context, tc *ToolContext, agent *Agent, tool Tool, result any) error {
 	for _, h := range c.hooks {
-		if err := h.OnToolEnd(ctx, rc, agent, tool, result); err != nil {
+		if err := h.OnToolEnd(ctx, tc, agent, tool, result); err != nil {
 			return err
 		}
 	}

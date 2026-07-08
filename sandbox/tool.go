@@ -30,10 +30,11 @@ type CodeToolConfig struct {
 	// Defaults to 8192. The cut never splits a multi-byte UTF-8 sequence.
 	MaxOutputBytes int
 	// NeedsApprovalFunc, when set, is forwarded to the tool as its per-call
-	// approval gate: given the command in argsJSON it decides whether this
-	// execution must be approved first. nil = never gate. The sandbox package
-	// attaches no policy of its own — the caller supplies the decision.
-	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string) (bool, error)
+	// approval gate: given the command in argsJSON and the model-assigned callID
+	// it decides whether this execution must be approved first. nil = never gate.
+	// The sandbox package attaches no policy of its own — the caller supplies the
+	// decision.
+	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)
 }
 
 const defaultMaxTimeout = 10 * time.Minute

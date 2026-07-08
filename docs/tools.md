@@ -28,7 +28,7 @@ agent.Tools = []agents.Tool{runQuery}
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
 - The `ctx` is the run's context (cancellation propagates into tools).
-- `tc *ToolContext` carries the [run context](context.md) plus call metadata (`ToolName`, `ToolCallID`, `ToolArguments`).
+- `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). The same `*ToolContext` is passed to the `OnToolStart` / `OnToolEnd` [lifecycle hooks](running_agents.md#run-scoped-hooks), so a hook sees exactly which call it is bracketing.
 - Tools requested in the same model turn run **concurrently**; share state through the context value only if it is goroutine-safe.
 
 This replaces Python's `@function_tool` decorator: compile-time generics instead of signature inspection, struct tags instead of docstrings.
@@ -73,7 +73,7 @@ t.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Age
 
 ### Approval (human-in-the-loop)
 
-`NeedsApproval` (or per-call `NeedsApprovalFunc`) pauses the run before the tool executes, surfacing an interruption you approve or reject — see [Human-in-the-loop](human_in_the_loop.md).
+`NeedsApproval` (or per-call `NeedsApprovalFunc`) pauses the run before the tool executes, surfacing an interruption you approve or reject — see [Human-in-the-loop](human_in_the_loop.md). The per-call predicate is `func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)`, so a decision can turn on the raw arguments and the model-assigned call id.
 
 ### Tool guardrails
 

@@ -115,6 +115,8 @@ agents.Run(ctx, agent, "remember my name is Ada",
 
 `GetItems`/`AddItems`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
 
+Before persistence each item is **sanitized** for the Conversations API (mirroring Python's `_sanitize_openai_conversation_item`): stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result. It is the Go counterpart of Python's `OpenAIResponsesCompactionSession`.
@@ -163,6 +165,31 @@ last, _ := sess.PopItem(ctx) // remove the assistant answer
 last, _ = sess.PopItem(ctx)  // remove the user question
 res, _ := agents.Run(ctx, agent, correctedQuestion, agents.RunOptions{Session: sess, ModelProvider: p})
 ```
+
+## Combining history with new input
+
+By default a run loads the session's stored history and appends the new input to it. Two `RunOptions` knobs (both the counterparts of Python's `RunConfig` fields) adjust this:
+
+- **`SessionInputCallback`** — a `func(history, newInput []agents.TResponseInputItem) ([]agents.TResponseInputItem, error)` that returns the exact item list sent to the model, so it can reorder, filter, or fold history rather than plain-append. Only the **genuinely new** items — those not carried over from history — are persisted back to the session, so a callback that re-emits old items does not duplicate them. Returning an error aborts the run.
+
+  ```go
+  agents.Run(ctx, agent, input, agents.RunOptions{
+      Session: sess,
+      SessionInputCallback: func(history, newInput []agents.TResponseInputItem) ([]agents.TResponseInputItem, error) {
+          return append(summarize(history), newInput...), nil
+      },
+  })
+  ```
+
+- **`SessionSettings{Limit}`** — caps how many of the most recent items are loaded at run start (`0`, the default, loads the full history). An explicit `RunOptions.SessionSettings` wins; otherwise a `Session` may supply its own default by implementing the optional `SessionSettingsAware` capability:
+
+  ```go
+  type SessionSettingsAware interface {
+      DefaultSessionSettings() SessionSettings // e.g. SessionSettings{Limit: 50}
+  }
+  ```
+
+Both are ignored when no `Session` is set.
 
 ## Forking sessions
 

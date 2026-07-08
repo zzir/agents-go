@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -79,7 +80,7 @@ func TestMCP_ToolFiltering(t *testing.T) {
 
 func TestResultOutput_TextOnly(t *testing.T) {
 	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "hello"}}}
-	out := resultOutput(res)
+	out := resultOutput(res, false)
 	if s, ok := out.(string); !ok || s != "hello" {
 		t.Fatalf("text-only result = %#v, want string \"hello\"", out)
 	}
@@ -90,7 +91,7 @@ func TestResultOutput_Image(t *testing.T) {
 		&mcpsdk.TextContent{Text: "see chart"},
 		&mcpsdk.ImageContent{MIMEType: "image/png", Data: []byte{0x89, 0x50}},
 	}}
-	out := resultOutput(res)
+	out := resultOutput(res, false)
 	parts, ok := out.([]agents.ToolOutputContent)
 	if !ok {
 		t.Fatalf("image result is not structured content: %T", out)
@@ -116,12 +117,54 @@ func TestResultOutput_ImageResource(t *testing.T) {
 			URI: "file:///c.png", MIMEType: "image/png", Blob: []byte{1, 2, 3},
 		}},
 	}}
-	out := resultOutput(res)
+	out := resultOutput(res, false)
 	parts, ok := out.([]agents.ToolOutputContent)
 	if !ok || len(parts) != 1 {
 		t.Fatalf("resource image result = %#v", out)
 	}
 	if _, ok := parts[0].(agents.ToolOutputImage); !ok {
 		t.Errorf("parts[0] = %T, want ToolOutputImage", parts[0])
+	}
+}
+
+// Multiple text blocks become a list of native text parts, not one
+// JSON-encoded string (Python parity).
+func TestResultOutput_MultipleTextBlocks(t *testing.T) {
+	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+		&mcpsdk.TextContent{Text: "first"},
+		&mcpsdk.TextContent{Text: "second"},
+	}}
+	out := resultOutput(res, false)
+	parts, ok := out.([]agents.ToolOutputContent)
+	if !ok {
+		t.Fatalf("multi-block result = %T, want []ToolOutputContent parts", out)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("len(parts) = %d, want 2", len(parts))
+	}
+	for i, want := range []string{"first", "second"} {
+		tp, ok := parts[i].(agents.ToolOutputText)
+		if !ok || tp.Text != want {
+			t.Errorf("parts[%d] = %#v, want text %q", i, parts[i], want)
+		}
+	}
+}
+
+// StructuredContent is ignored by default (the content blocks win) and
+// used exclusively only when opted in.
+func TestResultOutput_StructuredContentGating(t *testing.T) {
+	res := &mcpsdk.CallToolResult{
+		Content:           []mcpsdk.Content{&mcpsdk.TextContent{Text: "block text"}},
+		StructuredContent: map[string]any{"value": 42},
+	}
+	// Default: ignore structuredContent, use the content block.
+	if out := resultOutput(res, false); out != "block text" {
+		t.Errorf("default output = %#v, want the content block text", out)
+	}
+	// Opted in: use structuredContent exclusively.
+	out := resultOutput(res, true)
+	s, ok := out.(string)
+	if !ok || !strings.Contains(s, "42") {
+		t.Errorf("useStructured output = %#v, want the structured JSON", out)
 	}
 }

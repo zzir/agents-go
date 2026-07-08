@@ -294,6 +294,11 @@ tracing and MCP implementations live in subpackages that import `agents`. Items
 use the `openai-go` Responses types as the wire format, mirroring how the Python
 SDK reuses the OpenAI SDK types.
 
+**TODO (roadmap):** the Responses **WebSocket transport** and a `Model`
+connection-lifecycle hook (`Close`/`aclose`) are not implemented — only the HTTP
+Responses transport is supported today. Track this if you need streaming over
+WebSocket.
+
 ## License
 
 MIT

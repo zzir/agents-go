@@ -39,6 +39,24 @@ res, err := sr.FinalResult() // the completed RunResult, same as a non-streamed 
 
 `*AgentUpdatedStreamEvent` fires when a handoff switches the active agent.
 
+## Controlling and inspecting a running stream
+
+The `*StreamedResult` returned by `RunStreamed` exposes three helpers you can call from the event-consuming goroutine while the run is still in flight:
+
+- `sr.StopAfterTurn()` requests a **graceful** stop: the in-flight turn finishes — including its tool calls and session save — and then the run stops cleanly before the next turn begins, with no error and a nil `FinalOutput`. It is the counterpart of Python's `StreamedResult.cancel(mode="after_turn")`; to stop *immediately* instead, cancel the run's context (Python's "immediate" mode).
+- `sr.CurrentAgent()` returns the agent handling the turn in progress, or nil before the first turn starts.
+- `sr.CurrentTurn()` returns the 1-based number of the turn in progress, or 0 before the first turn starts.
+
+```go
+for event, err := range sr.Events() {
+	if err != nil { log.Fatal(err) }
+	if sr.CurrentTurn() >= maxUserTurns {
+		sr.StopAfterTurn() // let this turn finish, then stop
+	}
+	// … handle event …
+}
+```
+
 ## Semantics
 
 - Events are delivered on a buffered channel; the producing goroutine blocks when you stop consuming. **If you break out of the loop early, cancel the run's context** — otherwise the run goroutine leaks waiting to deliver.

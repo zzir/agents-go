@@ -1,5 +1,16 @@
 components:
   schemas:
+    agents.ContextManagement:
+      properties:
+        compact_threshold:
+          description: |-
+            CompactThreshold is the token threshold at which compaction triggers for
+            this entry. nil leaves it unset.
+          type: integer
+        type:
+          description: Type is the entry type. Currently only "compaction" is supported.
+          type: string
+      type: object
     agents.InputTokensDetails:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
@@ -11,6 +22,15 @@ components:
         ModelSettings, when set, replaces the agent's configured settings — the
         replay dialog seeds it from the traced request so edits take effect.
       properties:
+        context_management:
+          description: |-
+            ContextManagement configures server-side context management (e.g.
+            compaction) for OpenAI Responses API requests. A nil/empty slice leaves it
+            unset.
+          items:
+            $ref: '#/components/schemas/agents.ContextManagement'
+          type: array
+          uniqueItems: false
         frequency_penalty:
           type: number
         max_tokens:
@@ -28,6 +48,12 @@ components:
           type: boolean
         presence_penalty:
           type: number
+        prompt_cache_key:
+          description: |-
+            PromptCacheKey is forwarded as the Responses API prompt_cache_key to
+            improve prompt-cache hit rates. Empty means unset. Unlike the Python SDK,
+            the runner never generates a key: callers set this (or ExtraBody) themselves.
+          type: string
         prompt_cache_retention:
           description: PromptCacheRetention is "in_memory" or "24h".
           type: string

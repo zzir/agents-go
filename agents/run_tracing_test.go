@@ -287,3 +287,46 @@ func TestGenerationSpanEnvOptOut(t *testing.T) {
 		t.Fatalf("env opt-out ignored: %v", d)
 	}
 }
+
+// Tool errors routinely embed the call arguments, so the function span's error
+// message is redacted when sensitive-data tracing is off (Python parity:
+// REDACTED_TOOL_ERROR_MESSAGE).
+func TestFunctionSpanErrorRedaction(t *testing.T) {
+	newRun := func(include bool) *tracing.Span {
+		t.Helper()
+		tool := NewFunctionTool("boom", "fails",
+			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+				return "", errors.New("secret-arg-value leaked")
+			})
+		model := &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
+			modelResp(messageOutput(t, "done")),
+		}}
+		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+		proc := &recordingProcessor{}
+		if _, err := Run(context.Background(), agent, "go", RunOptions{
+			Tracer:                    tracing.NewTracer(proc),
+			TraceIncludeSensitiveData: &include,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		fns := proc.spansOfType(tracing.SpanTypeFunction)
+		if len(fns) != 1 {
+			t.Fatalf("want 1 function span, got %d", len(fns))
+		}
+		return fns[0]
+	}
+
+	span := newRun(false)
+	if span.Error == nil {
+		t.Fatal("function span should record the error")
+	}
+	if span.Error.Message != "Tool execution failed. Error details are redacted." {
+		t.Errorf("redacted message = %q", span.Error.Message)
+	}
+
+	span = newRun(true)
+	if span.Error == nil || span.Error.Message != "secret-arg-value leaked" {
+		t.Errorf("with sensitive data on, error = %+v, want the raw message", span.Error)
+	}
+}

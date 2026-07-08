@@ -34,6 +34,10 @@ type ModelResponse struct {
 	// ResponseID is the provider response identifier, used to chain calls via
 	// previous_response_id on the Responses API.
 	ResponseID string
+	// RequestID is the provider request identifier from the transport response
+	// headers (e.g. OpenAI's x-request-id), useful for support/debugging. Empty
+	// when the backend does not supply one.
+	RequestID string
 }
 
 // ToInputItems converts the model output items into input items suitable for the

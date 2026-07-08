@@ -23,6 +23,23 @@ type RunResult struct {
 	LastAgent *Agent
 	// Usage is the aggregated token usage across the run.
 	Usage *Usage
+	// InputGuardrailResults holds every input guardrail's result (run-level and
+	// agent-level), including non-tripping ones, so callers can read their
+	// OutputInfo. The counterpart of Python's RunResult.input_guardrail_results.
+	InputGuardrailResults []InputGuardrailResult
+	// OutputGuardrailResults holds every output guardrail's result, including
+	// non-tripping ones. The counterpart of Python's
+	// RunResult.output_guardrail_results.
+	OutputGuardrailResults []OutputGuardrailResult
+	// ToolInputGuardrailResults holds every tool input guardrail's result across
+	// the run — including non-tripping (allow) decisions — so callers can inspect
+	// each guardrail's OutputInfo. The counterpart of Python's
+	// RunResult.tool_input_guardrail_results.
+	ToolInputGuardrailResults []ToolInputGuardrailResult
+	// ToolOutputGuardrailResults holds every tool output guardrail's result across
+	// the run, including non-tripping ones. The counterpart of Python's
+	// RunResult.tool_output_guardrail_results.
+	ToolOutputGuardrailResults []ToolOutputGuardrailResult
 	// Interruptions holds pending tool approvals when a run pauses for HITL.
 	// It is empty for runs that complete normally.
 	Interruptions []*ToolApprovalItem

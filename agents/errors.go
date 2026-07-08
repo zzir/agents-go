@@ -13,6 +13,12 @@ type RunErrorDetails struct {
 	RawResponses []*ModelResponse
 	LastAgent    *Agent
 	Usage        *Usage
+	// InputGuardrailResults / OutputGuardrailResults hold the guardrail results
+	// accumulated before the failure, mirroring Python's RunErrorDetails
+	// (exceptions.py). Tool guardrail results are deliberately not included —
+	// Python's RunErrorDetails does not carry them either.
+	InputGuardrailResults  []InputGuardrailResult
+	OutputGuardrailResults []OutputGuardrailResult
 }
 
 // AgentsError is the base type for errors raised by the SDK. Match concrete
@@ -72,6 +78,13 @@ func newModelBehaviorError(format string, args ...any) *ModelBehaviorError {
 	return &ModelBehaviorError{AgentsError{Message: fmt.Sprintf(format, args...)}}
 }
 
+// NewModelBehaviorError constructs a *ModelBehaviorError with a formatted
+// message. It is exported so provider packages (e.g. models/openai) can classify
+// terminal model failures without importing an unexported constructor.
+func NewModelBehaviorError(format string, args ...any) *ModelBehaviorError {
+	return newModelBehaviorError(format, args...)
+}
+
 // ModelRefusalError indicates the model refused to produce output.
 type ModelRefusalError struct {
 	AgentsError
@@ -85,6 +98,12 @@ type UserError struct {
 
 func newUserError(format string, args ...any) *UserError {
 	return &UserError{AgentsError{Message: fmt.Sprintf(format, args...)}}
+}
+
+// NewUserError constructs a *UserError with a formatted message. It is exported
+// so provider packages (e.g. models/openai) can report incorrect SDK usage.
+func NewUserError(format string, args ...any) *UserError {
+	return newUserError(format, args...)
 }
 
 // ToolTimeoutError is returned when a tool invocation exceeds its timeout.

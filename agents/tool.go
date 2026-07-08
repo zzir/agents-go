@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -70,8 +71,11 @@ type FunctionTool struct {
 	// approve or reject. Use NeedsApprovalFunc for per-call decisions.
 	NeedsApproval bool
 	// NeedsApprovalFunc, when non-nil, decides per call whether approval is
-	// required, taking precedence over NeedsApproval.
-	NeedsApprovalFunc func(ctx context.Context, rc *RunContext, argsJSON string) (bool, error)
+	// required, taking precedence over NeedsApproval. callID is the
+	// model-assigned identifier of the specific tool call, so the predicate can
+	// distinguish concurrent calls to the same tool. It mirrors the Python SDK's
+	// needs_approval(run_context, tool_parameters, call_id).
+	NeedsApprovalFunc func(ctx context.Context, rc *RunContext, argsJSON string, callID string) (bool, error)
 
 	// FailureErrorFunction controls what happens when OnInvoke returns an error.
 	// When non-nil, its returned message is sent back to the model as the tool
@@ -89,19 +93,30 @@ type FunctionTool struct {
 	// a UserError. Returning an error aborts the run. The data survives
 	// RunState serialization across human-in-the-loop interruptions.
 	CustomDataExtractor func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error)
+
+	// constructionErr records a schema/argument-type failure detected when the
+	// tool was built (see failedFunctionTool). The runner surfaces it before the
+	// first model call — the tool is never sent to the model with a broken
+	// schema — instead of only when the model happens to call it.
+	constructionErr error
 }
 
 // DefaultToolErrorFunction is the default FailureErrorFunction: it returns a
 // generic, model-readable error message. It mirrors the Python SDK's
-// default_tool_error_function.
+// default_tool_error_function, including the dedicated wording when the model
+// sent arguments that were not decodable JSON — the message carries only the
+// underlying syntax error, prompting the model to retry with valid JSON.
 func DefaultToolErrorFunction(_ context.Context, _ *ToolContext, err error) string {
+	if ae, ok := errors.AsType[*toolArgumentsJSONError](err); ok {
+		return "An error occurred while parsing tool arguments. Please try again with valid JSON. Error: " + ae.cause.Error()
+	}
 	return "An error occurred while running the tool. Please try again. Error: " + err.Error()
 }
 
 // requiresApproval reports whether a specific call to this tool needs approval.
-func (t *FunctionTool) requiresApproval(ctx context.Context, rc *RunContext, argsJSON string) (bool, error) {
+func (t *FunctionTool) requiresApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
 	if t.NeedsApprovalFunc != nil {
-		return t.NeedsApprovalFunc(ctx, rc, argsJSON)
+		return t.NeedsApprovalFunc(ctx, rc, argsJSON, callID)
 	}
 	return t.NeedsApproval, nil
 }

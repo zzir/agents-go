@@ -3,7 +3,9 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -53,12 +55,59 @@ func TestNewFunctionTool_Invocation(t *testing.T) {
 		})
 
 	tc := &ToolContext{RunContext: NewRunContext(nil), ToolName: "get_weather"}
-	out, err := tool.OnInvoke(context.Background(), tc, `{"city":"Shanghai"}`)
+	out, err := tool.OnInvoke(context.Background(), tc, `{"city":"Shanghai","units":"c"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out != "sunny in Shanghai" {
 		t.Errorf("output = %v", out)
+	}
+}
+
+func TestNewFunctionTool_ArgumentValidation(t *testing.T) {
+	tool := NewFunctionTool("t", "",
+		func(ctx context.Context, tc *ToolContext, args weatherArgs) (string, error) {
+			return "ran", nil
+		})
+	tc := &ToolContext{RunContext: NewRunContext(nil)}
+
+	// Missing root-level required key: *ModelBehaviorError, generic wording.
+	_, err := tool.OnInvoke(context.Background(), tc, `{"city":"Shanghai"}`)
+	var mbe *ModelBehaviorError
+	if !errors.As(err, &mbe) {
+		t.Fatalf("missing key error = %v, want *ModelBehaviorError", err)
+	}
+	if msg := DefaultToolErrorFunction(context.Background(), tc, err); !strings.Contains(msg, "An error occurred while running the tool") {
+		t.Errorf("missing-key message = %q, want the generic wording", msg)
+	}
+
+	// Undecodable JSON: *ModelBehaviorError with the dedicated parse wording.
+	_, err = tool.OnInvoke(context.Background(), tc, `{not json`)
+	if !errors.As(err, &mbe) {
+		t.Fatalf("syntax error = %v, want *ModelBehaviorError", err)
+	}
+	if msg := DefaultToolErrorFunction(context.Background(), tc, err); !strings.Contains(msg, "An error occurred while parsing tool arguments. Please try again with valid JSON.") {
+		t.Errorf("syntax message = %q, want the dedicated parse wording", msg)
+	}
+
+	// Non-object payload: *ModelBehaviorError, generic wording.
+	_, err = tool.OnInvoke(context.Background(), tc, `[1,2]`)
+	if !errors.As(err, &mbe) || !strings.Contains(err.Error(), "expected a JSON object") {
+		t.Fatalf("non-object error = %v", err)
+	}
+}
+
+func TestNewFunctionTool_EmptyArgsAllOptional(t *testing.T) {
+	type noArgs struct{}
+	tool := NewFunctionTool("t", "",
+		func(ctx context.Context, tc *ToolContext, args noArgs) (string, error) {
+			return "ok", nil
+		})
+	for _, in := range []string{"", "  \n", "{}"} {
+		out, err := tool.OnInvoke(context.Background(), &ToolContext{}, in)
+		if err != nil || out != "ok" {
+			t.Errorf("input %q: out=%v err=%v", in, out, err)
+		}
 	}
 }
 
@@ -148,5 +197,29 @@ func TestSchemaForType_RoundTripsToJSON(t *testing.T) {
 	// Must marshal cleanly (it is sent on the wire as tool parameters).
 	if _, err := json.Marshal(schema); err != nil {
 		t.Errorf("schema not JSON-marshalable: %v", err)
+	}
+}
+
+// A tool built from an unusable schema (here an interface{} field, which
+// has no strict-mode schema) fails the run with a *UserError before the model
+// is ever called — not only when the model happens to invoke it.
+func TestNewFunctionTool_BrokenSchemaFailsBeforeModelCall(t *testing.T) {
+	type badArgs struct {
+		Anything any `json:"anything"`
+	}
+	tool := NewFunctionTool("bad", "unusable",
+		func(ctx context.Context, tc *ToolContext, args badArgs) (string, error) {
+			return "ran", nil
+		})
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+
+	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v, want *UserError for the broken tool schema", err)
+	}
+	if model.calls != 0 {
+		t.Errorf("model was called %d times; a broken tool schema must fail before any model call", model.calls)
 	}
 }

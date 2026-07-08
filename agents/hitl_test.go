@@ -317,3 +317,75 @@ func (c *tracingCollector) named(prefix string) int {
 }
 
 func newTestTracer(c *tracingCollector) *tracing.Tracer { return tracing.NewTracer(c) }
+
+// Approval precedence (Python parity: is_tool_approved). A permanent approval
+// wins over a later per-call rejection of the same tool.
+func TestApprovalStore_Precedence(t *testing.T) {
+	item := func(tool, callID string) *ToolApprovalItem {
+		return &ToolApprovalItem{ToolName: tool, CallID: callID}
+	}
+
+	t.Run("permanent approve beats later per-call reject", func(t *testing.T) {
+		s := NewApprovalStore()
+		s.Approve(item("t", "c1"), true)       // always-approve t
+		s.Reject(item("t", "c2"), false, "no") // reject a specific later call
+		d, ok := s.decisionFor("t", "c2")
+		if !ok || !d.approved || d.rejected {
+			t.Errorf("c2 decision = %+v (ok=%v), want approved (permanent approval wins)", d, ok)
+		}
+	})
+
+	t.Run("permanent reject beats per-call approve", func(t *testing.T) {
+		s := NewApprovalStore()
+		s.Reject(item("t", "c1"), true, "denied")
+		s.Approve(item("t", "c2"), false)
+		d, ok := s.decisionFor("t", "c2")
+		if !ok || d.approved || !d.rejected {
+			t.Errorf("c2 decision = %+v (ok=%v), want rejected (permanent rejection wins)", d, ok)
+		}
+	})
+
+	t.Run("per-call approve beats per-call reject on same call", func(t *testing.T) {
+		s := NewApprovalStore()
+		s.Reject(item("t", "c1"), false, "no")
+		s.Approve(item("t", "c1"), false) // approve supersedes on the same call
+		d, ok := s.decisionFor("t", "c1")
+		if !ok || !d.approved {
+			t.Errorf("c1 decision = %+v (ok=%v), want approved", d, ok)
+		}
+	})
+
+	t.Run("undecided call of a partially-decided tool", func(t *testing.T) {
+		s := NewApprovalStore()
+		s.Approve(item("t", "c1"), false)
+		if _, ok := s.decisionFor("t", "other"); ok {
+			t.Error("an unrelated call should be undecided")
+		}
+	})
+}
+
+// The per-tool entry structure round-trips through RunState JSON.
+func TestApprovalStore_SerializationRoundTrip(t *testing.T) {
+	var ran bool
+	agent := approvalAgentAndModel(t, &ran)
+	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Record a permanent approval plus a per-call rejection message.
+	res.State.Approve(res.Interruptions[0], true)
+	res.State.Reject(&ToolApprovalItem{ToolName: "delete_db", CallID: "other"}, false, "blocked")
+
+	data, err := res.State.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := RunStateFromJSON(data, map[string]*Agent{"a": agent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Permanent approval survives and still wins over the per-call rejection.
+	if d, ok := restored.Approvals.decisionFor("delete_db", "other"); !ok || !d.approved {
+		t.Errorf("restored decision = %+v (ok=%v), want approved", d, ok)
+	}
+}

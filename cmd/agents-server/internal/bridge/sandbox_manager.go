@@ -39,7 +39,7 @@ func (m *SandboxManager) Trust() *TrustStore { return m.trust }
 // commandGate is exec_command's per-call approval gate: approval is required
 // unless the run's session has already trusted this exact command (or all
 // commands). The session id rides in RunContext.Context, set by the runner.
-func (m *SandboxManager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string) (bool, error) {
+func (m *SandboxManager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string, _ string) (bool, error) {
 	if rc == nil {
 		return true, nil
 	}

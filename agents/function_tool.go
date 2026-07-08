@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // NewFunctionTool builds a FunctionTool from a typed Go function. The argument
@@ -48,8 +49,8 @@ func NewFunctionTool[A any, R any](
 		FailureErrorFunction: DefaultToolErrorFunction,
 		OnInvoke: func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error) {
 			var args A
-			if err := unmarshalToolArgs(argsJSON, &args); err != nil {
-				return nil, fmt.Errorf("function tool %q: invalid arguments: %w", name, err)
+			if err := decodeToolArgs(name, schema, argsJSON, &args); err != nil {
+				return nil, err
 			}
 			return fn(ctx, tc, args)
 		},
@@ -77,27 +78,69 @@ func failedFunctionTool(name, description string, err error) *FunctionTool {
 		ParamsJSONSchema:     emptyStrictSchema(),
 		Strict:               true,
 		FailureErrorFunction: DefaultToolErrorFunction,
+		constructionErr:      err,
 		OnInvoke: func(context.Context, *ToolContext, string) (any, error) {
 			return nil, err
 		},
 	}
 }
 
-// unmarshalToolArgs decodes the model-provided JSON argument string into dst.
-// An empty or whitespace string is treated as an empty object so that tools
-// taking a struct with all-optional fields still work.
-func unmarshalToolArgs(argsJSON string, dst any) error {
-	trimmed := argsJSON
-	for len(trimmed) > 0 && (trimmed[0] == ' ' || trimmed[0] == '\t' || trimmed[0] == '\n' || trimmed[0] == '\r') {
-		trimmed = trimmed[1:]
-	}
+// toolArgumentsJSONError marks tool arguments that were not decodable JSON at
+// all (a syntax error, as opposed to a shape/validation mismatch), so
+// DefaultToolErrorFunction can use Python's dedicated "parsing tool arguments"
+// wording for it. It unwraps to a *ModelBehaviorError like every other
+// argument failure.
+type toolArgumentsJSONError struct {
+	mbe   *ModelBehaviorError
+	cause error // the underlying JSON syntax error
+}
+
+func (e *toolArgumentsJSONError) Error() string { return e.mbe.Error() }
+func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
+
+// decodeToolArgs decodes and validates the model-provided JSON argument string
+// into dst. Mirroring Python's _parse_function_tool_json_input + pydantic
+// validation, every failure is a *ModelBehaviorError — fed back to the model
+// via the tool's FailureErrorFunction so it can retry with corrected
+// arguments:
+//   - undecodable JSON (syntax) — wrapped in toolArgumentsJSONError for the
+//     dedicated error wording,
+//   - a non-object payload,
+//   - a missing root-level required key (nested required fields are not
+//     enforced; see docs/python_differences.md),
+//   - a type mismatch while decoding into dst.
+//
+// An empty or whitespace-only string is treated as "{}" so tools taking a
+// struct with all-optional fields still work (Python parity: input_json or
+// "{}").
+func decodeToolArgs(toolName string, schema map[string]any, argsJSON string, dst any) error {
+	trimmed := strings.TrimSpace(argsJSON)
 	if trimmed == "" {
-		// Nothing to decode; leave dst at its zero value.
-		if reflect.TypeOf(dst).Elem().Kind() == reflect.Struct {
-			return nil
+		trimmed = "{}"
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return &toolArgumentsJSONError{
+			mbe:   newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err),
+			cause: err,
 		}
 	}
-	return json.Unmarshal([]byte(argsJSON), dst)
+	obj, ok := parsed.(map[string]any)
+	if !ok {
+		return newModelBehaviorError("Invalid JSON input for tool %s: expected a JSON object", toolName)
+	}
+	if required, rok := schema["required"].([]any); rok {
+		for _, k := range required {
+			key, _ := k.(string)
+			if _, present := obj[key]; !present {
+				return newModelBehaviorError("Invalid JSON input for tool %s: missing required key %q", toolName, key)
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(trimmed), dst); err != nil {
+		return newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
+	}
+	return nil
 }
 
 // NewRawFunctionTool builds a FunctionTool from a pre-built JSON Schema map and

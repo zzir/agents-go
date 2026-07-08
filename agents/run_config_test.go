@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -134,5 +135,102 @@ func TestHandoffInputFilter_RunLevelDefault(t *testing.T) {
 	}
 	if called != 1 {
 		t.Errorf("run-level handoff filter called %d times, want 1", called)
+	}
+}
+
+// reasoningOutput builds a reasoning output item carrying the given id.
+func reasoningOutput(t *testing.T, id string) TResponseOutputItem {
+	t.Helper()
+	raw := `{"type":"reasoning","id":` + quote(id) +
+		`,"summary":[{"type":"summary_text","text":"think"}]}`
+	return mustOutputItem(t, raw)
+}
+
+// reasoningInputID returns the id of the first reasoning item in a model input
+// list, and whether one was present.
+func reasoningInputID(items []TResponseInputItem) (string, bool) {
+	for i := range items {
+		if r := items[i].OfReasoning; r != nil {
+			return r.ID, true
+		}
+	}
+	return "", false
+}
+
+// With ReasoningItemIDOmit the reasoning id is stripped from the input on
+// later turns; the default preserves it.
+func TestReasoningItemIDPolicy_Omit(t *testing.T) {
+	build := func() (*fakeModel, *Agent) {
+		tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+			return "ok", nil
+		})
+		model := &fakeModel{responses: []*ModelResponse{
+			modelResp(reasoningOutput(t, "rs_1"), functionCallOutput(t, "noop", "c1", `{}`)),
+			modelResp(messageOutput(t, "done")),
+		}}
+		return model, &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	}
+
+	// Default (preserve): the reasoning id reaches the model on turn 2.
+	model, agent := build()
+	if _, err := Run(context.Background(), agent, "hi", RunOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	id, ok := reasoningInputID(model.lastReq.Input)
+	if !ok {
+		t.Fatal("preserve: no reasoning item in turn-2 input")
+	}
+	if id != "rs_1" {
+		t.Errorf("preserve: reasoning id = %q, want rs_1", id)
+	}
+
+	// Omit: the reasoning id is stripped.
+	model, agent = build()
+	if _, err := Run(context.Background(), agent, "hi", RunOptions{ReasoningItemIDPolicy: ReasoningItemIDOmit}); err != nil {
+		t.Fatal(err)
+	}
+	id, ok = reasoningInputID(model.lastReq.Input)
+	if !ok {
+		t.Fatal("omit: no reasoning item in turn-2 input")
+	}
+	if id != "" {
+		t.Errorf("omit: reasoning id = %q, want empty", id)
+	}
+}
+
+// The policy round-trips through RunState serialization, and states written
+// before the field existed default to preserve.
+func TestReasoningItemIDPolicy_RunStatePersistence(t *testing.T) {
+	agent := &Agent{Name: "a"}
+	registry := map[string]*Agent{"a": agent}
+
+	st := &RunState{
+		CurrentAgent:          agent,
+		Usage:                 NewUsage(),
+		ReasoningItemIDPolicy: ReasoningItemIDOmit,
+	}
+	data, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RunStateFromJSON(data, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReasoningItemIDPolicy != ReasoningItemIDOmit {
+		t.Errorf("round-trip policy = %v, want Omit", got.ReasoningItemIDPolicy)
+	}
+
+	// A state at the current schema version but without the reasoning-item-id
+	// field (an older writer) decodes to the default.
+	old := `{"schema_version":"` + RunStateSchemaVersion + `","current_agent":"a","current_turn":1,` +
+		`"original_input":[],"generated_items":[],"model_responses":[],` +
+		`"interrupted_response":null,"interruptions":[]}`
+	got, err = RunStateFromJSON([]byte(old), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReasoningItemIDPolicy != ReasoningItemIDPreserve {
+		t.Errorf("legacy state policy = %v, want Preserve", got.ReasoningItemIDPolicy)
 	}
 }

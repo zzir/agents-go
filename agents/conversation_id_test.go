@@ -98,3 +98,92 @@ func TestConversationIDRejectsSession(t *testing.T) {
 		t.Fatal("expected error combining ConversationID with a Session")
 	}
 }
+
+// modelRespID is modelResp with an explicit response id, for chaining tests.
+func modelRespID(id string, items ...TResponseOutputItem) *ModelResponse {
+	r := modelResp(items...)
+	r.ResponseID = id
+	return r
+}
+
+// The previous_response_id mode sends only new items and chains the response ID.
+func TestPreviousResponseID(t *testing.T) {
+	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+		return "ok", nil
+	})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
+		modelRespID("resp_2", messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+
+	res, err := Run(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FinalOutputString() != "done" {
+		t.Errorf("final = %q", res.FinalOutputString())
+	}
+	// Turn 2 must chain via previous_response_id and send only the new tool output.
+	if model.lastReq.PreviousResponseID != "resp_1" {
+		t.Errorf("previous_response_id = %q, want resp_1", model.lastReq.PreviousResponseID)
+	}
+	if len(model.lastReq.Input) != 1 {
+		t.Errorf("turn-2 input = %d items, want 1 (only the new tool output)", len(model.lastReq.Input))
+	}
+}
+
+func TestPreviousResponseID_Disabled(t *testing.T) {
+	// Without the opt-in, full history is resent and no previous_response_id set.
+	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+		return "ok", nil
+	})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
+		modelRespID("resp_2", messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+
+	if _, err := Run(context.Background(), agent, "go", RunOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if model.lastReq.PreviousResponseID != "" {
+		t.Errorf("previous_response_id should be empty when disabled, got %q", model.lastReq.PreviousResponseID)
+	}
+	// Full history: user msg + tool call + tool output = 3.
+	if len(model.lastReq.Input) != 3 {
+		t.Errorf("turn-2 input = %d items, want 3 (full history)", len(model.lastReq.Input))
+	}
+}
+
+// Streaming loop also honors previous_response_id.
+func TestPreviousResponseID_Streaming(t *testing.T) {
+	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+		return "ok", nil
+	})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
+		modelRespID("resp_2", messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+
+	sr := RunStreamed(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
+	for _, err := range sr.Events() {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := sr.FinalResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FinalOutputString() != "done" {
+		t.Errorf("final = %q", res.FinalOutputString())
+	}
+	if model.lastReq.PreviousResponseID == "" {
+		t.Error("streaming turn 2 should chain via previous_response_id")
+	}
+	if len(model.lastReq.Input) != 1 {
+		t.Errorf("streaming turn-2 input = %d items, want 1 (only the new tool output)", len(model.lastReq.Input))
+	}
+}

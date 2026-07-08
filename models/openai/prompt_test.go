@@ -1,17 +1,21 @@
 package openai
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
 )
 
 func TestConvertPrompt(t *testing.T) {
-	p := convertPrompt(&agents.Prompt{
+	p, err := convertPrompt(&agents.Prompt{
 		ID:        "pmpt_123",
 		Version:   "2",
-		Variables: map[string]any{"city": "Paris", "n": 7},
+		Variables: map[string]any{"city": "Paris"},
 	})
+	if err != nil {
+		t.Fatalf("convertPrompt: %v", err)
+	}
 	if p.ID != "pmpt_123" {
 		t.Errorf("ID = %q", p.ID)
 	}
@@ -21,9 +25,19 @@ func TestConvertPrompt(t *testing.T) {
 	if got := p.Variables["city"].OfString.Value; got != "Paris" {
 		t.Errorf("city = %q", got)
 	}
-	// Non-string variables are stringified.
-	if got := p.Variables["n"].OfString.Value; got != "7" {
-		t.Errorf("n = %q", got)
+}
+
+func TestConvertPromptRejectsNonStringVariable(t *testing.T) {
+	_, err := convertPrompt(&agents.Prompt{
+		ID:        "pmpt_123",
+		Variables: map[string]any{"n": 7},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-string variable, got nil")
+	}
+	var ue *agents.UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("error = %T, want *agents.UserError", err)
 	}
 }
 

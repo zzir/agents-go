@@ -10,7 +10,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// TestRestContract locks the P2 API conventions: 404 for writes against
+// TestRestContract locks the REST API conventions: 404 for writes against
 // missing resources, 204 for deletes, PATCH partial updates returning the
 // resource, and the {"error": {code, message}} envelope.
 func TestRestContract(t *testing.T) {

@@ -281,3 +281,95 @@ func TestRunState_PersistedCursorRoundTrip(t *testing.T) {
 		t.Errorf("PersistedSessionItems = %d, want 3", restored.PersistedSessionItems)
 	}
 }
+
+// SessionSettings.Limit caps how many history items are loaded at run start.
+func TestSessionSettings_Limit(t *testing.T) {
+	session := NewInMemorySession()
+	_ = session.AddItems(context.Background(), InputItemsFromText("h1"))
+	_ = session.AddItems(context.Background(), InputItemsFromText("h2"))
+	_ = session.AddItems(context.Background(), InputItemsFromText("h3"))
+
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	_, err := Run(context.Background(), agent, "new", RunOptions{
+		Session:         session,
+		SessionSettings: &SessionSettings{Limit: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One history item (the limit) plus the new input.
+	if got := len(model.lastReq.Input); got != 2 {
+		t.Errorf("turn-1 input length = %d, want 2 (1 history + 1 new)", got)
+	}
+}
+
+// A SessionInputCallback controls the model input, and only genuinely new
+// items — not history carried through the callback — are persisted.
+func TestSessionInputCallback_DiffPersistsOnlyNew(t *testing.T) {
+	session := NewInMemorySession()
+	_ = session.AddItems(context.Background(), InputItemsFromText("history"))
+
+	var gotHistory, gotNew []TResponseInputItem
+	cb := func(history, newInput []TResponseInputItem) ([]TResponseInputItem, error) {
+		gotHistory = history
+		gotNew = newInput
+		out := append([]TResponseInputItem{}, history...)
+		return append(out, newInput...), nil
+	}
+
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	_, err := Run(context.Background(), agent, "fresh", RunOptions{
+		Session:              session,
+		SessionInputCallback: cb,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotHistory) != 1 || len(gotNew) != 1 {
+		t.Fatalf("callback saw history=%d new=%d, want 1/1", len(gotHistory), len(gotNew))
+	}
+	// The model saw history + new input.
+	if got := len(model.lastReq.Input); got != 2 {
+		t.Errorf("model input length = %d, want 2", got)
+	}
+	// The session must not re-persist the history item: it should hold exactly
+	// [history, fresh, done-message] — three items, with "history" appearing once.
+	items, _ := session.GetItems(context.Background(), 0)
+	if len(items) != 3 {
+		t.Fatalf("session length = %d, want 3 (history not re-persisted)", len(items))
+	}
+}
+
+func TestInMemorySession(t *testing.T) {
+	ctx := context.Background()
+	sess := NewInMemorySession()
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(messageOutput(t, "hi there")),
+		modelResp(messageOutput(t, "you said hello before")),
+	}}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	// First run.
+	if _, err := Run(ctx, agent, "hello", RunOptions{Session: sess}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := sess.GetItems(ctx, 0)
+	if len(items) < 2 {
+		t.Fatalf("session should have user input + assistant msg, got %d", len(items))
+	}
+
+	// Second run: history must be prepended to the model input.
+	if _, err := Run(ctx, agent, "what did I say?", RunOptions{Session: sess}); err != nil {
+		t.Fatal(err)
+	}
+	// The second call's input should include the prior turn's items plus both
+	// user messages.
+	// 2 prior items (user "hello" + assistant) + new user message = 3.
+	if len(model.lastReq.Input) < 3 {
+		t.Errorf("second run input too short (history not prepended): %d", len(model.lastReq.Input))
+	}
+}

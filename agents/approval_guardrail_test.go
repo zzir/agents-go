@@ -19,7 +19,7 @@ func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 			ran.Add(1)
 			return "deleted", nil
 		})
-	tool.NeedsApprovalFunc = func(ctx context.Context, rc *RunContext, argsJSON string) (bool, error) {
+	tool.NeedsApprovalFunc = func(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
 		checks.Add(1)
 		return true, nil
 	}
@@ -63,7 +63,7 @@ func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ok", nil
 		})
-	tool.NeedsApprovalFunc = func(ctx context.Context, rc *RunContext, argsJSON string) (bool, error) {
+	tool.NeedsApprovalFunc = func(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
 		if calls.Add(1) > 1 {
 			return false, errors.New("checker exploded on second call")
 		}

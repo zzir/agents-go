@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -107,5 +108,45 @@ func TestNestHandoffHistory_EmptyHistory(t *testing.T) {
 	}
 	if !strings.Contains(inputItemText(out[0]), "no previous turns recorded") {
 		t.Errorf("empty-history summary missing placeholder:\n%s", inputItemText(out[0]))
+	}
+}
+
+// Handoff OnHandoff callback fires and InputFilter trims the next agent's input.
+func TestHandoff_OnHandoffAndInputFilter(t *testing.T) {
+	var callbackFired bool
+
+	target := &Agent{Name: "target"}
+	target.ModelImpl = &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "target done"))}}
+
+	h := HandoffTo(target)
+	h.OnHandoff = func(ctx context.Context, rc *RunContext, argsJSON string) error {
+		callbackFired = true
+		return nil
+	}
+	h.InputFilter = func(_ HandoffInputData) HandoffInputData {
+		// Drop everything, give the target a single fresh message.
+		return HandoffInputData{InputHistory: InputItemsFromText("fresh start")}
+	}
+
+	src := &Agent{
+		Name:      "src",
+		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "transfer_to_target", "c1", `{}`))}},
+		Handoffs:  []Handoff{h},
+	}
+
+	targetModel := target.ModelImpl.(*fakeModel)
+	res, err := Run(context.Background(), src, "original long conversation", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !callbackFired {
+		t.Error("OnHandoff callback did not fire")
+	}
+	if res.LastAgent != target {
+		t.Errorf("last agent = %v, want target", res.LastAgent.Name)
+	}
+	// The target agent should have seen the filtered (single-item) input.
+	if len(targetModel.lastReq.Input) != 1 {
+		t.Errorf("target input not filtered: %d items, want 1", len(targetModel.lastReq.Input))
 	}
 }

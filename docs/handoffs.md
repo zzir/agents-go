@@ -45,10 +45,15 @@ h := agents.Handoff{
 }
 ```
 
+> Set `StrictJSONSchema: true` on a hand-built `Handoff` as shown above. The Python
+> SDK defaults it to `True` and always emits a strict schema, but a Go bool zero
+> value is `false`, so omitting the field sends a non-strict schema. `HandoffTo`
+> already sets it for you.
+
 | Field | Purpose |
 |---|---|
 | `ToolName` / `ToolDescription` | What the model sees |
-| `InputJSONSchema` / `StrictJSONSchema` | Optional typed handoff input |
+| `InputJSONSchema` / `StrictJSONSchema` | Optional typed handoff input (set `StrictJSONSchema: true`) |
 | `OnInvoke` | Returns the agent to switch to (required) |
 | `OnHandoff` | Side-effect callback when the handoff fires (e.g. prefetch data) |
 | `InputFilter` | Rewrites the conversation the next agent sees (below) |
@@ -98,6 +103,7 @@ Transfers are seamless: do not mention or draw attention to them.`)
 
 ## Semantics worth knowing
 
+- When `InputJSONSchema` declares root-level **required** keys, the model's arguments are validated before `OnHandoff` runs: a nil, empty, non-object, or key-missing payload fails the run with a `*ModelBehaviorError` ("Handoff function expected non-null input, but got None"), matching Python. A no-input transfer (the default `HandoffTo`, whose schema requires nothing) accepts any arguments and is unaffected.
 - Function tools requested in the same turn run **before** the handoff executes.
 - If the model requests several handoffs in one turn, the **first** wins; the others receive a synthetic "Multiple handoffs detected, ignoring this one." tool output.
 - Run-level `OnHandoff` hooks and the receiving agent's `OnHandoff` agent hook both fire on every handoff.

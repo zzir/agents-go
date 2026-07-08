@@ -42,6 +42,9 @@ type RunOptions struct {
 	ErrorHandlers         RunErrorHandlers // recover from max-turns/refusal/invalid-output failures (below)
 	Hooks                 RunHooks         // run-scoped lifecycle callbacks
 	Session               Session          // conversation persistence (docs: Sessions)
+	SessionInputCallback  SessionInputCallback // combine stored history with new input (docs: Sessions)
+	SessionSettings       *SessionSettings // how the run reads the Session, e.g. Limit (docs: Sessions)
+	ReasoningItemIDPolicy ReasoningItemIDPolicy // keep (default) or omit reasoning-item ids on replay
 	Tracer                *tracing.Tracer  // opt-in tracing (docs: Tracing)
 	UsePreviousResponseID bool             // server-managed conversation state (below)
 	ConversationID        string           // attach to a server-side OpenAI conversation (below)
@@ -54,6 +57,8 @@ A few control knobs worth calling out:
 - **`MaxToolConcurrency`** bounds how many of a turn's function tools run at once (they otherwise all run in parallel) — useful against downstream rate limits.
 - **`ToolNotFoundBehavior`** defaults to `ToolNotFoundError` (a hallucinated tool name aborts the run). Set `ToolNotFoundReturnToModel` to instead feed an error back as the tool output so the model can correct itself.
 - **`HandoffInputFilter`** applies to any handoff that doesn't set its own `Handoff.InputFilter` — e.g. `agents.NestHandoffHistory(...)` to fold prior history across every handoff ([Handoffs](handoffs.md#nesting-handoff-history)).
+- **`SessionInputCallback`** and **`SessionSettings`** tune how a [session](sessions.md#combining-history-with-new-input) is read: the callback decides how stored history is combined with the new input, and `SessionSettings{Limit}` caps how many recent items are loaded. Both are ignored without a `Session`.
+- **`ReasoningItemIDPolicy`** controls whether reasoning-item ids survive when run items are converted back into model input on later turns. `ReasoningItemIDPreserve` (the default) keeps them; `ReasoningItemIDOmit` strips them — useful for `store=false` runs whose server-side ids are no longer valid and that rely on encrypted content. The choice is persisted across HITL interruptions in `RunState`.
 
 ## Conversations / chat threads
 
@@ -105,7 +110,7 @@ func (auditHooks) OnHandoff(ctx context.Context, rc *agents.RunContext, from, to
 }
 ```
 
-Callbacks: `OnAgentStart`, `OnAgentEnd`, `OnHandoff`, `OnToolStart`, `OnToolEnd`, `OnLLMStart`, `OnLLMEnd`. `OnLLMStart`/`OnLLMEnd` bracket each model call (the second carries the `*ModelResponse`); they do not fire on a HITL-resumed turn. Tool callbacks may fire concurrently (tools run in parallel), so hooks must be goroutine-safe.
+Callbacks: `OnAgentStart`, `OnAgentEnd`, `OnHandoff`, `OnToolStart`, `OnToolEnd`, `OnLLMStart`, `OnLLMEnd`. `OnToolStart`/`OnToolEnd` receive a `*ToolContext` identifying the specific call (tool, call id, arguments, agent) rather than the run-wide `*RunContext`. `OnLLMStart`/`OnLLMEnd` bracket each model call (the second carries the `*ModelResponse`); they do not fire on a HITL-resumed turn. Tool callbacks may fire concurrently (tools run in parallel), so hooks must be goroutine-safe.
 
 ## Errors
 

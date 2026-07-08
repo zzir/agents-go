@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -52,7 +53,11 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 		}
 	}
 	if req.Prompt != nil {
-		params.Prompt = convertPrompt(req.Prompt)
+		prompt, err := convertPrompt(req.Prompt)
+		if err != nil {
+			return responses.ResponseNewParams{}, err
+		}
+		params.Prompt = prompt
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
@@ -84,7 +89,10 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 		}
 	}
 
-	applySettings(&params, req.Settings, len(tools) > 0)
+	// parallel_tool_calls gating counts function tools only, excluding handoffs,
+	// matching the Python SDK (openai_responses.py:746 uses `tools`, not the
+	// combined tool+handoff list).
+	applySettings(&params, req.Settings, len(req.Tools) > 0)
 	return params, nil
 }
 
@@ -129,14 +137,27 @@ func (m *ResponsesModel) GetResponse(ctx context.Context, req agents.ModelReques
 	if err != nil {
 		return nil, err
 	}
-	resp, err := m.client.New(ctx, params, requestOptions(req.Settings)...)
+	var httpResp *http.Response
+	opts := append(requestOptions(req.Settings), option.WithResponseInto(&httpResp))
+	resp, err := m.client.New(ctx, params, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("openai responses: %w", err)
 	}
+	// The Responses API omits the usage block for some responses; count it as
+	// zero requests in that case (Python: `Usage() if not response.usage`).
+	var usage *responses.ResponseUsage
+	if resp.JSON.Usage.Valid() {
+		usage = &resp.Usage
+	}
+	var requestID string
+	if httpResp != nil {
+		requestID = httpResp.Header.Get("X-Request-Id")
+	}
 	return &agents.ModelResponse{
 		Output:     resp.Output,
-		Usage:      usageFromResponse(&resp.Usage),
+		Usage:      usageFromResponse(usage),
 		ResponseID: resp.ID,
+		RequestID:  requestID,
 	}, nil
 }
 
@@ -157,19 +178,21 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 			}
 			// The Responses API reports terminal failures as ordinary stream
 			// events that never trip the SSE layer's Err(); surface them as
-			// errors so a failed run cannot end as an empty success.
+			// typed *ModelBehaviorError so a failed run cannot end as an empty
+			// success (Python: response_terminal_failure_error /
+			// response_error_event_failure_error).
 			switch event.Type {
-			case "error":
+			case "error", "response.error":
 				e := event.AsError()
-				yield(nil, fmt.Errorf("openai responses stream error: %s (code %q)", e.Message, e.Code))
+				yield(nil, responseErrorEventFailure(event.Type, e))
 				return
 			case "response.failed":
-				e := event.AsResponseFailed().Response.Error
-				yield(nil, fmt.Errorf("openai responses stream: response failed: %s (code %q)", e.Message, e.Code))
+				r := event.AsResponseFailed().Response
+				yield(nil, responseTerminalFailure(event.Type, string(r.Status), string(r.Error.Code), r.Error.Message, ""))
 				return
 			case "response.incomplete":
-				reason := event.AsResponseIncomplete().Response.IncompleteDetails.Reason
-				yield(nil, fmt.Errorf("openai responses stream: response incomplete: %s", reason))
+				r := event.AsResponseIncomplete().Response
+				yield(nil, responseTerminalFailure(event.Type, string(r.Status), "", "", r.IncompleteDetails.Reason))
 				return
 			}
 		}
@@ -177,6 +200,55 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 			yield(nil, fmt.Errorf("openai responses stream: %w", err))
 		}
 	}
+}
+
+// responseTerminalFailure builds a *ModelBehaviorError for a response.failed /
+// response.incomplete terminal stream event, mirroring Python's
+// format_response_terminal_failure.
+func responseTerminalFailure(eventType, status, errCode, errMessage, incompleteReason string) *agents.ModelBehaviorError {
+	msg := fmt.Sprintf("Responses stream ended with terminal event `%s`.", eventType)
+	var details []string
+	if status != "" {
+		details = append(details, "status="+status)
+	}
+	if errCode != "" || errMessage != "" {
+		e := errCode
+		if errMessage != "" {
+			if e != "" {
+				e += ": "
+			}
+			e += errMessage
+		}
+		details = append(details, "error="+e)
+	}
+	if incompleteReason != "" {
+		details = append(details, "incomplete_details="+incompleteReason)
+	}
+	if len(details) > 0 {
+		msg += " " + strings.Join(details, "; ") + "."
+	}
+	return agents.NewModelBehaviorError("%s", msg)
+}
+
+// responseErrorEventFailure builds a *ModelBehaviorError for an error /
+// response.error terminal stream event, mirroring Python's
+// format_response_error_event.
+func responseErrorEventFailure(eventType string, e responses.ResponseErrorEvent) *agents.ModelBehaviorError {
+	msg := fmt.Sprintf("Responses stream ended with terminal event `%s`.", eventType)
+	var details []string
+	if e.Code != "" {
+		details = append(details, "code="+e.Code)
+	}
+	if e.Message != "" {
+		details = append(details, "message="+e.Message)
+	}
+	if e.Param != "" {
+		details = append(details, "param="+e.Param)
+	}
+	if len(details) > 0 {
+		msg += " " + strings.Join(details, "; ") + "."
+	}
+	return agents.NewModelBehaviorError("%s", msg)
 }
 
 func usageFromResponse(u *responses.ResponseUsage) *agents.Usage {

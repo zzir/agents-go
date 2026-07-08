@@ -20,6 +20,17 @@ const (
 	TruncationDisabled = "disabled"
 )
 
+// ContextManagement is a single server-side context-management entry forwarded
+// to the OpenAI Responses API (e.g. compaction). It mirrors the Python SDK's
+// ContextManagement passthrough.
+type ContextManagement struct {
+	// Type is the entry type. Currently only "compaction" is supported.
+	Type string `json:"type"`
+	// CompactThreshold is the token threshold at which compaction triggers for
+	// this entry. nil leaves it unset.
+	CompactThreshold *int64 `json:"compact_threshold,omitempty"`
+}
+
 // Reasoning configures reasoning models. It mirrors the subset of the OpenAI
 // shared Reasoning object that the runner forwards to the provider.
 type Reasoning struct {
@@ -71,6 +82,16 @@ type ModelSettings struct {
 
 	// PromptCacheRetention is "in_memory" or "24h".
 	PromptCacheRetention string `json:"prompt_cache_retention,omitempty"`
+
+	// PromptCacheKey is forwarded as the Responses API prompt_cache_key to
+	// improve prompt-cache hit rates. Empty means unset. Unlike the Python SDK,
+	// the runner never generates a key: callers set this (or ExtraBody) themselves.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+
+	// ContextManagement configures server-side context management (e.g.
+	// compaction) for OpenAI Responses API requests. A nil/empty slice leaves it
+	// unset.
+	ContextManagement []ContextManagement `json:"context_management,omitempty"`
 
 	// ResponseInclude lists additional output data to include in the response.
 	ResponseInclude []string `json:"response_include,omitempty"`
@@ -139,50 +160,30 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	if override.PromptCacheRetention != "" {
 		out.PromptCacheRetention = override.PromptCacheRetention
 	}
+	if override.PromptCacheKey != "" {
+		out.PromptCacheKey = override.PromptCacheKey
+	}
+	if override.ContextManagement != nil {
+		out.ContextManagement = override.ContextManagement
+	}
 	if override.ResponseInclude != nil {
 		out.ResponseInclude = override.ResponseInclude
 	}
 	if override.TopLogprobs != nil {
 		out.TopLogprobs = override.TopLogprobs
 	}
+	// ExtraHeaders/ExtraQuery/ExtraBody are replaced wholesale when the override
+	// sets them (matching Python's ModelSettings.resolve), not merged per-key.
 	if override.ExtraHeaders != nil {
-		out.ExtraHeaders = mergeStringMap(out.ExtraHeaders, override.ExtraHeaders)
+		out.ExtraHeaders = override.ExtraHeaders
 	}
 	if override.ExtraQuery != nil {
-		out.ExtraQuery = mergeStringMap(out.ExtraQuery, override.ExtraQuery)
+		out.ExtraQuery = override.ExtraQuery
 	}
 	if override.ExtraBody != nil {
-		out.ExtraBody = mergeAnyMap(out.ExtraBody, override.ExtraBody)
+		out.ExtraBody = override.ExtraBody
 	}
 	return &out
-}
-
-func mergeStringMap(base, over map[string]string) map[string]string {
-	if base == nil && over == nil {
-		return nil
-	}
-	merged := make(map[string]string, len(base)+len(over))
-	for k, v := range base {
-		merged[k] = v
-	}
-	for k, v := range over {
-		merged[k] = v
-	}
-	return merged
-}
-
-func mergeAnyMap(base, over map[string]any) map[string]any {
-	if base == nil && over == nil {
-		return nil
-	}
-	merged := make(map[string]any, len(base)+len(over))
-	for k, v := range base {
-		merged[k] = v
-	}
-	for k, v := range over {
-		merged[k] = v
-	}
-	return merged
 }
 
 // Ptr is a small helper that returns a pointer to v. It is convenient for

@@ -6,11 +6,16 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -47,12 +52,51 @@ type Options struct {
 
 	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_") to
 	// avoid collisions when multiple servers expose same-named tools. The server
-	// is still called with the original name.
+	// is still called with the original name. Ignored when
+	// IncludeServerInToolNames is set.
 	ToolNamePrefix string
+
+	// IncludeServerInToolNames auto-prefixes every exposed tool name with the
+	// server name (mcp_{server}__{tool}), truncating names longer than 64
+	// characters with a sha1 suffix and disambiguating any resulting collisions.
+	// The server is still called with the original name. When set it takes
+	// precedence over ToolNamePrefix. A rename or truncation is logged via
+	// slog.Default so an auto-renamed tool is never silently capped.
+	IncludeServerInToolNames bool
 
 	// RequireApproval, when set, marks an exposed MCP tool as needing human
 	// approval (HITL) whenever it returns true for the tool's original name.
 	RequireApproval func(toolName string) bool
+
+	// RequireApprovalFunc, when set, decides per call whether an exposed MCP tool
+	// needs human approval, receiving the run context, the current agent, and the
+	// tool's original name. It is wired to the core per-call approval mechanism
+	// and takes precedence over RequireApproval. The current agent is captured per
+	// ListTools call, matching the Python SDK.
+	RequireApprovalFunc func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
+
+	// ToolMetaResolver, when set, produces MCP request metadata (_meta) attached
+	// to each call_tool request, receiving the run context, the tool's original
+	// name, and the decoded arguments. Values it returns are overridden, per key,
+	// by a tool's own static _meta, matching the Python SDK's merge order.
+	ToolMetaResolver func(ctx context.Context, rc *agents.RunContext, toolName string, args map[string]any) (map[string]any, error)
+
+	// MaxRetryAttempts is the number of times to retry a failed list_tools or
+	// call_tool request. 0 (default) means no retries; -1 retries indefinitely.
+	MaxRetryAttempts int
+
+	// RetryBackoffBase is the base delay for exponential backoff between retries
+	// (delay = RetryBackoffBase * 2^(attempt-1)). Defaults to one second when
+	// retries are enabled and this is left zero.
+	RetryBackoffBase time.Duration
+
+	// UseStructuredContent controls how a tool result's structuredContent field
+	// is handled. It is false by default (matching the Python SDK): most servers
+	// duplicate their structured data in the content blocks, so structuredContent
+	// is ignored and the content blocks are sent to the model. Set it true to use
+	// structuredContent exclusively (the content blocks are then ignored) for
+	// servers that only populate the structured field.
+	UseStructuredContent bool
 
 	// OAuthHandler, when set, is passed to the streamable HTTP transport to
 	// handle OAuth 2.1 authorization flows (authorization code + PKCE, token
@@ -201,9 +245,30 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 		if s.opts.ToolFilter != nil && !s.opts.ToolFilter(ctx, rc, agent, ct.originalName) {
 			continue
 		}
-		tools = append(tools, ct.tool)
+		tools = append(tools, s.bindApproval(ct, agent))
 	}
 	return tools, nil
+}
+
+// bindApproval returns the tool to expose for this ListTools call, wiring the
+// dynamic RequireApprovalFunc (if set) with the current agent captured per call
+// — matching the Python SDK, which re-binds the approval closure to the current
+// agent each turn. The cached base tool is left untouched.
+func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
+	if s.opts.RequireApprovalFunc == nil {
+		return ct.tool
+	}
+	ft, ok := ct.tool.(*agents.FunctionTool)
+	if !ok {
+		return ct.tool
+	}
+	clone := *ft
+	name := ct.originalName
+	fn := s.opts.RequireApprovalFunc
+	clone.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, _ string, _ string) (bool, error) {
+		return fn(ctx, rc, agent, name), nil
+	}
+	return &clone
 }
 
 // toolList returns the adapted tools, fetching them from the server (and caching
@@ -217,18 +282,57 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	if s.opts.CacheToolsList && s.cached != nil {
 		return s.cached, nil
 	}
-	res, err := s.session.ListTools(ctx, nil)
+	var res *mcpsdk.ListToolsResult
+	err := s.runWithRetries(ctx, func() error {
+		var e error
+		res, e = s.session.ListTools(ctx, nil)
+		return e
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err)
 	}
+	names := s.exposedNames(res.Tools)
 	list := make([]cachedTool, 0, len(res.Tools))
-	for _, mt := range res.Tools {
-		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt)})
+	for i, mt := range res.Tools {
+		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt, names[i])})
 	}
 	if s.opts.CacheToolsList {
 		s.cached = list
 	}
 	return list, nil
+}
+
+// runWithRetries invokes fn, retrying failures up to MaxRetryAttempts times with
+// exponential backoff (RetryBackoffBase * 2^(attempt-1)). MaxRetryAttempts == -1
+// retries indefinitely; 0 disables retries. It mirrors the Python SDK's
+// _run_with_retries.
+func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
+	base := s.opts.RetryBackoffBase
+	if base <= 0 {
+		base = time.Second
+	}
+	attempts := 0
+	for {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		attempts++
+		if s.opts.MaxRetryAttempts != -1 && attempts > s.opts.MaxRetryAttempts {
+			return err
+		}
+		// Cap the shift so an unbounded retry loop cannot overflow the exponent.
+		shift := attempts - 1
+		if shift > 30 {
+			shift = 30
+		}
+		backoff := base * time.Duration(int64(1)<<shift)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
 }
 
 // InvalidateToolsCache drops any cached tool list so the next ListTools refetches
@@ -239,8 +343,11 @@ func (s *Server) InvalidateToolsCache() {
 	s.mu.Unlock()
 }
 
-func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
+func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 	schema := schemaToMap(mt.InputSchema)
+	// Capture the required-argument list from the original (non-strict) schema,
+	// used for client-side validation before every call_tool request.
+	required := requiredKeys(schema)
 	strict := false
 	if s.opts.Strict {
 		// EnsureStrictJSONSchema rewrites in place, so convert a deep copy: a
@@ -252,17 +359,19 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 		}
 	}
 	originalName := mt.Name
-	exposedName := s.opts.ToolNamePrefix + originalName
+	// A tool's own _meta travels with every call_tool request, overriding any
+	// resolver-produced metadata on key collisions (Python merge order).
+	staticMeta := map[string]any(mt.Meta)
 	tool := &agents.FunctionTool{
 		Name:             exposedName,
-		Description:      mt.Description,
+		Description:      resolveToolDescription(mt),
 		ParamsJSONSchema: schema,
 		Strict:           strict,
 		// Tool failures (including isError results) are fed back to the model
 		// so it can recover, matching the SDK-wide default; without this every
 		// MCP error would abort the whole run.
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
-		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
+		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (any, error) {
 			// Always send an "arguments" object — an empty {} rather than an
 			// omitted field — matching the Python SDK, which passes an empty
 			// dict; some servers reject calls with no arguments key.
@@ -275,21 +384,251 @@ func (s *Server) toolFor(mt *mcpsdk.Tool) agents.Tool {
 					args = map[string]any{}
 				}
 			}
-			// The server is always called with the original (unprefixed) name.
-			result, err := s.session.CallTool(ctx, &mcpsdk.CallToolParams{Name: originalName, Arguments: args})
+			// Client-side pre-validation of required parameters, before touching
+			// the server: a missing required key is a *agents.UserError, matching
+			// the Python SDK's _validate_required_parameters.
+			if err := validateRequiredArgs(s.name, originalName, required, args); err != nil {
+				return nil, err
+			}
+			meta, err := s.resolveMeta(ctx, tc, originalName, args, staticMeta)
 			if err != nil {
+				return nil, err
+			}
+			// The server is always called with the original (unprefixed) name.
+			params := &mcpsdk.CallToolParams{Name: originalName, Arguments: args}
+			if meta != nil {
+				params.Meta = meta
+			}
+			var result *mcpsdk.CallToolResult
+			if err := s.runWithRetries(ctx, func() error {
+				var e error
+				result, e = s.session.CallTool(ctx, params)
+				return e
+			}); err != nil {
+				// A transport/protocol failure is fed back to the model via the
+				// FailureErrorFunction (SDK-wide default) so it can recover.
 				return nil, fmt.Errorf("mcp tool %q call failed: %w", originalName, err)
 			}
-			if result.IsError {
-				return nil, fmt.Errorf("mcp tool %q returned error: %s", originalName, resultText(result))
-			}
-			return resultOutput(result), nil
+			// An isError result is NOT an error: its content (usually the error
+			// message) passes to the model verbatim, matching the Python SDK,
+			// which never inspects result.isError in invoke_mcp_tool.
+			return resultOutput(result, s.opts.UseStructuredContent), nil
 		},
 	}
 	if s.opts.RequireApproval != nil && s.opts.RequireApproval(originalName) {
 		tool.NeedsApproval = true
 	}
 	return tool
+}
+
+// resolveMeta computes the _meta to send with a call_tool request: the resolver's
+// output (if any) merged under the tool's static _meta (static wins per key).
+func (s *Server) resolveMeta(ctx context.Context, tc *agents.ToolContext, toolName string, args, staticMeta map[string]any) (mcpsdk.Meta, error) {
+	var resolved map[string]any
+	if s.opts.ToolMetaResolver != nil {
+		var rc *agents.RunContext
+		if tc != nil {
+			rc = tc.RunContext
+		}
+		var err error
+		resolved, err = s.opts.ToolMetaResolver(ctx, rc, toolName, args)
+		if err != nil {
+			return nil, fmt.Errorf("mcp tool %q: resolving _meta: %w", toolName, err)
+		}
+	}
+	if resolved == nil && len(staticMeta) == 0 {
+		return nil, nil
+	}
+	merged := make(mcpsdk.Meta, len(resolved)+len(staticMeta))
+	for k, v := range resolved {
+		merged[k] = v
+	}
+	for k, v := range staticMeta {
+		merged[k] = v
+	}
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	return merged, nil
+}
+
+// validateRequiredArgs reports a *agents.UserError when any schema-required
+// argument is missing, mirroring the Python SDK's _validate_required_parameters.
+func validateRequiredArgs(serverName, toolName string, required []string, args map[string]any) error {
+	if len(required) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, name := range required {
+		if _, ok := args[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return &agents.UserError{AgentsError: agents.AgentsError{
+		Message: fmt.Sprintf("Failed to call tool %q on MCP server %q: missing required parameters: %s",
+			toolName, serverName, strings.Join(missing, ", ")),
+	}}
+}
+
+// requiredKeys extracts the string entries of a JSON schema's "required" array.
+func requiredKeys(schema map[string]any) []string {
+	raw, ok := schema["required"].([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// resolveToolDescription returns the best model-facing description for an MCP
+// tool: its description, falling back to the display title, then the annotations
+// title. Mirrors resolve_mcp_tool_description_for_model.
+func resolveToolDescription(mt *mcpsdk.Tool) string {
+	if mt.Description != "" {
+		return mt.Description
+	}
+	if mt.Title != "" {
+		return mt.Title
+	}
+	if mt.Annotations != nil && mt.Annotations.Title != "" {
+		return mt.Annotations.Title
+	}
+	return ""
+}
+
+const (
+	mcpToolNameMaxLength = 64
+	mcpToolHashLength    = 8
+)
+
+// exposedNames computes the public name for each listed tool. Without
+// IncludeServerInToolNames it is the ToolNamePrefix + original name; with it,
+// names are auto-prefixed mcp_{server}__{tool}, truncated to 64 characters with a
+// sha1 suffix, and disambiguated on collision — mirroring the Python SDK's
+// _build_prefixed_tool_name_overrides. Truncated or disambiguated names are
+// logged so an auto-rename is never silent.
+func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
+	names := make([]string, len(tools))
+	if !s.opts.IncludeServerInToolNames {
+		for i, mt := range tools {
+			names[i] = s.opts.ToolNamePrefix + mt.Name
+		}
+		return names
+	}
+
+	baseNames := make([]string, len(tools))
+	baseCounts := map[string]int{}
+	for i, mt := range tools {
+		baseNames[i] = buildPrefixedBaseName(s.name, mt.Name)
+		baseCounts[baseNames[i]]++
+	}
+
+	type candidate struct {
+		index       int
+		base, seed  string
+		initialName string
+	}
+	cands := make([]candidate, len(tools))
+	for i, mt := range tools {
+		base := baseNames[i]
+		seed := s.name + "\x00" + mt.Name
+		forceHash := baseCounts[base] > 1
+		cands[i] = candidate{index: i, base: base, seed: seed, initialName: shortenToolName(base, seed, forceHash)}
+	}
+
+	// Allocate names in a deterministic order (initial name, seed, index) so a
+	// collision is resolved the same way regardless of the server's tool order.
+	order := make([]int, len(cands))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		ca, cb := cands[order[a]], cands[order[b]]
+		if ca.initialName != cb.initialName {
+			return ca.initialName < cb.initialName
+		}
+		if ca.seed != cb.seed {
+			return ca.seed < cb.seed
+		}
+		return ca.index < cb.index
+	})
+
+	used := map[string]bool{}
+	for _, oi := range order {
+		c := cands[oi]
+		public := c.initialName
+		for collision := 1; used[public]; collision++ {
+			public = shortenToolName(c.base, fmt.Sprintf("%s\x00%d", c.seed, collision), true)
+		}
+		used[public] = true
+		names[c.index] = public
+	}
+
+	for i, mt := range tools {
+		if names[i] != baseNames[i] {
+			slog.Default().Info("mcp: tool name truncated or disambiguated",
+				"server", s.name, "tool", mt.Name, "exposed_name", names[i])
+		}
+	}
+	return names
+}
+
+func buildPrefixedBaseName(server, tool string) string {
+	return "mcp_" + safeToolNamePart(server, "server") + "__" + safeToolNamePart(tool, "tool")
+}
+
+// safeToolNamePart keeps ASCII alphanumerics, '_' and '-', replacing anything
+// else with '_', then trims leading/trailing '_'/'-'. An empty result falls back
+// to fallback. Mirrors the Python SDK's _safe_tool_name_part.
+func safeToolNamePart(value, fallback string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if isASCIIAlnum(r) || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	safe := strings.Trim(b.String(), "_-")
+	if safe == "" {
+		return fallback
+	}
+	return safe
+}
+
+func isASCIIAlnum(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+// shortenToolName caps a prefixed tool name at 64 characters, appending a sha1
+// suffix derived from seed when the name is too long or forceHash is set.
+// Mirrors the Python SDK's _shorten_tool_name.
+func shortenToolName(base, seed string, forceHash bool) string {
+	if !forceHash && len(base) <= mcpToolNameMaxLength {
+		return base
+	}
+	sum := sha1.Sum([]byte(seed))
+	hashSuffix := hex.EncodeToString(sum[:])[:mcpToolHashLength]
+	suffix := "_" + hashSuffix
+	stemLen := mcpToolNameMaxLength - len(suffix)
+	stem := base
+	if len(stem) > stemLen {
+		stem = stem[:stemLen]
+	}
+	stem = strings.TrimRight(stem, "_-")
+	if stem == "" {
+		stem = "mcp"
+	}
+	return stem + suffix
 }
 
 // schemaToMap normalizes the MCP input schema (an any) into a map[string]any.
@@ -330,14 +669,25 @@ func deepCopySchema(m map[string]any) map[string]any {
 	return cp
 }
 
-// resultText renders a tool result for the model: structured content wins,
-// a single text block passes through verbatim, and anything else (multiple or
-// non-text blocks) is JSON-encoded so no information is silently dropped.
-func resultText(result *mcpsdk.CallToolResult) string {
-	if result.StructuredContent != nil {
-		if b, err := json.Marshal(result.StructuredContent); err == nil {
-			return string(b)
+// resultOutput renders a tool result for the model, mirroring the Python SDK's
+// content conversion:
+//   - When useStructured is set, the structuredContent field is used
+//     exclusively (JSON-encoded to a single text output) and the content blocks
+//     are ignored. By default structuredContent is ignored instead, because most
+//     servers duplicate it in the content blocks.
+//   - A single text block passes through as a plain string.
+//   - Multiple blocks, or any non-text block, become a []ToolOutputContent list
+//     so the model receives each block natively (text stays text, images become
+//     images, everything else is JSON-encoded into a text part) rather than one
+//     opaque JSON string.
+func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) any {
+	if useStructured {
+		if result.StructuredContent != nil {
+			if b, err := json.Marshal(result.StructuredContent); err == nil {
+				return string(b)
+			}
 		}
+		return ""
 	}
 	if len(result.Content) == 0 {
 		return ""
@@ -347,34 +697,7 @@ func resultText(result *mcpsdk.CallToolResult) string {
 			return tc.Text
 		}
 	}
-	if b, err := json.Marshal(result.Content); err == nil {
-		return string(b)
-	}
-	var b strings.Builder
-	for _, c := range result.Content {
-		if tc, ok := c.(*mcpsdk.TextContent); ok {
-			b.WriteString(tc.Text)
-		}
-	}
-	return b.String()
-}
-
-// resultOutput renders a tool result for the model. When the result carries any
-// image content (an image block, or an embedded resource with an image MIME
-// type) it is returned as structured multimodal content so the model receives
-// native image input; every block is mapped — text stays text, images become
-// images, and anything else is JSON-encoded into a text part so nothing is
-// silently dropped. Otherwise it falls back to the plain-text rendering.
-func resultOutput(result *mcpsdk.CallToolResult) any {
-	if !hasImageContent(result.Content) {
-		return resultText(result)
-	}
 	var parts []agents.ToolOutputContent
-	if result.StructuredContent != nil {
-		if b, err := json.Marshal(result.StructuredContent); err == nil {
-			parts = append(parts, agents.ToolOutputText{Text: string(b)})
-		}
-	}
 	for _, c := range result.Content {
 		switch v := c.(type) {
 		case *mcpsdk.TextContent:
@@ -392,22 +715,6 @@ func resultOutput(result *mcpsdk.CallToolResult) any {
 		}
 	}
 	return parts
-}
-
-// hasImageContent reports whether any block is image content the model can take
-// as native input.
-func hasImageContent(content []mcpsdk.Content) bool {
-	for _, c := range content {
-		switch v := c.(type) {
-		case *mcpsdk.ImageContent:
-			return true
-		case *mcpsdk.EmbeddedResource:
-			if v.Resource != nil && isImageMIME(v.Resource.MIMEType) && len(v.Resource.Blob) > 0 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func isImageMIME(mimeType string) bool {

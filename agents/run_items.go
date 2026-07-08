@@ -192,6 +192,43 @@ func (i *rawInputRunItem) ItemType() string                         { return i.K
 func (i *rawInputRunItem) isRunItem()                               {}
 func (i *rawInputRunItem) ToInputItem() (TResponseInputItem, error) { return i.RawInput, nil }
 
+// ReasoningItemIDPolicy controls whether reasoning-item ids are preserved when
+// run items are converted back into model input for a later turn. The default
+// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them, which is
+// useful when replaying reasoning items whose server-side ids are no longer valid
+// (e.g. store=false runs that rely on encrypted_content). It is the Go
+// counterpart of Python's RunConfig.reasoning_item_id_policy.
+type ReasoningItemIDPolicy int
+
+const (
+	// ReasoningItemIDPreserve keeps reasoning-item ids in model input (default).
+	ReasoningItemIDPreserve ReasoningItemIDPolicy = iota
+	// ReasoningItemIDOmit strips reasoning-item ids from model input.
+	ReasoningItemIDOmit
+)
+
+// applyReasoningItemIDPolicy strips the id from reasoning input items when the
+// policy is ReasoningItemIDOmit, mirroring Python's _without_reasoning_item_id
+// (run_internal/items.py). It replaces the OfReasoning pointer with a modified
+// copy so any RunItem or caller slice sharing the original param is unaffected.
+//
+// Note: the underlying openai-go reasoning param always serializes an "id" key,
+// so an omitted id is sent as an empty string rather than dropped entirely; only
+// the stale id value is removed.
+func applyReasoningItemIDPolicy(items []TResponseInputItem, policy ReasoningItemIDPolicy) []TResponseInputItem {
+	if policy != ReasoningItemIDOmit {
+		return items
+	}
+	for i := range items {
+		if r := items[i].OfReasoning; r != nil && r.ID != "" {
+			cp := *r
+			cp.ID = ""
+			items[i].OfReasoning = &cp
+		}
+	}
+	return items
+}
+
 // itemsToInputList converts a slice of RunItems into model input items.
 func itemsToInputList(items []RunItem) ([]TResponseInputItem, error) {
 	out := make([]TResponseInputItem, 0, len(items))

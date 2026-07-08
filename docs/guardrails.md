@@ -42,6 +42,38 @@ if errors.As(err, &trip) {
 
 Input guardrails are the *first* agent's: they only run when the agent is the start of the run, so different agents in a handoff chain can carry their own.
 
+Set `Blocking: true` on a guardrail to run it **to completion before** the first model call — a gate, so a tripwire prevents any token spend. The zero value (`false`) keeps the default concurrent behavior (`Blocking` is the inverse of Python's `run_in_parallel`, whose default `True` can't be a Go bool zero value). When a concurrent guardrail trips, the in-flight model call is cancelled and is neither billed nor surfaced to `OnLLMEnd`.
+
+## Run-level guardrails
+
+`RunOptions.InputGuardrails` and `RunOptions.OutputGuardrails` apply to every run regardless of which agent handles it, running alongside the agent's own (the run-level ones first) — the counterpart of Python's `RunConfig.input_guardrails` / `output_guardrails`:
+
+```go
+agents.Run(ctx, agent, input, agents.RunOptions{
+	ModelProvider:    provider,
+	InputGuardrails:  []agents.InputGuardrail{moderation},
+	OutputGuardrails: []agents.OutputGuardrail{piiCheck},
+})
+```
+
+## Inspecting guardrail results
+
+A guardrail left with an empty `Name` is reported under a fixed label — `"input_guardrail"` or `"output_guardrail"` — in its result and in the tripwire error, so `trip.Result.Guardrail.Name` is never blank. (Go has no function-name reflection, so unlike Python it cannot fall back to the guardrail function's name; give each guardrail a `Name` to tell them apart.)
+
+Every guardrail's result — run-level and agent-level, tripping or not — is exposed on the `RunResult` so you can read a non-tripping guardrail's `OutputInfo` (e.g. moderation scores):
+
+```go
+res, _ := agents.Run(ctx, agent, input, opts)
+for _, r := range res.InputGuardrailResults {
+	log.Printf("%s: %+v", r.Guardrail.Name, r.Output.OutputInfo)
+}
+for _, r := range res.OutputGuardrailResults {
+	log.Printf("%s checked %v: %+v", r.Guardrail.Name, r.AgentOutput, r.Output.OutputInfo)
+}
+```
+
+Tool guardrail results are exposed the same way: `res.ToolInputGuardrailResults` and `res.ToolOutputGuardrailResults` hold every tool guardrail's result across the run — allow, reject and raise alike — each carrying the `ToolName`/`ToolCallID` it ran for and its `Output` (see [Tool guardrails](#tool-guardrails)). All four result slices are carried on `RunState` and rehydrated on resume, so a run paused for approval still reports its earlier guardrail results after `ResumeRun`.
+
 ## Output guardrails
 
 Output guardrails receive the final output value and run before the result is returned (and before it is saved to a session):

@@ -10,7 +10,13 @@ import (
 )
 
 // usageFromStreamResponse extracts token usage from a streamed final Response.
+// When the response carries no usage block it counts as zero requests (matching
+// the blocking path's usageFromResponse and Python's `Usage()` fallback), so a
+// backend that omits usage does not inflate the request count.
 func usageFromStreamResponse(resp *responses.Response) *Usage {
+	if !resp.JSON.Usage.Valid() {
+		return NewUsage()
+	}
 	u := resp.Usage
 	return &Usage{
 		Requests:            1,
@@ -34,6 +40,18 @@ func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts Run
 	defer finishTrace()
 	r.sr = sr
 	return r.loop(ctx, startAgent, modelInput)
+}
+
+// emitStreamItem emits a run item's stream event to the consumer. A handoff
+// call additionally emits a tool_called event wrapping the underlying function
+// call, so a handoff surfaces as BOTH tool_called and handoff_requested —
+// matching Python, which emits tool_called during model streaming and
+// handoff_requested during side effects.
+func (r *runner) emitStreamItem(ctx context.Context, it RunItem) {
+	if hc, ok := it.(*HandoffCallItem); ok {
+		r.sr.emit(ctx, &RunItemStreamEvent{Name: "tool_called", Item: &ToolCallItem{Agent: hc.Agent, Raw: hc.Raw}})
+	}
+	r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(it), Item: it})
 }
 
 // streamOneModelCall streams a single model call, forwarding each raw event to

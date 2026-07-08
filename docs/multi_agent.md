@@ -55,6 +55,10 @@ orchestrator := &agents.Agent{
 
 The nested run inherits the parent's model provider, model override, model settings and tracer through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 
+Without a `CustomOutputExtractor`, the tool result is the nested run's final output — as a string for plain-text agents, or the JSON payload for structured ones. When the final output is empty, it falls back to the last non-empty assistant message, then the last non-empty string tool output (matching Python's `as_tool` extraction).
+
+**Human-in-the-loop through an agent tool.** If a tool *inside* the sub-agent needs approval ([Human-in-the-loop](human_in_the_loop.md)), the nested run pauses and its approval **surfaces as the orchestrator run's own interruption** — `RunResult.Interruptions` carries the nested tool's approval item. Approve or reject it on `RunResult.State` and `ResumeRun` as usual; the orchestrator continues the paused nested run (applying your decision) instead of restarting it, then finishes the parent turn. The paused nested state rides on the live `RunState` object in-process; like Python's agent-tool result cache it is **not** serialized, so a `RunState` persisted to JSON and resumed in another process restarts the nested run from the sub-agent's first turn rather than mid-approval.
+
 ## Orchestrating via code
 
 Plain Go is often the clearest orchestrator — deterministic, testable, cheap:

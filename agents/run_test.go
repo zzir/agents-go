@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-go/v3/responses"
 )
@@ -326,5 +328,117 @@ func TestRun_IsEnabledHidesTool(t *testing.T) {
 	}
 	if len(model.lastReq.Tools) != 0 {
 		t.Errorf("disabled tool should be hidden, got %d tools", len(model.lastReq.Tools))
+	}
+}
+
+// MaxTurnsUnlimited disables the turn budget — a run that would exceed the
+// default of 10 turns completes.
+func TestRun_MaxTurnsUnlimited(t *testing.T) {
+	tool := NewFunctionTool("loop", "loops",
+		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+			return "again", nil
+		})
+	// 15 tool-call turns (well past the default 10) then a final message.
+	var responses []*ModelResponse
+	for range 15 {
+		responses = append(responses, modelResp(functionCallOutput(t, "loop", "c", `{}`)))
+	}
+	responses = append(responses, modelResp(messageOutput(t, "finally done")))
+	model := &fakeModel{responses: responses}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+
+	res, err := Run(context.Background(), agent, "go", RunOptions{MaxTurns: MaxTurnsUnlimited})
+	if err != nil {
+		t.Fatalf("unlimited run should not hit a turn cap: %v", err)
+	}
+	if res.FinalOutputString() != "finally done" {
+		t.Errorf("final = %q", res.FinalOutputString())
+	}
+}
+
+// On resume the interrupted run's budget wins; a small opts.MaxTurns does
+// not shrink it.
+func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
+	tool := NewFunctionTool("act", "acts",
+		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+			return "ok", nil
+		})
+	tool.NeedsApproval = true
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
+		modelResp(messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+
+	res, err := Run(context.Background(), agent, "go", RunOptions{MaxTurns: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.State == nil || res.State.MaxTurns != 5 {
+		t.Fatalf("state MaxTurns = %v, want 5", res.State)
+	}
+	res.State.Approve(res.Interruptions[0], false)
+	// A tiny opts.MaxTurns must be ignored — the state's budget of 5 governs.
+	res2, err := ResumeRun(context.Background(), res.State, RunOptions{MaxTurns: 1})
+	if err != nil {
+		t.Fatalf("resume should run under the state's budget, not opts: %v", err)
+	}
+	if res2.FinalOutputString() != "done" {
+		t.Errorf("final = %q", res2.FinalOutputString())
+	}
+}
+
+// blockingModel blocks in GetResponse until its context is cancelled, then
+// reports the cancellation. Used to prove an input-guardrail tripwire cancels
+// the in-flight model call.
+type blockingModel struct {
+	called    chan struct{}
+	cancelled chan struct{}
+	once      sync.Once
+}
+
+func (m *blockingModel) GetResponse(ctx context.Context, _ ModelRequest) (*ModelResponse, error) {
+	m.once.Do(func() { close(m.called) })
+	<-ctx.Done()
+	close(m.cancelled)
+	return nil, ctx.Err()
+}
+
+func (m *blockingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
+	return func(func(*TResponseStreamEvent, error) bool) {}
+}
+
+// An input-guardrail tripwire cancels the in-flight model call and neither
+// bills usage nor fires OnLLMEnd (Python parity).
+func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
+	model := &blockingModel{called: make(chan struct{}), cancelled: make(chan struct{})}
+	hooks := &llmHookRec{}
+	agent := &Agent{
+		Name:      "a",
+		ModelImpl: model,
+		InputGuardrails: []InputGuardrail{{
+			Name: "trip",
+			Run: func(_ context.Context, _ *RunContext, _ *Agent, _ []TResponseInputItem) (GuardrailFunctionOutput, error) {
+				<-model.called // ensure the model call is in flight first
+				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+			},
+		}},
+	}
+
+	_, err := Run(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
+	var tw *InputGuardrailTripwireError
+	if !errors.As(err, &tw) {
+		t.Fatalf("err = %v, want InputGuardrailTripwireError", err)
+	}
+	select {
+	case <-model.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("model call was not cancelled by the tripwire")
+	}
+	// OnLLMEnd must not have fired, and no end recorded.
+	for _, o := range hooks.order {
+		if o == "end" {
+			t.Error("OnLLMEnd fired despite the tripwire cancelling the call")
+		}
 	}
 }

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -25,6 +26,10 @@ type Handoff struct {
 	// InputJSONSchema is the JSON Schema for the (optional) handoff input.
 	InputJSONSchema map[string]any
 	// StrictJSONSchema toggles strict-mode validation of the handoff input.
+	// Prefer true (the Python SDK defaults its strict_json_schema to True and
+	// always emits a strict schema). Because a Go bool zero value is false, a
+	// hand-built Handoff{} that omits this field gets a NON-strict schema — set it
+	// explicitly. HandoffTo already sets it true.
 	StrictJSONSchema bool
 	// AgentName is the name of the target agent, used for tracing.
 	AgentName string
@@ -45,6 +50,35 @@ type Handoff struct {
 
 	// IsEnabled, when non-nil, gates whether this handoff is offered to the model.
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
+}
+
+// validateHandoffInput checks the raw handoff arguments against the handoff's
+// InputJSONSchema before the handoff fires. When the schema declares root-level
+// required keys the handoff expects structured input, so a nil/empty/non-object
+// payload or one missing a required key is a *ModelBehaviorError fed back to the
+// model (Python parity: handoffs/__init__.py:278-307 raises ModelBehaviorError
+// "Handoff function expected non-null input, but got None"). A handoff with no
+// required keys (the default no-input transfer) accepts any arguments.
+func validateHandoffInput(h *Handoff, argsJSON string) error {
+	required, ok := h.InputJSONSchema["required"].([]any)
+	if !ok || len(required) == 0 {
+		return nil
+	}
+	trimmed := strings.TrimSpace(argsJSON)
+	if trimmed == "" || trimmed == "null" {
+		return newModelBehaviorError("Handoff function expected non-null input, but got None")
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return newModelBehaviorError("invalid JSON for handoff %q input: %v", h.ToolName, err)
+	}
+	for _, k := range required {
+		key, _ := k.(string)
+		if _, present := probe[key]; !present {
+			return newModelBehaviorError("handoff %q input missing required key %q", h.ToolName, key)
+		}
+	}
+	return nil
 }
 
 var invalidToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
