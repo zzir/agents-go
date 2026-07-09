@@ -189,11 +189,14 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, subs *connSubs, msg pro
 // subscribes conn to the resumed run.
 func (h *WSHandler) resolve(conn *server.WSConn, subs *connSubs, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := zerolog.Ctx(conn.Context())
-	runID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
+	runID, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		log.Error().Err(err).Str("tool_call_id", toolCallID).Msg("resolve approval failed")
+		// Carry the session id (when known) so the client can rebuild the paused
+		// turn's approval card — the optimistic approve/reject status was applied
+		// but the resume never happened.
 		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
-			Code: "approval_failed", Message: err.Error(),
+			SessionID: sessionID, Code: "approval_failed", Message: err.Error(),
 		})})
 		return
 	}

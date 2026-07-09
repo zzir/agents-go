@@ -110,13 +110,15 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxI
 // persisted RunState (so it works after a restart and from any transport),
 // deletes the pending record, and resumes via the hub. onDone fires when the
 // continuation terminates (e.g. to persist a further interruption).
-func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunResult)) (string, error) {
+// It also returns the paused session's id (whenever the pending row was loaded,
+// even on a later error) so a failed decision stays attributable to its session.
+func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunResult)) (runID, sessionID string, err error) {
 	if r.Deps.PendingApprovals == nil {
-		return "", errors.New("approvals are not persisted")
+		return "", "", errors.New("approvals are not persisted")
 	}
 	pending, _, err := r.Deps.PendingApprovals.FindByToolCall(ctx, toolCallID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// A RunState written by an older server binary can never be resumed — its
@@ -128,21 +130,21 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		if delErr := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); delErr != nil {
 			zerolog.Ctx(ctx).Error().Err(delErr).Str("run_id", pending.RunID).Msg("discarding stale pending approval")
 		}
-		return "", &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
+		return "", pending.SessionID, &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
 	}
 
 	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID)
 	if err != nil {
-		return "", fmt.Errorf("rebuilding agent: %w", err)
+		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
 	state, err := agents.RunStateFromJSON([]byte(pending.State), registry)
 	if err != nil {
-		return "", fmt.Errorf("restoring run state: %w", err)
+		return "", pending.SessionID, fmt.Errorf("restoring run state: %w", err)
 	}
 
 	item := findApprovalItem(state, toolCallID)
 	if item == nil {
-		return "", fmt.Errorf("tool call %s not found in run state", toolCallID)
+		return "", pending.SessionID, fmt.Errorf("tool call %s not found in run state", toolCallID)
 	}
 	if approve {
 		state.Approve(item, false)
@@ -156,12 +158,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// decisions exactly one proceeds. It also has to happen before resuming —
 	// the continuation may itself interrupt and persist a fresh record.
 	if err := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); err != nil {
-		return "", fmt.Errorf("claiming pending approval: %w", err)
+		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
 	}
 
 	// The continuation reopens the SAME run id, so the whole turn — both the
 	// interrupted and resumed halves — shares one event stream and trace group.
-	runID, err := r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
+	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
 	if err != nil {
 		// Give the approval back (e.g. the session has a live run right now)
 		// so the decision can be retried once the session frees up — losing
@@ -170,9 +172,9 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 			zerolog.Ctx(ctx).Error().Err(saveErr).Str("run_id", pending.RunID).
 				Msg("restoring pending approval after failed resume")
 		}
-		return "", err
+		return "", pending.SessionID, err
 	}
-	return runID, nil
+	return runID, pending.SessionID, nil
 }
 
 // StaleApprovalStateError is returned when a persisted RunState cannot be

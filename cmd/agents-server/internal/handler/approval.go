@@ -112,7 +112,7 @@ func (r approveReq) toScope() bridge.ApprovalScope {
 
 func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.ApprovalScope, reason string) {
 	toolCallID := c.Param("tool_call_id")
-	runID, err := h.runner.ResolveApproval(c.Request.Context(), toolCallID, approve, scope, reason, nil)
+	runID, _, err := h.runner.ResolveApproval(c.Request.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		h.resolveError(c, err)
 		return

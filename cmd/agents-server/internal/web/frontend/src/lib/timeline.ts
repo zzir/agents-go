@@ -5,6 +5,10 @@ interface ToolCallDisplay {
   name?: string;
   arguments?: string;
   output?: string;
+  // Set on an error annotation that was a guardrail block (reuses the display
+  // column) so a reloaded turn rebuilds the typed "Blocked by guardrail" card.
+  guardrail?: string;
+  stage?: string;
 }
 
 interface Message {
@@ -49,6 +53,8 @@ interface TextPart {
 interface ErrorPart {
   type: 'error';
   content: string;
+  guardrail?: string;
+  stage?: string;
 }
 
 interface CancelledPart {
@@ -161,7 +167,8 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
       ensureTurn();
       if (m.id) turn!.messageId = m.id;
       if (m.run_id) turn!.runId = m.run_id;
-      turn!.parts.push({ type: 'error', content: m.content });
+      const d = m.display;
+      turn!.parts.push({ type: 'error', content: m.content, guardrail: d?.guardrail, stage: d?.stage });
     } else if (m.role === 'cancelled') {
       // A run stopped by the user (or a deadline). Content is optional — the
       // card renders a fixed label — so this branch does not gate on it.
@@ -188,6 +195,20 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
   }
   finishTurn();
   return timeline;
+}
+
+// findToolCall returns the tool call with the given id (searching newest-first),
+// or null. Used to read a call's current state before patching it.
+export function findToolCall(messages: TimelineEntry[], toolCallId: string): ToolCall | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== 'turn') continue;
+    for (const part of (messages[i] as TurnEntry).parts) {
+      if (part.type !== 'tools') continue;
+      const tc = (part as ToolsPart).toolCalls.find(t => t.tool_call_id === toolCallId);
+      if (tc) return tc;
+    }
+  }
+  return null;
 }
 
 export function patchToolCall(messages: TimelineEntry[], toolCallId: string, patch: ToolCallPatch): TimelineEntry[] | null {

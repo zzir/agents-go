@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { WSClient } from '@/lib/ws';
-import { buildTimeline, patchToolCall } from '@/lib/timeline';
+import { buildTimeline, patchToolCall, findToolCall } from '@/lib/timeline';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 
@@ -35,6 +35,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   const sessionRunRef = useRef<Record<string, string>>({});
   const streamBufsRef = useRef<Record<string, string>>({});
   const reasoningBufsRef = useRef<Record<string, string>>({});
+  // Per-run set of completed message/reasoning item ids already folded into the
+  // timeline. Hub replays (reconnect) re-deliver those events; deduping by item
+  // id — rather than by text — keeps a genuinely repeated identical message from
+  // being dropped as if it were a replay.
+  const appendedItemsRef = useRef<Record<string, Set<string>>>({});
   const loadedRef = useRef<Set<string>>(new Set());
 
   // Coalesce high-frequency delta updates (run.step / run.reasoning) to one
@@ -55,12 +60,14 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   }, []);
 
   // fetchTimeline is the single authority for a session's persisted timeline:
-  // messages from the DB merged with the paused turn rebuilt from any durable
-  // pending approval (the SDK persists a turn to `messages` only on completion,
-  // so during a pause the approval row is the only holder of the user's prompt
-  // and the pending tool calls). Fetching both together and applying the result
-  // as one state update removes the messages/approvals race that made the
-  // approval card appear or vanish depending on which response landed last.
+  // messages from the DB merged with the pending tool calls from any durable
+  // pending approval. The streaming SDK persists the user prompt (and completed
+  // safe-prefix items) up front, so during a pause those already live in
+  // `messages`; only the unpaired pending function_call is held back, so the
+  // approval row is merged IN (its tool calls attached to the persisted turn),
+  // not appended as a fresh user+turn — otherwise the prompt would render twice.
+  // Fetching both together and applying the result as one state update removes
+  // the messages/approvals race that made the approval card flicker.
   const fetchTimeline = useCallback(async (sid: string): Promise<SessionState['messages']> => {
     type PendingApproval = { run_id: string; user_input?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
     const [msgs, pending] = await Promise.all([
@@ -81,12 +88,31 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       output: null as string | null, status: null as string | null, needs_approval: true,
     }))).filter(tc => !seen.has(tc.tool_call_id));
     if (toolCalls.length === 0) return timeline;
-    // The paused turn is always the latest: user bubble (held only by the
-    // approval row until the turn completes), then its tool-call card.
     const runId = pending[0].run_id;
     const userInput = pending[0].user_input || '';
-    const out = [...timeline];
-    if (userInput) out.push({ role: 'user', content: userInput, runId, messageId: Number.MAX_SAFE_INTEGER - 1 });
+    const out = [...timeline] as any[];
+
+    // The streaming SDK persists the user prompt (and any completed safe-prefix
+    // items) up front, BEFORE the pause — so the timeline may already hold this
+    // run's user bubble and turn. Merge the pending tool calls into that turn and
+    // skip re-adding the prompt, rather than appending duplicates. Only when
+    // nothing for this run is persisted do we reconstruct the paused turn whole.
+    let lastTurnIdx = -1;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].role === 'turn') { if (out[i].runId === runId) lastTurnIdx = i; break; }
+      if (out[i].role === 'user') break;
+    }
+    if (lastTurnIdx >= 0) {
+      const turn = out[lastTurnIdx];
+      const parts = [...(turn.parts || [])];
+      const lastPart = parts[parts.length - 1];
+      if (lastPart?.type === 'tools') parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, ...toolCalls] };
+      else parts.push({ type: 'tools', toolCalls });
+      out[lastTurnIdx] = { ...turn, parts };
+      return out;
+    }
+    const hasUser = out.some(m => m.role === 'user' && (m.runId === runId || (userInput && m.content === userInput)));
+    if (userInput && !hasUser) out.push({ role: 'user', content: userInput, runId, messageId: Number.MAX_SAFE_INTEGER - 1 });
     out.push({ role: 'turn' as const, parts: [{ type: 'tools' as const, toolCalls }], runId, messageId: Number.MAX_SAFE_INTEGER });
     return out;
   }, []);
@@ -156,6 +182,9 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       sessionRunRef.current[sid] = p.run_id;
       streamBufsRef.current[p.run_id] = '';
       reasoningBufsRef.current[p.run_id] = '';
+      // Keep any existing set across a replay/resume (same run id) so its dedup
+      // memory survives; only seed one for a genuinely new run.
+      if (!appendedItemsRef.current[p.run_id]) appendedItemsRef.current[p.run_id] = new Set();
       if (!loadedRef.current.has(sid)) loadedRef.current.add(sid);
       updateSS(sid, s => {
         // Hub replays (reconnect / re-subscribe) re-deliver run.started; don't
@@ -195,24 +224,28 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // and final answer alike. Authoritative over the run.step deltas that
     // previewed it: the delta buffer is dropped so the tool_call flush (and
     // run.output) cannot append the same text again.
-    ws.on('run.message', (p: { run_id: string; text: string }) => {
+    ws.on('run.message', (p: { run_id: string; text: string; item_id?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       streamBufsRef.current[p.run_id] = '';
+      const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
+      // Hub replays (reconnect / re-subscribe) re-deliver run.message. Dedup by
+      // item id when present; only fall back to text equality (which also drops a
+      // genuinely repeated identical message) for backends that send no id.
+      if (p.item_id && seen.has(p.item_id)) { updateSS(sid, s => ({ ...s, streaming: '' })); return; }
       updateSS(sid, s => {
         const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
         const last = msgs[msgs.length - 1];
         if (last?.role !== 'turn') return { ...s, streaming: '' };
         const parts = [...(last.parts || [])];
-        // Hub replays (reconnect / re-subscribe) re-deliver run.message for
-        // turns already in the timeline: appending again would duplicate.
-        if (parts.some(pt => pt.type === 'text' && pt.content === p.text)) {
+        if (!p.item_id && parts.some(pt => pt.type === 'text' && pt.content === p.text)) {
           return { ...s, streaming: '' };
         }
         parts.push({ type: 'text', content: p.text });
         msgs[msgs.length - 1] = { ...last, parts };
         return { ...s, messages: msgs, streaming: '' };
       });
+      if (p.item_id) seen.add(p.item_id);
     });
 
     // One completed reasoning block — a turn's full thinking text,
@@ -220,24 +253,27 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // it as a thinking part (and resetting the delta buffer) scopes the live
     // "Thinking…" preview to the current turn and is the only thinking signal
     // on backends that stream no reasoning deltas.
-    ws.on('run.reasoning_item', (p: { run_id: string; text: string }) => {
+    ws.on('run.reasoning_item', (p: { run_id: string; text: string; item_id?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       reasoningBufsRef.current[p.run_id] = '';
+      const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
+      // Hub replays re-deliver run.reasoning_item. Dedup by item id when present;
+      // fall back to text equality only when the backend sends none.
+      if (p.item_id && seen.has(p.item_id)) { updateSS(sid, s => ({ ...s, reasoning: '' })); return; }
       updateSS(sid, s => {
         const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
         const last = msgs[msgs.length - 1];
         if (last?.role !== 'turn') return { ...s, reasoning: '' };
         const parts = [...(last.parts || [])];
-        // Hub replays re-deliver run.reasoning_item for turns already in the
-        // timeline: appending again would duplicate.
-        if (parts.some(pt => pt.type === 'thinking' && pt.content === p.text)) {
+        if (!p.item_id && parts.some(pt => pt.type === 'thinking' && pt.content === p.text)) {
           return { ...s, reasoning: '' };
         }
         parts.push({ type: 'thinking', content: p.text });
         msgs[msgs.length - 1] = { ...last, parts };
         return { ...s, messages: msgs, reasoning: '' };
       });
+      if (p.item_id) seen.add(p.item_id);
     });
 
     ws.on('run.output', (p: { run_id: string; final_output?: string }) => {
@@ -247,6 +283,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       const thinking = reasoningBufsRef.current[p.run_id] || '';
       delete streamBufsRef.current[p.run_id];
       delete reasoningBufsRef.current[p.run_id];
+      delete appendedItemsRef.current[p.run_id];
       delete sessionRunRef.current[sid];
       updateSS(sid, s => {
         const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
@@ -274,6 +311,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         toast.error(p.message || 'Session already has an active run');
         return;
       }
+      // An approve/reject that failed server-side (session busy, config deleted,
+      // stale state): the optimistic 'approved'/'rejected' card status was never
+      // rolled back. Rebuild the paused turn from the durable approval row so its
+      // pending card and Approve/Reject controls reappear, and surface why.
+      if (p.code === 'approval_failed') {
+        toast.error(p.message || 'Approval failed');
+        const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
+        if (sid) reloadMessages(sid);
+        return;
+      }
       // The run we tried to resubscribe expired server-side (finished >15min
       // ago): clear the stale mapping and fall back to persisted history.
       if (p.code === 'run_not_found') {
@@ -298,6 +345,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       const thinking = reasoningBufsRef.current[rid] || '';
       delete streamBufsRef.current[rid];
       delete reasoningBufsRef.current[rid];
+      delete appendedItemsRef.current[rid];
       delete sessionRunRef.current[sid];
       // A guardrail block carries the guardrail name + stage so the turn renders
       // a distinct "blocked" card instead of a generic error.
@@ -318,10 +366,15 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         }
         return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
       });
-      reloadMessages(sid);
+      // A guardrail block already rendered its typed card (with the retracted
+      // answer above it) optimistically. A reload would replace that with the
+      // persisted timeline, which — since the SDK never persists a tripped output
+      // (Python parity) — drops the answer; the card itself survives via the
+      // persisted guardrail/stage. Keep the richer optimistic view for this session.
+      if (p.code !== 'guardrail_tripwire') reloadMessages(sid);
     });
 
-    ws.on('run.cancelled', (p: { run_id?: string }) => {
+    ws.on('run.cancelled', (p: { run_id?: string; code?: string }) => {
       const rid = p?.run_id;
       const sid = rid ? runMapRef.current[rid] : null;
       if (!sid || !rid) return;
@@ -329,17 +382,20 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       const thinking = reasoningBufsRef.current[rid] || '';
       delete streamBufsRef.current[rid];
       delete reasoningBufsRef.current[rid];
+      delete appendedItemsRef.current[rid];
       delete sessionRunRef.current[sid];
       updateSS(sid, s => {
         const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
-        if (remaining || thinking) {
-          const last = msgs[msgs.length - 1];
-          if (last?.role === 'turn') {
-            const parts = [...(last.parts || [])];
-            if (thinking) parts.push({ type: 'thinking', content: thinking });
-            if (remaining) parts.push({ type: 'text', content: remaining });
-            msgs[msgs.length - 1] = { ...last, parts };
-          }
+        const last = msgs[msgs.length - 1];
+        if (last?.role === 'turn') {
+          const parts = [...(last.parts || [])];
+          if (thinking) parts.push({ type: 'thinking', content: thinking });
+          if (remaining) parts.push({ type: 'text', content: remaining });
+          // Show the "Run cancelled" marker immediately, mirroring how run.error
+          // appends its card optimistically, instead of waiting on the async
+          // reload (which the next run's start can also skip).
+          if (parts[parts.length - 1]?.type !== 'cancelled') parts.push({ type: 'cancelled' });
+          msgs[msgs.length - 1] = { ...last, parts };
         }
         return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
       });
@@ -378,7 +434,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
-        const patched = patchToolCall(s.messages, p.tool_call_id, { output: p.output, status: 'completed' });
+        // A user-rejected call keeps its terminal 'rejected' status: the resumed
+        // turn still emits a tool_output (the rejection notice) that would
+        // otherwise clobber the red 'rejected' badge to a plain 'completed'.
+        const cur = findToolCall(s.messages, p.tool_call_id);
+        const status = cur?.status === 'rejected' ? 'rejected' : 'completed';
+        const patched = patchToolCall(s.messages, p.tool_call_id, { output: p.output, status });
         return patched ? { ...s, messages: patched } : s;
       });
     });
@@ -426,7 +487,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
         const last = msgs[msgs.length - 1];
         if (last?.role !== 'turn') return s;
-        msgs[msgs.length - 1] = { ...last, parts: [...(last.parts || []), { type: 'handoff', content: p.from + ' → ' + p.to }] };
+        const content = p.from + ' → ' + p.to;
+        // Hub replays (reconnect) re-deliver run.handoff; dedup like run.message /
+        // run.reasoning_item so a reconnect mid-run doesn't stack duplicate rows.
+        if ((last.parts || []).some(pt => pt.type === 'handoff' && pt.content === content)) return s;
+        msgs[msgs.length - 1] = { ...last, parts: [...(last.parts || []), { type: 'handoff', content }] };
         return { ...s, messages: msgs };
       });
     });

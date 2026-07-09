@@ -180,7 +180,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		// Persist the prompt + error so the user's message and the failure survive
 		// the reload the client runs on run.error (the run never reached the SDK's
 		// per-turn save). Mirrors the post-start error path below.
-		r.savePartialTurn(sessionID, runID, "", input, "error", err.Error(), "", "")
+		r.savePartialTurn(sessionID, runID, "", input, "error", err.Error(), "", "", "", "")
 		sendEvent("run.error", protocol.RunError{
 			RunID:   runID,
 			Code:    "config_error",
@@ -193,7 +193,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	provider := built.Provider
 	if provider == nil {
 		const msg = "no API key configured for this agent"
-		r.savePartialTurn(sessionID, runID, agent.Model, input, "error", msg, "", "")
+		r.savePartialTurn(sessionID, runID, agent.Model, input, "error", msg, "", "", "", "")
 		sendEvent("run.error", protocol.RunError{
 			RunID:   runID,
 			Code:    "config_error",
@@ -249,15 +249,15 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	// thinking) instead of vanishing.
 	res, err := sr.FinalResult()
 	if err != nil {
-		role, msg := "error", err.Error()
 		if isCancellation(ctx, err) {
-			role, msg = "cancelled", ""
-		}
-		r.savePartialTurn(sessionID, runID, agent.Model, input, role, msg, streamedReasoning, streamedText)
-		if role == "cancelled" {
+			r.savePartialTurn(sessionID, runID, agent.Model, input, "cancelled", "", streamedReasoning, streamedText, "", "")
 			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 		} else {
-			sendEvent("run.error", guardrailRunError(runID, err, "stream_error"))
+			// Persist the guardrail name/stage alongside the error so a reload
+			// rebuilds the "Blocked by guardrail X" card, not a generic error.
+			gerr := guardrailRunError(runID, err, "stream_error")
+			r.savePartialTurn(sessionID, runID, agent.Model, input, "error", err.Error(), streamedReasoning, streamedText, gerr.Guardrail, gerr.Stage)
+			sendEvent("run.error", gerr)
 		}
 		return mkResult()
 	}
@@ -321,11 +321,12 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		// same run id before pausing, so a failed resume only annotates why it
 		// stopped — cancelled or errored, mirroring runStreamed.
 		if isCancellation(ctx, err) {
-			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "cancelled", "", partialReasoning, partialText)
+			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "cancelled", "", partialReasoning, partialText, "", "")
 			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
 		} else {
-			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText)
-			sendEvent("run.error", guardrailRunError(runID, err, code))
+			gerr := guardrailRunError(runID, err, code)
+			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText, gerr.Guardrail, gerr.Stage)
+			sendEvent("run.error", gerr)
 		}
 		return mkResult()
 	}
@@ -499,12 +500,13 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 //     thinking phase (before that turn completed) still shows what the model was
 //     doing instead of vanishing;
 //   - a trailing marker for why the run stopped (annRole "cancelled"/"error",
-//     annMsg its optional detail);
+//     annMsg its optional detail; guardrail+stage, when set, tag an "error"
+//     marker as a guardrail block so a reload rebuilds the typed card);
 //
 // and, only when the run died before the SDK persisted anything under this run
 // id (e.g. cancelled before the first turn completed), the prompt as a
 // replayable fallback so it is not lost.
-func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, annMsg, partialReasoning, partialText string) {
+func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, annMsg, partialReasoning, partialText, guardrail, stage string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -529,7 +531,13 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 	}
 
 	if annRole != "" {
-		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, annRole, annMsg))
+		m := store.NewAnnotationMessage(sessionID, runID, annRole, annMsg)
+		// A guardrail block carries its name + stage so a reload rebuilds the
+		// typed "Blocked by guardrail X" card instead of a generic error.
+		if guardrail != "" {
+			m.Display, _ = json.Marshal(map[string]string{"guardrail": guardrail, "stage": stage})
+		}
+		msgs = append(msgs, m)
 	}
 
 	if len(msgs) == 0 {
@@ -650,7 +658,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			// stream no deltas rely on it entirely.
 			if mo, ok := e.Item.(*agents.MessageOutputItem); ok {
 				if text := mo.Text(); text != "" {
-					send("run.message", protocol.RunMessage{RunID: runID, Text: text})
+					send("run.message", protocol.RunMessage{RunID: runID, Text: text, ItemID: mo.Raw.ID})
 				}
 			}
 		case "reasoning_item_created":
@@ -659,7 +667,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			// backend streams no reasoning deltas or the segment was resumed.
 			if ri, ok := e.Item.(*agents.ReasoningItem); ok {
 				if text := ri.Text(); text != "" {
-					send("run.reasoning_item", protocol.RunReasoningItem{RunID: runID, Text: text})
+					send("run.reasoning_item", protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: ri.Raw.ID})
 				}
 			}
 		case "tool_called":

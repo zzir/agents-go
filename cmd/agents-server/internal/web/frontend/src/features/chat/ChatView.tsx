@@ -355,6 +355,9 @@ interface ProcessTimelineProps {
   parts: TurnPart[];
   live: boolean;
   reasoning: string | null;
+  // The turn's answer text has started streaming, so this group's thinking/tool
+  // phase is done even while the run is still live.
+  textStreaming?: boolean;
   compacting?: boolean;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
@@ -363,19 +366,20 @@ interface ProcessTimelineProps {
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
-function ProcessTimeline({ parts, live, reasoning, compacting, onApprove, onReject }: ProcessTimelineProps) {
+function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, onApprove, onReject }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
 
   let stepCount = 0;
   let pendingCount = 0;
   let runningTool: string | null = null;
+  let runningToolCount = 0;
   for (const p of parts) {
     if (p.type === 'tools') {
       stepCount += p.toolCalls!.length;
       for (const tc of p.toolCalls!) {
         if (tc.needs_approval && !tc.status) pendingCount++;
-        else if (!tc.output && tc.status !== 'completed' && tc.status !== 'rejected') runningTool = tc.tool_name;
+        else if (!tc.output && tc.status !== 'completed' && tc.status !== 'rejected') { runningToolCount++; if (!runningTool) runningTool = tc.tool_name; }
       }
     } else {
       stepCount++;
@@ -385,14 +389,28 @@ function ProcessTimeline({ parts, live, reasoning, compacting, onApprove, onReje
 
   if (stepCount === 0) return null;
 
-  const shouldShow = pendingCount > 0 || (expanded ?? live);
+  // Once the turn's answer text starts streaming, this group's thinking/tool
+  // phase is finished even though the run is still live: settle the label and
+  // let it collapse like a done group, instead of pinning "Thinking…" over an
+  // already-visible answer. The run.reasoning_item / run.message events that
+  // freeze the live preview into parts only land after the whole model call, so
+  // the live `reasoning` state otherwise lingers through the entire answer.
+  const active = live && !textStreaming;
 
-  const label = live
-    ? (pendingCount > 0 ? 'Waiting for approval'
-      : compacting ? 'Compacting context…'
-      : runningTool ? 'Running ' + runningTool + '…'
-      : reasoning ? 'Thinking…' : 'Working…')
-    : stepCount + ' step' + (stepCount > 1 ? 's' : '');
+  const shouldShow = pendingCount > 0 || (expanded ?? active);
+
+  // A pending approval is the group's status whether or not the run is still
+  // "active": in the steady paused state running is false, so gate it above
+  // `active` — otherwise it falls through to the settled step count and the
+  // "Waiting for approval" wording only flashes in the run.tool_call→interrupted
+  // window.
+  const label = pendingCount > 0
+    ? 'Waiting for approval'
+    : active
+      ? (compacting ? 'Compacting context…'
+        : runningTool ? (runningToolCount > 1 ? 'Running ' + runningToolCount + ' tools…' : 'Running ' + runningTool + '…')
+        : reasoning ? 'Thinking…' : 'Working…')
+      : stepCount + ' step' + (stepCount > 1 ? 's' : '');
 
   return (
     <div className="process-group">
@@ -496,6 +514,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
               parts={seg.parts}
               live={i === activeIdx}
               reasoning={i === activeIdx ? reasoning : null}
+              textStreaming={i === activeIdx && !!streaming}
               compacting={i === activeIdx ? compacting : false}
               onApprove={onApprove}
               onReject={onReject}
@@ -506,6 +525,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           parts={[]}
           live
           reasoning={reasoning}
+          textStreaming={!!streaming}
           compacting={compacting}
           onApprove={onApprove}
           onReject={onReject}
@@ -685,6 +705,9 @@ interface ChatViewProps {
   liveRunId: string | null;
   liveStartedAt: number | null;
   liveAgentName: string | null;
+  // The session is paused awaiting a tool approval: block new sends so the
+  // approval is resolved first (a concurrent run would strand it as session_busy).
+  awaiting?: boolean;
   onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
   onCancel: (graceful?: boolean) => void;
   onApprove?: (id: string, scope?: string) => void;
@@ -696,7 +719,7 @@ interface ChatViewProps {
 
 export function ChatView({
   sessionId, messages, loaded, streaming, reasoning, running, compacting,
-  traceRuns, liveRunId, liveStartedAt, liveAgentName,
+  traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigId] = useState('');
@@ -895,7 +918,7 @@ export function ChatView({
           <MessageInput
             onSend={handleSend}
             onCancel={handleCancel}
-            disabled={running || !agentConfigId}
+            disabled={running || awaiting || !agentConfigId}
             running={running}
             toolbar={inputToolbar}
           />
@@ -975,7 +998,7 @@ export function ChatView({
         <MessageInput
           onSend={handleSend}
           onCancel={handleCancel}
-          disabled={running || !agentConfigId}
+          disabled={running || awaiting || !agentConfigId}
           running={running}
           toolbar={inputToolbar}
         />

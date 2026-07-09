@@ -413,6 +413,7 @@ function App() {
       liveRunId={currentSS.liveRunId}
       liveStartedAt={currentSS.liveStartedAt}
       liveAgentName={currentSS.liveAgentName}
+      awaiting={!!activeSession && awaitingSessions.has(activeSession)}
       onSend={handleSend}
       onCancel={handleCancel}
       onApprove={handleApprove}

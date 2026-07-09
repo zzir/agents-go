@@ -51,7 +51,7 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 		t.Fatalf("seed user item: %v", err)
 	}
 
-	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "")
+	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
 	if got := countRows(t, db, sid, store.MessageKindAnnotation, "cancelled"); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
@@ -69,7 +69,7 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 	runner, db := newBareRunner(t)
 	sid, rid := store.NewID(), store.NewID()
 
-	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "let me think about primes", "here is my parti")
+	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "let me think about primes", "here is my parti", "", "")
 
 	if got := countRows(t, db, sid, store.MessageKindAnnotation, "reasoning"); got != 1 {
 		t.Errorf("reasoning annotations = %d, want 1", got)
@@ -98,7 +98,7 @@ func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 	runner, db := newBareRunner(t)
 	sid, rid := store.NewID(), store.NewID()
 
-	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "")
+	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
 	if got := countRows(t, db, sid, store.MessageKindItem, "user"); got != 1 {
 		t.Errorf("user fallback rows = %d, want 1", got)

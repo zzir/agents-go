@@ -94,6 +94,10 @@ type RunReasoning struct {
 type RunMessage struct {
 	RunID string `json:"run_id"`
 	Text  string `json:"text"`
+	// ItemID is the model item's stable id. The client dedups hub replays by it
+	// (falling back to text equality when empty), so a genuinely repeated
+	// identical message is preserved rather than dropped as a replay.
+	ItemID string `json:"item_id,omitempty"`
 }
 
 // RunReasoningItem carries one completed reasoning (thinking) block — a
@@ -103,6 +107,8 @@ type RunMessage struct {
 type RunReasoningItem struct {
 	RunID string `json:"run_id"`
 	Text  string `json:"text"`
+	// ItemID is the model item's stable id, used for replay dedup like RunMessage.
+	ItemID string `json:"item_id,omitempty"`
 }
 
 // RunToolCall is emitted when the agent invokes a tool (or requests approval for one).
