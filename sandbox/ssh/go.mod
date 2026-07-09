@@ -5,7 +5,7 @@ go 1.26.4
 require (
 	github.com/pkg/sftp v1.13.7
 	github.com/zzir/agents-go v0.0.0
-	golang.org/x/crypto v0.48.0
+	golang.org/x/crypto v0.52.0
 )
 
 require (
