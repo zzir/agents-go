@@ -98,6 +98,8 @@ interface Agent {
   instructions: string;
   handoffs: string;
   tools: string;
+  // Empty/absent means "not customized" -> the agent gets every installed skill.
+  skills?: string;
   chatgpt_token: string;
 }
 
@@ -487,21 +489,24 @@ export function AgentConfigPanel() {
     }
   };
 
-  const handoffNames = (handoffsJson: string): string | null => {
-    try {
-      const ids: (string | number)[] = JSON.parse(handoffsJson || '[]');
-      const names = ids.map(id => (agents.find(a => a.id === id) || {} as Agent).name).filter(Boolean);
-      return names.length ? 'Handoffs: ' + names.join(', ') : null;
-    } catch { return null; }
-  };
-
-  const mcpNames = (toolsJson: string): string | null => {
-    if (!mcpServers) return null;
+  // Number of MCP servers this agent references that still exist.
+  const mcpCount = (toolsJson: string): number => {
+    if (!mcpServers) return 0;
     try {
       const ids: (string | number)[] = JSON.parse(toolsJson || '[]');
-      const names = ids.map(id => (mcpServers.find(s => s.id === id) || {} as McpServer).name).filter(Boolean);
-      return names.length ? 'MCP: ' + names.join(', ') : null;
-    } catch { return null; }
+      return ids.filter(id => mcpServers.some(s => s.id === id)).length;
+    } catch { return 0; }
+  };
+
+  // Number of skills enabled for this agent. An empty/absent skills field means
+  // "not customized" -> every installed skill (mirrors AgentForm's effectiveSkills).
+  const skillCount = (skillsJson?: string): number => {
+    const all = skills || [];
+    if (!skillsJson) return all.length;
+    try {
+      const paths: string[] = JSON.parse(skillsJson);
+      return paths.filter(p => all.some(sk => sk.path === p)).length;
+    } catch { return all.length; }
   };
 
   return (
@@ -518,26 +523,23 @@ export function AgentConfigPanel() {
 
       {!adding && !editing && <div className="Box">
         {agents.map(a => {
-          const ho = handoffNames(a.handoffs);
-          const mcp = mcpNames(a.tools);
           const isChatGPT = a.provider?.auth_mode === 'chatgpt_login';
           const loggedIn = isChatGPT && !!a.chatgpt_token;
+          const mcp = mcpCount(a.tools);
+          const skl = skillCount(a.skills);
           return (
             <div key={a.id} className="Box-row">
               <div className="resource-row-main">
-                <div className="form-status">
+                <div className="form-status" style={{ flexWrap: 'wrap' }}>
                   {isChatGPT && <span className="form-status-dot" style={{ background: loggedIn ? 'var(--fgColor-success)' : 'var(--fgColor-muted)' }} />}
                   <span className="resource-row-title">{a.name}</span>
+                  {isChatGPT && <Label variant={loggedIn ? 'success' : 'secondary'}>ChatGPT</Label>}
+                  {mcp > 0 && <Label variant="accent">{'MCP·' + mcp}</Label>}
+                  {skl > 0 && <Label variant="done">{'Skills·' + skl}</Label>}
                 </div>
                 <div className="resource-row-meta">
                   <span>{[a.model || 'default model', a.provider?.base_url && ('@ ' + a.provider.base_url)].filter(Boolean).join(' ')}</span>
-                  {isChatGPT && <Label variant={loggedIn ? 'success' : 'secondary'}>ChatGPT</Label>}
                 </div>
-                {a.instructions && <div className="resource-row-sub">
-                  {a.instructions.substring(0, 80) + (a.instructions.length > 80 ? '...' : '')}
-                </div>}
-                {ho && <div className="resource-row-meta">{ho}</div>}
-                {mcp && <div className="resource-row-meta">{mcp}</div>}
               </div>
               <div className="resource-row-actions">
                 {isChatGPT && (loggedIn
