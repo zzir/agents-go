@@ -32,12 +32,16 @@ export function formatDuration(ms: number): string {
   return h + 'h ' + rm + 'm';
 }
 
+// The ONE ToolCall / TurnPart definition — the streaming path (streamReducer),
+// the replay path (buildTimeline) and every renderer (ChatView, ToolCallCard)
+// import these. A second local copy is how the two paths drift apart.
 interface ToolCall {
   tool_call_id: string;
   tool_name: string;
   arguments: string;
   output: string | null;
   status: string | null;
+  needs_approval?: boolean;
 }
 
 interface ToolsPart {
@@ -80,7 +84,9 @@ type TurnPart = ToolsPart | TextPart | ErrorPart | CancelledPart | ThinkingPart 
 interface UserEntry {
   role: 'user';
   content: string;
-  messageId: number | undefined;
+  // Absent on entries not yet persisted: the sender's optimistic bubble and
+  // the bubble a watching browser builds from run.started's input.
+  messageId?: number;
   runId?: string;
 }
 
@@ -93,7 +99,9 @@ interface SystemEntry {
 interface TurnEntry {
   role: 'turn';
   parts: TurnPart[];
-  messageId: number;
+  // Persisted turns carry the anchoring row id; a live turn assembled from
+  // stream events has none until the post-run reload swaps it in.
+  messageId?: number;
   runId?: string;
 }
 
@@ -121,7 +129,7 @@ interface ToolCallPatch {
   needs_approval?: boolean;
 }
 
-export type { Message, ToolCall, ToolsPart, TextPart, TurnPart, TimelineEntry, HookEvent, ToolCallPatch };
+export type { Message, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
 
 export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry[] {
   if (!msgs) return [];

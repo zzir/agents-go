@@ -27,6 +27,12 @@ type Runner struct {
 	db   *bun.DB
 	Deps *AgentDeps
 	hub  *RunHub
+	// OnRunAttach, when set, is invoked with the run id right after a run
+	// registers in the hub (fresh start and approval resume alike), before any
+	// event publishes. The WS layer uses it to attach every live connection to
+	// the stream — run events are a broadcast bus, not a reply channel to
+	// whoever started the run — and runs created over REST take the same path.
+	OnRunAttach func(runID string)
 }
 
 // compactionNotifier drives the chat UI's live indicator with transient
@@ -35,10 +41,10 @@ type Runner struct {
 func compactionNotifier(send func(string, any), runID string) store.CompactionNotifier {
 	return store.CompactionNotifier{
 		OnStart: func() {
-			send("run.compaction", protocol.RunCompaction{RunID: runID, Phase: "started"})
+			send(protocol.EventRunCompaction, protocol.RunCompaction{RunID: runID, Phase: "started"})
 		},
 		OnDone: func(before, after int) {
-			send("run.compaction", protocol.RunCompaction{
+			send(protocol.EventRunCompaction, protocol.RunCompaction{
 				RunID:  runID,
 				Phase:  "finished",
 				Detail: fmt.Sprintf("compacted %d→%d items", before, after),
@@ -120,6 +126,9 @@ func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, input string, onD
 	if err != nil {
 		return "", err
 	}
+	if r.OnRunAttach != nil {
+		r.OnRunAttach(runID)
+	}
 	go func() {
 		result := r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
 		r.hub.finish(runID, result.Interrupted)
@@ -157,7 +166,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		r.hub.publish(runID, env)
 	}
 
-	sendEvent("run.started", protocol.RunStarted{RunID: runID, SessionID: sessionID})
+	sendEvent(protocol.EventRunStarted, protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: input})
 
 	mkResult := func() *RunResult {
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
@@ -166,9 +175,9 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	// Refuse to run against a session that doesn't exist — otherwise the run
 	// would write orphaned messages under an arbitrary session id.
 	if _, err := r.Deps.Sessions.Get(ctx, sessionID); err != nil {
-		sendEvent("run.error", protocol.RunError{
+		sendEvent(protocol.EventRunError, protocol.RunError{
 			RunID:   runID,
-			Code:    "session_not_found",
+			Code:    protocol.CodeSessionNotFound,
 			Message: "session not found: " + sessionID,
 		})
 		return mkResult()
@@ -181,9 +190,9 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		// the reload the client runs on run.error (the run never reached the SDK's
 		// per-turn save). Mirrors the post-start error path below.
 		r.savePartialTurn(sessionID, runID, "", input, "error", err.Error(), "", "", "", "")
-		sendEvent("run.error", protocol.RunError{
+		sendEvent(protocol.EventRunError, protocol.RunError{
 			RunID:   runID,
-			Code:    "config_error",
+			Code:    protocol.CodeConfigError,
 			Message: err.Error(),
 		})
 		return mkResult()
@@ -194,9 +203,9 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	if provider == nil {
 		const msg = "no API key configured for this agent"
 		r.savePartialTurn(sessionID, runID, agent.Model, input, "error", msg, "", "", "", "")
-		sendEvent("run.error", protocol.RunError{
+		sendEvent(protocol.EventRunError, protocol.RunError{
 			RunID:   runID,
-			Code:    "config_error",
+			Code:    protocol.CodeConfigError,
 			Message: msg,
 		})
 		return mkResult()
@@ -205,7 +214,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	// Wrap with router provider if routes exist
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
 
-	sendEvent("run.agent_start", protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
+	sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
 
 	sa := store.NewSessionAdapter(r.db, sessionID)
 	sa.SetRunID(runID)
@@ -251,13 +260,13 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	if err != nil {
 		if isCancellation(ctx, err) {
 			r.savePartialTurn(sessionID, runID, agent.Model, input, "cancelled", "", streamedReasoning, streamedText, "", "")
-			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
+			sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
 		} else {
 			// Persist the guardrail name/stage alongside the error so a reload
 			// rebuilds the "Blocked by guardrail X" card, not a generic error.
 			gerr := guardrailRunError(runID, err, "stream_error")
 			r.savePartialTurn(sessionID, runID, agent.Model, input, "error", err.Error(), streamedReasoning, streamedText, gerr.Guardrail, gerr.Stage)
-			sendEvent("run.error", gerr)
+			sendEvent(protocol.EventRunError, gerr)
 		}
 		return mkResult()
 	}
@@ -278,6 +287,9 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 	ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID)
 	if err != nil {
 		return "", err
+	}
+	if r.OnRunAttach != nil {
+		r.OnRunAttach(runID)
 	}
 	go func() {
 		result := r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
@@ -309,7 +321,10 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
 	}
 
-	sendEvent("run.started", protocol.RunStarted{RunID: runID, SessionID: sessionID})
+	// The resumed segment re-announces the original prompt so a late-joining
+	// browser (attached at resume) can render the user bubble; earlier
+	// subscribers dedup it against the bubble they already show.
+	sendEvent(protocol.EventRunStarted, protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: userInputText(state.UserInput)})
 
 	// Any failed continuation must persist the user's prompt (and the error):
 	// the pending-approval row was consumed as the resume's claim and the SDK
@@ -322,11 +337,11 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		// stopped — cancelled or errored, mirroring runStreamed.
 		if isCancellation(ctx, err) {
 			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "cancelled", "", partialReasoning, partialText, "", "")
-			sendEvent("run.cancelled", protocol.RunCancelled{RunID: runID})
+			sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
 		} else {
 			gerr := guardrailRunError(runID, err, code)
 			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText, gerr.Guardrail, gerr.Stage)
-			sendEvent("run.error", gerr)
+			sendEvent(protocol.EventRunError, gerr)
 		}
 		return mkResult()
 	}
@@ -385,7 +400,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunResult {
 	if len(res.Interruptions) > 0 {
 		for _, item := range res.Interruptions {
-			sendEvent("run.tool_call", protocol.RunToolCall{
+			sendEvent(protocol.EventRunToolCall, protocol.RunToolCall{
 				RunID:         runID,
 				ToolCallID:    item.CallID,
 				ToolName:      item.ToolName,
@@ -396,7 +411,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 		// Terminal marker for this run segment: waiters and SSE streams end
 		// here; the approval decision reopens this same run id and continues
 		// its event sequence.
-		sendEvent("run.interrupted", protocol.RunInterrupted{RunID: runID})
+		sendEvent(protocol.EventRunInterrupted, protocol.RunInterrupted{RunID: runID})
 		return &RunResult{
 			RunID:         runID,
 			SessionID:     sessionID,
@@ -411,7 +426,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 	r.updateSessionMeta(sessionID, agentConfigID)
 
 	finalText := res.FinalOutputString()
-	sendEvent("run.output", protocol.RunOutput{RunID: runID, FinalOutput: finalText})
+	sendEvent(protocol.EventRunOutput, protocol.RunOutput{RunID: runID, FinalOutput: finalText})
 	return &RunResult{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
 }
 
@@ -485,7 +500,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 		log.Warn().Err(err).Msg("title gen: save failed")
 		return
 	}
-	sendEvent("session.title_updated", protocol.SessionTitleUpdated{
+	sendEvent(protocol.EventSessionTitleUpdated, protocol.SessionTitleUpdated{
 		SessionID: sessionID,
 		Title:     title,
 	})
@@ -625,9 +640,9 @@ func guardrailRunError(runID string, err error, fallback string) protocol.RunErr
 	var og *agents.OutputGuardrailTripwireError
 	switch {
 	case errors.As(err, &ig):
-		e.Code, e.Guardrail, e.Stage = "guardrail_tripwire", ig.Result.Guardrail.Name, "input"
+		e.Code, e.Guardrail, e.Stage = protocol.CodeGuardrailTripwire, ig.Result.Guardrail.Name, "input"
 	case errors.As(err, &og):
-		e.Code, e.Guardrail, e.Stage = "guardrail_tripwire", og.Result.Guardrail.Name, "output"
+		e.Code, e.Guardrail, e.Stage = protocol.CodeGuardrailTripwire, og.Result.Guardrail.Name, "output"
 	}
 	return e
 }
@@ -641,11 +656,11 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 		switch e.Data.Type {
 		case "response.output_text.delta":
 			if e.Data.Delta != "" {
-				send("run.step", protocol.RunStep{RunID: runID, Delta: e.Data.Delta})
+				send(protocol.EventRunStep, protocol.RunStep{RunID: runID, Delta: e.Data.Delta})
 			}
 		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 			if e.Data.Delta != "" {
-				send("run.reasoning", protocol.RunReasoning{RunID: runID, Delta: e.Data.Delta})
+				send(protocol.EventRunReasoning, protocol.RunReasoning{RunID: runID, Delta: e.Data.Delta})
 			}
 		}
 
@@ -658,7 +673,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			// stream no deltas rely on it entirely.
 			if mo, ok := e.Item.(*agents.MessageOutputItem); ok {
 				if text := mo.Text(); text != "" {
-					send("run.message", protocol.RunMessage{RunID: runID, Text: text, ItemID: mo.Raw.ID})
+					send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: mo.Raw.ID})
 				}
 			}
 		case "reasoning_item_created":
@@ -667,7 +682,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			// backend streams no reasoning deltas or the segment was resumed.
 			if ri, ok := e.Item.(*agents.ReasoningItem); ok {
 				if text := ri.Text(); text != "" {
-					send("run.reasoning_item", protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: ri.Raw.ID})
+					send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: ri.Raw.ID})
 				}
 			}
 		case "tool_called":
@@ -680,7 +695,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 				if handoffNames[fc.Name] {
 					return
 				}
-				send("run.tool_call", protocol.RunToolCall{
+				send(protocol.EventRunToolCall, protocol.RunToolCall{
 					RunID:      runID,
 					ToolCallID: fc.CallID,
 					ToolName:   fc.Name,
@@ -693,7 +708,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 				if fco := to.Raw.OfFunctionCallOutput; fco != nil {
 					callID = fco.CallID
 				}
-				send("run.tool_result", protocol.RunToolResult{
+				send(protocol.EventRunToolResult, protocol.RunToolResult{
 					RunID:      runID,
 					ToolCallID: callID,
 					Output:     fmt.Sprintf("%v", to.Output),
@@ -701,14 +716,14 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			}
 		case "handoff_requested":
 			if hc, ok := e.Item.(*agents.HandoffCallItem); ok {
-				send("run.handoff", protocol.RunHandoff{
+				send(protocol.EventRunHandoff, protocol.RunHandoff{
 					RunID: runID,
 					From:  hc.AgentRef().Name,
 				})
 			}
 		case "handoff_occured":
 			if ho, ok := e.Item.(*agents.HandoffOutputItem); ok {
-				send("run.handoff", protocol.RunHandoff{
+				send(protocol.EventRunHandoff, protocol.RunHandoff{
 					RunID: runID,
 					From:  ho.SourceAgent.Name,
 					To:    ho.TargetAgent.Name,
@@ -717,7 +732,7 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 		}
 
 	case *agents.AgentUpdatedStreamEvent:
-		send("run.agent_start", protocol.RunAgentStart{
+		send(protocol.EventRunAgentStart, protocol.RunAgentStart{
 			RunID:     runID,
 			AgentName: e.NewAgent.Name,
 		})

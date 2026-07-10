@@ -40,6 +40,15 @@ func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
 		t.Fatal("state reads blocked while a connect was in flight")
 	}
 
+	// The in-flight handshake is observable: this is what the API's
+	// "connecting" status is derived from.
+	if !m.IsConnecting("srv1") {
+		t.Fatal("IsConnecting should be true while a handshake is in flight")
+	}
+	if m.IsConnecting("other") {
+		t.Fatal("IsConnecting should be false for a server with no handshake")
+	}
+
 	// A concurrent Connect for the same server is deduped, not run twice.
 	if _, err := m.beginConnect("srv1"); !errors.Is(err, ErrConnectInProgress) {
 		t.Fatalf("second beginConnect: err = %v, want ErrConnectInProgress", err)
@@ -50,8 +59,64 @@ func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
 	if err := m.finishConnect("srv1", nil, errors.New("handshake failed")); err == nil {
 		t.Fatal("finishConnect should surface the handshake error")
 	}
+	if m.IsConnecting("srv1") {
+		t.Fatal("IsConnecting should be false after the handshake finished")
+	}
 	if done, err := m.beginConnect("srv1"); done || err != nil {
 		t.Fatalf("after a failed connect, beginConnect should be claimable again: done=%v err=%v", done, err)
+	}
+}
+
+// LiveRunIDs feeds the WS broadcast bus: a freshly connected browser is
+// attached to exactly the runs still executing — finished and interrupted
+// runs leave the set (resume re-adds and re-attaches via OnRunAttach).
+func TestRunHubLiveRunIDs(t *testing.T) {
+	h := NewRunHub(t.Context())
+	if got := h.LiveRunIDs(); len(got) != 0 {
+		t.Fatalf("empty hub: got %v", got)
+	}
+	if _, _, err := h.register("r1", "s1", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.register("r2", "s2", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.LiveRunIDs(); len(got) != 2 {
+		t.Fatalf("two live runs: got %v", got)
+	}
+	h.finish("r1", false)
+	got := h.LiveRunIDs()
+	if len(got) != 1 || got[0] != "r2" {
+		t.Fatalf("after finish: got %v, want [r2]", got)
+	}
+	h.finish("r2", true) // interrupted also leaves the live set
+	if got := h.LiveRunIDs(); len(got) != 0 {
+		t.Fatalf("after interrupt: got %v", got)
+	}
+}
+
+// IsAuthorizing tracks the interactive OAuth attempt for a server id and is
+// safe on a nil coordinator (handlers constructed without OAuth in tests).
+func TestOAuthCoordinatorIsAuthorizing(t *testing.T) {
+	var nilC *OAuthCoordinator
+	if nilC.IsAuthorizing("x") {
+		t.Fatal("nil coordinator should report no flows")
+	}
+
+	c := NewOAuthCoordinator(nil)
+	if c.IsAuthorizing("srv1") {
+		t.Fatal("no flow started yet")
+	}
+	a := &oauthAttempt{cancel: func() {}, done: make(chan struct{})}
+	c.mu.Lock()
+	c.inflight["srv1"] = a
+	c.mu.Unlock()
+	if !c.IsAuthorizing("srv1") {
+		t.Fatal("flow in progress should be reported")
+	}
+	c.clearInflight("srv1", a)
+	if c.IsAuthorizing("srv1") {
+		t.Fatal("finished flow should no longer be reported")
 	}
 }
 

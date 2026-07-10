@@ -14,16 +14,23 @@ import (
 
 // WSHandler dispatches WebSocket messages to start runs and handle tool
 // approvals and rejections. Runs live in the runner's hub, independent of the
-// connection; the handler subscribes the connection to a run's event stream
-// and cleans its subscriptions up on disconnect. Approvals are persisted by
-// the runner, so approve/reject work across reconnects and restarts.
+// connection, and their events are a broadcast bus: the registry attaches
+// every connection to every run (on connect, and via Runner.OnRunAttach when
+// a run starts or resumes), so a second browser on the same session streams
+// the conversation live instead of waiting for a reload. Approvals are
+// persisted by the runner, so approve/reject work across reconnects and
+// restarts.
 type WSHandler struct {
-	runner *bridge.Runner
+	runner   *bridge.Runner
+	registry *ConnRegistry
 }
 
-// NewWSHandler returns a WebSocket handler backed by the given runner.
+// NewWSHandler returns a WebSocket handler backed by the given runner and
+// wires the runner's attach hook to the connection registry.
 func NewWSHandler(runner *bridge.Runner) *WSHandler {
-	return &WSHandler{runner: runner}
+	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub())}
+	runner.OnRunAttach = h.registry.AttachAll
+	return h
 }
 
 // wsSink returns an event sink that enqueues envelopes onto the connection's
@@ -86,6 +93,10 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 	conn.StartWriter()
 	subs := &connSubs{hub: h.runner.Hub(), subs: map[string]int{}}
 	defer subs.closeAll()
+	// Join the broadcast bus: attach to every in-flight run (with replay) now,
+	// and let AttachAll pick this connection up for runs started later.
+	h.registry.register(conn, subs)
+	defer h.registry.unregister(conn)
 
 	for {
 		var env protocol.Envelope
@@ -101,15 +112,15 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		}
 
 		switch env.Type {
-		case "run.create":
+		case protocol.EventRunCreate:
 			var msg protocol.RunCreate
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
 				log.Error().Err(err).Msg("unmarshal run.create")
 				continue
 			}
-			h.handleRunCreate(conn, subs, msg)
+			h.handleRunCreate(conn, msg)
 
-		case "run.subscribe":
+		case protocol.EventRunSubscribe:
 			var msg protocol.RunSubscribe
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
 				log.Error().Err(err).Msg("unmarshal run.subscribe")
@@ -123,7 +134,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal tool.approve")
 				continue
 			}
-			go h.resolve(conn, subs, msg.ToolCallID, true, bridge.ParseApprovalScope(msg.Scope), "")
+			go h.resolve(conn, msg.ToolCallID, true, bridge.ParseApprovalScope(msg.Scope), "")
 
 		case "tool.reject":
 			var msg protocol.ToolReject
@@ -131,9 +142,9 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error().Err(err).Msg("unmarshal tool.reject")
 				continue
 			}
-			go h.resolve(conn, subs, msg.ToolCallID, false, bridge.ApprovalOnce, msg.Reason)
+			go h.resolve(conn, msg.ToolCallID, false, bridge.ApprovalOnce, msg.Reason)
 
-		case "run.cancel":
+		case protocol.EventRunCancel:
 			var msg protocol.RunCancel
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
 				log.Error().Err(err).Msg("unmarshal run.cancel")
@@ -156,56 +167,51 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 func (h *WSHandler) subscribe(conn *server.WSConn, subs *connSubs, runID string, fromSeq int) {
 	subID, ok := h.runner.Hub().Subscribe(runID, fromSeq, wsSink(conn))
 	if !ok {
-		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
-			RunID: runID, Code: "run_not_found", Message: "run not found or expired",
+		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+			RunID: runID, Code: protocol.CodeRunNotFound, Message: "run not found or expired",
 		})})
 		return
 	}
 	subs.add(runID, subID)
 }
 
-func (h *WSHandler) handleRunCreate(conn *server.WSConn, subs *connSubs, msg protocol.RunCreate) {
-	runID, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.Input, nil)
+func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate) {
+	// No explicit subscribe here: the runner's OnRunAttach hook attached every
+	// connection (this one included) before the first event published.
+	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.Input, nil)
 	if err != nil {
 		// These fire before any run.started, so no run→session mapping exists
 		// client-side yet: carry the session id so the error is attributable.
 		var busy bridge.ErrSessionBusy
 		if errors.As(err, &busy) {
-			_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
-				RunID: busy.RunID, SessionID: msg.SessionID, Code: "session_busy", Message: "session already has an active run",
+			_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+				RunID: busy.RunID, SessionID: msg.SessionID, Code: protocol.CodeSessionBusy, Message: "session already has an active run",
 			})})
 			return
 		}
-		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
-			SessionID: msg.SessionID, Code: "session_not_found", Message: err.Error(),
+		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+			SessionID: msg.SessionID, Code: protocol.CodeSessionNotFound, Message: err.Error(),
 		})})
 		return
 	}
-	// Subscribe from 0 so the run.started already buffered is delivered.
-	h.subscribe(conn, subs, runID, 0)
 }
 
-// resolve applies an approve/reject decision (persisted by the runner) and
-// subscribes conn to the resumed run.
-func (h *WSHandler) resolve(conn *server.WSConn, subs *connSubs, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
+// resolve applies an approve/reject decision (persisted by the runner). The
+// decision resumes the SAME run id; the runner's OnRunAttach hook re-attaches
+// any connection not already watching it (a connection that watched the
+// interrupted run is still attached and just keeps receiving events).
+func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := zerolog.Ctx(conn.Context())
-	runID, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
+	_, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		log.Error().Err(err).Str("tool_call_id", toolCallID).Msg("resolve approval failed")
 		// Carry the session id (when known) so the client can rebuild the paused
 		// turn's approval card — the optimistic approve/reject status was applied
 		// but the resume never happened.
-		_ = conn.WriteJSON(&protocol.Envelope{Type: "run.error", Payload: mustJSON(protocol.RunError{
-			SessionID: sessionID, Code: "approval_failed", Message: err.Error(),
+		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+			SessionID: sessionID, Code: protocol.CodeApprovalFailed, Message: err.Error(),
 		})})
 		return
-	}
-	// The decision resumes the SAME run id. A connection that watched the
-	// interrupted run is still attached to it and keeps receiving the resumed
-	// events; only attach (with full replay) when this connection has no
-	// subscription yet — e.g. the approval came from a fresh tab or over REST.
-	if !subs.has(runID) {
-		h.subscribe(conn, subs, runID, 0)
 	}
 }
 

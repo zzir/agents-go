@@ -2,15 +2,7 @@ import { Button, Label } from '@primer/react';
 import { ToolsIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
-
-interface ToolCall {
-  tool_call_id: string;
-  tool_name: string;
-  arguments: string;
-  needs_approval?: boolean;
-  status?: string;
-  output?: string;
-}
+import { type ToolCall } from '@/lib/timeline';
 
 interface ToolCallCardProps {
   toolCall: ToolCall;

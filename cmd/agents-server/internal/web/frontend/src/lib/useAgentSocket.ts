@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { WSClient } from '@/lib/ws';
-import { buildTimeline, patchToolCall, findToolCall } from '@/lib/timeline';
+import { EV, ERR } from '@/lib/protocol';
+import { buildTimeline } from '@/lib/timeline';
+import {
+  ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendHandoffPart,
+} from '@/lib/streamReducer';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 
@@ -132,9 +137,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
     loadedRef.current.add(sid);
     const msgP = fetchTimeline(sid).then(timeline => {
-      // Live events may have landed while fetching (loaded flipped true) —
-      // they are fresher than this snapshot, so keep them.
-      updateSS(sid, s => s.loaded ? s : { ...s, messages: timeline, loaded: true });
+      // Live events may have landed while fetching (loaded flipped true, e.g.
+      // a broadcast run.started from another browser's run) — merge them onto
+      // the persisted snapshot instead of dropping either side.
+      updateSS(sid, s => s.loaded
+        ? { ...s, messages: mergeLiveTail(timeline, s.messages) }
+        : { ...s, messages: timeline, loaded: true });
     });
     api.sessions.traces(sid).then((events: Array<{ run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
       if (!events || events.length === 0) return;
@@ -162,7 +170,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           duration,
         });
       }
-      updateSS(sid, s => Object.keys(s.traceRuns).length > 0 ? s : { ...s, traceRuns: runs });
+      // Merge per run id with live data winning: a run.started that landed
+      // during this fetch has already seeded (and keeps updating) its own run's
+      // entry — the old all-or-nothing guard dropped every persisted run's
+      // trace whenever any live run existed.
+      updateSS(sid, s => ({ ...s, traceRuns: { ...runs, ...s.traceRuns } }));
     }).catch(() => {});
     return msgP;
   }, [fetchTimeline, updateSS]);
@@ -175,7 +187,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     const ws = new WSClient();
     wsRef.current = ws;
 
-    ws.on('run.started', (p: { session_id?: string; run_id: string }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string }) => {
       const sid = p.session_id;
       if (!sid) return;
       runMapRef.current[p.run_id] = sid;
@@ -185,22 +197,25 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // Keep any existing set across a replay/resume (same run id) so its dedup
       // memory survives; only seed one for a genuinely new run.
       if (!appendedItemsRef.current[p.run_id]) appendedItemsRef.current[p.run_id] = new Set();
-      if (!loadedRef.current.has(sid)) loadedRef.current.add(sid);
+      // Deliberately NOT marking loadedRef here: run events broadcast to every
+      // browser, so this may be the first thing a watching browser hears about
+      // the session — loadSession must still fetch the history later (its merge
+      // keeps the live entries accumulated meanwhile).
       updateSS(sid, s => {
-        // Hub replays (reconnect / re-subscribe) re-deliver run.started; don't
-        // grow a second live turn for a run we already track.
-        const hasTurn = s.messages.some(m => m.role === 'turn' && (m as { runId?: string }).runId === p.run_id);
+        // Hub replays (reconnect / re-subscribe) re-deliver run.started; the
+        // reducer returns null instead of growing a second live turn.
+        const appended = ensureLiveTurn(s.messages, p.run_id, p.input);
         return {
           ...s, running: true, compacting: false, liveRunId: p.run_id,
-          liveStartedAt: hasTurn ? (s.liveStartedAt ?? Date.now()) : Date.now(),
+          liveStartedAt: appended ? Date.now() : (s.liveStartedAt ?? Date.now()),
           liveAgentName: null, loaded: true,
-          messages: hasTurn ? s.messages : [...s.messages, { role: 'turn', parts: [], runId: p.run_id }],
+          messages: appended || s.messages,
           traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
         };
       });
     });
 
-    ws.on('run.step', (p: { run_id: string; delta: string }) => {
+    ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       streamBufsRef.current[p.run_id] = (streamBufsRef.current[p.run_id] || '') + p.delta;
@@ -210,7 +225,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       });
     });
 
-    ws.on('run.reasoning', (p: { run_id: string; delta: string }) => {
+    ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       reasoningBufsRef.current[p.run_id] = (reasoningBufsRef.current[p.run_id] || '') + p.delta;
@@ -224,7 +239,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // and final answer alike. Authoritative over the run.step deltas that
     // previewed it: the delta buffer is dropped so the tool_call flush (and
     // run.output) cannot append the same text again.
-    ws.on('run.message', (p: { run_id: string; text: string; item_id?: string }) => {
+    ws.on(EV.runMessage, (p: { run_id: string; text: string; item_id?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       streamBufsRef.current[p.run_id] = '';
@@ -234,16 +249,8 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // genuinely repeated identical message) for backends that send no id.
       if (p.item_id && seen.has(p.item_id)) { updateSS(sid, s => ({ ...s, streaming: '' })); return; }
       updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role !== 'turn') return { ...s, streaming: '' };
-        const parts = [...(last.parts || [])];
-        if (!p.item_id && parts.some(pt => pt.type === 'text' && pt.content === p.text)) {
-          return { ...s, streaming: '' };
-        }
-        parts.push({ type: 'text', content: p.text });
-        msgs[msgs.length - 1] = { ...last, parts };
-        return { ...s, messages: msgs, streaming: '' };
+        const msgs = appendMessageItem(s.messages, p.text, !p.item_id);
+        return msgs ? { ...s, messages: msgs, streaming: '' } : { ...s, streaming: '' };
       });
       if (p.item_id) seen.add(p.item_id);
     });
@@ -253,7 +260,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // it as a thinking part (and resetting the delta buffer) scopes the live
     // "Thinking…" preview to the current turn and is the only thinking signal
     // on backends that stream no reasoning deltas.
-    ws.on('run.reasoning_item', (p: { run_id: string; text: string; item_id?: string }) => {
+    ws.on(EV.runReasoningItem, (p: { run_id: string; text: string; item_id?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       reasoningBufsRef.current[p.run_id] = '';
@@ -262,21 +269,13 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // fall back to text equality only when the backend sends none.
       if (p.item_id && seen.has(p.item_id)) { updateSS(sid, s => ({ ...s, reasoning: '' })); return; }
       updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role !== 'turn') return { ...s, reasoning: '' };
-        const parts = [...(last.parts || [])];
-        if (!p.item_id && parts.some(pt => pt.type === 'thinking' && pt.content === p.text)) {
-          return { ...s, reasoning: '' };
-        }
-        parts.push({ type: 'thinking', content: p.text });
-        msgs[msgs.length - 1] = { ...last, parts };
-        return { ...s, messages: msgs, reasoning: '' };
+        const msgs = appendReasoningItem(s.messages, p.text, !p.item_id);
+        return msgs ? { ...s, messages: msgs, reasoning: '' } : { ...s, reasoning: '' };
       });
       if (p.item_id) seen.add(p.item_id);
     });
 
-    ws.on('run.output', (p: { run_id: string; final_output?: string }) => {
+    ws.on(EV.runOutput, (p: { run_id: string; final_output?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       const text = p.final_output || streamBufsRef.current[p.run_id] || '';
@@ -286,28 +285,17 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete appendedItemsRef.current[p.run_id];
       delete sessionRunRef.current[sid];
       updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role === 'turn' && (text || thinking)) {
-          const parts = [...(last.parts || [])];
-          if (thinking) parts.push({ type: 'thinking', content: thinking });
-          // run.message already appended the final turn's text; only add it
-          // here when that event did not (older server, no-item edge cases).
-          if (text && !parts.some(pt => pt.type === 'text' && pt.content === text)) {
-            parts.push({ type: 'text', content: text });
-          }
-          msgs[msgs.length - 1] = { ...last, parts };
-        }
-        return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
+        const msgs = finalizeTurn(s.messages, text, thinking);
+        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
       });
       reloadMessages(sid);
     });
 
-    ws.on('run.error', (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
+    ws.on(EV.runError, (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
       // The session already has a live run (e.g. double-send from another
       // tab): the run this error names is still executing — a toast, not a
       // terminal error on the live turn.
-      if (p.code === 'session_busy') {
+      if (p.code === ERR.sessionBusy) {
         toast.error(p.message || 'Session already has an active run');
         return;
       }
@@ -315,7 +303,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // stale state): the optimistic 'approved'/'rejected' card status was never
       // rolled back. Rebuild the paused turn from the durable approval row so its
       // pending card and Approve/Reject controls reappear, and surface why.
-      if (p.code === 'approval_failed') {
+      if (p.code === ERR.approvalFailed) {
         toast.error(p.message || 'Approval failed');
         const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
         if (sid) reloadMessages(sid);
@@ -323,7 +311,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       }
       // The run we tried to resubscribe expired server-side (finished >15min
       // ago): clear the stale mapping and fall back to persisted history.
-      if (p.code === 'run_not_found') {
+      if (p.code === ERR.runNotFound) {
         const staleSid = p.run_id ? runMapRef.current[p.run_id] : undefined;
         if (p.run_id) delete runMapRef.current[p.run_id];
         if (staleSid) {
@@ -349,32 +337,22 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete sessionRunRef.current[sid];
       // A guardrail block carries the guardrail name + stage so the turn renders
       // a distinct "blocked" card instead of a generic error.
-      const errPart = p.code === 'guardrail_tripwire'
-        ? { type: 'error', content: p.message, guardrail: p.guardrail, stage: p.stage }
-        : { type: 'error', content: p.message };
-      updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; content?: string; parts?: Array<{ type: string; content?: string; guardrail?: string; stage?: string }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role === 'turn') {
-          const parts = [...(last.parts || [])];
-          if (thinking) parts.push({ type: 'thinking', content: thinking });
-          if (remaining) parts.push({ type: 'text', content: remaining });
-          parts.push(errPart);
-          msgs[msgs.length - 1] = { ...last, parts };
-        } else {
-          msgs.push({ role: 'turn', parts: [errPart] });
-        }
-        return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
-      });
+      const errPart = p.code === ERR.guardrailTripwire
+        ? { type: 'error' as const, content: p.message, guardrail: p.guardrail, stage: p.stage }
+        : { type: 'error' as const, content: p.message };
+      updateSS(sid, s => ({
+        ...s, messages: appendErrorPart(s.messages, errPart, thinking, remaining),
+        streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null,
+      }));
       // A guardrail block already rendered its typed card (with the retracted
       // answer above it) optimistically. A reload would replace that with the
       // persisted timeline, which — since the SDK never persists a tripped output
       // (Python parity) — drops the answer; the card itself survives via the
       // persisted guardrail/stage. Keep the richer optimistic view for this session.
-      if (p.code !== 'guardrail_tripwire') reloadMessages(sid);
+      if (p.code !== ERR.guardrailTripwire) reloadMessages(sid);
     });
 
-    ws.on('run.cancelled', (p: { run_id?: string; code?: string }) => {
+    ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
       const rid = p?.run_id;
       const sid = rid ? runMapRef.current[rid] : null;
       if (!sid || !rid) return;
@@ -384,63 +362,38 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete reasoningBufsRef.current[rid];
       delete appendedItemsRef.current[rid];
       delete sessionRunRef.current[sid];
+      // The marker shows immediately, mirroring how run.error appends its card
+      // optimistically, instead of waiting on the async reload (which the next
+      // run's start can also skip).
       updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role === 'turn') {
-          const parts = [...(last.parts || [])];
-          if (thinking) parts.push({ type: 'thinking', content: thinking });
-          if (remaining) parts.push({ type: 'text', content: remaining });
-          // Show the "Run cancelled" marker immediately, mirroring how run.error
-          // appends its card optimistically, instead of waiting on the async
-          // reload (which the next run's start can also skip).
-          if (parts[parts.length - 1]?.type !== 'cancelled') parts.push({ type: 'cancelled' });
-          msgs[msgs.length - 1] = { ...last, parts };
-        }
-        return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
+        const msgs = appendCancelledPart(s.messages, thinking, remaining);
+        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
       });
       reloadMessages(sid);
     });
 
-    ws.on('run.tool_call', (p: { run_id: string; tool_call_id: string; tool_name: string; arguments: string; needs_approval?: boolean }) => {
+    ws.on(EV.runToolCall, (p: { run_id: string; tool_call_id: string; tool_name: string; arguments: string; needs_approval?: boolean }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       const flushed = streamBufsRef.current[p.run_id] || '';
       streamBufsRef.current[p.run_id] = '';
-      const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval, status: null as string | null, output: null as string | null };
+      // Normalize needs_approval: the wire always carries the bool, but a
+      // replayed timeline only ever marks pending calls — carrying an explicit
+      // false would make the streamed turn differ from its reload (the
+      // isomorphism test pins this).
+      const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval || undefined, status: null as string | null, output: null as string | null };
       updateSS(sid, s => {
-        // Replays and the approval-rebuilt turn can already hold this call:
-        // update the existing card instead of appending a duplicate (a stray
-        // duplicate needs_approval card would pin the session red forever).
-        const patched = patchToolCall(s.messages, p.tool_call_id, { tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval });
-        if (patched) return { ...s, messages: patched, streaming: '' };
-        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string; toolCalls?: typeof tc[] }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role !== 'turn') return s;
-        const parts = [...(last.parts || [])];
-        if (flushed) parts.push({ type: 'text', content: flushed });
-        const lastPart = parts[parts.length - 1];
-        if (lastPart?.type === 'tools' && lastPart.toolCalls) {
-          parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, tc] };
-        } else {
-          parts.push({ type: 'tools', toolCalls: [tc] });
-        }
-        msgs[msgs.length - 1] = { ...last, parts };
-        return { ...s, messages: msgs, streaming: '' };
+        const msgs = appendToolCall(s.messages, tc, flushed);
+        return msgs ? { ...s, messages: msgs, streaming: '' } : s;
       });
     });
 
-    ws.on('run.tool_result', (p: { run_id: string; tool_call_id: string; output: string }) => {
+    ws.on(EV.runToolResult, (p: { run_id: string; tool_call_id: string; output: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
-        // A user-rejected call keeps its terminal 'rejected' status: the resumed
-        // turn still emits a tool_output (the rejection notice) that would
-        // otherwise clobber the red 'rejected' badge to a plain 'completed'.
-        const cur = findToolCall(s.messages, p.tool_call_id);
-        const status = cur?.status === 'rejected' ? 'rejected' : 'completed';
-        const patched = patchToolCall(s.messages, p.tool_call_id, { output: p.output, status });
-        return patched ? { ...s, messages: patched } : s;
+        const msgs = applyToolResult(s.messages, p.tool_call_id, p.output);
+        return msgs ? { ...s, messages: msgs } : s;
       });
     });
 
@@ -449,7 +402,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // (reloads merge the paused turn from the durable approvals meanwhile).
     // The mappings stay: the approval decision RESUMES THE SAME run id, so a
     // later run.started on this id flips the session back to live seamlessly.
-    ws.on('run.interrupted', (p: { run_id: string }) => {
+    ws.on(EV.runInterrupted, (p: { run_id: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
@@ -463,13 +416,13 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       }));
     });
 
-    ws.on('run.agent_start', (p: { run_id: string; agent_name?: string }) => {
+    ws.on(EV.runAgentStart, (p: { run_id: string; agent_name?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.agent_name) return;
       updateSS(sid, s => s.liveAgentName === p.agent_name ? s : { ...s, liveAgentName: p.agent_name || null });
     });
 
-    ws.on('run.compaction', (p: { run_id: string; phase: string }) => {
+    ws.on(EV.runCompaction, (p: { run_id: string; phase: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => ({ ...s, compacting: p.phase === 'started' }));
@@ -480,23 +433,18 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // isLive check anchor on it, so a message appended after it would freeze
     // live rendering for the rest of the run. handoff_requested events (no
     // `to` yet) are preview noise and are skipped.
-    ws.on('run.handoff', (p: { run_id: string; from: string; to?: string }) => {
+    ws.on(EV.runHandoff, (p: { run_id: string; from: string; to?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.to) return;
+      // Hub replays (reconnect) re-deliver run.handoff; the reducer dedups like
+      // run.message / run.reasoning_item so a reconnect mid-run doesn't stack rows.
       updateSS(sid, s => {
-        const msgs = [...s.messages] as Array<{ role: string; parts?: Array<{ type: string; content?: string }> }>;
-        const last = msgs[msgs.length - 1];
-        if (last?.role !== 'turn') return s;
-        const content = p.from + ' → ' + p.to;
-        // Hub replays (reconnect) re-deliver run.handoff; dedup like run.message /
-        // run.reasoning_item so a reconnect mid-run doesn't stack duplicate rows.
-        if ((last.parts || []).some(pt => pt.type === 'handoff' && pt.content === content)) return s;
-        msgs[msgs.length - 1] = { ...last, parts: [...(last.parts || []), { type: 'handoff', content }] };
-        return { ...s, messages: msgs };
+        const msgs = appendHandoffPart(s.messages, p.from + ' → ' + p.to);
+        return msgs ? { ...s, messages: msgs } : s;
       });
     });
 
-    ws.on('trace.span', (p: { run_id: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
+    ws.on(EV.traceSpan, (p: { run_id: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
@@ -525,7 +473,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // completed offline shows its result.
     ws.onReconnect = () => {
       for (const [sid, runId] of Object.entries(sessionRunRef.current)) {
-        ws.send('run.subscribe', { run_id: runId });
+        ws.send(EV.runSubscribe, { run_id: runId });
         reloadMessages(sid);
       }
     };

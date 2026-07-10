@@ -4,29 +4,31 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "build": "tsc --noEmit && vitest run && vite build",
     "postbuild": "find dist -type f \\( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' \\) -exec brotli -9 --rm {} \\;",
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "@primer/react": "38.29.0",
-    "@primer/primitives": "11.9.0",
     "@primer/css": "22.3.0",
     "@primer/octicons-react": "19.28.1",
+    "@primer/primitives": "11.9.0",
+    "@primer/react": "38.29.0",
+    "dompurify": "3.4.11",
     "highlight.js": "11.11.1",
-    "marked": "15.0.12",
     "katex": "0.16.47",
+    "marked": "15.0.12",
     "mermaid": "11.16.0",
-    "dompurify": "3.4.11"
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
   },
   "devDependencies": {
-    "vite": "6.4.3",
-    "@vitejs/plugin-react": "4.7.0",
-    "typescript": "5.9.3",
+    "@types/dompurify": "3.0.5",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "@types/dompurify": "3.0.5"
+    "@vitejs/plugin-react": "4.7.0",
+    "typescript": "5.9.3",
+    "vite": "6.4.3",
+    "vitest": "^4.1.10"
   }
 }

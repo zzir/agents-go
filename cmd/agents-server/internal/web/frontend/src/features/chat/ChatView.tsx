@@ -6,7 +6,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { renderMarkdownLite, useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { formatDuration } from '@/lib/timeline';
+import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { MessageInput } from '@/features/chat/MessageInput';
@@ -17,25 +17,6 @@ import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
-
-interface ToolCallData {
-  tool_call_id: string;
-  tool_name: string;
-  arguments: string;
-  needs_approval?: boolean;
-  status?: string;
-  output?: string;
-}
-
-interface TurnPart {
-  type: 'text' | 'tools' | 'error' | 'thinking' | 'cancelled' | 'handoff';
-  content?: string;
-  toolCalls?: ToolCallData[];
-  // Set on an error part when the run was blocked by a guardrail: the guardrail
-  // name and whether it fired on the input or the final output.
-  guardrail?: string;
-  stage?: string;
-}
 
 interface ChatMessage {
   role: string;
@@ -316,9 +297,9 @@ type TurnSegment =
   | { kind: 'text'; content: string }
   | { kind: 'process'; parts: TurnPart[] };
 
-function buildSegments(parts: TurnPart[]): { segments: TurnSegment[]; notices: TurnPart[] } {
+function buildSegments(parts: TurnPart[]): { segments: TurnSegment[]; notices: (ErrorPart | CancelledPart)[] } {
   const segments: TurnSegment[] = [];
-  const notices: TurnPart[] = [];
+  const notices: (ErrorPart | CancelledPart)[] = [];
   for (const p of parts) {
     if (p.type === 'error' || p.type === 'cancelled') { notices.push(p); continue; }
     if (p.type === 'text') {
@@ -376,8 +357,8 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, on
   let runningToolCount = 0;
   for (const p of parts) {
     if (p.type === 'tools') {
-      stepCount += p.toolCalls!.length;
-      for (const tc of p.toolCalls!) {
+      stepCount += p.toolCalls.length;
+      for (const tc of p.toolCalls) {
         if (tc.needs_approval && !tc.status) pendingCount++;
         else if (!tc.output && tc.status !== 'completed' && tc.status !== 'rejected') { runningToolCount++; if (!runningTool) runningTool = tc.tool_name; }
       }
@@ -428,7 +409,7 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, on
             if (p.type === 'thinking') return <TimelineThinking key={'pt-' + i} content={p.content || ''} />;
             if (p.type === 'handoff') return <TimelineHandoff key={'pt-' + i} content={p.content || ''} />;
             if (p.type === 'tools') {
-              return p.toolCalls!.map(tc => (
+              return p.toolCalls.map(tc => (
                 <ToolCallCard
                   key={tc.tool_call_id}
                   toolCall={tc}
@@ -490,7 +471,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
   const liveTail = isLive && activeIdx === -1 && !!reasoning;
 
   const turnText = useMemo(
-    () => parts.filter(p => p.type === 'text').map(p => p.content || '').join('\n\n'),
+    () => parts.flatMap(p => p.type === 'text' ? [p.content] : []).join('\n\n'),
     [parts],
   );
 

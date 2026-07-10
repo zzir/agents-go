@@ -42,13 +42,13 @@ const (
 // machine is defined in exactly one place.
 func terminalStatusForEvent(typ string) (RunStatus, bool) {
 	switch typ {
-	case "run.output":
+	case protocol.EventRunOutput:
 		return RunCompleted, true
-	case "run.error":
+	case protocol.EventRunError:
 		return RunErrored, true
-	case "run.cancelled":
+	case protocol.EventRunCancelled:
 		return RunCancelled, true
-	case "run.interrupted":
+	case protocol.EventRunInterrupted:
 		return RunInterrupted, true
 	}
 	return "", false
@@ -360,6 +360,20 @@ func (h *RunHub) ActiveRunForSession(sessionID string) (string, bool) {
 	defer h.mu.Unlock()
 	id, ok := h.bySession[sessionID]
 	return id, ok
+}
+
+// LiveRunIDs returns the ids of every currently executing run (one per busy
+// session). Used to attach a freshly connected client to all in-flight streams;
+// interrupted runs are excluded — they re-enter this set when resumed, and the
+// resume attach hook covers late joiners.
+func (h *RunHub) LiveRunIDs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ids := make([]string, 0, len(h.bySession))
+	for _, id := range h.bySession {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // gcLoop drops finished runs once they age past runRetention.
