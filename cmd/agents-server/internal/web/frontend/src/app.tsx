@@ -12,6 +12,7 @@ import { AppShell } from '@/layout/AppShell';
 import { SessionList } from '@/features/sessions/SessionList';
 import { ChatView } from '@/features/chat/ChatView';
 import { login, checkAuth, getToken, api } from '@/lib/api';
+import { EV } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall } from '@/lib/timeline';
 import { onToast, toast } from '@/lib/toast';
@@ -240,7 +241,7 @@ function App() {
 
   useEffect(() => {
     if (!wsRef.current) return;
-    wsRef.current.on('session.title_updated', () => {
+    wsRef.current.on(EV.sessionTitleUpdated, () => {
       setSessionReloadKey(k => k + 1);
     });
   }, [wsRef]);
@@ -272,14 +273,14 @@ function App() {
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }], ...(isNew ? { loaded: true } : {}) }));
     const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
     if (sandboxId) payload.sandbox_id = sandboxId;
-    wsRef.current.send('run.create', payload);
+    wsRef.current.send(EV.runCreate, payload);
   }, [activeSession, updateSS, wsRef]);
 
   const handleCancel = useCallback((graceful?: boolean) => {
     if (!wsRef.current || !activeSession) return;
     const runId = sessionRunRef.current[activeSession];
     if (!runId) return;
-    wsRef.current.send('run.cancel', { run_id: runId, mode: graceful ? 'graceful' : '' });
+    wsRef.current.send(EV.runCancel, { run_id: runId, mode: graceful ? 'graceful' : '' });
   }, [activeSession, wsRef, sessionRunRef]);
 
   const updateToolCall = useCallback((toolCallId: string, patch: Record<string, any>) => {
@@ -293,7 +294,7 @@ function App() {
   const handleApprove = useCallback((toolCallId: string, scope?: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'approved' });
-    if (!wsRef.current.send('tool.approve', { tool_call_id: toolCallId, scope })) {
+    if (!wsRef.current.send(EV.toolApprove, { tool_call_id: toolCallId, scope })) {
       // The socket is down: undo the optimistic status so the card stays
       // actionable — a silently dropped approval would strand the paused run.
       updateToolCall(toolCallId, { status: null });
@@ -304,7 +305,7 @@ function App() {
   const handleReject = useCallback((toolCallId: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'rejected' });
-    if (!wsRef.current.send('tool.reject', { tool_call_id: toolCallId })) {
+    if (!wsRef.current.send(EV.toolReject, { tool_call_id: toolCallId })) {
       updateToolCall(toolCallId, { status: null });
       toast.error('Not connected — rejection not sent, try again');
     }
@@ -337,7 +338,7 @@ function App() {
       updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent }] }));
       const payload: Record<string, any> = { session_id: forked.id, input: userContent, agent_config_id: agentConfigId };
       if (sandboxId) payload.sandbox_id = sandboxId;
-      wsRef.current.send('run.create', payload);
+      wsRef.current.send(EV.runCreate, payload);
     } catch (e: any) {
       toast.error(e.message || 'Regenerate failed');
     }

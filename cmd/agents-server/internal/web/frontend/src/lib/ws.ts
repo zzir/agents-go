@@ -1,4 +1,5 @@
 import { getToken } from '@/lib/api';
+import { EV } from '@/lib/protocol';
 
 interface WSEnvelope {
   type: string;
@@ -50,14 +51,14 @@ export class WSClient {
 
     this.ws.onopen = () => {
       this._retryDelay = 1000;
-      this.ws!.send(JSON.stringify({ type: 'auth', token }));
+      this.ws!.send(JSON.stringify({ type: EV.auth, token }));
     };
 
     this.ws.onmessage = (e: MessageEvent) => {
       try {
         const env: WSEnvelope = JSON.parse(e.data);
         if (!authed) {
-          if (env.type === 'auth.ok') {
+          if (env.type === EV.authOk) {
             authed = true;
             // Re-auth after a prior session means we reconnected; let the
             // caller resubscribe/resync. First-ever auth is not a reconnect.

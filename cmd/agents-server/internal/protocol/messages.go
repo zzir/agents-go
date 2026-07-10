@@ -9,6 +9,52 @@ type Envelope struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
+// Envelope.Type values. These ARE the wire protocol — every emitter and
+// consumer must reference these constants, never a string literal, so a typo
+// is a compile error instead of an event the frontend silently never receives.
+// The frontend mirror lives in web/frontend/src/lib/protocol.ts; keep both in
+// sync when adding an event.
+const (
+	// Client → server
+	EventAuth         = "auth"
+	EventRunCreate    = "run.create"
+	EventRunCancel    = "run.cancel"
+	EventRunSubscribe = "run.subscribe"
+	EventToolApprove  = "tool.approve"
+	EventToolReject   = "tool.reject"
+
+	// Server → client
+	EventAuthOK              = "auth.ok"
+	EventRunStarted          = "run.started"
+	EventRunAgentStart       = "run.agent_start"
+	EventRunStep             = "run.step"
+	EventRunReasoning        = "run.reasoning"
+	EventRunMessage          = "run.message"
+	EventRunReasoningItem    = "run.reasoning_item"
+	EventRunToolCall         = "run.tool_call"
+	EventRunToolResult       = "run.tool_result"
+	EventRunHandoff          = "run.handoff"
+	EventRunOutput           = "run.output"
+	EventRunError            = "run.error"
+	EventRunInterrupted      = "run.interrupted"
+	EventRunCancelled        = "run.cancelled"
+	EventRunCompaction       = "run.compaction"
+	EventSessionTitleUpdated = "session.title_updated"
+	EventTraceSpan           = "trace.span"
+)
+
+// RunError.Code values. Same single-point rule as the event constants: the
+// frontend branches on these to pick recovery behavior, so a misspelled code
+// downgrades a handled error to the generic path without any signal.
+const (
+	CodeSessionBusy       = "session_busy"
+	CodeSessionNotFound   = "session_not_found"
+	CodeRunNotFound       = "run_not_found"
+	CodeApprovalFailed    = "approval_failed"
+	CodeGuardrailTripwire = "guardrail_tripwire"
+	CodeConfigError       = "config_error"
+)
+
 // NewEnvelope marshals payload and wraps it in an Envelope of the given type.
 func NewEnvelope(typ string, payload any) (*Envelope, error) {
 	raw, err := json.Marshal(payload)
@@ -65,6 +111,11 @@ type ToolReject struct {
 type RunStarted struct {
 	RunID     string `json:"run_id"`
 	SessionID string `json:"session_id"`
+	// Input is the user prompt that started this run. Run events are broadcast
+	// to every connection, and an in-flight turn is not persisted yet — a
+	// browser that did not send the prompt renders its user bubble from this
+	// (the sender dedups against its own optimistic bubble).
+	Input string `json:"input,omitempty"`
 }
 
 // RunAgentStart notifies the client that a (possibly handed-off-to) agent has started its turn.

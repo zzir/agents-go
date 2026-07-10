@@ -101,14 +101,14 @@ func (p *wsProcessor) OnTraceEnd(*tracing.Trace)   {}
 // after the typed constructor (which fires this hook) returns.
 func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 	ts, _ := p.spanMessage(span)
-	p.send("trace.span", ts)
+	p.send(protocol.EventTraceSpan, ts)
 }
 
 // OnSpanEnd pushes the finished span (same span_id — the client replaces the
 // pending version) and persists it.
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts, dataJSON := p.spanMessage(span)
-	p.send("trace.span", ts)
+	p.send(protocol.EventTraceSpan, ts)
 	te := &store.TraceEvent{
 		SessionID: p.sessionID,
 		RunID:     p.runID,

@@ -98,17 +98,17 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	}
 	sink := func(env *protocol.Envelope) {
 		switch env.Type {
-		case "run.output":
+		case protocol.EventRunOutput:
 			var p protocol.RunOutput
 			_ = json.Unmarshal(env.Payload, &p)
 			report(outcome{final: p.FinalOutput})
-		case "run.error":
+		case protocol.EventRunError:
 			var p protocol.RunError
 			_ = json.Unmarshal(env.Payload, &p)
 			report(outcome{code: p.Code, msg: p.Message})
-		case "run.cancelled":
+		case protocol.EventRunCancelled:
 			report(outcome{code: "cancelled", msg: "run cancelled"})
-		case "run.interrupted":
+		case protocol.EventRunInterrupted:
 			report(outcome{interrupted: true})
 		}
 	}

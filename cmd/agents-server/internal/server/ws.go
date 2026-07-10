@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 const (
@@ -168,12 +170,12 @@ func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
 			Type  string `json:"type"`
 			Token string `json:"token"`
 		}
-		if err := conn.ReadJSON(&auth); err != nil || auth.Type != "auth" ||
+		if err := conn.ReadJSON(&auth); err != nil || auth.Type != protocol.EventAuth ||
 			subtle.ConstantTimeCompare([]byte(auth.Token), []byte(token)) != 1 {
 			conn.Close()
 			return
 		}
-		_ = conn.WriteJSON(map[string]string{"type": "auth.ok"})
+		_ = conn.WriteJSON(map[string]string{"type": protocol.EventAuthOK})
 
 		defer conn.Close()
 		handler(conn)
