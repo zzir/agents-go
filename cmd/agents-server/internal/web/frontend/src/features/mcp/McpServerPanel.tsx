@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
@@ -28,13 +28,17 @@ interface McpServerConfig {
   use_structured_content?: boolean;
 }
 
+// Lifecycle status derived by the backend — the panel renders it verbatim and
+// keeps no state model of its own (POST /connect + polling move it along).
+type McpStatus = 'disabled' | 'connecting' | 'authorizing' | 'needs_auth' | 'disconnected' | 'connected';
+
 interface McpServer {
   id: string | number;
   name: string;
   transport_type: string;
   enabled: boolean;
-  connected?: boolean;
-  auth_state?: string;
+  status: McpStatus;
+  has_oauth_token?: boolean;
   config?: McpServerConfig;
 }
 
@@ -119,7 +123,7 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
   const isStdio = form.transport_type === 'stdio';
   const isOAuth = form.auth_mode === 'oauth';
   const isHeader = form.auth_mode === 'header';
-  const canClearAuth = !!onClearAuth && !authCleared && !isStdio && isOAuth && initial?.auth_state === 'authorized';
+  const canClearAuth = !!onClearAuth && !authCleared && !isStdio && isOAuth && !!initial?.has_oauth_token;
 
   const handleClearAuth = async () => {
     if (!onClearAuth || clearing) return;
@@ -181,18 +185,28 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
   );
 }
 
-function statusDot(s: McpServer): string {
-  if (s.connected) return 'var(--fgColor-success)';
-  if (s.auth_state === 'unauthorized') return 'var(--fgColor-attention, var(--fgColor-muted))';
-  return 'var(--fgColor-muted)';
-}
+const STATUS_DOT: Record<McpStatus, string> = {
+  connected: 'var(--fgColor-success)',
+  connecting: 'var(--fgColor-attention, var(--fgColor-muted))',
+  authorizing: 'var(--fgColor-attention, var(--fgColor-muted))',
+  needs_auth: 'var(--fgColor-attention, var(--fgColor-muted))',
+  disconnected: 'var(--fgColor-danger, var(--fgColor-muted))',
+  disabled: 'var(--fgColor-muted)',
+};
 
-function connectLabel(s: McpServer, isConnecting: boolean): string {
-  if (isConnecting) return '...';
-  if (s.auth_state === 'unauthorized') return 'Authorize';
-  if (s.auth_state === 'authorizing') return 'Authorizing...';
-  return 'Connect';
-}
+// The action button each status offers; connected and disabled offer none.
+// connecting is disabled (a concurrent connect would just error with
+// "already in progress"), but authorizing stays CLICKABLE: the wait is on the
+// user finishing a popup they may have closed, and re-clicking supersedes the
+// stale attempt server-side (OAuthCoordinator.supersedeInflight) and opens a
+// fresh popup — otherwise a closed popup pins the row for the full 5-minute
+// pending timeout (design invariant #8).
+const STATUS_ACTION: Partial<Record<McpStatus, { label: string; inProgress?: boolean }>> = {
+  disconnected: { label: 'Connect' },
+  needs_auth: { label: 'Authorize' },
+  connecting: { label: 'Connecting...', inProgress: true },
+  authorizing: { label: 'Authorizing... (retry)' },
+};
 
 function EnabledToggle({ server, onToggle }: { server: McpServer; onToggle: (s: McpServer) => void }) {
   const [pending, setPending] = useState(false);
@@ -217,65 +231,57 @@ function EnabledToggle({ server, onToggle }: { server: McpServer; onToggle: (s: 
   );
 }
 
+// After a mutation the backend (re)connects in the background, so the response
+// status may not have caught up yet ("disconnected" an instant before the
+// handshake starts). Poll through this grace window until the list stabilizes.
+const MUTATION_GRACE_MS = 8000;
+const POLL_INTERVAL_MS = 1500;
+
 export function McpServerPanel() {
   const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
-  const [connecting, setConnecting] = useState<Record<string | number, boolean>>({});
-  const [authorizing, setAuthorizing] = useState<Record<string | number, boolean>>({});
-  const pollRef = useRef<Record<string | number, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>({});
+  // busy covers only the POST /connect round-trip; every longer-lived state
+  // (connecting, authorizing) is reported by the backend via status.
+  const [busy, setBusy] = useState<Record<string | number, boolean>>({});
+  const [graceUntil, setGraceUntil] = useState(0);
+  const bumpGrace = useCallback(() => setGraceUntil(Date.now() + MUTATION_GRACE_MS), []);
 
-  const stopPoll = useCallback((id: string | number) => {
-    const entry = pollRef.current[id];
-    if (entry) {
-      clearInterval(entry.interval);
-      clearTimeout(entry.timeout);
-      delete pollRef.current[id];
-    }
-    setAuthorizing(prev => {
-      if (!prev[id]) return prev;
-      return { ...prev, [id]: false };
-    });
-  }, []);
+  // One poll loop for the whole panel: run while any server is in a
+  // transitional status or a recent mutation may still be settling.
+  const transitional = servers.some(s => s.status === 'connecting' || s.status === 'authorizing');
+  useEffect(() => {
+    if (!transitional && !graceUntil) return;
+    const interval = setInterval(() => {
+      reload();
+      if (graceUntil && Date.now() >= graceUntil) setGraceUntil(0);
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [transitional, graceUntil, reload]);
 
-  const stopAllPolls = useCallback(() => {
-    for (const id of Object.keys(pollRef.current)) stopPoll(id);
-  }, [stopPoll]);
-
-  useEffect(() => stopAllPolls, [stopAllPolls]);
-
+  // The OAuth popup notifies us when its flow ends (success or denial); the
+  // poll loop above is the fallback when the message never arrives.
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data && event.data.type === 'mcp-oauth-done') {
+        bumpGrace();
         reload();
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [reload]);
+  }, [reload, bumpGrace]);
 
   const handleConnect = async (id: string | number) => {
-    setConnecting(prev => ({ ...prev, [id]: true }));
+    setBusy(prev => ({ ...prev, [id]: true }));
     try {
       const res = await api.mcpServers.connect(id) as { status?: string; authorize_url?: string } | null;
       if (res && res.status === 'authorization_required' && res.authorize_url) {
-        stopPoll(id);
-        setAuthorizing(prev => ({ ...prev, [id]: true }));
         window.open(res.authorize_url, 'mcp_oauth', 'width=520,height=640,popup=yes');
-        const interval = setInterval(async () => {
-          try {
-            const srv = await api.mcpServers.get(id) as McpServer | null;
-            if (srv && srv.connected) {
-              stopPoll(id);
-              reload();
-            }
-          } catch (_) { /* ignore transient errors */ }
-        }, 2000);
-        const timeout = setTimeout(() => { stopPoll(id); reload(); }, 5 * 60 * 1000);
-        pollRef.current[id] = { interval, timeout };
       }
     } catch (e: unknown) {
       toast.error((e as Error).message || 'Connect failed');
     }
-    setConnecting(prev => ({ ...prev, [id]: false }));
+    setBusy(prev => ({ ...prev, [id]: false }));
+    bumpGrace();
     reload();
   };
   const handleClearAuth = async (id: string | number): Promise<boolean> => {
@@ -293,10 +299,16 @@ export function McpServerPanel() {
   const handleToggleEnabled = async (s: McpServer) => {
     try {
       await api.mcpServers.update(s.id, { ...s, enabled: !s.enabled });
+      bumpGrace();
       reload();
     } catch (e) {
       toast.error((e as Error).message);
     }
+  };
+
+  const handleSave = async (data: Partial<McpServer>) => {
+    await save(data);
+    bumpGrace();
   };
 
   return (
@@ -307,35 +319,38 @@ export function McpServerPanel() {
         </PageHeader.TitleArea>
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
-      {adding && <McpForm onSave={save} onCancel={cancel} />}
-      {editing && <McpForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />}
+      {adding && <McpForm onSave={handleSave} onCancel={cancel} />}
+      {editing && <McpForm initial={editing} onSave={handleSave} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />}
       {!adding && !editing && <div className="Box">
-        {servers.map(s => (
-          <div key={s.id} className="Box-row">
-            <div className="resource-row-main">
-              <div className="form-status">
-                <span className="form-status-dot" style={{ background: statusDot(s) }} />
-                <span className="resource-row-title">{s.name}</span>
-                {s.config && s.config.auth_mode === 'oauth' && <Label variant="secondary">OAuth</Label>}
+        {servers.map(s => {
+          const action = STATUS_ACTION[s.status];
+          return (
+            <div key={s.id} className="Box-row">
+              <div className="resource-row-main">
+                <div className="resource-row-head">
+                  <span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />
+                  <span className="resource-row-title">{s.name}</span>
+                  {s.config && s.config.auth_mode === 'oauth' && <Label variant="secondary">OAuth</Label>}
+                </div>
+                <div className="resource-row-sub">
+                  {s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}
+                </div>
               </div>
-              <div className="resource-row-sub" style={{ marginLeft: '16px' }}>
-                {s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}
+              <div className="resource-row-actions">
+                {action && (
+                  <Button
+                    onClick={() => handleConnect(s.id)}
+                    disabled={action.inProgress || busy[s.id]}
+                    size="small"
+                    style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
+                  >{busy[s.id] ? '...' : action.label}</Button>
+                )}
+                <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
+                <EnabledToggle server={s} onToggle={handleToggleEnabled} />
               </div>
             </div>
-            <div className="resource-row-actions">
-              {!s.connected && (
-                <Button
-                  onClick={() => handleConnect(s.id)}
-                  disabled={connecting[s.id] || authorizing[s.id]}
-                  size="small"
-                  style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
-                >{connectLabel(s, connecting[s.id] || authorizing[s.id])}</Button>
-              )}
-              <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
-              <EnabledToggle server={s} onToggle={handleToggleEnabled} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {servers.length === 0 && (
           <Blankslate>
             <Blankslate.Description>No MCP servers configured.</Blankslate.Description>

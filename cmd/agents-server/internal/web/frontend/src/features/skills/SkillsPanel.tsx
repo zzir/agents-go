@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Button, TextInput, Label, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
+import { ChevronRightIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { type Skill, groupByRepo } from '@/lib/skills';
@@ -12,6 +13,17 @@ export function SkillsPanel() {
   const [cloning, setCloning] = useState(false);
   const [adding, setAdding] = useState(false);
   const [updating, setUpdating] = useState('');
+  // Repos are collapsed by default — a cloned repo can bundle dozens of
+  // skills, so the list shows one row per directory (name + count) until
+  // expanded. Same chevron mechanics as the agent form's skill picker.
+  const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
+  const toggleRepo = (repo: string) => {
+    setExpandedRepos(prev => {
+      const next = new Set(prev);
+      if (next.has(repo)) next.delete(repo); else next.add(repo);
+      return next;
+    });
+  };
   const reload = useCallback(() => {
     setLoading(true);
     api.skills.list()
@@ -105,34 +117,48 @@ export function SkillsPanel() {
           </div>
         )}
 
-        {grouped.map(group => (
-          <div key={group.repo} className="Box">
-            <div className="Box-row" style={{ fontWeight: 500 }}>
-              <span>{group.repo}</span>
-              <div className="resource-row-actions">
-                <Button
-                  size="small"
-                  variant="invisible"
-                  onClick={() => handleUpdate(group.repo)}
-                  disabled={updating === group.repo}
-                >
-                  {updating === group.repo ? 'Updating...' : 'Update'}
-                </Button>
-                <Button size="small" variant="danger" onClick={() => handleDelete(group.repo)}>
-                  Delete
-                </Button>
-              </div>
-            </div>
-            {group.skills.map(s => (
-              <div key={s.path} className="Box-row">
-                <div className="resource-row-main">
-                  <div className="resource-row-title">{s.name}</div>
-                  {s.description && <div className="resource-row-sub">{s.description}</div>}
+        {grouped.map(group => {
+          const expanded = expandedRepos.has(group.repo);
+          return (
+            <div key={group.repo} className="Box">
+              <div className="Box-row" style={{ fontWeight: 500 }}>
+                <div className="resource-row-head">
+                  <button
+                    type="button"
+                    className="checkbox-group-toggle"
+                    aria-expanded={expanded}
+                    onClick={() => toggleRepo(group.repo)}
+                  >
+                    <ChevronRightIcon size={12} />
+                    {group.repo}
+                  </button>
+                  <Label variant="secondary">{group.skills.length}</Label>
+                </div>
+                <div className="resource-row-actions">
+                  <Button
+                    size="small"
+                    variant="invisible"
+                    onClick={() => handleUpdate(group.repo)}
+                    disabled={updating === group.repo}
+                  >
+                    {updating === group.repo ? 'Updating...' : 'Update'}
+                  </Button>
+                  <Button size="small" variant="danger" onClick={() => handleDelete(group.repo)}>
+                    Delete
+                  </Button>
                 </div>
               </div>
-            ))}
-          </div>
-        ))}
+              {expanded && group.skills.map(s => (
+                <div key={s.path} className="Box-row">
+                  <div className="resource-row-main">
+                    <div className="resource-row-title">{s.name}</div>
+                    {s.description && <div className="resource-row-sub">{s.description}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
       </>}
     </Stack>
   );

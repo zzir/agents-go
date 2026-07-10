@@ -221,11 +221,14 @@ func restoreSandboxConfig(typ string, incoming, prev json.RawMessage) json.RawMe
 }
 
 // sanitizeAgentConfig masks the secret-bearing fields of an agent config for
-// API responses: the provider API key and the per-entry fallback-model keys.
+// API responses (the provider API key and the per-entry fallback-model keys)
+// and projects the ChatGPT token into the derived logged-in signal — the token
+// itself never leaves the server.
 func sanitizeAgentConfig(ac *store.AgentConfig) {
 	ac.Provider.APIKey = maskSecret(ac.Provider.APIKey)
 	ac.Resilience.FallbackModels = maskFallbackModels(ac.Resilience.FallbackModels)
-	ac.ChatGPTToken = maskSecret(ac.ChatGPTToken)
+	ac.ChatGPTLoggedIn = ac.ChatGPTToken != ""
+	ac.ChatGPTToken = "" // json:"-" already hides it; cleared as defense in depth
 }
 
 // secretSettingKeys are the settings whose values are secrets and therefore

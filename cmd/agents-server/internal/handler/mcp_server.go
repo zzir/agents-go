@@ -26,10 +26,58 @@ func NewMcpServerHandler(s *store.McpServerStore, m *bridge.McpManager, oc *brid
 	return &McpServerHandler{store: s, manager: m, oauth: oc}
 }
 
+// MCP server lifecycle states reported to the UI. Exactly one is derived per
+// server (see status) — the frontend renders it verbatim and keeps no state
+// model of its own.
+const (
+	mcpStatusDisabled     = "disabled"     // enabled=false; only the toggle applies
+	mcpStatusConnected    = "connected"    // live connection established
+	mcpStatusAuthorizing  = "authorizing"  // OAuth popup pending user action
+	mcpStatusConnecting   = "connecting"   // handshake in flight
+	mcpStatusNeedsAuth    = "needs_auth"   // OAuth without a token: user must authorize
+	mcpStatusDisconnected = "disconnected" // enabled but no live connection
+)
+
 type mcpServerListItem struct {
 	store.McpServerConfig
-	Connected bool   `json:"connected"`
-	AuthState string `json:"auth_state,omitempty"`
+	// Status is the single derived lifecycle state: disabled, connecting,
+	// authorizing, needs_auth, disconnected, or connected.
+	Status string `json:"status"`
+	// HasOAuthToken reports whether a persisted OAuth token exists. It gates
+	// the "clear auth" action independently of the lifecycle status.
+	HasOAuthToken bool `json:"has_oauth_token,omitempty"`
+}
+
+// listItem assembles the API view of a server: sanitized config plus the
+// derived lifecycle status.
+func (h *McpServerHandler) listItem(cfg *store.McpServerConfig) mcpServerListItem {
+	return mcpServerListItem{
+		McpServerConfig: sanitizeMcpConfig(*cfg),
+		Status:          h.status(cfg),
+		HasOAuthToken:   cfg.OAuthToken != "",
+	}
+}
+
+// status derives the single lifecycle state the UI renders, from stored config
+// and live connection state. Order matters: disabled wins over everything;
+// authorizing is checked before connecting because an interactive OAuth flow
+// holds the manager's connect slot for its whole popup wait, so IsConnecting
+// stays true throughout and the more specific state must win.
+func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
+	switch {
+	case !cfg.Enabled:
+		return mcpStatusDisabled
+	case h.manager.IsConnected(cfg.ID):
+		return mcpStatusConnected
+	case h.oauth.IsAuthorizing(cfg.ID):
+		return mcpStatusAuthorizing
+	case h.manager.IsConnecting(cfg.ID):
+		return mcpStatusConnecting
+	case bridge.IsOAuthConfig(cfg) && cfg.OAuthToken == "":
+		return mcpStatusNeedsAuth
+	default:
+		return mcpStatusDisconnected
+	}
 }
 
 // List responds with all MCP server configurations and their connection state.
@@ -48,12 +96,8 @@ func (h *McpServerHandler) List(c *gin.Context) {
 		return
 	}
 	items := make([]mcpServerListItem, len(configs))
-	for i, cfg := range configs {
-		items[i] = mcpServerListItem{
-			McpServerConfig: sanitizeMcpConfig(cfg),
-			Connected:       h.manager.IsConnected(cfg.ID),
-			AuthState:       h.authState(&cfg),
-		}
+	for i := range configs {
+		items[i] = h.listItem(&configs[i])
 	}
 	c.JSON(http.StatusOK, items)
 }
@@ -120,7 +164,7 @@ func (r *mcpServerReq) validate() string {
 //	@Accept			json
 //	@Produce		json
 //	@Param			server	body		mcpServerReq	true	"MCP server configuration"
-//	@Success		201		{object}	store.McpServerConfig
+//	@Success		201		{object}	mcpServerListItem
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
@@ -142,7 +186,10 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 		saveError(c, err) // duplicate name -> 409
 		return
 	}
-	c.JSON(http.StatusCreated, sanitizeMcpConfig(*cfg))
+	// A newly created enabled server connects in the background, same as an
+	// update — "I added a server" should not need a separate connect click.
+	h.manager.Reconcile(cfg, h.oauth)
+	c.JSON(http.StatusCreated, h.listItem(cfg))
 }
 
 // Get responds with the MCP server configuration identified by the id path parameter.
@@ -162,11 +209,7 @@ func (h *McpServerHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, mcpServerListItem{
-		McpServerConfig: sanitizeMcpConfig(*cfg),
-		Connected:       h.manager.IsConnected(cfg.ID),
-		AuthState:       h.authState(cfg),
-	})
+	c.JSON(http.StatusOK, h.listItem(cfg))
 }
 
 // Update overwrites the MCP server configuration identified by the id path
@@ -216,13 +259,10 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 		return
 	}
 	// Make the live connection match the newly persisted config (drop stale,
-	// reconnect an enabled non-OAuth server). The manager owns the ordering.
-	h.manager.Reconcile(updated)
-	c.JSON(http.StatusOK, mcpServerListItem{
-		McpServerConfig: sanitizeMcpConfig(*updated),
-		Connected:       h.manager.IsConnected(updated.ID),
-		AuthState:       h.authState(updated),
-	})
+	// reconnect an enabled server in the background). The manager owns the
+	// ordering; the response status typically reads "connecting".
+	h.manager.Reconcile(updated, h.oauth)
+	c.JSON(http.StatusOK, h.listItem(updated))
 }
 
 // Delete disconnects and removes the MCP server identified by the id path parameter.
@@ -260,12 +300,13 @@ type mcpConnectResp struct {
 // directly; the frontend should open that URL in a popup and wait for the callback.
 //
 //	@Summary		Connect MCP server
-//	@Description	Establishes the connection. OAuth-enabled servers may answer with status "authorization_required" and an authorize_url to open in a browser popup.
+//	@Description	Establishes the connection. OAuth-enabled servers may answer with status "authorization_required" and an authorize_url to open in a browser popup. Disabled servers cannot be connected (409).
 //	@Tags			mcp-servers
 //	@Produce		json
 //	@Param			id	path		string	true	"MCP server ID"
 //	@Success		200	{object}	mcpConnectResp
 //	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse	"server is disabled"
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/mcp-servers/{id}/connect [post]
@@ -273,6 +314,13 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		storeError(c, err)
+		return
+	}
+	// A disabled server must never gain a live connection: agents pick tools by
+	// connection state, so connecting one would put its tools back in play and
+	// silently void the disable switch.
+	if !cfg.Enabled {
+		conflict(c, "server is disabled; enable it before connecting")
 		return
 	}
 
@@ -369,24 +417,6 @@ func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
 		return
 	}
 	writeOAuthCallbackPage(c, "success", "")
-}
-
-// authState reports the OAuth authorization state for a server: "authorized"
-// when connected or holding a persisted token (reconnect needs no popup),
-// "unauthorized" when a fresh authorization flow is required, and "" for
-// servers that don't use OAuth.
-func (h *McpServerHandler) authState(cfg *store.McpServerConfig) string {
-	if cfg.TransportType != "streamable_http" {
-		return ""
-	}
-	var hc store.HTTPMcpConfig
-	if err := json.Unmarshal(cfg.Config, &hc); err != nil || hc.AuthMode != "oauth" {
-		return ""
-	}
-	if h.manager.IsConnected(cfg.ID) || cfg.OAuthToken != "" {
-		return "authorized"
-	}
-	return "unauthorized"
 }
 
 // oauthCallbackScript is the static popup script: it reads the flow status

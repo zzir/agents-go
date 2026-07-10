@@ -5,16 +5,21 @@ import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 
+// config travels as a JSON object in both directions (the API-wide contract
+// for config blobs) — never as a stringified JSON payload.
+interface GuardrailConfig {
+  pattern?: string;
+  max_length?: number;
+}
+
 interface Guardrail {
   id: string;
   name: string;
   description: string;
   type: string;
   mode: string;
-  config: string;
-  blocking: boolean;
-  created_at: string;
-  updated_at: string;
+  config?: GuardrailConfig;
+  blocking?: boolean;
 }
 
 interface GuardrailFormData {
@@ -22,7 +27,7 @@ interface GuardrailFormData {
   description: string;
   type: string;
   mode: string;
-  config?: string;
+  config?: GuardrailConfig;
   blocking?: boolean;
 }
 
@@ -41,19 +46,15 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
   const [form, setForm] = useState<GuardrailFormData>(initial || {
     name: '', description: '', type: 'input', mode: 'regex', blocking: false,
   });
-  const [pattern, setPattern] = useState<string>(() => {
-    try { const c = JSON.parse((initial && initial.config) || '{}'); return c.pattern || ''; } catch { return ''; }
-  });
-  const [maxLength, setMaxLength] = useState<string | number>(() => {
-    try { const c = JSON.parse((initial && initial.config) || '{}'); return c.max_length || 0; } catch { return 0; }
-  });
+  const [pattern, setPattern] = useState<string>(initial?.config?.pattern || '');
+  const [maxLength, setMaxLength] = useState<string | number>(initial?.config?.max_length || 0);
   const set = (k: keyof GuardrailFormData, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }));
 
   const handleSave = () => {
-    const config = form.mode === 'regex'
+    const config: GuardrailConfig = form.mode === 'regex'
       ? { pattern }
       : { max_length: parseInt(String(maxLength)) || 0 };
-    onSave({ ...form, config: JSON.stringify(config) });
+    onSave({ ...form, config });
   };
 
   return (
@@ -157,11 +158,11 @@ export function GuardrailPanel() {
         {guardrails.map((g, i) => (
           <div key={g.id || ('builtin-' + i)} className="Box-row">
             <div className="resource-row-main">
-              <div className="resource-row-title">
-                {g.name}
+              <div className="resource-row-head">
+                <span className="resource-row-title">{g.name}</span>
                 {isBuiltin(g) && <Label>built-in</Label>}
               </div>
-              <div className="resource-row-meta">
+              <div className="resource-row-sub">
                 {[g.type, g.mode].filter(Boolean).join(' · ')}
                 {g.description && (' — ' + g.description)}
               </div>

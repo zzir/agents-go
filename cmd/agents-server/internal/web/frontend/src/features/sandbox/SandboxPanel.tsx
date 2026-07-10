@@ -21,9 +21,7 @@ interface SandboxConfig {
   id: string;
   name: string;
   type: string;
-  timeout: number;
   config: Record<string, unknown>;
-
 }
 
 interface TestResult {
@@ -264,9 +262,9 @@ export function SandboxPanel() {
         {items.map(s => (
           <div key={s.id} className="Box-row">
             <div className="resource-row-main">
-              <div className="resource-row-meta">
-                <Label variant={typeVariant(s.type)}>{typeLabel(s.type)}</Label>
+              <div className="resource-row-head">
                 <span className="resource-row-title">{s.name}</span>
+                <Label variant={typeVariant(s.type)}>{typeLabel(s.type)}</Label>
               </div>
               <div className="resource-row-sub">{sandboxSummary(s)}</div>
             </div>

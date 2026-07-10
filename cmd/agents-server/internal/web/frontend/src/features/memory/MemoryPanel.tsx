@@ -126,11 +126,11 @@ export function MemoryPanel() {
         {memories.map(m => (
           <div key={m.id} className="Box-row">
             <div className="resource-row-main">
-              <div className="resource-row-meta">
+              <div className="resource-row-head">
+                <span className="resource-row-title">{m.key}</span>
                 <Label variant={m.agent_config_id ? 'accent' : 'secondary'}>
                   {agentName(m.agent_config_id)}
                 </Label>
-                <span className="resource-row-title">{m.key}</span>
               </div>
               <div className="resource-row-sub">
                 {m.content.substring(0, 120) +

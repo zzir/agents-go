@@ -85,8 +85,7 @@ interface AgentFormData {
 interface McpServer {
   id: string | number;
   name: string;
-  enabled?: boolean;
-  connected?: boolean;
+  status?: string;
 }
 
 interface Agent {
@@ -100,7 +99,8 @@ interface Agent {
   tools: string;
   // Empty/absent means "not customized" -> the agent gets every installed skill.
   skills?: string;
-  chatgpt_token: string;
+  // Derived login signal from the backend; the token itself never reaches the API.
+  chatgpt_logged_in?: boolean;
 }
 
 interface AgentFormProps {
@@ -247,7 +247,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         <div className="form-group-title">MCP Servers</div>
         <div className="form-checkbox-group">
           {mcpServers.map(s => {
-            const usable = !!s.connected;
+            const usable = s.status === 'connected';
             return (
               <FormControl key={s.id} disabled={!usable}>
                 <Checkbox checked={selectedMcp.includes(s.id)} disabled={!usable} onChange={() => toggleMcp(s.id)} />
@@ -255,7 +255,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
                   {s.name}
                   {usable
                     ? <span className="form-status-dot form-status-dot--success" style={{ width: 6, height: 6, marginLeft: 4, display: 'inline-block' }} />
-                    : <span className="resource-row-sub" style={{ marginLeft: 4 }}>({s.enabled === false ? 'disabled' : 'not connected'})</span>}
+                    : <span className="resource-row-sub" style={{ marginLeft: 4 }}>({s.status === 'disabled' ? 'disabled' : 'not connected'})</span>}
                 </FormControl.Label>
               </FormControl>
             );
@@ -460,6 +460,11 @@ export function AgentConfigPanel() {
     for (const id of Object.keys(pollRef.current)) stopPoll(id);
   }, [stopPoll]);
 
+  // The ChatGPT callback runs on a separate localhost server, so there is no
+  // postMessage from the popup — polling the status endpoint is the only
+  // completion signal. The button stays clickable while polling: a re-click
+  // supersedes the stale attempt (stopPoll + fresh login) instead of leaving
+  // the user stuck when the popup was closed or denied.
   const handleLogin = async (id: string | number) => {
     stopPoll(id);
     setSigningIn(prev => ({ ...prev, [id]: true }));
@@ -468,11 +473,13 @@ export function AgentConfigPanel() {
       window.open(d.authorize_url, 'chatgpt_oauth', 'width=500,height=700');
       const interval = setInterval(async () => {
         try {
-          const a = await api.agents.get(id) as Agent;
-          if (a.chatgpt_token) { stopPoll(id); reload(); }
+          const s = await api.chatgpt.status(id) as { logged_in: boolean };
+          if (s.logged_in) { stopPoll(id); reload(); }
         } catch { /* ignore transient */ }
       }, 2000);
-      const timeout = setTimeout(() => { stopPoll(id); reload(); }, 5 * 60 * 1000);
+      // Give up after 2 minutes: the button reverts to "Sign in" and a later
+      // completed login still shows up on the next reload.
+      const timeout = setTimeout(() => { stopPoll(id); reload(); }, 2 * 60 * 1000);
       pollRef.current[id] = { interval, timeout };
     } catch (e) {
       toast.error((e as Error).message);
@@ -524,13 +531,13 @@ export function AgentConfigPanel() {
       {!adding && !editing && <div className="Box">
         {agents.map(a => {
           const isChatGPT = a.provider?.auth_mode === 'chatgpt_login';
-          const loggedIn = isChatGPT && !!a.chatgpt_token;
+          const loggedIn = isChatGPT && !!a.chatgpt_logged_in;
           const mcp = mcpCount(a.tools);
           const skl = skillCount(a.skills);
           return (
             <div key={a.id} className="Box-row">
               <div className="resource-row-main">
-                <div className="form-status" style={{ flexWrap: 'wrap' }}>
+                <div className="resource-row-head">
                   {isChatGPT && <span className="form-status-dot" style={{ background: loggedIn ? 'var(--fgColor-success)' : 'var(--fgColor-muted)' }} />}
                   <span className="resource-row-title">{a.name}</span>
                   {isChatGPT && <Label variant={loggedIn ? 'success' : 'secondary'}>ChatGPT</Label>}
@@ -546,10 +553,9 @@ export function AgentConfigPanel() {
                   ? <Button onClick={() => handleLogout(a.id)} size="small" variant="invisible">Disconnect</Button>
                   : <Button
                       onClick={() => handleLogin(a.id)}
-                      disabled={signingIn[a.id]}
                       size="small"
                       style={{ color: 'var(--fgColor-success)' }}
-                    >{signingIn[a.id] ? 'Signing in...' : 'Sign in'}</Button>
+                    >{signingIn[a.id] ? 'Signing in… (retry)' : 'Sign in'}</Button>
                 )}
                 <Button onClick={() => startEdit(a)} size="small" variant="invisible">Edit</Button>
               </div>

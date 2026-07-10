@@ -70,6 +70,18 @@ func (c *OAuthCoordinator) supersedeInflight(id string) {
 	<-prev.done // the attempt's goroutine closes this after finishConnect frees the slot
 }
 
+// IsAuthorizing reports whether an interactive OAuth flow for the given server
+// config id is in progress (an authorize popup is pending user action). A nil
+// coordinator has no flows.
+func (c *OAuthCoordinator) IsAuthorizing(id string) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.inflight[id] != nil
+}
+
 // clearInflight removes a finished attempt, but only if it is still the current
 // one (a superseding attempt may have already replaced or deleted it).
 func (c *OAuthCoordinator) clearInflight(id string, a *oauthAttempt) {

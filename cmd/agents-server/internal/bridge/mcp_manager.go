@@ -149,21 +149,39 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 // Reconcile makes the live connection match a server's desired config after a
 // config write: it always drops the current connection (so a changed endpoint /
 // command / headers can't keep serving stale config) and, for an enabled
-// non-OAuth server, reconnects in the background under a bounded deadline off
-// the manager root context (the request context is already gone). A disabled
-// server is left disconnected. OAuth servers are reconnected through the OAuth
-// coordinator (a saved token connects silently), not here — the plain Connect
-// path carries no token and would fail. Centralizing this here keeps handlers
-// from imperatively sequencing Disconnect/Connect and getting the order wrong.
-func (m *McpManager) Reconcile(desired *store.McpServerConfig) {
+// server, reconnects in the background under a bounded deadline off the manager
+// root context (the request context is already gone). A disabled server is left
+// disconnected. OAuth servers reconnect through the coordinator's silent path —
+// a saved token connects without a popup, and without one the server is left
+// for the user to authorize interactively (only the frontend can drive that).
+// Centralizing this here keeps handlers from imperatively sequencing
+// Disconnect/Connect and getting the order wrong.
+func (m *McpManager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordinator) {
 	if desired == nil {
 		return
 	}
 	_ = m.Disconnect(desired.ID)
-	if !desired.Enabled || isOAuthConfig(desired) {
+	if !desired.Enabled {
 		return
 	}
 	cfg := *desired
+	if IsOAuthConfig(&cfg) {
+		if oauth == nil || cfg.OAuthToken == "" {
+			return
+		}
+		var hc store.HTTPMcpConfig
+		if unmarshalConfig(cfg.Config, &hc) != nil {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
+			defer cancel()
+			// Empty origin = non-interactive: connect with the saved token or
+			// report needs-authorization without parking a popup-wait goroutine.
+			_, _ = oauth.ConnectWithOAuth(ctx, m, &cfg, &hc, "")
+		}()
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
 		defer cancel()
@@ -171,10 +189,10 @@ func (m *McpManager) Reconcile(desired *store.McpServerConfig) {
 	}()
 }
 
-// isOAuthConfig reports whether cfg is a streamable_http server using OAuth,
+// IsOAuthConfig reports whether cfg is a streamable_http server using OAuth,
 // which must be (re)connected through the OAuth coordinator rather than the
 // plain Connect path.
-func isOAuthConfig(cfg *store.McpServerConfig) bool {
+func IsOAuthConfig(cfg *store.McpServerConfig) bool {
 	if cfg.TransportType != "streamable_http" {
 		return false
 	}
@@ -285,6 +303,16 @@ func (m *McpManager) IsConnected(id string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.servers[id]
 	return ok
+}
+
+// IsConnecting reports whether a connection handshake for the given ID is in
+// flight. Note an interactive OAuth flow holds the connect slot for its whole
+// popup wait, so this stays true throughout — check the OAuth coordinator's
+// IsAuthorizing first when deriving a user-facing state.
+func (m *McpManager) IsConnecting(id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.connecting[id]
 }
 
 // CloseAll closes all active connections.

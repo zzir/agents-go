@@ -124,6 +124,8 @@ func (r *GuardrailResolver) ListGuardrails(ctx context.Context) []GuardrailDef {
 				Description: g.Description,
 				Type:        g.Type,
 				Mode:        g.Mode,
+				Config:      g.Config,
+				Blocking:    g.Blocking,
 			})
 		}
 	}
@@ -264,13 +266,18 @@ func buildOutputFromDef(g *store.Guardrail) *agents.OutputGuardrail {
 	}
 }
 
-// GuardrailDef describes an available guardrail for listing via the API.
+// GuardrailDef describes an available guardrail for listing via the API. The
+// edit form initializes from list items (the useCrud contract), so stored
+// guardrails must carry every editable field here; built-in defs have fixed
+// behavior and omit Config/Blocking.
 type GuardrailDef struct {
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Type        string `json:"type"`
-	Mode        string `json:"mode,omitempty"`
+	ID          string          `json:"id,omitempty"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Type        string          `json:"type"`
+	Mode        string          `json:"mode,omitempty"`
+	Config      json.RawMessage `json:"config,omitempty"`
+	Blocking    bool            `json:"blocking,omitempty"`
 }
 
 var builtinDefs = []GuardrailDef{

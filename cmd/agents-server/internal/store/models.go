@@ -84,9 +84,13 @@ type AgentConfig struct {
 	// Empty means every run error stays fatal.
 	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 
-	// ChatGPT OAuth token (JSON-serialized). Hidden from API; preserved across
-	// regular CRUD updates so editing an agent doesn't erase its token.
-	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"chatgpt_token,omitempty"`
+	// ChatGPT OAuth token (JSON-serialized). Never serialized to the API
+	// (json:"-"); preserved across regular CRUD updates (the store excludes the
+	// column) so editing an agent doesn't erase its token.
+	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"-"`
+	// ChatGPTLoggedIn is the API-facing derived login signal (set by the
+	// handler when sanitizing); the token itself never leaves the server.
+	ChatGPTLoggedIn bool `bun:"-" json:"chatgpt_logged_in,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
@@ -101,7 +105,10 @@ type McpServerConfig struct {
 	ID            string `bun:"id,pk"                  json:"id"`
 	Name          string `bun:"name,notnull"           json:"name"`
 	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | streamable_http
-	Enabled       bool   `bun:"enabled,default:true"    json:"enabled"`
+	// Enabled deliberately carries no bun default tag: with `default:true`,
+	// bun swaps a zero-value false for SQL DEFAULT on insert, silently
+	// enabling a server that was created with enabled=false.
+	Enabled bool `bun:"enabled,notnull"        json:"enabled"`
 
 	// Config holds the transport-specific settings as JSON: StdioMcpConfig for
 	// "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and

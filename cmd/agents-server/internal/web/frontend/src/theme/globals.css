@@ -374,6 +374,17 @@ a:hover {
     min-width: 0;
 }
 
+/* Row head — the ONE ordering every settings row's first line follows:
+   [status dot] → title → [Label badges]. Badges always FOLLOW the title
+   (type, then attributes, then counts); the dot, when present, leads.
+   Detail lines go below in .resource-row-sub, flush left (no indent). */
+.resource-row-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--base-size-8);
+}
+
 .resource-row-title {
     font-weight: 500;
     font-size: var(--base-text-size-sm);

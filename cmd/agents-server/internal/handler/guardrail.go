@@ -20,12 +20,14 @@ func NewGuardrailHandler(s *store.GuardrailStore, r *bridge.GuardrailResolver) *
 	return &GuardrailHandler{store: s, resolver: r}
 }
 
-// List responds with all available guardrails (stored + built-in).
+// List responds with all available guardrails (stored + built-in). Stored
+// entries carry config and blocking so the edit form can initialize from the
+// list; built-in entries have no id and fixed behavior.
 //
 //	@Summary	List guardrails
 //	@Tags		guardrails
 //	@Produce	json
-//	@Success	200	{array}	store.Guardrail
+//	@Success	200	{array}	bridge.GuardrailDef
 //	@Security	BearerAuth
 //	@Router		/guardrails [get]
 func (h *GuardrailHandler) List(c *gin.Context) {

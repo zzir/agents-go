@@ -176,8 +176,10 @@ function ProviderRoutesSection() {
         {routes.map(r => (
           <div key={r.id} className="Box-row">
             <div className="resource-row-main">
-              <span className="resource-row-title">{r.prefix}/</span>
-              {r.base_url && <span className="resource-row-meta">{r.base_url}</span>}
+              <div className="resource-row-head">
+                <span className="resource-row-title">{r.prefix}/</span>
+              </div>
+              {r.base_url && <div className="resource-row-sub">{r.base_url}</div>}
             </div>
             <div className="resource-row-actions">
               <Button onClick={() => startEdit(r)} size="small" variant="invisible">Edit</Button>

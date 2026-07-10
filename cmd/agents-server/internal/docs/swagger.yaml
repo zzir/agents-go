@@ -230,6 +230,26 @@ components:
         state:
           type: string
       type: object
+    bridge.GuardrailDef:
+      properties:
+        blocking:
+          type: boolean
+        config:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        description:
+          type: string
+        id:
+          type: string
+        mode:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+      type: object
     bridge.RunInfo:
       properties:
         agent_config_id:
@@ -336,8 +356,6 @@ components:
       type: object
     handler.mcpServerListItem:
       properties:
-        auth_state:
-          type: string
         config:
           description: |-
             Config holds the transport-specific settings as JSON: StdioMcpConfig for
@@ -347,15 +365,27 @@ components:
             type: integer
           type: array
           uniqueItems: false
-        connected:
-          type: boolean
         created_at:
           type: string
         enabled:
+          description: |-
+            Enabled deliberately carries no bun default tag: with `default:true`,
+            bun swaps a zero-value false for SQL DEFAULT on insert, silently
+            enabling a server that was created with enabled=false.
+          type: boolean
+        has_oauth_token:
+          description: |-
+            HasOAuthToken reports whether a persisted OAuth token exists. It gates
+            the "clear auth" action independently of the lifecycle status.
           type: boolean
         id:
           type: string
         name:
+          type: string
+        status:
+          description: |-
+            Status is the single derived lifecycle state: disabled, connecting,
+            authorizing, needs_auth, disconnected, or connected.
           type: string
         transport_type:
           description: stdio | streamable_http
@@ -528,11 +558,11 @@ components:
           $ref: '#/components/schemas/store.ApprovalGroup'
         behavior:
           $ref: '#/components/schemas/store.BehaviorGroup'
-        chatgpt_token:
+        chatgpt_logged_in:
           description: |-
-            ChatGPT OAuth token (JSON-serialized). Hidden from API; preserved across
-            regular CRUD updates so editing an agent doesn't erase its token.
-          type: string
+            ChatGPTLoggedIn is the API-facing derived login signal (set by the
+            handler when sanitizing); the token itself never leaves the server.
+          type: boolean
         compaction:
           $ref: '#/components/schemas/store.CompactionGroup'
         created_at:
@@ -650,31 +680,6 @@ components:
         output_guardrails:
           type: string
         output_schema:
-          type: string
-      type: object
-    store.McpServerConfig:
-      properties:
-        config:
-          description: |-
-            Config holds the transport-specific settings as JSON: StdioMcpConfig for
-            "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
-            exchanged with the API as a raw JSON object.
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
-        created_at:
-          type: string
-        enabled:
-          type: boolean
-        id:
-          type: string
-        name:
-          type: string
-        transport_type:
-          description: stdio | streamable_http
-          type: string
-        updated_at:
           type: string
       type: object
     store.Memory:
@@ -1257,7 +1262,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/store.Guardrail'
+                  $ref: '#/components/schemas/bridge.GuardrailDef'
                 type: array
           description: OK
       security:
@@ -1455,7 +1460,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.McpServerConfig'
+                $ref: '#/components/schemas/handler.mcpServerListItem'
           description: Created
         "400":
           content:
@@ -1590,7 +1595,7 @@ paths:
     post:
       description: Establishes the connection. OAuth-enabled servers may answer with
         status "authorization_required" and an authorize_url to open in a browser
-        popup.
+        popup. Disabled servers cannot be connected (409).
       parameters:
       - description: MCP server ID
         in: path
@@ -1611,6 +1616,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: server is disabled
         "502":
           content:
             application/json:
