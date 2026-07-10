@@ -14,7 +14,7 @@ type MemoryStore struct {
 
 // NewMemoryStore returns a MemoryStore backed by db.
 func NewMemoryStore(db *bun.DB) *MemoryStore {
-	return &MemoryStore{NewCrudStore[Memory](db, "memory", "updated_at DESC")}
+	return &MemoryStore{NewCrudStore[Memory](db, "memory", "created_at DESC")}
 }
 
 // ListForAgent returns global memories plus those scoped to agentConfigID (or

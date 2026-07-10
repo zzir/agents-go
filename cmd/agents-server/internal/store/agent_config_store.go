@@ -17,7 +17,7 @@ type AgentConfigStore struct {
 // uniqueness is enforced by the DB (idx_agent_configs_name); a duplicate
 // surfaces as a UNIQUE-constraint error that handlers map to 409.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
-	return &AgentConfigStore{NewCrudStore[AgentConfig](db, "agent config", "updated_at DESC")}
+	return &AgentConfigStore{NewCrudStore[AgentConfig](db, "agent config", "created_at DESC")}
 }
 
 // Update overwrites the agent config but preserves the chatgpt_token column.

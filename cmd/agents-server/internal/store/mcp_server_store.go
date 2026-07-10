@@ -17,7 +17,7 @@ type McpServerStore struct {
 // (idx_mcp_servers_name); a duplicate surfaces as a UNIQUE-constraint error
 // that handlers map to 409.
 func NewMcpServerStore(db *bun.DB) *McpServerStore {
-	return &McpServerStore{NewCrudStore[McpServerConfig](db, "mcp server config", "updated_at DESC")}
+	return &McpServerStore{NewCrudStore[McpServerConfig](db, "mcp server config", "created_at DESC")}
 }
 
 // Update overwrites the server config but preserves the oauth_token column.
