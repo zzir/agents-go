@@ -14,6 +14,7 @@ servers, sandboxes, guardrails, memories, and skills.
 - [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
 - [Architecture](#architecture)
+- [Design invariants](#design-invariants) — the rules every panel/handler pair must follow
 - [Database](#database)
 - [Roadmap](#roadmap)
 
@@ -242,28 +243,38 @@ with an `?agent_config_id=` query parameter). The browser OAuth redirect lands a
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
-| Method | Path                           | Description                                                    |
-|--------|--------------------------------|----------------------------------------------------------------|
-| GET    | `/mcp-servers`                 | List servers with connection status                            |
-| POST   | `/mcp-servers`                 | Create MCP config                                              |
-| GET    | `/mcp-servers/:id`             | Get config                                                     |
-| PUT    | `/mcp-servers/:id`             | Update config (toggles connect/disconnect on `enabled` change) |
-| DELETE | `/mcp-servers/:id`             | Delete and disconnect                                          |
-| POST   | `/mcp-servers/:id/connect`     | Connect (may trigger OAuth)                                    |
-| DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out")        |
-| GET    | `/mcp-servers/:id/tools`       | List tools exposed by the server                               |
-| GET    | `/mcp-servers/oauth/callback`  | OAuth redirect callback                                        |
+| Method | Path                           | Description                                                       |
+|--------|--------------------------------|-------------------------------------------------------------------|
+| GET    | `/mcp-servers`                 | List servers with derived `status`                                |
+| POST   | `/mcp-servers`                 | Create MCP config (an enabled server connects in the background)  |
+| GET    | `/mcp-servers/:id`             | Get config                                                        |
+| PUT    | `/mcp-servers/:id`             | Update config (reconciles the live connection to the new config)  |
+| DELETE | `/mcp-servers/:id`             | Delete and disconnect                                             |
+| POST   | `/mcp-servers/:id/connect`     | Connect (may trigger OAuth); `409` if the server is disabled      |
+| DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out")           |
+| GET    | `/mcp-servers/:id/tools`       | List tools exposed by the server                                  |
+| GET    | `/mcp-servers/oauth/callback`  | OAuth redirect callback                                           |
 
 Transports: `stdio` and `streamable_http`. The HTTP transport supports
-`auth_mode` `header` or `oauth`. Each server has an `enabled` flag (default
-`true`); enabled servers are connected automatically on startup. Disabling a
-server disconnects it; re-enabling triggers a reconnect — the toggle is the
-on/off switch, there is no separate transient disconnect.
+`auth_mode` `header` or `oauth`. Enabled servers are connected automatically on
+startup and after create/update; disabling disconnects. A disabled server
+cannot be connected (`409`) — agents pick tools by live connection, so the
+toggle is a hard off switch.
 
-OAuth tokens obtained during authorization are persisted, so reconnecting (or
-restarting the server) does not require re-authorizing. The list endpoint
-reports `auth_state` per OAuth server: `authorized` (connected or a saved token
-exists) or `unauthorized` (next connect opens the authorization popup). Use the
+Every read endpoint reports a single derived `status` per server: `disabled`,
+`connecting` (handshake in flight), `authorizing` (OAuth popup pending user
+action), `needs_auth` (OAuth without a saved token — connect returns an
+authorize URL), `disconnected` (enabled but no live connection), or
+`connected`. Writes reconnect in the background, so the status returned by a
+PUT/POST is often still `disconnected` or `connecting` — poll the list until it
+settles (the built-in UI does exactly that). While `authorizing`, calling
+connect again is safe and intended: it supersedes the stale attempt (e.g. the
+user closed the popup, which sends no signal) and returns a fresh authorize
+URL; an abandoned attempt otherwise expires on its own after 5 minutes.
+
+OAuth tokens obtained during authorization are persisted and reported as
+`has_oauth_token`, so reconnecting — including the automatic reconnect after a
+disable/enable cycle or a restart — needs no re-authorization. Use the
 `oauth-token` DELETE endpoint — the "Clear auth" button in the server's edit
 form — to drop the saved token, e.g. to re-authorize with a different account.
 
@@ -434,9 +445,14 @@ client must authenticate at the application level by sending
 
 All messages use the envelope format `{"type":"...", "payload":{...}}`.
 
-Runs live in the runner's hub, independent of the connection. A dropped socket
-does not cancel a run; after reconnecting, use `run.subscribe` to reattach to a
-run's event stream (replaying buffered events after `from_seq`).
+Runs live in the runner's hub, independent of the connection, and their events
+are a **broadcast bus**: every authenticated connection is attached to every
+run's stream — on connect (all in-flight runs, with a replay of their buffered
+events) and automatically when any run starts or resumes, no matter which
+connection (or REST call) started it. Two browsers on the same session both
+watch the conversation live. A dropped socket does not cancel a run; after
+reconnecting the server re-attaches the connection, and `run.subscribe` remains
+available to resume from a specific cursor (`from_seq`) without a full replay.
 
 ### Client → Server
 
@@ -452,7 +468,7 @@ run's event stream (replaying buffered events after `from_seq`).
 
 | type                    | Description                                                                                                                                             |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run.started`           | Run begun — `{run_id, session_id}`                                                                                                                      |
+| `run.started`           | Run begun — `{run_id, session_id, input}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble                      |
 | `run.agent_start`       | Agent taking its turn — `{run_id, agent_name}`                                                                                                          |
 | `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
 | `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
@@ -520,6 +536,114 @@ cmd/agents-server/
    survives a server restart.
 5. On completion the message history is persisted and the session title is
    auto-generated.
+
+## Design invariants
+
+Cross-cutting rules every resource (panel + handler + store + bridge consumer)
+must follow. Each exists because its violation shipped a real bug; the fix for
+a new feature is to fit these shapes, not to add a one-off patch beside them.
+When a change genuinely doesn't fit, update this list in the same PR.
+
+**API shape**
+
+1. **`config` blobs travel as JSON objects, never strings.** Every
+   backend-specific settings blob (`mcp_servers.config`, `sandbox_configs.config`,
+   `guardrails.config`) is a `json.RawMessage` exchanged as an inline JSON
+   object. The frontend reads and writes it as an object — no
+   `JSON.stringify`/`JSON.parse` of the field itself. (The guardrail panel once
+   sent a stringified config; every save failed with 400 and nobody noticed.)
+2. **List responses carry every field the edit form needs.** `useCrud` panels
+   initialize their edit form from the list item. A list-side projection that
+   drops fields (config, flags) makes the edit form silently wipe them on the
+   next save. Either return full rows from List or make the panel fetch Get
+   before editing — never assume "the list is just for display".
+3. **Derived state is computed in one backend function; the frontend renders it
+   verbatim.** Connection/login/authorization lifecycle is reported as a single
+   `status` (MCP: `disabled | connecting | authorizing | needs_auth |
+   disconnected | connected`) or boolean (`chatgpt_logged_in`,
+   `has_oauth_token`) derived server-side from the facts it already owns
+   (manager/coordinator state + stored config). The frontend must not
+   reconstruct state by combining multiple response fields or its own
+   per-item maps — that is how phantom states (`auth_state === 'authorizing'`)
+   and stuck buttons happen.
+4. **Keep swagger annotations in sync with the actual response type**, and run
+   `make openapi` after any handler change — CI diffs the generated spec.
+
+**State & lifecycle**
+
+5. **An off switch must hold at every entrance.** When a resource has
+   `enabled=false`, every path that could activate it (manual connect
+   endpoints, agent assembly, startup auto-connect) must respect the flag —
+   agents pick MCP tools by live connection, so one unguarded connect path
+   voids the whole switch.
+6. **Create and Update trigger the same side effects.** If updating a resource
+   reconciles a live connection, creating one must too. Asymmetry here reads
+   as "sometimes it just doesn't work".
+7. **Async settling uses grace-window polling, not per-item timers.** After a
+   mutation whose effect completes in the background (reconnect, OAuth), the
+   panel polls the list while any row is in a transitional status or an
+   ~8s post-mutation grace window is open, then stops. One-shot notifications
+   (popup `postMessage`) only trigger an immediate reload — they must not own
+   state cleanup, because they don't always arrive. Long-lived per-item
+   `setInterval` + hand-rolled cleanup is the pattern that produced the
+   5-minute stuck "Authorizing..." button.
+8. **In-progress buttons stay retryable when the wait is on an external actor.**
+   If completion depends on the user finishing a popup flow, the button that
+   started it must allow a superseding retry (cancel the stale attempt, start
+   fresh) instead of disabling itself until a timeout.
+
+**Secrets**
+
+9. **Secrets are write-only and go through `handler/secrets.go`.** Read side
+   masks with `********`; write side resolves the sentinel (mask = keep stored,
+   `""` = clear, anything else = replace). New secret fields must use the same
+   sanitize/restore helpers and get a round-trip test — no ad-hoc masking.
+10. **OAuth-class tokens never leave the server.** Store them in their own
+    column with `json:"-"`, exclude the column from CRUD updates
+    (`ExcludeColumn`), and expose only a derived boolean
+    (`has_oauth_token`, `chatgpt_logged_in`). Do not reuse a masked token
+    string as a truthiness signal.
+
+**Store layer**
+
+11. **No bun `default:` tags on booleans.** bun swaps a zero-value field for
+    SQL `DEFAULT` on insert, so `default:true` silently enables a row created
+    with `enabled=false`. Use `notnull` and set the value in Go.
+12. **Deleting a referenced resource fails loud at use, never silently skips a
+    safety feature.** Guardrail names that no longer resolve fail the agent
+    build (a guardrail that appears enabled but never runs is a security hole);
+    dangling MCP/skill ids are filtered with a visible count in the UI. Pick
+    one of those two behaviors deliberately for any new reference.
+
+**Chat / run streaming**
+
+13. **Run events are a broadcast bus, not a reply channel.** Every
+    authenticated WS connection is attached to every run's stream — on
+    connect (all live runs, with replay) and through `Runner.OnRunAttach`
+    when a run starts or resumes, whether it was created over WS or REST.
+    Two browsers on the same session both watch the conversation live;
+    `run.started` carries the prompt (`input`) so a browser that didn't send
+    it can render the user bubble. Never wire an event to "the connection
+    that asked" — that is exactly the bug this replaced.
+14. **Protocol constants have one definition per side.** Event types
+    (`run.error`, …) and error codes (`session_busy`, …) live in
+    `internal/protocol` (Go) and `src/lib/protocol.ts` (TS mirror). Emitters
+    and consumers reference the constants, never string literals — a typo must
+    be a compile error, not an event that silently never fires. Adding an
+    event means updating both files.
+15. **A streamed turn must equal its reload.** The streaming path
+    (`src/lib/streamReducer.ts` pure transforms, applied by `useAgentSocket`)
+    and the replay path (`buildTimeline` over persisted rows) must produce the
+    same `turn.parts`; `src/lib/timeline.test.ts` pins this isomorphism — run
+    it via `npm test`. Intentional differences are documented and asserted
+    there (currently: handoff parts are live-only; a rejected call's status
+    replays as completed). A new part type or field lands on BOTH paths plus
+    the shared types in `timeline.ts`, or the test fails.
+16. **Terminal run events reconcile against the store.** Every terminal event
+    handler (output/error/cancelled) applies its optimistic parts and then
+    reloads the persisted timeline as the authority. Exceptions must be
+    deliberate and listed here — currently only `guardrail_tripwire`, which
+    skips the reload to keep the retracted-answer view the SDK never persists.
 
 ## Database
 
