@@ -105,7 +105,11 @@
 
 /* Message styles */
 .message {
-  padding: var(--base-size-8) 0;
+  /* Left/right padding buffers the jump-flash outline ring on the
+     right-aligned user bubble: .message has content-visibility:auto (implies
+     contain:paint), which would otherwise clip the ring where the bubble meets
+     the edge. Kept in sync with .message-turn so bubbles and turns align. */
+  padding: var(--base-size-8) var(--base-size-4);
   max-width: 860px;
   margin: 0 auto;
   width: 100%;
@@ -137,10 +141,15 @@
   border: 1px solid var(--borderColor-muted);
 }
 
-/* Flash ring when the trace panel jumps to this message */
+/* Flash ring when the trace panel jumps to this message. Uses outline (not
+   box-shadow) so it survives forced-colors / high-contrast mode, where the UA
+   drops box-shadow. The ring still relies on the horizontal padding on
+   .message / .message-turn to avoid being clipped by their
+   content-visibility:auto paint containment (outline is painted, so it clips
+   just like box-shadow would). */
 @keyframes msg-jump-flash {
-  0%, 55% { box-shadow: 0 0 0 3px var(--borderColor-accent-emphasis, #0969da); }
-  100% { box-shadow: 0 0 0 3px transparent; }
+  0%, 55% { outline: 2px solid var(--borderColor-accent-emphasis, #0969da); outline-offset: 1px; }
+  100%    { outline: 2px solid transparent; outline-offset: 1px; }
 }
 .msg-jump-flash .message-body {
   animation: msg-jump-flash 1.8s ease-out;
@@ -196,7 +205,9 @@
   max-width: 860px;
   margin: 0 auto;
   width: 100%;
-  padding: var(--base-size-8) 0;
+  /* Match .message's horizontal padding so user bubbles and assistant turns
+     share the same left/right content edges. */
+  padding: var(--base-size-8) var(--base-size-4);
 }
 .turn-text {
   font-size: var(--base-text-size-sm);
