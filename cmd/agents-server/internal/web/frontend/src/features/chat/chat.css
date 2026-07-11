@@ -217,6 +217,10 @@
 .turn-text + .process-group,
 .process-group + .turn-text { margin-top: var(--base-size-8); }
 .turn-text + .turn-text { margin-top: var(--base-size-8); }
+/* Streaming cursor lives in CSS, not the markdown source: appending it to the
+   text would dirty the tail node on every delta and defeat morphdom patching
+   (see StreamingMarkdown.tsx). */
+.turn-text.streaming > :last-child::after { content: '▋'; }
 
 /* Process messages (tool calls) collapsible */
 .process-group {

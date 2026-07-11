@@ -4,11 +4,12 @@ import { createPortal } from 'react-dom';
 import { Button, IconButton, Label, ActionMenu, ActionList } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
-import { renderMarkdownLite, useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
+import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { MessageBubble } from '@/features/chat/MessageBubble';
+import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
@@ -512,12 +513,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           onReject={onReject}
         />
       )}
-      {streaming && (
-        <div
-          className="turn-text markdown-body streaming"
-          dangerouslySetInnerHTML={{ __html: renderMarkdownLite(streaming + '▋') }}
-        />
-      )}
+      {streaming && <StreamingMarkdown text={streaming} />}
       {notices.map((part, i) => (
         part.type === 'cancelled'
           ? <CancelledCard key={'notice-' + i} />
@@ -722,7 +718,13 @@ export function ChatView({
     if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
   }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
-  const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(messages.length + (streaming ? 1 : 0), sessionId);
+  // The dep must change on every content growth, not just on new messages:
+  // .chat-messages opts out of native scroll anchoring, so streamed text and
+  // reasoning deltas only keep the view pinned if they re-fire this effect.
+  const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(
+    messages.length + (streaming?.length ?? 0) + (reasoning?.length ?? 0),
+    sessionId,
+  );
 
   const handleCopyClick = useCallback((e: MouseEvent<HTMLDivElement>) => {
     const expand = (e.target as HTMLElement).closest('.btn-code-expand') as HTMLElement | null;

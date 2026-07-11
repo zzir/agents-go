@@ -644,6 +644,16 @@ When a change genuinely doesn't fit, update this list in the same PR.
     reloads the persisted timeline as the authority. Exceptions must be
     deliberate and listed here — currently only `guardrail_tripwire`, which
     skips the reload to keep the retracted-answer view the SDK never persists.
+17. **The streaming block patches the DOM; user intent beats the pin.** The
+    live text is morphdom-patched (`StreamingMarkdown.tsx`), never rewritten
+    via innerHTML — node identity is what keeps a text selection alive across
+    deltas, so anything that replaces those nodes wholesale is a regression.
+    Bottom-following (`useScrollToBottom`) re-fires on every content growth
+    (the dep includes streamed text length) and yields to explicit user
+    intent: an upward wheel/drag or an actively changing selection unsticks
+    immediately; a stale leftover selection must NOT block re-sticking when
+    the user scrolls back down (recency windows, not standing state, arbitrate
+    the races with the pin's own trailing scroll events).
 
 ## Database
 

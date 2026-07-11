@@ -224,7 +224,7 @@ interface ScrollAnchor {
 
 export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor {
   const elRef = useRef<HTMLElement | null>(null);
-  const handlerRef = useRef<(() => void) | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
   const stick = useRef(true);
   const [isSticky, setIsSticky] = useState(true);
 
@@ -235,41 +235,96 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
     }
   }, []);
 
+  // Timestamps of the last "stop following" intents. Both veto re-sticking
+  // only while recent (350ms) — a standing state would deadlock against the
+  // pin-to-bottom writes, a one-shot would lose to their trailing scroll
+  // events, so recency is the discriminator.
+  //  - lastSelChange: an actively changing selection (mid-drag). A static
+  //    leftover selection must NOT veto — it survives the follow (morphdom
+  //    keeps its nodes alive), and scrolling back down means "follow again".
+  //  - lastUpIntent: an upward wheel/drag. While pinned, each delta rewrites
+  //    scrollTop, so upward wheel motion barely moves the position and the
+  //    dist<80 threshold takes several fighting frames to cross — the intent
+  //    must win instantly, not by out-scrolling the pin.
+  const lastSelChange = useRef(0);
+  const lastUpIntent = useRef(0);
+  const selectionInside = useCallback(() => {
+    const sel = document.getSelection();
+    return !!(sel && !sel.isCollapsed && elRef.current?.contains(sel.anchorNode));
+  }, []);
+
   const ref: RefCallback<HTMLElement> = useCallback((node: HTMLElement | null) => {
-    if (elRef.current && handlerRef.current) {
-      elRef.current.removeEventListener('scroll', handlerRef.current);
-    }
+    cleanupRef.current?.();
+    cleanupRef.current = null;
     elRef.current = node;
     if (node) {
       // Trackpads fire scroll events well above frame rate; coalesce the
       // layout reads (scrollHeight/scrollTop) to one per frame.
       let rafId = 0;
-      const handler = () => {
+      let prevTop = node.scrollTop;
+      let prevDist = 0;
+      const onScroll = () => {
         if (rafId) return;
         rafId = requestAnimationFrame(() => {
           rafId = 0;
           const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
-          updateSticky(dist < 80);
+          // Position moved away from the bottom: upward scrollbar drag or
+          // touch scroll (wheel is caught below, before position even moves).
+          // The dist guard keeps content shrinkage — which clamps scrollTop
+          // but leaves dist at 0 — from reading as user intent.
+          const movedUp = node.scrollTop < prevTop - 1 && dist > prevDist + 1;
+          prevTop = node.scrollTop;
+          prevDist = dist;
+          const now = performance.now();
+          if (movedUp) {
+            lastUpIntent.current = now;
+            updateSticky(false);
+          } else {
+            updateSticky(dist < 80 && now - lastSelChange.current > 350 && now - lastUpIntent.current > 350);
+          }
         });
       };
-      handlerRef.current = handler;
-      node.addEventListener('scroll', handler, { passive: true });
+      const onWheel = (e: WheelEvent) => {
+        if (e.ctrlKey) return; // pinch-zoom, not a scroll
+        if (e.deltaY < 0) {
+          lastUpIntent.current = performance.now();
+          updateSticky(false);
+        } else if (e.deltaY > 0) {
+          lastUpIntent.current = 0; // wheeling down: let dist<80 re-stick at once
+        }
+      };
+      node.addEventListener('scroll', onScroll, { passive: true });
+      node.addEventListener('wheel', onWheel, { passive: true });
       node.scrollTop = node.scrollHeight;
+      cleanupRef.current = () => {
+        if (rafId) cancelAnimationFrame(rafId);
+        node.removeEventListener('scroll', onScroll);
+        node.removeEventListener('wheel', onWheel);
+      };
     }
   }, [updateSticky]);
 
   useEffect(() => {
+    // Making or growing a selection in the log suspends bottom-following even
+    // at the bottom: auto-scroll would move the content under the cursor
+    // mid-drag. Only selection *changes* unstick — a static leftover
+    // selection doesn't keep re-unsticking, so the scroll handler above can
+    // win once the user scrolls back down.
     const onSelect = () => {
-      const sel = document.getSelection();
       const el = elRef.current;
-      if (sel && !sel.isCollapsed && el?.contains(sel.anchorNode)) {
+      if (!el) return;
+      if (selectionInside()) {
+        lastSelChange.current = performance.now();
+        updateSticky(false);
+      } else if (!stick.current) {
+        // Selection cleared while still at the bottom: resume following.
         const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (dist >= 80) updateSticky(false);
+        if (dist < 80) updateSticky(true);
       }
     };
     document.addEventListener('selectionchange', onSelect);
     return () => document.removeEventListener('selectionchange', onSelect);
-  }, [updateSticky]);
+  }, [updateSticky, selectionInside]);
 
   useEffect(() => { updateSticky(true); }, [resetDep, updateSticky]);
 
@@ -281,6 +336,10 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
 
   const scrollToBottom = useCallback(() => {
     if (elRef.current) {
+      // Explicit "follow again" click: clear both re-stick vetoes so the
+      // smooth scroll's own trailing events can't leave the view unstuck.
+      lastUpIntent.current = 0;
+      lastSelChange.current = 0;
       elRef.current.scrollTo({ top: elRef.current.scrollHeight, behavior: 'smooth' });
       updateSticky(true);
     }
