@@ -527,8 +527,6 @@
   inset: 0;
   z-index: 200;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
   overflow: auto;
   background: color-mix(in srgb, var(--bgColor-default) 70%, transparent);
   backdrop-filter: blur(8px);
@@ -540,8 +538,14 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+/* Centering must come from auto margins, not justify-content: center — with
+   justify-content the overflowing half of an oversized diagram extends into
+   the container's negative coordinate space, which scrolling can never reach.
+   Auto margins collapse to 0 on overflow, keeping every edge scrollable; the
+   padding keeps a gutter even at the scroll extremes. */
 .svg-overlay > div {
-  margin: auto 32px;
+  margin: auto;
+  padding: 32px;
   flex-shrink: 0;
 }
 .svg-overlay svg {
