@@ -74,6 +74,10 @@
   min-height: 0;
   overflow: hidden;
   isolation: isolate;
+  /* Size container so the TOC rail can hide when the chat column itself is
+     narrow — the sidebar is user-resizable, so a viewport media query can't
+     know the real column width. */
+  container-type: inline-size;
 }
 
 /* Chat messages area */
@@ -103,6 +107,60 @@
   animation: msg-in var(--base-duration-200) var(--base-easing-easeOut) both;
 }
 
+/* Conversation TOC rail — one bar per user prompt, vertically centered in
+   the left gutter. Hover/focus shows the prompt via Primer Tooltip. */
+.chat-toc {
+  position: absolute;
+  left: var(--base-size-8);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  z-index: 1;
+}
+.chat-toc-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 4px;
+  /* Many prompts: bars compress instead of overflowing the 70vh rail. */
+  flex-shrink: 1;
+  min-height: 5px;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.chat-toc-bar {
+  width: 14px;
+  height: 3px;
+  border-radius: var(--borderRadius-full);
+  background: var(--borderColor-default);
+  transition: width var(--base-duration-200) var(--base-easing-easeInOut),
+    background var(--base-duration-100) var(--base-easing-easeInOut);
+}
+.chat-toc-item.active .chat-toc-bar { background: var(--fgColor-accent); }
+/* Hovering (or keyboard-entering) the rail stretches every bar; per-bar
+   hover darkens for pointing feedback, the active bar keeps its accent.
+   :has(:focus-visible), NOT :focus-within — a mouse click leaves focus on
+   the button, which would hold the rail expanded after the pointer leaves. */
+.chat-toc:hover .chat-toc-bar,
+.chat-toc:has(:focus-visible) .chat-toc-bar { width: 36px; }
+.chat-toc:hover .chat-toc-item:hover:not(.active) .chat-toc-bar,
+.chat-toc .chat-toc-item:focus-visible:not(.active) .chat-toc-bar { background: var(--fgColor-muted); }
+/* Primer Tooltip wraps long text; the rail wants a single truncated line. */
+.chat-toc [popover] {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(380px, 45vw);
+}
+/* The rail lives in the side gutter of the 860px message column; hide it
+   when the column is too narrow for a gutter. */
+@container (max-width: 980px) {
+  .chat-toc { display: none; }
+}
+
 /* Message styles */
 .message {
   /* Left/right padding buffers the jump-flash outline ring on the
@@ -127,6 +185,7 @@
 .message-user {
   display: flex;
   justify-content: flex-end;
+  scroll-margin-top: var(--base-size-12);
 }
 .message-user .message-body {
   max-width: 75%;

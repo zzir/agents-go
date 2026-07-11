@@ -10,6 +10,7 @@ import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } fro
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
+import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
@@ -597,9 +598,20 @@ interface UserMessageProps {
   content: string;
   traceRunId?: string | null;
   onTrace?: (runId: string) => void;
+  msgIdx: number;
 }
 
-const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace }: UserMessageProps) {
+// Restartable jump-target flash, shared by trace reverse-navigation and the
+// TOC rail.
+function flashMessage(el: Element) {
+  el.classList.remove('msg-jump-flash');
+  // Restart the animation even when jumping to the same message twice.
+  void (el as HTMLElement).offsetWidth;
+  el.classList.add('msg-jump-flash');
+  window.setTimeout(() => el.classList.remove('msg-jump-flash'), 1800);
+}
+
+const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace, msgIdx }: UserMessageProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -611,7 +623,7 @@ const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace }: 
   }, [content]);
 
   return (
-    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined}>
+    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx}>
       <div className="message-body">{content}</div>
       <div className="message-user-actions">
         {traceRunId && onTrace && (
@@ -725,6 +737,13 @@ export function ChatView({
     messages.length + (streaming?.length ?? 0) + (reasoning?.length ?? 0),
     sessionId,
   );
+  // Plain element handle alongside the hook's callback ref — the TOC rail
+  // needs the scroll container for active-item tracking and jump targets.
+  const chatElRef = useRef<HTMLDivElement | null>(null);
+  const composedScrollRef = useCallback((node: HTMLDivElement | null) => {
+    chatElRef.current = node;
+    scrollRef(node);
+  }, [scrollRef]);
 
   const handleCopyClick = useCallback((e: MouseEvent<HTMLDivElement>) => {
     const expand = (e.target as HTMLElement).closest('.btn-code-expand') as HTMLElement | null;
@@ -806,11 +825,23 @@ export function ChatView({
     const el = document.querySelector(`.chat-messages [data-run-id="${CSS.escape(runId)}"]`);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.remove('msg-jump-flash');
-    // Restart the animation even when jumping to the same message twice.
-    void (el as HTMLElement).offsetWidth;
-    el.classList.add('msg-jump-flash');
-    window.setTimeout(() => el.classList.remove('msg-jump-flash'), 1800);
+    flashMessage(el);
+  }, []);
+
+  // TOC rail: one entry per user prompt; click scrolls to the message. The
+  // upward smooth scroll trips the scroll hook's moved-up intent detection,
+  // so following pauses automatically while the user reads.
+  const tocItems = useMemo(() =>
+    messages.flatMap((m, i) => m.role === 'user' && m.content
+      ? [{ idx: i, preview: m.content.replace(/\s+/g, ' ').trim().slice(0, 60) }]
+      : []),
+    [messages]);
+
+  const jumpToMsg = useCallback((idx: number) => {
+    const el = chatElRef.current?.querySelector(`[data-msg-idx="${idx}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    flashMessage(el);
   }, []);
 
   // Keep agent/sandbox selection in a ref so the regenerate callback stays
@@ -914,7 +945,7 @@ export function ChatView({
     <div className={'chat-main' + (traceOpen ? ' trace-open' : '')}>
       <div className="chat-content">
         <div className="chat-messages-area">
-        <div ref={scrollRef} className="chat-messages" onClick={handleCopyClick}>
+        <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
           {loading ? null : messages.map((m, i) => {
             if (m.role === 'turn') {
               const isLive = running && i === messages.length - 1;
@@ -961,6 +992,7 @@ export function ChatView({
                   content={m.content || ''}
                   traceRunId={rid || null}
                   onTrace={openTrace}
+                  msgIdx={i}
                 />
               );
             }
@@ -976,6 +1008,7 @@ export function ChatView({
             {streaming ? 'Responding…' : 'Jump to latest'}
           </Button>
         )}
+        <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
         </div>
 
         <MessageInput
