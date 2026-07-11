@@ -1,7 +1,7 @@
 import './sessions.css';
 import { useState, useEffect, useRef, type ReactElement, type RefObject } from 'react';
 import { ActionList, ActionMenu } from '@primer/react';
-import { ClockIcon, KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
+import { StackIcon, KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
@@ -56,7 +56,7 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
         ref={anchorRef}
         className="session-kebab"
         icon={KebabHorizontalIcon}
-        label="Session actions"
+        label=""
         onClick={() => setMenuOpen(o => !o)}
       />
       <ActionMenu open={menuOpen} onOpenChange={setMenuOpen} anchorRef={anchorRef as RefObject<HTMLElement>}>
@@ -149,8 +149,8 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
             New Chat
           </ActionList.Item>
           <ActionList.Item disabled>
-            <ActionList.LeadingVisual><ClockIcon size={16} /></ActionList.LeadingVisual>
-            Automation
+            <ActionList.LeadingVisual><StackIcon size={16} /></ActionList.LeadingVisual>
+            Tasks
           </ActionList.Item>
         </ActionList>
       </div>

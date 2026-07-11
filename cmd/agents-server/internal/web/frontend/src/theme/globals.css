@@ -165,7 +165,7 @@ a:hover {
     min-height: 0;
 }
 
-/* Fixed action group at the top of the sidebar (New Chat, Automation, etc.) */
+/* Fixed action group at the top of the sidebar (New Chat, etc.) */
 .sidebar-actions {
     flex-shrink: 0;
     border-bottom: 1px solid var(--borderColor-muted);
@@ -286,8 +286,7 @@ a:hover {
         top: 0;
         left: 0;
         bottom: 0;
-        width: 300px;
-        max-width: 85vw;
+        width: 35vw;
         border-right: 1px solid var(--borderColor-muted);
         z-index: 50;
         transform: translateX(-100%);
