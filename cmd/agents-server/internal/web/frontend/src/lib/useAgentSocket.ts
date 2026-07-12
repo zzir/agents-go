@@ -24,6 +24,11 @@ export interface TaskState {
   // The run that spawned this task — lets the trace panel nest the wake-up
   // run's card under the run whose spawn_task started the chain.
   parentRunId?: string;
+  // Millisecond timestamps for the list's duration label: createdAt from the
+  // durable row (or spawn time when seen live), updatedAt refreshed on every
+  // task event — for a terminal task it is the finish time.
+  createdAt?: number;
+  updatedAt?: number;
   lastTool?: string;
   summary?: string;
   // The child run's pending approval, surfaced on the parent's task chip.
@@ -80,7 +85,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // Background task runs, keyed by child run id (== task id). Task events are
   // routed into the PARENT session's task list — never a chat timeline — so
   // they must be intercepted before the runMap lookup the chat handlers use.
-  const taskRunsRef = useRef<Record<string, { parentSid: string; label: string; toolCallId?: string }>>({});
+  const taskRunsRef = useRef<Record<string, { parentSid: string; label: string; taskId: string; toolCallId?: string }>>({});
   // The task the Inspector is watching: its child-run events additionally
   // feed SessionState.taskView (accumulated only while open).
   const taskWatchRef = useRef<{ sid: string; taskId: string; childSessionId: string } | null>(null);
@@ -212,12 +217,14 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.
-    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string }>>)
+    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
       .then(rows => {
         if (!rows || rows.length === 0) return;
         updateSS(sid, s => {
           const tasks = { ...s.tasks };
           for (const row of rows) {
+            const created = row.created_at ? Date.parse(row.created_at) : undefined;
+            const updated = row.updated_at ? Date.parse(row.updated_at) : undefined;
             const cur = tasks[row.task_id];
             if (cur) {
               // Live events may have registered the task first; the row still
@@ -229,6 +236,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
                 childSessionId: cur.childSessionId || row.child_session_id,
                 parentRunId: cur.parentRunId || row.parent_run_id,
                 summary: cur.summary ?? row.summary,
+                createdAt: created || cur.createdAt,
+                // For a terminal task the row's updated_at IS the finish time
+                // (authoritative); live tasks keep their event-driven value.
+                updatedAt: cur.status === 'working' || cur.status === 'input_required'
+                  ? (cur.updatedAt || updated)
+                  : (updated || cur.updatedAt),
               };
               continue;
             }
@@ -236,6 +249,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
               taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id,
               childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
               status: (row.status || 'working') as TaskState['status'], summary: row.summary,
+              createdAt: created, updatedAt: updated,
             };
           }
           return { ...s, tasks };
@@ -284,14 +298,17 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     const ws = new WSClient();
     wsRef.current = ws;
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; tool_call_id?: string; label?: string }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string }) => {
       // A background task run: track it under its parent session's task list
-      // and keep it out of every chat-timeline path.
+      // and keep it out of every chat-timeline path. Task identity (task_id)
+      // and run attempt (run_id) are separate: events route by run id through
+      // this registry, task state is keyed by task id.
       if (p.parent_session_id) {
-        taskRunsRef.current[p.run_id] = { parentSid: p.parent_session_id, label: p.label || '', toolCallId: p.tool_call_id };
+        const taskId = p.task_id || p.run_id;
+        taskRunsRef.current[p.run_id] = { parentSid: p.parent_session_id, label: p.label || '', taskId, toolCallId: p.tool_call_id };
         updateSS(p.parent_session_id, s => ({
           ...s,
-          tasks: { ...s.tasks, [p.run_id]: { ...s.tasks[p.run_id], taskId: p.run_id, label: p.label || '', status: 'working' as TaskStatus, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[p.run_id]?.parentRunId } },
+          tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', status: 'working' as TaskStatus, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now() } },
         }));
         // A resume segment of the watched task re-announces itself; make sure
         // the view has a live turn to stream into.
@@ -329,7 +346,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // watched task. Returns true when it was.
     const updateTaskView = (runId: string, fn: (v: TaskViewState) => TaskViewState) => {
       const w = taskWatchRef.current;
-      if (!w || w.taskId !== runId) return false;
+      if (!w || (taskRunsRef.current[runId]?.taskId || runId) !== w.taskId) return false;
       updateSS(w.sid, s => (s.taskView && s.taskView.taskId === runId ? { ...s, taskView: fn(s.taskView) } : s));
       return true;
     };
@@ -340,7 +357,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // to the inspected task).
     const refetchTaskView = (runId: string) => {
       const w = taskWatchRef.current;
-      if (!w || w.taskId !== runId) return;
+      if (!w || (taskRunsRef.current[runId]?.taskId || runId) !== w.taskId) return;
       fetchTimeline(w.childSessionId).then(timeline => {
         updateTaskView(runId, v => ({ ...v, messages: timeline, streaming: '', reasoning: '', loaded: true }));
       }).catch(() => undefined);
@@ -350,15 +367,22 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       const meta = taskRunsRef.current[runId];
       if (!meta) return false;
       updateSS(meta.parentSid, s => {
-        const cur = s.tasks[runId] || { taskId: runId, label: meta.label, status: 'working' as TaskStatus, toolCallId: meta.toolCallId };
-        return { ...s, tasks: { ...s.tasks, [runId]: { ...cur, ...patch } } };
+        const cur = s.tasks[meta.taskId] || { taskId: meta.taskId, label: meta.label, status: 'working' as TaskStatus, toolCallId: meta.toolCallId };
+        return { ...s, tasks: { ...s.tasks, [meta.taskId]: { ...cur, updatedAt: Date.now(), ...patch } } };
       });
       return true;
     };
 
+    // The Inspector watch is keyed by task id; run events carry a run id —
+    // map through the registry before comparing.
+    const isWatchedRun = (runId: string) => {
+      const w = taskWatchRef.current;
+      return !!w && (taskRunsRef.current[runId]?.taskId || runId) === w.taskId;
+    };
+
     ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
       if (taskRunsRef.current[p.run_id]) {
-        if (taskWatchRef.current?.taskId === p.run_id) {
+        if (isWatchedRun(p.run_id)) {
           taskViewBufRef.current.text += p.delta;
           scheduleFrame('taskview:step', () => {
             const buf = taskViewBufRef.current.text;
@@ -378,7 +402,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
 
     ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
       if (taskRunsRef.current[p.run_id]) {
-        if (taskWatchRef.current?.taskId === p.run_id) {
+        if (isWatchedRun(p.run_id)) {
           taskViewBufRef.current.reasoning += p.delta;
           scheduleFrame('taskview:reasoning', () => {
             const buf = taskViewBufRef.current.reasoning;
@@ -402,7 +426,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // run.output) cannot append the same text again.
     ws.on(EV.runMessage, (p: { run_id: string; text: string; item_id?: string }) => {
       if (taskRunsRef.current[p.run_id]) {
-        if (p.text && taskWatchRef.current?.taskId === p.run_id) {
+        if (p.text && isWatchedRun(p.run_id)) {
           taskViewBufRef.current.text = '';
           updateTaskView(p.run_id, v => {
             const msgs = appendMessageItem(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.text, !p.item_id);
@@ -433,7 +457,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // on backends that stream no reasoning deltas.
     ws.on(EV.runReasoningItem, (p: { run_id: string; text: string; item_id?: string }) => {
       if (taskRunsRef.current[p.run_id]) {
-        if (p.text && taskWatchRef.current?.taskId === p.run_id) {
+        if (p.text && isWatchedRun(p.run_id)) {
           taskViewBufRef.current.reasoning = '';
           updateTaskView(p.run_id, v => {
             const msgs = appendReasoningItem(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.text, !p.item_id);
@@ -459,7 +483,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     ws.on(EV.runOutput, (p: { run_id: string; final_output?: string }) => {
       if (taskRunsRef.current[p.run_id]) {
         updateTask(p.run_id, { status: 'completed', summary: (p.final_output || '').slice(0, 300), pendingCallId: undefined });
-        if (taskWatchRef.current?.taskId === p.run_id) {
+        if (isWatchedRun(p.run_id)) {
           const remaining = taskViewBufRef.current;
           taskViewBufRef.current = { text: '', reasoning: '' };
           updateTaskView(p.run_id, v => {
@@ -488,7 +512,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     ws.on(EV.runError, (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
       if (p.run_id && taskRunsRef.current[p.run_id]) {
         updateTask(p.run_id, { status: 'failed', summary: p.message?.slice(0, 300), pendingCallId: undefined });
-        if (taskWatchRef.current?.taskId === p.run_id) {
+        if (isWatchedRun(p.run_id)) {
           const remaining = taskViewBufRef.current;
           taskViewBufRef.current = { text: '', reasoning: '' };
           const rid = p.run_id;
@@ -564,7 +588,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
       if (p?.run_id && taskRunsRef.current[p.run_id]) {
         updateTask(p.run_id, { status: 'cancelled', pendingCallId: undefined });
-        if (taskWatchRef.current?.taskId === p.run_id) {
+        if (isWatchedRun(p.run_id)) {
           const remaining = taskViewBufRef.current;
           taskViewBufRef.current = { text: '', reasoning: '' };
           updateTaskView(p.run_id, v => {
@@ -599,7 +623,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         updateTask(p.run_id, p.needs_approval
           ? { lastTool: p.tool_name, pendingCallId: p.tool_call_id, pendingToolName: p.tool_name }
           : { lastTool: p.tool_name });
-        if (taskWatchRef.current?.taskId === p.run_id) {
+        if (isWatchedRun(p.run_id)) {
           const flushed = taskViewBufRef.current.text;
           taskViewBufRef.current.text = '';
           updateTaskView(p.run_id, v => {
@@ -758,7 +782,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // the hub entirely) — re-pull the durable rows so statuses that changed
       // during the outage land in the chips.
       for (const sid of loadedRef.current) {
-        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string }>>)
+        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
           .then(rows => {
             if (!rows || rows.length === 0) return;
             updateSS(sid, s => {
@@ -771,6 +795,8 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
                   childSessionId: cur?.childSessionId || row.child_session_id,
                   parentRunId: cur?.parentRunId || row.parent_run_id,
                   status, summary: row.summary ?? cur?.summary,
+                  createdAt: (row.created_at ? Date.parse(row.created_at) : undefined) || cur?.createdAt,
+                  updatedAt: (row.updated_at ? Date.parse(row.updated_at) : undefined) || cur?.updatedAt,
                 };
               }
               return { ...s, tasks };

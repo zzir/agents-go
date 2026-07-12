@@ -8,7 +8,7 @@ import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdow
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
-import { parseTaskNotification } from '@/lib/protocol';
+import { parseTaskNotification, type TaskStatus } from '@/lib/protocol';
 import type { TaskState, TaskViewState } from '@/lib/useAgentSocket';
 import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
 import { MessageBubble } from '@/features/chat/MessageBubble';
@@ -726,6 +726,9 @@ interface ChatViewProps {
   taskView?: TaskViewState | null;
   onWatchTask?: (sid: string, taskId: string, childSessionId: string) => void;
   onUnwatchTask?: (sid: string) => void;
+  // Applies a server-confirmed task state change (the stop API response) —
+  // the fallback when no hub broadcast will come (paused task after restart).
+  onPatchTask?: (sid: string, taskId: string, patch: Partial<TaskState>) => void;
   onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
   onCancel: (graceful?: boolean) => void;
   onApprove?: (id: string, scope?: string) => void;
@@ -738,7 +741,7 @@ interface ChatViewProps {
 export function ChatView({
   sessionId, messages, loaded, streaming, reasoning, running, compacting,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
-  onWatchTask, onUnwatchTask,
+  onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigId] = useState('');
@@ -892,8 +895,16 @@ export function ChatView({
   }, []);
 
   const stopTask = useCallback((taskId: string) => {
-    (api.tasks.stop(taskId) as Promise<unknown>).catch((e: Error) => toast.error(e.message || 'Stop failed'));
-  }, []);
+    (api.tasks.stop(taskId) as Promise<{ status?: string }>)
+      .then(info => {
+        // Apply the confirmed state directly: after a restart the hub has no
+        // record of the run, so no run.cancelled broadcast will arrive.
+        if (sessionId && info?.status) {
+          onPatchTask?.(sessionId, taskId, { status: info.status as TaskStatus, pendingCallId: undefined, pendingToolName: undefined });
+        }
+      })
+      .catch((e: Error) => toast.error(e.message || 'Stop failed'));
+  }, [sessionId, onPatchTask]);
 
   // The task-detail lens is live: tell the socket layer which task to tail.
   const inspectedTaskId = inspector?.kind === 'task' ? inspector.taskId : null;

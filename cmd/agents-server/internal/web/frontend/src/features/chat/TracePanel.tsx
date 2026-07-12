@@ -679,7 +679,7 @@ export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, runP
   const toggle = (rid: string) => setExpanded(prev => ({ ...prev, [rid]: !prev[rid] }));
 
   return (
-    <SidePanel icon={PulseIcon} title="Traces" count={groups.length} onClose={onClose} storageKey="tracePanelWidth">
+    <SidePanel icon={PulseIcon} title="Traces" count={groups.length} onClose={onClose} storageKey="inspectorWidth">
       {groups.length === 0 && (
         <div className="trace-empty">No traces yet.</div>
       )}

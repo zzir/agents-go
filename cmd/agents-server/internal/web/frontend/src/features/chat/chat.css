@@ -640,6 +640,17 @@
 .task-ind-working::before { background: var(--fgColor-accent); }
 .task-ind-attention::before { background: var(--fgColor-attention); }
 
+/* State groups: a small muted header per non-empty state bucket. */
+.task-group-title {
+  font-size: 11px;
+  font-weight: var(--base-text-weight-medium, 500);
+  color: var(--fgColor-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: var(--base-size-12) 2px var(--base-size-4);
+}
+.task-group:first-of-type .task-group-title { margin-top: 2px; }
+
 .task-row {
   border: 1px solid var(--borderColor-default);
   border-radius: var(--borderRadius-medium);
@@ -654,6 +665,14 @@
   font-size: var(--text-body-size-medium);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1;
+}
+/* Right-hand duration: live rows tick, terminal rows are fixed. */
+.task-row-duration {
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 /* Inline on the action line, next to Stop — truncates, never wraps. */
 .task-row-activity {
@@ -704,6 +723,9 @@
   color: var(--fgColor-muted); cursor: pointer;
   display: inline-flex; align-items: center; gap: 3px;
   flex-shrink: 1; min-width: 24px; overflow: hidden;
+}
+.task-detail-id-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .task-detail-id:hover { color: var(--fgColor-accent); }
 

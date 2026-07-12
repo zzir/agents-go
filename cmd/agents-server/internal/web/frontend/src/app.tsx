@@ -221,6 +221,15 @@ function App() {
 
   const { wsRef, sessionRunRef, loadSession, deleteSession, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
+  // patchTask applies a server-confirmed task state change (e.g. the stop
+  // API's response) directly — the fallback for when no hub broadcast will
+  // come (stopping a paused task after a restart).
+  const patchTask = useCallback((sid: string, taskId: string, patch: Record<string, unknown>) => {
+    updateSS(sid, s => s.tasks[taskId]
+      ? { ...s, tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], ...patch } } }
+      : s);
+  }, [updateSS]);
+
   useEffect(() => {
     if (!activeSession) return;
     let cancelled = false;
@@ -419,6 +428,7 @@ function App() {
       taskView={currentSS.taskView}
       onWatchTask={watchTask}
       onUnwatchTask={unwatchTask}
+      onPatchTask={patchTask}
       onSend={handleSend}
       onCancel={handleCancel}
       onApprove={handleApprove}
