@@ -658,23 +658,28 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 **Background tasks**
 
-18. **A task is a run.** `spawn_task` starts an ordinary hub run whose id is
-    the task id, with its transcript in a hidden child session; the parent
-    linkage rides on `run.started` / `RunInfo.task`. The spawn target is an
-    agent config by name; an empty `agent_name` (or the `default` / `self` /
-    `current` aliases) runs the task with the spawning run's own agent — a
-    config actually named that way wins. Task events use the same
-    broadcast bus, replay cursors, approval persistence, and retention as chat
-    runs — a task-specific transport is how the two lifecycles would drift.
+18. **A task is a durable entity; a run is one execution of it.** `spawn_task`
+    mints separate ids: the task row carries `run_id` (its current attempt),
+    and `run.started` / `RunInfo.task` carry `task_id` — clients route events
+    by run id and key task state by task id (a future retry mints a new run id
+    on the same task row). The transcript lives in a hidden child session. The
+    spawn target is an agent config by name; an empty `agent_name` (or the
+    `default` / `self` / `current` aliases) runs the task with the spawning
+    run's own agent — a config actually named that way wins. Task events use
+    the same broadcast bus, replay cursors, approval persistence, and
+    retention as chat runs — a task-specific transport is how the two
+    lifecycles would drift.
 19. **The spawn card's durable truth is its display projection.** The hub's
     RunInfo is GC'd minutes after a run ends; when a task reaches a final
     state the server patches `{task_id, task_label, task_status, task_summary}`
     onto the spawning `tool_call` row's `display`, and a reload rebuilds the
     task card from that row. Live status comes from run events; durable status
     comes from the row — never from the hub after the fact. Completion wakes
-    the parent at its next run boundary via a `[task-notification] ` input
-    (in-memory queue; a restart keeps the outcome, drops only the auto-wake).
-    The notification is ordinary user-role input identified by its text
+    the parent at its next run boundary via a `[task-notification] ` input;
+    the debt is the row's `notify_state` (pending → consumed by an in-turn
+    `task_status` read, or → delivered by the wake-up run), written in the
+    same UPDATE as the terminal status — the auto-wake survives restarts via
+    the startup sweep. The notification is ordinary user-role input identified by its text
     prefix. It never renders in the timeline — the composer's task indicator
     and the Inspector are the human-facing surfaces; the model reads the text
     verbatim. The prefix carries no privileged behavior: a user typing it
@@ -684,6 +689,23 @@ When a change genuinely doesn't fit, update this list in the same PR.
     same streamReducer/timeline code as the chat) are lenses of one panel —
     a new inspection surface is a new lens, not a second drawer. Task detail
     accumulates live child-run events only while open (watchTask/unwatchTask).
+21. **A task's terminal state is written exactly once, via row CAS.** The
+    durable row is the terminal authority: `Finalize` (status + full result +
+    notification debt in one UPDATE) only wins while the row is non-terminal,
+    stop/approve claims race through the same CAS (`Finalize` vs
+    `ReclaimWorking` — exactly one wins, and `hub.resume` refuses finished
+    records as the second line), and `task_status` treats only the row as
+    final — a hub-terminal run whose row hasn't landed is still `working`. A
+    graceful stop marks the hub record before signalling, so its clean finish
+    lands as `cancelled` ("stopped after the current turn"), never as a
+    completion. Cancellations consume their own wake-up debt (the user did it;
+    completed / failed are the states worth waking the parent for). Deleting a
+    session stops its run tree first (cancel + bounded wait on the done gate)
+    so no write can land after the cascade.
+22. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
+    EXISTS` is the whole story; a structural change to an existing table means
+    dropping and recreating the database (dev-tool stance, decided
+    deliberately). Never add ALTER TABLE migration machinery here.
 
 ## Database
 
