@@ -214,7 +214,11 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, sr *Strea
 			r.toolsUsedBy[name] = true
 		}
 	}
-	if opts.Tracer != nil {
+	// A nested agent-as-tool resume passes the parent's live trace: join it
+	// instead of opening an orphan "(resumed)" root trace (prepareRun parity).
+	if opts.parentTrace != nil {
+		r.trace = opts.parentTrace
+	} else if opts.Tracer != nil {
 		workflow := state.CurrentAgent.Name
 		if workflow == "" {
 			workflow = "Agent workflow"

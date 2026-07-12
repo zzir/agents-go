@@ -172,6 +172,23 @@ func TestBuildParams_PromptCacheKey(t *testing.T) {
 	}
 }
 
+func TestBuildParams_PromptCacheOptions(t *testing.T) {
+	req := agents.ModelRequest{
+		Input: agents.InputItemsFromText("hi"),
+		Settings: &agents.ModelSettings{
+			PromptCacheOptions: &agents.PromptCacheOptions{Mode: agents.PromptCacheModeExplicit, TTL: "30m"},
+		},
+	}
+	got := marshalParams(t, req)
+	opts, ok := got["prompt_cache_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("prompt_cache_options = %v, want object", got["prompt_cache_options"])
+	}
+	if opts["mode"] != "explicit" || opts["ttl"] != "30m" {
+		t.Errorf("prompt_cache_options = %v, want mode=explicit ttl=30m", opts)
+	}
+}
+
 func TestBuildParams_ContextManagement(t *testing.T) {
 	req := agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),

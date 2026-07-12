@@ -127,6 +127,7 @@ agent.ModelSettings = &agents.ModelSettings{
 	TopLogprobs:       agents.Ptr(int64(5)), // logprobs are included automatically
 	Metadata:          map[string]string{"team": "support"},
 	PromptCacheKey:    "chatbot-v3",         // forwarded as prompt_cache_key
+	PromptCacheOptions: &agents.PromptCacheOptions{Mode: agents.PromptCacheModeExplicit, TTL: "30m"},
 	ContextManagement: []agents.ContextManagement{{Type: "compaction"}},
 	ExtraHeaders:      map[string]string{"X-Trace": "1"},
 	ExtraBody:         map[string]any{"safety_identifier": "u_123"},
@@ -139,6 +140,7 @@ Notes:
 
 - `ToolChoice` of `"required"` or a specific tool name is automatically released after the agent calls a tool, preventing infinite loops — see [Agents](agents.md#tool-use-behavior). Any value other than `"auto"`/`"required"`/`"none"` is sent as a function tool name (the SDK has no provider-hosted tools).
 - `PromptCacheKey` is forwarded as the Responses API `prompt_cache_key` to improve prompt-cache hit rates. Unlike the Python SDK, the runner **never auto-generates** one ([differences](python_differences.md)): set it explicitly, or supply your own via `ExtraBody["prompt_cache_key"]`. Empty means unset.
+- `PromptCacheOptions` configures prompt caching: `Mode` is `"implicit"` (default) or `"explicit"`, `TTL` is the minimum cache-entry lifetime (currently only `"30m"`). With `"explicit"` mode, mark cache breakpoints on input content parts (`prompt_cache_breakpoint`) to control which prompt prefixes are cached. nil leaves it unset.
 - `ContextManagement` passes server-side context-management entries through to the Responses API — currently `ContextManagement{Type: "compaction", CompactThreshold: agents.Ptr(int64(...))}`, where a nil `CompactThreshold` leaves the threshold to the server. A nil/empty slice leaves it unset.
 - The per-run overlay replaces `ExtraHeaders` / `ExtraQuery` / `ExtraBody` **wholesale** when the override sets them (matching Python's `ModelSettings.resolve`), rather than merging per key: a run-level `ExtraBody` shadows the agent's `ExtraBody` entirely, it does not union with it.
 

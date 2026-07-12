@@ -41,9 +41,13 @@ type RunContext struct {
 	// keyed by the parent tool call id, so a resumed parent run continues the
 	// nested run from where it paused instead of restarting it. Populated by the
 	// runner at an interruption and re-installed onto the resume's context from
-	// RunState. In-process only (never serialized) — matching Python's ephemeral
-	// agent-tool result cache, which likewise does not survive a RunState JSON
-	// round-trip (a cross-process resume restarts the nested run).
+	// RunState, which serializes these states recursively (NestedToolStates) —
+	// a RunState persisted to JSON and resumed in another process continues the
+	// nested run mid-approval rather than restarting it.
+	// Guarded by nestedMu: a resume replays the interrupted turn's tool calls
+	// concurrently (errgroup), so two paused agent-tools take their states in
+	// parallel.
+	nestedMu         sync.Mutex
 	nestedToolStates map[string]*RunState
 }
 
@@ -51,6 +55,8 @@ type RunContext struct {
 // parent tool call id, if any. Used by an agent-as-tool on resume to continue
 // its paused nested run.
 func (c *RunContext) takeNestedToolState(callID string) *RunState {
+	c.nestedMu.Lock()
+	defer c.nestedMu.Unlock()
 	if c.nestedToolStates == nil {
 		return nil
 	}
@@ -185,6 +191,10 @@ func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, 
 // into dst, keyed by the item's call id. An agent-as-tool uses it to carry the
 // parent run's approve/reject decisions into the nested run it resumes, so the
 // human's choice on a surfaced nested interruption actually takes effect.
+// Permanent (always) decisions stay permanent in the nested store — matching
+// Python's _apply_nested_approvals — so an "always approve" on the parent
+// covers the nested run's future calls to the same tool without another
+// pause/resume round-trip.
 func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem) {
 	if dst == nil {
 		return
@@ -193,12 +203,26 @@ func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem
 		if it == nil {
 			continue
 		}
-		if d, ok := s.decisionFor(it.ToolName, it.CallID); ok {
-			if d.approved {
-				dst.Approve(it, false)
-			} else {
-				dst.Reject(it, false, d.message)
-			}
+		s.mu.Lock()
+		e := s.entries[it.ToolName]
+		var apply func()
+		item := it
+		switch {
+		case e == nil:
+		case e.approvedAll:
+			apply = func() { dst.Approve(item, true) }
+		case e.rejectedAll:
+			msg := e.stickyMessage
+			apply = func() { dst.Reject(item, true, msg) }
+		case e.approvedIDs[it.CallID]:
+			apply = func() { dst.Approve(item, false) }
+		case e.rejectedIDs[it.CallID]:
+			msg := e.messages[it.CallID]
+			apply = func() { dst.Reject(item, false, msg) }
+		}
+		s.mu.Unlock()
+		if apply != nil {
+			apply()
 		}
 	}
 }

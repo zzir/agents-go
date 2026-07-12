@@ -123,6 +123,12 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 	if s.PromptCacheKey != "" {
 		params.PromptCacheKey = oai.String(s.PromptCacheKey)
 	}
+	if s.PromptCacheOptions != nil {
+		params.PromptCacheOptions = responses.ResponseNewParamsPromptCacheOptions{
+			Mode: string(s.PromptCacheOptions.Mode),
+			Ttl:  s.PromptCacheOptions.TTL,
+		}
+	}
 	if len(s.ContextManagement) > 0 {
 		entries := make([]responses.ResponseNewParamsContextManagement, len(s.ContextManagement))
 		for i, cm := range s.ContextManagement {

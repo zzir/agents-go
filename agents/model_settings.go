@@ -57,6 +57,28 @@ const (
 	PromptCacheRetention24h      PromptCacheRetention = "24h"
 )
 
+// PromptCacheMode controls whether the provider creates an implicit cache
+// breakpoint: "implicit" (default) or "explicit". Empty means unset.
+type PromptCacheMode string
+
+// The predefined prompt-cache modes.
+const (
+	PromptCacheModeImplicit PromptCacheMode = "implicit"
+	PromptCacheModeExplicit PromptCacheMode = "explicit"
+)
+
+// PromptCacheOptions configures prompt caching for OpenAI Responses API
+// requests. It mirrors the Python SDK's ModelSettings.prompt_cache_options.
+// Combine Mode "explicit" with content-part cache breakpoints on the input to
+// control which prompt prefixes are eligible for caching.
+type PromptCacheOptions struct {
+	// Mode is "implicit" (default) or "explicit". Empty leaves it unset.
+	Mode PromptCacheMode `json:"mode,omitempty"`
+	// TTL is the minimum cache-entry lifetime, e.g. "30m" (currently the only
+	// supported value). Empty leaves it unset.
+	TTL string `json:"ttl,omitempty"`
+}
+
 // ReasoningEffort constrains reasoning effort: "minimal", "low", "medium" or
 // "high". Empty means unset.
 type ReasoningEffort string
@@ -157,6 +179,10 @@ type ModelSettings struct {
 	// the runner never generates a key: callers set this (or ExtraBody) themselves.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
+	// PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
+	// for OpenAI Responses API requests. nil leaves it unset.
+	PromptCacheOptions *PromptCacheOptions `json:"prompt_cache_options,omitempty"`
+
 	// ContextManagement configures server-side context management (e.g.
 	// compaction) for OpenAI Responses API requests. A nil/empty slice leaves it
 	// unset.
@@ -231,6 +257,9 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	}
 	if override.PromptCacheKey != "" {
 		out.PromptCacheKey = override.PromptCacheKey
+	}
+	if override.PromptCacheOptions != nil {
+		out.PromptCacheOptions = override.PromptCacheOptions
 	}
 	if override.ContextManagement != nil {
 		out.ContextManagement = override.ContextManagement

@@ -19,11 +19,14 @@ func usageFromStreamResponse(resp *responses.Response) *Usage {
 	}
 	u := resp.Usage
 	return &Usage{
-		Requests:            1,
-		InputTokens:         u.InputTokens,
-		OutputTokens:        u.OutputTokens,
-		TotalTokens:         u.TotalTokens,
-		InputTokensDetails:  InputTokensDetails{CachedTokens: u.InputTokensDetails.CachedTokens},
+		Requests:     1,
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+		InputTokensDetails: InputTokensDetails{
+			CachedTokens:     u.InputTokensDetails.CachedTokens,
+			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
+		},
 		OutputTokensDetails: OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ReasoningTokens},
 	}
 }

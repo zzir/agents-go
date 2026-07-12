@@ -6,7 +6,7 @@ func TestUsageAdd(t *testing.T) {
 	u := NewUsage()
 	u.Add(&Usage{
 		Requests: 1, InputTokens: 100, OutputTokens: 20, TotalTokens: 120,
-		InputTokensDetails:  InputTokensDetails{CachedTokens: 10},
+		InputTokensDetails:  InputTokensDetails{CachedTokens: 10, CacheWriteTokens: 4},
 		OutputTokensDetails: OutputTokensDetails{ReasoningTokens: 5},
 	})
 	u.Add(&Usage{
@@ -21,6 +21,9 @@ func TestUsageAdd(t *testing.T) {
 	}
 	if u.InputTokensDetails.CachedTokens != 10 {
 		t.Errorf("cached = %d, want 10", u.InputTokensDetails.CachedTokens)
+	}
+	if u.InputTokensDetails.CacheWriteTokens != 4 {
+		t.Errorf("cache writes = %d, want 4", u.InputTokensDetails.CacheWriteTokens)
 	}
 	if len(u.RequestUsageEntries) != 2 {
 		t.Errorf("entries = %d, want 2 (one synthesized per request)", len(u.RequestUsageEntries))

@@ -1,6 +1,6 @@
 # Differences from the Python SDK
 
-`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.17.8: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
+`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.18.2: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
 
 ## API mapping
 
@@ -45,7 +45,7 @@
 
 ## Behavioral differences
 
-| Area | Python v0.17.8 | Go |
+| Area | Python v0.18.2 | Go |
 |---|---|---|
 | Tool errors | `failure_error_function` default feeds the error to the model | Same default (`DefaultToolErrorFunction`); set the field to `nil` for fatal |
 | Tool timeout | `timeout_seconds` + `timeout_behavior` (`error_as_result` / `raise_exception`) | `FunctionTool.Timeout` → `*ToolTimeoutError`, fed back via `FailureErrorFunction` when set (≈ `error_as_result`), else fatal (≈ `raise_exception`). Enforced by the runner: the call returns at the deadline even if the tool ignores its context (the tool goroutine finishes in the background, its late result discarded) |
@@ -76,6 +76,7 @@
 | MCP call cancellation | typed `MCPToolCancellationError` | plain `context.Context` cancellation (`ctx.Err()`) |
 | Session UI metadata | tool-call items may carry `_agents_tool_title`/`_agents_tool_description` keys (stripped before model calls) | sessions store pure API items; SDK-only metadata lives on `ToolCallOutputItem.CustomData`, never persisted |
 | Trace span granularity | one span per guardrail (named after it, with a `triggered` flag), `mcp_tools` spans per list call, `mcp_data` on function spans | one aggregate span per guardrail stage (`"input"` / `"output"`), no MCP list spans, no `mcp_data` |
+| Generation span usage keys | per-call usage includes cached and cache-write input-token breakdowns | `input_tokens` / `output_tokens` / `total_tokens` only — the breakdowns live on `Usage.InputTokensDetails`, not on spans |
 | Prompt cache key | may auto-generate a `prompt_cache_key` (sniffing the endpoint) and carry it across a resumed run | typed `ModelSettings.PromptCacheKey` field only — the runner never auto-generates one, sniffs the endpoint, or persists it in `RunState` ("Option A"); set it explicitly or via `ExtraBody["prompt_cache_key"]` |
 | Stored-prompt variables | prompt variable values may be text or content (image/file) inputs | only string (text) values are supported; a non-string variable is rejected with a `*UserError` rather than silently stringified |
 | `RunContext.TurnInput` | `turn_input` is the model input for the current turn | reconstructed from the run's new input plus the conversation generated so far; it does **not** include prior Session history — a Go-only approximation |
@@ -94,13 +95,15 @@
 - **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others. (`OpenAIConversationsSession` and `OpenAIResponsesCompactionSession` **are** ported, as `openai.ConversationsSession` and `openai.CompactionSession`.)
 - **Realtime and voice agents**
 - **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
-- **Responses-over-WebSocket transport** (`OpenAIResponsesWSModel`, `use_responses_websocket`) and the `Model.close()` / `ModelProvider.aclose()` lifecycle hooks — HTTP only; a custom Go `Model` manages its own connections
+- **Responses-over-WebSocket transport** (`OpenAIResponsesWSModel`, `use_responses_websocket`) and the `Model.close()` / `ModelProvider.aclose()` / run-scoped `Model._cleanup_on_run_end` (v0.18) lifecycle hooks — HTTP only; a custom Go `Model` manages its own connections
+- **Hosted multi-agent beta** (`OpenAIHostedMultiAgentModel`, v0.18.2 experimental) — server-side subagent orchestration over the Responses WebSocket; falls under both the no-hosted-tools and HTTP-only decisions above
+- **`agent.as_tool(previous_response_id=...)`** — the only as_tool option not ported: Go's `RunOptions` has no explicit response-id entry point (`UsePreviousResponseID` is an automatic bool chain). The rest of the surface exists on `AgentToolConfig` (`OnStream`, `IsEnabled`, `NeedsApproval`/`Func`, `FailureErrorFunction`, `Hooks`, `Session`, `ConversationID`, `ModifyRunOptions` as the `run_config` override, `InputBuilder`/`IncludeInputSchema`) plus `AgentAsTool[Params]` for typed parameters (a free function — Go methods cannot take type parameters). Builders return text only, not item lists
 - **MCP-level `custom_data_extractor`** — Python's MCP servers (and hosted tools) accept their own custom-data extractors with access to the raw `CallToolResult`; in Go only `FunctionTool.CustomDataExtractor` exists, and MCP-bridged tools don't expose the raw result to it
 - **`ModelSettings.extra_args`** — the free-form request-passthrough dict is intentionally not ported: `ExtraBody` (with `ExtraHeaders` / `ExtraQuery`) already covers forwarding arbitrary fields to the provider request
 
 ## Go-only additions
 
-- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in your own infrastructure — locked-down Docker containers (`sandbox/docker`) or a remote host over SSH (`sandbox/ssh`) — exposed via `sandbox.CodeTool`. Python's sandboxes target hosted providers (e2b / modal / blaxel) rather than self-hosted backends
+- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in your own infrastructure — locked-down Docker containers (`sandbox/docker`) or a remote host over SSH (`sandbox/ssh`) — exposed via `sandbox.CodeTool`. Python has since grown its own sandbox stack (self-hosted `docker` / `unix_local` in core plus hosted providers — e2b / daytona / cloudflare / runloop / vercel — as extensions) with a PTY session model; the Go `Sandbox` interface predates it and stays a deliberately smaller surface: Exec + file operations, no PTY sessions, no hosted providers, plus an SSH backend Python lacks
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
 - **`FileSession`**: zero-dependency JSONL persistence with per-path locking and atomic rewrites
 - **[Skills](skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills

@@ -5,7 +5,7 @@ go 1.26.4
 require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/openai/openai-go/v3 v3.41.1
+	github.com/openai/openai-go/v3 v3.42.0
 	golang.org/x/sync v0.22.0
 )
 

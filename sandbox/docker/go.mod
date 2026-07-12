@@ -21,7 +21,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/openai/openai-go/v3 v3.41.1 // indirect
+	github.com/openai/openai-go/v3 v3.42.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect

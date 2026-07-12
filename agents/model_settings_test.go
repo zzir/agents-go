@@ -48,6 +48,18 @@ func TestResolvePromptCacheKey(t *testing.T) {
 	}
 }
 
+func TestResolvePromptCacheOptions(t *testing.T) {
+	base := &ModelSettings{PromptCacheOptions: &PromptCacheOptions{Mode: PromptCacheModeImplicit}}
+
+	over := &PromptCacheOptions{Mode: PromptCacheModeExplicit, TTL: "30m"}
+	if got := base.Resolve(&ModelSettings{PromptCacheOptions: over}); got.PromptCacheOptions != over {
+		t.Errorf("PromptCacheOptions = %+v, want override to win", got.PromptCacheOptions)
+	}
+	if got := base.Resolve(&ModelSettings{}); got.PromptCacheOptions == nil || got.PromptCacheOptions.Mode != PromptCacheModeImplicit {
+		t.Errorf("PromptCacheOptions = %+v, want base retained when override unset", got.PromptCacheOptions)
+	}
+}
+
 func TestResolveContextManagement(t *testing.T) {
 	cm := []ContextManagement{{Type: "compaction", CompactThreshold: Ptr[int64](200000)}}
 	got := (&ModelSettings{}).Resolve(&ModelSettings{ContextManagement: cm})

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -115,6 +116,11 @@ type Server struct {
 	allowed map[string]bool
 	blocked map[string]bool
 
+	// closed flips when Close runs so later ListTools/CallTool report a clear
+	// error instead of failing obscurely on the dead session — a long-lived
+	// run can hold a *Server pointer past a reconfiguration that closed it.
+	closed atomic.Bool
+
 	mu     sync.Mutex
 	cached []cachedTool // populated lazily when CacheToolsList is set
 }
@@ -212,11 +218,13 @@ func NewSSEServer(ctx context.Context, name, endpoint string, opts Options) (*Se
 // Name implements agents.MCPServer.
 func (s *Server) Name() string { return s.name }
 
-// Close implements agents.MCPServer, closing the session.
+// Close implements agents.MCPServer, closing the session. Subsequent
+// ListTools/CallTool calls fail with a "closed" error.
 func (s *Server) Close() error {
 	if s.session == nil {
 		return nil
 	}
+	s.closed.Store(true)
 	return s.session.Close()
 }
 
@@ -278,6 +286,9 @@ func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
 func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	if s.session == nil {
 		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+	}
+	if s.closed.Load() {
+		return nil, fmt.Errorf("mcp: server %q is closed", s.name)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -404,6 +415,9 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			var result *mcpsdk.CallToolResult
 			if err := s.runWithRetries(ctx, func() error {
 				var e error
+				if s.closed.Load() {
+					return fmt.Errorf("mcp: server %q is closed", s.name)
+				}
 				result, e = s.session.CallTool(ctx, params)
 				return e
 			}); err != nil {

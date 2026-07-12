@@ -256,11 +256,14 @@ func usageFromResponse(u *responses.ResponseUsage) *agents.Usage {
 		return agents.NewUsage()
 	}
 	return &agents.Usage{
-		Requests:            1,
-		InputTokens:         u.InputTokens,
-		OutputTokens:        u.OutputTokens,
-		TotalTokens:         u.TotalTokens,
-		InputTokensDetails:  agents.InputTokensDetails{CachedTokens: u.InputTokensDetails.CachedTokens},
+		Requests:     1,
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+		InputTokensDetails: agents.InputTokensDetails{
+			CachedTokens:     u.InputTokensDetails.CachedTokens,
+			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
+		},
 		OutputTokensDetails: agents.OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ReasoningTokens},
 	}
 }

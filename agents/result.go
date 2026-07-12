@@ -47,6 +47,11 @@ type RunResult struct {
 	// approvals. Approve/reject items on it and resume with ResumeRun. It is nil
 	// for runs that complete normally.
 	State *RunState
+	// AgentToolInvocation identifies the parent tool call when this result was
+	// produced by a nested agent-as-tool run (visible to a
+	// CustomOutputExtractor); nil for top-level runs. The counterpart of
+	// Python's RunResult.agent_tool_invocation.
+	AgentToolInvocation *AgentToolInvocation
 }
 
 // FinalOutputString returns the final output as a string when the agent produced

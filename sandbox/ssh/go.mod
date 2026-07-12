@@ -11,7 +11,7 @@ require (
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/kr/fs v0.1.0 // indirect
-	github.com/openai/openai-go/v3 v3.41.1 // indirect
+	github.com/openai/openai-go/v3 v3.42.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect

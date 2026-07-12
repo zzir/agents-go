@@ -6,6 +6,10 @@ import "sync"
 // tokens. Only the fields the runner cares about are modeled.
 type InputTokensDetails struct {
 	CachedTokens int64 `json:"cached_tokens"`
+	// CacheWriteTokens counts input tokens written to the prompt cache (surfaced
+	// by providers that bill cache writes separately). Older serialized RunState
+	// snapshots without the field decode to zero.
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
 }
 
 // OutputTokensDetails mirrors the OpenAI Responses API usage breakdown for
@@ -70,6 +74,7 @@ func (u *Usage) Add(other *Usage) {
 	u.OutputTokens += other.OutputTokens
 	u.TotalTokens += other.TotalTokens
 	u.InputTokensDetails.CachedTokens += other.InputTokensDetails.CachedTokens
+	u.InputTokensDetails.CacheWriteTokens += other.InputTokensDetails.CacheWriteTokens
 	u.OutputTokensDetails.ReasoningTokens += other.OutputTokensDetails.ReasoningTokens
 
 	switch {
