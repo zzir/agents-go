@@ -1,7 +1,7 @@
 # agents-go
 
 A Go port of [openai-agents-python](https://github.com/openai/openai-agents-python)
-(tracking **v0.17.8**). Build agents that call tools, hand off to one another,
+(tracking **v0.18.2**). Build agents that call tools, hand off to one another,
 enforce guardrails, stream events, persist sessions, pause for human approval,
 and emit traces — all with idiomatic Go APIs.
 
@@ -60,7 +60,7 @@ func main() {
 | Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |
 | Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` |
 | Handoffs | `agents.HandoffTo(targetAgent)` |
-| Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})` |
+| Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})`; typed params via `agents.AgentAsTool[Params](agent, cfg)` (validated, structured input rendering) |
 | Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails (incl. pre-approval via `RunOptions.PreApprovalToolInputGuardrails`) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Error recovery | `RunOptions.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
@@ -227,8 +227,9 @@ Backends:
 A full-featured **[demo web app](cmd/agents-server/README.md)** that wraps the
 SDK with a versioned REST API, WebSocket streaming, and an embedded browser UI.
 Configure agents, MCP servers, sandboxes, memories, and skills — then run
-conversations with streaming output, tool approval, and tracing, all from the
-browser.
+conversations with streaming output, tool approval, tracing, and background
+tasks (`spawn_task` subagents with durable state, approval bubbling, and
+automatic completion wake-ups), all from the browser.
 
 ```bash
 go run ./cmd/agents-server --port 8080
