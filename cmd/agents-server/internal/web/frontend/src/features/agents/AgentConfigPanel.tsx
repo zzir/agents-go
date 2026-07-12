@@ -151,6 +151,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
   const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
   const [extraBody, setExtraBody] = useState(initMs.extra_body ? JSON.stringify(initMs.extra_body) : '');
+  // model_settings keys the form has no controls for (prompt_cache_options,
+  // verbosity, metadata, …) can be set through the API. The save handler
+  // rebuilds model_settings from the form, so anything not carried over here
+  // would be silently dropped on the next UI save.
+  const msFormKeys = ['reasoning', 'service_tier', 'extra_body'];
+  const preservedMs = Object.fromEntries(Object.entries(parseModelSettings()).filter(([k]) => !msFormKeys.includes(k)));
   const [selectedHandoffs, setSelectedHandoffs] = useState<(string | number)[]>(initHandoffs);
   const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
@@ -215,6 +221,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
       </Select>)}
 
       <JsonField label="Extra body (JSON)" value={extraBody} onChange={setExtraBody} placeholder='{"enable_thinking": true, "thinking_budget": 1024}' caption="Provider-specific parameters injected into every API request" />
+      {Object.keys(preservedMs).length > 0 && (
+        <span style={{ color: 'var(--fgColor-muted)', fontSize: 'var(--text-body-size-small)' }}>
+          Set via API, preserved on save: {Object.keys(preservedMs).sort().join(', ')}
+        </span>
+      )}
 
       <div className="form-group">
         <div className="form-group-title">Provider</div>
@@ -412,8 +423,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
 
       <div className="form-actions">
         <Button onClick={() => {
-          const ms: Record<string, unknown> = {};
-          if (reasoningEffort) ms.reasoning = { effort: reasoningEffort };
+          const ms: Record<string, unknown> = { ...preservedMs };
+          const reasoning: Record<string, unknown> = { ...(initMs.reasoning as Record<string, unknown> | undefined) };
+          if (reasoningEffort) reasoning.effort = reasoningEffort; else delete reasoning.effort;
+          if (Object.keys(reasoning).length > 0) ms.reasoning = reasoning;
           if (serviceTier) ms.service_tier = serviceTier;
           if (extraBody.trim()) {
             // Block the save on malformed JSON — silently dropping the field

@@ -16,13 +16,23 @@ import (
 // so the resulting events stream over GET /runs/{id}/events or the WebSocket.
 type ApprovalHandler struct {
 	store  *store.PendingApprovalStore
+	tasks  *store.TaskStore
 	runner *bridge.Runner
 }
 
 // NewApprovalHandler returns a handler backed by the pending-approval store
-// and the runner.
-func NewApprovalHandler(s *store.PendingApprovalStore, runner *bridge.Runner) *ApprovalHandler {
-	return &ApprovalHandler{store: s, runner: runner}
+// and the runner. tasks, when non-nil, lets the session listing surface
+// approvals paused inside the session's background tasks.
+func NewApprovalHandler(s *store.PendingApprovalStore, tasks *store.TaskStore, runner *bridge.Runner) *ApprovalHandler {
+	return &ApprovalHandler{store: s, tasks: tasks, runner: runner}
+}
+
+// SessionApproval is a pending approval enriched with the background task it
+// belongs to (empty for the session's own foreground run).
+type SessionApproval struct {
+	store.PendingApproval
+	TaskID    string `json:"task_id,omitempty"`
+	TaskLabel string `json:"task_label,omitempty"`
 }
 
 // ListBySession responds with the pending approvals for the session
@@ -33,17 +43,41 @@ func NewApprovalHandler(s *store.PendingApprovalStore, runner *bridge.Runner) *A
 //	@Tags			approvals
 //	@Produce		json
 //	@Param			id	path		string	true	"Session ID"
-//	@Success		200	{array}		store.PendingApproval
+//	@Success		200	{array}		SessionApproval
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/approvals [get]
 func (h *ApprovalHandler) ListBySession(c *gin.Context) {
-	items, err := h.store.ListBySession(c.Request.Context(), c.Param("id"))
+	ctx := c.Request.Context()
+	items, err := h.store.ListBySession(ctx, c.Param("id"))
 	if err != nil {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, items)
+	out := make([]SessionApproval, 0, len(items))
+	for _, it := range items {
+		out = append(out, SessionApproval{PendingApproval: it})
+	}
+	// Approvals paused inside this session's background tasks surface here too,
+	// tagged with their task, so the chat UI is the one approval surface.
+	if h.tasks != nil {
+		tasks, err := h.tasks.ListByParent(ctx, c.Param("id"))
+		if err != nil {
+			internalError(c, err)
+			return
+		}
+		for _, task := range tasks {
+			childItems, err := h.store.ListBySession(ctx, task.ChildSessionID)
+			if err != nil {
+				internalError(c, err)
+				return
+			}
+			for _, it := range childItems {
+				out = append(out, SessionApproval{PendingApproval: it, TaskID: task.ID, TaskLabel: task.Label})
+			}
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 type rejectReq struct {

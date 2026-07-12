@@ -279,9 +279,16 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
           if (movedUp) {
             lastUpIntent.current = now;
             updateSticky(false);
-          } else {
-            updateSticky(dist < 80 && now - lastSelChange.current > 350 && now - lastUpIntent.current > 350);
+          } else if (dist >= 80) {
+            updateSticky(false);
+          } else if (now - lastSelChange.current > 350 && now - lastUpIntent.current > 350) {
+            // At the bottom with no recent stop-following intent: (re)stick.
+            updateSticky(true);
           }
+          // At the bottom but vetoed (mid-selection / just wheeled up): leave
+          // the state as is — the veto blocks RE-sticking after an unstick,
+          // it must not force an unstick while still pinned (that surfaced a
+          // "Jump to latest" button with nothing below to jump to).
         });
       };
       const onWheel = (e: WheelEvent) => {
@@ -314,8 +321,11 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
       const el = elRef.current;
       if (!el) return;
       if (selectionInside()) {
+        // Record the intent but do NOT unstick yet: with nothing arriving,
+        // selecting at the bottom must not surface a "Jump to latest" button
+        // for content that doesn't exist. The pin effect below unsticks
+        // lazily, on the first content growth during an active selection.
         lastSelChange.current = performance.now();
-        updateSticky(false);
       } else if (!stick.current) {
         // Selection cleared while still at the bottom: resume following.
         const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -329,10 +339,19 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
   useEffect(() => { updateSticky(true); }, [resetDep, updateSticky]);
 
   useEffect(() => {
-    if (elRef.current && stick.current) {
-      elRef.current.scrollTop = elRef.current.scrollHeight;
+    const el = elRef.current;
+    if (!el || !stick.current) return;
+    // Content arrived while a selection is actively changing (mid-drag):
+    // following would move the text under the cursor, so hand over to the
+    // unstuck state — the button appears now, when there genuinely is newer
+    // content below. A static leftover selection doesn't veto (recency
+    // window), matching the scroll handler's discriminator.
+    if (performance.now() - lastSelChange.current < 350) {
+      updateSticky(false);
+      return;
     }
-  }, [dep, resetDep]);
+    el.scrollTop = el.scrollHeight;
+  }, [dep, resetDep, updateSticky]);
 
   const scrollToBottom = useCallback(() => {
     if (elRef.current) {

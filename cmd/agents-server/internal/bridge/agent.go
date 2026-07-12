@@ -36,7 +36,11 @@ type AgentDeps struct {
 	SandboxManager   *SandboxManager
 	ChatGPTOAuth     *ChatGPTOAuth
 	PendingApprovals *store.PendingApprovalStore
+	Tasks            *store.TaskStore
 	Workspace        string
+	// TaskSpawner is set by NewRunner; when non-nil, chat agents get the
+	// spawn_task / task_status / task_stop tools.
+	TaskSpawner TaskSpawner
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -84,6 +88,12 @@ type BuildResult struct {
 // global settings (system_prompt). agentConfigID is required. sandboxID is
 // optional — when set, only that sandbox is attached; when empty, all are.
 func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string) (*BuildResult, error) {
+	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, false)
+}
+
+// buildFullAgent is BuildFullAgent with task-run awareness: a background task
+// run's agent is built WITHOUT the task tools, capping spawn depth at one.
+func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string, taskRun bool) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
@@ -92,6 +102,9 @@ func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		cache: make(map[string]*BuildResult),
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
+	if err == nil && !taskRun && deps.TaskSpawner != nil {
+		result.Agent.Tools = append(result.Agent.Tools, TaskTools(deps.TaskSpawner)...)
+	}
 	if err != nil {
 		return nil, err
 	}

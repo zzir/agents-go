@@ -57,9 +57,9 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	}
 
 	// With the sandbox id: the resolved agent must carry exec_command.
-	withSb, err := runner.buildAgentRegistry(ctx, ac.ID, sb.ID)
+	withSb, err := runner.buildAgentRegistry(ctx, ac.ID, sb.ID, false)
 	if err != nil {
-		t.Fatalf("buildAgentRegistry(sandbox): %v", err)
+		t.Fatalf("buildAgentRegistry(sandbox, false): %v", err)
 	}
 	if !hasExec(withSb) {
 		t.Error("registry built with a sandbox id is missing exec_command")
@@ -67,9 +67,9 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 
 	// Without it, exec_command is absent — this is exactly the state that
 	// stranded approvals, so the fix is that ResolveApproval passes the id.
-	noSb, err := runner.buildAgentRegistry(ctx, ac.ID, "")
+	noSb, err := runner.buildAgentRegistry(ctx, ac.ID, "", false)
 	if err != nil {
-		t.Fatalf("buildAgentRegistry(none): %v", err)
+		t.Fatalf("buildAgentRegistry(none, false): %v", err)
 	}
 	if hasExec(noSb) {
 		t.Error("registry built with no sandbox id unexpectedly has exec_command")

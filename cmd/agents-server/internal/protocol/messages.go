@@ -116,7 +116,32 @@ type RunStarted struct {
 	// browser that did not send the prompt renders its user bubble from this
 	// (the sender dedups against its own optimistic bubble).
 	Input string `json:"input,omitempty"`
+	// Task metadata, set only for background task runs (spawn_task): the
+	// parent chat session/run this task belongs to and the spawning tool call.
+	// The client routes such runs into the parent session's task list instead
+	// of a chat timeline (SessionID is the task's own hidden session).
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	ParentRunID     string `json:"parent_run_id,omitempty"`
+	ToolCallID      string `json:"tool_call_id,omitempty"`
+	Label           string `json:"label,omitempty"`
 }
+
+// Task status vocabulary, aligned with the MCP Tasks (SEP-1686) five-state
+// lifecycle. The mapping from run status is single-pointed in
+// bridge.TaskStatusFor.
+const (
+	TaskWorking       = "working"
+	TaskInputRequired = "input_required"
+	TaskCompleted     = "completed"
+	TaskFailed        = "failed"
+	TaskCancelled     = "cancelled"
+)
+
+// TaskNotificationPrefix marks a user-input message injected by the server
+// when a background task finishes (the parent run "wakes" on it). The client
+// renders such messages as task notifications rather than user bubbles; the
+// model sees the prefixed text verbatim.
+const TaskNotificationPrefix = "[task-notification] "
 
 // RunAgentStart notifies the client that a (possibly handed-off-to) agent has started its turn.
 type RunAgentStart struct {

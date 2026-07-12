@@ -219,7 +219,7 @@ function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, loadSession, deleteSession } = useAgentSocket(updateSS);
+  const { wsRef, sessionRunRef, loadSession, deleteSession, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -415,6 +415,10 @@ function App() {
       liveStartedAt={currentSS.liveStartedAt}
       liveAgentName={currentSS.liveAgentName}
       awaiting={!!activeSession && awaitingSessions.has(activeSession)}
+      tasks={currentSS.tasks}
+      taskView={currentSS.taskView}
+      onWatchTask={watchTask}
+      onUnwatchTask={unwatchTask}
       onSend={handleSend}
       onCancel={handleCancel}
       onApprove={handleApprove}

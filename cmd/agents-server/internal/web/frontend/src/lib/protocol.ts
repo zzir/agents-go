@@ -40,4 +40,37 @@ export const ERR = {
   runNotFound: 'run_not_found',
   approvalFailed: 'approval_failed',
   guardrailTripwire: 'guardrail_tripwire',
+  configError: 'config_error',
 } as const;
+
+// Mirror of protocol.TaskNotificationPrefix: a user-input message the server
+// injects when a background task finishes. Rendered as a notification card,
+// not a user bubble.
+export const TASK_NOTIFICATION_PREFIX = '[task-notification] ';
+
+// parseTaskNotification is THE way the UI recognizes a server-injected task
+// notification (a user-role item the model reads verbatim). Every place that
+// special-cases user messages (TOC rail, trace labels, bubble rendering) must
+// go through it so the notification is exempted consistently.
+export interface TaskNotificationItem {
+  label: string;
+  taskId: string;
+  status: string;
+}
+
+export function parseTaskNotification(content: string | undefined | null): null | { text: string; label: string | null; taskId: string | null; items: TaskNotificationItem[] } {
+  if (!content || !content.startsWith(TASK_NOTIFICATION_PREFIX)) return null;
+  const text = content.slice(TASK_NOTIFICATION_PREFIX.length);
+  // One line per finished task: `Task "label" (id) status.[ Result: ...]` —
+  // the server may batch several tasks into one wake-up.
+  const items: TaskNotificationItem[] = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(/^Task "([^"]+)" \(([0-9a-f]+)\) (\w+)\./);
+    if (m) items.push({ label: m[1], taskId: m[2], status: m[3] });
+  }
+  const first = items[0];
+  return { text, label: first ? first.label : null, taskId: first ? first.taskId : null, items };
+}
+
+// MCP-Tasks-aligned task statuses (mirror of the Go protocol.Task* consts).
+export type TaskStatus = 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled';

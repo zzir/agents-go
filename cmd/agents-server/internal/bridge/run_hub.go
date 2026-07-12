@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -79,6 +80,15 @@ type SeqEnvelope struct {
 	Env *protocol.Envelope `json:"env"`
 }
 
+// TaskMeta links a background task run to the parent chat session/run that
+// spawned it. Nil for ordinary runs.
+type TaskMeta struct {
+	ParentSessionID string `json:"parent_session_id"`
+	ParentRunID     string `json:"parent_run_id,omitempty"`
+	ToolCallID      string `json:"tool_call_id,omitempty"`
+	Label           string `json:"label,omitempty"`
+}
+
 // RunInfo is a snapshot of a run's identity and state for status queries.
 type RunInfo struct {
 	RunID         string    `json:"run_id"`
@@ -87,6 +97,26 @@ type RunInfo struct {
 	SandboxID     string    `json:"sandbox_id,omitempty"`
 	Status        RunStatus `json:"status"`
 	LastSeq       int       `json:"last_seq"`
+	// Task is set for background task runs (SessionID is then the task's own
+	// hidden session; Task carries the parent linkage).
+	Task *TaskMeta `json:"task,omitempty"`
+}
+
+// TaskStatusFor maps a run status onto the MCP Tasks (SEP-1686) five-state
+// task vocabulary — the single point where the two state models meet.
+func TaskStatusFor(s RunStatus) string {
+	switch s {
+	case RunInterrupted:
+		return protocol.TaskInputRequired
+	case RunCompleted:
+		return protocol.TaskCompleted
+	case RunErrored:
+		return protocol.TaskFailed
+	case RunCancelled:
+		return protocol.TaskCancelled
+	default:
+		return protocol.TaskWorking
+	}
 }
 
 // SeqSink receives a hub event together with its sequence number. It is the
@@ -143,24 +173,57 @@ type ErrSessionBusy struct{ RunID string }
 
 func (e ErrSessionBusy) Error() string { return "session already has an active run: " + e.RunID }
 
+// ErrTaskLimit is returned by register when the parent session is already at
+// its live-task cap. Enforced inside the hub lock so concurrent spawns in one
+// turn cannot collectively overshoot (check-then-act would).
+type ErrTaskLimit struct{ Limit int }
+
+func (e ErrTaskLimit) Error() string {
+	return fmt.Sprintf("session already has %d live tasks; wait for one to finish or stop one", e.Limit)
+}
+
 // register creates a run record for a fresh run on sessionID and returns it
 // with a context descending from the hub root (not any connection). It fails
 // with ErrSessionBusy if the session already has a live run.
-func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string) (*runRecord, context.Context, error) {
+func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runRecord, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, ErrSessionBusy{RunID: existing}
 	}
+	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= maxConcurrentTasks {
+		return nil, nil, ErrTaskLimit{Limit: maxConcurrentTasks}
+	}
 	ctx, cancel := context.WithCancel(h.rootCtx)
 	rec := &runRecord{
-		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning},
+		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 		cancel: cancel,
 		subs:   make(map[int]SeqSink),
 	}
 	h.runs[runID] = rec
 	h.bySession[sessionID] = runID
 	return rec, ctx, nil
+}
+
+// LiveTaskCount reports how many live (running or input-required) task runs
+// belong to the given parent session.
+func (h *RunHub) LiveTaskCount(parentSessionID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.liveTaskCountLocked(parentSessionID)
+}
+
+func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
+	n := 0
+	for _, rec := range h.runs {
+		rec.mu.Lock()
+		if rec.info.Task != nil && rec.info.Task.ParentSessionID == parentSessionID &&
+			(rec.info.Status == RunRunning || rec.info.Status == RunInterrupted) {
+			n++
+		}
+		rec.mu.Unlock()
+	}
+	return n
 }
 
 // resume reopens an interrupted run so its continuation streams under the
@@ -171,7 +234,7 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string) (*r
 // If the record is gone (server restart, retention GC), a fresh record is
 // created under the same id with the sequence restarting at zero.
 // It fails with ErrSessionBusy if the session already has a live run.
-func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string) (context.Context, error) {
+func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if existing, ok := h.bySession[sessionID]; ok {
@@ -181,7 +244,7 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string) (cont
 	rec := h.runs[runID]
 	if rec == nil {
 		rec = &runRecord{
-			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning},
+			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 			cancel: cancel,
 			subs:   make(map[int]SeqSink),
 		}
@@ -192,6 +255,9 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string) (cont
 	rec.mu.Lock()
 	rec.cancel = cancel
 	rec.info.Status = RunRunning
+	if task != nil {
+		rec.info.Task = task
+	}
 	rec.endedAt = time.Time{}
 	rec.mu.Unlock()
 	h.bySession[sessionID] = runID

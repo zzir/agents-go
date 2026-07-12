@@ -512,9 +512,18 @@ function SpanRow({ node, depth, range, alignChevron }: { node: SpanNode; depth: 
 
 /* ---------- per-run card ---------- */
 
-interface TraceRunProps {
+// One run's events inside a trace card. A card usually holds a single run,
+// but a conversation exchange that spawned background tasks also pulls in the
+// wake-up runs their results triggered — each segment keeps its own waterfall
+// timeline (the runs are minutes apart; one shared scale would be unreadable).
+export interface TraceRunSegment {
   runId: string;
   events: TraceEventData[];
+}
+
+interface TraceRunProps {
+  runId: string;
+  segments: TraceRunSegment[];
   label: string;
   isLive: boolean;
   isExpanded: boolean;
@@ -524,24 +533,28 @@ interface TraceRunProps {
   onJump?: () => void;
 }
 
-function TraceRun({ events, label, isLive, isExpanded, onToggle, onJump }: TraceRunProps) {
+export function TraceRun({ segments, label, isLive, isExpanded, onToggle, onJump }: TraceRunProps) {
   const ref = useRef<HTMLDivElement>(null);
 
-  const { spanRoots, range, tokens } = useMemo(() => {
-    const spanEvents = events.filter(ev => ev.kind === 'span');
-    let inp = 0, out = 0;
-    for (const ev of spanEvents) {
-      if (ev.type === 'generation' && ev.data) {
-        inp += Number(ev.data.input_tokens) || 0;
-        out += Number(ev.data.output_tokens) || 0;
+  const { parts, tokens, spanCount } = useMemo(() => {
+    let inp = 0, out = 0, count = 0;
+    const parts = segments.map(seg => {
+      const spanEvents = seg.events.filter(ev => ev.kind === 'span');
+      count += spanEvents.length;
+      for (const ev of spanEvents) {
+        if (ev.type === 'generation' && ev.data) {
+          inp += Number(ev.data.input_tokens) || 0;
+          out += Number(ev.data.output_tokens) || 0;
+        }
       }
-    }
-    return {
-      spanRoots: buildSpanTree(spanEvents),
-      range: spanTimeRange(spanEvents),
-      tokens: inp > 0 ? { input: inp, output: out } : null,
-    };
-  }, [events]);
+      return {
+        runId: seg.runId,
+        spanRoots: buildSpanTree(spanEvents),
+        range: spanTimeRange(spanEvents),
+      };
+    });
+    return { parts, tokens: inp > 0 ? { input: inp, output: out } : null, spanCount: count };
+  }, [segments]);
 
   useEffect(() => {
     if (isExpanded && ref.current) {
@@ -568,7 +581,7 @@ function TraceRun({ events, label, isLive, isExpanded, onToggle, onJump }: Trace
           {(tokens.input + tokens.output).toLocaleString() + ' tok'}
         </span>
       )}
-      <CounterLabel>{events.length}</CounterLabel>
+      <CounterLabel>{spanCount}</CounterLabel>
     </>
   );
 
@@ -584,8 +597,12 @@ function TraceRun({ events, label, isLive, isExpanded, onToggle, onJump }: Trace
       onToggle={onToggle}
       className="trace-run"
     >
-      {spanRoots.length === 0 && <div className="trace-empty">No trace events.</div>}
-      {spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={range} alignChevron={spanRoots.some(r => spanHasDetails(r.span))} />)}
+      {spanCount === 0 && <div className="trace-empty">No trace events.</div>}
+      {parts.map(p => (
+        <div key={p.runId} className="trace-run-segment">
+          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} />)}
+        </div>
+      ))}
     </Disclosure>
   );
 }
@@ -595,6 +612,9 @@ interface TraceDrawerProps {
   liveRunId: string | null;
   activeRunId: string | null;
   runLabels: Record<string, string>;
+  // runParents maps a wake-up run (auto-started by a task result) to the run
+  // whose spawn_task originated it; the chain renders as ONE card.
+  runParents?: Record<string, string>;
   onClose: () => void;
   // onJumpToRun scrolls the chat to the run's user message; messageRunIds
   // lists the runs that actually have one, gating the jump control.
@@ -602,40 +622,77 @@ interface TraceDrawerProps {
   messageRunIds?: Set<string>;
 }
 
-export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
+export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const runIds = useMemo(() => Object.keys(traceRuns), [traceRuns]);
+  // One card per conversation exchange: a run plus the wake-up runs its tasks
+  // triggered, in chronological (insertion) order. rootOf routes expand/live
+  // state for any run in a chain to the card that hosts it. A parent missing
+  // from traceRuns (e.g. trimmed by retention) leaves the wake run as its own
+  // top-level card.
+  const { groups, rootOf } = useMemo(() => {
+    const ids = Object.keys(traceRuns);
+    const children: Record<string, string[]> = {};
+    const roots: string[] = [];
+    for (const rid of ids) {
+      const parent = runParents ? runParents[rid] : undefined;
+      if (parent && parent !== rid && traceRuns[parent]) {
+        if (!children[parent]) children[parent] = [];
+        children[parent].push(rid);
+      } else {
+        roots.push(rid);
+      }
+    }
+    const groups: Array<{ rootId: string; segments: TraceRunSegment[] }> = [];
+    const rootOf: Record<string, string> = {};
+    const seen = new Set<string>();
+    for (const root of roots) {
+      const segments: TraceRunSegment[] = [];
+      const visit = (rid: string) => {
+        if (seen.has(rid)) return;
+        seen.add(rid);
+        rootOf[rid] = root;
+        segments.push({ runId: rid, events: traceRuns[rid] || [] });
+        for (const c of children[rid] || []) visit(c);
+      };
+      visit(root);
+      groups.push({ rootId: root, segments });
+    }
+    return { groups, rootOf };
+  }, [traceRuns, runParents]);
 
   useEffect(() => {
     if (activeRunId && traceRuns[activeRunId]) {
-      setExpanded(prev => ({ ...prev, [activeRunId]: true }));
+      const root = rootOf[activeRunId] || activeRunId;
+      setExpanded(prev => prev[root] ? prev : { ...prev, [root]: true });
     }
-  }, [activeRunId, traceRuns]);
+  }, [activeRunId, traceRuns, rootOf]);
 
-  // Auto-expand the live run so in-flight spans are visible as they stream in.
+  // Auto-expand the live run's card so in-flight spans are visible as they
+  // stream in — for a wake-up run that is the card of its originating run.
   useEffect(() => {
     if (liveRunId) {
-      setExpanded(prev => prev[liveRunId] ? prev : { ...prev, [liveRunId]: true });
+      const root = rootOf[liveRunId] || liveRunId;
+      setExpanded(prev => prev[root] ? prev : { ...prev, [root]: true });
     }
-  }, [liveRunId]);
+  }, [liveRunId, rootOf]);
 
   const toggle = (rid: string) => setExpanded(prev => ({ ...prev, [rid]: !prev[rid] }));
 
   return (
-    <SidePanel icon={PulseIcon} title="Traces" count={runIds.length} onClose={onClose} storageKey="tracePanelWidth">
-      {runIds.length === 0 && (
+    <SidePanel icon={PulseIcon} title="Traces" count={groups.length} onClose={onClose} storageKey="tracePanelWidth">
+      {groups.length === 0 && (
         <div className="trace-empty">No traces yet.</div>
       )}
-      {runIds.map(rid => (
+      {groups.map(({ rootId, segments }) => (
         <TraceRun
-          key={rid}
-          runId={rid}
-          events={traceRuns[rid] || []}
-          label={(runLabels && runLabels[rid]) || rid.slice(0, 8)}
-          isLive={rid === liveRunId}
-          isExpanded={!!expanded[rid]}
-          onToggle={() => toggle(rid)}
-          onJump={onJumpToRun && messageRunIds && messageRunIds.has(rid) ? () => onJumpToRun(rid) : undefined}
+          key={rootId}
+          runId={rootId}
+          segments={segments}
+          label={(runLabels && runLabels[rootId]) || rootId.slice(0, 8)}
+          isLive={segments.some(s => s.runId === liveRunId)}
+          isExpanded={!!expanded[rootId]}
+          onToggle={() => toggle(rootId)}
+          onJump={onJumpToRun && messageRunIds && messageRunIds.has(rootId) ? () => onJumpToRun(rootId) : undefined}
         />
       ))}
     </SidePanel>

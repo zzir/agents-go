@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -24,9 +25,18 @@ type EventSink func(env *protocol.Envelope)
 // buffering, and fan-out are delegated to the hub, so a run outlives the
 // connection that started it.
 type Runner struct {
-	db   *bun.DB
-	Deps *AgentDeps
-	hub  *RunHub
+	db       *bun.DB
+	Deps     *AgentDeps
+	hub      *RunHub
+	messages *store.MessageStore
+
+	// pendingNotifs queues task-completion notifications per parent session
+	// until its current run's boundary (see drainTaskNotifications).
+	notifMu       sync.Mutex
+	pendingNotifs map[string][]string
+	// deliveredResults marks tasks whose final result the model already
+	// received through task_status (wait), so their wake-up is skipped.
+	deliveredResults map[string]bool
 	// OnRunAttach, when set, is invoked with the run id right after a run
 	// registers in the hub (fresh start and approval resume alike), before any
 	// event publishes. The WS layer uses it to attach every live connection to
@@ -87,11 +97,15 @@ func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agent
 // dependencies. rootCtx scopes every run's lifetime (see RunHub); cancelling
 // it stops all in-flight runs.
 func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
-	return &Runner{
-		db:   db,
-		Deps: deps,
-		hub:  NewRunHub(rootCtx),
+	r := &Runner{
+		db:       db,
+		Deps:     deps,
+		hub:      NewRunHub(rootCtx),
+		messages: store.NewMessageStore(db),
 	}
+	// The runner is the task spawner; agent building only sees the interface.
+	deps.TaskSpawner = r
+	return r
 }
 
 // Hub exposes the run hub so handlers can subscribe to run events, query
@@ -116,13 +130,18 @@ type RunResult struct {
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
 // ErrSessionBusy when the session already has a live run.
 func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, input string, onDone func(*RunResult)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, input, onDone)
+}
+
+// startRunWithID is StartRun with a caller-chosen run id — a background task's
+// id doubles as its run id, so SpawnTask picks it before launching.
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, input string, onDone func(*RunResult)) (string, error) {
 	// Reject unknown sessions up front so we never register a run (or write
 	// orphaned messages) against a non-existent session.
 	if _, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID); err != nil {
 		return "", err
 	}
-	runID := store.NewID()
-	_, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID)
+	_, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
 	if err != nil {
 		return "", err
 	}
@@ -131,8 +150,12 @@ func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, input string, onD
 	}
 	go func() {
 		result := r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
-		r.hub.finish(runID, result.Interrupted)
+		// Persist a pending approval BEFORE finish releases the session slot:
+		// a task completing in between would see "no live run, no approvals"
+		// and auto-wake a parent that is actually paused on a decision.
 		r.afterRun(runID, result)
+		r.hub.finish(runID, result.Interrupted)
+		r.postRun(runID, sessionID, result)
 		if onDone != nil {
 			onDone(result)
 		}
@@ -166,7 +189,15 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		r.hub.publish(runID, env)
 	}
 
-	sendEvent(protocol.EventRunStarted, protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: input})
+	task := r.taskMeta(ctx, sessionID)
+	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: input}
+	if task != nil {
+		started.ParentSessionID = task.ParentSessionID
+		started.ParentRunID = task.ParentRunID
+		started.ToolCallID = task.ToolCallID
+		started.Label = task.Label
+	}
+	sendEvent(protocol.EventRunStarted, started)
 
 	mkResult := func() *RunResult {
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
@@ -183,8 +214,9 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		return mkResult()
 	}
 
-	// Build fully configured agent from DB config
-	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
+	// Build fully configured agent from DB config. Task runs never get the
+	// task tools themselves: one level of spawning, no recursive fan-out.
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, task != nil)
 	if err != nil {
 		// Persist the prompt + error so the user's message and the failure survive
 		// the reload the client runs on run.error (the run never reached the SDK's
@@ -231,7 +263,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		UsePreviousResponseID: built.UsePreviousResponseID,
 		MaxToolConcurrency:    built.MaxToolConcurrency,
 		ErrorHandlers:         built.ErrorHandlers,
-		Context:               sessionID, // exec_command gate reads sessionID here
+		Context:               trustSessionID(sessionID, task), // exec_command gate reads a session id here
 	}
 	if built.HandoffInputFilter == "nest_history" {
 		opts.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
@@ -244,7 +276,10 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 	// Name the session in parallel with the run — the title needs only the user's
 	// first message, not the answer, so it need not wait for the run to finish.
-	go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, input, provider, sendEvent)
+	// Task sessions are pre-named from the task label and hidden, so skip them.
+	if task == nil {
+		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, input, provider, sendEvent)
+	}
 
 	sr := agents.RunStreamed(ctx, agent, input, opts)
 	r.hub.setStopHook(runID, sr.StopAfterTurn)
@@ -284,7 +319,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // keeps one id across interrupt/resume — events, traces, and messages all
 // stay under that id and the trace panel shows one group per turn.
 func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunResult)) (string, error) {
-	ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID)
+	ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
 	if err != nil {
 		return "", err
 	}
@@ -293,8 +328,10 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 	}
 	go func() {
 		result := r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
-		r.hub.finish(runID, result.Interrupted)
+		// Same ordering rationale as StartRun: approval row before slot release.
 		r.afterRun(runID, result)
+		r.hub.finish(runID, result.Interrupted)
+		r.postRun(runID, sessionID, result)
 		if onDone != nil {
 			onDone(result)
 		}
@@ -321,10 +358,18 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
 	}
 
+	task := r.taskMeta(ctx, sessionID)
 	// The resumed segment re-announces the original prompt so a late-joining
 	// browser (attached at resume) can render the user bubble; earlier
 	// subscribers dedup it against the bubble they already show.
-	sendEvent(protocol.EventRunStarted, protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: userInputText(state.UserInput)})
+	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: userInputText(state.UserInput)}
+	if task != nil {
+		started.ParentSessionID = task.ParentSessionID
+		started.ParentRunID = task.ParentRunID
+		started.ToolCallID = task.ToolCallID
+		started.Label = task.Label
+	}
+	sendEvent(protocol.EventRunStarted, started)
 
 	// Any failed continuation must persist the user's prompt (and the error):
 	// the pending-approval row was consumed as the resume's claim and the SDK
@@ -346,7 +391,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		return mkResult()
 	}
 
-	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, task != nil)
 	if err != nil {
 		return failTurn("", "config_error", err, "", "")
 	}
@@ -381,7 +426,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
 		InputGuardrails:       built.RunInputGuardrails,
 		OutputGuardrails:      built.RunOutputGuardrails,
-		Context:               sessionID, // exec_command gate reads sessionID here
+		Context:               trustSessionID(sessionID, task), // exec_command gate reads a session id here
 	})
 	r.hub.setStopHook(runID, sr.StopAfterTurn)
 	streamedText, streamedReasoning := r.drainStream(sr, runID, built.HandoffToolNames, sendEvent)

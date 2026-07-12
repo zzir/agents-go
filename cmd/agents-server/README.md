@@ -106,6 +106,7 @@ detail.
 | POST   | `/sessions/:id/fork`      | Fork session                                                         |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
 | GET    | `/sessions/:id/approvals` | List pending approvals (see [Approvals](#approvals--apiv1approvals)) |
+| GET    | `/sessions/:id/tasks`     | List background tasks spawned from the session (see below)          |
 
 `POST /sessions` accepts an optional `agent_config_id` to bind the session to an
 agent at creation (it must reference an existing agent). Rename and pin are a
@@ -468,7 +469,7 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 
 | type                    | Description                                                                                                                                             |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run.started`           | Run begun — `{run_id, session_id, input}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble                      |
+| `run.started`           | Run begun — `{run_id, session_id, input}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble. A background task run additionally carries `{parent_session_id, parent_run_id, tool_call_id, label}` — the client routes it into the parent session's task list, never a chat timeline |
 | `run.agent_start`       | Agent taking its turn — `{run_id, agent_name}`                                                                                                          |
 | `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
 | `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
@@ -654,6 +655,35 @@ When a change genuinely doesn't fit, update this list in the same PR.
     immediately; a stale leftover selection must NOT block re-sticking when
     the user scrolls back down (recency windows, not standing state, arbitrate
     the races with the pin's own trailing scroll events).
+
+**Background tasks**
+
+18. **A task is a run.** `spawn_task` starts an ordinary hub run whose id is
+    the task id, with its transcript in a hidden child session; the parent
+    linkage rides on `run.started` / `RunInfo.task`. The spawn target is an
+    agent config by name; an empty `agent_name` (or the `default` / `self` /
+    `current` aliases) runs the task with the spawning run's own agent — a
+    config actually named that way wins. Task events use the same
+    broadcast bus, replay cursors, approval persistence, and retention as chat
+    runs — a task-specific transport is how the two lifecycles would drift.
+19. **The spawn card's durable truth is its display projection.** The hub's
+    RunInfo is GC'd minutes after a run ends; when a task reaches a final
+    state the server patches `{task_id, task_label, task_status, task_summary}`
+    onto the spawning `tool_call` row's `display`, and a reload rebuilds the
+    task card from that row. Live status comes from run events; durable status
+    comes from the row — never from the hub after the fact. Completion wakes
+    the parent at its next run boundary via a `[task-notification] ` input
+    (in-memory queue; a restart keeps the outcome, drops only the auto-wake).
+    The notification is ordinary user-role input identified by its text
+    prefix. It never renders in the timeline — the composer's task indicator
+    and the Inspector are the human-facing surfaces; the model reads the text
+    verbatim. The prefix carries no privileged behavior: a user typing it
+    merely hides their own message from the transcript view.
+20. **The right side panel is a single-instance Inspector.** Traces, the task
+    list, and one task's detail (live transcript + trace, assembled with the
+    same streamReducer/timeline code as the chat) are lenses of one panel —
+    a new inspection surface is a new lens, not a second drawer. Task detail
+    accumulates live child-run events only while open (watchTask/unwatchTask).
 
 ## Database
 

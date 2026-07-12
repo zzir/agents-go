@@ -31,10 +31,13 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 	return nil
 }
 
-// List returns all sessions ordered newest first.
+// List returns all chat sessions ordered newest first. Hidden task-transcript
+// sessions (owned by a tasks row) are excluded — they surface through the
+// parent session's task list, not the sidebar.
 func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 	var sessions []Session
 	if err := s.db.NewSelect().Model(&sessions).
+		Where("s.id NOT IN (SELECT child_session_id FROM tasks)").
 		OrderExpr("created_at DESC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
@@ -87,9 +90,38 @@ func (s *SessionStore) UpdateFields(ctx context.Context, id string, name *string
 }
 
 // Delete removes the session with the given id together with all of its
-// messages, trace events, and pending approvals in one transaction.
+// messages, trace events, and pending approvals in one transaction. Background
+// tasks spawned from the session cascade: their rows and hidden child
+// sessions (with all their data) go too — a hidden session has no UI path of
+// its own, so anything left behind would be unreachable forever.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var childIDs []string
+		if err := tx.NewSelect().Model((*Task)(nil)).
+			Column("child_session_id").
+			Where("parent_session_id = ?", id).
+			Scan(ctx, &childIDs); err != nil {
+			return fmt.Errorf("listing task sessions for %s: %w", id, err)
+		}
+		for _, child := range childIDs {
+			for _, model := range []any{(*Message)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil)} {
+				if _, err := tx.NewDelete().Model(model).
+					Where("session_id = ?", child).
+					Exec(ctx); err != nil {
+					return fmt.Errorf("deleting task session %s data: %w", child, err)
+				}
+			}
+			if _, err := tx.NewDelete().Model((*Session)(nil)).
+				Where("id = ?", child).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("deleting task session %s: %w", child, err)
+			}
+		}
+		if _, err := tx.NewDelete().Model((*Task)(nil)).
+			Where("parent_session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting tasks for session %s: %w", id, err)
+		}
 		if _, err := tx.NewDelete().Model((*Message)(nil)).
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {

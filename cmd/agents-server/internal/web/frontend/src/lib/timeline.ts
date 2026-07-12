@@ -9,6 +9,12 @@ interface ToolCallDisplay {
   // column) so a reloaded turn rebuilds the typed "Blocked by guardrail" card.
   guardrail?: string;
   stage?: string;
+  // Patched onto a spawn_task call when its background task ends — the durable
+  // truth the task card is rebuilt from on reload (the hub run is GC'd).
+  task_id?: string;
+  task_label?: string;
+  task_status?: string;
+  task_summary?: string;
 }
 
 interface Message {
@@ -42,6 +48,8 @@ interface ToolCall {
   output: string | null;
   status: string | null;
   needs_approval?: boolean;
+  // Terminal task outcome for a spawn_task call, from the display projection.
+  task?: { id?: string; label?: string; status?: string; summary?: string };
 }
 
 interface ToolsPart {
@@ -159,6 +167,7 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
         if (m.id) turn!.messageId = m.id;
         if (m.run_id) turn!.runId = m.run_id;
         const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.name || '', arguments: d.arguments || '', output: null, status: null };
+        if (d.task_id || d.task_status) tc.task = { id: d.task_id, label: d.task_label, status: d.task_status, summary: d.task_summary };
         pendingTC[d.call_id] = tc;
         const last = turn!.parts[turn!.parts.length - 1];
         if (last && last.type === 'tools') { (last as ToolsPart).toolCalls.push(tc); }

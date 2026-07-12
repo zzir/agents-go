@@ -75,10 +75,10 @@ func TestRunHubLiveRunIDs(t *testing.T) {
 	if got := h.LiveRunIDs(); len(got) != 0 {
 		t.Fatalf("empty hub: got %v", got)
 	}
-	if _, _, err := h.register("r1", "s1", "", ""); err != nil {
+	if _, _, err := h.register("r1", "s1", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := h.register("r2", "s2", "", ""); err != nil {
+	if _, _, err := h.register("r2", "s2", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.LiveRunIDs(); len(got) != 2 {

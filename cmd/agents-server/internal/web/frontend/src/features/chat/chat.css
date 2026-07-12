@@ -624,3 +624,128 @@
   .chat-messages { padding: var(--base-size-8) var(--base-size-16); }
   .chat-input-container { padding: var(--base-size-8) var(--base-size-16) var(--base-size-4); }
 }
+
+/* ---- Task indicator (composer toolbar) + Inspector task lenses ---- */
+
+.task-ind { font-size: 12px; color: var(--fgColor-muted); }
+.task-ind::before {
+  content: '';
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--fgColor-muted);
+  vertical-align: 1px;
+}
+.task-ind-working::before { background: var(--fgColor-accent); }
+.task-ind-attention::before { background: var(--fgColor-attention); }
+
+.task-row {
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  padding: var(--base-size-8) var(--base-size-12);
+  margin-bottom: var(--base-size-8);
+  cursor: pointer;
+}
+.task-row:hover { background: var(--bgColor-muted); }
+.task-row-head { display: flex; align-items: center; gap: var(--base-size-8); }
+.task-row-label {
+  font-weight: var(--base-text-weight-medium, 500);
+  font-size: var(--text-body-size-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1;
+}
+/* Inline on the action line, next to Stop — truncates, never wraps. */
+.task-row-activity {
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+/* failed rows keep a one-line error excerpt; other terminal rows are 1 line. */
+.task-row-error {
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-danger);
+  margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.task-row-actions { display: flex; align-items: center; gap: var(--base-size-4); margin-top: var(--base-size-6); }
+/* Stop sits apart on the right — destructive, away from the primary actions. */
+.task-row-stop { margin-left: auto; }
+
+/* Detail-header status dot (compact statusLabel): color + pulse carry the
+   state, the words live in the tooltip/aria-label. pulse-live @keyframes
+   comes from trace.css (same bundle). */
+.task-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.task-status-dot-working        { background: var(--fgColor-accent); animation: pulse-live 1.5s ease-in-out infinite; }
+.task-status-dot-input_required { background: var(--fgColor-attention); animation: pulse-live 1.5s ease-in-out infinite; }
+.task-status-dot-completed      { background: var(--fgColor-success); }
+.task-status-dot-failed         { background: var(--fgColor-danger); }
+.task-status-dot-cancelled      { background: var(--fgColor-muted); }
+
+.task-detail-head {
+  display: flex; align-items: center; gap: var(--base-size-8);
+  padding-bottom: var(--base-size-8);
+  border-bottom: 1px solid var(--borderColor-muted);
+  margin-bottom: var(--base-size-8);
+}
+/* On a narrow panel the id is the one thing that gives way — the action
+   buttons stay whole (the full id is one copy-click away). */
+.task-detail-head > * { flex-shrink: 0; }
+.task-detail-spacer { flex: 1; }
+.task-detail-id {
+  border: none; background: none; padding: 0;
+  font-family: var(--fontStack-monospace); font-size: 11px;
+  color: var(--fgColor-muted); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 3px;
+  flex-shrink: 1; min-width: 24px; overflow: hidden;
+}
+.task-detail-id:hover { color: var(--fgColor-accent); }
+
+.task-detail-tabs { display: flex; gap: var(--base-size-4); margin-bottom: var(--base-size-8); }
+.task-detail-tabs button {
+  border: none; background: none; cursor: pointer;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  padding: 2px 8px;
+  border-radius: var(--borderRadius-medium);
+}
+.task-detail-tabs button.active {
+  color: var(--fgColor-default);
+  background: var(--bgColor-muted);
+  font-weight: var(--base-text-weight-medium, 500);
+}
+
+.task-view { display: flex; flex-direction: column; gap: var(--base-size-8); }
+.task-view-user {
+  align-self: flex-end;
+  background: var(--bgColor-accent-muted);
+  border-radius: var(--borderRadius-medium);
+  padding: var(--base-size-4) var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  max-width: 90%;
+  white-space: pre-wrap;
+}
+.task-view-turn { font-size: var(--text-body-size-small); }
+.task-view-text { font-size: var(--text-body-size-small); }
+.task-view-thinking summary {
+  cursor: pointer;
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small);
+}
+.task-view-thinking {}
+.task-view-error { color: var(--fgColor-danger); font-size: var(--text-body-size-small); }
+.task-view-handoff { color: var(--fgColor-muted); font-size: var(--text-body-size-small); }
+
+/* the inspect affordance on a spawn card header */
+.ToolCallCard-inspect {
+  border: none; background: none; padding: 0 2px;
+  color: var(--fgColor-muted); cursor: pointer;
+  display: inline-flex; align-items: center;
+}
+.ToolCallCard-inspect:hover { color: var(--fgColor-accent); }

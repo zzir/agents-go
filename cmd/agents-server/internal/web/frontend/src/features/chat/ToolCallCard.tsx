@@ -1,10 +1,14 @@
 import { Button, Label } from '@primer/react';
-import { ToolsIcon } from '@primer/octicons-react';
+import { ToolsIcon, StackIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
 
 interface ToolCallCardProps {
+  onInspectTask?: (taskId: string) => void;
+  // Live status of the task this spawn call started (working/input_required),
+  // from run events; terminal status comes from the display projection.
+  liveTaskStatus?: string;
   toolCall: ToolCall;
   live?: boolean;
   onApprove?: (id: string, scope?: string) => void;
@@ -54,8 +58,15 @@ function diffPreview(patch: string, multiFile: boolean): string {
   }).join('\n');
 }
 
-export function ToolCallCard({ toolCall, live, onApprove, onReject }: ToolCallCardProps) {
-  const { tool_call_id, tool_name, arguments: args, needs_approval, status, output } = toolCall;
+export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, liveTaskStatus }: ToolCallCardProps) {
+  const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task } = toolCall;
+
+  // A spawn_task card is the task's anchor in the timeline: the terminal
+  // display projection carries the id; while live, it's in the tool output.
+  let inspectTaskId = task?.id || '';
+  if (!inspectTaskId && tool_name === 'spawn_task' && output) {
+    try { inspectTaskId = (JSON.parse(output) as { task_id?: string }).task_id || ''; } catch { /* not JSON */ }
+  }
 
   const sepIdx = tool_name.indexOf('__');
   const mcpServer = sepIdx > 0 ? tool_name.substring(0, sepIdx) : null;
@@ -93,6 +104,17 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject }: ToolCallCa
       <span className="ToolCallCard-name">{displayName}</span>
       {fileHint && <span className="ToolCallCard-file">{fileHint}</span>}
       {mcpServer && <Label variant="secondary">{mcpServer}</Label>}
+      {task?.status && <Label variant={task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : task.status === 'cancelled' ? 'secondary' : 'accent'}>{'task ' + task.status.replace('_', ' ')}</Label>}
+      {!task?.status && liveTaskStatus && <Label variant={liveTaskStatus === 'input_required' ? 'attention' : 'accent'}>{'task ' + liveTaskStatus.replace('_', ' ')}</Label>}
+      {inspectTaskId && onInspectTask && (
+        <button
+          className="ToolCallCard-inspect"
+          title="Inspect task"
+          onClick={e => { e.stopPropagation(); onInspectTask(inspectTaskId); }}
+        >
+          <StackIcon size={14} />
+        </button>
+      )}
       {showStatus && <Label variant={statusVariant as any}>{statusLabel}</Label>}
     </>
   );
@@ -109,6 +131,12 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject }: ToolCallCa
         <div className="ToolCallCard-diff markdown-body" dangerouslySetInnerHTML={{ __html: diffHtml }} />
       ) : (
         <pre>{body.text}</pre>
+      )}
+      {task?.summary && (
+        <div className="ToolCallCard-output">
+          <div className="ToolCallCard-output-label">Task result:</div>
+          <pre>{task.summary}</pre>
+        </div>
       )}
       {output && (
         <div className="ToolCallCard-output">

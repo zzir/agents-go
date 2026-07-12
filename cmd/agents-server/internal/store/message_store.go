@@ -539,3 +539,48 @@ func (s *MessageStore) DeleteBySession(ctx context.Context, sessionID string) er
 }
 
 var _ agents.Session = (*SessionAdapter)(nil)
+
+// PatchToolCallDisplay merges patch into the display projection of the
+// tool_call row with the given call id in sessionID. Used when a background
+// task ends: the spawn tool call's card gets the terminal status/summary, so a
+// reload rebuilds the task card from the row (the hub's RunInfo is GC'd
+// minutes after the run). The wire JSON in Item is untouched — display is a
+// UI projection, not replay truth.
+func (s *MessageStore) PatchToolCallDisplay(ctx context.Context, sessionID, callID string, patch map[string]any) error {
+	// Scan every tool_call row of the session (newest first): a spawn card can
+	// be arbitrarily old by the time its task finishes, so a bounded window
+	// would silently drop the terminal patch.
+	var rows []Message
+	if err := s.db.NewSelect().Model(&rows).
+		Column("id", "display").
+		Where("session_id = ?", sessionID).
+		Where("role = ?", "tool_call").
+		OrderExpr("id DESC").
+		Scan(ctx); err != nil {
+		return fmt.Errorf("finding tool call %s: %w", callID, err)
+	}
+	for _, row := range rows {
+		var d map[string]any
+		if len(row.Display) == 0 || json.Unmarshal(row.Display, &d) != nil {
+			continue
+		}
+		if d["call_id"] != callID {
+			continue
+		}
+		for k, v := range patch {
+			d[k] = v
+		}
+		merged, err := json.Marshal(d)
+		if err != nil {
+			return fmt.Errorf("merging display for %s: %w", callID, err)
+		}
+		if _, err := s.db.NewUpdate().Model((*Message)(nil)).
+			Set("display = ?", string(merged)).
+			Where("id = ?", row.ID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("patching display for %s: %w", callID, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("tool call %s not found in session %s: %w", callID, sessionID, ErrNotFound)
+}

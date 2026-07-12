@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { WSClient } from '@/lib/ws';
 import { EV, ERR } from '@/lib/protocol';
+import type { TaskStatus } from '@/lib/protocol';
 import { buildTimeline } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
@@ -10,6 +11,40 @@ import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
+
+// TaskState tracks one background task of a chat session — live status from
+// run events while the hub run exists, seeded from the durable tasks rows on
+// session load.
+export interface TaskState {
+  taskId: string;
+  label: string;
+  status: TaskStatus;
+  childSessionId?: string;
+  toolCallId?: string;
+  // The run that spawned this task — lets the trace panel nest the wake-up
+  // run's card under the run whose spawn_task started the chain.
+  parentRunId?: string;
+  lastTool?: string;
+  summary?: string;
+  // The child run's pending approval, surfaced on the parent's task chip.
+  pendingCallId?: string;
+  pendingToolName?: string;
+}
+
+// TaskViewState is the Inspector's live view of ONE task being inspected:
+// the child session's transcript (persisted snapshot + live tail assembled
+// with the same streamReducer functions as the chat) and its trace events.
+// Populated only while the panel is open (watchTask/unwatchTask).
+export interface TaskViewState {
+  taskId: string;
+  childSessionId: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messages: any[];
+  streaming: string;
+  reasoning: string;
+  traces: TraceEvent[];
+  loaded: boolean;
+}
 
 export interface SessionState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,6 +58,9 @@ export interface SessionState {
   liveStartedAt: number | null;
   liveAgentName: string | null;
   loaded: boolean;
+  tasks: Record<string, TaskState>;
+  // The task currently inspected in the side panel, or null.
+  taskView: TaskViewState | null;
 }
 
 type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionState) => void;
@@ -31,6 +69,7 @@ export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false,
     traceRuns: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, loaded: false,
+    tasks: {}, taskView: null,
   };
 }
 
@@ -38,6 +77,14 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   const wsRef = useRef<WSClient | null>(null);
   const runMapRef = useRef<Record<string, string>>({});
   const sessionRunRef = useRef<Record<string, string>>({});
+  // Background task runs, keyed by child run id (== task id). Task events are
+  // routed into the PARENT session's task list — never a chat timeline — so
+  // they must be intercepted before the runMap lookup the chat handlers use.
+  const taskRunsRef = useRef<Record<string, { parentSid: string; label: string; toolCallId?: string }>>({});
+  // The task the Inspector is watching: its child-run events additionally
+  // feed SessionState.taskView (accumulated only while open).
+  const taskWatchRef = useRef<{ sid: string; taskId: string; childSessionId: string } | null>(null);
+  const taskViewBufRef = useRef({ text: '', reasoning: '' });
   const streamBufsRef = useRef<Record<string, string>>({});
   const reasoningBufsRef = useRef<Record<string, string>>({});
   // Per-run set of completed message/reasoning item ids already folded into the
@@ -74,11 +121,30 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // Fetching both together and applying the result as one state update removes
   // the messages/approvals race that made the approval card flicker.
   const fetchTimeline = useCallback(async (sid: string): Promise<SessionState['messages']> => {
-    type PendingApproval = { run_id: string; user_input?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
-    const [msgs, pending] = await Promise.all([
+    type PendingApproval = { run_id: string; user_input?: string; task_id?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
+    const [msgs, pendingAll] = await Promise.all([
       api.sessions.messages(sid) as Promise<any[]>,
       (api.sessions.approvals(sid) as Promise<PendingApproval[]>).catch(() => [] as PendingApproval[]),
     ]);
+    // Approvals belonging to background tasks surface on the task chips (and
+    // must NOT gate the composer or be merged into the chat timeline — their
+    // call ids belong to the task's hidden transcript). Seeding them here is
+    // what keeps a paused task's Approve button reachable after a reload,
+    // when no live run.tool_call event will ever arrive.
+    const taskPending = (pendingAll || []).filter(p => p.task_id);
+    if (taskPending.length > 0) {
+      updateSS(sid, s => {
+        const tasks = { ...s.tasks };
+        for (const p of taskPending) {
+          const tc = (p.tool_calls || [])[0];
+          if (!p.task_id || !tc) continue;
+          const cur = tasks[p.task_id] || { taskId: p.task_id, label: '', status: 'input_required' as const };
+          tasks[p.task_id] = { ...cur, status: 'input_required', pendingCallId: tc.tool_call_id, pendingToolName: tc.tool_name };
+        }
+        return { ...s, tasks };
+      });
+    }
+    const pending = (pendingAll || []).filter(p => !p.task_id);
     const timeline = buildTimeline(msgs) as SessionState['messages'];
     if (!pending || pending.length === 0) return timeline;
     const seen = new Set<string>();
@@ -144,6 +210,37 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         ? { ...s, messages: mergeLiveTail(timeline, s.messages) }
         : { ...s, messages: timeline, loaded: true });
     });
+    // Seed the task list from the durable rows; live task-run events (which
+    // may already have arrived) win per task id.
+    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string }>>)
+      .then(rows => {
+        if (!rows || rows.length === 0) return;
+        updateSS(sid, s => {
+          const tasks = { ...s.tasks };
+          for (const row of rows) {
+            const cur = tasks[row.task_id];
+            if (cur) {
+              // Live events may have registered the task first; the row still
+              // owns the durable identity fields (child session, tool call).
+              tasks[row.task_id] = {
+                ...cur,
+                label: cur.label || row.label || '',
+                toolCallId: cur.toolCallId || row.tool_call_id,
+                childSessionId: cur.childSessionId || row.child_session_id,
+                parentRunId: cur.parentRunId || row.parent_run_id,
+                summary: cur.summary ?? row.summary,
+              };
+              continue;
+            }
+            tasks[row.task_id] = {
+              taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id,
+              childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
+              status: (row.status || 'working') as TaskState['status'], summary: row.summary,
+            };
+          }
+          return { ...s, tasks };
+        });
+      }).catch(() => undefined);
     api.sessions.traces(sid).then((events: Array<{ run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
@@ -187,7 +284,20 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     const ws = new WSClient();
     wsRef.current = ws;
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; tool_call_id?: string; label?: string }) => {
+      // A background task run: track it under its parent session's task list
+      // and keep it out of every chat-timeline path.
+      if (p.parent_session_id) {
+        taskRunsRef.current[p.run_id] = { parentSid: p.parent_session_id, label: p.label || '', toolCallId: p.tool_call_id };
+        updateSS(p.parent_session_id, s => ({
+          ...s,
+          tasks: { ...s.tasks, [p.run_id]: { ...s.tasks[p.run_id], taskId: p.run_id, label: p.label || '', status: 'working' as TaskStatus, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[p.run_id]?.parentRunId } },
+        }));
+        // A resume segment of the watched task re-announces itself; make sure
+        // the view has a live turn to stream into.
+        updateTaskView(p.run_id, view => ({ ...view, messages: ensureLiveTurn(view.messages, p.run_id) || view.messages }));
+        return;
+      }
       const sid = p.session_id;
       if (!sid) return;
       runMapRef.current[p.run_id] = sid;
@@ -215,7 +325,48 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       });
     });
 
+    // updateTaskView applies fn to the inspected task's view iff runId is the
+    // watched task. Returns true when it was.
+    const updateTaskView = (runId: string, fn: (v: TaskViewState) => TaskViewState) => {
+      const w = taskWatchRef.current;
+      if (!w || w.taskId !== runId) return false;
+      updateSS(w.sid, s => (s.taskView && s.taskView.taskId === runId ? { ...s, taskView: fn(s.taskView) } : s));
+      return true;
+    };
+
+    // refetchTaskView re-pulls the child transcript after a terminal event —
+    // the snapshot is the durable truth and closes any in-flight merge gap
+    // (the chat path's "terminal events reconcile against the store", scoped
+    // to the inspected task).
+    const refetchTaskView = (runId: string) => {
+      const w = taskWatchRef.current;
+      if (!w || w.taskId !== runId) return;
+      fetchTimeline(w.childSessionId).then(timeline => {
+        updateTaskView(runId, v => ({ ...v, messages: timeline, streaming: '', reasoning: '', loaded: true }));
+      }).catch(() => undefined);
+    };
+
+    const updateTask = (runId: string, patch: Partial<TaskState>) => {
+      const meta = taskRunsRef.current[runId];
+      if (!meta) return false;
+      updateSS(meta.parentSid, s => {
+        const cur = s.tasks[runId] || { taskId: runId, label: meta.label, status: 'working' as TaskStatus, toolCallId: meta.toolCallId };
+        return { ...s, tasks: { ...s.tasks, [runId]: { ...cur, ...patch } } };
+      });
+      return true;
+    };
+
     ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        if (taskWatchRef.current?.taskId === p.run_id) {
+          taskViewBufRef.current.text += p.delta;
+          scheduleFrame('taskview:step', () => {
+            const buf = taskViewBufRef.current.text;
+            updateTaskView(p.run_id, v => ({ ...v, streaming: buf }));
+          });
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       streamBufsRef.current[p.run_id] = (streamBufsRef.current[p.run_id] || '') + p.delta;
@@ -226,6 +377,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        if (taskWatchRef.current?.taskId === p.run_id) {
+          taskViewBufRef.current.reasoning += p.delta;
+          scheduleFrame('taskview:reasoning', () => {
+            const buf = taskViewBufRef.current.reasoning;
+            updateTaskView(p.run_id, v => ({ ...v, reasoning: buf }));
+          });
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       reasoningBufsRef.current[p.run_id] = (reasoningBufsRef.current[p.run_id] || '') + p.delta;
@@ -240,6 +401,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // previewed it: the delta buffer is dropped so the tool_call flush (and
     // run.output) cannot append the same text again.
     ws.on(EV.runMessage, (p: { run_id: string; text: string; item_id?: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        if (p.text && taskWatchRef.current?.taskId === p.run_id) {
+          taskViewBufRef.current.text = '';
+          updateTaskView(p.run_id, v => {
+            const msgs = appendMessageItem(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.text, !p.item_id);
+            return msgs ? { ...v, messages: msgs, streaming: '' } : { ...v, streaming: '' };
+          });
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       streamBufsRef.current[p.run_id] = '';
@@ -261,6 +432,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // "Thinking…" preview to the current turn and is the only thinking signal
     // on backends that stream no reasoning deltas.
     ws.on(EV.runReasoningItem, (p: { run_id: string; text: string; item_id?: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        if (p.text && taskWatchRef.current?.taskId === p.run_id) {
+          taskViewBufRef.current.reasoning = '';
+          updateTaskView(p.run_id, v => {
+            const msgs = appendReasoningItem(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.text, !p.item_id);
+            return msgs ? { ...v, messages: msgs, reasoning: '' } : { ...v, reasoning: '' };
+          });
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       reasoningBufsRef.current[p.run_id] = '';
@@ -276,6 +457,19 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runOutput, (p: { run_id: string; final_output?: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        updateTask(p.run_id, { status: 'completed', summary: (p.final_output || '').slice(0, 300), pendingCallId: undefined });
+        if (taskWatchRef.current?.taskId === p.run_id) {
+          const remaining = taskViewBufRef.current;
+          taskViewBufRef.current = { text: '', reasoning: '' };
+          updateTaskView(p.run_id, v => {
+            const msgs = finalizeTurn(v.messages, p.final_output || remaining.text, remaining.reasoning);
+            return { ...v, messages: msgs || v.messages, streaming: '', reasoning: '' };
+          });
+          refetchTaskView(p.run_id);
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       const text = p.final_output || streamBufsRef.current[p.run_id] || '';
@@ -292,6 +486,21 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runError, (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
+      if (p.run_id && taskRunsRef.current[p.run_id]) {
+        updateTask(p.run_id, { status: 'failed', summary: p.message?.slice(0, 300), pendingCallId: undefined });
+        if (taskWatchRef.current?.taskId === p.run_id) {
+          const remaining = taskViewBufRef.current;
+          taskViewBufRef.current = { text: '', reasoning: '' };
+          const rid = p.run_id;
+          updateTaskView(rid, v => ({
+            ...v,
+            messages: appendErrorPart(ensureLiveTurn(v.messages, rid) || v.messages, { type: 'error', content: p.message || 'run failed' }, remaining.reasoning, remaining.text),
+            streaming: '', reasoning: '',
+          }));
+          refetchTaskView(rid);
+        }
+        return;
+      }
       // The session already has a live run (e.g. double-send from another
       // tab): the run this error names is still executing — a toast, not a
       // terminal error on the live turn.
@@ -353,6 +562,19 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
+      if (p?.run_id && taskRunsRef.current[p.run_id]) {
+        updateTask(p.run_id, { status: 'cancelled', pendingCallId: undefined });
+        if (taskWatchRef.current?.taskId === p.run_id) {
+          const remaining = taskViewBufRef.current;
+          taskViewBufRef.current = { text: '', reasoning: '' };
+          updateTaskView(p.run_id, v => {
+            const msgs = appendCancelledPart(v.messages, remaining.reasoning, remaining.text);
+            return { ...v, messages: msgs || v.messages, streaming: '', reasoning: '' };
+          });
+          refetchTaskView(p.run_id);
+        }
+        return;
+      }
       const rid = p?.run_id;
       const sid = rid ? runMapRef.current[rid] : null;
       if (!sid || !rid) return;
@@ -373,6 +595,21 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runToolCall, (p: { run_id: string; tool_call_id: string; tool_name: string; arguments: string; needs_approval?: boolean }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        updateTask(p.run_id, p.needs_approval
+          ? { lastTool: p.tool_name, pendingCallId: p.tool_call_id, pendingToolName: p.tool_name }
+          : { lastTool: p.tool_name });
+        if (taskWatchRef.current?.taskId === p.run_id) {
+          const flushed = taskViewBufRef.current.text;
+          taskViewBufRef.current.text = '';
+          updateTaskView(p.run_id, v => {
+            const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval || undefined, status: null as string | null, output: null as string | null };
+            const msgs = appendToolCall(ensureLiveTurn(v.messages, p.run_id) || v.messages, tc, flushed);
+            return msgs ? { ...v, messages: msgs, streaming: '' } : v;
+          });
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       const flushed = streamBufsRef.current[p.run_id] || '';
@@ -388,7 +625,17 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       });
     });
 
+    // Single registration: WSClient.on is overwrite-semantics (one handler per
+    // event type), so the task branch must live INSIDE the chat handler.
     ws.on(EV.runToolResult, (p: { run_id: string; tool_call_id: string; output: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        updateTask(p.run_id, { pendingCallId: undefined, pendingToolName: undefined });
+        updateTaskView(p.run_id, v => {
+          const msgs = applyToolResult(v.messages, p.tool_call_id, p.output);
+          return msgs ? { ...v, messages: msgs } : v;
+        });
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
@@ -403,6 +650,13 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // The mappings stay: the approval decision RESUMES THE SAME run id, so a
     // later run.started on this id flips the session back to live seamlessly.
     ws.on(EV.runInterrupted, (p: { run_id: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        updateTask(p.run_id, { status: 'input_required' });
+        // High-signal, once per pause: background approvals are otherwise
+        // easy to miss (the conversation itself stays quiet).
+        toast.info('Task "' + (taskRunsRef.current[p.run_id].label || p.run_id.slice(0, 8)) + '" needs approval');
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
@@ -434,6 +688,15 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // live rendering for the rest of the run. handoff_requested events (no
     // `to` yet) are preview noise and are skipped.
     ws.on(EV.runHandoff, (p: { run_id: string; from: string; to?: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        if (p.to) {
+          updateTaskView(p.run_id, v => {
+            const msgs = appendHandoffPart(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.from + ' → ' + p.to);
+            return msgs ? { ...v, messages: msgs } : v;
+          });
+        }
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.to) return;
       // Hub replays (reconnect) re-deliver run.handoff; the reducer dedups like
@@ -445,6 +708,25 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.traceSpan, (p: { run_id: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        updateTaskView(p.run_id, v => {
+          let duration = '';
+          if (p.started_at && p.ended_at) {
+            const ms = new Date(p.ended_at).getTime() - new Date(p.started_at).getTime();
+            duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+          }
+          const ev: TraceEvent = {
+            kind: 'span', name: p.name, type: p.type || '',
+            span_id: p.span_id, parent_id: p.parent_id,
+            error: p.error, started_at: p.started_at, ended_at: p.ended_at,
+            data: p.data || null, duration,
+          };
+          const idx = p.span_id ? v.traces.findIndex(e => e.span_id === p.span_id) : -1;
+          const traces = idx >= 0 ? [...v.traces.slice(0, idx), ev, ...v.traces.slice(idx + 1)] : [...v.traces, ev];
+          return { ...v, traces };
+        });
+        return;
+      }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
@@ -472,6 +754,29 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // hub replays buffered events) and reload persisted history so a run that
     // completed offline shows its result.
     ws.onReconnect = () => {
+      // Task runs are not resubscribed (their terminal events may be gone from
+      // the hub entirely) — re-pull the durable rows so statuses that changed
+      // during the outage land in the chips.
+      for (const sid of loadedRef.current) {
+        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string }>>)
+          .then(rows => {
+            if (!rows || rows.length === 0) return;
+            updateSS(sid, s => {
+              const tasks = { ...s.tasks };
+              for (const row of rows) {
+                const cur = tasks[row.task_id];
+                const status = (row.status || 'working') as TaskState['status'];
+                tasks[row.task_id] = {
+                  ...(cur || { taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id }),
+                  childSessionId: cur?.childSessionId || row.child_session_id,
+                  parentRunId: cur?.parentRunId || row.parent_run_id,
+                  status, summary: row.summary ?? cur?.summary,
+                };
+              }
+              return { ...s, tasks };
+            });
+          }).catch(() => undefined);
+      }
       for (const [sid, runId] of Object.entries(sessionRunRef.current)) {
         ws.send(EV.runSubscribe, { run_id: runId });
         reloadMessages(sid);
@@ -489,5 +794,56 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     };
   }, [updateSS, reloadMessages, scheduleFrame]);
 
-  return { wsRef, sessionRunRef, loadSession, deleteSession };
+  // watchTask opens the Inspector's live view of a task: snapshot the child
+  // session's persisted transcript + traces, then let the child-run event
+  // interceptors stream the live tail into it. unwatchTask drops everything.
+  const watchTask = useCallback((sid: string, taskId: string, childSessionId: string) => {
+    taskWatchRef.current = { sid, taskId, childSessionId };
+    taskViewBufRef.current = { text: '', reasoning: '' };
+    updateSS(sid, s => ({ ...s, taskView: { taskId, childSessionId, messages: [], streaming: '', reasoning: '', traces: [], loaded: false } }));
+    Promise.all([
+      // fetchTimeline (not raw messages): a task paused on an approval keeps
+      // its dangling tool call out of messages (persist boundary) — the
+      // pending-approval merge is what puts the approval card in the view.
+      fetchTimeline(childSessionId),
+      (api.sessions.traces(childSessionId) as Promise<any[]>).catch(() => []),
+    ]).then(([timeline, traceRows]) => {
+      if (taskWatchRef.current?.taskId !== taskId) return; // switched away meanwhile
+      const traces: TraceEvent[] = [];
+      for (const ev of traceRows || []) {
+        if (ev.kind !== 'span') continue;
+        let parsed: Record<string, unknown> | null = null;
+        if (ev.data) { try { parsed = JSON.parse(ev.data); } catch (_e) { parsed = null; } }
+        let duration = '';
+        if (ev.started_at && ev.ended_at) {
+          const ms = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
+          duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+        }
+        traces.push({ kind: 'span', name: ev.name || '', type: ev.detail || '', span_id: ev.span_id, parent_id: ev.parent_id, error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at, data: parsed, duration });
+      }
+      updateSS(sid, s => {
+        if (!s.taskView || s.taskView.taskId !== taskId) return s;
+        // Live spans that raced the fetch win (upsert by span id).
+        const merged = [...traces];
+        for (const live of s.taskView.traces) {
+          const idx = live.span_id ? merged.findIndex(e => e.span_id === live.span_id) : -1;
+          if (idx >= 0) merged[idx] = live; else merged.push(live);
+        }
+        // Snapshot wins: the child rows share the live turn's runId, so a
+        // mergeLiveTail would drop the in-flight turn wholesale. Terminal
+        // events refetch (refetchTaskView), which closes the gap for good.
+        return { ...s, taskView: { ...s.taskView, messages: timeline, traces: merged, loaded: true } };
+      });
+    }).catch(() => {
+      updateSS(sid, s => (s.taskView && s.taskView.taskId === taskId ? { ...s, taskView: { ...s.taskView, loaded: true } } : s));
+    });
+  }, [updateSS]);
+
+  const unwatchTask = useCallback((sid: string) => {
+    taskWatchRef.current = null;
+    taskViewBufRef.current = { text: '', reasoning: '' };
+    updateSS(sid, s => (s.taskView ? { ...s, taskView: null } : s));
+  }, [updateSS]);
+
+  return { wsRef, sessionRunRef, loadSession, deleteSession, watchTask, unwatchTask };
 }

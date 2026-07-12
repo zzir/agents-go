@@ -20,6 +20,36 @@ type Session struct {
 	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`
 }
 
+// Task is a background subagent run spawned from a chat session via the
+// spawn_task tool. Its transcript lives in a hidden child session
+// (ChildSessionID); the parent linkage and terminal outcome live here. The id
+// doubles as the task's run id in the hub. Status uses the MCP Tasks
+// five-state vocabulary (protocol.Task*).
+type Task struct {
+	bun.BaseModel `bun:"table:tasks,alias:t"`
+
+	ID              string `bun:"id,pk"                json:"task_id"`
+	ParentSessionID string `bun:"parent_session_id,notnull" json:"parent_session_id"`
+	ParentRunID     string `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
+	ToolCallID      string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
+	Label           string `bun:"label"                json:"label,omitempty"`
+	AgentConfigID   string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
+	ChildSessionID  string `bun:"child_session_id,notnull" json:"child_session_id"`
+	// ParentAgentConfigID / ParentSandboxID snapshot the spawning run's
+	// configuration so the completion notification can start a parent run with
+	// the same setup.
+	ParentAgentConfigID string `bun:"parent_agent_config_id" json:"-"`
+	ParentSandboxID     string `bun:"parent_sandbox_id"      json:"-"`
+	Status              string `bun:"status,notnull"     json:"status"`
+	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
+	// Result is the task's full final output. The row summary (and the wake
+	// notification) stay truncated to keep prompts and lists lean; the parent
+	// model pulls this on demand through task_status.
+	Result    string    `bun:"result,nullzero" json:"-"`
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
 // Message kinds. "item" rows are replayable conversation history holding wire
 // JSON in Item; "annotation" rows are UI-only records (errors, partial
 // reasoning from a cancelled run) that never reach the model.

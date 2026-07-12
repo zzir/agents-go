@@ -208,4 +208,19 @@ describe('stream/replay isomorphism', () => {
     const parts = (again[again.length - 1] as TurnEntry).parts;
     expect(parts.filter(p => p.type === 'cancelled')).toHaveLength(1); // marker idempotent
   });
+
+  it('task display projection: a patched spawn_task call rebuilds its task card', () => {
+    // postRun patches task_* onto the spawn call's display row when the task
+    // ends. This is deliberately replay-only (no streamed counterpart): while
+    // the task is live the chips row carries its status, so the isomorphism
+    // contract does not extend to these fields.
+    const timeline = buildTimeline([
+      { id: 1, run_id: RUN, role: 'user', content: 'spawn something' },
+      { id: 2, run_id: RUN, role: 'tool_call', display: { call_id: 'c1', name: 'spawn_task', arguments: '{}', task_id: 't1', task_label: 'audit', task_status: 'completed', task_summary: 'all green' } },
+      { id: 3, run_id: RUN, role: 'tool_output', display: { call_id: 'c1', output: '{"task_id":"t1"}' } },
+    ]);
+    const turn = timeline[1] as TurnEntry;
+    const tools = turn.parts.find(p => p.type === 'tools') as { toolCalls: Array<{ task?: { id?: string; status?: string; summary?: string } }> };
+    expect(tools.toolCalls[0].task).toEqual({ id: 't1', label: 'audit', status: 'completed', summary: 'all green' });
+  });
 });

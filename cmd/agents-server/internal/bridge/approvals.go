@@ -77,8 +77,8 @@ func userInputText(items []agents.TResponseInputItem) string {
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID string) (map[string]*agents.Agent, error) {
-	built, err := BuildFullAgent(ctx, r.Deps, agentConfigID, sandboxID)
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID string, taskRun bool) (map[string]*agents.Agent, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, taskRun)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,9 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
 	}
 
-	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID)
+	// A pending approval may belong to a background task's child session — its
+	// agent must be rebuilt task-shaped (no task tools), like the original run.
+	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, r.taskMeta(ctx, pending.SessionID) != nil)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -148,7 +150,10 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	if approve {
 		state.Approve(item, false)
-		r.applyCommandTrust(scope, item, pending.SessionID)
+		// A task's exec_command gate reads the PARENT session's trust store
+		// (trustSessionID); record the grant under the same key or it would
+		// never be consulted again.
+		r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, r.taskMeta(ctx, pending.SessionID)))
 	} else {
 		state.Reject(item, false, reason)
 	}

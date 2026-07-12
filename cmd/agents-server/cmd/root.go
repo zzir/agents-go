@@ -89,6 +89,12 @@ func run(_ *cobra.Command, _ []string) error {
 	sandboxStore := store.NewSandboxStore(db)
 	guardrailStore := store.NewGuardrailStore(db)
 	pendingApprovalStore := store.NewPendingApprovalStore(db)
+	taskStore := store.NewTaskStore(db)
+	if n, err := taskStore.FailOrphans(ctx); err != nil {
+		log.Warn().Err(err).Msg("task orphan reconciliation")
+	} else if n > 0 {
+		log.Info().Int64("count", n).Msg("marked orphaned tasks failed (restart)")
+	}
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
 	mcpManager := bridge.NewMcpManager(ctx, settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
@@ -96,7 +102,7 @@ func run(_ *cobra.Command, _ []string) error {
 	defer mcpManager.CloseAll()
 	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
 	go bridge.RunTraceRetention(ctx, settingStore, traceStore)
-	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, messageStore)
+	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, messageStore, taskStore)
 	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
@@ -114,6 +120,7 @@ func run(_ *cobra.Command, _ []string) error {
 		SandboxManager:   sandboxManager,
 		ChatGPTOAuth:     chatgptOAuth,
 		PendingApprovals: pendingApprovalStore,
+		Tasks:            taskStore,
 		Workspace:        flagWorkspace,
 	}
 	runner := bridge.NewRunner(ctx, db, deps)
@@ -131,7 +138,8 @@ func run(_ *cobra.Command, _ []string) error {
 	playgroundHandler := handler.NewPlaygroundHandler(deps)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
 	runHandler := handler.NewRunHandler(runner)
-	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, runner)
+	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, taskStore, runner)
+	taskHandler := handler.NewTaskHandler(taskStore, runner)
 	wsHandler := handler.NewWSHandler(runner)
 
 	token := flagToken
@@ -157,6 +165,8 @@ func run(_ *cobra.Command, _ []string) error {
 		RunEvents: runHandler.Events,
 
 		ApprovalListBySession: approvalHandler.ListBySession,
+		TaskListBySession:     taskHandler.ListBySession,
+		TaskStop:              taskHandler.Stop,
 		ApprovalApprove:       approvalHandler.Approve,
 		ApprovalReject:        approvalHandler.Reject,
 

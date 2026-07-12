@@ -8,13 +8,16 @@ import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdow
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
+import { parseTaskNotification } from '@/lib/protocol';
+import type { TaskState, TaskViewState } from '@/lib/useAgentSocket';
+import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, StackIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -344,12 +347,14 @@ interface ProcessTimelineProps {
   compacting?: boolean;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
+  onInspectTask?: (taskId: string) => void;
+  liveTaskStatusByCallId?: Record<string, string>;
 }
 
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
-function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, onApprove, onReject }: ProcessTimelineProps) {
+function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, onApprove, onReject, onInspectTask, liveTaskStatusByCallId }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
 
@@ -418,6 +423,8 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, on
                   live={live}
                   onApprove={onApprove}
                   onReject={onReject}
+                  onInspectTask={onInspectTask}
+                  liveTaskStatus={liveTaskStatusByCallId?.[tc.tool_call_id]}
                 />
               ));
             }
@@ -456,9 +463,11 @@ interface TurnBlockProps {
   liveStartedAt?: number | null;
   messageId?: string | number;
   onFork?: (id: string) => void;
+  onInspectTask?: (taskId: string) => void;
+  liveTaskStatusByCallId?: Record<string, string>;
 }
 
-const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, duration, liveStartedAt, messageId, onFork }: TurnBlockProps) {
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, duration, liveStartedAt, messageId, onFork, onInspectTask, liveTaskStatusByCallId }: TurnBlockProps) {
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
@@ -493,6 +502,8 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
         seg.kind === 'text'
           ? <TextContent key={'seg-' + i} content={seg.content} />
           : <ProcessTimeline
+              onInspectTask={onInspectTask}
+              liveTaskStatusByCallId={liveTaskStatusByCallId}
               key={'seg-' + i}
               parts={seg.parts}
               live={i === activeIdx}
@@ -505,6 +516,8 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
       )}
       {liveTail && (
         <ProcessTimeline
+          onInspectTask={onInspectTask}
+          liveTaskStatusByCallId={liveTaskStatusByCallId}
           parts={[]}
           live
           reasoning={reasoning}
@@ -622,6 +635,16 @@ const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace, ms
     });
   }, [content]);
 
+  // A server-injected task notification renders as a compact system-style
+  // card, not a user bubble — the model still saw the full text; the UI clamps
+  // it because the complete result lives in the task's Inspector detail,
+  // which clicking the card opens.
+  // A server-injected task notification never renders in the timeline: the
+  // model reads it verbatim, but for the human the composer's task indicator
+  // and the Inspector are the (only) surfaces — an in-flow card duplicated
+  // them mid-conversation.
+  if (parseTaskNotification(content)) return null;
+
   return (
     <div className="message message-user message-forkable" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx}>
       <div className="message-body">{content}</div>
@@ -697,6 +720,12 @@ interface ChatViewProps {
   // The session is paused awaiting a tool approval: block new sends so the
   // approval is resolved first (a concurrent run would strand it as session_busy).
   awaiting?: boolean;
+  // Background tasks spawned from this session (spawn_task), keyed by task id.
+  tasks?: Record<string, TaskState>;
+  // The Inspector's live view of the task being inspected (see useAgentSocket).
+  taskView?: TaskViewState | null;
+  onWatchTask?: (sid: string, taskId: string, childSessionId: string) => void;
+  onUnwatchTask?: (sid: string) => void;
   onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
   onCancel: (graceful?: boolean) => void;
   onApprove?: (id: string, scope?: string) => void;
@@ -708,12 +737,16 @@ interface ChatViewProps {
 
 export function ChatView({
   sessionId, messages, loaded, streaming, reasoning, running, compacting,
-  traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting,
+  traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
+  onWatchTask, onUnwatchTask,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigId] = useState('');
   const [sandboxId, setSandboxId] = useState('');
-  const [traceOpen, setTraceOpen] = useState(false);
+  // The right side panel is a single-instance Inspector with three lenses:
+  // the session's traces, the task list, and one task's detail (transcript +
+  // trace). Opening one closes the others.
+  const [inspector, setInspector] = useState<null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string }>(null);
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
   const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>);
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
@@ -776,6 +809,17 @@ export function ChatView({
     toast.info(graceful ? 'Stopping after the current turn…' : 'Run cancelled');
   }, [onCancel]);
 
+  // A wake run's input is the raw notification text — label it by the task,
+  // phrased so it reads as the parent's reaction to the result, not as the
+  // task's own trace (the task's trace lives in the Inspector).
+  const runLabelFor = (content: string) => {
+    const notif = parseTaskNotification(content);
+    if (!notif) return content;
+    const labels = notif.items.map(it => it.label).filter(Boolean);
+    const which = labels.length > 1 ? labels.join(', ') : (labels[0] || notif.taskId || '');
+    return 'task result: ' + which;
+  };
+
   const { turnRunMap, userRunMap, runLabels } = useMemo(() => {
     const tMap: Record<number, string> = {};
     const uMap: Record<number, string> = {};
@@ -787,8 +831,10 @@ export function ChatView({
       // Label runs from the user message directly, so a run whose reply
       // produced no visible turn still shows its question in the trace panel.
       if (entry.role === 'user' && rid && traceRuns[rid]) {
-        uMap[i] = rid;
-        if (entry.content && !labels[rid]) labels[rid] = entry.content;
+        // Notifications don't render, so they anchor no jump target — label
+        // the run but keep it out of userRunMap/messageRunIds.
+        if (!parseTaskNotification(entry.content)) uMap[i] = rid;
+        if (entry.content && !labels[rid]) labels[rid] = runLabelFor(entry.content);
       } else if (entry.role === 'turn') {
         if (rid && traceRuns[rid]) {
           tMap[i] = rid;
@@ -801,7 +847,7 @@ export function ChatView({
                 break;
               }
             }
-            labels[rid] = userContent || 'Turn ' + (turnIdx + 1);
+            labels[rid] = userContent ? runLabelFor(userContent) : 'Turn ' + (turnIdx + 1);
           }
         }
         turnIdx++;
@@ -810,10 +856,54 @@ export function ChatView({
     return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels };
   }, [messages, traceRuns]);
 
+  // Wake-up run → the run whose spawn_task started the chain. A wake run's
+  // first item is the task notification; its task ids resolve to parentRunId
+  // via the task list, letting the trace panel nest the "task result" card
+  // under its originating run instead of presenting two unrelated traces.
+  const traceRunParents = useMemo(() => {
+    const parents: Record<string, string> = {};
+    for (const entry of messages as any[]) {
+      const rid = entry.runId;
+      if (!rid || entry.role !== 'user' || parents[rid]) continue;
+      const notif = parseTaskNotification(entry.content);
+      if (!notif) continue;
+      for (const it of notif.items) {
+        const parent = tasks?.[it.taskId]?.parentRunId;
+        if (parent && parent !== rid) { parents[rid] = parent; break; }
+      }
+    }
+    return parents;
+  }, [messages, tasks]);
+
   const openTrace = useCallback((runId: string) => {
-    setTraceOpen(true);
+    setInspector({ kind: 'trace' });
     setTraceActiveRun(runId);
   }, []);
+
+  // A lens holds session-scoped state (task ids, trace runs); switching
+  // sessions resets it so a stale detail lens can't leave the drawer class
+  // dangling with no visible panel (and no close affordance).
+  useEffect(() => {
+    setInspector(null);
+  }, [sessionId]);
+
+  const openTaskDetail = useCallback((taskId: string) => {
+    setInspector({ kind: 'task', taskId });
+  }, []);
+
+  const stopTask = useCallback((taskId: string) => {
+    (api.tasks.stop(taskId) as Promise<unknown>).catch((e: Error) => toast.error(e.message || 'Stop failed'));
+  }, []);
+
+  // The task-detail lens is live: tell the socket layer which task to tail.
+  const inspectedTaskId = inspector?.kind === 'task' ? inspector.taskId : null;
+  useEffect(() => {
+    if (!sessionId || !inspectedTaskId || !onWatchTask || !onUnwatchTask) return;
+    const child = tasks?.[inspectedTaskId]?.childSessionId;
+    if (!child) return;
+    onWatchTask(sessionId, inspectedTaskId, child);
+    return () => onUnwatchTask(sessionId);
+  }, [sessionId, inspectedTaskId, onWatchTask, onUnwatchTask, tasks?.[inspectedTaskId || '']?.childSessionId]);
 
   // Runs that have a user message in this conversation — gates the trace
   // panel's jump-to-message control.
@@ -831,8 +921,24 @@ export function ChatView({
   // TOC rail: one entry per user prompt; click scrolls to the message. The
   // upward smooth scroll trips the scroll hook's moved-up intent detection,
   // so following pauses automatically while the user reads.
+  // toolCallId → live task status, for the spawn card badge. Status-only and
+  // identity-stable across unrelated task events (lastTool etc.), so the
+  // memoized TurnBlocks only re-render on real transitions.
+  const liveTaskStatusRef = useRef<Record<string, string>>({});
+  const liveTaskStatusByCallId = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const t of Object.values(tasks || {})) {
+      if (t.toolCallId && (t.status === 'working' || t.status === 'input_required')) next[t.toolCallId] = t.status;
+    }
+    const prev = liveTaskStatusRef.current;
+    const same = Object.keys(next).length === Object.keys(prev).length &&
+      Object.entries(next).every(([k, v]) => prev[k] === v);
+    if (!same) liveTaskStatusRef.current = next;
+    return liveTaskStatusRef.current;
+  }, [tasks]);
+
   const tocItems = useMemo(() =>
-    messages.flatMap((m, i) => m.role === 'user' && m.content
+    messages.flatMap((m, i) => m.role === 'user' && m.content && !parseTaskNotification(m.content)
       ? [{ idx: i, preview: m.content.replace(/\s+/g, ' ').trim().slice(0, 60) }]
       : []),
     [messages]);
@@ -897,6 +1003,24 @@ export function ChatView({
             </ActionMenu.Overlay>
           </ActionMenu>
         )}
+              {tasks && Object.keys(tasks).length > 0 && (() => {
+          const list = Object.values(tasks);
+          const working = list.some(t => t.status === 'working');
+          const attention = list.some(t => t.status === 'input_required');
+          return (
+            <Button
+              size="small"
+              variant="invisible"
+              leadingVisual={StackIcon}
+              onClick={() => setInspector(cur => (cur?.kind === 'tasks' ? null : { kind: 'tasks' }))}
+              aria-label="Background tasks"
+            >
+              <span className={'task-ind' + (attention ? ' task-ind-attention' : working ? ' task-ind-working' : '')}>
+                {list.length} task{list.length > 1 ? 's' : ''}{attention ? ' · needs approval' : ''}
+              </span>
+            </Button>
+          );
+        })()}
       </div>
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (
@@ -942,7 +1066,7 @@ export function ChatView({
   }
 
   return (
-    <div className={'chat-main' + (traceOpen ? ' trace-open' : '')}>
+    <div className={'chat-main' + (inspector ? ' trace-open' : '')}>
       <div className="chat-content">
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
@@ -965,6 +1089,7 @@ export function ChatView({
               return (
                 <TurnBlock
                   key={'turn-' + i}
+                  onInspectTask={openTaskDetail}
                   parts={m.parts || []}
                   streaming={isLive ? streaming : null}
                   reasoning={isLive ? reasoning : null}
@@ -1020,15 +1145,37 @@ export function ChatView({
         />
       </div>
 
-      {traceOpen && (
+      {inspector?.kind === 'trace' && (
         <TraceDrawer
           traceRuns={traceRuns}
           liveRunId={liveRunId}
           activeRunId={traceActiveRun}
           runLabels={runLabels}
-          onClose={() => setTraceOpen(false)}
+          runParents={traceRunParents}
+          onClose={() => setInspector(null)}
           onJumpToRun={jumpToRun}
           messageRunIds={messageRunIds}
+        />
+      )}
+      {inspector?.kind === 'tasks' && (
+        <TaskListPanel
+          tasks={tasks || {}}
+          onOpenTask={taskId => setInspector({ kind: 'task', taskId })}
+          onClose={() => setInspector(null)}
+          onApprove={onApprove}
+          onReject={onReject}
+          onStop={stopTask}
+        />
+      )}
+      {inspector?.kind === 'task' && tasks?.[inspector.taskId] && (
+        <TaskDetailPanel
+          task={tasks[inspector.taskId]}
+          view={taskView && taskView.taskId === inspector.taskId ? taskView : null}
+          onBack={() => setInspector({ kind: 'tasks' })}
+          onClose={() => setInspector(null)}
+          onApprove={onApprove}
+          onReject={onReject}
+          onStop={stopTask}
         />
       )}
     </div>

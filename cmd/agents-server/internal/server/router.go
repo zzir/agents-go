@@ -25,6 +25,8 @@ type Routes struct {
 
 	// Approvals are the human-in-the-loop decisions a paused run is waiting on.
 	ApprovalListBySession gin.HandlerFunc
+	TaskListBySession     gin.HandlerFunc
+	TaskStop              gin.HandlerFunc
 	ApprovalApprove       gin.HandlerFunc
 	ApprovalReject        gin.HandlerFunc
 
@@ -124,6 +126,7 @@ func registerAPIRoutes(api *gin.RouterGroup, r Routes) {
 		sessions.GET("/:id/traces", r.TraceListBySession)
 		sessions.POST("/:id/runs", r.RunCreate)
 		sessions.GET("/:id/approvals", r.ApprovalListBySession)
+		sessions.GET("/:id/tasks", r.TaskListBySession)
 	}
 	{
 		runs := api.Group("/runs")
@@ -132,6 +135,11 @@ func registerAPIRoutes(api *gin.RouterGroup, r Routes) {
 		runs.POST("/:id/cancel", r.RunCancel)
 	}
 	{
+		tasks := api.Group("/tasks")
+		{
+			tasks.POST("/:id/stop", r.TaskStop)
+		}
+
 		approvals := api.Group("/approvals")
 		approvals.POST("/:tool_call_id/approve", r.ApprovalApprove)
 		approvals.POST("/:tool_call_id/reject", r.ApprovalReject)

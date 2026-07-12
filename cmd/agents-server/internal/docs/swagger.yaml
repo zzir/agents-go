@@ -20,6 +20,12 @@ components:
     agents.InputTokensDetails:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
+        cache_write_tokens:
+          description: |-
+            CacheWriteTokens counts input tokens written to the prompt cache (surfaced
+            by providers that bill cache writes separately). Older serialized RunState
+            snapshots without the field decode to zero.
+          type: integer
         cached_tokens:
           type: integer
       type: object
@@ -60,6 +66,8 @@ components:
             improve prompt-cache hit rates. Empty means unset. Unlike the Python SDK,
             the runner never generates a key: callers set this (or ExtraBody) themselves.
           type: string
+        prompt_cache_options:
+          $ref: '#/components/schemas/agents.PromptCacheOptions'
         prompt_cache_retention:
           $ref: '#/components/schemas/agents.PromptCacheRetention'
         reasoning:
@@ -96,6 +104,28 @@ components:
       properties:
         reasoning_tokens:
           type: integer
+      type: object
+    agents.PromptCacheMode:
+      description: Mode is "implicit" (default) or "explicit". Empty leaves it unset.
+      enum:
+      - implicit
+      - explicit
+      type: string
+      x-enum-varnames:
+      - PromptCacheModeImplicit
+      - PromptCacheModeExplicit
+    agents.PromptCacheOptions:
+      description: |-
+        PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
+        for OpenAI Responses API requests. nil leaves it unset.
+      properties:
+        mode:
+          $ref: '#/components/schemas/agents.PromptCacheMode'
+        ttl:
+          description: |-
+            TTL is the minimum cache-entry lifetime, e.g. "30m" (currently the only
+            supported value). Empty leaves it unset.
+          type: string
       type: object
     agents.PromptCacheRetention:
       description: PromptCacheRetention is "in_memory" or "24h".
@@ -264,6 +294,8 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/bridge.RunStatus'
+        task:
+          $ref: '#/components/schemas/bridge.TaskMeta'
       type: object
     bridge.RunStatus:
       enum:
@@ -279,6 +311,38 @@ components:
       - RunCompleted
       - RunErrored
       - RunCancelled
+    bridge.TaskInfo:
+      properties:
+        agent:
+          type: string
+        label:
+          type: string
+        result:
+          description: |-
+            Result carries the task's full final output (task_status only — the
+            wake notification and UI stay on the truncated Summary).
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+        task_id:
+          type: string
+      type: object
+    bridge.TaskMeta:
+      description: |-
+        Task is set for background task runs (SessionID is then the task's own
+        hidden session; Task carries the parent linkage).
+      properties:
+        label:
+          type: string
+        parent_run_id:
+          type: string
+        parent_session_id:
+          type: string
+        tool_call_id:
+          type: string
+      type: object
     handler.APIError:
       properties:
         code:
@@ -290,6 +354,38 @@ components:
       properties:
         error:
           $ref: '#/components/schemas/handler.APIError'
+      type: object
+    handler.SessionApproval:
+      properties:
+        agent_config_id:
+          type: string
+        created_at:
+          type: string
+        run_id:
+          type: string
+        sandbox_id:
+          type: string
+        session_id:
+          type: string
+        task_id:
+          type: string
+        task_label:
+          type: string
+        tool_calls:
+          description: |-
+            ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
+            shown to the user.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        user_input:
+          description: |-
+            UserInput is the text of the message that started this paused turn. The
+            SDK only persists the turn to `messages` on completion, so during the
+            pause this is the only place the user's prompt is stored — the UI
+            reconstructs the user bubble from it on reload.
+          type: string
       type: object
     handler.approvalResultResp:
       properties:
@@ -552,6 +648,11 @@ components:
           type: array
           uniqueItems: false
       type: object
+    handler.taskStopReq:
+      properties:
+        graceful:
+          type: boolean
+      type: object
     store.AgentConfig:
       properties:
         approval:
@@ -726,34 +827,6 @@ components:
         session_id:
           type: string
       type: object
-    store.PendingApproval:
-      properties:
-        agent_config_id:
-          type: string
-        created_at:
-          type: string
-        run_id:
-          type: string
-        sandbox_id:
-          type: string
-        session_id:
-          type: string
-        tool_calls:
-          description: |-
-            ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
-            shown to the user.
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
-        user_input:
-          description: |-
-            UserInput is the text of the message that started this paused turn. The
-            SDK only persists the turn to `messages` on completion, so during the
-            pause this is the only place the user's prompt is stored — the UI
-            reconstructs the user bubble from it on reload.
-          type: string
-      type: object
     store.ProviderGroup:
       description: |-
         The remaining knobs are grouped into JSON category columns (see
@@ -850,6 +923,31 @@ components:
         key:
           type: string
         value:
+          type: string
+      type: object
+    store.Task:
+      properties:
+        agent_config_id:
+          type: string
+        child_session_id:
+          type: string
+        created_at:
+          type: string
+        label:
+          type: string
+        parent_run_id:
+          type: string
+        parent_session_id:
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+        task_id:
+          type: string
+        tool_call_id:
+          type: string
+        updated_at:
           type: string
       type: object
     store.TraceEvent:
@@ -2610,7 +2708,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/store.PendingApproval'
+                  $ref: '#/components/schemas/handler.SessionApproval'
                 type: array
           description: OK
         "500":
@@ -2784,6 +2882,37 @@ paths:
       summary: Start run
       tags:
       - runs
+  /sessions/{id}/tasks:
+    get:
+      description: Tasks spawned from this session via spawn_task, newest first. Status
+        is live for running tasks and durable after they end.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Task'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List background tasks
+      tags:
+      - tasks
   /sessions/{id}/traces:
     get:
       description: Without limit, returns all events oldest-first. With limit, returns
@@ -3129,5 +3258,50 @@ paths:
       summary: Get skill content
       tags:
       - skills
+  /tasks/{id}/stop:
+    post:
+      description: Cancels a running task, or discards the pending approval of a paused
+        one. Errors if the task is already final.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.taskStopReq'
+                description: Stop options
+                summary: request
+        description: Stop options
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bridge.TaskInfo'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Conflict
+      security:
+      - BearerAuth: []
+      summary: Stop a background task
+      tags:
+      - tasks
 servers:
 - url: /api/v1

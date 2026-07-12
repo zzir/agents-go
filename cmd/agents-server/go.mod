@@ -6,7 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/openai/openai-go/v3 v3.41.1
+	github.com/openai/openai-go/v3 v3.42.0
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
 	github.com/uptrace/bun v1.2.18

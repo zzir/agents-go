@@ -81,6 +81,7 @@ export const api = {
     create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     messages: (id: string | number) => request(`/sessions/${id}/messages`),
+    tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
     approvals: (id: string | number) => request(`/sessions/${id}/approvals`),
     fork: (id: string | number, messageId?: number, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
@@ -124,6 +125,9 @@ export const api = {
     list: () => request('/guardrails'),
   },
   providerRoutes: crud('/provider-routes'),
+  tasks: {
+    stop: (id: string | number, graceful = false) => request(`/tasks/${id}/stop`, { method: 'POST', body: JSON.stringify({ graceful }) }),
+  },
   sandboxes: {
     ...crud('/sandboxes'),
     test: (id: string | number) => request(`/sandboxes/${id}/test`, { method: 'POST' }),

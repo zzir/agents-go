@@ -22,6 +22,10 @@
 .trace-run { margin-bottom: 6px; }
 .trace-run .disclosure-header { font-size: 12px; font-weight: normal; padding: 8px 10px; }
 .trace-run .disclosure-body { padding: 4px 6px; }
+/* One card can hold a chain of runs (the user's run + the wake-up runs its
+   tasks triggered); each segment keeps its own waterfall timeline, with a
+   small gap between them. */
+.trace-run-segment + .trace-run-segment { margin-top: 8px; }
 .trace-run-label {
   flex: 1;
   min-width: 0;
