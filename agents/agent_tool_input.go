@@ -34,6 +34,11 @@ type AgentToolInputBuilder func(opts AgentToolInputBuilderOptions) (string, erro
 // agentToolSchemaInfo carries the schema rendering details computed once when
 // the tool is built (Python's StructuredInputSchemaInfo).
 type agentToolSchemaInfo struct {
+	// structured marks a custom-Params tool (AgentAsTool): its arguments are
+	// always rendered structurally, even when the schema yields no summary
+	// (no descriptions anywhere) — summary emptiness must not silently drop
+	// the documented preamble + JSON rendering.
+	structured bool
 	summary    string
 	jsonSchema map[string]any
 }
@@ -42,7 +47,7 @@ type agentToolSchemaInfo struct {
 // the full schema) used by the default structured-input rendering. Mirrors
 // Python's build_structured_input_schema_info.
 func buildStructuredSchemaInfo(schema map[string]any, includeJSONSchema bool) agentToolSchemaInfo {
-	info := agentToolSchemaInfo{summary: summarizeJSONSchema(schema)}
+	info := agentToolSchemaInfo{structured: true, summary: summarizeJSONSchema(schema)}
 	if includeJSONSchema {
 		info.jsonSchema = schema
 	}
@@ -54,7 +59,7 @@ func buildStructuredSchemaInfo(schema map[string]any, includeJSONSchema bool) ag
 // rendering when a builder or schema info is present, direct passthrough for
 // the default single {"input": string} shape, raw JSON otherwise.
 func resolveAgentToolInput(argsJSON string, info agentToolSchemaInfo, builder AgentToolInputBuilder) (string, error) {
-	if builder != nil || info.summary != "" || info.jsonSchema != nil {
+	if builder != nil || info.structured || info.summary != "" || info.jsonSchema != nil {
 		b := builder
 		if b == nil {
 			b = DefaultAgentToolInputBuilder

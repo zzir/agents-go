@@ -128,7 +128,7 @@ func (a *Agent) AsTool(cfg AgentToolConfig) Tool {
 	if err != nil {
 		schema = emptyStrictSchema()
 	}
-	return agentTool(a, cfg, schema, agentToolSchemaInfo{})
+	return agentTool(a, cfg, schema, agentToolSchemaInfo{}, nil)
 }
 
 // AgentAsTool is AsTool with a custom argument schema: the tool's parameters
@@ -146,11 +146,20 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) Tool {
 	if err != nil {
 		return failedFunctionTool(name, cfg.Description, fmt.Errorf("agent tool %q: %w", name, err))
 	}
-	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema, cfg.IncludeInputSchema))
+	// The validator decodes into Params like NewFunctionTool does for its
+	// args (and Python's as_tool TypeAdapter): malformed arguments go back to
+	// the model as a behavior error instead of flowing into the nested run.
+	validate := func(argsJSON string) error {
+		var params Params
+		return json.Unmarshal([]byte(argsJSON), &params)
+	}
+	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema, cfg.IncludeInputSchema), validate)
 }
 
 // agentTool builds the FunctionTool shared by AsTool and AgentAsTool.
-func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo) Tool {
+// validate, when non-nil, type-checks the raw arguments (AgentAsTool's Params
+// decode); nil falls back to the default {"input": string} handling.
+func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) Tool {
 	name := cfg.Name
 	if name == "" {
 		name = transformToolName(a.Name)
@@ -200,17 +209,25 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				}
 			}
 			if !resumed {
-				// The default {"input": string} schema validates strictly, like
-				// the Python TypeAdapter and the previous Go implementation — a
-				// malformed-argument error goes back to the model to self-correct
-				// instead of silently becoming the nested run's prompt.
-				if cfg.InputBuilder == nil && info.summary == "" && info.jsonSchema == nil {
+				// Arguments validate against their declared shape before they
+				// can influence the nested run — mirroring the Python
+				// TypeAdapter: a malformed-argument error goes back to the
+				// model to self-correct instead of silently becoming the
+				// nested run's prompt.
+				switch {
+				case validate != nil:
+					if uerr := validate(argsJSON); uerr != nil {
+						return nil, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
+					}
+				case cfg.InputBuilder == nil && !info.structured:
 					var args agentToolInput
 					if uerr := json.Unmarshal([]byte(argsJSON), &args); uerr != nil {
 						return nil, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
 					}
-				} else if !json.Valid([]byte(argsJSON)) {
-					return nil, newModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
+				default:
+					if !json.Valid([]byte(argsJSON)) {
+						return nil, newModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
+					}
 				}
 				input, ierr := resolveAgentToolInput(argsJSON, info, cfg.InputBuilder)
 				if ierr != nil {

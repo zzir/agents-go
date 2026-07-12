@@ -293,6 +293,55 @@ func TestAgentAsToolStructuredParams(t *testing.T) {
 	}
 }
 
+// Params that carry no descriptions anywhere: the schema summary is empty,
+// but the rendering must still be structural (preamble + JSON) — and the
+// arguments must still decode into Params before reaching the nested run.
+type asToolBareParams struct {
+	Query string `json:"query"`
+	Limit int64  `json:"limit"`
+}
+
+func TestAgentAsToolValidatesParams(t *testing.T) {
+	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
+	sub := &Agent{Name: "searcher", ModelImpl: subModel}
+	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search"})
+
+	// A type mismatch (limit as string) must bounce back to the model as a
+	// tool error, not flow into the nested run.
+	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":"three"}`)
+	res, err := Run(context.Background(), orch, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subModel.calls != 0 {
+		t.Fatalf("nested agent ran despite invalid params: %v", subModel.lastReq.Input)
+	}
+	if out := res.FinalOutputString(); out == "" {
+		t.Fatal("expected the orchestrator to receive the tool error and answer")
+	}
+}
+
+func TestAgentAsToolStructuredWithoutDescriptions(t *testing.T) {
+	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
+	sub := &Agent{Name: "searcher", ModelImpl: subModel}
+	tool := AgentAsTool[asToolBareParams](sub, AgentToolConfig{Name: "search"})
+
+	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
+	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// No descriptions -> no schema summary, but the structured preamble and
+	// the JSON arguments must still be rendered (not raw passthrough).
+	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
+	nestedInput := string(lastItem)
+	if !strings.Contains(nestedInput, "called as a tool") || !strings.Contains(nestedInput, "cats") {
+		t.Errorf("nested input = %q, want structured preamble + params", nestedInput)
+	}
+	if strings.Contains(nestedInput, "Input Schema Summary") {
+		t.Errorf("nested input = %q, unexpected summary section for description-less params", nestedInput)
+	}
+}
+
 func TestAgentAsToolIncludeInputSchema(t *testing.T) {
 	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
 	sub := &Agent{Name: "searcher", ModelImpl: subModel}
