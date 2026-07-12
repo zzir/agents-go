@@ -46,7 +46,11 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 			// stop or approve can ever advance.
 			if tasks != nil {
 				if task, err := tasks.ByChildSession(ctx, p.SessionID); err == nil {
-					_ = tasks.SetStatus(ctx, task.ID, "cancelled", "approval expired after "+strconv.Itoa(ttl)+" minutes", "")
+					if won, _ := tasks.Finalize(ctx, task.ID, "cancelled", "approval expired after "+strconv.Itoa(ttl)+" minutes", ""); won {
+						// Cancellations owe no wake-up; the timeout annotation
+						// above is the parent's record.
+						_ = tasks.ConsumeNotify(ctx, task.ID)
+					}
 				}
 			}
 			log.Info().Str("run_id", p.RunID).Str("session_id", p.SessionID).Msg("expired pending approval")

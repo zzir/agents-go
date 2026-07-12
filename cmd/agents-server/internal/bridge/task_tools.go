@@ -7,10 +7,11 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// maxConcurrentTasks caps live background tasks per chat session; a spawn
-// beyond the cap fails with a model-readable error. Matches the single-digit
-// defaults of comparable agent harnesses.
-const maxConcurrentTasks = 6
+// defaultMaxConcurrentTasks caps live background tasks per chat session when
+// no --max-tasks override is configured; a spawn beyond the cap fails with a
+// model-readable error. Matches the single-digit defaults of comparable agent
+// harnesses.
+const defaultMaxConcurrentTasks = 6
 
 // TaskSpawner is the runner surface the task tools call. It is an interface
 // (implemented by *Runner) so agent building doesn't depend on the runner.

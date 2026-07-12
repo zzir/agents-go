@@ -135,7 +135,8 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 
 	// A pending approval may belong to a background task's child session — its
 	// agent must be rebuilt task-shaped (no task tools), like the original run.
-	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, r.taskMeta(ctx, pending.SessionID) != nil)
+	taskMeta := r.taskMeta(ctx, pending.SessionID)
+	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, taskMeta != nil)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -153,7 +154,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// A task's exec_command gate reads the PARENT session's trust store
 		// (trustSessionID); record the grant under the same key or it would
 		// never be consulted again.
-		r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, r.taskMeta(ctx, pending.SessionID)))
+		r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta))
 	} else {
 		state.Reject(item, false, reason)
 	}
@@ -166,16 +167,36 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
 	}
 
+	// For a task's approval the row CAS (input_required -> working) is the
+	// second claim: a stop that finalized the task meanwhile wins, and this
+	// resume is abandoned — the discarded approval row is correct then (the
+	// task is dead; nothing may revive it).
+	if taskMeta != nil && taskMeta.TaskID != "" {
+		won, cerr := r.Deps.Tasks.ReclaimWorking(ctx, taskMeta.TaskID)
+		if cerr != nil {
+			return "", pending.SessionID, fmt.Errorf("reclaiming task %s: %w", taskMeta.TaskID, cerr)
+		}
+		if !won {
+			return "", pending.SessionID, fmt.Errorf("task %s was stopped; the approval is void", taskMeta.TaskID)
+		}
+	}
+
 	// The continuation reopens the SAME run id, so the whole turn — both the
 	// interrupted and resumed halves — shares one event stream and trace group.
 	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
 	if err != nil {
 		// Give the approval back (e.g. the session has a live run right now)
 		// so the decision can be retried once the session frees up — losing
-		// the row here would strand the paused run forever.
+		// the row here would strand the paused run forever. The task row goes
+		// back to input_required with it.
 		if saveErr := r.Deps.PendingApprovals.Save(context.Background(), pending); saveErr != nil {
 			zerolog.Ctx(ctx).Error().Err(saveErr).Str("run_id", pending.RunID).
 				Msg("restoring pending approval after failed resume")
+		}
+		if taskMeta != nil && taskMeta.TaskID != "" {
+			if merr := r.Deps.Tasks.MarkInputRequired(ctx, taskMeta.TaskID); merr != nil {
+				zerolog.Ctx(ctx).Warn().Err(merr).Str("task_id", taskMeta.TaskID).Msg("restoring task input_required after failed resume")
+			}
 		}
 		return "", pending.SessionID, err
 	}

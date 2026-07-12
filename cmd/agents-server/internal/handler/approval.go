@@ -16,15 +16,14 @@ import (
 // so the resulting events stream over GET /runs/{id}/events or the WebSocket.
 type ApprovalHandler struct {
 	store  *store.PendingApprovalStore
-	tasks  *store.TaskStore
 	runner *bridge.Runner
 }
 
 // NewApprovalHandler returns a handler backed by the pending-approval store
-// and the runner. tasks, when non-nil, lets the session listing surface
-// approvals paused inside the session's background tasks.
-func NewApprovalHandler(s *store.PendingApprovalStore, tasks *store.TaskStore, runner *bridge.Runner) *ApprovalHandler {
-	return &ApprovalHandler{store: s, tasks: tasks, runner: runner}
+// and the runner. The session listing also surfaces approvals paused inside
+// the session's background tasks (a join in the approval store).
+func NewApprovalHandler(s *store.PendingApprovalStore, runner *bridge.Runner) *ApprovalHandler {
+	return &ApprovalHandler{store: s, runner: runner}
 }
 
 // SessionApproval is a pending approval enriched with the background task it
@@ -60,22 +59,14 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	}
 	// Approvals paused inside this session's background tasks surface here too,
 	// tagged with their task, so the chat UI is the one approval surface.
-	if h.tasks != nil {
-		tasks, err := h.tasks.ListByParent(ctx, c.Param("id"))
-		if err != nil {
-			internalError(c, err)
-			return
-		}
-		for _, task := range tasks {
-			childItems, err := h.store.ListBySession(ctx, task.ChildSessionID)
-			if err != nil {
-				internalError(c, err)
-				return
-			}
-			for _, it := range childItems {
-				out = append(out, SessionApproval{PendingApproval: it, TaskID: task.ID, TaskLabel: task.Label})
-			}
-		}
+	// One join, not a query per task.
+	taskItems, err := h.store.ListByParentTasks(ctx, c.Param("id"))
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	for _, it := range taskItems {
+		out = append(out, SessionApproval{PendingApproval: it.PendingApproval, TaskID: it.TaskID, TaskLabel: it.TaskLabel})
 	}
 	c.JSON(http.StatusOK, out)
 }

@@ -13,18 +13,31 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
+// RunStopper stops a session's live run and its background tasks; implemented
+// by the bridge runner. Deletion must stop execution before removing data.
+type RunStopper interface {
+	StopSessionTree(sessionID string)
+}
+
 // SessionHandler serves CRUD endpoints for chat sessions and their messages.
 type SessionHandler struct {
 	sessions *store.SessionStore
 	messages *store.MessageStore
 	traces   *store.TraceStore
 	agents   *store.AgentConfigStore
+	stopper  RunStopper
 }
 
 // NewSessionHandler returns a handler backed by the session, message, trace,
 // and agent-config stores.
 func NewSessionHandler(sessions *store.SessionStore, messages *store.MessageStore, traces *store.TraceStore, agents *store.AgentConfigStore) *SessionHandler {
 	return &SessionHandler{sessions: sessions, messages: messages, traces: traces, agents: agents}
+}
+
+// WithRunStopper wires the runner so deletes stop the session tree first.
+func (h *SessionHandler) WithRunStopper(s RunStopper) *SessionHandler {
+	h.stopper = s
+	return h
 }
 
 // List responds with all sessions.
@@ -170,6 +183,12 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/sessions/{id} [delete]
 func (h *SessionHandler) Delete(c *gin.Context) {
+	// Stop the session's live run and all its background tasks (bounded wait)
+	// BEFORE the cascade: a task still executing would keep writing messages
+	// and traces into rows this delete is about to remove.
+	if h.stopper != nil {
+		h.stopper.StopSessionTree(c.Param("id"))
+	}
 	if err := h.sessions.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err)
 		return

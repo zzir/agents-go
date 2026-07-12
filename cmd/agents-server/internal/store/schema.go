@@ -48,6 +48,24 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating trace_events session index: %w", err)
 	}
+	// Task lookups run per chat turn (list by parent) and on every run start
+	// (taskMeta by child session) — index both edges.
+	if _, err := db.NewCreateIndex().
+		Model((*Task)(nil)).
+		Index("idx_tasks_parent_session_id").
+		Column("parent_session_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating tasks parent index: %w", err)
+	}
+	if _, err := db.NewCreateIndex().
+		Model((*Task)(nil)).
+		Index("idx_tasks_child_session_id").
+		Column("child_session_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating tasks child index: %w", err)
+	}
 	// Trace retention prunes by age; without this the periodic DELETE
 	// full-scans the largest table in the DB.
 	if _, err := db.NewCreateIndex().

@@ -28,6 +28,7 @@ var (
 	flagWorkspace         string
 	flagToken             string
 	flagAllowLocalSandbox bool
+	flagMaxTasks          int
 )
 
 var rootCmd = &cobra.Command{
@@ -42,6 +43,7 @@ func init() {
 	rootCmd.Flags().StringVar(&flagWorkspace, "workspace", ".", "Workspace directory")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
 	rootCmd.Flags().BoolVar(&flagAllowLocalSandbox, "allow-local-sandbox", false, "Allow creating local (non-isolated) sandboxes")
+	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
@@ -122,10 +124,14 @@ func run(_ *cobra.Command, _ []string) error {
 		PendingApprovals: pendingApprovalStore,
 		Tasks:            taskStore,
 		Workspace:        flagWorkspace,
+		MaxTasks:         flagMaxTasks,
 	}
 	runner := bridge.NewRunner(ctx, db, deps)
+	// Deliver wake-ups owed from before the restart (including tasks the
+	// orphan reconciliation above just marked failed).
+	go runner.DrainPendingTaskNotifications(ctx)
 
-	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore, agentConfigStore)
+	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore, agentConfigStore).WithRunStopper(runner)
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver)
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
@@ -138,7 +144,7 @@ func run(_ *cobra.Command, _ []string) error {
 	playgroundHandler := handler.NewPlaygroundHandler(deps)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
 	runHandler := handler.NewRunHandler(runner)
-	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, taskStore, runner)
+	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, runner)
 	taskHandler := handler.NewTaskHandler(taskStore, runner)
 	wsHandler := handler.NewWSHandler(runner)
 

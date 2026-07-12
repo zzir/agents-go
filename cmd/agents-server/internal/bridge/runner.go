@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -30,13 +29,9 @@ type Runner struct {
 	hub      *RunHub
 	messages *store.MessageStore
 
-	// pendingNotifs queues task-completion notifications per parent session
-	// until its current run's boundary (see drainTaskNotifications).
-	notifMu       sync.Mutex
-	pendingNotifs map[string][]string
-	// deliveredResults marks tasks whose final result the model already
-	// received through task_status (wait), so their wake-up is skipped.
-	deliveredResults map[string]bool
+	// Task completion wake-ups have no in-memory state: the notification debt
+	// lives on the tasks row (notify_state), written atomically with the
+	// terminal status — see drainTaskNotifications.
 	// OnRunAttach, when set, is invoked with the run id right after a run
 	// registers in the hub (fresh start and approval resume alike), before any
 	// event publishes. The WS layer uses it to attach every live connection to
@@ -103,6 +98,9 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 		hub:      NewRunHub(rootCtx),
 		messages: store.NewMessageStore(db),
 	}
+	if deps.MaxTasks > 0 {
+		r.hub.maxTasks = deps.MaxTasks
+	}
 	// The runner is the task spawner; agent building only sees the interface.
 	deps.TaskSpawner = r
 	return r
@@ -119,6 +117,11 @@ type RunResult struct {
 	SessionID     string
 	AgentConfigID string
 	SandboxID     string
+	// ErrCode/ErrMessage describe a failed run (mirroring the run.error event)
+	// so terminal bookkeeping — a task row's failure reason above all — does
+	// not depend on having watched the event stream.
+	ErrCode       string
+	ErrMessage    string
 	Interrupted   bool
 	Interruptions []*agents.ToolApprovalItem
 	SDKState      *agents.RunState
@@ -133,8 +136,8 @@ func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, input string, onD
 	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, input, onDone)
 }
 
-// startRunWithID is StartRun with a caller-chosen run id — a background task's
-// id doubles as its run id, so SpawnTask picks it before launching.
+// startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
+// task's run id up front so the row can carry it before the run launches.
 func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, input string, onDone func(*RunResult)) (string, error) {
 	// Reject unknown sessions up front so we never register a run (or write
 	// orphaned messages) against a non-existent session.
@@ -159,6 +162,7 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 		if onDone != nil {
 			onDone(result)
 		}
+		r.hub.markDone(runID)
 	}()
 	return runID, nil
 }
@@ -194,6 +198,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	if task != nil {
 		started.ParentSessionID = task.ParentSessionID
 		started.ParentRunID = task.ParentRunID
+		started.TaskID = task.TaskID
 		started.ToolCallID = task.ToolCallID
 		started.Label = task.Label
 	}
@@ -201,6 +206,11 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 	mkResult := func() *RunResult {
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
+	}
+	mkErrResult := func(code, msg string) *RunResult {
+		res := mkResult()
+		res.ErrCode, res.ErrMessage = code, msg
+		return res
 	}
 
 	// Refuse to run against a session that doesn't exist — otherwise the run
@@ -211,7 +221,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 			Code:    protocol.CodeSessionNotFound,
 			Message: "session not found: " + sessionID,
 		})
-		return mkResult()
+		return mkErrResult(protocol.CodeSessionNotFound, "session not found: "+sessionID)
 	}
 
 	// Build fully configured agent from DB config. Task runs never get the
@@ -227,7 +237,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 			Code:    protocol.CodeConfigError,
 			Message: err.Error(),
 		})
-		return mkResult()
+		return mkErrResult(protocol.CodeConfigError, err.Error())
 	}
 
 	agent := built.Agent
@@ -240,7 +250,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 			Code:    protocol.CodeConfigError,
 			Message: msg,
 		})
-		return mkResult()
+		return mkErrResult(protocol.CodeConfigError, msg)
 	}
 
 	// Wrap with router provider if routes exist
@@ -302,6 +312,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 			gerr := guardrailRunError(runID, err, "stream_error")
 			r.savePartialTurn(sessionID, runID, agent.Model, input, "error", err.Error(), streamedReasoning, streamedText, gerr.Guardrail, gerr.Stage)
 			sendEvent(protocol.EventRunError, gerr)
+			return mkErrResult(gerr.Code, err.Error())
 		}
 		return mkResult()
 	}
@@ -335,6 +346,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		if onDone != nil {
 			onDone(result)
 		}
+		r.hub.markDone(runID)
 	}()
 	return runID, nil
 }
@@ -357,6 +369,11 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	mkResult := func() *RunResult {
 		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
 	}
+	mkErrResult := func(code, msg string) *RunResult {
+		res := mkResult()
+		res.ErrCode, res.ErrMessage = code, msg
+		return res
+	}
 
 	task := r.taskMeta(ctx, sessionID)
 	// The resumed segment re-announces the original prompt so a late-joining
@@ -366,6 +383,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	if task != nil {
 		started.ParentSessionID = task.ParentSessionID
 		started.ParentRunID = task.ParentRunID
+		started.TaskID = task.TaskID
 		started.ToolCallID = task.ToolCallID
 		started.Label = task.Label
 	}
@@ -387,6 +405,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 			gerr := guardrailRunError(runID, err, code)
 			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText, gerr.Guardrail, gerr.Stage)
 			sendEvent(protocol.EventRunError, gerr)
+			return mkErrResult(gerr.Code, err.Error())
 		}
 		return mkResult()
 	}

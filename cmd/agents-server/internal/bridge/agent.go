@@ -38,6 +38,9 @@ type AgentDeps struct {
 	PendingApprovals *store.PendingApprovalStore
 	Tasks            *store.TaskStore
 	Workspace        string
+	// MaxTasks overrides the per-session live background-task cap when > 0
+	// (--max-tasks; 0 keeps the built-in default).
+	MaxTasks int
 	// TaskSpawner is set by NewRunner; when non-nil, chat agents get the
 	// spawn_task / task_status / task_stop tools.
 	TaskSpawner TaskSpawner

@@ -27,7 +27,7 @@ func newTaskRunner(t *testing.T) (*Runner, *store.TaskStore) {
 func seedTask(t *testing.T, tasks *store.TaskStore, id, parent string) {
 	t.Helper()
 	if err := tasks.Create(context.Background(), &store.Task{
-		ID: id, ParentSessionID: parent, ChildSessionID: store.NewID(),
+		ID: id, RunID: store.NewID(), ParentSessionID: parent, ChildSessionID: store.NewID(),
 		Label: "t", Status: protocol.TaskWorking,
 	}); err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestTaskStatusWaitReturnsOnCompletion(t *testing.T) {
 
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		_ = tasks.SetStatus(context.Background(), "task-1", protocol.TaskCompleted, "done", "full result")
+		_, _ = tasks.Finalize(context.Background(), "task-1", protocol.TaskCompleted, "done", "full result")
 	}()
 
 	start := time.Now()
@@ -72,30 +72,124 @@ func TestTaskStatusWaitTimesOutToWorking(t *testing.T) {
 	}
 }
 
-// A result delivered in-turn via task_status consumes the wake-up: postRun
-// must not queue a duplicate notification for it.
+// A result delivered in-turn via task_status consumes the wake-up debt on the
+// row: postRun's Finalize owed it (notify_state=pending), the read settles it.
 func TestTaskStatusFinalConsumesNotification(t *testing.T) {
 	runner, tasks := newTaskRunner(t)
 	seedTask(t, tasks, "task-3", "parent-3")
-	_ = tasks.SetStatus(context.Background(), "task-3", protocol.TaskCompleted, "done", "r")
+	if won, err := tasks.Finalize(context.Background(), "task-3", protocol.TaskCompleted, "done", "r"); err != nil || !won {
+		t.Fatalf("Finalize won=%v err=%v", won, err)
+	}
+	row, err := tasks.Get(context.Background(), "task-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.NotifyState != store.NotifyPending {
+		t.Fatalf("notify_state = %q, want pending after Finalize", row.NotifyState)
+	}
+
+	finishedAt := row.UpdatedAt
 
 	if _, err := runner.TaskStatus(context.Background(), "task-3", 0); err != nil {
 		t.Fatal(err)
 	}
-	runner.notifMu.Lock()
-	delivered := runner.deliveredResults["task-3"]
-	runner.notifMu.Unlock()
-	if !delivered {
-		t.Fatal("final task_status did not mark the result as delivered")
+	row, err = tasks.Get(context.Background(), "task-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.NotifyState != store.NotifyConsumed {
+		t.Fatalf("notify_state = %q, want consumed after a final task_status read", row.NotifyState)
+	}
+	// Notification bookkeeping must not move the finish time: for a terminal
+	// task updated_at is its end timestamp (the UI's duration comes from it).
+	if !row.UpdatedAt.Equal(finishedAt) {
+		t.Fatalf("updated_at moved by ConsumeNotify: %v -> %v", finishedAt, row.UpdatedAt)
+	}
+}
+
+// The durable row is the terminal authority: a hub record that already shows
+// completed while the row is still working (the Finalize hasn't landed) must
+// NOT surface as final — that window used to return an empty result and eat
+// the wake-up.
+func TestTaskStatusHubTerminalWaitsForRow(t *testing.T) {
+	runner, tasks := newTaskRunner(t)
+	seedTask(t, tasks, "task-4", "parent-4")
+	task, err := tasks.Get(context.Background(), "task-4")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// queued entry (had the completion raced ahead) is dropped too
-	runner.queueTaskNotification("parent-3", "task-3")
-	runner.consumeTaskNotification("parent-3", "task-3")
-	runner.notifMu.Lock()
-	queue := runner.pendingNotifs["parent-3"]
-	runner.notifMu.Unlock()
-	if len(queue) != 0 {
-		t.Fatalf("queue = %v, want the consumed task dropped", queue)
+	// Register the task's run and drive the hub record to completed without
+	// touching the row — exactly the publish-before-persist window.
+	meta := &TaskMeta{TaskID: task.ID, ParentSessionID: "parent-4"}
+	if _, _, err := runner.hub.register(task.RunID, task.ChildSessionID, "", "", meta); err != nil {
+		t.Fatal(err)
+	}
+	env, err := protocol.NewEnvelope(protocol.EventRunOutput, protocol.RunOutput{RunID: task.RunID, FinalOutput: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.hub.publish(task.RunID, env)
+	runner.hub.finish(task.RunID, false)
+
+	info, err := runner.TaskStatus(context.Background(), "task-4", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Status != protocol.TaskWorking {
+		t.Fatalf("status = %s, want working while the row has not landed", info.Status)
+	}
+	row, err := tasks.Get(context.Background(), "task-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.NotifyState != "" {
+		t.Fatalf("notify_state = %q, want untouched (nothing consumed early)", row.NotifyState)
+	}
+}
+
+// Stop and approve race on an input_required task through row CAS: the stop's
+// Finalize and the approve's ReclaimWorking are mutually exclusive claims.
+func TestStopApproveRowClaims(t *testing.T) {
+	ctx := context.Background()
+	_, tasks := newTaskRunner(t)
+
+	// Stop wins first: the reclaim (approve) must lose.
+	seedTask(t, tasks, "task-5", "parent-5")
+	if err := tasks.MarkInputRequired(ctx, "task-5"); err != nil {
+		t.Fatal(err)
+	}
+	won, err := tasks.Finalize(ctx, "task-5", protocol.TaskCancelled, "stopped", "")
+	if err != nil || !won {
+		t.Fatalf("stop Finalize won=%v err=%v", won, err)
+	}
+	won, err = tasks.ReclaimWorking(ctx, "task-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if won {
+		t.Fatal("ReclaimWorking revived a cancelled task")
+	}
+
+	// Approve wins first: the resume proceeds (working), and a later terminal
+	// transition (the run being cancelled) still lands exactly once.
+	seedTask(t, tasks, "task-6", "parent-6")
+	if err := tasks.MarkInputRequired(ctx, "task-6"); err != nil {
+		t.Fatal(err)
+	}
+	won, err = tasks.ReclaimWorking(ctx, "task-6")
+	if err != nil || !won {
+		t.Fatalf("ReclaimWorking won=%v err=%v", won, err)
+	}
+	won, err = tasks.Finalize(ctx, "task-6", protocol.TaskCancelled, "stopped", "")
+	if err != nil || !won {
+		t.Fatalf("post-reclaim Finalize won=%v err=%v", won, err)
+	}
+	won, err = tasks.Finalize(ctx, "task-6", protocol.TaskCompleted, "late", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if won {
+		t.Fatal("terminal state was overwritten")
 	}
 }

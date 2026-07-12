@@ -59,6 +59,31 @@ func (s *PendingApprovalStore) ListBySession(ctx context.Context, sessionID stri
 	return out, nil
 }
 
+// TaskApproval is a pending approval inside a background task's child
+// session, tagged with the owning task.
+type TaskApproval struct {
+	PendingApproval
+	TaskID    string `bun:"task_id"    json:"task_id"`
+	TaskLabel string `bun:"task_label" json:"task_label,omitempty"`
+}
+
+// ListByParentTasks returns the pending approvals of every background task
+// spawned from the given chat session — one join instead of a per-task query.
+func (s *PendingApprovalStore) ListByParentTasks(ctx context.Context, parentSessionID string) ([]TaskApproval, error) {
+	var out []TaskApproval
+	if err := s.db.NewSelect().Model((*PendingApproval)(nil)).
+		ColumnExpr("pa.*").
+		ColumnExpr("t.id AS task_id").
+		ColumnExpr("t.label AS task_label").
+		Join("JOIN tasks AS t ON t.child_session_id = pa.session_id").
+		Where("t.parent_session_id = ?", parentSessionID).
+		OrderExpr("pa.created_at ASC").
+		Scan(ctx, &out); err != nil {
+		return nil, fmt.Errorf("listing task approvals for session %s: %w", parentSessionID, err)
+	}
+	return out, nil
+}
+
 // List returns every pending approval, oldest first (FindByToolCall scans it;
 // recovery after a restart is lazy — approvals resume from these rows on the
 // next approve/reject, nothing is preloaded).

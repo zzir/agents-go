@@ -83,6 +83,7 @@ type SeqEnvelope struct {
 // TaskMeta links a background task run to the parent chat session/run that
 // spawned it. Nil for ordinary runs.
 type TaskMeta struct {
+	TaskID          string `json:"task_id,omitempty"`
 	ParentSessionID string `json:"parent_session_id"`
 	ParentRunID     string `json:"parent_run_id,omitempty"`
 	ToolCallID      string `json:"tool_call_id,omitempty"`
@@ -97,6 +98,10 @@ type RunInfo struct {
 	SandboxID     string    `json:"sandbox_id,omitempty"`
 	Status        RunStatus `json:"status"`
 	LastSeq       int       `json:"last_seq"`
+	// GracefulStop records that StopAfterTurn was requested: a clean finish
+	// after it is a cancellation (postRun writes the task row accordingly),
+	// not a completion. Internal to the stop flow.
+	GracefulStop bool `json:"-"`
 	// Task is set for background task runs (SessionID is then the task's own
 	// hidden session; Task carries the parent linkage).
 	Task *TaskMeta `json:"task,omitempty"`
@@ -129,6 +134,10 @@ type SeqSink func(SeqEnvelope)
 type runRecord struct {
 	info   RunInfo
 	cancel context.CancelFunc
+	// done closes when the current run segment's goroutine has fully finished
+	// (postRun included) — the session-delete path waits on it so no write
+	// can land after the cascade removes the data.
+	done chan struct{}
 	// stopAfterTurn, when set by the run goroutine, requests a graceful stop:
 	// the in-flight turn finishes (tools + session save) and the run ends cleanly
 	// before the next turn. Distinct from cancel (a hard context abort).
@@ -149,6 +158,10 @@ type runRecord struct {
 type RunHub struct {
 	rootCtx context.Context
 
+	// maxTasks caps live background tasks per parent session (--max-tasks;
+	// set once at construction time, read under mu with everything else).
+	maxTasks int
+
 	mu        sync.Mutex
 	runs      map[string]*runRecord
 	bySession map[string]string // sessionID -> live run id (only while running)
@@ -161,6 +174,7 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 	}
 	h := &RunHub{
 		rootCtx:   rootCtx,
+		maxTasks:  defaultMaxConcurrentTasks,
 		runs:      make(map[string]*runRecord),
 		bySession: make(map[string]string),
 	}
@@ -191,13 +205,14 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, ErrSessionBusy{RunID: existing}
 	}
-	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= maxConcurrentTasks {
-		return nil, nil, ErrTaskLimit{Limit: maxConcurrentTasks}
+	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= h.maxTasks {
+		return nil, nil, ErrTaskLimit{Limit: h.maxTasks}
 	}
 	ctx, cancel := context.WithCancel(h.rootCtx)
 	rec := &runRecord{
 		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 		cancel: cancel,
+		done:   make(chan struct{}),
 		subs:   make(map[int]SeqSink),
 	}
 	h.runs[runID] = rec
@@ -246,6 +261,7 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 		rec = &runRecord{
 			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 			cancel: cancel,
+			done:   make(chan struct{}),
 			subs:   make(map[int]SeqSink),
 		}
 		h.runs[runID] = rec
@@ -253,8 +269,20 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 		return ctx, nil
 	}
 	rec.mu.Lock()
+	// Only a paused run resumes. A record finished by a concurrent stop (or a
+	// completed/errored one) stays dead — reviving it would let an approve
+	// race resurrect a task the user just cancelled.
+	if rec.info.Status != RunInterrupted {
+		st := rec.info.Status
+		rec.mu.Unlock()
+		cancel()
+		return nil, fmt.Errorf("run %s is %s and cannot be resumed", runID, st)
+	}
 	rec.cancel = cancel
 	rec.info.Status = RunRunning
+	rec.info.GracefulStop = false
+	// A fresh segment gets a fresh done gate (the previous one is closed).
+	rec.done = make(chan struct{})
 	if task != nil {
 		rec.info.Task = task
 	}
@@ -366,6 +394,44 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 	rec.mu.Unlock()
 }
 
+// markDone closes the current segment's done gate. Called exactly once by the
+// run goroutine as its last act.
+func (h *RunHub) markDone(runID string) {
+	h.mu.Lock()
+	rec := h.runs[runID]
+	h.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	rec.mu.Lock()
+	done := rec.done
+	rec.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+}
+
+// waitDone blocks until the run's current segment has fully finished or the
+// deadline passes. Unknown runs (GC'd, restarted away) return immediately.
+func (h *RunHub) waitDone(runID string, deadline time.Time) {
+	h.mu.Lock()
+	rec := h.runs[runID]
+	h.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	rec.mu.Lock()
+	done := rec.done
+	rec.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Until(deadline)):
+	}
+}
+
 // Cancel cancels the run's context, which unwinds the run goroutine. It
 // reports whether a live run with that id existed.
 func (h *RunHub) Cancel(runID string) bool {
@@ -397,7 +463,14 @@ func (h *RunHub) StopAfterTurn(runID string) bool {
 	h.mu.Lock()
 	var stop func()
 	if rec := h.runs[runID]; rec != nil {
-		stop = rec.stopAfterTurn
+		rec.mu.Lock()
+		if rec.stopAfterTurn != nil {
+			// Mark before signalling: the run goroutine's postRun must never
+			// observe a clean finish without the graceful-stop marker.
+			rec.info.GracefulStop = true
+			stop = rec.stopAfterTurn
+		}
+		rec.mu.Unlock()
 	}
 	h.mu.Unlock()
 	if stop == nil {

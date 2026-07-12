@@ -122,8 +122,11 @@ type RunStarted struct {
 	// of a chat timeline (SessionID is the task's own hidden session).
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	ParentRunID     string `json:"parent_run_id,omitempty"`
-	ToolCallID      string `json:"tool_call_id,omitempty"`
-	Label           string `json:"label,omitempty"`
+	// TaskID is the durable task identity; RunID is this attempt's execution
+	// id. Clients key task state by TaskID and route events by RunID.
+	TaskID     string `json:"task_id,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Label      string `json:"label,omitempty"`
 }
 
 // Task status vocabulary, aligned with the MCP Tasks (SEP-1686) five-state

@@ -284,3 +284,55 @@ func TestRunHubStopAfterTurn(t *testing.T) {
 		t.Error("StopAfterTurn on an unknown run should report false")
 	}
 }
+
+// TestStopAfterTurnSetsGracefulMarker locks the graceful-stop contract: the
+// marker lands on the record BEFORE the stop hook fires, so a clean finish
+// can never be observed without it — postRun turns that finish into a
+// cancelled terminal state. resume clears it for the next segment.
+func TestStopAfterTurnSetsGracefulMarker(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("r1", "s1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	var markerAtHook bool
+	h.setStopHook("r1", func() {
+		info, _ := h.Info("r1")
+		markerAtHook = info.GracefulStop
+	})
+	if !h.StopAfterTurn("r1") {
+		t.Fatal("StopAfterTurn found no hook")
+	}
+	if !markerAtHook {
+		t.Fatal("graceful marker not visible at hook time")
+	}
+	if info, _ := h.Info("r1"); !info.GracefulStop {
+		t.Fatal("graceful marker not retained")
+	}
+}
+
+// TestResumeRefusesFinishedRecord locks the second line of defence in the
+// stop/approve race: a record a stop already finished cannot be revived by a
+// racing resume.
+func TestResumeRefusesFinishedRecord(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("r2", "s2", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: "r2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.publish("r2", env)
+	h.finish("r2", false)
+	if _, err := h.resume("r2", "s2", "", "", nil); err == nil {
+		t.Fatal("resume revived a cancelled record")
+	}
+	// An interrupted record resumes fine.
+	if _, _, err := h.register("r3", "s3", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	h.finish("r3", true)
+	if _, err := h.resume("r3", "s3", "", "", nil); err != nil {
+		t.Fatalf("resume of interrupted record: %v", err)
+	}
+}

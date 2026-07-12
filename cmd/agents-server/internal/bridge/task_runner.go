@@ -25,26 +25,32 @@ type TaskFinalError struct{ Status string }
 
 func (e *TaskFinalError) Error() string { return "task already " + e.Status }
 
-// publishTaskCancelled advances the hub record (when it still exists) and
-// broadcasts run.cancelled, so every connected client flips the task's state
-// and the record stops holding a concurrency-cap slot. A no-op after GC.
-func (r *Runner) publishTaskCancelled(taskID string) {
-	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: taskID})
+// publishTaskCancelled advances the hub record of the task's run (when it
+// still exists) and broadcasts run.cancelled, so every connected client flips
+// the task's state and the record stops holding a concurrency-cap slot. A
+// no-op after GC or a restart (callers fall back to the stop API response).
+func (r *Runner) publishTaskCancelled(runID string) {
+	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
 	if err != nil {
 		return
 	}
-	r.hub.publish(taskID, env)
-	r.hub.finish(taskID, false)
+	r.hub.publish(runID, env)
+	r.hub.finish(runID, false)
 }
 
 // SpawnTask implements TaskSpawner: it creates the task's hidden child
 // session and durable row, then launches the run through the ordinary run
-// pipeline (same hub, same events, broadcast to every connection). The task
-// id doubles as the child run id.
+// pipeline (same hub, same events, broadcast to every connection).
 func (r *Runner) SpawnTask(ctx context.Context, parentSessionID, agentName, input, label string) (*TaskInfo, error) {
 	cfg, err := r.resolveSpawnAgent(ctx, parentSessionID, agentName)
 	if err != nil {
 		return nil, err
+	}
+
+	// Pre-check the cap before creating any rows, so an over-cap spawn fails
+	// clean (the in-lock register check below stays as the TOCTOU backstop).
+	if n := r.hub.LiveTaskCount(parentSessionID); n >= r.hub.maxTasks {
+		return nil, ErrTaskLimit{Limit: r.hub.maxTasks}
 	}
 
 	// Snapshot the spawning run's setup so the completion notification can
@@ -62,13 +68,18 @@ func (r *Runner) SpawnTask(ctx context.Context, parentSessionID, agentName, inpu
 	if label == "" {
 		label = truncateRunes(input, 60)
 	}
+	// Task identity and run attempt are separate ids: the task is the durable
+	// entity, the run is one execution of it (a future retry would mint a new
+	// run id on the same task row).
 	taskID := store.NewID()
+	runID := store.NewID()
 	child := &store.Session{ID: store.NewID(), Name: "task: " + label, AgentConfigID: cfg.ID}
 	if err := r.Deps.Sessions.Create(ctx, child); err != nil {
 		return nil, fmt.Errorf("spawn_task: creating task session: %w", err)
 	}
 	task := &store.Task{
 		ID:                  taskID,
+		RunID:               runID,
 		ParentSessionID:     parentSessionID,
 		ParentRunID:         parentRunID,
 		ToolCallID:          toolCallID,
@@ -90,11 +101,15 @@ func (r *Runner) SpawnTask(ctx context.Context, parentSessionID, agentName, inpu
 	}
 	// The task shares the parent run's sandbox (and thereby its command-trust
 	// scope, carried by the parent session id in the run context).
-	if _, err := r.startRunWithID(taskID, child.ID, cfg.ID, parentSandboxID, input, nil); err != nil {
-		// The row exists but no run will ever advance it — mark it failed so
-		// task_status and the UI don't report a phantom "working" forever.
-		if stErr := r.Deps.Tasks.SetStatus(ctx, taskID, protocol.TaskFailed, "failed to start: "+err.Error(), ""); stErr != nil {
-			zerolog.Ctx(ctx).Warn().Err(stErr).Str("task_id", taskID).Msg("task failure status")
+	if _, err := r.startRunWithID(runID, child.ID, cfg.ID, parentSandboxID, input, nil); err != nil {
+		// The run never started: unwind the row and the child session instead
+		// of leaving a failed husk. The tool error is the model's record of
+		// this attempt; a row would only pollute the task list on retries.
+		if delErr := r.Deps.Tasks.DeleteByID(ctx, taskID); delErr != nil {
+			zerolog.Ctx(ctx).Warn().Err(delErr).Str("task_id", taskID).Msg("unstarted task row cleanup")
+		}
+		if delErr := r.Deps.Sessions.Delete(ctx, child.ID); delErr != nil {
+			zerolog.Ctx(ctx).Warn().Err(delErr).Str("session_id", child.ID).Msg("unstarted task session cleanup")
 		}
 		return nil, fmt.Errorf("spawn_task: starting task run: %w", err)
 	}
@@ -120,18 +135,33 @@ func (r *Runner) TaskStatus(ctx context.Context, taskID string, waitSeconds int)
 		if err != nil {
 			return nil, fmt.Errorf("task_status: %w", err)
 		}
+		// The durable row is the sole terminal authority: Finalize writes the
+		// status, the full result, and the notification debt in one UPDATE, so
+		// "row terminal" means "result fully readable". The hub only refines
+		// the non-terminal display (working vs input_required) — a terminal
+		// hub status whose row hasn't landed yet stays "working" for one more
+		// poll tick rather than surfacing an empty result.
 		status := task.Status
-		if hubInfo, ok := r.hub.Info(taskID); ok {
-			status = TaskStatusFor(hubInfo.Status)
+		if !isTerminalTaskStatus(status) {
+			if hubInfo, ok := r.hub.Info(task.RunID); ok {
+				if hs := TaskStatusFor(hubInfo.Status); hs == protocol.TaskWorking || hs == protocol.TaskInputRequired {
+					status = hs
+				}
+			}
 		}
 		info = &TaskInfo{TaskID: taskID, Label: task.Label, Status: status, Summary: task.Summary, Result: task.Result}
-		final := status == protocol.TaskCompleted || status == protocol.TaskFailed || status == protocol.TaskCancelled
-		if final {
-			r.consumeTaskNotification(task.ParentSessionID, taskID)
+		if isTerminalTaskStatus(status) {
+			// The model just read the final result in-turn: consume the
+			// wake-up debt so no duplicate notification run fires.
+			if err := r.Deps.Tasks.ConsumeNotify(ctx, taskID); err != nil {
+				zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", taskID).Msg("consuming task notification")
+			}
 			return info, nil
 		}
 		if waitSeconds <= 0 || time.Now().After(deadline) || ctx.Err() != nil {
-			return info, nil
+			// The wait window closing is not an error: task_status's contract is
+			// to return the current snapshot when the bounded wait ends.
+			return info, nil //nolint:nilerr
 		}
 		select {
 		case <-ctx.Done():
@@ -141,88 +171,121 @@ func (r *Runner) TaskStatus(ctx context.Context, taskID string, waitSeconds int)
 	}
 }
 
-// consumeTaskNotification marks a task's result as already delivered to the
-// model (via task_status) so postRun doesn't queue a duplicate wake-up, and
-// drops it from the queue if it got there first.
-func (r *Runner) consumeTaskNotification(parentSessionID, taskID string) {
-	r.notifMu.Lock()
-	defer r.notifMu.Unlock()
-	if r.deliveredResults == nil {
-		r.deliveredResults = map[string]bool{}
-	}
-	r.deliveredResults[taskID] = true
-	queue := r.pendingNotifs[parentSessionID]
-	for i, id := range queue {
-		if id == taskID {
-			r.pendingNotifs[parentSessionID] = append(queue[:i], queue[i+1:]...)
-			break
-		}
-	}
+// isTerminalTaskStatus reports whether s is one of the three terminal task
+// states (completed / failed / cancelled).
+func isTerminalTaskStatus(s string) bool {
+	return s == protocol.TaskCompleted || s == protocol.TaskFailed || s == protocol.TaskCancelled
 }
 
-// StopTask implements TaskSpawner. Only a live run can be stopped through the
-// hub; a task paused on an approval is cancelled by discarding its pending
-// approval (the claim that would otherwise revive it) and finalizing the row.
+// StopTask implements TaskSpawner. A live run is stopped through the hub
+// (gracefully when asked); a paused or unhosted task is finalized directly on
+// the durable row via CAS — of a racing stop and approve exactly one wins.
 // Anything already final reports its actual status instead of pretending.
+// Cancellations never owe the parent a wake-up (the user just did it, or the
+// system already annotated why): the notification debt is consumed on spot.
 func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	ctx := r.hub.rootCtx
 	task, err := r.Deps.Tasks.Get(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("task_stop: %w", err)
 	}
-	info, live := r.hub.Info(taskID)
+	if isTerminalTaskStatus(task.Status) {
+		return nil, &TaskFinalError{Status: task.Status}
+	}
+	info, live := r.hub.Info(task.RunID)
 	status := task.Status
 	if live {
-		status = TaskStatusFor(info.Status)
+		if hs := TaskStatusFor(info.Status); hs == protocol.TaskWorking || hs == protocol.TaskInputRequired {
+			status = hs
+		} else {
+			// The run just finished; its Finalize is landing. Report the
+			// imminent terminal state rather than cancelling a done task.
+			return nil, &TaskFinalError{Status: TaskStatusFor(info.Status)}
+		}
 	}
+	cancelled := &TaskInfo{TaskID: taskID, Label: task.Label, Status: protocol.TaskCancelled}
 	switch status {
 	case protocol.TaskWorking:
-		if live {
+		if live && info.Status == RunRunning {
+			// The run goroutine owns the row: its postRun finalizes to
+			// cancelled — for graceful stops via the hub marker (set before
+			// the stop signal, so a clean finish can't miss it).
 			stopped := false
 			if graceful {
-				stopped = r.hub.StopAfterTurn(taskID)
+				stopped = r.hub.StopAfterTurn(task.RunID)
 			}
 			if !stopped {
-				r.hub.Cancel(taskID)
+				r.hub.Cancel(task.RunID)
 			}
-			return &TaskInfo{TaskID: taskID, Label: task.Label, Status: protocol.TaskCancelled}, nil
+			return cancelled, nil
 		}
-		// No live run (e.g. after a restart): finalize the row directly.
-		_ = r.Deps.Tasks.SetStatus(ctx, taskID, protocol.TaskCancelled, "stopped", "")
-		r.publishTaskCancelled(taskID)
-		return &TaskInfo{TaskID: taskID, Label: task.Label, Status: protocol.TaskCancelled}, nil
-	case protocol.TaskInputRequired:
-		// Discard the pending approval — deleting the row is the exclusive
-		// claim, so a concurrent approve loses and cannot revive the task.
-		if r.Deps.PendingApprovals != nil {
-			if err := r.Deps.PendingApprovals.Delete(ctx, taskID); err != nil {
-				if !errors.Is(err, store.ErrNotFound) {
-					return nil, fmt.Errorf("task_stop: discarding pending approval: %w", err)
-				}
-				// The approval row is gone. Either a concurrent approve just
-				// claimed it (the resume is spinning up — refuse the stop), or
-				// the approval reaper expired it long ago and the task is a
-				// zombie stuck at input_required — cancel that zombie below.
-				if info, ok := r.hub.Info(taskID); ok && info.Status == RunRunning {
-					return nil, &TaskFinalError{Status: "being resumed"}
-				}
-			}
-		}
-		if err := r.Deps.Tasks.SetStatus(ctx, taskID, protocol.TaskCancelled, "stopped while awaiting approval", ""); err != nil {
+		// No live run (restart, hub GC): finalize the row directly.
+		won, err := r.Deps.Tasks.Finalize(ctx, taskID, protocol.TaskCancelled, "stopped", "")
+		if err != nil {
 			return nil, fmt.Errorf("task_stop: %w", err)
 		}
-		if task.ToolCallID != "" {
-			_ = r.messages.PatchToolCallDisplay(ctx, task.ParentSessionID, task.ToolCallID, map[string]any{
-				"task_id": task.ID, "task_label": task.Label, "task_status": protocol.TaskCancelled,
-			})
+		if !won {
+			cur, gerr := r.Deps.Tasks.Get(ctx, taskID)
+			if gerr != nil {
+				return nil, fmt.Errorf("task_stop: %w", gerr)
+			}
+			return nil, &TaskFinalError{Status: cur.Status}
 		}
+		_ = r.Deps.Tasks.ConsumeNotify(ctx, taskID)
+		r.patchTaskDisplay(ctx, task, protocol.TaskCancelled, "stopped")
+		r.publishTaskCancelled(task.RunID)
+		return cancelled, nil
+	case protocol.TaskInputRequired:
+		// Finalizing the row IS the exclusive claim: a concurrent approve's
+		// ReclaimWorking (input_required -> working) and this Finalize
+		// (non-terminal -> cancelled) cannot both win.
+		won, err := r.Deps.Tasks.Finalize(ctx, taskID, protocol.TaskCancelled, "stopped while awaiting approval", "")
+		if err != nil {
+			return nil, fmt.Errorf("task_stop: %w", err)
+		}
+		if !won {
+			cur, gerr := r.Deps.Tasks.Get(ctx, taskID)
+			if gerr != nil {
+				return nil, fmt.Errorf("task_stop: %w", gerr)
+			}
+			return nil, &TaskFinalError{Status: cur.Status}
+		}
+		_ = r.Deps.Tasks.ConsumeNotify(ctx, taskID)
+		// Discard the pending approval (best-effort: an approve may have
+		// claimed it already — harmless, its ReclaimWorking lost the row CAS
+		// and the resume was abandoned; and if a resume DID sneak in first,
+		// cancel it so execution matches the row).
+		if r.Deps.PendingApprovals != nil {
+			if err := r.Deps.PendingApprovals.Delete(ctx, task.RunID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", taskID).Msg("discarding pending approval on stop")
+			}
+		}
+		if in, ok := r.hub.Info(task.RunID); ok && in.Status == RunRunning {
+			r.hub.Cancel(task.RunID)
+		}
+		r.patchTaskDisplay(ctx, task, protocol.TaskCancelled, "stopped while awaiting approval")
 		// Advance the hub record past RunInterrupted and tell every client:
 		// without this the chip stays "input required" (with dead approve
 		// buttons) and the record holds a task-cap slot for up to 15 minutes.
-		r.publishTaskCancelled(taskID)
-		return &TaskInfo{TaskID: taskID, Label: task.Label, Status: protocol.TaskCancelled}, nil
+		r.publishTaskCancelled(task.RunID)
+		return cancelled, nil
 	default:
 		return nil, &TaskFinalError{Status: status}
+	}
+}
+
+// patchTaskDisplay updates the spawn card's display projection for terminal
+// transitions that happen outside the run goroutine (postRun covers the rest).
+func (r *Runner) patchTaskDisplay(ctx context.Context, task *store.Task, status, summary string) {
+	if task.ToolCallID == "" {
+		return
+	}
+	patch := map[string]any{"task_id": task.ID, "task_label": task.Label, "task_status": status}
+	if summary != "" {
+		patch["task_summary"] = summary
+	}
+	if err := r.messages.PatchToolCallDisplay(ctx, task.ParentSessionID, task.ToolCallID, patch); err != nil && !errors.Is(err, store.ErrNotFound) {
+		zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", task.ID).Msg("task display patch")
 	}
 }
 
@@ -291,6 +354,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) *TaskMeta {
 		return nil
 	}
 	return &TaskMeta{
+		TaskID:          task.ID,
 		ParentSessionID: task.ParentSessionID,
 		ParentRunID:     task.ParentRunID,
 		ToolCallID:      task.ToolCallID,
@@ -323,40 +387,73 @@ func (r *Runner) postRun(runID, sessionID string, result *RunResult) {
 	status := TaskStatusFor(info.Status)
 	full := strings.TrimSpace(result.FinalText)
 	summary := truncateRunes(full, taskSummaryLimit)
-	if err := r.Deps.Tasks.SetStatus(ctx, task.ID, status, summary, full); err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("task status update")
+	// A failed run's reason travels on the result — without it the row (and
+	// so the task list, the spawn card, and task_status) would only ever say
+	// "failed" with no why.
+	if status == protocol.TaskFailed && full == "" && result.ErrMessage != "" {
+		full = result.ErrMessage
+		summary = truncateRunes(full, taskSummaryLimit)
 	}
-	// Patch the spawn card's display projection — the durable truth the UI
-	// rebuilds the task card from after the hub record is GC'd. Retried in the
-	// background: a fast-failing task can end before the parent turn persists
-	// the spawn tool_call row (the SDK saves at turn boundaries).
-	if task.ToolCallID != "" {
-		patch := map[string]any{
-			"task_id":     task.ID,
-			"task_label":  task.Label,
-			"task_status": status,
+	// A clean finish under the graceful-stop marker is a cancellation: the
+	// user asked the task to stop after its turn, and it did. The terminal
+	// state says so explicitly instead of masquerading as a completion.
+	if status == protocol.TaskCompleted && info.GracefulStop {
+		status = protocol.TaskCancelled
+		if summary == "" {
+			summary = "stopped after the current turn"
 		}
-		if summary != "" {
-			patch["task_summary"] = summary
-		}
-		go r.patchDisplayWithRetry(ctx, task.ParentSessionID, task.ToolCallID, task.ID, patch)
 	}
 	// input_required is not final: the approval flow surfaces it, and the
 	// resumed segment lands back here with a final status.
 	if status == protocol.TaskInputRequired {
+		if err := r.Deps.Tasks.MarkInputRequired(ctx, task.ID); err != nil {
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("task status update")
+		}
+		r.patchTaskDisplayRetried(ctx, task, protocol.TaskInputRequired, "")
 		return
 	}
-	// A result the model already pulled in-turn (task_status wait) owes no
-	// wake-up; consume the marker instead of queueing a duplicate.
-	r.notifMu.Lock()
-	delivered := r.deliveredResults[task.ID]
-	delete(r.deliveredResults, task.ID)
-	r.notifMu.Unlock()
-	if delivered {
+	if !isTerminalTaskStatus(status) {
 		return
 	}
-	r.queueTaskNotification(task.ParentSessionID, task.ID)
+	// Finalize is a CAS: status, full result, and the wake-up debt land in
+	// one UPDATE. Losing means another finalizer (a stop) already owned the
+	// terminal transition — its state stands, nothing more to do here.
+	won, err := r.Deps.Tasks.Finalize(ctx, task.ID, status, summary, full)
+	if err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("task status update")
+		return
+	}
+	if !won {
+		return
+	}
+	// Cancellations never wake the parent: the user (or the deleting/reaping
+	// system path) initiated them and the UI already reflects it — a wake-up
+	// run would only burn a turn restating it.
+	if status == protocol.TaskCancelled {
+		_ = r.Deps.Tasks.ConsumeNotify(ctx, task.ID)
+	}
+	r.patchTaskDisplayRetried(ctx, task, status, summary)
 	r.drainTaskNotifications(task.ParentSessionID)
+}
+
+// patchTaskDisplayRetried patches the spawn card's display projection in the
+// background — the durable truth the UI rebuilds the task card from after the
+// hub record is GC'd. Retried because a fast-failing task can end before the
+// parent turn persists the spawn tool_call row (the SDK saves at turn
+// boundaries).
+func (r *Runner) patchTaskDisplayRetried(ctx context.Context, task *store.Task, status, summary string) {
+	if task.ToolCallID == "" {
+		return
+	}
+	patch := map[string]any{
+		"task_id":     task.ID,
+		"task_label":  task.Label,
+		"task_status": status,
+	}
+	if summary != "" {
+		patch["task_summary"] = summary
+	}
+	go r.patchDisplayWithRetry(ctx, task.ParentSessionID, task.ToolCallID, task.ID, patch)
 }
 
 // patchDisplayWithRetry patches the spawn card's display, retrying while the
@@ -380,51 +477,41 @@ func (r *Runner) patchDisplayWithRetry(ctx context.Context, sessionID, callID, t
 	zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", taskID).Msg("task display patch")
 }
 
-// queueTaskNotification records that a finished task still owes its parent a
-// wake-up notification. In-memory only: after a restart the task card (from
-// the display projection) still shows the outcome, only the auto-wake is lost.
-func (r *Runner) queueTaskNotification(parentSessionID, taskID string) {
-	r.notifMu.Lock()
-	defer r.notifMu.Unlock()
-	if r.pendingNotifs == nil {
-		r.pendingNotifs = map[string][]string{}
-	}
-	r.pendingNotifs[parentSessionID] = append(r.pendingNotifs[parentSessionID], taskID)
-}
-
-// drainTaskNotifications wakes the parent session on queued task completions:
-// it starts one notification run carrying every pending result. The parent's
-// run boundary is the injection point — if the session is busy (or paused on
-// an approval), the queue holds until its current run ends.
+// drainTaskNotifications wakes the parent session on tasks that still owe it
+// a completion notification (notify_state = pending): one notification run
+// carries every pending result. The parent's run boundary is the injection
+// point — if the session is busy (or paused on an approval), the rows keep
+// their debt until its current run ends; the startup sweep covers restarts.
+// Concurrency is settled by StartRun's one-live-run-per-session guarantee:
+// of two racing drains one starts the wake-up and marks the rows delivered,
+// the loser leaves them untouched (still-pending rows are re-swept at the
+// next boundary).
 func (r *Runner) drainTaskNotifications(parentSessionID string) {
 	ctx := r.hub.rootCtx
 	log := zerolog.Ctx(ctx)
-
-	r.notifMu.Lock()
-	pending := r.pendingNotifs[parentSessionID]
-	if len(pending) == 0 {
-		r.notifMu.Unlock()
+	if r.Deps.Tasks == nil {
 		return
 	}
 	if _, busy := r.hub.ActiveRunForSession(parentSessionID); busy {
-		r.notifMu.Unlock()
 		return
 	}
 	// A parent paused on approval must not be auto-woken: the human decides.
 	if approvals, err := r.Deps.PendingApprovals.ListBySession(ctx, parentSessionID); err == nil && len(approvals) > 0 {
-		r.notifMu.Unlock()
 		return
 	}
-	delete(r.pendingNotifs, parentSessionID)
-	r.notifMu.Unlock()
+	pending, err := r.Deps.Tasks.ListPendingNotify(ctx, parentSessionID)
+	if err != nil {
+		log.Warn().Err(err).Str("session_id", parentSessionID).Msg("listing pending task notifications")
+		return
+	}
+	if len(pending) == 0 {
+		return
+	}
 
 	var agentConfigID, sandboxID string
 	lines := make([]string, 0, len(pending))
-	for _, taskID := range pending {
-		task, err := r.Deps.Tasks.Get(ctx, taskID)
-		if err != nil {
-			continue
-		}
+	for i := range pending {
+		task := &pending[i]
 		if task.ParentAgentConfigID != "" {
 			agentConfigID = task.ParentAgentConfigID
 			sandboxID = task.ParentSandboxID
@@ -438,9 +525,6 @@ func (r *Runner) drainTaskNotifications(parentSessionID string) {
 		}
 		lines = append(lines, line)
 	}
-	if len(lines) == 0 {
-		return
-	}
 	if agentConfigID == "" {
 		// Fall back to the parent session's bound agent config.
 		if sess, err := r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
@@ -448,20 +532,80 @@ func (r *Runner) drainTaskNotifications(parentSessionID string) {
 		}
 	}
 	if agentConfigID == "" {
-		log.Warn().Str("session_id", parentSessionID).Msg("task notification dropped: no agent config for parent session")
+		log.Warn().Str("session_id", parentSessionID).Msg("task notification undeliverable: no agent config for parent session")
 		return
 	}
 	input := protocol.TaskNotificationPrefix + strings.Join(lines, "\n")
 	if _, err := r.StartRun(parentSessionID, agentConfigID, sandboxID, input, nil); err != nil {
-		// Lost the race with a new user run — requeue for its boundary.
+		// Lost the race with a new user run: the rows keep their pending debt
+		// and the winner's boundary re-drains them.
 		var busy ErrSessionBusy
-		if errors.As(err, &busy) {
-			r.notifMu.Lock()
-			r.pendingNotifs[parentSessionID] = append(pending, r.pendingNotifs[parentSessionID]...)
-			r.notifMu.Unlock()
-			return
+		if !errors.As(err, &busy) {
+			log.Warn().Err(err).Str("session_id", parentSessionID).Msg("task notification run failed to start")
 		}
-		log.Warn().Err(err).Str("session_id", parentSessionID).Msg("task notification run failed to start")
+		return
+	}
+	for i := range pending {
+		if err := r.Deps.Tasks.MarkNotifyDelivered(ctx, pending[i].ID); err != nil {
+			log.Warn().Err(err).Str("task_id", pending[i].ID).Msg("marking task notification delivered")
+		}
+	}
+}
+
+// DrainPendingTaskNotifications is the startup reconciliation sweep: every
+// parent session still owed a wake-up (including tasks the restart just
+// marked failed) gets its notification run — the auto-wake survives restarts.
+func (r *Runner) DrainPendingTaskNotifications(ctx context.Context) {
+	if r.Deps.Tasks == nil {
+		return
+	}
+	parents, err := r.Deps.Tasks.PendingNotifyParents(ctx)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("startup task notification sweep")
+		return
+	}
+	for _, sid := range parents {
+		r.drainTaskNotifications(sid)
+	}
+}
+
+// StopSessionTree cancels the session's live run and every non-terminal
+// background task it spawned, then waits (bounded) for their goroutines to
+// finish — postRun included — so the session-delete cascade that follows
+// cannot race a write. Paused tasks (input_required) have no goroutine; their
+// rows are finalized directly and their pending approvals fall to the cascade.
+func (r *Runner) StopSessionTree(sessionID string) {
+	ctx := r.hub.rootCtx
+	deadline := time.Now().Add(5 * time.Second)
+	var waits []string
+	if rid, ok := r.hub.ActiveRunForSession(sessionID); ok {
+		r.hub.Cancel(rid)
+		waits = append(waits, rid)
+	}
+	if r.Deps.Tasks != nil {
+		tasks, err := r.Deps.Tasks.ListByParent(ctx, sessionID)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("listing tasks for session stop")
+		}
+		for i := range tasks {
+			task := &tasks[i]
+			if isTerminalTaskStatus(task.Status) {
+				continue
+			}
+			if info, ok := r.hub.Info(task.RunID); ok && info.Status == RunRunning {
+				// The run goroutine finalizes the row (cancelled) in postRun.
+				r.hub.Cancel(task.RunID)
+				waits = append(waits, task.RunID)
+				continue
+			}
+			// No goroutine will ever advance this row — finalize it here.
+			if won, err := r.Deps.Tasks.Finalize(ctx, task.ID, protocol.TaskCancelled, "parent session deleted", ""); err == nil && won {
+				_ = r.Deps.Tasks.ConsumeNotify(ctx, task.ID)
+			}
+		}
+	}
+	for _, rid := range waits {
+		r.hub.waitDone(rid, deadline)
 	}
 }
 

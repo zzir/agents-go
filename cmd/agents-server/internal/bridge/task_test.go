@@ -43,8 +43,8 @@ func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskS
 }
 
 // TestSpawnTaskCreatesHiddenSessionAndRow locks the spawn contract: a task
-// gets its own child session (hidden from the chat list), a durable row whose
-// id doubles as the run id, and a live hub run carrying the parent linkage.
+// gets its own child session (hidden from the chat list), a durable row with
+// its own run id, and a live hub run carrying the task linkage.
 func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
@@ -88,12 +88,16 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 		}
 	}
 
-	// The hub run carries the parent linkage under the task's id.
-	runInfo, ok := runner.Hub().Info(info.TaskID)
+	// Task identity and run attempt are separate ids; the hub run lives under
+	// the run id and carries the task linkage in its meta.
+	if task.RunID == "" || task.RunID == task.ID {
+		t.Fatalf("task.RunID = %q, want a distinct run id (task id %s)", task.RunID, task.ID)
+	}
+	runInfo, ok := runner.Hub().Info(task.RunID)
 	if !ok {
 		t.Fatal("no hub run for task")
 	}
-	if runInfo.Task == nil || runInfo.Task.ParentSessionID != parent.ID {
+	if runInfo.Task == nil || runInfo.Task.ParentSessionID != parent.ID || runInfo.Task.TaskID != task.ID {
 		t.Fatalf("hub run task meta = %+v", runInfo.Task)
 	}
 	if runner.Hub().LiveTaskCount(parent.ID) != 1 {
@@ -118,25 +122,29 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &store.Task{
-		ID: store.NewID(), ParentSessionID: parent.ID, ChildSessionID: store.NewID(),
-		Label: "audit", Status: protocol.TaskCompleted, Summary: "all green",
+		ID: store.NewID(), RunID: store.NewID(), ParentSessionID: parent.ID, ChildSessionID: store.NewID(),
+		Label: "audit", Status: protocol.TaskWorking,
 		ParentAgentConfigID: ac.ID,
 	}
 	if err := tasks.Create(ctx, task); err != nil {
 		t.Fatal(err)
 	}
+	// Finalize owes the wake-up on the row (notify_state = pending).
+	if won, err := tasks.Finalize(ctx, task.ID, protocol.TaskCompleted, "all green", ""); err != nil || !won {
+		t.Fatalf("Finalize won=%v err=%v", won, err)
+	}
 
-	// Busy parent: the notification must stay queued.
+	// Busy parent: the debt stays pending on the row.
 	if _, _, err := runner.hub.register("busy-run", parent.ID, ac.ID, "", nil); err != nil {
 		t.Fatal(err)
 	}
-	runner.queueTaskNotification(parent.ID, task.ID)
 	runner.drainTaskNotifications(parent.ID)
-	runner.notifMu.Lock()
-	queued := len(runner.pendingNotifs[parent.ID])
-	runner.notifMu.Unlock()
-	if queued != 1 {
-		t.Fatalf("queued = %d, want 1 while parent is busy", queued)
+	row, err := tasks.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.NotifyState != store.NotifyPending {
+		t.Fatalf("notify_state = %q, want pending while parent is busy", row.NotifyState)
 	}
 
 	// Free the parent: the drain starts a notification run. The test config has
@@ -168,11 +176,64 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	if !found {
 		t.Fatal("no task-notification prompt persisted")
 	}
-	runner.notifMu.Lock()
-	left := len(runner.pendingNotifs[parent.ID])
-	runner.notifMu.Unlock()
-	if left != 0 {
-		t.Fatalf("queue not drained: %d left", left)
+	row, err = tasks.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.NotifyState != store.NotifyDelivered {
+		t.Fatalf("notify_state = %q, want delivered after the drain", row.NotifyState)
+	}
+}
+
+// TestStartupSweepDeliversPendingNotifications locks the restart contract: a
+// wake-up owed before the restart (here: an orphaned working task the boot
+// reconciliation marks failed) is delivered by the startup sweep.
+func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
+	ctx := context.Background()
+	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
+
+	ac := &store.AgentConfig{Name: "chat-agent", Model: "gpt-test"}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	parent := &store.Session{ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
+	if err := sessions.Create(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	task := &store.Task{
+		ID: store.NewID(), RunID: store.NewID(), ParentSessionID: parent.ID, ChildSessionID: store.NewID(),
+		Label: "orphaned", Status: protocol.TaskWorking, ParentAgentConfigID: ac.ID,
+	}
+	if err := tasks.Create(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+
+	// Boot sequence: reconcile orphans (working -> failed, wake-up owed),
+	// then sweep the owed notifications.
+	if n, err := tasks.FailOrphans(ctx); err != nil || n != 1 {
+		t.Fatalf("FailOrphans n=%d err=%v", n, err)
+	}
+	runner.DrainPendingTaskNotifications(ctx)
+
+	msgs := store.NewMessageStore(runner.db)
+	found := false
+	deadline := time.Now().Add(5 * time.Second)
+	for !found && time.Now().Before(deadline) {
+		rows, err := msgs.GetMessages(ctx, parent.ID, 0, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range rows {
+			if strings.HasPrefix(m.Content, protocol.TaskNotificationPrefix) && strings.Contains(m.Content, "orphaned") && strings.Contains(m.Content, "failed") {
+				found = true
+			}
+		}
+		if !found {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if !found {
+		t.Fatal("startup sweep did not deliver the owed notification")
 	}
 }
 

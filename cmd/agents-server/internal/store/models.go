@@ -28,7 +28,12 @@ type Session struct {
 type Task struct {
 	bun.BaseModel `bun:"table:tasks,alias:t"`
 
-	ID              string `bun:"id,pk"                json:"task_id"`
+	ID string `bun:"id,pk"                json:"task_id"`
+	// RunID is the id of the task's current run attempt. Today a task has
+	// exactly one attempt (retries would update this and add an attempts
+	// table); it is deliberately distinct from the task id so the public
+	// model does not lock the two together.
+	RunID           string `bun:"run_id"               json:"run_id,omitempty"`
 	ParentSessionID string `bun:"parent_session_id,notnull" json:"parent_session_id"`
 	ParentRunID     string `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
 	ToolCallID      string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
@@ -45,9 +50,15 @@ type Task struct {
 	// Result is the task's full final output. The row summary (and the wake
 	// notification) stay truncated to keep prompts and lists lean; the parent
 	// model pulls this on demand through task_status.
-	Result    string    `bun:"result,nullzero" json:"-"`
-	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+	Result string `bun:"result,nullzero" json:"-"`
+	// NotifyState tracks the completion wake-up owed to the parent session:
+	// "" (none yet) -> "pending" (terminal result written, wake-up owed) ->
+	// "consumed" (model pulled the result in-turn via task_status) or
+	// "delivered" (wake-up run injected). Persisted so the auto-wake
+	// survives restarts.
+	NotifyState string    `bun:"notify_state,nullzero" json:"-"`
+	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // Message kinds. "item" rows are replayable conversation history holding wire

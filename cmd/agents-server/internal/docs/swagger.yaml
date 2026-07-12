@@ -340,6 +340,8 @@ components:
           type: string
         parent_session_id:
           type: string
+        task_id:
+          type: string
         tool_call_id:
           type: string
       type: object
@@ -938,6 +940,13 @@ components:
         parent_run_id:
           type: string
         parent_session_id:
+          type: string
+        run_id:
+          description: |-
+            RunID is the id of the task's current run attempt. Today a task has
+            exactly one attempt (retries would update this and add an attempts
+            table); it is deliberately distinct from the task id so the public
+            model does not lock the two together.
           type: string
         status:
           type: string

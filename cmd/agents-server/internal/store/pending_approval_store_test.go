@@ -112,3 +112,42 @@ func TestPendingApprovalReap(t *testing.T) {
 		t.Fatalf("wrong survivor: %+v", all)
 	}
 }
+
+// TestListByParentTasks exercises the real join SQL: approvals inside a
+// session's task child sessions come back tagged with their task, others
+// (chat approvals, other parents' tasks) do not.
+func TestListByParentTasks(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewPendingApprovalStore(db)
+	tasks := NewTaskStore(db)
+
+	mk := func(runID, sessionID string) {
+		t.Helper()
+		calls, _ := json.Marshal([]PendingToolCall{{ToolCallID: "call-" + runID, ToolName: "shell", Arguments: "{}"}})
+		if err := s.Save(ctx, &PendingApproval{RunID: runID, SessionID: sessionID, State: "{}", ToolCalls: calls}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := tasks.Create(ctx, &Task{ID: "task-1", RunID: "run-t1", ParentSessionID: "parent-1", ChildSessionID: "child-1", Label: "mine", Status: "input_required"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.Create(ctx, &Task{ID: "task-2", RunID: "run-t2", ParentSessionID: "parent-2", ChildSessionID: "child-2", Label: "other", Status: "input_required"}); err != nil {
+		t.Fatal(err)
+	}
+	mk("run-t1", "child-1") // parent-1's task approval
+	mk("run-t2", "child-2") // another parent's task approval
+	mk("run-c", "parent-1") // a plain chat approval in parent-1 itself
+
+	got, err := s.ListByParentTasks(ctx, "parent-1")
+	if err != nil {
+		t.Fatalf("ListByParentTasks: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d approvals, want exactly parent-1's task approval: %+v", len(got), got)
+	}
+	if got[0].RunID != "run-t1" || got[0].TaskID != "task-1" || got[0].TaskLabel != "mine" {
+		t.Fatalf("joined row = %+v", got[0])
+	}
+}
