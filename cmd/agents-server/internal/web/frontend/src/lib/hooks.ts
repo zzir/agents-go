@@ -229,6 +229,10 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
   const [isSticky, setIsSticky] = useState(true);
 
   const updateSticky = useCallback((val: boolean) => {
+    if (!val) {
+      const el = elRef.current;
+      if (el && el.scrollHeight <= el.clientHeight) return;
+    }
     if (stick.current !== val) {
       stick.current = val;
       setIsSticky(val);
