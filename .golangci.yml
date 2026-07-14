@@ -39,3 +39,10 @@ linters:
       - linters: [revive]
         path: (_test\.go$|^examples/|/example/)
         text: unused-parameter
+
+# In v2, formatters are their own section: `golangci-lint run` reports diffs as
+# issues, `golangci-lint fmt` applies them. These supersede the standalone gofmt.
+formatters:
+  enable:
+    - gofmt
+    - goimports

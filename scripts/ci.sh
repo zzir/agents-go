@@ -14,12 +14,6 @@ export GOWORK=off
 
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
-step "Verify formatting"
-unformatted=$(gofmt -l .)
-if [ -n "$unformatted" ]; then
-  echo "These files are not gofmt-ed:"; echo "$unformatted"; exit 1
-fi
-
 step "Frontend build"
 (cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build)
 
@@ -53,12 +47,19 @@ step "OpenAPI spec up to date"
   exit 1
 }
 
-step "golangci-lint"
+step "golangci-lint (lint + gofmt/goimports)"
 if command -v golangci-lint >/dev/null; then
-  golangci-lint run
-  (cd cmd/agents-server && golangci-lint run)
+  golangci-lint run                            # root: lint + formatters
+  (cd cmd/agents-server && golangci-lint run)  # agents-server: lint + formatters
+  # The support submodules don't run full golangci; check their formatting only.
+  for m in sandbox/docker sandbox/ssh sessions skills; do
+    out=$(cd "$m" && golangci-lint fmt --diff)
+    if [ -n "$out" ]; then
+      echo "$m is not gofmt/goimports-clean:"; echo "$out"; exit 1
+    fi
+  done
 else
-  echo "golangci-lint not installed; skipping (CI runs it)." >&2
+  echo "golangci-lint not installed; skipping lint AND format checks (CI runs them)." >&2
   echo "Install: brew install golangci-lint" >&2
 fi
 

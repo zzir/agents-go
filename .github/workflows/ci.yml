@@ -16,13 +16,6 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: Verify formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt-ed:"; echo "$unformatted"; exit 1
-          fi
-
       - name: Vet
         run: go vet ./...
 
@@ -55,3 +48,14 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.12
+      # `run` above covers the root module (lint + gofmt/goimports formatters).
+      # The other modules don't run full golangci, so check their formatting here.
+      # (golangci-lint-action puts the binary on PATH for later steps.)
+      - name: Verify formatting (gofmt + goimports)
+        run: |
+          for m in cmd/agents-server sandbox/docker sandbox/ssh sessions skills; do
+            out=$(cd "$m" && golangci-lint fmt --diff)
+            if [ -n "$out" ]; then
+              echo "::error::$m is not gofmt/goimports-clean"; echo "$out"; exit 1
+            fi
+          done
