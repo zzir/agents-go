@@ -162,7 +162,7 @@ tasks (`spawn_task` subagents with durable state, approval bubbling, and
 automatic completion wake-ups), all from the browser.
 
 ```bash
-go run ./cmd/agents-server --port 8080
+go run ./cmd/agents-server --port 9527
 ```
 
 ![agents-server screenshot](cmd/agents-server/screenshot.png)
