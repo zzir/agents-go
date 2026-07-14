@@ -20,6 +20,9 @@ servers, sandboxes, guardrails, memories, and skills.
 
 ## Quick start
 
+Grab a prebuilt binary for your platform from the
+[Releases](https://github.com/zzir/agents-go/releases) page, or build from source:
+
 ```bash
 go build -o agents-server ./cmd/agents-server
 ./agents-server --port 9527

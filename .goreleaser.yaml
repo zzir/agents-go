@@ -1,0 +1,70 @@
+# GoReleaser：Release cross-platform binaries for cmd/agents-server.
+#   Local preview: goreleaser release --snapshot --clean
+#   Official release: push v* tag, triggered by .github/workflows/release.yml.
+version: 2
+
+project_name: agents-server
+
+before:
+  hooks:
+    # Front-end artifacts (internal/web/frontend/dist) are not checked in, but go:embed depends on them,
+    # so we must run the front-end build (tsc + vitest + vite) before each build.
+    - sh -c "cd cmd/agents-server/internal/web/frontend && npm ci && npm run build"
+
+builds:
+  - id: agents-server
+    dir: cmd/agents-server        # The binary is an independent submodule, built in this directory (go.mod contains replace ../..)
+    main: .
+    binary: agents-server
+    env:
+      - CGO_ENABLED=0             # When sqliteshim has no CGO, it uses the modernc pure Go implementation, allowing cross-compilation on a single machine
+      - GOWORK=off                # Ignore local go.work, consistent with CI (no go.work)
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .CommitDate }}
+    goos: [ linux, darwin, windows ]
+    goarch: [ amd64, arm64 ]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: agents-server
+    formats: [ tar.gz ]
+    format_overrides:
+      - goos: windows
+        formats: [ zip ]
+    files:
+      - LICENSE
+      - src: cmd/agents-server/README.md
+        dst: README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^ci"
+      - "^test"
+      - "^chore"
+  groups:
+    - title: agents-server
+      regexp: "^agents-server"
+      order: 0
+    - title: Fixes
+      regexp: "^fix"
+      order: 1
+    - title: Changes
+      order: 999
+
+release:
+  draft: true                     # Generate a draft, manually polish it and then publish on GitHub page
+  replace_existing_draft: true    # Overwrite the old draft when rerunning the workflow for the same tag
+  footer: |
+    {{ if .PreviousTag }}**Full Changelog**: https://github.com/zzir/agents-go/compare/{{ .PreviousTag }}...{{ .Tag }}{{ end }}

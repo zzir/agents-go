@@ -3,3 +3,5 @@
 
 go.work
 go.work.sum
+
+dist/
