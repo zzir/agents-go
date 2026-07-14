@@ -58,11 +58,6 @@ a:hover {
     text-decoration: underline;
 }
 
-
-/* =============================================================
-   Layout — sidebar | content split, both scrolling independently
-   within a shared, non-scrolling viewport container.
-   ============================================================= */
 .app-layout {
     display: flex;
     flex-direction: column;
@@ -82,6 +77,7 @@ a:hover {
     background: var(--bgColor-default);
     z-index: 30;
 }
+
 .mobile-header-title {
     flex: 1;
     font-weight: 600;
@@ -99,6 +95,7 @@ a:hover {
     z-index: 49;
     display: none;
 }
+
 .sidebar-open .sidebar-backdrop {
     display: block;
 }
@@ -200,9 +197,6 @@ a:hover {
     min-width: 0;
 }
 
-/* --- Generic resizable right-docked panel (SidePanel: trace/diff/image
-   detail views) --- mirrors .app-sidebar-pane/.app-sidebar-handle's drag
-   mechanics on the opposite edge. */
 .side-panel {
     position: relative;
     flex-shrink: 0;
@@ -265,9 +259,6 @@ a:hover {
     padding: 8px;
 }
 
-/* Mobile — full-height overlay below the mobile top bar (48px). SidePanel
-   suppresses the inline width style itself when narrow, so this plain class
-   width applies cleanly (no !important needed). */
 @media (max-width: 767px) {
     .side-panel {
         position: fixed;
@@ -277,9 +268,6 @@ a:hover {
     }
 }
 
-/* --- Responsive: narrow (< 768px) --- fixed-overlay drawer.
-   Everything else (mobile-header, backdrop, sidebar-footer, drag handle)
-   is handled by conditional rendering in AppShell via useNarrow(). */
 @media (max-width: 767px) {
     .app-sidebar-pane {
         position: fixed;
@@ -294,6 +282,7 @@ a:hover {
         display: flex;
         overflow: hidden;
     }
+
     .sidebar-open .app-sidebar-pane {
         transform: translateX(0);
     }
@@ -315,6 +304,10 @@ a:hover {
     overflow-y: auto;
 }
 
+.settings-nav a[aria-current="page"] [data-component="ActionList.Item.Label"] {
+    font-weight: var(--base-text-weight-normal, 400);
+}
+
 .settings-content {
     flex: 1;
     min-width: 0;
@@ -327,14 +320,6 @@ a:hover {
     margin-right: var(--base-size-24);
 }
 
-/* Dialog.Body is rendered directly via the Settings Dialog's renderBody
-   (app.tsx), so it's addressed by our own stable .settings-body class —
-   no more reaching into Primer's hashed classnames for that half. Dialog.Body
-   merges our className with its own (Primer's own overflow:auto still lands
-   on the same element), so we pair the class with Dialog.Body's stable
-   data-component attribute to win the tie without !important or hashes.
-   DialogOverflowWrapper (the ScrollableRegion Dialog wraps the body slot in)
-   has no prop to customize; it's still targeted by a substring selector. */
 .settings-body[data-component="Dialog.Body"] {
     display: flex;
     flex-direction: column;
@@ -366,17 +351,11 @@ a:hover {
     background: var(--bgColor-muted);
 }
 
-/* Resource list row — shared layout for every settings panel's `.Box-row`
-   items (title + meta + trailing actions), replacing per-panel inline style. */
 .resource-row-main {
     flex: 1;
     min-width: 0;
 }
 
-/* Row head — the ONE ordering every settings row's first line follows:
-   [status dot] → title → [Label badges]. Badges always FOLLOW the title
-   (type, then attributes, then counts); the dot, when present, leads.
-   Detail lines go below in .resource-row-sub, flush left (no indent). */
 .resource-row-head {
     display: flex;
     align-items: center;
@@ -419,9 +398,6 @@ a:hover {
     display: none;
 }
 
-/* --- Create / edit form ---
-   Forms use Primer <Stack gap="normal"> for vertical spacing between fields.
-   Legacy .form-group and .advanced-section still use margin for inner FormControls. */
 .form-group > .FormControl,
 .advanced-section > .FormControl {
     margin-bottom: var(--base-size-16);
@@ -432,8 +408,6 @@ a:hover {
     margin-bottom: 0;
 }
 
-/* Field group — separated by space + one hairline, headed by a label.
-   Replaces ad-hoc divider stacks. */
 .form-group {
     margin-top: var(--base-size-24);
     padding-top: var(--base-size-24);
@@ -543,9 +517,6 @@ a:hover {
     gap: var(--base-size-4);
 }
 
-/* Expandable directory row inside a .form-checkbox-group (e.g. Skills grouped
-   by repo) — a group-level checkbox plus a disclosure button, same
-   chevron-rotate mechanics as .advanced-toggle but sized for a repeated list. */
 .checkbox-group-header {
     display: flex;
     align-items: center;

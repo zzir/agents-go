@@ -349,12 +349,14 @@ interface ProcessTimelineProps {
   onReject?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
   liveTaskStatusByCallId?: Record<string, string>;
+  liveTaskLabelByCallId?: Record<string, string>;
+  taskLabelById?: Record<string, string>;
 }
 
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
-function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, onApprove, onReject, onInspectTask, liveTaskStatusByCallId }: ProcessTimelineProps) {
+function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, onApprove, onReject, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
 
@@ -425,6 +427,8 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, on
                   onReject={onReject}
                   onInspectTask={onInspectTask}
                   liveTaskStatus={liveTaskStatusByCallId?.[tc.tool_call_id]}
+                  liveTaskLabel={liveTaskLabelByCallId?.[tc.tool_call_id]}
+                  taskLabelById={taskLabelById}
                 />
               ));
             }
@@ -465,9 +469,11 @@ interface TurnBlockProps {
   onFork?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
   liveTaskStatusByCallId?: Record<string, string>;
+  liveTaskLabelByCallId?: Record<string, string>;
+  taskLabelById?: Record<string, string>;
 }
 
-const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, duration, liveStartedAt, messageId, onFork, onInspectTask, liveTaskStatusByCallId }: TurnBlockProps) {
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, duration, liveStartedAt, messageId, onFork, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
@@ -504,6 +510,8 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           : <ProcessTimeline
               onInspectTask={onInspectTask}
               liveTaskStatusByCallId={liveTaskStatusByCallId}
+              liveTaskLabelByCallId={liveTaskLabelByCallId}
+              taskLabelById={taskLabelById}
               key={'seg-' + i}
               parts={seg.parts}
               live={i === activeIdx}
@@ -518,6 +526,8 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
         <ProcessTimeline
           onInspectTask={onInspectTask}
           liveTaskStatusByCallId={liveTaskStatusByCallId}
+          liveTaskLabelByCallId={liveTaskLabelByCallId}
+          taskLabelById={taskLabelById}
           parts={[]}
           live
           reasoning={reasoning}
@@ -948,6 +958,37 @@ export function ChatView({
     return liveTaskStatusRef.current;
   }, [tasks]);
 
+  // toolCallId → live task title (the spawn label), for the spawn card header
+  // before the terminal display projection lands. Identity-stable like the
+  // status map above so the memoized TurnBlocks don't churn on unrelated events.
+  const liveTaskLabelRef = useRef<Record<string, string>>({});
+  const liveTaskLabelByCallId = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const t of Object.values(tasks || {})) {
+      if (t.toolCallId && t.label) next[t.toolCallId] = t.label;
+    }
+    const prev = liveTaskLabelRef.current;
+    const same = Object.keys(next).length === Object.keys(prev).length &&
+      Object.entries(next).every(([k, v]) => prev[k] === v);
+    if (!same) liveTaskLabelRef.current = next;
+    return liveTaskLabelRef.current;
+  }, [tasks]);
+
+  // taskId → label, so task_status / task_stop cards resolve the readable title
+  // of the task they reference. Same identity-stability as the maps above.
+  const taskLabelByIdRef = useRef<Record<string, string>>({});
+  const taskLabelById = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const t of Object.values(tasks || {})) {
+      if (t.taskId && t.label) next[t.taskId] = t.label;
+    }
+    const prev = taskLabelByIdRef.current;
+    const same = Object.keys(next).length === Object.keys(prev).length &&
+      Object.entries(next).every(([k, v]) => prev[k] === v);
+    if (!same) taskLabelByIdRef.current = next;
+    return taskLabelByIdRef.current;
+  }, [tasks]);
+
   const tocItems = useMemo(() =>
     messages.flatMap((m, i) => m.role === 'user' && m.content && !parseTaskNotification(m.content)
       ? [{ idx: i, preview: m.content.replace(/\s+/g, ' ').trim().slice(0, 60) }]
@@ -1117,6 +1158,9 @@ export function ChatView({
                   liveStartedAt={isLive ? liveStartedAt : undefined}
                   messageId={m.messageId}
                   onFork={onFork}
+                  liveTaskStatusByCallId={liveTaskStatusByCallId}
+                  liveTaskLabelByCallId={liveTaskLabelByCallId}
+                  taskLabelById={taskLabelById}
                 />
               );
             }

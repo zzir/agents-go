@@ -471,7 +471,23 @@
   font-weight: 600;
   font-size: 13px;
   font-family: var(--fontStack-sansSerif);
+  flex-shrink: 0;
 }
+/* spawn label beside the tool name: grows to fill the header so the trailing
+   status badge + inspect are pushed to the right edge (and line up into a column
+   across stacked cards); truncates before it can crowd them */
+.ToolCallCard-tasktitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fgColor-muted);
+}
+/* paths / commands render in the code font; prose titles (labels, queries) don't */
+.ToolCallCard-tasktitle--mono { font-family: var(--fontStack-monospace, monospace); }
 .ToolCallCard-output { margin-top: 8px; }
 .ToolCallCard-output-label {
   font-size: 11px;
@@ -661,8 +677,7 @@
 .task-row:hover { background: var(--bgColor-muted); }
 .task-row-head { display: flex; align-items: center; gap: var(--base-size-8); }
 .task-row-label {
-  font-weight: var(--base-text-weight-medium, 500);
-  font-size: var(--text-body-size-medium);
+  font-size: var(--text-body-size-small);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1;
 }
@@ -764,8 +779,10 @@
 .task-view-error { color: var(--fgColor-danger); font-size: var(--text-body-size-small); }
 .task-view-handoff { color: var(--fgColor-muted); font-size: var(--text-body-size-small); }
 
-/* the inspect affordance on a spawn card header */
+/* the inspect affordance on a spawn card header — pushed to the row's trailing
+   edge so it mirrors the leading chevron (the label/badges stay by the name) */
 .ToolCallCard-inspect {
+  margin-left: auto;
   border: none; background: none; padding: 0 2px;
   color: var(--fgColor-muted); cursor: pointer;
   display: inline-flex; align-items: center;

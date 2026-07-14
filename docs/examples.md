@@ -29,4 +29,21 @@ go run ./examples/hello
 | [`sessions/example`](../sessions/example/main.go) | SQLite-backed session persistence (separate module) |
 | [`skills/example`](../skills/example/main.go) | Loading `SKILL.md` skills into an agent (separate module) |
 
+## Extra setup
+
+Most examples only need `OPENAI_API_KEY`. The exceptions:
+
+- `examples/prompt` — a stored prompt ID: `OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt`
+- `examples/bravesearch` — `BRAVE_API_KEY=... go run ./examples/bravesearch`
+- `examples/sandbox` — the host needs `python3`
+- Examples in the optional submodules run from their module directory:
+
+```bash
+(cd sessions && go run ./example)        # SQLite-backed session
+(cd skills && go run ./example)          # Agent Skills (SKILL.md)
+(cd sandbox/docker && go run ./example)  # needs a running Docker daemon
+(cd sandbox/ssh && SSH_HOST=host SSH_USER=user SSH_KEY=~/.ssh/id_ed25519 \
+	go run ./example)                    # needs a reachable SSH host
+```
+
 The test suites are also worth reading as usage references — `agents/run_test.go` shows how to script a fake model (`Agent.ModelImpl`) for offline tests of your own agents.

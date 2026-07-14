@@ -75,3 +75,7 @@
   mask-image: none;
   -webkit-mask-image: none;
 }
+
+.sidebar-scroll li:has(.session-selected) [data-component="ActionList.Item.Label"] {
+  font-weight: var(--base-text-weight-normal, 400);
+}
