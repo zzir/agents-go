@@ -25,7 +25,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: cmd/agents-server/internal/web/frontend/package-lock.json
+          # package-lock.json is gitignored; key the npm cache on package.json instead.
+          cache-dependency-path: cmd/agents-server/internal/web/frontend/package.json
 
       - uses: goreleaser/goreleaser-action@v6
         with:

@@ -9,7 +9,8 @@ before:
   hooks:
     # Front-end artifacts (internal/web/frontend/dist) are not checked in, but go:embed depends on them,
     # so we must run the front-end build (tsc + vitest + vite) before each build.
-    - sh -c "cd cmd/agents-server/internal/web/frontend && npm ci && npm run build"
+    # package-lock.json is gitignored too, so use `npm install` (not `npm ci`, which requires a lockfile).
+    - sh -c "cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build"
 
 builds:
   - id: agents-server
