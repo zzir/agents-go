@@ -1,6 +1,6 @@
 {
-  "name": "Agents Server",
-  "short_name": "Agents",
+  "name": "agents-go",
+  "short_name": "agents-go",
   "description": "AI agent orchestration dashboard",
   "start_url": "/",
   "display": "standalone",
