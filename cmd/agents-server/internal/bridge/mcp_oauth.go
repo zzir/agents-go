@@ -176,7 +176,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		redirectURI := RedirectURI(requestOrigin)
 		handlerCfg.DynamicClientRegistrationConfig = &auth.DynamicClientRegistrationConfig{
 			Metadata: &oauthex.ClientRegistrationMetadata{
-				ClientName:   "agents-server",
+				ClientName:   "agents-go",
 				RedirectURIs: []string{redirectURI},
 				Scope:        hc.OAuthScopes,
 			},
