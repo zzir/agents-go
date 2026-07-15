@@ -24,6 +24,8 @@ import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
 
+export type InspectorPanel = null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string };
+
 interface ChatMessage {
   role: string;
   content?: string;
@@ -750,6 +752,8 @@ interface ChatViewProps {
   onFork?: (id: string) => void;
   onRegenerate?: (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => void;
   settingsReloadKey?: number;
+  panel: InspectorPanel;
+  onPanelChange: (panel: InspectorPanel) => void;
 }
 
 export function ChatView({
@@ -757,6 +761,7 @@ export function ChatView({
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
+  panel, onPanelChange,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [sandboxId, setSandboxIdState] = useState(() => loadSessionSandbox(sessionId || ''));
@@ -775,10 +780,6 @@ export function ChatView({
     setSandboxIdState(id);
     saveSessionSandbox(sessionId || '', id);
   }, [sessionId]);
-  // The right side panel is a single-instance Inspector with three lenses:
-  // the session's traces, the task list, and one task's detail (transcript +
-  // trace). Opening one closes the others.
-  const [inspector, setInspector] = useState<null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string }>(null);
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
   const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>);
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
@@ -916,20 +917,13 @@ export function ChatView({
   }, [messages, tasks]);
 
   const openTrace = useCallback((runId: string) => {
-    setInspector({ kind: 'trace' });
+    onPanelChange({ kind: 'trace' });
     setTraceActiveRun(runId);
-  }, []);
-
-  // A lens holds session-scoped state (task ids, trace runs); switching
-  // sessions resets it so a stale detail lens can't leave the drawer class
-  // dangling with no visible panel (and no close affordance).
-  useEffect(() => {
-    setInspector(null);
-  }, [sessionId]);
+  }, [onPanelChange]);
 
   const openTaskDetail = useCallback((taskId: string) => {
-    setInspector({ kind: 'task', taskId });
-  }, []);
+    onPanelChange({ kind: 'task', taskId });
+  }, [onPanelChange]);
 
   const stopTask = useCallback((taskId: string) => {
     (api.tasks.stop(taskId) as Promise<{ status?: string }>)
@@ -944,7 +938,7 @@ export function ChatView({
   }, [sessionId, onPatchTask]);
 
   // The task-detail lens is live: tell the socket layer which task to tail.
-  const inspectedTaskId = inspector?.kind === 'task' ? inspector.taskId : null;
+  const inspectedTaskId = panel?.kind === 'task' ? panel.taskId : null;
   useEffect(() => {
     if (!sessionId || !inspectedTaskId || !onWatchTask || !onUnwatchTask) return;
     const child = tasks?.[inspectedTaskId]?.childSessionId;
@@ -1091,7 +1085,7 @@ export function ChatView({
               size="small"
               variant="invisible"
               leadingVisual={StackIcon}
-              onClick={() => setInspector(cur => (cur?.kind === 'tasks' ? null : { kind: 'tasks' }))}
+              onClick={() => onPanelChange(panel?.kind === 'tasks' ? null : { kind: 'tasks' })}
               aria-label="Background tasks"
             >
               <span className={'task-ind' + (attention ? ' task-ind-attention' : working ? ' task-ind-working' : '')}>
@@ -1150,7 +1144,7 @@ export function ChatView({
   }
 
   return (
-    <div className={'chat-main' + (inspector ? ' trace-open' : '')}>
+    <div className={'chat-main' + (panel ? ' trace-open' : '')}>
       <div className="chat-content">
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
@@ -1234,34 +1228,34 @@ export function ChatView({
         />
       </div>
 
-      {inspector?.kind === 'trace' && (
+      {panel?.kind === 'trace' && (
         <TraceDrawer
           traceRuns={traceRuns}
           liveRunId={liveRunId}
           activeRunId={traceActiveRun}
           runLabels={runLabels}
           runParents={traceRunParents}
-          onClose={() => setInspector(null)}
+          onClose={() => onPanelChange(null)}
           onJumpToRun={jumpToRun}
           messageRunIds={messageRunIds}
         />
       )}
-      {inspector?.kind === 'tasks' && (
+      {panel?.kind === 'tasks' && (
         <TaskListPanel
           tasks={tasks || {}}
-          onOpenTask={taskId => setInspector({ kind: 'task', taskId })}
-          onClose={() => setInspector(null)}
+          onOpenTask={taskId => onPanelChange({ kind: 'task', taskId })}
+          onClose={() => onPanelChange(null)}
           onApprove={onApprove}
           onReject={onReject}
           onStop={stopTask}
         />
       )}
-      {inspector?.kind === 'task' && tasks?.[inspector.taskId] && (
+      {panel?.kind === 'task' && tasks?.[panel.taskId] && (
         <TaskDetailPanel
-          task={tasks[inspector.taskId]}
-          view={taskView && taskView.taskId === inspector.taskId ? taskView : null}
-          onBack={() => setInspector({ kind: 'tasks' })}
-          onClose={() => setInspector(null)}
+          task={tasks[panel.taskId]}
+          view={taskView && taskView.taskId === panel.taskId ? taskView : null}
+          onBack={() => onPanelChange({ kind: 'tasks' })}
+          onClose={() => onPanelChange(null)}
           onApprove={onApprove}
           onReject={onReject}
           onStop={stopTask}

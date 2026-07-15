@@ -9,7 +9,7 @@ import type { Icon } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
 import { AppShell } from '@/layout/AppShell';
 import { SessionList } from '@/features/sessions/SessionList';
-import { ChatView } from '@/features/chat/ChatView';
+import { ChatView, type InspectorPanel } from '@/features/chat/ChatView';
 import { login, checkAuth, getToken, api } from '@/lib/api';
 import { EV } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
@@ -164,14 +164,31 @@ const DEFAULT_SS = defaultSS();
 
 const MemoizedChatView = memo(ChatView);
 
-function readHashSession(): string | null {
-  const h = window.location.hash;
-  const m = /^#\/session\/([a-zA-Z0-9_-]+)$/.exec(h);
-  return m ? m[1] : null;
+function panelKey(p: InspectorPanel): string {
+  if (!p) return '';
+  if (p.kind === 'task') return `task/${p.taskId}`;
+  return p.kind;
 }
 
-function writeHashSession(id: string | null) {
-  const next = id ? `#/session/${id}` : '';
+function readHash(): { sessionId: string | null; panel: InspectorPanel } {
+  const h = window.location.hash;
+  const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
+  if (!m) return { sessionId: null, panel: null };
+  let panel: InspectorPanel = null;
+  if (m[2] === 'trace') panel = { kind: 'trace' };
+  else if (m[2] === 'tasks') panel = { kind: 'tasks' };
+  else if (m[3]) panel = { kind: 'task', taskId: m[3] };
+  return { sessionId: m[1], panel };
+}
+
+function writeHash(sessionId: string | null, panel: InspectorPanel) {
+  let next = '';
+  if (sessionId) {
+    next = `#/session/${sessionId}`;
+    if (panel?.kind === 'trace') next += '/trace';
+    else if (panel?.kind === 'tasks') next += '/tasks';
+    else if (panel?.kind === 'task') next += `/task/${panel.taskId}`;
+  }
   if (window.location.hash !== next) {
     window.history.replaceState(null, '', next || window.location.pathname);
   }
@@ -180,7 +197,8 @@ function writeHashSession(id: string | null) {
 export default function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
-  const [activeSession, setActiveSession] = useState<string | null>(readHashSession);
+  const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
+  const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
@@ -193,13 +211,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    writeHashSession(activeSession);
-  }, [activeSession]);
+    writeHash(activeSession, activePanel);
+  }, [activeSession, activePanel]);
 
   useEffect(() => {
     const onHash = () => {
-      const id = readHashSession();
-      setActiveSession(prev => prev === id ? prev : id);
+      const { sessionId, panel } = readHash();
+      setActiveSession(prev => prev === sessionId ? prev : sessionId);
+      setActivePanel(prev => panelKey(prev) === panelKey(panel) ? prev : panel);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -273,6 +292,7 @@ export default function App() {
         sid = sess.id;
         isNew = true;
         setActiveSession(sid);
+        setActivePanel(null);
         setSessionReloadKey(k => k + 1);
       } catch {
         toast.error('Could not start a new chat');
@@ -336,6 +356,7 @@ export default function App() {
     const forked = await api.sessions.fork(activeSession, Number(messageId));
     setSessionReloadKey(k => k + 1);
     setActiveSession(forked.id);
+    setActivePanel(null);
   }, [activeSession]);
 
   const handleRegenerate = useCallback(async (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => {
@@ -344,6 +365,7 @@ export default function App() {
       const forked = await api.sessions.fork(activeSession, Number(userMessageId), { exclusive: true, label: 'regen' });
       setSessionReloadKey(k => k + 1);
       setActiveSession(forked.id);
+      setActivePanel(null);
       await loadSession(forked.id);
       updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent }] }));
       const payload: Record<string, any> = { session_id: forked.id, input: userContent, agent_config_id: agentConfigId };
@@ -391,6 +413,7 @@ export default function App() {
 
   const handleSelectSession = useCallback((id: string | null) => {
     setActiveSession(id);
+    setActivePanel(null);
     if (window.innerWidth < 768) setSidebarOpen(false);
   }, []);
 
@@ -437,6 +460,8 @@ export default function App() {
       onFork={handleFork}
       onRegenerate={handleRegenerate}
       settingsReloadKey={settingsReloadKey}
+      panel={activePanel}
+      onPanelChange={setActivePanel}
     />
   );
 
