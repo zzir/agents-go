@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"os"
 	"slices"
@@ -1356,7 +1357,9 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 	for _, server := range agent.MCPServers {
 		mcpTools, err := server.ListTools(ctx, r.rc, agent)
 		if err != nil {
-			return nil, err
+			slog.WarnContext(ctx, "MCP ListTools failed, skipping server",
+				"agent", agent.Name, "error", err)
+			continue
 		}
 		out = append(out, mcpTools...)
 	}
