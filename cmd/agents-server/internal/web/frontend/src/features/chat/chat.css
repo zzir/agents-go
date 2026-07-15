@@ -473,11 +473,11 @@
   font-family: var(--fontStack-sansSerif);
   flex-shrink: 0;
 }
-/* spawn label beside the tool name: grows to fill the header so the trailing
-   status badge + inspect are pushed to the right edge (and line up into a column
-   across stacked cards); truncates before it can crowd them */
+/* summary beside the tool name (spawn label / patched file / MCP tool / arg
+   summary): sits left next to the name and truncates before it can crowd the
+   trailing group — the spacer below is what pushes that group to the right. */
 .ToolCallCard-tasktitle {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -488,6 +488,10 @@
 }
 /* paths / commands render in the code font; prose titles (labels, queries) don't */
 .ToolCallCard-tasktitle--mono { font-family: var(--fontStack-monospace, monospace); }
+/* Flexible gap: the single flex-grow element in the header, so the trailing
+   group (MCP label / task status / inspect / approval status) lands at the
+   right edge on every card — with or without a summary. */
+.ToolCallCard-spacer { flex: 1; }
 .ToolCallCard-output { margin-top: 8px; }
 .ToolCallCard-output-label {
   font-size: 11px;

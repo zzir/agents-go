@@ -98,6 +98,28 @@ function argSummary(toolName: string, args: string): { text: string; mono: boole
   }
 }
 
+// mcpArgSummary scans an MCP tool call's args for well-known parameter names
+// common across MCP servers (path, query, command, …). Identifiers and paths
+// render in the code font (mono); prose queries don't. Returns null when
+// nothing useful is found — the card falls back to the bare method name.
+function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
+  try {
+    const p = JSON.parse(args);
+    if (typeof p !== 'object' || p === null) return null;
+    const mono = ['path', 'uri', 'url', 'file', 'name', 'command', 'cmd', 'label'];
+    const sans = ['query', 'q', 'search', 'prompt', 'message'];
+    for (const k of mono) {
+      if (typeof p[k] === 'string' && p[k]) return { text: p[k], mono: true };
+    }
+    for (const k of sans) {
+      if (typeof p[k] === 'string' && p[k]) return { text: p[k], mono: false };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task } = toolCall;
 
@@ -132,6 +154,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
   let headerSummary: { text: string; mono: boolean } | null = null;
   if (taskTitle) headerSummary = { text: taskTitle, mono: false };
   else if (fileHint) headerSummary = { text: fileHint, mono: true };
+  else if (mcpServer) headerSummary = mcpArgSummary(args);
   else {
     headerSummary = argSummary(tool_name, args);
     if (!headerSummary && (tool_name === 'task_status' || tool_name === 'task_stop')) {
@@ -170,7 +193,11 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
           title={headerSummary.text}
         >{headerSummary.text}</span>
       )}
-      {mcpServer && <Label variant="secondary">{mcpServer}</Label>}
+      {/* Pushes the trailing group (MCP label / task status / inspect /
+          approval status) to the right edge, so every card's header aligns the
+          same way whether or not it has a summary. */}
+      <span className="ToolCallCard-spacer" />
+      {mcpServer && <Label>{mcpServer}</Label>}
       {task?.status && <Label variant={task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : task.status === 'cancelled' ? 'secondary' : 'accent'}>{'task ' + task.status.replace('_', ' ')}</Label>}
       {!task?.status && liveTaskStatus && <Label variant={liveTaskStatus === 'input_required' ? 'attention' : 'accent'}>{'task ' + liveTaskStatus.replace('_', ' ')}</Label>}
       {inspectTaskId && onInspectTask && (
