@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import ReactDOM from 'react-dom/client';
 import { TextInput, Dialog, NavList as PrimerNavList, Flash } from '@primer/react';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon,
@@ -15,6 +14,7 @@ import { login, checkAuth, getToken, api } from '@/lib/api';
 import { EV } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall } from '@/lib/timeline';
+import { clearSessionPrefs } from '@/lib/drafts';
 import { onToast, toast } from '@/lib/toast';
 
 const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
@@ -177,7 +177,7 @@ function writeHashSession(id: string | null) {
   }
 }
 
-function App() {
+export default function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
   const [activeSession, setActiveSession] = useState<string | null>(readHashSession);
@@ -322,6 +322,7 @@ function App() {
 
   const handleDeleteSession = useCallback((deletedId: string) => {
     deleteSession(deletedId);
+    clearSessionPrefs(deletedId);
     setSS(prev => {
       if (!prev[deletedId]) return prev;
       const next = { ...prev };
@@ -449,6 +450,3 @@ function App() {
     </ThemeProvider>
   );
 }
-
-const root = ReactDOM.createRoot(document.getElementById('root')!);
-root.render(<App />);

@@ -8,6 +8,7 @@ import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdow
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
+import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
 import { parseTaskNotification, type TaskStatus } from '@/lib/protocol';
 import type { TaskState, TaskViewState } from '@/lib/useAgentSocket';
 import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
@@ -704,7 +705,10 @@ function getGreeting(): [string, string] {
 }
 
 function Greeting() {
-  const [emoji, text] = getGreeting();
+  // Pick once per mount. The call site keys this by session id, so the slogan
+  // stays put across composer re-renders (e.g. switching the bottom agent /
+  // sandbox picker) and only rerolls when a new or different session opens it.
+  const [[emoji, text]] = useState(getGreeting);
   return (
     <div className="chat-greeting">
       <span className="chat-greeting-emoji">{emoji}</span>
@@ -754,8 +758,23 @@ export function ChatView({
   onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
 }: ChatViewProps) {
-  const [agentConfigId, setAgentConfigId] = useState('');
-  const [sandboxId, setSandboxId] = useState('');
+  const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
+  const [sandboxId, setSandboxIdState] = useState(() => loadSessionSandbox(sessionId || ''));
+
+  useEffect(() => {
+    setAgentConfigIdState(loadSessionAgent(sessionId || ''));
+    setSandboxIdState(loadSessionSandbox(sessionId || ''));
+  }, [sessionId]);
+
+  const setAgentConfigId = useCallback((id: string) => {
+    setAgentConfigIdState(id);
+    saveSessionAgent(sessionId || '', id);
+  }, [sessionId]);
+
+  const setSandboxId = useCallback((id: string) => {
+    setSandboxIdState(id);
+    saveSessionSandbox(sessionId || '', id);
+  }, [sessionId]);
   // The right side panel is a single-instance Inspector with three lenses:
   // the session's traces, the task list, and one task's detail (transcript +
   // trace). Opening one closes the others.
@@ -770,7 +789,15 @@ export function ChatView({
     if (!valid) {
       setAgentConfigId(agentConfigs[0].id);
     }
-  }, [agentConfigs, agentConfigId]);
+  }, [agentConfigs, agentConfigId, setAgentConfigId]);
+
+  // A persisted sandbox may have since been deleted: drop a now-unknown id
+  // back to None ('' is a valid choice), so the composer doesn't carry a stale
+  // sandbox_id and the label doesn't fall back to a generic "Environment".
+  useEffect(() => {
+    if (!sandboxId || !sandboxConfigs) return;
+    if (!sandboxConfigs.some(s => s.id === sandboxId)) setSandboxId('');
+  }, [sandboxConfigs, sandboxId, setSandboxId]);
 
   useEffect(() => {
     if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
@@ -1097,15 +1124,20 @@ export function ChatView({
     </>
   );
 
-  const loading = sessionId && !loaded && messages.length === 0;
   const isEmpty = loaded && messages.length === 0;
+
+  if (!loaded && messages.length === 0) {
+    return <div className="chat-main" />;
+  }
 
   if (isEmpty) {
     return (
       <div className="chat-main">
         <div className="chat-content chat-content-centered">
-          <Greeting />
+          <Greeting key={`greeting-${sessionId}`} />
           <MessageInput
+            key={`input-${sessionId}`}
+            sessionId={sessionId}
             onSend={handleSend}
             onCancel={handleCancel}
             disabled={running || awaiting || !agentConfigId}
@@ -1122,7 +1154,7 @@ export function ChatView({
       <div className="chat-content">
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
-          {loading ? null : messages.map((m, i) => {
+          {messages.map((m, i) => {
             if (m.role === 'turn') {
               const isLive = running && i === messages.length - 1;
               let prevUserContent: string | null = null;
@@ -1192,6 +1224,8 @@ export function ChatView({
         </div>
 
         <MessageInput
+          key={`input-${sessionId}`}
+          sessionId={sessionId}
           onSend={handleSend}
           onCancel={handleCancel}
           disabled={running || awaiting || !agentConfigId}

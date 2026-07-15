@@ -9,4 +9,8 @@ import './theme/markdown.css'
 import './theme/toast.css'
 import './theme/syntax.css'
 
-import('./app')
+import ReactDOM from 'react-dom/client'
+
+import('./app').then(({ default: App }) => {
+  ReactDOM.createRoot(document.getElementById('root')!).render(<App />)
+})

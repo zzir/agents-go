@@ -1,8 +1,10 @@
 import { useState, useCallback, useRef, useEffect, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { IconButton } from '@primer/react';
 import { PaperAirplaneIcon, SquareCircleIcon } from '@primer/octicons-react';
+import { loadDraft, saveDraft, clearDraft } from '@/lib/drafts';
 
 interface MessageInputProps {
+  sessionId: string;
   onSend: (text: string) => void;
   onCancel: (graceful?: boolean) => void;
   disabled: boolean;
@@ -10,9 +12,14 @@ interface MessageInputProps {
   toolbar?: ReactNode;
 }
 
-export function MessageInput({ onSend, onCancel, disabled, running, toolbar }: MessageInputProps) {
-  const [text, setText] = useState('');
+export function MessageInput({ sessionId, onSend, onCancel, disabled, running, toolbar }: MessageInputProps) {
+  const [text, setText] = useState(() => loadDraft(sessionId));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const updateText = useCallback((v: string) => {
+    setText(v);
+    saveDraft(sessionId, v);
+  }, [sessionId]);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -29,6 +36,7 @@ export function MessageInput({ onSend, onCancel, disabled, running, toolbar }: M
     if (!trimmed || disabled) return;
     onSend(trimmed);
     setText('');
+    clearDraft(sessionId);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -43,7 +51,7 @@ export function MessageInput({ onSend, onCancel, disabled, running, toolbar }: M
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => updateText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="type something here…"
           rows={2}
