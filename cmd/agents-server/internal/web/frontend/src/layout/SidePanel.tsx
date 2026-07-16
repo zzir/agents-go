@@ -4,9 +4,9 @@ import { XIcon } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { useNarrow, useResizablePane } from '@/lib/hooks';
 
-const DEFAULT_WIDTH = 340;
+const DEFAULT_WIDTH = 440;
 const MIN_WIDTH = 280;
-const MAX_WIDTH = 640;
+const MAX_WIDTH = 960;
 
 interface SidePanelProps {
   icon: Icon;
