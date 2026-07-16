@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/subtle"
+	"io"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -105,14 +108,29 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 		c.FileFromFS("/"+p, httpFS)
 		return true
 	}
-	if data, err := fs.ReadFile(sfs, p+".br"); err == nil {
+	if data, err := fs.ReadFile(sfs, p+".gz"); err == nil {
 		ct := mime.TypeByExtension(path.Ext(p))
 		if ct == "" {
 			ct = "application/octet-stream"
 		}
-		c.Header("Content-Encoding", "br")
-		c.Header("Vary", "Accept-Encoding")
-		c.Data(http.StatusOK, ct, data)
+		if strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+			c.Header("Content-Encoding", "gzip")
+			c.Header("Vary", "Accept-Encoding")
+			c.Data(http.StatusOK, ct, data)
+		} else {
+			gr, err := gzip.NewReader(bytes.NewReader(data))
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				return true
+			}
+			raw, err := io.ReadAll(gr)
+			_ = gr.Close()
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				return true
+			}
+			c.Data(http.StatusOK, ct, raw)
+		}
 		return true
 	}
 	return false

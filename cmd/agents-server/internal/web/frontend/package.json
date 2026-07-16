@@ -6,7 +6,7 @@
     "dev": "vite",
     "test": "vitest run",
     "build": "tsc --noEmit && vitest run && vite build",
-    "postbuild": "find dist -type f \\( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' \\) -exec brotli -9 --rm {} \\;",
+    "postbuild": "find dist -type f \\( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' \\) -exec gzip -9 {} \\;",
     "preview": "vite preview"
   },
   "dependencies": {
