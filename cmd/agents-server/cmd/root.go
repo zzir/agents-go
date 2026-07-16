@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 )
 
 var (
+	flagHost              string
 	flagPort              int
 	flagDB                string
 	flagWorkspace         string
@@ -38,6 +40,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.Flags().StringVar(&flagHost, "host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
 	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path")
 	rootCmd.Flags().StringVar(&flagWorkspace, "workspace", ".", "Workspace directory")
@@ -247,12 +250,12 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	srv.ServeStatic(staticFS)
 
-	addr := fmt.Sprintf("127.0.0.1:%d", flagPort)
+	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Engine}
 
 	go func() {
 		log.Info().Str("addr", addr).Str("workspace", flagWorkspace).Msg("server started")
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal().Err(err).Msg("server error")
 		}
 	}()
