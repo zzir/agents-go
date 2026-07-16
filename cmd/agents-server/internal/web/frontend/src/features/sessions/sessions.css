@@ -1,3 +1,18 @@
+/* Row-state anchoring — READ THIS BEFORE CHANGING A SELECTOR BELOW.
+
+   Every selector that reacts to a single session row's state (selected /
+   running / awaiting / hover / focus) is anchored to `.session-row`, the class
+   we put on each ActionList.Item's <li> (see SessionList.tsx). Never anchor
+   these on a bare `li`.
+
+   Why: when pinned sessions exist the list is split into ActionList.Groups, so
+   every row's <li data-component="ActionList.Item"> is nested inside a wrapper
+   <li data-component="ActionList.Group">. `:has()` matches ANY descendant, so a
+   bare `li:has(.session-selected)` also matches that Group wrapper — and its
+   descendant `.session-kebab`s are the WHOLE group's kebabs, lighting every one
+   of them up when a single row is selected. `.session-row` lives only on the
+   row itself, so `:has()` cannot leak up to the group. */
+
 /* The kebab is an ActionList.TrailingAction — a sibling of the row's button
    inside the flex li (valid HTML, unlike nesting a button in TrailingVisual).
    Collapse it by default so the session name uses the full row width; reveal
@@ -7,9 +22,9 @@
   opacity: 0;
   overflow: hidden;
 }
-.sidebar-scroll li[data-component="ActionList.Item"]:hover .session-kebab,
-.sidebar-scroll li[data-component="ActionList.Item"]:focus-within .session-kebab,
-.sidebar-scroll li:has(.session-selected) .session-kebab {
+.sidebar-scroll .session-row:hover .session-kebab,
+.sidebar-scroll .session-row:focus-within .session-kebab,
+.sidebar-scroll .session-row:has(.session-selected) .session-kebab {
   width: auto;
   opacity: 1;
   overflow: visible;
@@ -24,15 +39,15 @@
      running only        → orange bar + transparent background
      running + hover     → orange bar + muted background
      selected only       → blue bar + Primer active background (untouched)  */
-.sidebar-scroll li:has(.session-running)::after {
+.sidebar-scroll .session-row:has(.session-running)::after {
   background-color: var(--bgColor-severe-emphasis) !important;
 }
-.sidebar-scroll li:has(.session-running):not(:has(.session-selected)) {
+.sidebar-scroll .session-row:has(.session-running):not(:has(.session-selected)) {
   background: transparent !important;
 }
-.sidebar-scroll li:has(.session-running):not(:has(.session-selected)):hover,
-.sidebar-scroll li:has(.session-running):not(:has(.session-selected)):focus-within,
-.sidebar-scroll li:has(.session-running):not(:has(.session-selected)):active {
+.sidebar-scroll .session-row:has(.session-running):not(:has(.session-selected)):hover,
+.sidebar-scroll .session-row:has(.session-running):not(:has(.session-selected)):focus-within,
+.sidebar-scroll .session-row:has(.session-running):not(:has(.session-selected)):active {
   background: var(--bgColor-muted) !important;
 }
 
@@ -40,15 +55,15 @@
    but Primer's danger color, because a paused run needs the user's attention.
    The marker is mutually exclusive with .session-running (set in React), so
    the red bar always wins over the orange one for a paused run. */
-.sidebar-scroll li:has(.session-awaiting)::after {
+.sidebar-scroll .session-row:has(.session-awaiting)::after {
   background-color: var(--bgColor-danger-emphasis) !important;
 }
-.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)) {
+.sidebar-scroll .session-row:has(.session-awaiting):not(:has(.session-selected)) {
   background: transparent !important;
 }
-.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)):hover,
-.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)):focus-within,
-.sidebar-scroll li:has(.session-awaiting):not(:has(.session-selected)):active {
+.sidebar-scroll .session-row:has(.session-awaiting):not(:has(.session-selected)):hover,
+.sidebar-scroll .session-row:has(.session-awaiting):not(:has(.session-selected)):focus-within,
+.sidebar-scroll .session-row:has(.session-awaiting):not(:has(.session-selected)):active {
   background: var(--bgColor-muted) !important;
 }
 
@@ -69,13 +84,13 @@
 }
 
 /* When kebab is visible the grid cell is already narrower — drop the fade */
-.sidebar-scroll [data-component="ActionList.Item"]:hover [data-component="ActionList.Item.Label"],
-.sidebar-scroll li:has(.session-selected) [data-component="ActionList.Item.Label"],
-.sidebar-scroll [data-component="ActionList.Item"]:focus-within [data-component="ActionList.Item.Label"] {
+.sidebar-scroll .session-row:hover [data-component="ActionList.Item.Label"],
+.sidebar-scroll .session-row:has(.session-selected) [data-component="ActionList.Item.Label"],
+.sidebar-scroll .session-row:focus-within [data-component="ActionList.Item.Label"] {
   mask-image: none;
   -webkit-mask-image: none;
 }
 
-.sidebar-scroll li:has(.session-selected) [data-component="ActionList.Item.Label"] {
+.sidebar-scroll .session-row:has(.session-selected) [data-component="ActionList.Item.Label"] {
   font-weight: var(--base-text-weight-normal, 400);
 }

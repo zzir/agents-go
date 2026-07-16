@@ -40,6 +40,7 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
   const isActive = s.id === activeId;
   return (
     <ActionList.Item
+      className="session-row"
       active={isActive || isRunning || isAwaiting}
       onSelect={() => onSelect(s.id)}
     >
