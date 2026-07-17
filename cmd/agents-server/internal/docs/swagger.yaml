@@ -886,6 +886,12 @@ components:
           type: string
         name:
           type: string
+        terminal:
+          description: |-
+            Terminal reports whether this sandbox can host an interactive web
+            terminal (ssh always; docker only in persistent mode; local never, by
+            design). Computed per response by the handler, never stored.
+          type: boolean
         type:
           description: local | docker | ssh
           type: string

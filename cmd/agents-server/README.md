@@ -395,6 +395,12 @@ Sandbox types: `local` (subprocess — requires `--allow-local-sandbox`), `docke
 enforced on both create and update. For `ssh` sandboxes the `password` config
 field is masked on read — see [Secret handling](#secret-handling).
 
+Every response carries a computed `terminal` boolean — whether the sandbox can
+host an interactive web terminal (`ssh` always, `docker` only with
+`persistent: true`, `local` never, by design). The chat composer shows the
+terminal toggle only when the selected sandbox advertises it; the session
+itself runs over [`/ws/terminal`](#terminal-endpoint--wsterminal).
+
 ### Playground — `/api/v1/playground`
 
 | Method | Path                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -497,6 +503,31 @@ after compaction/filters, including MCP/skill tool definitions. Payloads past
 512KB are replaced with a truncation marker; set
 `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=false` to keep conversation
 content out of traces entirely.
+
+### Terminal endpoint — `GET /ws/terminal`
+
+One interactive sandbox terminal per connection, deliberately separate from
+the `/ws` event bus (different delivery semantics: an ordered byte stream with
+backpressure, not broadcast envelopes with replay). Authentication is the same
+first-message `auth` handshake.
+
+After `auth.ok` the client sends exactly one control envelope and the server
+answers:
+
+| type              | Direction | Description                                                                  |
+|-------------------|-----------|------------------------------------------------------------------------------|
+| `terminal.open`   | C → S     | Start the session — `{sandbox_id, cols?, rows?}`; must be the first message  |
+| `terminal.ready`  | S → C     | Shell is live; binary frames flow from here                                  |
+| `terminal.error`  | S → C     | Open failed (unknown sandbox, `local` type, non-persistent docker, backend error) |
+| `terminal.resize` | C → S     | PTY resize — `{cols, rows}`                                                  |
+| `terminal.exit`   | S → C     | Shell exited — `{code}` (`-1` when unknown); the server then closes          |
+
+**Binary WebSocket frames carry the terminal byte stream in both directions**
+(client → stdin, PTY output → client); text frames are reserved for the JSON
+control envelopes above. `local` sandboxes are refused server-side regardless
+of `--allow-local-sandbox` — a browser shell on the host process is a bigger
+grant than that flag implies. Terminals are capped at 4 per sandbox config,
+and updating or deleting a sandbox closes its live terminals.
 
 ## Architecture
 

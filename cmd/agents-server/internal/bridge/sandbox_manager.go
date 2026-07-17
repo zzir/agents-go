@@ -147,6 +147,7 @@ func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox
 		opts := dockersb.Options{
 			Image:            dc.Image,
 			Runtime:          dc.Runtime,
+			User:             dc.User,
 			Network:          dc.Network,
 			Persistent:       dc.Persistent,
 			ContainerName:    dc.ContainerName,

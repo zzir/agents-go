@@ -15,6 +15,9 @@ type Routes struct {
 	SessionMessages gin.HandlerFunc
 	SessionFork     gin.HandlerFunc
 	WSHandler       WSHandlerFunc
+	// TerminalWSHandler serves one interactive sandbox terminal per
+	// connection on /ws/terminal.
+	TerminalWSHandler WSHandlerFunc
 
 	// Runs are started on a session and observed by run id (REST + SSE),
 	// sharing the runner hub with the WebSocket transport.
@@ -101,6 +104,7 @@ func (s *Server) RegisterRoutes(r Routes) {
 	registerAPIRoutes(s.Engine.Group("/api/v1"), r)
 	registerAPIRoutes(s.Engine.Group("/api"), r)
 	s.Engine.GET("/ws", HandleWSWithAuth(r.WSHandler, s.token))
+	s.Engine.GET("/ws/terminal", HandleWSWithAuth(r.TerminalWSHandler, s.token))
 }
 
 // ServeOpenAPI mounts the OpenAPI document (auth-exempt) at

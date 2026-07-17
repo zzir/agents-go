@@ -142,7 +142,8 @@ func run(_ *cobra.Command, _ []string) error {
 	skillHandler := handler.NewSkillHandler(flagWorkspace)
 	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore)
 	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
-	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox)
+	terminalHandler := handler.NewTerminalHandler(sandboxStore, sandboxManager)
+	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox).WithTerminals(terminalHandler)
 	traceHandler := handler.NewTraceHandler(traceStore)
 	playgroundHandler := handler.NewPlaygroundHandler(deps)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
@@ -167,6 +168,8 @@ func run(_ *cobra.Command, _ []string) error {
 		SessionMessages: sessionHandler.Messages,
 		SessionFork:     sessionHandler.Fork,
 		WSHandler:       wsHandler.Handle,
+
+		TerminalWSHandler: terminalHandler.Handle,
 
 		RunCreate: runHandler.Create,
 		RunGet:    runHandler.Get,

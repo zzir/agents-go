@@ -18,12 +18,50 @@ type SandboxHandler struct {
 	store             *store.SandboxStore
 	manager           *bridge.SandboxManager
 	allowLocalSandbox bool
+	terminals         *TerminalHandler
 }
 
 // NewSandboxHandler returns a handler backed by the given store and sandbox manager.
 // allowLocal controls whether type "local" sandboxes may be created.
 func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager, allowLocal bool) *SandboxHandler {
 	return &SandboxHandler{store: s, manager: m, allowLocalSandbox: allowLocal}
+}
+
+// WithTerminals wires the terminal registry so Update/Delete also tear down
+// live web terminals on the affected sandbox.
+func (h *SandboxHandler) WithTerminals(t *TerminalHandler) *SandboxHandler {
+	h.terminals = t
+	return h
+}
+
+// closeTerminals tears down live web terminals for a sandbox config, if the
+// terminal feature is wired.
+func (h *SandboxHandler) closeTerminals(id string) {
+	if h.terminals != nil {
+		h.terminals.CloseSandboxTerminals(id)
+	}
+}
+
+// terminalCapable reports whether a sandbox config can host an interactive
+// web terminal: ssh always, docker only in persistent mode (an ephemeral
+// container has nothing to attach to between Execs), local never — a web
+// terminal on the host process is a bigger grant than --allow-local-sandbox
+// implies.
+func terminalCapable(cfg *store.SandboxConfig) bool {
+	switch cfg.Type {
+	case "ssh":
+		return true
+	case "docker":
+		var dc store.DockerConfig
+		if len(cfg.Config) > 0 {
+			if err := json.Unmarshal(cfg.Config, &dc); err != nil {
+				return false
+			}
+		}
+		return dc.Persistent
+	default:
+		return false
+	}
 }
 
 // List responds with all sandbox configurations, secrets masked.
@@ -43,6 +81,7 @@ func (h *SandboxHandler) List(c *gin.Context) {
 	}
 	for i := range configs {
 		configs[i] = sanitizeSandboxConfig(configs[i])
+		configs[i].Terminal = terminalCapable(&configs[i])
 	}
 	c.JSON(http.StatusOK, configs)
 }
@@ -143,7 +182,9 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, sanitizeSandboxConfig(*cfg))
+	created := sanitizeSandboxConfig(*cfg)
+	created.Terminal = terminalCapable(&created)
+	c.JSON(http.StatusCreated, created)
 }
 
 // Get responds with the sandbox configuration identified by the id path
@@ -164,7 +205,9 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sanitizeSandboxConfig(*cfg))
+	out := sanitizeSandboxConfig(*cfg)
+	out.Terminal = terminalCapable(&out)
+	c.JSON(http.StatusOK, out)
 }
 
 // Update overwrites the sandbox configuration identified by the id path
@@ -210,12 +253,15 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		return
 	}
 	h.manager.Remove(id)
+	h.closeTerminals(id)
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sanitizeSandboxConfig(*updated))
+	out := sanitizeSandboxConfig(*updated)
+	out.Terminal = terminalCapable(&out)
+	c.JSON(http.StatusOK, out)
 }
 
 // Delete removes the sandbox configuration identified by the id path parameter.
@@ -238,6 +284,7 @@ func (h *SandboxHandler) Delete(c *gin.Context) {
 		return
 	}
 	h.manager.Remove(id)
+	h.closeTerminals(id)
 	c.Status(http.StatusNoContent)
 }
 

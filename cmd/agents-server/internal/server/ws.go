@@ -128,6 +128,24 @@ func (c *WSConn) WriteJSON(v any) error {
 	return c.conn.WriteJSON(v)
 }
 
+// WriteBinary writes a binary frame synchronously under the write mutex with
+// the standard deadline. Terminal byte streams use this instead of the JSON
+// event queue: they need frame ordering with backpressure on the producer
+// pump, not fire-and-forget enqueueing.
+func (c *WSConn) WriteBinary(p []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_ = c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+	return c.conn.WriteMessage(websocket.BinaryMessage, p)
+}
+
+// ReadMessage reads the next frame and returns its websocket message type
+// (websocket.TextMessage or websocket.BinaryMessage) alongside the payload.
+// For JSON-only protocols prefer ReadJSON.
+func (c *WSConn) ReadMessage() (int, []byte, error) {
+	return c.conn.ReadMessage()
+}
+
 // Close cancels the connection context and closes the underlying websocket.
 func (c *WSConn) Close() {
 	c.cancel()

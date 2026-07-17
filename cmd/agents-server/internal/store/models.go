@@ -283,6 +283,11 @@ type SandboxConfig struct {
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
+	// Terminal reports whether this sandbox can host an interactive web
+	// terminal (ssh always; docker only in persistent mode; local never, by
+	// design). Computed per response by the handler, never stored.
+	Terminal bool `bun:"-" json:"terminal"`
+
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -297,6 +302,7 @@ type LocalConfig struct {
 type DockerConfig struct {
 	Image            string `json:"image"`
 	Runtime          string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
+	User             string `json:"user,omitempty"`    // user[:group] the container runs as; "" = backend default (65534 nobody)
 	Network          bool   `json:"network"`
 	Persistent       bool   `json:"persistent"`
 	ContainerName    string `json:"container_name,omitempty"`      // Docker container name (persistent mode only)

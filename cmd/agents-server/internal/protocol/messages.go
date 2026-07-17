@@ -41,6 +41,15 @@ const (
 	EventRunCompaction       = "run.compaction"
 	EventSessionTitleUpdated = "session.title_updated"
 	EventTraceSpan           = "trace.span"
+
+	// Terminal events, exchanged on /ws/terminal (one terminal per
+	// connection). Control frames are JSON Envelopes (text); the terminal
+	// byte stream itself rides binary WebSocket frames in both directions.
+	EventTerminalOpen   = "terminal.open"   // client → server
+	EventTerminalResize = "terminal.resize" // client → server
+	EventTerminalReady  = "terminal.ready"  // server → client
+	EventTerminalError  = "terminal.error"  // server → client
+	EventTerminalExit   = "terminal.exit"   // server → client
 )
 
 // RunError.Code values. Same single-point rule as the event constants: the
@@ -103,6 +112,33 @@ type ToolApprove struct {
 type ToolReject struct {
 	ToolCallID string `json:"tool_call_id"`
 	Reason     string `json:"reason,omitempty"`
+}
+
+// TerminalOpen is the client request that starts an interactive terminal on
+// /ws/terminal; it must be the first message after auth. Cols/Rows of zero
+// use the backend defaults (80x24).
+type TerminalOpen struct {
+	SandboxID string `json:"sandbox_id"`
+	Cols      int    `json:"cols,omitempty"`
+	Rows      int    `json:"rows,omitempty"`
+}
+
+// TerminalResize is the client request to change the PTY size.
+type TerminalResize struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
+// TerminalError reports why the terminal could not be opened (or died); the
+// server closes the connection after sending it.
+type TerminalError struct {
+	Message string `json:"message"`
+}
+
+// TerminalExit reports that the shell exited. Code is -1 when unknown (e.g.
+// the transport closed before an exit status was delivered).
+type TerminalExit struct {
+	Code int `json:"code"`
 }
 
 // Server → Client messages
