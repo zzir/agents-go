@@ -100,7 +100,7 @@ function pack(form: FlatForm): PackedForm {
   const base: PackedForm = { name: form.name, type: form.type };
   let config: Record<string, unknown> | undefined;
   if (form.type === 'docker') {
-    config = { image: form.image, runtime: form.runtime, network: form.network, persistent: form.persistent, container_name: form.container_name };
+    config = { image: form.image, runtime: form.runtime, user: form.user, network: form.network, persistent: form.persistent, container_name: form.container_name };
   } else if (form.type === 'ssh') {
     config = {
       addr: form.addr, user: form.user, use_agent: form.use_agent,
@@ -145,6 +145,10 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
       )}
       {t === 'docker' && fc('Image',
         <TextInput block value={form.image} onChange={e => set('image', e.target.value)} placeholder="ghcr.io/zzir/sandbox:latest" />,
+      )}
+      {t === 'docker' && fc('User',
+        <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="65534:65534" />,
+        'user[:group] the container runs as. Leave empty for the non-privileged default (nobody). Use e.g. "root" or "1000:1000" when the workflow needs it.',
       )}
       {t === 'docker' && (
         <FormControl>
@@ -252,7 +256,7 @@ export function SandboxPanel() {
     <Stack gap="normal">
       <PageHeader>
         <PageHeader.TitleArea>
-          <PageHeader.Title>Sandbox Environments</PageHeader.Title>
+          <PageHeader.Title>Sandboxes</PageHeader.Title>
         </PageHeader.TitleArea>
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
@@ -278,7 +282,7 @@ export function SandboxPanel() {
         ))}
         {items.length === 0 && (
           <Blankslate>
-            <Blankslate.Description>No sandbox environments configured.</Blankslate.Description>
+            <Blankslate.Description>No sandboxes configured.</Blankslate.Description>
           </Blankslate>
         )}
       </div>}

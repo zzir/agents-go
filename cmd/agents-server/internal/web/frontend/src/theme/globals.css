@@ -125,7 +125,30 @@ a:hover {
     border-right: 1px solid var(--borderColor-muted);
 }
 
-/* Drag handle — visual/behavioral parity with Primer's PageLayout.DragHandle */
+/* Shared resize-handle visuals — parity with Primer's PageLayout.DragHandle:
+   a neutral wash on hover/focus, a solid accent bar while dragging. Every
+   pane divider (left sidebar, right side panel, bottom terminal panel) layers
+   this class over its own positioning class so the three lines stay in sync. */
+.pane-resize-handle::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-color: var(--bgColor-neutral-muted);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.pane-resize-handle:hover::before,
+.pane-resize-handle:focus-visible::before {
+    opacity: 1;
+}
+
+.pane-resize-handle.dragging::before {
+    background-color: var(--bgColor-accent-emphasis);
+    opacity: 1;
+}
+
+/* Left sidebar drag handle — positioning only; visuals come from .pane-resize-handle */
 .app-sidebar-handle {
     position: absolute;
     top: 0;
@@ -137,20 +160,6 @@ a:hover {
     -webkit-user-select: none;
     user-select: none;
     z-index: 1;
-}
-
-.app-sidebar-handle::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-color: var(--bgColor-neutral-muted);
-    opacity: 0;
-    transition: opacity 0.15s ease;
-}
-
-.app-sidebar-handle:hover::before,
-.app-sidebar-handle:focus-visible::before {
-    opacity: 1;
 }
 
 /* Sidebar body — flex column so fixed actions stay put and scroll area scrolls */
@@ -208,6 +217,7 @@ a:hover {
     overflow: hidden;
 }
 
+/* Right side-panel drag handle — positioning only; visuals come from .pane-resize-handle */
 .side-panel-handle {
     position: absolute;
     top: 0;
@@ -219,20 +229,6 @@ a:hover {
     -webkit-user-select: none;
     user-select: none;
     z-index: 1;
-}
-
-.side-panel-handle::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-color: var(--bgColor-neutral-muted);
-    opacity: 0;
-    transition: opacity 0.15s ease;
-}
-
-.side-panel-handle:hover::before,
-.side-panel-handle:focus-visible::before {
-    opacity: 1;
 }
 
 .side-panel-header {

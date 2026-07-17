@@ -1,0 +1,161 @@
+/* Global terminal panel: bottom strip of the main content area, hosting
+   sandbox terminals in tabs. Stays mounted (display:none) while hidden so
+   sessions survive panel toggles. */
+.terminal-panel {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--borderColor-default);
+  background: var(--bgColor-default);
+  /* Trap xterm.css's z-indexes (canvas/decoration layers go up to 11) in the
+     panel's own stacking context: without this they beat Primer's portal
+     overlays (which rely on DOM order, not z-index), swallowing clicks on any
+     menu that opens over the terminal — the composer's sandbox picker and the
+     panel's own "+" menu included. */
+  isolation: isolate;
+}
+
+/* Dragged to the bottom: only the header bar remains (its height matches the
+   left sidebar's footer — same 4px padding, small controls and 1px border),
+   and sessions stay alive exactly like when the whole panel is hidden. */
+.terminal-panel-collapsed .terminal-panel-header {
+  border-bottom: none;
+}
+.terminal-panel-collapsed .terminal-panel-body,
+.terminal-panel-collapsed .terminal-panel-empty {
+  display: none;
+}
+
+/* Grab strip on the top edge for drag-to-resize — positioning only; hover
+   and dragging visuals come from the shared .pane-resize-handle (globals.css). */
+.terminal-panel-resize {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  z-index: 1;
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: var(--base-size-4) var(--base-size-8);
+  border-bottom: 1px solid var(--borderColor-muted);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.terminal-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  padding: 2px var(--base-size-4) 2px var(--base-size-8);
+  border-radius: var(--borderRadius-medium);
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.terminal-tab:hover {
+  background: var(--bgColor-neutral-muted);
+}
+.terminal-tab-active {
+  background: var(--bgColor-neutral-muted);
+  color: var(--fgColor-default);
+}
+.terminal-tab-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.terminal-tab-status {
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  opacity: 0.8;
+}
+.terminal-tab-close {
+  width: 18px;
+  height: 18px;
+}
+
+.terminal-panel-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--base-size-4);
+  flex-shrink: 0;
+}
+
+.terminal-panel-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--base-size-8);
+  color: var(--fgColor-muted);
+  font-size: 13px;
+}
+.terminal-panel-empty svg {
+  vertical-align: text-bottom;
+}
+
+.terminal-panel-body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--base-size-4) var(--base-size-8);
+  overflow: hidden;
+}
+.terminal-view {
+  height: 100%;
+}
+.terminal-view .xterm {
+  height: 100%;
+}
+/* xterm.css hardcodes #000 here (an OS X scrollbar workaround); the few
+   pixels of viewport that the fitted cell grid doesn't cover would show as a
+   black band. Let the panel background shine through instead. */
+.terminal-view .xterm-viewport {
+  background-color: transparent !important;
+}
+/* The focus indicator inside the terminal is xterm's own block cursor.
+   Kill browser/Primer focus rings on xterm's internals. Two collisions here:
+   the focusable scroll viewport picks up the global :focus-visible outline,
+   and xterm's root carries class "terminal … focus" which collides with
+   Primer CSS's own .terminal/.focus rules (an inset accent box-shadow that
+   peeks out under the cell grid as a stray blue line along the bottom). */
+.terminal-view .xterm,
+.terminal-view .xterm-viewport,
+.terminal-view .xterm-helper-textarea {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* xterm 6 draws its own VS Code-style scrollbar (.xterm-scrollable-element),
+   which the app-wide native-scrollbar styling can't reach. Match its track
+   width to the global 6px; slider colors are set via the xterm theme
+   (scrollbarSlider* in TerminalView). The width is inline-styled by xterm,
+   hence the !important. */
+.terminal-view .xterm-scrollable-element > .scrollbar.vertical,
+.terminal-view .xterm-scrollable-element > .scrollbar.vertical .slider {
+  width: 6px !important;
+}
+.terminal-view .xterm-scrollable-element > .shadow {
+  display: none !important;
+}

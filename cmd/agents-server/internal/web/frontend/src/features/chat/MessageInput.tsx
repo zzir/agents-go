@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, type FormEvent, type Keyboard
 import { IconButton } from '@primer/react';
 import { PaperAirplaneIcon, SquareCircleIcon } from '@primer/octicons-react';
 import { loadDraft, saveDraft, clearDraft } from '@/lib/drafts';
+import { onComposerInsert } from '@/lib/composer';
 
 interface MessageInputProps {
   sessionId: string;
@@ -29,6 +30,20 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
   }, []);
 
   useEffect(() => { autoResize(); }, [text, autoResize]);
+
+  // Receive text injected from elsewhere in the app (e.g. terminal output
+  // quoted via the panel's quote button): append on its own line and focus.
+  useEffect(() => {
+    onComposerInsert(injected => {
+      setText(prev => {
+        const next = prev ? (prev.endsWith('\n') ? prev : prev + '\n') + injected : injected;
+        saveDraft(sessionId, next);
+        return next;
+      });
+      textareaRef.current?.focus();
+    });
+    return () => onComposerInsert(null);
+  }, [sessionId]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();

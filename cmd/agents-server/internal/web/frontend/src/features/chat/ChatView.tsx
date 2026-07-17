@@ -18,7 +18,7 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, StackIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, StackIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon, TerminalIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -42,6 +42,9 @@ interface AgentConfig {
 interface SandboxConfig {
   id: string;
   name: string;
+  // Whether this sandbox can host an interactive web terminal (server-computed:
+  // ssh always, docker only when persistent, local never).
+  terminal?: boolean;
 }
 
 interface MermaidSegment {
@@ -754,6 +757,11 @@ interface ChatViewProps {
   settingsReloadKey?: number;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
+  // Opens the global terminal panel (app-level, independent of the session).
+  // Open-only by design: closing/collapsing happens on the panel itself. When
+  // the composer has a terminal-capable sandbox selected it is passed along,
+  // and a freshly opened panel starts a terminal for it right away.
+  onTerminalOpen?: (sandbox?: { id: string; name: string }) => void;
 }
 
 export function ChatView({
@@ -761,7 +769,7 @@ export function ChatView({
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
-  panel, onPanelChange,
+  panel, onPanelChange, onTerminalOpen,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [sandboxId, setSandboxIdState] = useState(() => loadSessionSandbox(sessionId || ''));
@@ -794,7 +802,7 @@ export function ChatView({
 
   // A persisted sandbox may have since been deleted: drop a now-unknown id
   // back to None ('' is a valid choice), so the composer doesn't carry a stale
-  // sandbox_id and the label doesn't fall back to a generic "Environment".
+  // sandbox_id and the label doesn't fall back to a generic "Sandbox".
   useEffect(() => {
     if (!sandboxId || !sandboxConfigs) return;
     if (!sandboxConfigs.some(s => s.id === sandboxId)) setSandboxId('');
@@ -1046,7 +1054,8 @@ export function ChatView({
     );
   }
 
-  const selectedSandboxLabel = sandboxConfigs?.find(s => s.id === sandboxId)?.name || 'Environment';
+  const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
+  const selectedSandboxLabel = selectedSandbox?.name || 'Sandbox';
   const selectedAgentLabel = agentConfigs?.find(a => a.id === agentConfigId)?.name || 'Agent';
 
   const inputToolbar: ReactNode = (
@@ -1075,6 +1084,17 @@ export function ChatView({
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>
+        )}
+        {onTerminalOpen && sandboxConfigs?.some(s => s.terminal) && (
+          <IconButton
+            icon={TerminalIcon}
+            variant="invisible"
+            size="small"
+            aria-label="Open terminal panel"
+            onClick={() => onTerminalOpen(
+              selectedSandbox?.terminal ? { id: selectedSandbox.id, name: selectedSandbox.name } : undefined,
+            )}
+          />
         )}
               {tasks && Object.keys(tasks).length > 0 && (() => {
           const list = Object.values(tasks);

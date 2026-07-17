@@ -53,6 +53,9 @@ interface UseResizablePaneOptions {
 
 interface ResizablePane {
   width: number;
+  /** True while a pointer drag is in flight — drives the handle's accent
+   *  dragging visual (Primer PageLayout.DragHandle parity). */
+  dragging: boolean;
   handleProps: {
     onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
     onPointerMove: (e: PointerEvent<HTMLDivElement>) => void;
@@ -71,6 +74,7 @@ interface ResizablePane {
  */
 export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: UseResizablePaneOptions): ResizablePane {
   const [width, setWidth] = useState(() => clampPaneWidth(readStoredPaneWidth(storageKey, defaultWidth), min, max));
+  const [dragging, setDragging] = useState(false);
   const widthRef = useRef(width);
   widthRef.current = width;
   const dragStartXRef = useRef(0);
@@ -87,6 +91,7 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: U
     }
     dragStartXRef.current = e.clientX;
     dragStartWidthRef.current = widthRef.current;
+    setDragging(true);
   }, []);
 
   const onPointerMove = useCallback((e: PointerEvent<HTMLDivElement>) => {
@@ -98,6 +103,7 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: U
   }, [min, max, sign]);
 
   const onPointerUp = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    setDragging(false);
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
     savePaneWidth(storageKey, widthRef.current);
   }, [storageKey]);
@@ -118,7 +124,7 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: U
     savePaneWidth(storageKey, defaultWidth);
   }, [defaultWidth, storageKey]);
 
-  return { width, handleProps: { onPointerDown, onPointerMove, onPointerUp, onLostPointerCapture: onPointerUp, onKeyDown, onDoubleClick } };
+  return { width, dragging, handleProps: { onPointerDown, onPointerMove, onPointerUp, onLostPointerCapture: onPointerUp, onKeyDown, onDoubleClick } };
 }
 
 interface UseApiResult<T> {

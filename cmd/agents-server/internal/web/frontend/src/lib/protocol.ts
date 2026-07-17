@@ -31,6 +31,13 @@ export const EV = {
   runCompaction: 'run.compaction',
   sessionTitleUpdated: 'session.title_updated',
   traceSpan: 'trace.span',
+
+  // terminal (on /ws/terminal; binary frames carry the byte stream)
+  terminalOpen: 'terminal.open',
+  terminalResize: 'terminal.resize',
+  terminalReady: 'terminal.ready',
+  terminalError: 'terminal.error',
+  terminalExit: 'terminal.exit',
 } as const;
 
 // RunError.code values the client branches on for recovery behavior.

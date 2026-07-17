@@ -10,6 +10,13 @@ import { ThemeProvider } from '@/theme/ThemeProvider';
 import { AppShell } from '@/layout/AppShell';
 import { SessionList } from '@/features/sessions/SessionList';
 import { ChatView, type InspectorPanel } from '@/features/chat/ChatView';
+
+// Lazy: xterm (+ webgl renderer) is a few hundred KB the first paint never
+// needs — the chunk loads when the terminal panel first opens, then the panel
+// stays mounted (hidden) so its sessions survive toggles.
+const TerminalPanel = React.lazy(() =>
+  import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
+);
 import { login, checkAuth, getToken, api } from '@/lib/api';
 import { EV } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
@@ -203,6 +210,27 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
+  // Global terminal panel: session-agnostic, opened from the composer (the
+  // button only ever opens; closing/collapsing lives on the panel itself).
+  // everOpened defers mounting (and the xterm chunk) until first use, after
+  // which the panel stays mounted while hidden to keep sessions alive.
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalEverOpened, setTerminalEverOpened] = useState(false);
+  // A one-shot "start a terminal for this sandbox" request, set when the
+  // composer button opens a CLOSED panel with a capable sandbox selected (an
+  // already-open panel is left alone). The nonce distinguishes repeat requests
+  // for the same sandbox.
+  const [terminalRequest, setTerminalRequest] = useState<{ id: string; name: string; nonce: number } | null>(null);
+  const terminalOpenRef = useRef(false);
+  terminalOpenRef.current = terminalOpen;
+  const terminalNonceRef = useRef(0);
+  const handleTerminalOpen = useCallback((sandbox?: { id: string; name: string }) => {
+    if (!terminalOpenRef.current && sandbox) {
+      setTerminalRequest({ ...sandbox, nonce: ++terminalNonceRef.current });
+    }
+    setTerminalOpen(true);
+    setTerminalEverOpened(true);
+  }, []);
 
   const [ss, setSS] = useState<Record<string, SessionState>>({});
 
@@ -462,6 +490,7 @@ export default function App() {
       settingsReloadKey={settingsReloadKey}
       panel={activePanel}
       onPanelChange={setActivePanel}
+      onTerminalOpen={handleTerminalOpen}
     />
   );
 
@@ -469,6 +498,16 @@ export default function App() {
     <ThemeProvider>
       <AppShell onSettingsOpen={() => setSettingsOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
         {main}
+        {terminalEverOpened && (
+          <React.Suspense fallback={null}>
+            <TerminalPanel
+              open={terminalOpen}
+              onClose={() => setTerminalOpen(false)}
+              settingsReloadKey={settingsReloadKey}
+              openRequest={terminalRequest}
+            />
+          </React.Suspense>
+        )}
       </AppShell>
       {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
       <GlobalToast />

@@ -22,7 +22,7 @@ export function AppShell({ onSettingsOpen, sidebarPane, sidebarOpen, onSidebarTo
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
 
-  const { width, handleProps } = useResizablePane({ storageKey: PANE_WIDTH_KEY, min: PANE_MIN, max: PANE_MAX, defaultWidth: PANE_DEFAULT, edge: 'left' });
+  const { width, dragging, handleProps } = useResizablePane({ storageKey: PANE_WIDTH_KEY, min: PANE_MIN, max: PANE_MAX, defaultWidth: PANE_DEFAULT, edge: 'left' });
 
   return (
     <div className={'app-layout' + (sidebarOpen ? ' sidebar-open' : '')}>
@@ -57,7 +57,7 @@ export function AppShell({ onSettingsOpen, sidebarPane, sidebarOpen, onSidebarTo
 
           {!narrow && (
             <div
-              className="app-sidebar-handle"
+              className={'app-sidebar-handle pane-resize-handle' + (dragging ? ' dragging' : '')}
               role="slider"
               aria-orientation="horizontal"
               aria-label="Resize sidebar"

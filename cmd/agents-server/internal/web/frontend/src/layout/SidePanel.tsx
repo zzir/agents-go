@@ -29,13 +29,13 @@ interface SidePanelProps {
  */
 export function SidePanel({ icon: PanelIcon, title, count, onClose, children, storageKey, defaultWidth = DEFAULT_WIDTH, minWidth = MIN_WIDTH, maxWidth = MAX_WIDTH }: SidePanelProps) {
   const narrow = useNarrow();
-  const { width, handleProps } = useResizablePane({ storageKey, min: minWidth, max: maxWidth, defaultWidth, edge: 'right' });
+  const { width, dragging, handleProps } = useResizablePane({ storageKey, min: minWidth, max: maxWidth, defaultWidth, edge: 'right' });
 
   return (
     <div className="side-panel" style={narrow ? undefined : { width }}>
       {!narrow && (
         <div
-          className="side-panel-handle"
+          className={'side-panel-handle pane-resize-handle' + (dragging ? ' dragging' : '')}
           role="slider"
           aria-orientation="horizontal"
           aria-label={`Resize ${title} panel`}
