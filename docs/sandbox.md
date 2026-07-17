@@ -160,4 +160,38 @@ type ExecStreamer interface {
 
 Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). All three built-in backends implement this interface.
 
+## TerminalOpener (optional)
+
+Backends can optionally implement `TerminalOpener` to host an interactive
+shell with a PTY (this is what powers the web terminal in `agents-server`):
+
+```go
+type TerminalOpener interface {
+	OpenTerminal(ctx context.Context, opts TerminalOptions) (Terminal, error)
+}
+
+type TerminalOptions struct {
+	Cols, Rows int               // initial PTY size; 0 = 80x24
+	Term       string            // TERM value; "" = "xterm-256color"
+	Shell      []string          // nil = backend default (SSH: login shell; docker: bash if present, else sh)
+	Env        map[string]string
+}
+
+type Terminal interface {
+	io.ReadWriteCloser              // Read: PTY output (ANSI included, EOF on shell exit); Write: user input
+	Resize(cols, rows int) error
+	Wait() (int, error)             // exit code after EOF; -1 when unknown
+}
+```
+
+The **SSH** backend always supports it (a new session with `RequestPty` on the
+existing connection, one per terminal). The **docker** backend supports it only
+in `Persistent` mode — an interactive shell needs a long-lived container to
+attach to — and force-kills the shell's process tree on `Close`. The **local**
+backend does not implement it: handing out a host shell is a deliberately
+bigger grant than running individual commands, so it is excluded by design.
+`OpenTerminal` returns an error wrapping `ErrTerminalUnsupported` when the
+backend's current configuration cannot host a terminal. The context bounds
+session establishment only; the returned `Terminal` lives until `Close`.
+
 See [examples/sandbox](../examples/sandbox/main.go), [sandbox/docker/example](../sandbox/docker/example/main.go) and [sandbox/ssh/example](../sandbox/ssh/example/main.go) for runnable programs.
