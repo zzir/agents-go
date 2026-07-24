@@ -194,9 +194,22 @@ func (r *runner) executeToolsAndSideEffects(
 		newStepItems = append(newStepItems, pr.NewItems...)
 	}
 
+	// On the first turn after a HITL resume the interrupted model response is
+	// re-processed, so any sibling tool calls that already completed before the
+	// pause reappear in pr.Functions. Their outputs were recorded before the
+	// pause and still sit in preStepItems, so re-running them would duplicate
+	// their side effects and emit a second function_call_output for the same call
+	// id — which the Responses API rejects on the next turn. Drop them from this
+	// turn's work so they are neither re-run nor re-output (their prior outputs
+	// stay in the item log). Mirrors openai-agents-python 3229/3259.
+	functions := pr.Functions
+	if resumed {
+		functions = dropCompletedResumedCalls(functions, preStepItems)
+	}
+
 	// Human-in-the-loop: partition function calls into those ready to run, those
 	// awaiting approval, and rejected calls (already resolved to results).
-	toRun, interruptions, rejected, err := r.partitionByApproval(ctx, agent, pr.Functions)
+	toRun, interruptions, rejected, err := r.partitionByApproval(ctx, agent, functions)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +232,7 @@ func (r *runner) executeToolsAndSideEffects(
 	if err != nil {
 		return nil, err
 	}
-	functionResults := orderToolResults(pr.Functions, executed, rejected)
+	functionResults := orderToolResults(functions, executed, rejected)
 
 	var nestedInterruptions []*ToolApprovalItem
 	var nestedStates map[string]*RunState
@@ -260,7 +273,7 @@ func (r *runner) executeToolsAndSideEffects(
 	// the model can correct itself. hasToolsToRun stays true, forcing another turn.
 	for _, call := range pr.UnknownTools {
 		// Attach the tool-not-found error to the current agent span (Python
-		// parity: attach_error_to_current_span with {"tool_name": ...}). The tool
+		// parity: attach_error_to_current_span with {"tool_name":...}). The tool
 		// name is model-chosen metadata, not user data, so it is recorded
 		// regardless of the sensitive-data setting.
 		r.agentSpan.SetError("Tool not found", map[string]any{"tool_name": call.Name})
@@ -397,6 +410,37 @@ func orderToolResults(calls []toolRunFunction, executed, rejected []functionTool
 			out = append(out, r)
 			seen[r.callID] = true
 		}
+	}
+	return out
+}
+
+// dropCompletedResumedCalls removes function calls whose function_call_output
+// already exists among priorItems (the run's already-generated items). On the
+// first turn after a HITL resume the interrupted model response is re-processed,
+// so sibling calls that finished before the pause reappear as pending work; a
+// completed call must be neither re-run (duplicating side effects) nor re-output
+// (a duplicate call id the Responses API rejects). Its output was recorded
+// before the pause, so dropping the call is safe. Mirrors
+// openai-agents-python 3229/3259.
+func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []RunItem) []toolRunFunction {
+	if len(functions) == 0 {
+		return functions
+	}
+	completed := map[string]struct{}{}
+	for _, it := range priorItems {
+		if id, _, isOutput := runItemCallID(it); isOutput {
+			completed[id] = struct{}{}
+		}
+	}
+	if len(completed) == 0 {
+		return functions
+	}
+	out := make([]toolRunFunction, 0, len(functions))
+	for _, f := range functions {
+		if _, done := completed[f.Call.CallID]; done {
+			continue
+		}
+		out = append(out, f)
 	}
 	return out
 }
@@ -660,7 +704,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 		// An explicit approve/reject decision (typically on resume) wins before
 		// anything else: honoring it here skips re-invoking NeedsApprovalFunc,
 		// whose side effects or errors must not re-fire for a resolved call
-		// (Python parity: openai-agents-python #3229/#3259).
+		// (Python parity: openai-agents-python 3229/3259).
 		if store != nil {
 			if decision, decided := store.decisionFor(run.Call.Name, run.Call.CallID); decided {
 				if !decision.approved {

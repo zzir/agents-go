@@ -13,10 +13,13 @@ import (
 // format guarantees Go↔Go round-trips; it is not binary-compatible with the
 // Python SDK's RunState.
 //
-// 1.2 added nested agent-as-tool states and the reasoning-item id policy; both
-// are omitempty fields, so a state written at 1.2 without them decodes cleanly
-// (absent → nil / the default). 1.3 added the guardrail-result slices (input,
-// output, tool input/output), likewise omitempty.
+// The version is checked for STRICT equality on decode: a state stamped with any
+// other version — older or newer — is rejected rather than best-effort decoded
+// (see RunStateFromJSON; recorded in docs/python_differences.md). The list below
+// is why each version bumped, not a promise of cross-version compatibility: 1.1
+// replaced the per-call approval maps with per-tool entries, 1.2 added the nested
+// agent-as-tool states and the reasoning-item id policy, and 1.3 added the
+// guardrail-result slices (input, output, tool input/output).
 const RunStateSchemaVersion = "1.3"
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
@@ -253,14 +256,6 @@ type serialResponse struct {
 	Usage  *Usage            `json:"usage,omitempty"`
 }
 
-// serialApproval is the legacy per-key approval shape (schema ≤ 1.0). Still
-// read for back-compat; new states write serialApprovalEntry.
-type serialApproval struct {
-	Approved bool   `json:"approved"`
-	Rejected bool   `json:"rejected"`
-	Message  string `json:"message,omitempty"`
-}
-
 // serialApprovalEntry is the per-tool approval entry (schema ≥ 1.1): a permanent
 // allow/deny plus per-call id sets and messages.
 type serialApprovalEntry struct {
@@ -295,8 +290,6 @@ type serialRunState struct {
 	InterruptedResponse   *serialResponse                `json:"interrupted_response"`
 	Interruptions         []serialInterruption           `json:"interruptions"`
 	ApprovalEntries       map[string]serialApprovalEntry `json:"approval_entries,omitempty"`
-	Approvals             map[string]serialApproval      `json:"approvals_by_call_id,omitempty"`
-	ApprovalsByTool       map[string]serialApproval      `json:"approvals_by_tool,omitempty"`
 	Usage                 *Usage                         `json:"usage,omitempty"`
 	ReasoningItemIDPolicy string                         `json:"reasoning_item_id_policy,omitempty"`
 	// NestedToolStates holds the serialized paused RunState of each agent-as-tool
@@ -723,34 +716,6 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 			e.rejectedIDs[id] = true
 		}
 		maps.Copy(e.messages, se.Messages)
-	}
-	// Legacy format (schema ≤ 1.0): a per-call map and a per-tool ("always")
-	// map. The per-call map was keyed by call id without the tool name, so
-	// recover the tool name from the interruptions (which carry it per call).
-	toolByCall := map[string]string{}
-	for _, it := range st.Interruptions {
-		toolByCall[it.CallID] = it.ToolName
-	}
-	for callID, d := range in.Approvals {
-		tool := toolByCall[callID]
-		e := st.Approvals.entryFor(tool)
-		if d.Approved {
-			e.approvedIDs[callID] = true
-		} else if d.Rejected {
-			e.rejectedIDs[callID] = true
-			if d.Message != "" {
-				e.messages[callID] = d.Message
-			}
-		}
-	}
-	for tool, d := range in.ApprovalsByTool {
-		e := st.Approvals.entryFor(tool)
-		if d.Approved {
-			e.approvedAll = true
-		} else if d.Rejected {
-			e.rejectedAll = true
-			e.stickyMessage = d.Message
-		}
 	}
 	// Rebuild nested agent-as-tool states recursively, resolving each nested
 	// CurrentAgent via the same registry, so a resumed parent continues (not

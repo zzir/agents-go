@@ -269,8 +269,13 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 			if cerr != nil {
 				return nil, nil, nil, cerr
 			}
-			modelInput = combined
+			// Persistence diffs against the raw combined so the callback's chosen
+			// new items are saved intact, but the model input is scrubbed just like
+			// the default branch below: a callback that folds history can carry a
+			// dangling tool call or a duplicate that would otherwise 400 at the
+			// Responses API.
 			r.userInput = sessionAppendedItems(history, userInput, combined)
+			modelInput = normalizeStoredInput(combined)
 		} else if len(history) > 0 {
 			modelInput = make([]TResponseInputItem, 0, len(history)+len(userInput))
 			modelInput = append(modelInput, history...)
@@ -831,6 +836,13 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err := r.persistSessionItems(ctx); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
+			// Snapshot any nested states already cached on the run context under the
+			// mutex that guards them (run_context.go's nestedMu contract): a
+			// timed-out tool can leave an orphan goroutine that still calls
+			// takeNestedToolState concurrently with this read.
+			r.rc.nestedMu.Lock()
+			carriedNested := maps.Clone(r.rc.nestedToolStates)
+			r.rc.nestedMu.Unlock()
 			state := &RunState{
 				CurrentAgent:          currentAgent,
 				OriginalInput:         originalInput,
@@ -858,7 +870,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// continues them; merge with any already cached on the run context
 				// from an earlier resume of the same parent run. Serialized in
 				// RunState JSON, so a cross-process resume continues them too.
-				nestedToolStates: mergeNestedStates(r.rc.nestedToolStates, step.NestedStates),
+				nestedToolStates: mergeNestedStates(carriedNested, step.NestedStates),
 			}
 			return &RunResult{
 				Input: originalInput,
@@ -1029,29 +1041,37 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 	return nil
 }
 
-// safePersistBoundary returns the exclusive end index up to which
-// items[start:] can be safely persisted: it stops at the first function_call
-// whose matching function_call_output is absent from items[start:], holding
-// back that call and everything after it. All other turns leave every call
-// paired with its output, so the boundary is len(items).
+// safePersistBoundary returns the exclusive end index up to which items[start:]
+// can be safely persisted without ever storing a function_call that lacks its
+// matching function_call_output. It returns the largest end such that every
+// function_call in items[start:end] has its output also within items[start:end).
+//
+// Scanning left to right, the boundary advances to just past each point where no
+// call is left open (awaiting its output). A pending call — and everything
+// ordered after it, including a completed sibling's output that happens to sit
+// after it (as at a nested agent-as-tool pause: [call S, call A(pending),
+// output S]) — is held back until the missing outputs arrive on resume, so the
+// stored history never contains a dangling call. A turn whose calls are all
+// paired therefore persists in full.
 func safePersistBoundary(items []RunItem, start int) int {
 	if start >= len(items) {
 		return len(items)
 	}
-	haveOutput := map[string]struct{}{}
+	end := start
+	open := map[string]struct{}{}
 	for i := start; i < len(items); i++ {
-		if id, _, isOutput := runItemCallID(items[i]); isOutput {
-			haveOutput[id] = struct{}{}
+		id, isCall, isOutput := runItemCallID(items[i])
+		switch {
+		case isCall:
+			open[id] = struct{}{}
+		case isOutput:
+			delete(open, id)
+		}
+		if len(open) == 0 {
+			end = i + 1
 		}
 	}
-	for i := start; i < len(items); i++ {
-		if id, isCall, _ := runItemCallID(items[i]); isCall {
-			if _, ok := haveOutput[id]; !ok {
-				return i
-			}
-		}
-	}
-	return len(items)
+	return end
 }
 
 // runItemCallID reports a run item's function-call correlation id and whether it

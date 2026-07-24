@@ -244,14 +244,27 @@ func MarshalItems(items []TResponseInputItem) ([]byte, error) {
 
 // UnmarshalItems deserializes a JSON byte slice (as produced by MarshalItems)
 // back into input items. It tolerates nil, empty, and "null" inputs by returning
-// an empty slice.
+// a nil slice. Each element is decoded through UnmarshalInputItem so the union
+// fix-ups apply: assistant messages keep their output_text/refusal content (a
+// plain slice decode matches EasyInputMessageParam first and silently drops it),
+// and "easy" role messages without a "type" discriminator still decode instead
+// of failing. This keeps a MarshalItems→UnmarshalItems round-trip — the encoding
+// external Session backends use for DB storage — lossless.
 func UnmarshalItems(data []byte) ([]TResponseInputItem, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return nil, nil
 	}
-	var items []TResponseInputItem
-	if err := json.Unmarshal(data, &items); err != nil {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(data, &raws); err != nil {
 		return nil, fmt.Errorf("unmarshal session items: %w", err)
+	}
+	items := make([]TResponseInputItem, 0, len(raws))
+	for i, raw := range raws {
+		item, err := UnmarshalInputItem(raw)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal session item %d: %w", i, err)
+		}
+		items = append(items, item)
 	}
 	return items, nil
 }
