@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
-	"sync"
 
 	agents "github.com/zzir/agents-go/agents"
 )
@@ -44,13 +43,17 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 		"apply_patch",
 		applyPatchDesc,
 		func(ctx context.Context, _ *agents.ToolContext, args applyPatchArgs) (string, error) {
-			// Serialize all apply_patch commits process-wide (see applyPatchMu):
-			// a rollback must not race a concurrent patch's writes on the same
-			// filesystem, and exclusive-create only stops two Adds racing.
-			applyPatchMu.Lock()
-			defer applyPatchMu.Unlock()
 			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
 			defer cancel()
+			// Serialize all apply_patch commits process-wide (see applyPatchSem).
+			// Acquire via select so the timeout covers queueing time and a
+			// cancelled run doesn't block behind a slow patch on another sandbox.
+			select {
+			case applyPatchSem <- struct{}{}:
+				defer func() { <-applyPatchSem }()
+			case <-ctx.Done():
+				return "apply_patch failed: " + ctx.Err().Error(), nil
+			}
 			// A bad patch (parse / locate / missing file) is returned as text so
 			// the model can correct itself, matching read_file / write_file.
 			out, err := applyPatch(ctx, sb, args.Patch)
@@ -62,14 +65,16 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 	)
 }
 
-// applyPatchMu serializes ALL apply_patch commits process-wide. A rollback's
-// RemoveFile could otherwise delete a file a concurrent patch just wrote on the
-// same filesystem; exclusive-create only stops two Adds racing, not a rollback
-// racing an Update. A single global lock (rather than one keyed on the Sandbox)
-// keeps this correct without requiring Sandbox to be comparable and without
-// leaking a lock entry per closed sandbox — at the cost of serializing applies
-// across sandboxes, acceptable for a low-frequency, heavyweight operation.
-var applyPatchMu sync.Mutex
+// applyPatchSem is a global cap-1 semaphore serializing ALL apply_patch commits
+// process-wide. A rollback's RemoveFile could otherwise delete a file a
+// concurrent patch just wrote on the same filesystem; exclusive-create only
+// stops two Adds racing, not a rollback racing an Update. It is a channel (not a
+// sync.Mutex) so acquisition honors ctx.Done() — a cancelled/timed-out run
+// queued behind a slow patch unblocks instead of hanging. A single global gate
+// (rather than one keyed on the Sandbox) avoids requiring Sandbox to be
+// comparable and avoids leaking an entry per closed sandbox, at the cost of
+// serializing applies across sandboxes — fine for a low-frequency op.
+var applyPatchSem = make(chan struct{}, 1)
 
 // fsOp is a single filesystem mutation paired with its inverse, so a failed
 // multi-file commit can be rolled back from the in-memory snapshot.

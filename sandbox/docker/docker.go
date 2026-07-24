@@ -680,21 +680,28 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 			dir = "."
 		}
 		dirQ := shellQuote(dir)
-		// Write to a unique temp file in the target's dir, then publish it with a
-		// hard link: `ln` fails with EEXIST if the target exists (the atomic
-		// exclusive create). Unlike an in-place write, a SIGKILL on cancel/timeout
-		// can at worst leak the temp file — the real target is never a partial or
-		// corrupt file.
-		// Sweep stale .ap.* temp files a prior kill (cancel/timeout) may have left
-		// in this dir before making our own. apply_patch is serialized
-		// process-wide, so no live temp file is ever concurrently in use here.
-		script := "mkdir -p " + dirQ + " && find " + dirQ + " -maxdepth 1 -type f -name '.ap.*' -delete 2>/dev/null; tmp=$(mktemp " + dirQ + "/.ap.XXXXXX) && { printf %s " + shellQuote(b64) + " | base64 -d > \"$tmp\" && ln \"$tmp\" " + target + "; rc=$?; rm -f \"$tmp\"; exit $rc; }"
+		// Write to a Go-named unpredictable temp file, then publish it with a hard
+		// link (ln fails with EEXIST if the target exists — the atomic exclusive
+		// create). The name is generated here, NOT swept with a shell glob, so we
+		// never delete a user's file and can clean up exactly our own temp.
+		buf := make([]byte, 8)
+		if _, err := rand.Read(buf); err != nil {
+			return err
+		}
+		tmp := path.Join(dir, ".ap."+hex.EncodeToString(buf))
+		tmpQ := shellQuote(tmp)
+		script := "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; rc=$?; rm -f " + tmpQ + "; exit $rc"
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
 		if err != nil {
+			// Exec failed (a cancel/timeout may have SIGKILLed the shell before its
+			// own rm ran): remove our temp on a detached context, best-effort.
+			cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "rm -f " + tmpQ}})
+			cancelCleanup()
 			return err
 		}
 		if res.ExitCode != 0 {
-			if strings.Contains(res.Stderr, "cannot overwrite") || strings.Contains(res.Stderr, "exists") {
+			if strings.Contains(res.Stderr, "exists") {
 				return fmt.Errorf("docker sandbox: create %q: %w", p, fs.ErrExist)
 			}
 			return fmt.Errorf("docker sandbox: create %q: %s", p, res.Stderr)
