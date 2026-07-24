@@ -129,19 +129,52 @@ func TaskStatusFor(s RunStatus) string {
 // Last-Event-ID id line).
 type SeqSink func(SeqEnvelope)
 
+// runSegment is one execution of a run: the goroutine that started it (a fresh
+// StartRun or an approval resume) owns the segment and is the ONLY closer of
+// its done gate and the ONLY caller of its cancel. Because the closer captures
+// its OWN done/cancel by value, a resume that swaps a fresh segment onto the
+// record can never make two goroutines race one channel (the double-close)
+// or leak a finished segment's cancel context: each goroutine cancels and
+// closes exactly the segment it started.
+type runSegment struct {
+	done   chan struct{}
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+// finalize releases the segment: it cancels the segment's context (so the
+// context tree rooted at the hub root sheds this child instead of leaking it)
+// and closes the segment's done gate. Idempotent and safe to call from exactly
+// one goroutine — the one that started the segment.
+func (s *runSegment) finalize() {
+	s.once.Do(func() {
+		s.cancel()
+		close(s.done)
+	})
+}
+
 // runRecord is the hub's per-run state: its cancel hook, the replay buffer,
 // and the live subscribers fanned out to.
 type runRecord struct {
 	info   RunInfo
 	cancel context.CancelFunc
-	// done closes when the current run segment's goroutine has fully finished
-	// (postRun included) — the session-delete path waits on it so no write
-	// can land after the cascade removes the data.
+	// done mirrors the CURRENT segment's done gate (see runSegment): it closes
+	// when that segment's goroutine has fully finished (postRun included), so
+	// the session-delete path can wait on the live segment. A resume replaces it
+	// with the new segment's gate; the old goroutine still closes its own
+	// captured gate, never this one.
 	done chan struct{}
 	// stopAfterTurn, when set by the run goroutine, requests a graceful stop:
 	// the in-flight turn finishes (tools + session save) and the run ends cleanly
 	// before the next turn. Distinct from cancel (a hard context abort).
 	stopAfterTurn func()
+
+	// sendMu serializes a run's publishes end to end (seq assignment through
+	// fan-out) so a single subscriber can never observe events out of sequence
+	// when two goroutines publish concurrently. It is ordered BEFORE mu:
+	// publish takes sendMu, then mu briefly to mutate state, releases mu, and
+	// fans out still holding sendMu. No path takes sendMu while holding mu.
+	sendMu sync.Mutex
 
 	mu      sync.Mutex
 	seq     int
@@ -165,6 +198,13 @@ type RunHub struct {
 	mu        sync.Mutex
 	runs      map[string]*runRecord
 	bySession map[string]string // sessionID -> live run id (only while running)
+	// deleting marks sessions whose delete cascade is in progress. register and
+	// resume refuse them so a task's postRun drain (or any late resume) cannot
+	// start a fresh run on a session that is about to be removed. The set
+	// grows by one entry per deleted session over the process lifetime — a
+	// deleted session id is never reused, so the entries stay valid and the
+	// growth is bounded by the number of distinct deletes.
+	deleting map[string]bool
 }
 
 // NewRunHub returns a hub scoped to rootCtx and starts its GC loop.
@@ -177,9 +217,33 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 		maxTasks:  defaultMaxConcurrentTasks,
 		runs:      make(map[string]*runRecord),
 		bySession: make(map[string]string),
+		deleting:  make(map[string]bool),
 	}
 	go h.gcLoop()
 	return h
+}
+
+// markSessionDeleting records that sessionID's delete cascade has begun, so no
+// new run (fresh or resumed) is registered against it while it is torn down.
+func (h *RunHub) markSessionDeleting(sessionID string) {
+	h.mu.Lock()
+	h.deleting[sessionID] = true
+	h.mu.Unlock()
+}
+
+// SessionDeleting reports whether a session's delete cascade is in progress.
+func (h *RunHub) SessionDeleting(sessionID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.deleting[sessionID]
+}
+
+// ErrSessionDeleting is returned by register/resume when the session is being
+// torn down by a delete cascade — a new run must not be started on it.
+type ErrSessionDeleting struct{ SessionID string }
+
+func (e ErrSessionDeleting) Error() string {
+	return "session is being deleted: " + e.SessionID
 }
 
 // ErrSessionBusy is returned by register when the session already has a live run.
@@ -196,12 +260,17 @@ func (e ErrTaskLimit) Error() string {
 	return fmt.Sprintf("session already has %d live tasks; wait for one to finish or stop one", e.Limit)
 }
 
-// register creates a run record for a fresh run on sessionID and returns it
-// with a context descending from the hub root (not any connection). It fails
-// with ErrSessionBusy if the session already has a live run.
-func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runRecord, context.Context, error) {
+// register creates a run record for a fresh run on sessionID and returns the
+// segment the caller's goroutine owns plus a context descending from the hub
+// root (not any connection). The goroutine MUST call seg.finalize() exactly
+// once when it ends. It fails with ErrSessionBusy if the session already has a
+// live run, or ErrSessionDeleting if the session is being torn down.
+func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.deleting[sessionID] {
+		return nil, nil, ErrSessionDeleting{SessionID: sessionID}
+	}
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, ErrSessionBusy{RunID: existing}
 	}
@@ -209,15 +278,16 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 		return nil, nil, ErrTaskLimit{Limit: h.maxTasks}
 	}
 	ctx, cancel := context.WithCancel(h.rootCtx)
+	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := &runRecord{
 		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
-		cancel: cancel,
-		done:   make(chan struct{}),
+		cancel: seg.cancel,
+		done:   seg.done,
 		subs:   make(map[int]SeqSink),
 	}
 	h.runs[runID] = rec
 	h.bySession[sessionID] = runID
-	return rec, ctx, nil
+	return seg, ctx, nil
 }
 
 // LiveTaskCount reports how many live (running or input-required) task runs
@@ -247,26 +317,33 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 // its sequence counter, replay buffer, and subscribers — attached clients
 // simply keep receiving events, and SSE Last-Event-ID cursors stay valid.
 // If the record is gone (server restart, retention GC), a fresh record is
-// created under the same id with the sequence restarting at zero.
-// It fails with ErrSessionBusy if the session already has a live run.
-func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (context.Context, error) {
+// created under the same id with the sequence restarting at zero. The caller's
+// goroutine owns the returned segment and MUST call seg.finalize() when it ends.
+// It fails with ErrSessionBusy if the session already has a live run,
+// ErrSessionDeleting if the session is being torn down, or ErrRunNotResumable
+// if the record is not paused (a concurrent stop finished it).
+func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.deleting[sessionID] {
+		return nil, nil, ErrSessionDeleting{SessionID: sessionID}
+	}
 	if existing, ok := h.bySession[sessionID]; ok {
-		return nil, ErrSessionBusy{RunID: existing}
+		return nil, nil, ErrSessionBusy{RunID: existing}
 	}
 	ctx, cancel := context.WithCancel(h.rootCtx)
+	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := h.runs[runID]
 	if rec == nil {
 		rec = &runRecord{
 			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
-			cancel: cancel,
-			done:   make(chan struct{}),
+			cancel: seg.cancel,
+			done:   seg.done,
 			subs:   make(map[int]SeqSink),
 		}
 		h.runs[runID] = rec
 		h.bySession[sessionID] = runID
-		return ctx, nil
+		return seg, ctx, nil
 	}
 	rec.mu.Lock()
 	// Only a paused run resumes. A record finished by a concurrent stop (or a
@@ -276,25 +353,50 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 		st := rec.info.Status
 		rec.mu.Unlock()
 		cancel()
-		return nil, fmt.Errorf("run %s is %s and cannot be resumed", runID, st)
+		return nil, nil, ErrRunNotResumable{RunID: runID, Status: st}
 	}
-	rec.cancel = cancel
+	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
 	rec.info.GracefulStop = false
-	// A fresh segment gets a fresh done gate (the previous one is closed).
-	rec.done = make(chan struct{})
+	// Drop the previous segment's graceful-stop hook: it closed over the old
+	// StreamedResult and would stop the wrong stream. The new segment
+	// installs its own via setStopHook once its StreamedResult exists.
+	rec.stopAfterTurn = nil
+	// A fresh segment gets a fresh done gate; the previous segment's goroutine
+	// still owns and closes its own (see runSegment), so this swap is safe.
+	rec.done = seg.done
 	if task != nil {
 		rec.info.Task = task
 	}
 	rec.endedAt = time.Time{}
 	rec.mu.Unlock()
 	h.bySession[sessionID] = runID
-	return ctx, nil
+	return seg, ctx, nil
+}
+
+// ErrRunNotResumable is returned by resume when a run's segment is not paused
+// (Interrupted) — e.g. a concurrent stop finalized it. Handlers map it to 409:
+// the run reached a terminal state and cannot be continued.
+type ErrRunNotResumable struct {
+	RunID  string
+	Status RunStatus
+}
+
+func (e ErrRunNotResumable) Error() string {
+	return fmt.Sprintf("run %s is %s and cannot be resumed", e.RunID, e.Status)
 }
 
 // publish assigns the next sequence number to env, appends it to the run's
 // replay buffer, advances the terminal status for terminal event types, and
 // fans the event out to all current subscribers.
+//
+// sendMu is held across the whole operation — seq assignment through fan-out —
+// so two concurrent publishes on one run are fully serialized and a single
+// subscriber can never receive a higher seq before a lower one. The
+// record lock (mu) is taken only briefly to mutate shared state, never during
+// the fan-out, so subscribe/info/unsubscribe stay responsive while events
+// deliver. The sinks are non-blocking (WS/SSE enqueue with a default branch),
+// so holding sendMu across delivery cannot stall other runs.
 func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -302,6 +404,9 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 	if rec == nil {
 		return
 	}
+
+	rec.sendMu.Lock()
+	defer rec.sendMu.Unlock()
 
 	rec.mu.Lock()
 	rec.seq++
@@ -392,23 +497,6 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 	}
 	rec.endedAt = time.Now()
 	rec.mu.Unlock()
-}
-
-// markDone closes the current segment's done gate. Called exactly once by the
-// run goroutine as its last act.
-func (h *RunHub) markDone(runID string) {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
-	if rec == nil {
-		return
-	}
-	rec.mu.Lock()
-	done := rec.done
-	rec.mu.Unlock()
-	if done != nil {
-		close(done)
-	}
 }
 
 // waitDone blocks until the run's current segment has fully finished or the

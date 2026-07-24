@@ -4,7 +4,52 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
 )
+
+// TestHandleCallbackIdempotentAndNonBlocking locks: a duplicate OAuth
+// callback must neither double-deliver nor block forever on a full, unread
+// channel. The pending entry is consumed under the lock on the first callback,
+// and the delivery send is non-blocking.
+func TestHandleCallbackIdempotentAndNonBlocking(t *testing.T) {
+	c := NewOAuthCoordinator(nil)
+
+	// (1) Idempotency: the first callback delivers and consumes the entry; a
+	// second for the same state finds nothing instead of racing or re-delivering.
+	const state = "st-1"
+	codeCh := make(chan *auth.AuthorizationResult, 1)
+	c.mu.Lock()
+	c.pending[state] = &OAuthPending{AuthorizeURL: "http://x", codeCh: codeCh}
+	c.mu.Unlock()
+
+	if err := c.HandleCallback(state, "code-1"); err != nil {
+		t.Fatalf("first callback: %v", err)
+	}
+	if got := <-codeCh; got.Code != "code-1" {
+		t.Fatalf("delivered code = %q, want code-1", got.Code)
+	}
+	if err := c.HandleCallback(state, "code-2"); err == nil {
+		t.Fatal("duplicate callback should report unknown/expired state (consumed once)")
+	}
+
+	// (2) Non-blocking: even with a full, unread channel (the fetcher already
+	// gave up), delivery must not park the goroutine forever.
+	const state2 = "st-2"
+	full := make(chan *auth.AuthorizationResult, 1)
+	full <- &auth.AuthorizationResult{} // pre-fill: no capacity, no receiver
+	c.mu.Lock()
+	c.pending[state2] = &OAuthPending{AuthorizeURL: "http://y", codeCh: full}
+	c.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { _ = c.HandleCallback(state2, "code-3"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleCallback blocked on a full channel ")
+	}
+}
 
 // A stale interactive OAuth attempt (the user refreshed mid-flow) must be
 // cancelled and awaited when a fresh authorize arrives, so the connect slot is

@@ -6,12 +6,37 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
+
+// approvalSettleTimeout bounds how long ResolveApproval waits for the paused
+// run segment's teardown (postRun) to finish before claiming the approval. In
+// the common case the segment settled long ago and the wait returns at once;
+// the bound only caps a pathological stall so an approve never hangs.
+const approvalSettleTimeout = 5 * time.Second
+
+// ApprovalVoidError reports that an approval could not be applied because its
+// background task reached a terminal state first (a concurrent stop or reap
+// won). It is a conflict, not a server fault — handlers map it to 409.
+type ApprovalVoidError struct{ TaskID string }
+
+func (e *ApprovalVoidError) Error() string {
+	return "task " + e.TaskID + " is no longer awaiting approval; the decision is void"
+}
+
+// ApprovalNotReadyError reports that the paused run had not finished settling
+// into an approvable state by the time the decision arrived. The pending row is
+// preserved, so the decision can simply be retried. Handlers map it to 409.
+type ApprovalNotReadyError struct{ RunID string }
+
+func (e *ApprovalNotReadyError) Error() string {
+	return "run " + e.RunID + " is not yet ready for an approval decision; retry"
+}
 
 // persistInterruption serializes an interrupted run's SDK state and its
 // pending tool calls to the store, so the approval survives a restart and can
@@ -121,13 +146,22 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", "", err
 	}
 
+	// The claim and the resume that follows form a multi-step migration across
+	// two tables plus the hub. Once the pending row is deleted, bailing out
+	// half-done would strand the paused run — so every MUTATION below runs on a
+	// context detached from the request's cancellation: a client that
+	// disconnects mid-approve no longer aborts the migration in the middle.
+	// Reads still use the request ctx; a disconnect there aborts before any
+	// state changed, which is safe to retry.
+	mctx := context.WithoutCancel(ctx)
+
 	// A RunState written by an older server binary can never be resumed — its
 	// schema version no longer matches, and RunStateFromJSON enforces strict
 	// equality. Detect that up front so it surfaces as a clear, actionable error
 	// instead of a masked 500, and discard the stale row so it stops wedging the
 	// session (a masked 500 on every approve/reject retry, row never deleted).
 	if v := pendingStateSchemaVersion(pending.State); v != agents.RunStateSchemaVersion {
-		if delErr := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); delErr != nil {
+		if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
 			zerolog.Ctx(ctx).Error().Err(delErr).Str("run_id", pending.RunID).Msg("discarding stale pending approval")
 		}
 		return "", pending.SessionID, &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
@@ -159,25 +193,45 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		state.Reject(item, false, reason)
 	}
 
-	// Deleting the record is the exclusive claim on this approval: Delete
-	// reports ErrNotFound when the row is already gone, so of two concurrent
-	// decisions exactly one proceeds. It also has to happen before resuming —
-	// the continuation may itself interrupt and persist a fresh record.
-	if err := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); err != nil {
+	// Wait for the paused segment's teardown to complete before claiming. The
+	// run goroutine's postRun marks a task input_required (working ->
+	// input_required) and only THEN closes the segment's done gate, so waiting
+	// on it guarantees the task row is already in the state ReclaimWorking
+	// expects. This closes the window: a fast approve that raced ahead of
+	// postRun used to delete the pending row, then fail ReclaimWorking (task
+	// still "working"), and — with the row gone — strand the approval forever.
+	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
+
+	// Deleting the record is the exclusive claim on this approval vs. a
+	// concurrent approve: Delete reports ErrNotFound when the row is already
+	// gone, so of two racing decisions exactly one proceeds. It must precede the
+	// resume — the continuation may itself interrupt and persist a fresh record.
+	if err := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); err != nil {
 		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
 	}
 
 	// For a task's approval the row CAS (input_required -> working) is the
-	// second claim: a stop that finalized the task meanwhile wins, and this
-	// resume is abandoned — the discarded approval row is correct then (the
-	// task is dead; nothing may revive it).
+	// second claim, mutually exclusive with a concurrent stop's Finalize.
 	if taskMeta != nil && taskMeta.TaskID != "" {
-		won, cerr := r.Deps.Tasks.ReclaimWorking(ctx, taskMeta.TaskID)
+		won, cerr := r.Deps.Tasks.ReclaimWorking(mctx, taskMeta.TaskID)
 		if cerr != nil {
+			// A store error is not a definitive loss — put the row back so the
+			// decision survives to be retried instead of vanishing with the run.
+			r.restorePendingApproval(mctx, pending)
 			return "", pending.SessionID, fmt.Errorf("reclaiming task %s: %w", taskMeta.TaskID, cerr)
 		}
 		if !won {
-			return "", pending.SessionID, fmt.Errorf("task %s was stopped; the approval is void", taskMeta.TaskID)
+			// The task is no longer reclaimable. If it went terminal a stop/reap
+			// won the race and the decision is genuinely void (the discarded row
+			// is correct — nothing may revive a cancelled task). If it is somehow
+			// still non-terminal (the settle wait should have prevented this),
+			// restore the row so the approval is not lost — defense for it.
+			cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID)
+			if gerr == nil && !isTerminalTaskStatus(cur.Status) {
+				r.restorePendingApproval(mctx, pending)
+				return "", pending.SessionID, &ApprovalNotReadyError{RunID: pending.RunID}
+			}
+			return "", pending.SessionID, &ApprovalVoidError{TaskID: taskMeta.TaskID}
 		}
 	}
 
@@ -185,22 +239,42 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// interrupted and resumed halves — shares one event stream and trace group.
 	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
 	if err != nil {
-		// Give the approval back (e.g. the session has a live run right now)
-		// so the decision can be retried once the session frees up — losing
-		// the row here would strand the paused run forever. The task row goes
-		// back to input_required with it.
-		if saveErr := r.Deps.PendingApprovals.Save(context.Background(), pending); saveErr != nil {
-			zerolog.Ctx(ctx).Error().Err(saveErr).Str("run_id", pending.RunID).
-				Msg("restoring pending approval after failed resume")
-		}
+		// Give the approval back (e.g. the session has a live run right now) so
+		// the decision can be retried once the session frees up — losing the row
+		// here would strand the paused run forever. The task row goes back to
+		// input_required with it.
+		r.restorePendingApproval(mctx, pending)
 		if taskMeta != nil && taskMeta.TaskID != "" {
-			if merr := r.Deps.Tasks.MarkInputRequired(ctx, taskMeta.TaskID); merr != nil {
+			if merr := r.Deps.Tasks.MarkInputRequired(mctx, taskMeta.TaskID); merr != nil {
 				zerolog.Ctx(ctx).Warn().Err(merr).Str("task_id", taskMeta.TaskID).Msg("restoring task input_required after failed resume")
 			}
 		}
 		return "", pending.SessionID, err
 	}
+
+	// A stop may have finalized the task cancelled in the narrow window between
+	// our ReclaimWorking and the resumed segment registering as live — its own
+	// cancel would then have found no live run to stop. Re-check: if the task is
+	// now terminal, the run we just started is a zombie (executing under a
+	// cancelled task), so cancel it to keep execution consistent with the row.
+	if taskMeta != nil && taskMeta.TaskID != "" {
+		if cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID); gerr == nil && isTerminalTaskStatus(cur.Status) {
+			r.hub.Cancel(runID)
+		}
+	}
 	return runID, pending.SessionID, nil
+}
+
+// restorePendingApproval writes a claimed pending-approval row back after a
+// failed claim/resume, so a paused run is never stranded by a lost row. The
+// row's serialized state is the original (pre-decision) one, so a retry
+// re-applies the decision cleanly. Detached context — the restore must land
+// even if the request that triggered it is gone.
+func (r *Runner) restorePendingApproval(ctx context.Context, pending *store.PendingApproval) {
+	if saveErr := r.Deps.PendingApprovals.Save(context.WithoutCancel(ctx), pending); saveErr != nil {
+		zerolog.Ctx(ctx).Error().Err(saveErr).Str("run_id", pending.RunID).
+			Msg("restoring pending approval after failed claim/resume")
+	}
 }
 
 // StaleApprovalStateError is returned when a persisted RunState cannot be

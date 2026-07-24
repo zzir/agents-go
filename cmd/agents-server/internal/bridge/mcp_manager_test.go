@@ -11,7 +11,52 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/mcp"
 )
+
+// TestFinishConnectDiscardsSupersededHandshake locks: a handshake that
+// completes AFTER its config was reconciled away (Disconnect) must have its
+// fresh connection discarded, not installed — otherwise a reconfigured or
+// disabled server stays connected with stale config. Disconnect also cancels
+// the in-flight handshake so it releases the connect slot promptly.
+func TestFinishConnectDiscardsSupersededHandshake(t *testing.T) {
+	m := NewMcpManager(context.Background(), nil)
+
+	done, hctx, gen, err := m.beginConnect(context.Background(), "srv1")
+	if err != nil || done {
+		t.Fatalf("beginConnect: done=%v err=%v", done, err)
+	}
+
+	// Reconcile drops the connection mid-handshake.
+	_ = m.Disconnect("srv1")
+	if hctx.Err() == nil {
+		t.Fatal("Disconnect must cancel the in-flight handshake context ")
+	}
+
+	// The stale handshake still "succeeds" and hands finishConnect a server; the
+	// superseded generation must cause it to be discarded and the slot released.
+	if err := m.finishConnect("srv1", gen, &mcp.Server{}, nil); err != nil {
+		t.Fatalf("finishConnect (superseded): %v", err)
+	}
+	if m.IsConnected("srv1") {
+		t.Fatal("a superseded handshake's server was installed ")
+	}
+	if m.IsConnecting("srv1") {
+		t.Fatal("the connect slot was not released after a superseded finishConnect")
+	}
+
+	// A fresh connect proceeds and its current-generation result installs.
+	done, _, gen2, err := m.beginConnect(context.Background(), "srv1")
+	if err != nil || done {
+		t.Fatalf("re-beginConnect: done=%v err=%v", done, err)
+	}
+	if err := m.finishConnect("srv1", gen2, &mcp.Server{}, nil); err != nil {
+		t.Fatalf("finishConnect (fresh): %v", err)
+	}
+	if !m.IsConnected("srv1") {
+		t.Fatal("a current-generation handshake should install its server")
+	}
+}
 
 // A handshake in flight must not block state reads. beginConnect claims the
 // slot and releases the manager lock (the handshake runs outside it), so
@@ -20,7 +65,7 @@ func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
 	m := NewMcpManager(context.Background(), nil)
 
 	// Simulate a claimed-but-not-finished connect (a slow handshake in flight).
-	done, err := m.beginConnect("srv1")
+	done, _, gen, err := m.beginConnect(context.Background(), "srv1")
 	if err != nil || done {
 		t.Fatalf("beginConnect: done=%v err=%v", done, err)
 	}
@@ -50,19 +95,19 @@ func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
 	}
 
 	// A concurrent Connect for the same server is deduped, not run twice.
-	if _, err := m.beginConnect("srv1"); !errors.Is(err, ErrConnectInProgress) {
+	if _, _, _, err := m.beginConnect(context.Background(), "srv1"); !errors.Is(err, ErrConnectInProgress) {
 		t.Fatalf("second beginConnect: err = %v, want ErrConnectInProgress", err)
 	}
 
 	// Finishing the claim clears the in-progress flag; a later beginConnect for
 	// the (still unconnected) server can proceed again.
-	if err := m.finishConnect("srv1", nil, errors.New("handshake failed")); err == nil {
+	if err := m.finishConnect("srv1", gen, nil, errors.New("handshake failed")); err == nil {
 		t.Fatal("finishConnect should surface the handshake error")
 	}
 	if m.IsConnecting("srv1") {
 		t.Fatal("IsConnecting should be false after the handshake finished")
 	}
-	if done, err := m.beginConnect("srv1"); done || err != nil {
+	if done, _, _, err := m.beginConnect(context.Background(), "srv1"); done || err != nil {
 		t.Fatalf("after a failed connect, beginConnect should be claimable again: done=%v err=%v", done, err)
 	}
 }

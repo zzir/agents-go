@@ -134,20 +134,22 @@ func (s *PendingApprovalStore) Delete(ctx context.Context, runID string) error {
 }
 
 // DeleteOlderThan removes pending approvals created before cutoff and returns
-// the removed rows (so the caller can annotate the affected sessions).
+// the rows it actually removed (so the caller can annotate the affected
+// sessions and finalize their tasks).
+//
+// It uses DELETE... RETURNING so the returned set is EXACTLY what this
+// statement deleted, atomically. A plain SELECT-then-DELETE could return a row
+// that a concurrent approve deleted — and already resumed — in the gap between
+// the two statements; the reaper would then finalize that just-approved task as
+// cancelled, killing a live run. With RETURNING, any row an approve
+// claimed first is simply absent from the result, so the reaper only ever acts
+// on approvals it genuinely expired.
 func (s *PendingApprovalStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) ([]PendingApproval, error) {
 	var removed []PendingApproval
-	if err := s.db.NewSelect().Model(&removed).
+	if err := s.db.NewDelete().Model(&removed).
 		Where("created_at < ?", cutoff).
+		Returning("*").
 		Scan(ctx); err != nil {
-		return nil, fmt.Errorf("scanning expired approvals: %w", err)
-	}
-	if len(removed) == 0 {
-		return nil, nil
-	}
-	if _, err := s.db.NewDelete().Model((*PendingApproval)(nil)).
-		Where("created_at < ?", cutoff).
-		Exec(ctx); err != nil {
 		return nil, fmt.Errorf("deleting expired approvals: %w", err)
 	}
 	return removed, nil

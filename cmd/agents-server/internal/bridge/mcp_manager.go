@@ -27,11 +27,25 @@ type McpManager struct {
 	settings *store.SettingStore
 	mu       sync.RWMutex
 	servers  map[string]*mcp.Server
-	// connecting marks servers whose handshake is in flight. The handshake
-	// runs OUTSIDE mu (it does network/subprocess I/O and must not block
-	// Get/IsConnected/Disconnect); this set dedups concurrent Connect calls
-	// for the same server without holding the lock across the handshake.
-	connecting map[string]bool
+	// connecting marks servers whose handshake is in flight, carrying the
+	// handshake's cancel so Disconnect can abort it. The handshake runs OUTSIDE
+	// mu (it does network/subprocess I/O and must not block
+	// Get/IsConnected/Disconnect); this map dedups concurrent Connect calls for
+	// the same server without holding the lock across the handshake.
+	connecting map[string]*connectState
+	// connectGen is bumped on every Disconnect so a handshake that completes
+	// AFTER its config was reconciled away is discarded rather than installed —
+	// the fix for the reconcile-vs-handshake race. A handshake captures
+	// the generation at beginConnect and finishConnect stores its result only if
+	// the generation still matches.
+	connectGen map[string]uint64
+}
+
+// connectState is one in-flight handshake: its cancel (so Disconnect can abort
+// it) and the connectGen it captured (so a superseded result is discarded).
+type connectState struct {
+	cancel context.CancelFunc
+	gen    uint64
 }
 
 // NewMcpManager returns a new manager with no active connections. rootCtx
@@ -44,7 +58,8 @@ func NewMcpManager(rootCtx context.Context, settings *store.SettingStore) *McpMa
 		rootCtx:    rootCtx,
 		settings:   settings,
 		servers:    make(map[string]*mcp.Server),
-		connecting: make(map[string]bool),
+		connecting: make(map[string]*connectState),
+		connectGen: make(map[string]uint64),
 	}
 }
 
@@ -59,29 +74,44 @@ const mcpAutoConnectTimeout = 30 * time.Second
 // beginConnect claims the right to handshake id. It returns done=true if the
 // server is already connected (caller should no-op), or ErrConnectInProgress if
 // another goroutine holds the claim. On a nil error with done=false the caller
-// owns the claim and MUST call finishConnect.
-func (m *McpManager) beginConnect(id string) (done bool, err error) {
+// owns the claim and MUST call finishConnect with the returned generation and a
+// handshake bounded by the returned context (which Disconnect can cancel).
+func (m *McpManager) beginConnect(ctx context.Context, id string) (done bool, hctx context.Context, gen uint64, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.servers[id]; ok {
-		return true, nil
+		return true, nil, 0, nil
 	}
-	if m.connecting[id] {
-		return false, ErrConnectInProgress
+	if m.connecting[id] != nil {
+		return false, nil, 0, ErrConnectInProgress
 	}
-	m.connecting[id] = true
-	return false, nil
+	hctx, cancel := context.WithCancel(ctx)
+	gen = m.connectGen[id]
+	m.connecting[id] = &connectState{cancel: cancel, gen: gen}
+	return false, hctx, gen, nil
 }
 
-// finishConnect releases the claim and, on success, stores srv. A server that
-// appeared meanwhile (should not happen given the claim) is closed rather than
-// leaked.
-func (m *McpManager) finishConnect(id string, srv *mcp.Server, connErr error) error {
+// finishConnect releases the claim and, on success, stores srv — UNLESS the
+// server's generation advanced while we handshook (a Disconnect / reconcile
+// superseded this attempt), in which case the fresh connection is closed and
+// discarded so a reconfigured or disabled server is never left connected with
+// stale config. A server that appeared meanwhile (should not happen given
+// the claim) is likewise closed rather than leaked.
+func (m *McpManager) finishConnect(id string, gen uint64, srv *mcp.Server, connErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.connecting, id)
+	// Clear the slot only if it is still ours: a Disconnect that cancelled us
+	// leaves the entry for us to remove, but a newer beginConnect could not have
+	// replaced it (the slot was held), so an equal-generation check is enough.
+	if cs := m.connecting[id]; cs != nil && cs.gen == gen {
+		delete(m.connecting, id)
+	}
 	if connErr != nil {
 		return connErr
+	}
+	if m.connectGen[id] != gen {
+		_ = srv.Close()
+		return nil
 	}
 	if _, ok := m.servers[id]; ok {
 		_ = srv.Close()
@@ -126,24 +156,25 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 	}
 	opts := buildMcpOptions(cfg.Name, retry, useStructured)
 
-	done, err := m.beginConnect(cfg.ID)
+	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
 		return err // already connected (nil) or another connect is in flight
 	}
 
-	// Handshake OUTSIDE the lock: this does subprocess spawn / network I/O and
-	// a slow server here must not block Get/IsConnected/Disconnect/Connect.
+	// Handshake OUTSIDE the lock, under hctx (which Disconnect can cancel): this
+	// does subprocess spawn / network I/O and a slow server here must not block
+	// Get/IsConnected/Disconnect/Connect.
 	var srv *mcp.Server
 	switch cfg.TransportType {
 	case "stdio":
-		srv, err = mcp.NewStdioServer(ctx, cfg.Name, cmd, opts)
+		srv, err = mcp.NewStdioServer(hctx, cfg.Name, cmd, opts)
 	case "streamable_http":
-		srv, err = mcp.NewWithTransport(ctx, cfg.Name, transport, opts)
+		srv, err = mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
 	}
 	if err != nil {
 		err = fmt.Errorf("connecting MCP server %s: %w", cfg.Name, err)
 	}
-	return m.finishConnect(cfg.ID, srv, err)
+	return m.finishConnect(cfg.ID, gen, srv, err)
 }
 
 // Reconcile makes the live connection match a server's desired config after a
@@ -244,7 +275,7 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 // OAuth handler. It is called from OAuthCoordinator in a goroutine and blocks
 // until the OAuth flow completes (or the context is cancelled).
 func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
-	done, err := m.beginConnect(cfg.ID)
+	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
 		return err
 	}
@@ -255,11 +286,11 @@ func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpSer
 	}
 	transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 
-	srv, cerr := mcp.NewWithTransport(ctx, cfg.Name, transport, buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent))
+	srv, cerr := mcp.NewWithTransport(hctx, cfg.Name, transport, buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent))
 	if cerr != nil {
 		cerr = fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, cerr)
 	}
-	return m.finishConnect(cfg.ID, srv, cerr)
+	return m.finishConnect(cfg.ID, gen, srv, cerr)
 }
 
 // buildMcpOptions is the single place every MCP connection's mcp.Options is
@@ -279,14 +310,24 @@ func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredConte
 }
 
 // Disconnect closes an MCP server connection and removes it from the manager.
+// It also invalidates any in-flight handshake for the same id: the generation
+// is bumped (so a handshake completing after this returns is discarded, not
+// installed) and the handshake's context is cancelled (so it releases the
+// connect slot promptly instead of after its own timeout) — the fix for a
+// reconcile racing a slow connect.
 func (m *McpManager) Disconnect(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.connectGen[id]++
+	if cs := m.connecting[id]; cs != nil {
+		cs.cancel()
+	}
 	srv, ok := m.servers[id]
 	if !ok {
+		m.mu.Unlock()
 		return nil
 	}
 	delete(m.servers, id)
+	m.mu.Unlock()
 	return srv.Close()
 }
 
@@ -312,7 +353,7 @@ func (m *McpManager) IsConnected(id string) bool {
 func (m *McpManager) IsConnecting(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.connecting[id]
+	return m.connecting[id] != nil
 }
 
 // CloseAll closes all active connections.

@@ -37,15 +37,15 @@ type SessionApproval struct {
 // ListBySession responds with the pending approvals for the session
 // identified by the id path parameter.
 //
-//	@Summary		List pending approvals
+//	@Summary List pending approvals
 //	@Description	Tool calls the session is paused on, awaiting a human decision. Survives restarts.
-//	@Tags			approvals
-//	@Produce		json
-//	@Param			id	path		string	true	"Session ID"
-//	@Success		200	{array}		SessionApproval
-//	@Failure		500	{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/sessions/{id}/approvals [get]
+//	@Tags approvals
+//	@Produce json
+//	@Param id	path string	true	"Session ID"
+//	@Success 200	{array} SessionApproval
+//	@Failure 500	{object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /sessions/{id}/approvals [get]
 func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	ctx := c.Request.Context()
 	items, err := h.store.ListBySession(ctx, c.Param("id"))
@@ -83,19 +83,19 @@ type approvalResultResp struct {
 // Approve approves the pending tool call identified by the tool_call_id path
 // parameter and resumes its run.
 //
-//	@Summary		Approve tool call
+//	@Summary Approve tool call
 //	@Description	Approves a pending tool call and resumes the run under its original run id; stream it via GET /runs/{id}/events (existing cursors stay valid). For exec_command, the optional body scope extends the approval: "once" (default), "same" (trust this exact command for the session), or "all" (trust every command).
-//	@Tags			approvals
-//	@Accept			json
-//	@Produce		json
-//	@Param			tool_call_id	path		string		true	"Tool call ID"
-//	@Param			body			body		approveReq	false	"Optional approval scope"
-//	@Success		202				{object}	approvalResultResp
-//	@Failure		404				{object}	ErrorResponse
-//	@Failure		409				{object}	ErrorResponse	"session already has an active run"
-//	@Failure		500				{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/approvals/{tool_call_id}/approve [post]
+//	@Tags approvals
+//	@Accept json
+//	@Produce json
+//	@Param tool_call_id	path string true	"Tool call ID"
+//	@Param body body approveReq	false	"Optional approval scope"
+//	@Success 202 {object}	approvalResultResp
+//	@Failure 404 {object}	ErrorResponse
+//	@Failure 409 {object}	ErrorResponse	"session already has an active run"
+//	@Failure 500 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /approvals/{tool_call_id}/approve [post]
 func (h *ApprovalHandler) Approve(c *gin.Context) {
 	var req approveReq
 	_ = c.ShouldBindJSON(&req) // body optional; absent → once
@@ -105,19 +105,19 @@ func (h *ApprovalHandler) Approve(c *gin.Context) {
 // Reject rejects the pending tool call identified by the tool_call_id path
 // parameter (with an optional reason) and resumes its run.
 //
-//	@Summary		Reject tool call
+//	@Summary Reject tool call
 //	@Description	Rejects a pending tool call and resumes the run under its original run id so the model can react.
-//	@Tags			approvals
-//	@Accept			json
-//	@Produce		json
-//	@Param			tool_call_id	path		string		true	"Tool call ID"
-//	@Param			body			body		rejectReq	false	"Optional rejection reason"
-//	@Success		202				{object}	approvalResultResp
-//	@Failure		404				{object}	ErrorResponse
-//	@Failure		409				{object}	ErrorResponse	"session already has an active run"
-//	@Failure		500				{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/approvals/{tool_call_id}/reject [post]
+//	@Tags approvals
+//	@Accept json
+//	@Produce json
+//	@Param tool_call_id	path string true	"Tool call ID"
+//	@Param body body rejectReq	false	"Optional rejection reason"
+//	@Success 202 {object}	approvalResultResp
+//	@Failure 404 {object}	ErrorResponse
+//	@Failure 409 {object}	ErrorResponse	"session already has an active run"
+//	@Failure 500 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /approvals/{tool_call_id}/reject [post]
 func (h *ApprovalHandler) Reject(c *gin.Context) {
 	var req rejectReq
 	_ = c.ShouldBindJSON(&req) // body is optional
@@ -147,7 +147,11 @@ func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.App
 
 func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 	var busy bridge.ErrSessionBusy
+	var deleting bridge.ErrSessionDeleting
+	var notResumable bridge.ErrRunNotResumable
 	var stale *bridge.StaleApprovalStateError
+	var void *bridge.ApprovalVoidError
+	var notReady *bridge.ApprovalNotReadyError
 	switch {
 	case errors.As(err, &busy):
 		conflict(c, "session already has an active run: "+busy.RunID)
@@ -155,6 +159,19 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 		// Unresumable-by-version: a clear 409 with the reason, not a masked 500.
 		// The stale record was already discarded, so the run is gone.
 		conflict(c, stale.Error())
+	case errors.As(err, &notResumable):
+		// The paused run reached a terminal state (a concurrent stop won) and
+		// cannot be continued — a state conflict, not a server fault.
+		conflict(c, notResumable.Error())
+	case errors.As(err, &void):
+		// The task was stopped/reaped before the decision landed — 409, not 500.
+		conflict(c, void.Error())
+	case errors.As(err, &notReady):
+		// The paused run had not finished settling; the row is preserved for a
+		// retry, so it is a transient conflict.
+		conflict(c, notReady.Error())
+	case errors.As(err, &deleting):
+		conflict(c, deleting.Error())
 	case errors.Is(err, store.ErrNotFound):
 		notFound(c)
 	default:

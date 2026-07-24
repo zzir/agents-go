@@ -90,11 +90,16 @@ func (r *Runner) SpawnTask(ctx context.Context, parentSessionID, agentName, inpu
 		ParentSandboxID:     parentSandboxID,
 		Status:              protocol.TaskWorking,
 	}
+	// Rollback deletes run on a context detached from the tool's: SpawnTask is
+	// invoked from within the parent run, so a parent cancel racing the spawn
+	// would kill ctx and leave these cleanups half-done — a ghost child session
+	// the row rollback never removed.
+	cleanupCtx := context.WithoutCancel(ctx)
 	if err := r.Deps.Tasks.Create(ctx, task); err != nil {
 		// Best-effort: without a tasks row the child session would surface in
 		// the sidebar (the list filter keys on the row), a ghost the user can
 		// open but nothing owns.
-		if delErr := r.Deps.Sessions.Delete(ctx, child.ID); delErr != nil {
+		if delErr := r.Deps.Sessions.Delete(cleanupCtx, child.ID); delErr != nil {
 			zerolog.Ctx(ctx).Warn().Err(delErr).Str("session_id", child.ID).Msg("orphan task session cleanup")
 		}
 		return nil, fmt.Errorf("spawn_task: %w", err)
@@ -105,10 +110,12 @@ func (r *Runner) SpawnTask(ctx context.Context, parentSessionID, agentName, inpu
 		// The run never started: unwind the row and the child session instead
 		// of leaving a failed husk. The tool error is the model's record of
 		// this attempt; a row would only pollute the task list on retries.
-		if delErr := r.Deps.Tasks.DeleteByID(ctx, taskID); delErr != nil {
+		// Detached ctx so a parent cancel racing the spawn can't leave the row
+		// or session behind.
+		if delErr := r.Deps.Tasks.DeleteByID(cleanupCtx, taskID); delErr != nil {
 			zerolog.Ctx(ctx).Warn().Err(delErr).Str("task_id", taskID).Msg("unstarted task row cleanup")
 		}
-		if delErr := r.Deps.Sessions.Delete(ctx, child.ID); delErr != nil {
+		if delErr := r.Deps.Sessions.Delete(cleanupCtx, child.ID); delErr != nil {
 			zerolog.Ctx(ctx).Warn().Err(delErr).Str("session_id", child.ID).Msg("unstarted task session cleanup")
 		}
 		return nil, fmt.Errorf("spawn_task: starting task run: %w", err)
@@ -492,11 +499,23 @@ func (r *Runner) drainTaskNotifications(parentSessionID string) {
 	if r.Deps.Tasks == nil {
 		return
 	}
+	// A session mid-delete must not be woken: starting a run on it now would
+	// outlive the cascade. register would refuse anyway; skip early to
+	// avoid the noise.
+	if r.hub.SessionDeleting(parentSessionID) {
+		return
+	}
 	if _, busy := r.hub.ActiveRunForSession(parentSessionID); busy {
 		return
 	}
 	// A parent paused on approval must not be auto-woken: the human decides.
-	if approvals, err := r.Deps.PendingApprovals.ListBySession(ctx, parentSessionID); err == nil && len(approvals) > 0 {
+	// Treat a query error as "cannot prove it is safe" and skip — waking a
+	// session that is actually paused on an approval would burn a turn and race
+	// the human's decision.
+	if approvals, err := r.Deps.PendingApprovals.ListBySession(ctx, parentSessionID); err != nil {
+		log.Warn().Err(err).Str("session_id", parentSessionID).Msg("checking pending approvals before task wake; skipping")
+		return
+	} else if len(approvals) > 0 {
 		return
 	}
 	pending, err := r.Deps.Tasks.ListPendingNotify(ctx, parentSessionID)
@@ -576,6 +595,11 @@ func (r *Runner) DrainPendingTaskNotifications(ctx context.Context) {
 // rows are finalized directly and their pending approvals fall to the cascade.
 func (r *Runner) StopSessionTree(sessionID string) {
 	ctx := r.hub.rootCtx
+	// Mark the session as being torn down FIRST, so a task's postRun drain (or a
+	// racing resume) can no longer start a fresh run on it while we cancel and
+	// wait — otherwise a notification run started mid-teardown would outlive the
+	// delete cascade and write into rows it is about to remove.
+	r.hub.markSessionDeleting(sessionID)
 	deadline := time.Now().Add(5 * time.Second)
 	var waits []string
 	if rid, ok := r.hub.ActiveRunForSession(sessionID); ok {

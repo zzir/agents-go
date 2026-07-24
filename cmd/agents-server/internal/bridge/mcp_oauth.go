@@ -273,20 +273,31 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 }
 
 // HandleCallback processes the OAuth authorization callback. It delivers the
-// code to the pending connection goroutine. Returns an error if the state is
-// unknown or expired.
+// code to the pending connection goroutine exactly once. Returns an error if
+// the state is unknown or already consumed.
+//
+// The pending entry is removed under the lock BEFORE delivery, so a duplicate
+// callback (browsers re-issue redirects; a user may reload the callback tab)
+// finds nothing and returns the unknown-state error instead of racing. The send
+// itself is non-blocking: codeCh is buffered (cap 1) and the fetcher receives
+// at most once, so a redundant delivery must never park this goroutine forever
+// on a full channel.
 func (c *OAuthCoordinator) HandleCallback(state, code string) error {
 	c.mu.Lock()
 	p, ok := c.pending[state]
+	if ok {
+		delete(c.pending, state)
+	}
 	c.mu.Unlock()
 
 	if !ok {
 		return fmt.Errorf("unknown or expired oauth state")
 	}
 
-	p.codeCh <- &auth.AuthorizationResult{
-		Code:  code,
-		State: state,
+	select {
+	case p.codeCh <- &auth.AuthorizationResult{Code: code, State: state}:
+	default:
+		// The fetcher already received (or gave up) — nothing to deliver to.
 	}
 	return nil
 }

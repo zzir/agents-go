@@ -9,6 +9,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -173,5 +174,104 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	}
 	if _, err := approvals.Get(ctx, "paused-old"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("stale pending row should be discarded, got %v", err)
+	}
+}
+
+// TestResolveApprovalTaskNotYetInputRequiredKeepsPending locks: a task
+// approval that lands while the task row is still "working" — the fast-approve
+// window before the run's postRun marks it input_required — must NOT be lost. A
+// failed ReclaimWorking on a still-non-terminal task restores the pending row
+// (returning a retryable ApprovalNotReadyError) instead of deleting it and
+// stranding the paused run forever, which is what the old code did.
+func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	agentConfigs := store.NewAgentConfigStore(db)
+	approvals := store.NewPendingApprovalStore(db)
+	sessions := store.NewSessionStore(db)
+	tasks := store.NewTaskStore(db)
+
+	ac := &store.AgentConfig{Name: "approver", Model: "gpt-test"}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatalf("create agent config: %v", err)
+	}
+	// The task's hidden child session (pending.SessionID points here).
+	child := &store.Session{ID: store.NewID(), Name: "task"}
+	if err := sessions.Create(ctx, child); err != nil {
+		t.Fatalf("create child session: %v", err)
+	}
+	// A task still recorded as "working": its run interrupted and persisted the
+	// approval, but postRun has not yet flipped it to input_required.
+	task := &store.Task{
+		ID: store.NewID(), RunID: "paused-task-run", ParentSessionID: store.NewID(),
+		ChildSessionID: child.ID, Label: "audit", Status: protocol.TaskWorking,
+	}
+	if err := tasks.Create(ctx, task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	runner := NewRunner(ctx, db, &AgentDeps{
+		AgentConfigs:     agentConfigs,
+		Sessions:         sessions,
+		Settings:         store.NewSettingStore(db),
+		Memories:         store.NewMemoryStore(db),
+		PendingApprovals: approvals,
+		Tasks:            tasks,
+	})
+
+	var rawCall agents.TResponseOutputItem
+	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-race-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {
+		t.Fatalf("unmarshal raw call: %v", err)
+	}
+	state := &agents.RunState{
+		CurrentAgent: &agents.Agent{Name: "approver"},
+		Approvals:    agents.NewApprovalStore(),
+		Interruptions: []*agents.ToolApprovalItem{{
+			Agent:    &agents.Agent{Name: "approver"},
+			ToolName: "shell",
+			CallID:   "call-race-1",
+			Raw:      rawCall,
+		}},
+	}
+	stateJSON, err := state.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal run state: %v", err)
+	}
+	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-race-1", ToolName: "shell"}})
+	if err := approvals.Save(ctx, &store.PendingApproval{
+		RunID:         task.RunID,
+		SessionID:     child.ID,
+		AgentConfigID: ac.ID,
+		State:         string(stateJSON),
+		ToolCalls:     calls,
+	}); err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+
+	_, _, err = runner.ResolveApproval(ctx, "call-race-1", true, ApprovalOnce, "", nil)
+	var notReady *ApprovalNotReadyError
+	if !errors.As(err, &notReady) {
+		t.Fatalf("want *ApprovalNotReadyError (retryable), got %v", err)
+	}
+	// The pending row MUST survive so the decision can be retried once postRun
+	// marks the task input_required — losing it would strand the paused run.
+	if _, err := approvals.Get(ctx, task.RunID); err != nil {
+		t.Fatalf("pending row must survive a not-ready claim, got %v", err)
+	}
+	// The task row is untouched (still working, not spuriously terminal).
+	if got, _ := tasks.Get(ctx, task.ID); got.Status != protocol.TaskWorking {
+		t.Fatalf("task status = %q, want still working", got.Status)
+	}
+
+	// Once postRun marks it input_required, the same decision goes through.
+	if err := tasks.MarkInputRequired(ctx, task.ID); err != nil {
+		t.Fatalf("mark input_required: %v", err)
+	}
+	if _, _, err := runner.ResolveApproval(ctx, "call-race-1", true, ApprovalOnce, "", nil); err != nil {
+		t.Fatalf("resolve after input_required: %v", err)
+	}
+	if _, err := approvals.Get(ctx, task.RunID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("pending row should be consumed after a successful resolve, got %v", err)
 	}
 }

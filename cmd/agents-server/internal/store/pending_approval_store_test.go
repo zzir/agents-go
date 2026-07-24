@@ -113,6 +113,66 @@ func TestPendingApprovalReap(t *testing.T) {
 	}
 }
 
+// TestDeleteOlderThanReturnsOnlyDeleted locks: DeleteOlderThan reports
+// EXACTLY the rows it removed. Two concurrent reaps over the same expired set
+// must, between them, return each row exactly once — never the same row twice.
+// The old SELECT-then-DELETE let both reaps SELECT the same rows before either
+// DELETE, so both returned them, and the reaper then finalized a just-expired
+// (or, in the approve race, just-resumed) task twice. DELETE... RETURNING makes
+// the returned set the deleted set, so a row is reported by whichever statement
+// actually removed it and by no other.
+func TestDeleteOlderThanReturnsOnlyDeleted(t *testing.T) {
+	ctx := context.Background()
+	s := NewPendingApprovalStore(newTestDB(t))
+
+	old := time.Now().UTC().Add(-2 * time.Hour)
+	const n = 30
+	for range n {
+		if err := s.Save(ctx, &PendingApproval{RunID: NewID(), SessionID: "s", State: "{}", CreatedAt: old}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	type result struct {
+		rows []PendingApproval
+		err  error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			rows, err := s.DeleteOlderThan(ctx, cutoff)
+			results <- result{rows, err}
+		}()
+	}
+
+	seen := map[string]int{}
+	total := 0
+	for range 2 {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("DeleteOlderThan: %v", r.err)
+		}
+		for _, row := range r.rows {
+			seen[row.RunID]++
+			total++
+		}
+	}
+	if total != n {
+		t.Fatalf("two concurrent reaps returned %d rows total, want exactly %d (no row twice, none missed)", total, n)
+	}
+	for id, c := range seen {
+		if c != 1 {
+			t.Fatalf("row %s returned %d times; each expired row must be returned exactly once", id, c)
+		}
+	}
+	// Everything is gone; a follow-up reap returns an empty set with no error.
+	rest, err := s.DeleteOlderThan(ctx, cutoff)
+	if err != nil || len(rest) != 0 {
+		t.Fatalf("follow-up reap: rows=%d err=%v, want empty and nil", len(rest), err)
+	}
+}
+
 // TestListByParentTasks exercises the real join SQL: approvals inside a
 // session's task child sessions come back tagged with their task, others
 // (chat approvals, other parents' tasks) do not.

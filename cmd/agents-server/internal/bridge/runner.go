@@ -144,7 +144,7 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 	if _, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID); err != nil {
 		return "", err
 	}
-	_, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
+	seg, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
 	if err != nil {
 		return "", err
 	}
@@ -152,6 +152,11 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 		r.OnRunAttach(runID)
 	}
 	go func() {
+		// finalize is this segment's exclusive teardown: it cancels the segment's
+		// context (no leaked child of the hub root,) and closes its own done
+		// gate (never a resume's fresh gate, so no double-close,). It runs last
+		// so the session-delete wait only unblocks after every write below lands.
+		defer seg.finalize()
 		result := r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
 		// Persist a pending approval BEFORE finish releases the session slot:
 		// a task completing in between would see "no live run, no approvals"
@@ -162,7 +167,6 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 		if onDone != nil {
 			onDone(result)
 		}
-		r.hub.markDone(runID)
 	}()
 	return runID, nil
 }
@@ -330,7 +334,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // keeps one id across interrupt/resume — events, traces, and messages all
 // stay under that id and the trace panel shows one group per turn.
 func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunResult)) (string, error) {
-	ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
+	seg, ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
 	if err != nil {
 		return "", err
 	}
@@ -338,6 +342,9 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		r.OnRunAttach(runID)
 	}
 	go func() {
+		// See startRunWithID: this segment owns its teardown, so a later resume
+		// swapping in a fresh gate can never collide with this goroutine's close.
+		defer seg.finalize()
 		result := r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
 		// Same ordering rationale as StartRun: approval row before slot release.
 		r.afterRun(runID, result)
@@ -346,7 +353,6 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		if onDone != nil {
 			onDone(result)
 		}
-		r.hub.markDone(runID)
 	}()
 	return runID, nil
 }
@@ -498,11 +504,16 @@ func (r *Runner) updateSessionMeta(sessionID, agentConfigID string) {
 	if agentConfigID == "" {
 		return
 	}
-	_, _ = r.db.NewUpdate().Model((*store.Session)(nil)).
+	if _, err := r.db.NewUpdate().Model((*store.Session)(nil)).
 		Set("agent_config_id = ?", agentConfigID).
 		Where("id = ?", sessionID).
 		Where("agent_config_id = '' OR agent_config_id IS NULL").
-		Exec(context.Background())
+		Exec(context.Background()); err != nil {
+		// Best-effort back-fill of the session's bound agent; log rather than
+		// swallow so a persistent failure is diagnosable.
+		zerolog.Ctx(r.hub.rootCtx).Warn().Err(err).Str("session_id", sessionID).
+			Msg("updating session agent config")
+	}
 }
 
 // maybeGenerateTitle names a still-default ("New Chat") session from the user's
@@ -575,12 +586,12 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 // completed turn incrementally (see agents.runner.persistSessionItems), so
 // completed segments and tool calls survive on their own. This adds, all as
 // display-only annotations that are never replayed:
-//   - the in-flight turn's streamed reasoning and text, so a cancel during the
-//     thinking phase (before that turn completed) still shows what the model was
-//     doing instead of vanishing;
-//   - a trailing marker for why the run stopped (annRole "cancelled"/"error",
-//     annMsg its optional detail; guardrail+stage, when set, tag an "error"
-//     marker as a guardrail block so a reload rebuilds the typed card);
+// - the in-flight turn's streamed reasoning and text, so a cancel during the
+// thinking phase (before that turn completed) still shows what the model was
+// doing instead of vanishing;
+// - a trailing marker for why the run stopped (annRole "cancelled"/"error",
+// annMsg its optional detail; guardrail+stage, when set, tag an "error"
+// marker as a guardrail block so a reload rebuilds the typed card);
 //
 // and, only when the run died before the SDK persisted anything under this run
 // id (e.g. cancelled before the first turn completed), the prompt as a
@@ -622,7 +633,13 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 	if len(msgs) == 0 {
 		return
 	}
-	_, _ = r.db.NewInsert().Model(&msgs).Exec(ctx)
+	if _, err := r.db.NewInsert().Model(&msgs).Exec(ctx); err != nil {
+		// The partial-turn save is the only durable record of a cancelled/failed
+		// turn's prompt and in-flight thinking; a lost write means a reload shows
+		// nothing. Best-effort, but never silent.
+		zerolog.Ctx(r.hub.rootCtx).Warn().Err(err).Str("run_id", runID).Str("session_id", sessionID).
+			Msg("persisting partial turn")
+	}
 }
 
 // isCancellation reports whether a run stopped because it was cancelled (or its
@@ -663,16 +680,33 @@ func (r *Runner) CancelRun(runID string) {
 	r.hub.Cancel(runID)
 }
 
-// drainStream forwards a streamed run's events to the hub and accumulates
-// only the CURRENT turn's reasoning/text, resetting at each turn boundary
-// (response.completed): the SDK persists a turn's items once it completes, so
-// the returned strings hold just the in-flight turn the SDK has not saved
-// yet. On an abort they become display-only annotations so a cancel during
-// the thinking phase still shows what the model was doing. A terminal error
-// on the event channel stops consumption; the caller reads the run's outcome
-// from FinalResult.
+// drainStream forwards a streamed run's events to the hub and accumulates only
+// the CURRENT turn's reasoning/text so an abort can persist them as
+// display-only annotations (a cancel during the thinking phase still shows what
+// the model was doing). A terminal error on the event channel stops
+// consumption; the caller reads the run's outcome from FinalResult.
+//
+// The reset is aligned with the SDK's real per-turn persist boundary, NOT with
+// response.completed. The SDK saves a turn's items only AFTER its tool calls
+// have run (agents/run.go stepRunAgain / stepHandoff persist post-tool-exec).
+// response.completed fires when the model finishes generating — before the
+// tools run — so resetting there loses this turn's streamed text/reasoning if
+// the run is cancelled DURING tool execution (the SDK has not persisted it yet
+// either, so a reload would then show nothing). Instead, mark the turn
+// committed at response.completed and defer the reset until the NEXT turn's
+// first delta arrives: by then the SDK has persisted the previous turn (its
+// stepRunAgain ran before the next model call), so the buffer correctly holds
+// only the still-unpersisted in-flight turn.
 func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNames map[string]bool, send func(string, any)) (streamedText, streamedReasoning string) {
 	var text, reasoning strings.Builder
+	turnCommitted := false // response.completed seen; the SDK will persist this turn after its tools run
+	startNextTurn := func() {
+		if turnCommitted {
+			text.Reset()
+			reasoning.Reset()
+			turnCommitted = false
+		}
+	}
 	for event, err := range sr.Events() {
 		if err != nil {
 			break
@@ -680,11 +714,12 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNam
 		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
 			switch raw.Data.Type {
 			case "response.completed":
-				text.Reset()
-				reasoning.Reset()
+				turnCommitted = true
 			case "response.output_text.delta":
+				startNextTurn()
 				text.WriteString(raw.Data.Delta)
 			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+				startNextTurn()
 				reasoning.WriteString(raw.Data.Delta)
 			}
 		}
