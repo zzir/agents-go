@@ -85,19 +85,34 @@ function flatten(s: Partial<McpServer>): McpFormData {
   };
 }
 
+// Throws on invalid JSON in the Args / Headers fields so the caller can block
+// the save and surface it — parsing to an empty value and saving anyway
+// silently discarded whatever the user typed.
 function pack(form: McpFormData): Partial<McpServer> {
   const base: Partial<McpServer> = { name: form.name, transport_type: form.transport_type, enabled: form.enabled };
   let config: McpServerConfig;
   if (form.transport_type === 'stdio') {
     let args: string[] = [];
-    try { args = form.args ? JSON.parse(form.args) : []; } catch (e) { args = []; }
+    const argsRaw = form.args.trim();
+    if (argsRaw) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(argsRaw); }
+      catch { throw new Error('Args is not valid JSON — fix or clear it before saving'); }
+      if (!Array.isArray(parsed)) throw new Error('Args must be a JSON array, e.g. ["/path/to/dir"]');
+      args = parsed as string[];
+    }
     config = { command: form.command, args };
   } else {
     config = { endpoint: form.endpoint };
     if (form.auth_mode === 'header' || !form.auth_mode) {
-      let headers: Record<string, string> | null = null;
-      try { headers = form.headers ? JSON.parse(form.headers) : null; } catch (e) { headers = null; }
-      if (headers && typeof headers === 'object' && Object.keys(headers).length > 0) config.headers = headers;
+      const headersRaw = form.headers.trim();
+      if (headersRaw) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(headersRaw); }
+        catch { throw new Error('Headers is not valid JSON — fix or clear it before saving'); }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Headers must be a JSON object, e.g. {"Authorization": "Bearer <token>"}');
+        if (Object.keys(parsed).length > 0) config.headers = parsed as Record<string, string>;
+      }
     }
     if (form.auth_mode === 'oauth') {
       config.auth_mode = 'oauth';
@@ -177,7 +192,12 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
         <FormControl.Label>Enabled</FormControl.Label>
       </FormControl>
       <div className="form-actions">
-        <Button onClick={() => onSave(pack(form))} variant="primary">Save</Button>
+        <Button onClick={() => {
+          let packed: Partial<McpServer>;
+          try { packed = pack(form); }
+          catch (e) { toast.error((e as Error).message); return; }
+          onSave(packed);
+        }} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
       </div>
@@ -200,7 +220,7 @@ const STATUS_DOT: Record<McpStatus, string> = {
 // user finishing a popup they may have closed, and re-clicking supersedes the
 // stale attempt server-side (OAuthCoordinator.supersedeInflight) and opens a
 // fresh popup — otherwise a closed popup pins the row for the full 5-minute
-// pending timeout (design invariant #8).
+// pending timeout (design invariant).
 const STATUS_ACTION: Partial<Record<McpStatus, { label: string; inProgress?: boolean }>> = {
   disconnected: { label: 'Connect' },
   needs_auth: { label: 'Authorize' },

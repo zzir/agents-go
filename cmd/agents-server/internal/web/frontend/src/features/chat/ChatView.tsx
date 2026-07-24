@@ -33,6 +33,24 @@ interface ChatMessage {
   parts?: TurnPart[];
 }
 
+// Stable React key for a rendered message: prefer the durable store id, then
+// the run id or the sender's optimistic client id, and only fall back to the
+// array index for a transient entry that has none. Type-tagged prefixes
+// (m/r/c/i) keep the id and index number-spaces from colliding; the role
+// prefix keeps a user bubble and a turn that share a run id distinct. Plain
+// index keys let collapse / copied state drift onto the wrong message whenever
+// the list length changed (reload, fork, session switch).
+function entryKey(
+  m: { messageId?: string | number; runId?: string; clientMsgId?: string },
+  i: number,
+  role: string,
+): string {
+  if (m.messageId != null) return role + '-m' + m.messageId;
+  if (m.runId) return role + '-r' + m.runId;
+  if (m.clientMsgId) return role + '-c' + m.clientMsgId;
+  return role + '-i' + i;
+}
+
 
 interface AgentConfig {
   id: string;
@@ -191,8 +209,10 @@ function MermaidBlock({ source }: { source: string }) {
       const id = `m${++mermaidIdSeq}`;
       try {
         const mermaid = await ensureMermaid();
-        const decoded = source.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-        const { svg: rendered } = await mermaid.render(id, decoded);
+        // `source` is the raw fenced ```mermaid``` body from the un-escaped
+        // markdown — it must be fed to mermaid verbatim. Decoding entities here
+        // corrupted diagrams that legitimately contain "&", "<" or ">".
+        const { svg: rendered } = await mermaid.render(id, source);
         if (!cancelled) {
           const safe = sanitizeSVG(rendered);
           mermaidCacheSet(cacheKey, safe);
@@ -813,7 +833,7 @@ export function ChatView({
   }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
   // The dep must change on every content growth, not just on new messages:
-  // .chat-messages opts out of native scroll anchoring, so streamed text and
+  //.chat-messages opts out of native scroll anchoring, so streamed text and
   // reasoning deltas only keep the view pinned if they re-fire this effect.
   const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(
     messages.length + (streaming?.length ?? 0) + (reasoning?.length ?? 0),
@@ -835,8 +855,11 @@ export function ChatView({
     }
     const btn = (e.target as HTMLElement).closest('.btn-copy') as HTMLElement | null;
     if (!btn) return;
-    const code = btn.getAttribute('data-code')
-      ?.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    // getAttribute already returns the decoded value (the HTML parser resolved
+    // the entities the renderer escaped into the attribute). A second manual
+    // decode here corrupted any code that literally contained an entity like
+    // "&amp;", so read the attribute as-is.
+    const code = btn.getAttribute('data-code');
     if (!code) return;
     navigator.clipboard.writeText(code).then(() => {
       btn.classList.add('copied');
@@ -1186,7 +1209,7 @@ export function ChatView({
                 : undefined;
               return (
                 <TurnBlock
-                  key={'turn-' + i}
+                  key={entryKey(m, i, 'turn')}
                   onInspectTask={openTaskDetail}
                   parts={m.parts || []}
                   streaming={isLive ? streaming : null}
@@ -1214,7 +1237,7 @@ export function ChatView({
               const rid = userRunMap[i];
               return (
                 <UserMessage
-                  key={i}
+                  key={entryKey(m, i, 'user')}
                   content={m.content || ''}
                   traceRunId={rid || null}
                   onTrace={openTrace}
@@ -1223,9 +1246,9 @@ export function ChatView({
               );
             }
             if (m.role === 'compaction') {
-              return <CompactionCard key={i} content={m.content || ''} />;
+              return <CompactionCard key={entryKey(m, i, 'compaction')} content={m.content || ''} />;
             }
-            return <MessageBubble key={i} role={m.role} content={m.content || ''} />;
+            return <MessageBubble key={entryKey(m, i, 'msg')} role={m.role} content={m.content || ''} />;
           })}
         </div>
 

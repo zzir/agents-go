@@ -69,10 +69,19 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs): Msgs {
   const out = [...persisted];
   for (const m of tail) {
     if (m.role === 'user') {
-      const u = m as UserEntry;
-      const dup = out.some(p => p.role === 'user' && (
-        (p as UserEntry).runId && u.runId ? (p as UserEntry).runId === u.runId : (p as UserEntry).content === u.content
-      ));
+      const u = m as UserEntry & { clientMsgId?: string };
+      const dup = out.some(p => {
+        if (p.role !== 'user') return false;
+        const pu = p as UserEntry & { clientMsgId?: string };
+        // Prefer stable identity keys over content: two DISTINCT optimistic
+        // sends of the same text carry different clientMsgIds and must both
+        // survive (deduping by content dropped the second). Content equality
+        // is the last-resort match, only when neither side has a shared key
+        // (e.g. a persisted row vs. a broadcast bubble for the same prompt).
+        if (pu.runId && u.runId) return pu.runId === u.runId;
+        if (pu.clientMsgId && u.clientMsgId) return pu.clientMsgId === u.clientMsgId;
+        return pu.content === u.content;
+      });
       if (!dup) out.push(m);
     } else if (m.role === 'turn') {
       const rid = (m as TurnEntry).runId;

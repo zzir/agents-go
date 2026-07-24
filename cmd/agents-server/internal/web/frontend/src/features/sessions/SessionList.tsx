@@ -4,6 +4,7 @@ import { ActionList, ActionMenu } from '@primer/react';
 import { StackIcon, KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
+import { toast } from '@/lib/toast';
 
 interface Session {
   id: string;
@@ -100,27 +101,41 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
       await reload();
       onSelect(sess.id);
       if (onCreated) onCreated();
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not create chat');
     } finally {
       setCreating(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    await api.sessions.delete(id);
-    reload();
-    if (onDeleteNotify) onDeleteNotify(id);
-    if (activeId === id) onSelect(null);
+    try {
+      await api.sessions.delete(id);
+      reload();
+      if (onDeleteNotify) onDeleteNotify(id);
+      if (activeId === id) onSelect(null);
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not delete chat');
+    }
   };
 
   const handleFork = async (id: string) => {
-    const forked = await api.sessions.fork(id) as Session;
-    await reload();
-    onSelect(forked.id);
+    try {
+      const forked = await api.sessions.fork(id) as Session;
+      await reload();
+      onSelect(forked.id);
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not fork chat');
+    }
   };
 
   const handlePin = async (id: string, pinned: boolean) => {
-    await api.sessions.pin(id, pinned);
-    reload();
+    try {
+      await api.sessions.pin(id, pinned);
+      reload();
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not update pin');
+    }
   };
 
   const pinned = sessions ? sessions.filter(s => s.pinned) : [];

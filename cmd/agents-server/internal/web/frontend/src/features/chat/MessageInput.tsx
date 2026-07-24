@@ -55,6 +55,11 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // While an IME composition is active (Chinese/Japanese/Korean input),
+    // Enter commits the candidate selection and must NOT send the message.
+    // `isComposing` is set for the whole composition; keyCode 229 is the
+    // legacy signal browsers emit for the same in-composition key.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       handleSubmit(e);
     }

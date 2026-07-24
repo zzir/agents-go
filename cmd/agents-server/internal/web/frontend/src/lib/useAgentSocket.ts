@@ -7,7 +7,7 @@ import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendHandoffPart,
 } from '@/lib/streamReducer';
-import { api } from '@/lib/api';
+import { api, clearToken } from '@/lib/api';
 import { toast } from '@/lib/toast';
 
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
@@ -214,6 +214,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       updateSS(sid, s => s.loaded
         ? { ...s, messages: mergeLiveTail(timeline, s.messages) }
         : { ...s, messages: timeline, loaded: true });
+    }).catch(err => {
+      // The fetch failed: roll back the loaded mark so a later retry (or a
+      // re-select of this session) re-fetches instead of leaving the history
+      // permanently blank, and rethrow so the caller can toast the failure.
+      loadedRef.current.delete(sid);
+      throw err;
     });
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.
@@ -298,6 +304,15 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     const ws = new WSClient();
     wsRef.current = ws;
 
+    // The socket kept getting closed before it could authenticate: the token
+    // is being rejected. Clear it and drop back to the login screen (mirroring
+    // the REST layer's 401 handling) instead of reconnecting forever.
+    ws.onAuthFail = () => {
+      clearToken();
+      window.dispatchEvent(new Event('auth:logout'));
+      toast.error('Session expired — please sign in again');
+    };
+
     ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string }) => {
       // A background task run: track it under its parent session's task list
       // and keep it out of every chat-timeline path. Task identity (task_id)
@@ -343,11 +358,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     // updateTaskView applies fn to the inspected task's view iff runId is the
-    // watched task. Returns true when it was.
+    // watched task. Returns true when it was. taskView is keyed by the DURABLE
+    // task id, not the run attempt id — so both the outer watch guard and the
+    // inner taskView guard must map runId → taskId before comparing (comparing
+    // taskView.taskId against the raw runId is always false, which silently
+    // dropped every live Inspector update).
     const updateTaskView = (runId: string, fn: (v: TaskViewState) => TaskViewState) => {
       const w = taskWatchRef.current;
-      if (!w || (taskRunsRef.current[runId]?.taskId || runId) !== w.taskId) return false;
-      updateSS(w.sid, s => (s.taskView && s.taskView.taskId === runId ? { ...s, taskView: fn(s.taskView) } : s));
+      const taskId = taskRunsRef.current[runId]?.taskId ?? runId;
+      if (!w || taskId !== w.taskId) return false;
+      updateSS(w.sid, s => (s.taskView && s.taskView.taskId === taskId ? { ...s, taskView: fn(s.taskView) } : s));
       return true;
     };
 
@@ -492,6 +512,10 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           });
           refetchTaskView(p.run_id);
         }
+        // Terminal: drop the run→task routing entry so it doesn't accumulate.
+        // Keep the watched run's entry — its async refetchTaskView still maps
+        // runId → taskId when the fetch resolves.
+        if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
         return;
       }
       const sid = runMapRef.current[p.run_id];
@@ -501,6 +525,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete streamBufsRef.current[p.run_id];
       delete reasoningBufsRef.current[p.run_id];
       delete appendedItemsRef.current[p.run_id];
+      delete runMapRef.current[p.run_id];
       delete sessionRunRef.current[sid];
       updateSS(sid, s => {
         const msgs = finalizeTurn(s.messages, text, thinking);
@@ -523,13 +548,31 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           }));
           refetchTaskView(rid);
         }
+        if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
         return;
       }
       // The session already has a live run (e.g. double-send from another
       // tab): the run this error names is still executing — a toast, not a
-      // terminal error on the live turn.
+      // terminal error on the live turn. The rejected send left an optimistic
+      // user bubble that will never get a run, so roll it back instead of
+      // stranding a ghost message. Only this tab's un-sent sends carry a
+      // clientMsgId (with no run/message id), so the newest such bubble is
+      // exactly the one that was just rejected.
       if (p.code === ERR.sessionBusy) {
         toast.error(p.message || 'Session already has an active run');
+        const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
+        if (sid) {
+          updateSS(sid, s => {
+            const msgs = s.messages as Array<{ role?: string; clientMsgId?: string; messageId?: number; runId?: string }>;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              const m = msgs[i];
+              if (m.role === 'user' && m.clientMsgId && m.messageId === undefined && m.runId === undefined) {
+                return { ...s, messages: msgs.slice(0, i).concat(msgs.slice(i + 1)) };
+              }
+            }
+            return s;
+          });
+        }
         return;
       }
       // An approve/reject that failed server-side (session busy, config deleted,
@@ -546,7 +589,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // ago): clear the stale mapping and fall back to persisted history.
       if (p.code === ERR.runNotFound) {
         const staleSid = p.run_id ? runMapRef.current[p.run_id] : undefined;
-        if (p.run_id) delete runMapRef.current[p.run_id];
+        if (p.run_id) {
+          delete runMapRef.current[p.run_id];
+          delete streamBufsRef.current[p.run_id];
+          delete reasoningBufsRef.current[p.run_id];
+          delete appendedItemsRef.current[p.run_id];
+        }
         if (staleSid) {
           delete sessionRunRef.current[staleSid];
           updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null }));
@@ -567,6 +615,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete streamBufsRef.current[rid];
       delete reasoningBufsRef.current[rid];
       delete appendedItemsRef.current[rid];
+      delete runMapRef.current[rid];
       delete sessionRunRef.current[sid];
       // A guardrail block carries the guardrail name + stage so the turn renders
       // a distinct "blocked" card instead of a generic error.
@@ -597,6 +646,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           });
           refetchTaskView(p.run_id);
         }
+        if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
         return;
       }
       const rid = p?.run_id;
@@ -607,6 +657,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       delete streamBufsRef.current[rid];
       delete reasoningBufsRef.current[rid];
       delete appendedItemsRef.current[rid];
+      delete runMapRef.current[rid];
       delete sessionRunRef.current[sid];
       // The marker shows immediately, mirroring how run.error appends its card
       // optimistically, instead of waiting on the async reload (which the next

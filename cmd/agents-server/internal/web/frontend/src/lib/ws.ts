@@ -14,19 +14,29 @@ export class WSClient {
   // Fired once the socket re-authenticates after a drop (not on first connect),
   // so callers can resync runs that kept executing server-side.
   onReconnect: (() => void) | null;
+  // Fired when the socket keeps closing before it can authenticate — i.e. the
+  // token is being rejected. Lets the app prompt a re-login instead of silently
+  // reconnecting forever.
+  onAuthFail: (() => void) | null;
   private _closed: boolean;
   private _retryDelay: number;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null;
   private _everAuthed: boolean;
+  // Consecutive connections that closed before receiving auth.ok. A single
+  // pre-auth drop can be a transient network blip on a valid token, so the
+  // auth-fail signal only fires past a small threshold.
+  private _authFailures: number;
 
   constructor() {
     this.ws = null;
     this.handlers = {};
     this.onReconnect = null;
+    this.onAuthFail = null;
     this._closed = false;
     this._retryDelay = 1000;
     this._reconnectTimer = null;
     this._everAuthed = false;
+    this._authFailures = 0;
   }
 
   connect(): void {
@@ -50,7 +60,9 @@ export class WSClient {
     let authed = false;
 
     this.ws.onopen = () => {
-      this._retryDelay = 1000;
+      // Backoff is reset only once auth.ok arrives (below), not here: a socket
+      // that opens, fails auth, and is closed by the server must NOT reset the
+      // delay, or a rejected token reconnects every second forever.
       this.ws!.send(JSON.stringify({ type: EV.auth, token }));
     };
 
@@ -60,6 +72,10 @@ export class WSClient {
         if (!authed) {
           if (env.type === EV.authOk) {
             authed = true;
+            // Authentication succeeded: this is the real success signal, so
+            // reset the reconnect backoff and the auth-failure counter here.
+            this._retryDelay = 1000;
+            this._authFailures = 0;
             // Re-auth after a prior session means we reconnected; let the
             // caller resubscribe/resync. First-ever auth is not a reconnect.
             if (this._everAuthed) this.onReconnect?.();
@@ -76,6 +92,14 @@ export class WSClient {
 
     this.ws.onclose = () => {
       if (this._closed) return;
+      // Closed before authenticating: the server rejects a bad token by
+      // silently closing (no error frame). Count consecutive pre-auth closes
+      // and, once it's clearly not a one-off blip, surface it so the app can
+      // prompt a re-login instead of hammering reconnects.
+      if (!authed) {
+        this._authFailures++;
+        if (this._authFailures >= 3) this.onAuthFail?.();
+      }
       this._scheduleReconnect();
     };
 

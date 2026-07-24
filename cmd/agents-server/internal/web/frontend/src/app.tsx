@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import { TextInput, Dialog, NavList as PrimerNavList, Flash } from '@primer/react';
+import { TextInput, Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon,
   ContainerIcon, DatabaseIcon, GearIcon,
@@ -169,6 +169,13 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
 
 const DEFAULT_SS = defaultSS();
 
+// Monotonic client-side id stamped on each optimistic user bubble. It lets the
+// socket layer roll back a specific un-sent message (on session_busy or a
+// dropped send) and lets the stream reducer dedup two identical-text sends
+// without collapsing them into one.
+let clientMsgSeq = 0;
+function nextClientMsgId(): string { return 'c' + (++clientMsgSeq); }
+
 const MemoizedChatView = memo(ChatView);
 
 function panelKey(p: InspectorPanel): string {
@@ -204,6 +211,10 @@ function writeHash(sessionId: string | null, panel: InspectorPanel) {
 export default function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
+  // The initial auth check failed at the network level (server unreachable), as
+  // opposed to resolving "not authenticated". Without this the app would sit on
+  // a blank screen forever; instead we surface a retryable error state.
+  const [checkError, setCheckError] = useState(false);
   const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
   const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -234,9 +245,17 @@ export default function App() {
 
   const [ss, setSS] = useState<Record<string, SessionState>>({});
 
-  useEffect(() => {
-    checkAuth().then(ok => { setAuthed(ok); setChecking(false); });
+  const runCheck = useCallback(() => {
+    setChecking(true);
+    setCheckError(false);
+    checkAuth()
+      .then(ok => { setAuthed(ok); setChecking(false); })
+      // A network-level failure (server down, offline) rejects here — don't
+      // stay stuck in "checking"; show the retry screen below.
+      .catch(() => { setChecking(false); setCheckError(true); });
   }, []);
+
+  useEffect(() => { runCheck(); }, [runCheck]);
 
   useEffect(() => {
     writeHash(activeSession, activePanel);
@@ -253,7 +272,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const handler = () => setAuthed(false);
+    // A logout is a definitive "not authenticated" — clear any lingering
+    // network-error state so the login page shows, not the retry screen.
+    const handler = () => { setAuthed(false); setCheckError(false); };
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
   }, []);
@@ -285,12 +306,13 @@ export default function App() {
     // unknown session rather than 404, so validate existence explicitly: a 404
     // means drop the id — the app falls back to the empty state and typing then
     // starts a new chat instead of running against a non-existent session.
+    const tryLoad = () => loadSession(activeSession).catch(() => toast.error('Could not load conversation'));
     api.sessions.get(activeSession)
-      .then(() => { if (!cancelled) loadSession(activeSession); })
+      .then(() => { if (!cancelled) tryLoad(); })
       .catch((e: { status?: number }) => {
         if (cancelled) return;
         if (e?.status === 404) setActiveSession(null);
-        else loadSession(activeSession); // transient error — try loading anyway
+        else tryLoad(); // transient error — try loading anyway
       });
     return () => { cancelled = true; };
   }, [activeSession, loadSession]);
@@ -327,10 +349,16 @@ export default function App() {
         return;
       }
     }
-    updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text }], ...(isNew ? { loaded: true } : {}) }));
+    const clientMsgId = nextClientMsgId();
+    updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId }], ...(isNew ? { loaded: true } : {}) }));
     const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
     if (sandboxId) payload.sandbox_id = sandboxId;
-    wsRef.current.send(EV.runCreate, payload);
+    if (!wsRef.current.send(EV.runCreate, payload)) {
+      // The socket dropped between the isConnected() check and the send: roll
+      // back the optimistic bubble so it isn't left stranded with no run.
+      updateSS(sid, s => ({ ...s, messages: s.messages.filter((m: { clientMsgId?: string }) => m.clientMsgId !== clientMsgId) }));
+      toast.error('WebSocket disconnected — message not sent');
+    }
   }, [activeSession, updateSS, wsRef]);
 
   const handleCancel = useCallback((graceful?: boolean) => {
@@ -381,10 +409,14 @@ export default function App() {
 
   const handleFork = useCallback(async (messageId: string | number) => {
     if (!activeSession) return;
-    const forked = await api.sessions.fork(activeSession, Number(messageId));
-    setSessionReloadKey(k => k + 1);
-    setActiveSession(forked.id);
-    setActivePanel(null);
+    try {
+      const forked = await api.sessions.fork(activeSession, Number(messageId));
+      setSessionReloadKey(k => k + 1);
+      setActiveSession(forked.id);
+      setActivePanel(null);
+    } catch (e) {
+      toast.error((e as Error).message || 'Fork failed');
+    }
   }, [activeSession]);
 
   const handleRegenerate = useCallback(async (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => {
@@ -394,7 +426,9 @@ export default function App() {
       setSessionReloadKey(k => k + 1);
       setActiveSession(forked.id);
       setActivePanel(null);
-      await loadSession(forked.id);
+      // A load hiccup on the freshly-forked (empty) session must not abort the
+      // regenerate — swallow it so the run still starts below.
+      await loadSession(forked.id).catch(() => undefined);
       updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent }] }));
       const payload: Record<string, any> = { session_id: forked.id, input: userContent, agent_config_id: agentConfigId };
       if (sandboxId) payload.sandbox_id = sandboxId;
@@ -445,6 +479,17 @@ export default function App() {
     if (window.innerWidth < 768) setSidebarOpen(false);
   }, []);
 
+  if (!authed && checkError) return (
+    <ThemeProvider>
+      <div className="login-page">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+          <img src="/icon.svg" width={48} height={48} />
+          <Flash variant="danger">Couldn&apos;t reach the server. Check your connection and try again.</Flash>
+          <Button onClick={runCheck}>Retry</Button>
+        </div>
+      </div>
+    </ThemeProvider>
+  );
   if (!authed && !checking) return <ThemeProvider><LoginPage onLogin={() => setAuthed(true)} /></ThemeProvider>;
   if (!authed) return <ThemeProvider>{null}</ThemeProvider>;
 
