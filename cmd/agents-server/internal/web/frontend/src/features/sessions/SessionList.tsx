@@ -90,7 +90,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const { data: sessions, reload } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
-    if (reloadKey) reload();
+    if (reloadKey) reload().catch(() => {}); // failure surfaced via useApi's error state
   }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
 
@@ -111,7 +111,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handleDelete = async (id: string) => {
     try {
       await api.sessions.delete(id);
-      reload();
+      await reload();
       if (onDeleteNotify) onDeleteNotify(id);
       if (activeId === id) onSelect(null);
     } catch (e) {
@@ -132,7 +132,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handlePin = async (id: string, pinned: boolean) => {
     try {
       await api.sessions.pin(id, pinned);
-      reload();
+      await reload();
     } catch (e) {
       toast.error((e as Error).message || 'Could not update pin');
     }

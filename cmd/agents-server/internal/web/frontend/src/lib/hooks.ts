@@ -147,6 +147,9 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
       setError(null);
     } catch (e) {
       setError((e as Error).message);
+      // Re-throw so a caller that awaits reload() (e.g. after a mutation) can
+      // surface the refresh failure; the error state is still set for render.
+      throw e;
     } finally {
       setLoading(false);
     }

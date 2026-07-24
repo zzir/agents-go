@@ -380,7 +380,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       if (!w || (taskRunsRef.current[runId]?.taskId || runId) !== w.taskId) return;
       fetchTimeline(w.childSessionId).then(timeline => {
         updateTaskView(runId, v => ({ ...v, messages: timeline, streaming: '', reasoning: '', loaded: true }));
-      }).catch(() => undefined);
+      }).catch(() => undefined).finally(() => {
+        // This is the terminal refetch (the terminal handler kept the run→task
+        // entry alive only for it). Drop it now so a watched task that ended
+        // doesn't leak its routing entry for the life of the page.
+        delete taskRunsRef.current[runId];
+      });
     };
 
     const updateTask = (runId: string, patch: Partial<TaskState>) => {
