@@ -489,53 +489,82 @@ func (a *SessionAdapter) Clear(ctx context.Context) error {
 	return nil
 }
 
+// forkMessagesTx copies src's messages into dstSessionID within tx and returns
+// the deduplicated run ids. Shared by ForkMessages and ForkSession so both run
+// the read and the write in one transaction.
+func forkMessagesTx(ctx context.Context, tx bun.Tx, srcSessionID, dstSessionID string, upToMessageID int64, exclusive bool) ([]string, error) {
+	var msgs []Message
+	q := tx.NewSelect().Model(&msgs).
+		Where("session_id = ?", srcSessionID).
+		OrderExpr("id ASC")
+	if upToMessageID > 0 {
+		if exclusive {
+			q = q.Where("id < ?", upToMessageID)
+		} else {
+			q = q.Where("id <= ?", upToMessageID)
+		}
+	}
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("fork messages read: %w", err)
+	}
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+	var runIDs []string
+	seen := map[string]struct{}{}
+	now := time.Now().UTC()
+	for i := range msgs {
+		if rid := msgs[i].RunID; rid != "" {
+			if _, ok := seen[rid]; !ok {
+				seen[rid] = struct{}{}
+				runIDs = append(runIDs, rid)
+			}
+		}
+		msgs[i].ID = 0
+		msgs[i].SessionID = dstSessionID
+		msgs[i].CreatedAt = now
+	}
+	if _, err := tx.NewInsert().Model(&msgs).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("fork messages write: %w", err)
+	}
+	return runIDs, nil
+}
+
 // ForkMessages copies messages from srcSessionID to dstSessionID. When
 // upToMessageID > 0, only messages with id up to that ID are copied (inclusive
 // by default, exclusive when exclusive is true); otherwise all messages are
-// copied. Returns the deduplicated run IDs found in the copied messages.
-//
-// The read and the write run in one transaction so the copy is a consistent
-// snapshot of the source and can't leave a half-written fork behind. (The
-// handler's wider fork — new session + messages + trace events — is still three
-// separate calls; making that whole assembly atomic needs a handler-side
-// transaction, which is out of this method's scope.)
+// copied. Returns the deduplicated run IDs found in the copied messages. The
+// read and write run in one transaction — a consistent snapshot with no
+// half-written fork.
 func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessionID string, upToMessageID int64, exclusive bool) ([]string, error) {
 	var runIDs []string
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var msgs []Message
-		q := tx.NewSelect().Model(&msgs).
-			Where("session_id = ?", srcSessionID).
-			OrderExpr("id ASC")
-		if upToMessageID > 0 {
-			if exclusive {
-				q = q.Where("id < ?", upToMessageID)
-			} else {
-				q = q.Where("id <= ?", upToMessageID)
-			}
-		}
-		if err := q.Scan(ctx); err != nil {
-			return fmt.Errorf("fork messages read: %w", err)
-		}
-		if len(msgs) == 0 {
-			return nil
-		}
-		seen := map[string]struct{}{}
+		var e error
+		runIDs, e = forkMessagesTx(ctx, tx, srcSessionID, dstSessionID, upToMessageID, exclusive)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return runIDs, nil
+}
+
+// ForkSession atomically creates dst and copies src's messages into it in a
+// single transaction, so a failure (or a cancelled request) never leaves an
+// orphaned empty session behind — the gap the handler's separate
+// create-then-copy left open.
+func (s *MessageStore) ForkSession(ctx context.Context, dst *Session, srcSessionID string, upToMessageID int64, exclusive bool) ([]string, error) {
+	var runIDs []string
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		now := time.Now().UTC()
-		for i := range msgs {
-			if rid := msgs[i].RunID; rid != "" {
-				if _, ok := seen[rid]; !ok {
-					seen[rid] = struct{}{}
-					runIDs = append(runIDs, rid)
-				}
-			}
-			msgs[i].ID = 0
-			msgs[i].SessionID = dstSessionID
-			msgs[i].CreatedAt = now
+		dst.CreatedAt = now
+		dst.UpdatedAt = now
+		if _, err := tx.NewInsert().Model(dst).Exec(ctx); err != nil {
+			return fmt.Errorf("fork create session: %w", err)
 		}
-		if _, err := tx.NewInsert().Model(&msgs).Exec(ctx); err != nil {
-			return fmt.Errorf("fork messages write: %w", err)
-		}
-		return nil
+		var e error
+		runIDs, e = forkMessagesTx(ctx, tx, srcSessionID, dst.ID, upToMessageID, exclusive)
+		return e
 	})
 	if err != nil {
 		return nil, err

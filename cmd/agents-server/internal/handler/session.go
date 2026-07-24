@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -250,17 +249,10 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
 	}
-	if err := h.sessions.Create(ctx, dst); err != nil {
-		internalError(c, err)
-		return
-	}
-	runIDs, err := h.messages.ForkMessages(ctx, srcID, dst.ID, upTo, req.Exclusive)
+	// One transaction creates the session and copies its messages, so a failure
+	// (or a cancelled request) can't leave an orphaned empty session behind.
+	runIDs, err := h.messages.ForkSession(ctx, dst, srcID, upTo, req.Exclusive)
 	if err != nil {
-		// The dst session was already created; a failed message copy would leave
-		// it orphaned (empty, no tasks). Roll it back on a detached context so a
-		// cancelled request still cleans up. Store-level atomicity across the
-		// session and message copy would be stronger; this at least avoids the leak.
-		_ = h.sessions.Delete(context.WithoutCancel(ctx), dst.ID)
 		internalError(c, err)
 		return
 	}
