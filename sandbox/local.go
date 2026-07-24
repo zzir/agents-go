@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -155,12 +156,18 @@ func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, 
 
 // ReadFile reads a file relative to the sandbox working directory. Files
 // larger than LocalOptions.MaxReadFileBytes (default DefaultMaxReadFileBytes)
-// fail with ErrReadLimitExceeded.
+// fail with ErrReadLimitExceeded. Access is confined to WorkDir via os.Root, so
+// a symlink under WorkDir cannot be followed to read a file outside it.
 func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir
 	}
-	f, err := os.Open(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	root, err := os.OpenRoot(s.opts.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := root.Open(rootRel(p))
 	if err != nil {
 		return nil, err
 	}
@@ -168,53 +175,85 @@ func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	return ReadAllLimited(f, s.opts.MaxReadFileBytes)
 }
 
-// WriteFile writes a file relative to the sandbox working directory.
+// WriteFile writes a file relative to the sandbox working directory, creating
+// parent directories. Access is confined to WorkDir via os.Root, so a symlink
+// under WorkDir cannot be followed to write outside it.
 func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) error {
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	full := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	root, err := os.OpenRoot(s.opts.WorkDir)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(full, content, 0o644)
+	defer root.Close()
+	rel := rootRel(p)
+	if dir := filepath.Dir(rel); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return root.WriteFile(rel, content, 0o644)
 }
 
-// RemoveFile removes a file relative to the sandbox working directory.
+// RemoveFile removes a file relative to the sandbox working directory. Access
+// is confined to WorkDir via os.Root; removing a symlink deletes the link, not
+// its (possibly external) target.
 func (s *LocalSandbox) RemoveFile(_ context.Context, p string) error {
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	return os.Remove(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	root, err := os.OpenRoot(s.opts.WorkDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(rootRel(p))
 }
 
 // Rename moves a file within the sandbox working directory, creating the
-// destination's parent directories.
+// destination's parent directories. Access is confined to WorkDir via os.Root,
+// so neither endpoint can escape it through a symlink.
 func (s *LocalSandbox) Rename(_ context.Context, oldPath, newPath string) error {
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	from := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+oldPath))
-	to := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+newPath))
-	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+	root, err := os.OpenRoot(s.opts.WorkDir)
+	if err != nil {
 		return err
 	}
-	return os.Rename(from, to)
+	defer root.Close()
+	to := rootRel(newPath)
+	if dir := filepath.Dir(to); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return root.Rename(rootRel(oldPath), to)
 }
 
-// ListDir lists entries in a directory relative to the sandbox working directory.
+// ListDir lists entries in a directory relative to the sandbox working
+// directory. Access is confined to WorkDir via os.Root, so a symlinked
+// subdirectory cannot be followed out of it. Entries are sorted by name.
 func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) {
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir
 	}
-	target := s.opts.WorkDir
-	if p != "" && p != "." {
-		target = filepath.Join(target, filepath.Clean("/"+p))
-	}
-	entries, err := os.ReadDir(target)
+	root, err := os.OpenRoot(s.opts.WorkDir)
 	if err != nil {
 		return nil, err
 	}
+	defer root.Close()
+	f, err := root.Open(rootRel(p))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	result := make([]DirEntry, 0, len(entries))
 	for _, e := range entries {
 		info, _ := e.Info()
@@ -225,6 +264,19 @@ func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) 
 		result = append(result, DirEntry{Name: e.Name(), IsDir: e.IsDir(), Size: size})
 	}
 	return result, nil
+}
+
+// rootRel converts a sandbox-relative path — which may carry a leading slash or
+// ".." components — into a clean path relative to an os.Root. Cleaning as if
+// rooted at "/" neutralizes any ".." that would escape, and the leading
+// separator is then stripped because os.Root rejects rooted names. An empty or
+// root-only path becomes ".", i.e. the working directory itself.
+func rootRel(p string) string {
+	rel := strings.TrimPrefix(filepath.Clean("/"+p), string(filepath.Separator))
+	if rel == "" {
+		return "."
+	}
+	return rel
 }
 
 // buildEnv assembles the child environment: the full host environment when

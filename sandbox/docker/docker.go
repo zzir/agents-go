@@ -1,11 +1,11 @@
 // Package docker implements the sandbox.Sandbox interface using Docker
 // containers. Two modes are supported:
 //
-//   - Ephemeral (default): each Exec creates a fresh container, runs the
-//     command, captures output and removes the container.
-//   - Persistent (Options.Persistent = true): a single long-lived container is
-//     started on the first Exec; subsequent Exec calls use "docker exec" to run
-//     commands inside it. The container is removed on Close.
+// - Ephemeral (default): each Exec creates a fresh container, runs the
+// command, captures output and removes the container.
+// - Persistent (Options.Persistent = true): a single long-lived container is
+// started on the first Exec; subsequent Exec calls use "docker exec" to run
+// commands inside it. The container is removed on Close.
 //
 // This package pulls the (heavy) Docker client; it is a separate module so the
 // core agents-go module stays dependency-light.
@@ -557,7 +557,12 @@ func shellQuote(s string) string {
 // with sandbox.ErrReadLimitExceeded instead of being loaded into host memory.
 func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir != "" {
-		f, err := os.Open(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+		root, err := os.OpenRoot(s.opts.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		f, err := root.Open(rootRel(p))
 		if err != nil {
 			return nil, err
 		}
@@ -592,11 +597,18 @@ func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 // WriteFile implements sandbox.Sandbox.
 func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error {
 	if s.opts.WorkDir != "" {
-		hostPath := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
-		if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
+		root, err := os.OpenRoot(s.opts.WorkDir)
+		if err != nil {
 			return err
 		}
-		return os.WriteFile(hostPath, content, 0o644)
+		defer root.Close()
+		rel := rootRel(p)
+		if dir := filepath.Dir(rel); dir != "." {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		return root.WriteFile(rel, content, 0o644)
 	}
 	if s.opts.Persistent {
 		if err := s.ensureImage(ctx); err != nil {
@@ -622,7 +634,12 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 // RemoveFile implements sandbox.Sandbox.
 func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 	if s.opts.WorkDir != "" {
-		return os.Remove(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+		root, err := os.OpenRoot(s.opts.WorkDir)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return root.Remove(rootRel(p))
 	}
 	if s.opts.Persistent {
 		clean := path.Clean("/" + p)[1:]
@@ -644,11 +661,18 @@ func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 // Rename implements sandbox.Sandbox.
 func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 	if s.opts.WorkDir != "" {
-		to := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+newPath))
-		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		root, err := os.OpenRoot(s.opts.WorkDir)
+		if err != nil {
 			return err
 		}
-		return os.Rename(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+oldPath)), to)
+		defer root.Close()
+		to := rootRel(newPath)
+		if dir := filepath.Dir(to); dir != "." {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		return root.Rename(rootRel(oldPath), to)
 	}
 	if s.opts.Persistent {
 		oc := path.Clean("/" + oldPath)[1:]
@@ -678,11 +702,21 @@ func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 // ListDir implements sandbox.Sandbox.
 func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, error) {
 	if s.opts.WorkDir != "" {
-		hostPath := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
-		entries, err := os.ReadDir(hostPath)
+		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return nil, err
 		}
+		defer root.Close()
+		f, err := root.Open(rootRel(p))
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		entries, err := f.ReadDir(-1)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 		out := make([]sandbox.DirEntry, 0, len(entries))
 		for _, e := range entries {
 			info, ierr := e.Info()
@@ -703,7 +737,12 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 			return nil, err
 		}
 		dir := path.Join(workDir, path.Clean("/"+p))
-		cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\n'", shellQuote(dir))
+		// NUL-terminate each record instead of newline: a filename may contain
+		// a newline (or a tab), which would otherwise split into a phantom
+		// entry or corrupt the next line. The name is the final \t-field, so a
+		// tab inside it is preserved by the 3-way split; NUL can never appear
+		// in a filename, so records stay unambiguous.
+		cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\0'", shellQuote(dir))
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
 		if err != nil {
 			return nil, err
@@ -711,26 +750,48 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 		if res.ExitCode != 0 {
 			return nil, fmt.Errorf("docker sandbox: list dir: %s", res.Stderr)
 		}
-		lines := strings.Split(strings.TrimRight(res.Stdout, "\n"), "\n")
-		var out []sandbox.DirEntry
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 3)
-			if len(parts) != 3 {
-				continue
-			}
-			size, _ := strconv.ParseInt(parts[1], 10, 64)
-			out = append(out, sandbox.DirEntry{
-				Name:  parts[2],
-				IsDir: parts[0] == "d",
-				Size:  size,
-			})
-		}
-		return out, nil
+		return parseFindEntries(res.Stdout), nil
 	}
 	return nil, sandbox.ErrNoWorkDir
+}
+
+// rootRel converts a sandbox-relative path — which may carry a leading slash or
+// ".." components — into a clean path relative to an os.Root. Cleaning as if
+// rooted at "/" neutralizes any ".." that would escape, and the leading
+// separator is then stripped because os.Root rejects rooted names. An empty or
+// root-only path becomes ".", i.e. the bind-mounted working directory itself.
+func rootRel(p string) string {
+	rel := strings.TrimPrefix(filepath.Clean("/"+p), string(filepath.Separator))
+	if rel == "" {
+		return "."
+	}
+	return rel
+}
+
+// parseFindEntries parses the NUL-separated output of the persistent-mode
+// ListDir "find" command. Each record is "%y\t%s\t%f" — type char, size,
+// filename — and records are separated by NUL so a filename containing a tab or
+// newline cannot corrupt the listing. A trailing NUL yields an empty final
+// record, which is skipped.
+func parseFindEntries(out string) []sandbox.DirEntry {
+	records := strings.Split(out, "\x00")
+	entries := make([]sandbox.DirEntry, 0, len(records))
+	for _, rec := range records {
+		if rec == "" {
+			continue
+		}
+		parts := strings.SplitN(rec, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		size, _ := strconv.ParseInt(parts[1], 10, 64)
+		entries = append(entries, sandbox.DirEntry{
+			Name:  parts[2],
+			IsDir: parts[0] == "d",
+			Size:  size,
+		})
+	}
+	return entries
 }
 
 // ExecStream implements sandbox.ExecStreamer.

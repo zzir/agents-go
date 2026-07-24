@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	agents "github.com/zzir/agents-go/agents"
@@ -78,36 +79,49 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 	for _, e := range edits {
 		switch e.op {
 		case opAdd:
-			path, body := e.path, []byte(e.addBody)
-			ops = append(ops, fsOp{
-				do:   func() error { return sb.WriteFile(ctx, path, body) },
-				undo: func() error { return sb.RemoveFile(ctx, path) },
-				desc: "A " + path,
-			})
-		case opDelete:
-			path := e.path
-			orig, rerr := sb.ReadFile(ctx, path)
-			if rerr != nil {
-				return "", fmt.Errorf("delete %s: %w", path, rerr)
+			p, body := e.path, []byte(e.addBody)
+			// Codex apply_patch semantics: adding over an existing file is an
+			// error, not a silent overwrite. Without this the undo (RemoveFile)
+			// on a later rollback would delete the clobbered original outright.
+			if targetExists(ctx, sb, p) {
+				return "", fmt.Errorf("add %s: file already exists", p)
 			}
 			ops = append(ops, fsOp{
-				do:   func() error { return sb.RemoveFile(ctx, path) },
-				undo: func() error { return sb.WriteFile(ctx, path, orig) },
-				desc: "D " + path,
+				do:   func() error { return sb.WriteFile(ctx, p, body) },
+				undo: func() error { return sb.RemoveFile(ctx, p) },
+				desc: "A " + p,
+			})
+		case opDelete:
+			p := e.path
+			orig, rerr := sb.ReadFile(ctx, p)
+			if rerr != nil {
+				return "", fmt.Errorf("delete %s: %w", p, rerr)
+			}
+			ops = append(ops, fsOp{
+				do:   func() error { return sb.RemoveFile(ctx, p) },
+				undo: func() error { return sb.WriteFile(ctx, p, orig) },
+				desc: "D " + p,
 			})
 		case opUpdate:
-			path := e.path
-			orig, rerr := sb.ReadFile(ctx, path)
+			p := e.path
+			orig, rerr := sb.ReadFile(ctx, p)
 			if rerr != nil {
-				return "", fmt.Errorf("update %s: %w", path, rerr)
+				return "", fmt.Errorf("update %s: %w", p, rerr)
 			}
 			nc, aerr := applyHunks(string(orig), e.hunks)
 			if aerr != nil {
-				return "", fmt.Errorf("%s: %w", path, aerr)
+				return "", fmt.Errorf("%s: %w", p, aerr)
 			}
 			newContent := []byte(nc)
-			if e.movePath != "" && e.movePath != path {
-				dst, src, snap := e.movePath, path, orig
+			if e.movePath != "" && e.movePath != p {
+				// Codex apply_patch semantics: renaming onto an existing file is
+				// an error. Otherwise the two-op move would clobber the
+				// destination and its rollback (undo = RemoveFile dst) would
+				// delete the pre-existing file outright.
+				if targetExists(ctx, sb, e.movePath) {
+					return "", fmt.Errorf("move %s -> %s: destination already exists", p, e.movePath)
+				}
+				dst, src, snap := e.movePath, p, orig
 				ops = append(ops,
 					fsOp{
 						do:   func() error { return sb.WriteFile(ctx, dst, newContent) },
@@ -122,9 +136,9 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			} else {
 				snap := orig
 				ops = append(ops, fsOp{
-					do:   func() error { return sb.WriteFile(ctx, path, newContent) },
-					undo: func() error { return sb.WriteFile(ctx, path, snap) },
-					desc: "U " + path,
+					do:   func() error { return sb.WriteFile(ctx, p, newContent) },
+					undo: func() error { return sb.WriteFile(ctx, p, snap) },
+					desc: "U " + p,
 				})
 			}
 		}
@@ -146,4 +160,23 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 		}
 	}
 	return "applied patch:\n" + strings.Join(summary, "\n"), nil
+}
+
+// targetExists reports whether p already names an entry in the sandbox. It
+// lists p's parent directory rather than reading p, so a large file (which
+// ReadFile would reject with ErrReadLimitExceeded) is still detected and a
+// directory is not slurped into memory. A parent that can't be listed (it does
+// not exist yet, or isn't a directory) means p can't exist either.
+func targetExists(ctx context.Context, sb Sandbox, p string) bool {
+	entries, err := sb.ListDir(ctx, path.Dir(p))
+	if err != nil {
+		return false
+	}
+	base := path.Base(p)
+	for _, e := range entries {
+		if e.Name == base {
+			return true
+		}
+	}
+	return false
 }

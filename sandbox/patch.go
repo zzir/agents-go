@@ -142,8 +142,24 @@ func parseHunks(lines []string, i int) ([]patchHunk, int, error) {
 		var oldLines, newLines []string
 		for i < len(lines) {
 			bl := trimCR(lines[i])
-			if isSectionStart(bl) || strings.HasPrefix(bl, hunkMark) || !isHunkBodyLine(bl) {
+			if isSectionStart(bl) || strings.HasPrefix(bl, hunkMark) {
 				break
+			}
+			if !isHunkBodyLine(bl) {
+				// bl is a completely empty line. Models routinely strip the
+				// single leading space from an empty context line, turning
+				// " " into "". Treat it as an empty context line when more
+				// hunk-body content still follows; otherwise it is a blank
+				// separator before the next hunk or section, so stop and let
+				// the caller skip it (rather than truncating this hunk and
+				// silently dropping the empty line it was meant to keep).
+				if !moreBodyFollows(lines, i+1) {
+					break
+				}
+				oldLines = append(oldLines, "")
+				newLines = append(newLines, "")
+				i++
+				continue
 			}
 			switch bl[0] {
 			case ' ':
@@ -167,6 +183,26 @@ func parseHunks(lines []string, i int) ([]patchHunk, int, error) {
 	return hunks, i, nil
 }
 
+// moreBodyFollows reports whether a hunk-body line (' ', '-' or '+') appears at
+// or after index i before the next hunk marker or file-section boundary. It
+// lets a completely blank line inside a hunk be told apart from a blank
+// separator that precedes the next hunk or section: only the former still has
+// body content ahead. Consecutive blank lines are skipped so a run of empty
+// context lines inside a hunk is recognized as interior.
+func moreBodyFollows(lines []string, i int) bool {
+	for i < len(lines) {
+		l := trimCR(lines[i])
+		if isSectionStart(l) || strings.HasPrefix(l, hunkMark) {
+			return false
+		}
+		if isHunkBodyLine(l) {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
 // applyHunks applies each hunk to content in order. A hunk is located by the
 // first occurrence of its oldBlock at or after the previous hunk's end (the
 // "@@ anchor", when present, first advances the search point). A hunk whose
@@ -185,10 +221,16 @@ func applyHunks(content string, hunks []patchHunk) (string, error) {
 		}
 		if h.insert {
 			nl := strings.IndexByte(result[from:], '\n')
-			pos := len(result)
-			if nl >= 0 {
-				pos = from + nl + 1
+			if nl < 0 {
+				// The anchor sits on the file's last line and that line has no
+				// trailing newline. Terminate it first so the inserted block
+				// starts on its own line instead of being glued onto the last
+				// line's text.
+				result += "\n" + h.newBlock + "\n"
+				searchFrom = len(result)
+				continue
 			}
+			pos := from + nl + 1
 			result = result[:pos] + h.newBlock + "\n" + result[pos:]
 			searchFrom = pos + len(h.newBlock) + 1
 			continue
