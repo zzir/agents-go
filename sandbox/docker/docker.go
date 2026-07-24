@@ -675,15 +675,17 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		}
 		b64 := base64.StdEncoding.EncodeToString(content)
 		target := shellQuote(cleanPath)
-		// `set -C && > target` atomically creates the empty file, failing if it
-		// already exists (no rm then — that's someone else's file). Once we own
-		// it, drop noclobber and write; if the write fails, remove the partial
-		// file we created so the caller isn't told "rolled back" with junk left.
-		create := "set -C && > " + target + " && { set +C; printf %s " + shellQuote(b64) + " | base64 -d > " + target + " || { rm -f " + target + "; exit 1; }; }"
-		script := create
-		if parent := path.Dir(cleanPath); parent != "." && parent != "" {
-			script = "mkdir -p " + shellQuote(parent) + " && " + create
+		dir := path.Dir(cleanPath)
+		if dir == "" {
+			dir = "."
 		}
+		dirQ := shellQuote(dir)
+		// Write to a unique temp file in the target's dir, then publish it with a
+		// hard link: `ln` fails with EEXIST if the target exists (the atomic
+		// exclusive create). Unlike an in-place write, a SIGKILL on cancel/timeout
+		// can at worst leak the temp file — the real target is never a partial or
+		// corrupt file.
+		script := "mkdir -p " + dirQ + " && tmp=$(mktemp " + dirQ + "/.ap.XXXXXX) && { printf %s " + shellQuote(b64) + " | base64 -d > \"$tmp\" && ln \"$tmp\" " + target + "; rc=$?; rm -f \"$tmp\"; exit $rc; }"
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
 		if err != nil {
 			return err

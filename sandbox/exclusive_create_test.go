@@ -68,3 +68,20 @@ func TestCreateExclusiveRejectsExistingAndKeepsContent(t *testing.T) {
 		t.Fatalf("content clobbered: %q", got)
 	}
 }
+
+// TestApplyPatchLockPerSandbox verifies the apply_patch lock is keyed on the
+// Sandbox instance: the same sandbox shares one lock (so applies serialize even
+// across separately-built tools/runs sharing that Sandbox), and different
+// sandboxes get different locks.
+func TestApplyPatchLockPerSandbox(t *testing.T) {
+	sb1 := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb2 := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	l1a := applyPatchLock(sb1)
+	l1b := applyPatchLock(sb1)
+	if l1a != l1b {
+		t.Fatal("the same sandbox must share one apply_patch lock")
+	}
+	if l1a == applyPatchLock(sb2) {
+		t.Fatal("different sandboxes must not share an apply_patch lock")
+	}
+}
