@@ -22,12 +22,12 @@ func NewProviderRouteHandler(s *store.ProviderRouteStore) *ProviderRouteHandler 
 // List responds with all provider routes, API keys masked.
 //
 //	@Summary	List provider routes
-//	@Tags provider-routes
+//	@Tags		provider-routes
 //	@Produce	json
-//	@Success	200	{array} store.ProviderRoute
+//	@Success	200	{array}		store.ProviderRoute
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /provider-routes [get]
+//	@Router		/provider-routes [get]
 func (h *ProviderRouteHandler) List(c *gin.Context) {
 	routes, err := h.store.List(c.Request.Context())
 	if err != nil {
@@ -50,14 +50,14 @@ type providerRouteReq struct {
 // API key masked.
 //
 //	@Summary	Get provider route
-//	@Tags provider-routes
+//	@Tags		provider-routes
 //	@Produce	json
-//	@Param id	path string	true	"Provider route ID"
+//	@Param		id	path		string	true	"Provider route ID"
 //	@Success	200	{object}	store.ProviderRoute
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /provider-routes/{id} [get]
+//	@Router		/provider-routes/{id} [get]
 func (h *ProviderRouteHandler) Get(c *gin.Context) {
 	pr, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -70,17 +70,17 @@ func (h *ProviderRouteHandler) Get(c *gin.Context) {
 
 // Create persists a new provider route from the request body.
 //
-//	@Summary Create provider route
+//	@Summary		Create provider route
 //	@Description	Maps a model-name prefix to an API key and base URL. api_key is write-only (******** mask semantics).
-//	@Tags provider-routes
-//	@Accept json
-//	@Produce json
-//	@Param route	body providerRouteReq	true	"Provider route"
-//	@Success 201 {object}	store.ProviderRoute
-//	@Failure 400 {object}	ErrorResponse
-//	@Failure 500 {object}	ErrorResponse
-//	@Security BearerAuth
-//	@Router /provider-routes [post]
+//	@Tags			provider-routes
+//	@Accept			json
+//	@Produce		json
+//	@Param			route	body		providerRouteReq	true	"Provider route"
+//	@Success		201		{object}	store.ProviderRoute
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/provider-routes [post]
 func (h *ProviderRouteHandler) Create(c *gin.Context) {
 	var req providerRouteReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -109,17 +109,17 @@ func (h *ProviderRouteHandler) Create(c *gin.Context) {
 // value.
 //
 //	@Summary	Update provider route
-//	@Tags provider-routes
-//	@Accept json
+//	@Tags		provider-routes
+//	@Accept		json
 //	@Produce	json
-//	@Param id path string true	"Provider route ID"
-//	@Param route	body providerRouteReq	true	"Provider route"
-//	@Success	200 {object}	store.ProviderRoute
-//	@Failure	400 {object}	ErrorResponse
-//	@Failure	404 {object}	ErrorResponse
-//	@Failure	500 {object}	ErrorResponse
+//	@Param		id		path		string				true	"Provider route ID"
+//	@Param		route	body		providerRouteReq	true	"Provider route"
+//	@Success	200		{object}	store.ProviderRoute
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /provider-routes/{id} [put]
+//	@Router		/provider-routes/{id} [put]
 func (h *ProviderRouteHandler) Update(c *gin.Context) {
 	var req providerRouteReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -165,13 +165,13 @@ func (h *ProviderRouteHandler) Update(c *gin.Context) {
 // Delete removes the provider route identified by the id path parameter.
 //
 //	@Summary	Delete provider route
-//	@Tags provider-routes
-//	@Param id	path	string	true	"Provider route ID"
+//	@Tags		provider-routes
+//	@Param		id	path	string	true	"Provider route ID"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /provider-routes/{id} [delete]
+//	@Router		/provider-routes/{id} [delete]
 func (h *ProviderRouteHandler) Delete(c *gin.Context) {
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err)

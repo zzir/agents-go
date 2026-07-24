@@ -44,12 +44,12 @@ func (h *SessionHandler) WithRunStopper(s RunStopper) *SessionHandler {
 // List responds with all sessions.
 //
 //	@Summary	List sessions
-//	@Tags sessions
+//	@Tags		sessions
 //	@Produce	json
-//	@Success	200	{array} store.Session
+//	@Success	200	{array}		store.Session
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /sessions [get]
+//	@Router		/sessions [get]
 func (h *SessionHandler) List(c *gin.Context) {
 	sessions, err := h.sessions.List(c.Request.Context())
 	if err != nil {
@@ -69,15 +69,15 @@ type sessionCreateReq struct {
 // Create persists a new session, defaulting its name when omitted.
 //
 //	@Summary	Create session
-//	@Tags sessions
-//	@Accept json
+//	@Tags		sessions
+//	@Accept		json
 //	@Produce	json
-//	@Param session	body sessionCreateReq	false	"Session; name defaults to \"New	Chat\", agent_config_id optionally binds an agent"
-//	@Success	201 {object}	store.Session
-//	@Failure	400 {object}	ErrorResponse
-//	@Failure	500 {object}	ErrorResponse
+//	@Param		session	body		sessionCreateReq	false	"Session; name defaults to \"New	Chat\", agent_config_id optionally binds an agent"
+//	@Success	201		{object}	store.Session
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /sessions [post]
+//	@Router		/sessions [post]
 func (h *SessionHandler) Create(c *gin.Context) {
 	var req sessionCreateReq
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
@@ -109,14 +109,14 @@ func (h *SessionHandler) Create(c *gin.Context) {
 // Get responds with the session identified by the id path parameter.
 //
 //	@Summary	Get session
-//	@Tags sessions
+//	@Tags		sessions
 //	@Produce	json
-//	@Param id	path string	true	"Session ID"
+//	@Param		id	path		string	true	"Session ID"
 //	@Success	200	{object}	store.Session
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /sessions/{id} [get]
+//	@Router		/sessions/{id} [get]
 func (h *SessionHandler) Get(c *gin.Context) {
 	sess, err := h.sessions.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -135,19 +135,19 @@ type sessionPatchReq struct {
 // Patch applies a partial update (rename and/or pin) to the session
 // identified by the id path parameter and responds with the updated session.
 //
-//	@Summary Update session (partial)
+//	@Summary		Update session (partial)
 //	@Description	Applies a partial update; absent fields are unchanged.
-//	@Tags sessions
-//	@Accept json
-//	@Produce json
-//	@Param id path string true	"Session ID"
-//	@Param session	body sessionPatchReq	true	"Fields to change"
-//	@Success 200 {object}	store.Session
-//	@Failure 400 {object}	ErrorResponse
-//	@Failure 404 {object}	ErrorResponse
-//	@Failure 500 {object}	ErrorResponse
-//	@Security BearerAuth
-//	@Router /sessions/{id} [patch]
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string			true	"Session ID"
+//	@Param			session	body		sessionPatchReq	true	"Fields to change"
+//	@Success		200		{object}	store.Session
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id} [patch]
 func (h *SessionHandler) Patch(c *gin.Context) {
 	var req sessionPatchReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -176,13 +176,13 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 // with its messages and traces (one transaction in the store).
 //
 //	@Summary	Delete session
-//	@Tags sessions
-//	@Param id	path	string	true	"Session ID"
+//	@Tags		sessions
+//	@Param		id	path	string	true	"Session ID"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /sessions/{id} [delete]
+//	@Router		/sessions/{id} [delete]
 func (h *SessionHandler) Delete(c *gin.Context) {
 	// Stop the session's live run and all its background tasks (bounded wait)
 	// BEFORE the cascade: a task still executing would keep writing messages
@@ -201,19 +201,19 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 // to (and including) a given message ID. When message_id is omitted (or 0),
 // all messages are copied.
 //
-//	@Summary Fork session
+//	@Summary		Fork session
 //	@Description	Copies messages (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary message itself.
-//	@Tags sessions
-//	@Accept json
-//	@Produce json
-//	@Param id path string	true	"Source session ID"
-//	@Param fork	body object	false	"{message_id?: number, exclusive?: bool, label?: string}"
-//	@Success 201 {object}	store.Session
-//	@Failure 400 {object}	ErrorResponse
-//	@Failure 404 {object}	ErrorResponse
-//	@Failure 500 {object}	ErrorResponse
-//	@Security BearerAuth
-//	@Router /sessions/{id}/fork [post]
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string	true	"Source session ID"
+//	@Param			fork	body		object	false	"{message_id?: number, exclusive?: bool, label?: string}"
+//	@Success		201		{object}	store.Session
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/fork [post]
 func (h *SessionHandler) Fork(c *gin.Context) {
 	srcID := c.Param("id")
 	ctx := c.Request.Context()
@@ -274,17 +274,17 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 
 // Messages responds with the messages for the session identified by the id path parameter.
 //
-//	@Summary List session messages
+//	@Summary		List session messages
 //	@Description	Without limit, returns all messages oldest-first. With limit, returns the newest `limit` messages (still oldest-first); page backwards by passing the smallest received id as before_id.
-//	@Tags sessions
-//	@Produce json
-//	@Param id path string	true	"Session ID"
-//	@Param limit query int false	"Max messages to return; 0 or absent returns all"
-//	@Param before_id	query int false	"Only messages with id < before_id (backwards cursor)"
-//	@Success 200 {array} store.Message
-//	@Failure 500 {object}	ErrorResponse
-//	@Security BearerAuth
-//	@Router /sessions/{id}/messages [get]
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id			path		string	true	"Session ID"
+//	@Param			limit		query		int		false	"Max messages to return; 0 or absent returns all"
+//	@Param			before_id	query		int		false	"Only messages with id < before_id (backwards cursor)"
+//	@Success		200			{array}		store.Message
+//	@Failure		500			{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/messages [get]
 func (h *SessionHandler) Messages(c *gin.Context) {
 	beforeID, limit := pageParams(c)
 	msgs, err := h.messages.GetMessages(c.Request.Context(), c.Param("id"), beforeID, limit)

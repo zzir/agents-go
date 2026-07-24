@@ -36,11 +36,11 @@ type skillEntry struct {
 // List responds with all discovered skills under the root directory.
 //
 //	@Summary	List skills
-//	@Tags skills
+//	@Tags		skills
 //	@Produce	json
 //	@Success	200	{array}	skillEntry
 //	@Security	BearerAuth
-//	@Router /skills [get]
+//	@Router		/skills [get]
 func (h *SkillHandler) List(c *gin.Context) {
 	skills := findAllSkills(h.skillsDir)
 	c.JSON(http.StatusOK, skills)
@@ -49,14 +49,14 @@ func (h *SkillHandler) List(c *gin.Context) {
 // Get responds with the SKILL.md contents for the skill at the requested path.
 //
 //	@Summary	Get skill content
-//	@Tags skills
+//	@Tags		skills
 //	@Produce	json
-//	@Param path	path string	true	"Skill path (may be nested, e.g. repo/sub-skill)"
-//	@Success	200 {object}	skillContentResp
-//	@Failure	400 {object}	ErrorResponse
-//	@Failure	404 {object}	ErrorResponse
+//	@Param		path	path		string	true	"Skill path (may be nested, e.g. repo/sub-skill)"
+//	@Success	200		{object}	skillContentResp
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /skills/{path} [get]
+//	@Router		/skills/{path} [get]
 func (h *SkillHandler) Get(c *gin.Context) {
 	relPath := c.Param("path")
 	relPath = strings.TrimPrefix(relPath, "/")
@@ -102,18 +102,18 @@ type skillContentResp struct {
 // Clone shallow-clones a git repository of skills into the root directory.
 // It responds with 201 and the discovered skills.
 //
-//	@Summary Clone skill repo
+//	@Summary		Clone skill repo
 //	@Description	git clone --depth=1 of an http(s) repository containing SKILL.md files.
-//	@Tags skill-repos
-//	@Accept json
-//	@Produce json
-//	@Param repo	body cloneRequest	true	"Repository URL (http/https only)"
-//	@Success 201 {object}	skillRepoResp
-//	@Failure 400 {object}	ErrorResponse
-//	@Failure 409 {object}	ErrorResponse	"directory already exists"
-//	@Failure 502 {object}	ErrorResponse	"git clone failed"
-//	@Security BearerAuth
-//	@Router /skill-repos [post]
+//	@Tags			skill-repos
+//	@Accept			json
+//	@Produce		json
+//	@Param			repo	body		cloneRequest	true	"Repository URL (http/https only)"
+//	@Success		201		{object}	skillRepoResp
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"directory already exists"
+//	@Failure		502		{object}	ErrorResponse	"git clone failed"
+//	@Security		BearerAuth
+//	@Router			/skill-repos [post]
 func (h *SkillHandler) Clone(c *gin.Context) {
 	var req cloneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -219,14 +219,14 @@ func (h *SkillHandler) repoDir(c *gin.Context) string {
 // Delete removes the skill repo directory identified by the name path parameter.
 //
 //	@Summary	Delete skill repo
-//	@Tags skill-repos
-//	@Param name	path	string	true	"Repo directory name"
-//	@Success	204 "deleted"
-//	@Failure	400 {object}	ErrorResponse
-//	@Failure	404 {object}	ErrorResponse
-//	@Failure	500 {object}	ErrorResponse
+//	@Tags		skill-repos
+//	@Param		name	path	string	true	"Repo directory name"
+//	@Success	204		"deleted"
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	500		{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router /skill-repos/{name} [delete]
+//	@Router		/skill-repos/{name} [delete]
 func (h *SkillHandler) Delete(c *gin.Context) {
 	target := h.repoDir(c)
 	if target == "" {
@@ -246,18 +246,18 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 // Sync fetches and hard-resets the skill git repository identified by the
 // name path parameter, then responds with the refreshed skill list.
 //
-//	@Summary Sync skill repo
+//	@Summary		Sync skill repo
 //	@Description	git fetch + reset --hard origin/HEAD; local changes in the repo are discarded.
-//	@Tags skill-repos
-//	@Produce json
-//	@Param name	path string	true	"Repo directory name"
-//	@Success 200 {object}	skillRepoResp
-//	@Failure 400 {object}	ErrorResponse
-//	@Failure 404 {object}	ErrorResponse
-//	@Failure 409 {object}	ErrorResponse	"not a git repository"
-//	@Failure 502 {object}	ErrorResponse	"git fetch failed"
-//	@Security BearerAuth
-//	@Router /skill-repos/{name}/sync [post]
+//	@Tags			skill-repos
+//	@Produce		json
+//	@Param			name	path		string	true	"Repo directory name"
+//	@Success		200		{object}	skillRepoResp
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"not a git repository"
+//	@Failure		502		{object}	ErrorResponse	"git fetch failed"
+//	@Security		BearerAuth
+//	@Router			/skill-repos/{name}/sync [post]
 func (h *SkillHandler) Sync(c *gin.Context) {
 	target := h.repoDir(c)
 	if target == "" {
