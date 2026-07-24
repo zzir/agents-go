@@ -104,6 +104,7 @@ func run(_ *cobra.Command, _ []string) error {
 	mcpManager := bridge.NewMcpManager(ctx, settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
 	chatgptOAuth := bridge.NewChatGPTOAuth(agentConfigStore)
+	chatgptOAuth.UseSettings(settingStore) // route token refresh/exchange through configured proxy
 	defer mcpManager.CloseAll()
 	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
 	go bridge.RunTraceRetention(ctx, settingStore, traceStore)
@@ -254,7 +255,17 @@ func run(_ *cobra.Command, _ []string) error {
 	srv.ServeStatic(staticFS)
 
 	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
-	httpSrv := &http.Server{Addr: addr, Handler: srv.Engine}
+	httpSrv := &http.Server{
+		Addr:    addr,
+		Handler: srv.Engine,
+		// Slow-loris protection: bound how long a client may take to send request
+		// headers, and how long an idle keep-alive connection may linger. There is
+		// deliberately NO global WriteTimeout — it would abort the long-lived SSE
+		// (/runs/{id}/events) and WebSocket (/ws, /ws/terminal) responses mid-stream;
+		// those transports bound their own writes (SSE heartbeat, ws write deadline).
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	go func() {
 		log.Info().Str("addr", addr).Str("workspace", flagWorkspace).Msg("server started")

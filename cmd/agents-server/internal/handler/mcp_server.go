@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"html"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -83,12 +85,12 @@ func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
 // List responds with all MCP server configurations and their connection state.
 //
 //	@Summary	List MCP servers
-//	@Tags		mcp-servers
+//	@Tags mcp-servers
 //	@Produce	json
-//	@Success	200	{array}		mcpServerListItem
+//	@Success	200	{array} mcpServerListItem
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/mcp-servers [get]
+//	@Router /mcp-servers [get]
 func (h *McpServerHandler) List(c *gin.Context) {
 	configs, err := h.store.List(c.Request.Context())
 	if err != nil {
@@ -158,17 +160,17 @@ func (r *mcpServerReq) validate() string {
 
 // Create persists a new MCP server configuration from the request body.
 //
-//	@Summary		Create MCP server
+//	@Summary Create MCP server
 //	@Description	config is transport-specific: {command, args} for stdio; {endpoint, headers, auth_mode, oauth_*} for streamable_http. Header values and oauth_client_secret are write-only (******** mask semantics).
-//	@Tags			mcp-servers
-//	@Accept			json
-//	@Produce		json
-//	@Param			server	body		mcpServerReq	true	"MCP server configuration"
-//	@Success		201		{object}	mcpServerListItem
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		500		{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/mcp-servers [post]
+//	@Tags mcp-servers
+//	@Accept json
+//	@Produce json
+//	@Param server	body mcpServerReq	true	"MCP server configuration"
+//	@Success 201 {object}	mcpServerListItem
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 500 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /mcp-servers [post]
 func (h *McpServerHandler) Create(c *gin.Context) {
 	var req mcpServerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -195,14 +197,14 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 // Get responds with the MCP server configuration identified by the id path parameter.
 //
 //	@Summary	Get MCP server
-//	@Tags		mcp-servers
+//	@Tags mcp-servers
 //	@Produce	json
-//	@Param		id	path		string	true	"MCP server ID"
+//	@Param id	path string	true	"MCP server ID"
 //	@Success	200	{object}	mcpServerListItem
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/mcp-servers/{id} [get]
+//	@Router /mcp-servers/{id} [get]
 func (h *McpServerHandler) Get(c *gin.Context) {
 	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -217,19 +219,19 @@ func (h *McpServerHandler) Get(c *gin.Context) {
 // the server is disconnected; when flipped to true, a connection attempt is
 // made automatically.
 //
-//	@Summary		Update MCP server
+//	@Summary Update MCP server
 //	@Description	Full replace; flipping enabled disconnects/reconnects the server. Masked secrets keep their stored values.
-//	@Tags			mcp-servers
-//	@Accept			json
-//	@Produce		json
-//	@Param			id		path		string			true	"MCP server ID"
-//	@Param			server	body		mcpServerReq	true	"MCP server configuration"
-//	@Success		200		{object}	mcpServerListItem
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		500		{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/mcp-servers/{id} [put]
+//	@Tags mcp-servers
+//	@Accept json
+//	@Produce json
+//	@Param id path string true	"MCP server ID"
+//	@Param server	body mcpServerReq	true	"MCP server configuration"
+//	@Success 200 {object}	mcpServerListItem
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 404 {object}	ErrorResponse
+//	@Failure 500 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /mcp-servers/{id} [put]
 func (h *McpServerHandler) Update(c *gin.Context) {
 	var req mcpServerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -242,7 +244,15 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	prev, _ := h.store.Get(ctx, id)
+	// Load the current row so masked header values / oauth_client_secret can
+	// round-trip. A transient (non-not-found) Get failure must abort: continuing
+	// with an empty prev would resolve those ******** masks to "" and silently
+	// wipe the stored secrets. Not-found carries through to a 404 from Update.
+	prev, err := h.store.Get(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		internalError(c, err)
+		return
+	}
 	cfg := req.toModel()
 	var prevConfig json.RawMessage
 	if prev != nil {
@@ -268,13 +278,13 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 // Delete disconnects and removes the MCP server identified by the id path parameter.
 //
 //	@Summary	Delete MCP server
-//	@Tags		mcp-servers
-//	@Param		id	path	string	true	"MCP server ID"
+//	@Tags mcp-servers
+//	@Param id	path	string	true	"MCP server ID"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/mcp-servers/{id} [delete]
+//	@Router /mcp-servers/{id} [delete]
 func (h *McpServerHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	// Delete the row first, then disconnect: a failed delete must not leave a
@@ -299,17 +309,17 @@ type mcpConnectResp struct {
 // For OAuth-enabled servers, it may return an authorize_url instead of connecting
 // directly; the frontend should open that URL in a popup and wait for the callback.
 //
-//	@Summary		Connect MCP server
+//	@Summary Connect MCP server
 //	@Description	Establishes the connection. OAuth-enabled servers may answer with status "authorization_required" and an authorize_url to open in a browser popup. Disabled servers cannot be connected (409).
-//	@Tags			mcp-servers
-//	@Produce		json
-//	@Param			id	path		string	true	"MCP server ID"
-//	@Success		200	{object}	mcpConnectResp
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		409	{object}	ErrorResponse	"server is disabled"
-//	@Failure		502	{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/mcp-servers/{id}/connect [post]
+//	@Tags mcp-servers
+//	@Produce json
+//	@Param id	path string	true	"MCP server ID"
+//	@Success 200	{object}	mcpConnectResp
+//	@Failure 404	{object}	ErrorResponse
+//	@Failure 409	{object}	ErrorResponse	"server is disabled"
+//	@Failure 502	{object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /mcp-servers/{id}/connect [post]
 func (h *McpServerHandler) Connect(c *gin.Context) {
 	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -327,11 +337,7 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	if cfg.TransportType == "streamable_http" {
 		var hc store.HTTPMcpConfig
 		if err := json.Unmarshal(cfg.Config, &hc); err == nil && hc.AuthMode == "oauth" {
-			scheme := "http"
-			if c.Request.TLS != nil {
-				scheme = "https"
-			}
-			origin := scheme + "://" + c.Request.Host
+			origin := externalOrigin(c.Request)
 			result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, origin)
 			if err != nil {
 				upstreamError(c, err)
@@ -357,18 +363,74 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
 }
 
+// externalOrigin derives the browser-facing origin (scheme://host) used to build
+// the OAuth redirect_uri. Behind a TLS-terminating reverse proxy the request
+// reaches us as plain http on an internal host, so the real scheme/host live in
+// the forwarding headers: this prefers RFC 7239 Forwarded, then the de-facto
+// X-Forwarded-Proto / X-Forwarded-Host, and otherwise falls back to the direct
+// connection. The redirect_uri must match what the browser actually loaded, or
+// the authorization server rejects the callback.
+//
+// NOTE: these headers are trustworthy only when a trusted reverse proxy sets
+// them — a direct client can forge them. There is no proxy-trust setting yet, so
+// this assumes the documented reverse-proxy deployment.
+// TODO: gate forwarded-header trust on an explicit --trusted-proxy / trust-proxy
+// config flag once one exists.
+func externalOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if fwd := r.Header.Get("Forwarded"); fwd != "" {
+		if p := forwardedParam(fwd, "proto"); p != "" {
+			scheme = p
+		}
+		if h := forwardedParam(fwd, "host"); h != "" {
+			host = h
+		}
+	} else {
+		// X-Forwarded-* may be a comma-separated proxy chain; the first element is
+		// the value closest to the original client.
+		if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
+			scheme = strings.TrimSpace(strings.Split(p, ",")[0])
+		}
+		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
+			host = strings.TrimSpace(strings.Split(h, ",")[0])
+		}
+	}
+	return scheme + "://" + host
+}
+
+// forwardedParam extracts a token=value parameter (e.g. proto, host) from the
+// first element of an RFC 7239 Forwarded header. Values may be double-quoted.
+func forwardedParam(header, key string) string {
+	first := header
+	if i := strings.IndexByte(header, ','); i >= 0 {
+		first = header[:i]
+	}
+	for _, part := range strings.Split(first, ";") {
+		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), key) {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(val), `"`)
+	}
+	return ""
+}
+
 // ClearOAuth disconnects the MCP server identified by the id path parameter
 // and removes its persisted OAuth token, forcing a fresh authorization on the
 // next connect. This is the "sign out" action for OAuth-enabled servers.
 //
 //	@Summary	Clear MCP OAuth token
-//	@Tags		mcp-servers
-//	@Param		id	path	string	true	"MCP server ID"
+//	@Tags mcp-servers
+//	@Param id	path	string	true	"MCP server ID"
 //	@Success	204	"token cleared"
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/mcp-servers/{id}/oauth-token [delete]
+//	@Router /mcp-servers/{id}/oauth-token [delete]
 func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 	id := c.Param("id")
 	if !requireResource(c, h.store.Get, id) {
@@ -389,16 +451,16 @@ func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 // It delivers the authorization code to the pending connection and renders a
 // small HTML page that notifies the opener window via postMessage.
 //
-//	@Summary		MCP OAuth callback
+//	@Summary MCP OAuth callback
 //	@Description	Browser-facing redirect target of the OAuth flow (no auth token required). Renders an HTML result page, not JSON.
-//	@Tags			mcp-servers
-//	@Produce		html
-//	@Param			state	query		string	true	"OAuth state"
-//	@Param			code	query		string	true	"Authorization code"
-//	@Param			error	query		string	false	"Provider error, e.g. access_denied"
-//	@Success		200		{string}	string	"HTML result page"
-//	@Failure		400		{string}	string	"missing state or code parameter"
-//	@Router			/mcp-servers/oauth/callback [get]
+//	@Tags mcp-servers
+//	@Produce html
+//	@Param state	query string	true	"OAuth state"
+//	@Param code	query string	true	"Authorization code"
+//	@Param error	query string	false	"Provider error, e.g. access_denied"
+//	@Success 200 {string}	string	"HTML result page"
+//	@Failure 400 {string}	string	"missing state or code parameter"
+//	@Router /mcp-servers/oauth/callback [get]
 func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
 	// Provider denial redirects (?error=access_denied&state=...) carry no
 	// code, so the error parameter must be checked before requiring one.
@@ -459,14 +521,14 @@ type mcpToolInfo struct {
 // disconnected server is a 409: the request is fine, the server state isn't.
 //
 //	@Summary	List MCP server tools
-//	@Tags		mcp-servers
+//	@Tags mcp-servers
 //	@Produce	json
-//	@Param		id	path		string	true	"MCP server ID"
-//	@Success	200	{array}		mcpToolInfo
+//	@Param id	path string	true	"MCP server ID"
+//	@Success	200	{array} mcpToolInfo
 //	@Failure	409	{object}	ErrorResponse	"server not connected"
 //	@Failure	502	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/mcp-servers/{id}/tools [get]
+//	@Router /mcp-servers/{id}/tools [get]
 func (h *McpServerHandler) Tools(c *gin.Context) {
 	id := c.Param("id")
 	// Distinguish "no such server" (404) from "exists but not connected" (409):

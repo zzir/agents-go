@@ -23,9 +23,27 @@ const (
 	// wsWriteTimeout caps a single socket write so a client whose TCP receive
 	// window is full can never block the writer goroutine indefinitely.
 	wsWriteTimeout = 15 * time.Second
+	// wsMaxMessageBytes bounds a single inbound WebSocket frame. gorilla's
+	// default read limit is unlimited, so without this cap a client — even an
+	// unauthenticated one, before the auth handshake — could stream an
+	// arbitrarily large frame straight into memory and OOM the process. 1 MiB
+	// comfortably fits the largest legitimate inbound message (a chat prompt in
+	// run.create, or the terminal.open handshake); a peer that exceeds it is
+	// closed with 1009 (message too big).
+	wsMaxMessageBytes = 1 << 20
+	// wsAuthDeadline caps how long an upgraded-but-unauthenticated connection may
+	// take to send its auth frame. Without it, a client that completes the
+	// upgrade but never authenticates pins a goroutine and its read buffer
+	// indefinitely. It is cleared on success — the event/terminal streams are
+	// long-lived and legitimately idle between messages.
+	wsAuthDeadline = 10 * time.Second
+	// wsHandshakeTimeout bounds the upgrade handshake itself, so a slow client
+	// dribbling the upgrade request cannot tie up the accepting goroutine.
+	wsHandshakeTimeout = 10 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
+	HandshakeTimeout: wsHandshakeTimeout,
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
@@ -163,6 +181,8 @@ func HandleWS(handler WSHandlerFunc) gin.HandlerFunc {
 			zerolog.Ctx(c.Request.Context()).Error().Err(err).Msg("ws upgrade")
 			return
 		}
+		// Bound every inbound frame up front: gorilla defaults to no limit.
+		ws.SetReadLimit(wsMaxMessageBytes)
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		conn := &WSConn{conn: ws, ctx: ctx, cancel: cancel}
 		defer conn.Close()
@@ -181,9 +201,15 @@ func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
 			zerolog.Ctx(c.Request.Context()).Error().Err(err).Msg("ws upgrade")
 			return
 		}
+		// Cap inbound frame size immediately — before the auth handshake — so an
+		// unauthenticated peer cannot OOM the process with a giant frame.
+		ws.SetReadLimit(wsMaxMessageBytes)
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		conn := &WSConn{conn: ws, ctx: ctx, cancel: cancel}
 
+		// Require the auth frame to arrive within a bounded window so an idle,
+		// unauthenticated connection can't hold a goroutine and buffer open.
+		_ = ws.SetReadDeadline(time.Now().Add(wsAuthDeadline))
 		var auth struct {
 			Type  string `json:"type"`
 			Token string `json:"token"`
@@ -193,6 +219,9 @@ func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
 			conn.Close()
 			return
 		}
+		// Authenticated: drop the deadline (the stream idles between messages by
+		// design). The read-size limit stays in force for the whole connection.
+		_ = ws.SetReadDeadline(time.Time{})
 		_ = conn.WriteJSON(map[string]string{"type": protocol.EventAuthOK})
 
 		defer conn.Close()

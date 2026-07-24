@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -20,14 +21,14 @@ func NewSettingHandler(s *store.SettingStore) *SettingHandler {
 
 // List responds with all settings, secret values masked.
 //
-//	@Summary		List settings
+//	@Summary List settings
 //	@Description	Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).
-//	@Tags			settings
-//	@Produce		json
-//	@Success		200	{array}		store.Setting
-//	@Failure		500	{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/settings [get]
+//	@Tags settings
+//	@Produce json
+//	@Success 200	{array} store.Setting
+//	@Failure 500	{object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /settings [get]
 func (h *SettingHandler) List(c *gin.Context) {
 	settings, err := h.store.List(c.Request.Context())
 	if err != nil {
@@ -46,14 +47,14 @@ func (h *SettingHandler) List(c *gin.Context) {
 // values masked.
 //
 //	@Summary	Get setting
-//	@Tags		settings
+//	@Tags settings
 //	@Produce	json
-//	@Param		key	path		string	true	"Setting key"
+//	@Param key	path string	true	"Setting key"
 //	@Success	200	{object}	store.Setting
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/settings/{key} [get]
+//	@Router /settings/{key} [get]
 func (h *SettingHandler) Get(c *gin.Context) {
 	st, err := h.store.Get(c.Request.Context(), c.Param("key"))
 	if err != nil {
@@ -75,16 +76,16 @@ type setSettingReq struct {
 // settings, a masked value keeps the stored one.
 //
 //	@Summary	Set setting
-//	@Tags		settings
-//	@Accept		json
+//	@Tags settings
+//	@Accept json
 //	@Produce	json
-//	@Param		key		path		string			true	"Setting key"
-//	@Param		setting	body		setSettingReq	true	"Value to store"
-//	@Success	200		{object}	store.Setting
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	500		{object}	ErrorResponse
+//	@Param key path string true	"Setting key"
+//	@Param setting	body setSettingReq	true	"Value to store"
+//	@Success	200 {object}	store.Setting
+//	@Failure	400 {object}	ErrorResponse
+//	@Failure	500 {object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/settings/{key} [put]
+//	@Router /settings/{key} [put]
 func (h *SettingHandler) Set(c *gin.Context) {
 	var req setSettingReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -94,11 +95,19 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	ctx := c.Request.Context()
 	key := c.Param("key")
 	if secretSettingKeys[key] && req.Value == SecretMask {
-		var prevValue string
-		if prev, err := h.store.Get(ctx, key); err == nil {
-			prevValue = prev.Value
+		// Keep the stored secret when the client echoes the mask. A transient
+		// (non-not-found) Get failure must abort: continuing would resolve the mask
+		// to "" and silently clear the stored secret. Not-found leaves nothing to
+		// preserve, so the mask resolves to "".
+		prev, err := h.store.Get(ctx, key)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			internalError(c, err)
+			return
 		}
-		req.Value = prevValue
+		req.Value = ""
+		if prev != nil {
+			req.Value = prev.Value
+		}
 	}
 	if err := h.store.Set(ctx, key, req.Value); err != nil {
 		internalError(c, err)
@@ -114,13 +123,13 @@ func (h *SettingHandler) Set(c *gin.Context) {
 // Delete removes the setting identified by the key path parameter.
 //
 //	@Summary	Delete setting
-//	@Tags		settings
-//	@Param		key	path	string	true	"Setting key"
+//	@Tags settings
+//	@Param key	path	string	true	"Setting key"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/settings/{key} [delete]
+//	@Router /settings/{key} [delete]
 func (h *SettingHandler) Delete(c *gin.Context) {
 	if err := h.store.Delete(c.Request.Context(), c.Param("key")); err != nil {
 		storeError(c, err)

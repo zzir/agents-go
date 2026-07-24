@@ -43,21 +43,21 @@ type createRunResp struct {
 // output; otherwise it returns 201 immediately with the run id (stream events
 // via GET /runs/{id}/events).
 //
-//	@Summary		Start run
+//	@Summary Start run
 //	@Description	Starts an agent run on the session. Default returns 201 with a run id; pass wait=true to block until the run ends and receive the final output — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals). Fails 409 if the session already has an active run.
-//	@Tags			runs
-//	@Accept			json
-//	@Produce		json
-//	@Param			id		path		string			true	"Session ID"
-//	@Param			wait	query		bool			false	"Block until the run finishes"
-//	@Param			run		body		createRunReq	true	"Run input"
-//	@Success		201		{object}	createRunResp
-//	@Success		200		{object}	map[string]interface{}	"Final result (wait=true)"
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"session already has an active run"
-//	@Security		BearerAuth
-//	@Router			/sessions/{id}/runs [post]
+//	@Tags runs
+//	@Accept json
+//	@Produce json
+//	@Param id path string true	"Session ID"
+//	@Param wait	query bool false	"Block until the run finishes"
+//	@Param run body createRunReq	true	"Run input"
+//	@Success 201 {object}	createRunResp
+//	@Success 200 {object}	map[string]interface{}	"Final result (wait=true)"
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 404 {object}	ErrorResponse
+//	@Failure 409 {object}	ErrorResponse	"session already has an active run"
+//	@Security BearerAuth
+//	@Router /sessions/{id}/runs [post]
 func (h *RunHandler) Create(c *gin.Context) {
 	sessionID := c.Param("id")
 	var req createRunReq
@@ -153,20 +153,29 @@ func (h *RunHandler) startError(c *gin.Context, err error) {
 		conflict(c, "session already has an active run: "+busy.RunID)
 		return
 	}
-	// StartRun's only other failure is an unknown session.
-	notFound(c)
+	// The session exists but is already at its live-task cap: a state conflict
+	// (409), not a missing resource.
+	var limit bridge.ErrTaskLimit
+	if errors.As(err, &limit) {
+		conflict(c, limit.Error())
+		return
+	}
+	// The remaining failures come from the session lookup StartRun does first:
+	// an unknown session -> 404, any other DB error -> 500. Folding the latter
+	// into 404 would mislabel a transient failure as "session not found".
+	storeError(c, err)
 }
 
 // Get reports the current status of the run identified by the id path parameter.
 //
 //	@Summary	Get run status
-//	@Tags		runs
+//	@Tags runs
 //	@Produce	json
-//	@Param		id	path		string	true	"Run ID"
+//	@Param id	path string	true	"Run ID"
 //	@Success	200	{object}	bridge.RunInfo
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/runs/{id} [get]
+//	@Router /runs/{id} [get]
 func (h *RunHandler) Get(c *gin.Context) {
 	info, ok := h.runner.Hub().Info(c.Param("id"))
 	if !ok {
@@ -179,13 +188,13 @@ func (h *RunHandler) Get(c *gin.Context) {
 // Cancel cancels the run identified by the id path parameter.
 //
 //	@Summary	Cancel run
-//	@Tags		runs
-//	@Param		id		path	string	true	"Run ID"
-//	@Param		mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
-//	@Success	204		"cancelling"
-//	@Failure	404		{object}	ErrorResponse
+//	@Tags runs
+//	@Param id path	string	true	"Run ID"
+//	@Param mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
+//	@Success	204 "cancelling"
+//	@Failure	404 {object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/runs/{id}/cancel [post]
+//	@Router /runs/{id}/cancel [post]
 func (h *RunHandler) Cancel(c *gin.Context) {
 	if _, ok := h.runner.Hub().Info(c.Param("id")); !ok {
 		notFound(c)
@@ -203,16 +212,16 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 // its hub sequence number; a reconnect with Last-Event-ID (or ?from_seq)
 // resumes without loss. The stream ends after a terminal event.
 //
-//	@Summary		Stream run events (SSE)
+//	@Summary Stream run events (SSE)
 //	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted (paused for approval — deciding via /approvals resumes the SAME run id; reconnect with Last-Event-ID to continue the stream).
-//	@Tags			runs
-//	@Produce		text/event-stream
-//	@Param			id			path		string	true	"Run ID"
-//	@Param			from_seq	query		int		false	"Resume after this sequence number"
-//	@Success		200			{string}	string	"SSE stream"
-//	@Failure		404			{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/runs/{id}/events [get]
+//	@Tags runs
+//	@Produce text/event-stream
+//	@Param id path string	true	"Run ID"
+//	@Param from_seq	query int false	"Resume after this sequence number"
+//	@Success 200 {string}	string	"SSE stream"
+//	@Failure 404 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /runs/{id}/events [get]
 func (h *RunHandler) Events(c *gin.Context) {
 	runID := c.Param("id")
 	fromSeq := 0

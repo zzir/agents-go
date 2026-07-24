@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -84,12 +85,12 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 // List responds with all agent configurations, secrets masked.
 //
 //	@Summary	List agents
-//	@Tags		agents
+//	@Tags agents
 //	@Produce	json
-//	@Success	200	{array}		store.AgentConfig
+//	@Success	200	{array} store.AgentConfig
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/agents [get]
+//	@Router /agents [get]
 func (h *AgentConfigHandler) List(c *gin.Context) {
 	configs, err := h.store.List(c.Request.Context())
 	if err != nil {
@@ -104,17 +105,17 @@ func (h *AgentConfigHandler) List(c *gin.Context) {
 
 // Create persists a new agent configuration from the request body.
 //
-//	@Summary		Create agent
+//	@Summary Create agent
 //	@Description	Secret fields (api_key, fallback_models[].api_key) are write-only: responses mask them with ********; sending the mask back keeps the stored value, "" clears it. use_previous_response_id is rejected (incompatible with the server-side session store), as are tool selections whose statically known tool names would collide.
-//	@Tags			agents
-//	@Accept			json
-//	@Produce		json
-//	@Param			agent	body		store.AgentConfig	true	"Agent configuration"
-//	@Success		201		{object}	store.AgentConfig
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		500		{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/agents [post]
+//	@Tags agents
+//	@Accept json
+//	@Produce json
+//	@Param agent	body store.AgentConfig	true	"Agent configuration"
+//	@Success 201 {object}	store.AgentConfig
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 500 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /agents [post]
 func (h *AgentConfigHandler) Create(c *gin.Context) {
 	var ac store.AgentConfig
 	if err := c.ShouldBindJSON(&ac); err != nil {
@@ -142,14 +143,14 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 // parameter, secrets masked.
 //
 //	@Summary	Get agent
-//	@Tags		agents
+//	@Tags agents
 //	@Produce	json
-//	@Param		id	path		string	true	"Agent ID"
+//	@Param id	path string	true	"Agent ID"
 //	@Success	200	{object}	store.AgentConfig
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/agents/{id} [get]
+//	@Router /agents/{id} [get]
 func (h *AgentConfigHandler) Get(c *gin.Context) {
 	ac, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -164,19 +165,19 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 // parameter and responds with the updated configuration (secrets masked).
 // Masked secret fields keep their stored values.
 //
-//	@Summary		Update agent
+//	@Summary Update agent
 //	@Description	Full replace. Secret fields are write-only: send back the ******** mask to keep the stored value, "" to clear it. use_previous_response_id is rejected (incompatible with the server-side session store), as are tool selections whose statically known tool names would collide.
-//	@Tags			agents
-//	@Accept			json
-//	@Produce		json
-//	@Param			id		path		string				true	"Agent ID"
-//	@Param			agent	body		store.AgentConfig	true	"Agent configuration"
-//	@Success		200		{object}	store.AgentConfig
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		500		{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/agents/{id} [put]
+//	@Tags agents
+//	@Accept json
+//	@Produce json
+//	@Param id path string true	"Agent ID"
+//	@Param agent	body store.AgentConfig	true	"Agent configuration"
+//	@Success 200 {object}	store.AgentConfig
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 404 {object}	ErrorResponse
+//	@Failure 500 {object}	ErrorResponse
+//	@Security BearerAuth
+//	@Router /agents/{id} [put]
 func (h *AgentConfigHandler) Update(c *gin.Context) {
 	var ac store.AgentConfig
 	if err := c.ShouldBindJSON(&ac); err != nil {
@@ -188,8 +189,18 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
+	// Load the current row so masked secrets can round-trip to their stored
+	// values. A transient (non-not-found) Get failure must abort: continuing with
+	// an empty prev would resolve the ******** mask to "" and silently WIPE the
+	// stored api_key. Not-found is fine to carry through — the Update below
+	// returns 404 for it.
+	prev, err := h.store.Get(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		internalError(c, err)
+		return
+	}
 	var prevKey, prevFallback string
-	if prev, err := h.store.Get(ctx, id); err == nil {
+	if prev != nil {
 		prevKey, prevFallback = prev.Provider.APIKey, prev.Resilience.FallbackModels
 	}
 	ac.Provider.APIKey = resolveSecret(ac.Provider.APIKey, prevKey)
@@ -210,13 +221,13 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 // Delete removes the agent configuration identified by the id path parameter.
 //
 //	@Summary	Delete agent
-//	@Tags		agents
-//	@Param		id	path	string	true	"Agent ID"
+//	@Tags agents
+//	@Param id	path	string	true	"Agent ID"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/agents/{id} [delete]
+//	@Router /agents/{id} [delete]
 func (h *AgentConfigHandler) Delete(c *gin.Context) {
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err)

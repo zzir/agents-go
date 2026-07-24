@@ -3,10 +3,12 @@ package handler
 import (
 	"bufio"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -34,11 +36,11 @@ type skillEntry struct {
 // List responds with all discovered skills under the root directory.
 //
 //	@Summary	List skills
-//	@Tags		skills
+//	@Tags skills
 //	@Produce	json
 //	@Success	200	{array}	skillEntry
 //	@Security	BearerAuth
-//	@Router		/skills [get]
+//	@Router /skills [get]
 func (h *SkillHandler) List(c *gin.Context) {
 	skills := findAllSkills(h.skillsDir)
 	c.JSON(http.StatusOK, skills)
@@ -47,14 +49,14 @@ func (h *SkillHandler) List(c *gin.Context) {
 // Get responds with the SKILL.md contents for the skill at the requested path.
 //
 //	@Summary	Get skill content
-//	@Tags		skills
+//	@Tags skills
 //	@Produce	json
-//	@Param		path	path		string	true	"Skill path (may be nested, e.g. repo/sub-skill)"
-//	@Success	200		{object}	skillContentResp
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	404		{object}	ErrorResponse
+//	@Param path	path string	true	"Skill path (may be nested, e.g. repo/sub-skill)"
+//	@Success	200 {object}	skillContentResp
+//	@Failure	400 {object}	ErrorResponse
+//	@Failure	404 {object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/skills/{path} [get]
+//	@Router /skills/{path} [get]
 func (h *SkillHandler) Get(c *gin.Context) {
 	relPath := c.Param("path")
 	relPath = strings.TrimPrefix(relPath, "/")
@@ -63,12 +65,11 @@ func (h *SkillHandler) Get(c *gin.Context) {
 		badRequest(c, "invalid skill path")
 		return
 	}
-	resolved := filepath.Join(h.skillsDir, clean, "SKILL.md")
-	if !strings.HasPrefix(resolved, h.skillsDir) {
-		badRequest(c, "invalid skill path")
-		return
-	}
-	data, err := os.ReadFile(resolved)
+	// Read SKILL.md through an os.Root confined to skillsDir. Lexical traversal is
+	// already rejected above; os.Root additionally refuses symlink escapes, so a
+	// repo containing SKILL.md -> /etc/passwd (or a symlinked parent directory)
+	// cannot leak a file from outside the skills tree.
+	data, err := readUnderRoot(h.skillsDir, filepath.Join(clean, "SKILL.md"))
 	if err != nil {
 		notFound(c)
 		return
@@ -101,18 +102,18 @@ type skillContentResp struct {
 // Clone shallow-clones a git repository of skills into the root directory.
 // It responds with 201 and the discovered skills.
 //
-//	@Summary		Clone skill repo
+//	@Summary Clone skill repo
 //	@Description	git clone --depth=1 of an http(s) repository containing SKILL.md files.
-//	@Tags			skill-repos
-//	@Accept			json
-//	@Produce		json
-//	@Param			repo	body		cloneRequest	true	"Repository URL (http/https only)"
-//	@Success		201		{object}	skillRepoResp
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"directory already exists"
-//	@Failure		502		{object}	ErrorResponse	"git clone failed"
-//	@Security		BearerAuth
-//	@Router			/skill-repos [post]
+//	@Tags skill-repos
+//	@Accept json
+//	@Produce json
+//	@Param repo	body cloneRequest	true	"Repository URL (http/https only)"
+//	@Success 201 {object}	skillRepoResp
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 409 {object}	ErrorResponse	"directory already exists"
+//	@Failure 502 {object}	ErrorResponse	"git clone failed"
+//	@Security BearerAuth
+//	@Router /skill-repos [post]
 func (h *SkillHandler) Clone(c *gin.Context) {
 	var req cloneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -146,18 +147,43 @@ func (h *SkillHandler) Clone(c *gin.Context) {
 		return
 	}
 
-	cmd := exec.CommandContext(c.Request.Context(), "git", "clone", "--depth=1", "--", repoURL, dest)
+	// Clone into a private temp directory and publish it with a single atomic
+	// rename. This removes the check-then-clone/cleanup TOCTOU: the old code
+	// cloned straight into dest and, on any failure, RemoveAll(dest) — so two
+	// concurrent clones of the same name could delete each other's tree. Now the
+	// rename is the one point that makes the repo visible, and cleanup only ever
+	// touches this request's own scratch dir. The temp dir lives inside skillsDir
+	// so the rename stays on one filesystem (truly atomic, no cross-device copy).
+	tmp, err := os.MkdirTemp(h.skillsDir, ".clone-*")
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	defer func() { _ = os.RemoveAll(tmp) }() // best-effort; a no-op once a successful rename empties it
+	cloneDir := filepath.Join(tmp, name)
+
+	cmd := exec.CommandContext(c.Request.Context(), "git", "clone", "--depth=1", "--", repoURL, cloneDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		_ = os.RemoveAll(dest)
 		abortError(c, http.StatusBadGateway, CodeUpstream, "git clone failed: "+string(output))
 		return
 	}
 
-	skills := findAllSkills(dest)
+	skills := findAllSkills(cloneDir)
 	if len(skills) == 0 {
-		_ = os.RemoveAll(dest)
 		badRequest(c, "cloned repo does not contain any SKILL.md")
+		return
+	}
+
+	// Publish atomically. If a concurrent clone of the same name won the race,
+	// dest now exists and the rename fails — report that as the conflict; the
+	// scratch dir is removed by the deferred cleanup.
+	if err := os.Rename(cloneDir, dest); err != nil {
+		if _, statErr := os.Stat(dest); statErr == nil {
+			conflict(c, "directory already exists: "+name)
+			return
+		}
+		internalError(c, err)
 		return
 	}
 
@@ -169,12 +195,21 @@ func (h *SkillHandler) Clone(c *gin.Context) {
 func (h *SkillHandler) repoDir(c *gin.Context) string {
 	name := c.Param("name")
 	clean := filepath.Clean(name)
-	if strings.Contains(clean, "..") || filepath.IsAbs(clean) {
+	// Reject anything that isn't a single in-tree segment: "" and "." (Clean maps
+	// both to "."), ".." escapes, and absolute paths. The "." guard is critical —
+	// without it filepath.Join(skillsDir, ".") collapses to the skills root
+	// itself, so Delete's RemoveAll would wipe EVERY repo and Sync would
+	// git-reset the whole tree. This also blocks the "%2E" url-encoded "." that
+	// gin decodes to "." before it reaches here.
+	if clean == "." || clean == ".." || strings.Contains(clean, "..") || filepath.IsAbs(clean) {
 		badRequest(c, "invalid skill repo name")
 		return ""
 	}
 	target := filepath.Join(h.skillsDir, clean)
-	if !strings.HasPrefix(target, h.skillsDir) {
+	// Defense in depth: the resolved path must live strictly inside the skills
+	// root, never equal it. The trailing separator also blocks a sibling-prefix
+	// escape (e.g. a root of "<skills>" vs a target of "<skills>-evil").
+	if target == h.skillsDir || !strings.HasPrefix(target, h.skillsDir+string(filepath.Separator)) {
 		badRequest(c, "invalid skill repo name")
 		return ""
 	}
@@ -184,14 +219,14 @@ func (h *SkillHandler) repoDir(c *gin.Context) string {
 // Delete removes the skill repo directory identified by the name path parameter.
 //
 //	@Summary	Delete skill repo
-//	@Tags		skill-repos
-//	@Param		name	path	string	true	"Repo directory name"
-//	@Success	204		"deleted"
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	404		{object}	ErrorResponse
-//	@Failure	500		{object}	ErrorResponse
+//	@Tags skill-repos
+//	@Param name	path	string	true	"Repo directory name"
+//	@Success	204 "deleted"
+//	@Failure	400 {object}	ErrorResponse
+//	@Failure	404 {object}	ErrorResponse
+//	@Failure	500 {object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/skill-repos/{name} [delete]
+//	@Router /skill-repos/{name} [delete]
 func (h *SkillHandler) Delete(c *gin.Context) {
 	target := h.repoDir(c)
 	if target == "" {
@@ -211,18 +246,18 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 // Sync fetches and hard-resets the skill git repository identified by the
 // name path parameter, then responds with the refreshed skill list.
 //
-//	@Summary		Sync skill repo
+//	@Summary Sync skill repo
 //	@Description	git fetch + reset --hard origin/HEAD; local changes in the repo are discarded.
-//	@Tags			skill-repos
-//	@Produce		json
-//	@Param			name	path		string	true	"Repo directory name"
-//	@Success		200		{object}	skillRepoResp
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"not a git repository"
-//	@Failure		502		{object}	ErrorResponse	"git fetch failed"
-//	@Security		BearerAuth
-//	@Router			/skill-repos/{name}/sync [post]
+//	@Tags skill-repos
+//	@Produce json
+//	@Param name	path string	true	"Repo directory name"
+//	@Success 200 {object}	skillRepoResp
+//	@Failure 400 {object}	ErrorResponse
+//	@Failure 404 {object}	ErrorResponse
+//	@Failure 409 {object}	ErrorResponse	"not a git repository"
+//	@Failure 502 {object}	ErrorResponse	"git fetch failed"
+//	@Security BearerAuth
+//	@Router /skill-repos/{name}/sync [post]
 func (h *SkillHandler) Sync(c *gin.Context) {
 	target := h.repoDir(c)
 	if target == "" {
@@ -253,39 +288,74 @@ func (h *SkillHandler) Sync(c *gin.Context) {
 	c.JSON(http.StatusOK, skillRepoResp{Name: c.Param("name"), Skills: skills})
 }
 
-func findAllSkills(root string) []skillEntry {
-	var skills []skillEntry
+// readUnderRoot reads rel (a path relative to rootDir) through an os.Root
+// confined to rootDir, so symlinks that resolve outside the root are refused.
+func readUnderRoot(rootDir, rel string) ([]byte, error) {
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+func findAllSkills(rootDir string) []skillEntry {
+	skills := []skillEntry{}
+	// Confine discovery to rootDir via os.Root: WalkDir traversal never follows
+	// symlinks, and file reads go back through this rooted FS, so a symlinked
+	// SKILL.md pointing outside the repo (e.g. -> /etc/passwd) is refused rather
+	// than leaking an external file into the description. A missing/unreadable
+	// root simply yields no skills.
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return skills
+	}
+	defer root.Close()
+	rfs := root.FS()
+
 	// WalkDir only errors if the callback does; ours never returns a non-nil
-	// error (unreadable entries are skipped), so the return is always nil.
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	// error (unreadable entries are skipped), so the return is ignored.
+	_ = fs.WalkDir(rfs, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip unreadable entries, keep walking
 		}
-		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules") {
-			return filepath.SkipDir
+		if d.IsDir() {
+			// Skip VCS/dependency dirs and any hidden dir (which also hides the
+			// .clone-* scratch a concurrent Clone may momentarily leave in the
+			// skills root) — but never the walk root itself.
+			if p != "." && (d.Name() == ".git" || d.Name() == "node_modules" || strings.HasPrefix(d.Name(), ".")) {
+				return fs.SkipDir
+			}
+			return nil
 		}
-		if !d.IsDir() && d.Name() == "SKILL.md" {
-			dir := filepath.Dir(path)
-			rel, _ := filepath.Rel(root, dir)
-			if rel == "." {
-				rel = filepath.Base(root)
+		// Only a real regular file counts: a symlinked SKILL.md is skipped (it
+		// would be refused on read and isn't a legitimate skill file anyway).
+		if d.Type().IsRegular() && d.Name() == "SKILL.md" {
+			dir := path.Dir(p) // forward-slash, relative to rootDir
+			name := filepath.Base(rootDir)
+			rel := name
+			if dir != "." {
+				name = path.Base(dir)
+				rel = filepath.FromSlash(dir)
 			}
 			skills = append(skills, skillEntry{
-				Name:        filepath.Base(dir),
+				Name:        name,
 				Path:        rel,
-				Description: extractDescription(path),
+				Description: extractDescription(rfs, p),
 			})
 		}
 		return nil
 	})
-	if skills == nil {
-		skills = []skillEntry{}
-	}
 	return skills
 }
 
-func extractDescription(path string) string {
-	f, err := os.Open(path)
+func extractDescription(rfs fs.FS, name string) string {
+	f, err := rfs.Open(name)
 	if err != nil {
 		return ""
 	}

@@ -75,7 +75,7 @@ func (s *Server) ServeHealth(version string) {
 }
 
 // ServeStatic serves files from staticFS, falling back to index.html for unmatched routes (SPA support).
-// Text assets (.js, .css, .html, .svg, .json) may be pre-compressed as .br files;
+// Text assets (.js,.css,.html,.svg,.json) may be pre-compressed as.br files;
 // they are served transparently with Content-Encoding: br.
 func (s *Server) ServeStatic(staticFS fs.FS) {
 	httpFS := http.FS(staticFS)
@@ -152,10 +152,17 @@ func cspMiddleware() gin.HandlerFunc {
 	}
 }
 
+// redactSensitiveQueryKeys are query parameters scrubbed from request logs:
+// the auth token, and the OAuth authorization code/state that ride the MCP and
+// ChatGPT OAuth callback redirects (a leaked code is a usable credential).
+var redactSensitiveQueryKeys = []string{"token", "code", "state"}
+
 func redactQuery(u *url.URL) string {
 	q := u.Query()
-	if q.Get("token") != "" {
-		q.Set("token", "REDACTED")
+	for _, key := range redactSensitiveQueryKeys {
+		if q.Get(key) != "" {
+			q.Set(key, "REDACTED")
+		}
 	}
 	if len(q) == 0 {
 		return u.Path
