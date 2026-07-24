@@ -144,11 +144,22 @@ func (s *ConversationsSession) AddItems(ctx context.Context, in []agents.TRespon
 	if err != nil {
 		return err
 	}
+	// The Conversations API commits each batch independently and offers no way to
+	// roll one back, so a failure after the first batch leaves the server-side
+	// conversation holding a partial turn. We cannot undo it here; instead the
+	// error reports how much was already written so the caller can reconcile
+	// (e.g. reset the session) rather than silently proceeding on half-state.
+	written := 0
 	for start := 0; start < len(sanitized); start += conversationItemsBatchLimit {
-		batch := sanitized[start:min(start+conversationItemsBatchLimit, len(sanitized))]
+		end := min(start+conversationItemsBatchLimit, len(sanitized))
+		batch := sanitized[start:end]
 		if _, err := s.svc.Items.New(ctx, id, conversations.ItemNewParams{Items: batch}); err != nil {
+			if written > 0 {
+				return fmt.Errorf("adding conversation items: failed after writing %d of %d item(s) in prior batches; conversation may be left in a partially written state: %w", written, len(sanitized), err)
+			}
 			return fmt.Errorf("adding conversation items: %w", err)
 		}
+		written = end
 	}
 	return nil
 }

@@ -118,13 +118,23 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 	return opts
 }
 
-// escapeJSONPath escapes sjson path metacharacters in a literal key.
+// escapeJSONPath escapes sjson path metacharacters so WithJSONSet treats k as a
+// single literal top-level key rather than a path expression. A leading ':' is
+// sjson's "force string key" marker — it is stripped from the key during path
+// parsing — so it is escaped too, otherwise an ExtraBody key like ":k" would be
+// silently renamed to "k".
 func escapeJSONPath(k string) string {
 	var b strings.Builder
-	for _, r := range k {
+	for i, r := range k {
 		switch r {
 		case '.', '*', '?', '|', '#', '@', '\\':
 			b.WriteByte('\\')
+		case ':':
+			// Only a leading ':' is special to sjson (force-string-key); a colon
+			// anywhere else is an ordinary key character.
+			if i == 0 {
+				b.WriteByte('\\')
+			}
 		}
 		b.WriteRune(r)
 	}

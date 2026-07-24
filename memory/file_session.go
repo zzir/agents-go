@@ -314,7 +314,13 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, s.path)
+	if err := os.Rename(tmpName, s.path); err != nil {
+		// Rename failed, so the temp file was never published; remove it rather
+		// than leaking a.session-* file next to the session on every failure.
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 var (

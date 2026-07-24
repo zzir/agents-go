@@ -168,3 +168,52 @@ func TestResultOutput_StructuredContentGating(t *testing.T) {
 		t.Errorf("useStructured output = %#v, want the structured JSON", out)
 	}
 }
+
+// When UseStructuredContent is opted in but the result carries no (or empty)
+// structuredContent, the output must fall back to the content blocks rather
+// than blanking out — mirroring the Python SDK's
+// `if use_structured_content and result.structuredContent:` truthiness.
+func TestResultOutput_StructuredContentEmptyFallsBackToBlocks(t *testing.T) {
+	cases := []struct {
+		name       string
+		structured any
+	}{
+		{"nil", nil},
+		{"empty map", map[string]any{}},
+		{"empty slice", []any{}},
+		{"empty string", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := &mcpsdk.CallToolResult{
+				Content:           []mcpsdk.Content{&mcpsdk.TextContent{Text: "fallback text"}},
+				StructuredContent: tc.structured,
+			}
+			if out := resultOutput(res, true); out != "fallback text" {
+				t.Errorf("output = %#v, want the content block text (structured was empty)", out)
+			}
+		})
+	}
+}
+
+// With opt-in and empty structuredContent AND no content blocks, the result is
+// an empty string (nothing to fall back to) — never a panic.
+func TestResultOutput_StructuredContentEmptyNoBlocks(t *testing.T) {
+	res := &mcpsdk.CallToolResult{StructuredContent: map[string]any{}}
+	if out := resultOutput(res, true); out != "" {
+		t.Errorf("output = %#v, want empty string", out)
+	}
+}
+
+// A scalar structured value (e.g. a JSON number) counts as present and is used
+// exclusively, not discarded as "empty".
+func TestResultOutput_StructuredContentScalarIsUsed(t *testing.T) {
+	res := &mcpsdk.CallToolResult{
+		Content:           []mcpsdk.Content{&mcpsdk.TextContent{Text: "block"}},
+		StructuredContent: 42.0,
+	}
+	out := resultOutput(res, true)
+	if s, ok := out.(string); !ok || s != "42" {
+		t.Errorf("output = %#v, want the structured scalar \"42\"", out)
+	}
+}

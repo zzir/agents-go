@@ -290,11 +290,21 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	if s.closed.Load() {
 		return nil, fmt.Errorf("mcp: server %q is closed", s.name)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.opts.CacheToolsList && s.cached != nil {
-		return s.cached, nil
+	// Fast path: a cached list is served under a short critical section, never
+	// while a network call is in flight.
+	if s.opts.CacheToolsList {
+		s.mu.Lock()
+		cached := s.cached
+		s.mu.Unlock()
+		if cached != nil {
+			return cached, nil
+		}
 	}
+	// Fetch outside s.mu so a slow ListTools RPC (plus retry backoff) never
+	// blocks InvalidateToolsCache (list_changed handling) or a concurrent
+	// same-session caller. Two callers racing a cold cache may each issue a
+	// ListTools request; that duplicate work is acceptable and preferable to
+	// holding the lock across a blocking network call.
 	var res *mcpsdk.ListToolsResult
 	err := s.runWithRetries(ctx, func() error {
 		var e error
@@ -310,7 +320,15 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt, names[i])})
 	}
 	if s.opts.CacheToolsList {
-		s.cached = list
+		s.mu.Lock()
+		// If another goroutine published a list while we were fetching, prefer
+		// it so every caller converges on the same slice; otherwise cache ours.
+		if s.cached != nil {
+			list = s.cached
+		} else {
+			s.cached = list
+		}
+		s.mu.Unlock()
 	}
 	return list, nil
 }
@@ -679,23 +697,26 @@ func deepCopySchema(m map[string]any) map[string]any {
 
 // resultOutput renders a tool result for the model, mirroring the Python SDK's
 // content conversion:
-//   - When useStructured is set, the structuredContent field is used
-//     exclusively (JSON-encoded to a single text output) and the content blocks
-//     are ignored. By default structuredContent is ignored instead, because most
-//     servers duplicate it in the content blocks.
-//   - A single text block passes through as a plain string.
-//   - Multiple blocks, or any non-text block, become a []ToolOutputContent list
-//     so the model receives each block natively (text stays text, images become
-//     images, everything else is JSON-encoded into a text part) rather than one
-//     opaque JSON string.
+// - When useStructured is set AND the result carries non-empty
+// structuredContent, that field is used exclusively (JSON-encoded to a
+// single text output) and the content blocks are ignored. A nil or empty
+// structuredContent falls through to the content blocks instead, mirroring
+// the Python SDK's `if use_structured_content and result.structuredContent:`
+// truthiness — most servers duplicate their data in the content blocks, so
+// an empty structured field must never blank out the result. By default
+// (useStructured false) structuredContent is ignored entirely.
+// - A single text block passes through as a plain string.
+// - Multiple blocks, or any non-text block, become a []ToolOutputContent list
+// so the model receives each block natively (text stays text, images become
+// images, everything else is JSON-encoded into a text part) rather than one
+// opaque JSON string.
 func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) any {
-	if useStructured {
-		if result.StructuredContent != nil {
-			if b, err := json.Marshal(result.StructuredContent); err == nil {
-				return string(b)
-			}
+	if useStructured && hasStructuredContent(result.StructuredContent) {
+		if b, err := json.Marshal(result.StructuredContent); err == nil {
+			return string(b)
 		}
-		return ""
+		// A marshal failure is unexpected for JSON-decoded content; fall through
+		// to the content blocks rather than emitting an empty result.
 	}
 	if len(result.Content) == 0 {
 		return ""
@@ -723,6 +744,28 @@ func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) any {
 		}
 	}
 	return parts
+}
+
+// hasStructuredContent reports whether a tool result's structuredContent field
+// holds a usable value, mirroring the truthiness of the Python SDK's
+// `if... result.structuredContent:` guard. The MCP schema types the field as a
+// JSON object (Go: nil or map[string]any); a nil or empty object is treated as
+// absent so the caller falls back to the content blocks. Empty slices/strings
+// are covered defensively for non-conforming servers, while genuine scalar
+// values (numbers, booleans) count as present.
+func hasStructuredContent(sc any) bool {
+	switch v := sc.(type) {
+	case nil:
+		return false
+	case map[string]any:
+		return len(v) > 0
+	case []any:
+		return len(v) > 0
+	case string:
+		return v != ""
+	default:
+		return true
+	}
 }
 
 func isImageMIME(mimeType string) bool {
