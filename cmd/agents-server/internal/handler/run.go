@@ -160,6 +160,13 @@ func (h *RunHandler) startError(c *gin.Context, err error) {
 		conflict(c, limit.Error())
 		return
 	}
+	// The session's delete cascade is in progress: a state conflict (409), not a
+	// missing session.
+	var deleting bridge.ErrSessionDeleting
+	if errors.As(err, &deleting) {
+		conflict(c, deleting.Error())
+		return
+	}
 	// The remaining failures come from the session lookup StartRun does first:
 	// an unknown session -> 404, any other DB error -> 500. Folding the latter
 	// into 404 would mislabel a transient failure as "session not found".

@@ -10,6 +10,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // WSHandler dispatches WebSocket messages to start runs and handle tool
@@ -182,15 +183,25 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 	if err != nil {
 		// These fire before any run.started, so no run→session mapping exists
 		// client-side yet: carry the session id so the error is attributable.
+		// Classify like the REST path instead of labeling everything
+		// session_not_found: a DB failure or a delete-in-progress is not a missing
+		// session, and busy/limit/deleting are conflicts the client should treat
+		// like session-busy (drop the optimistic bubble; the run never started).
 		var busy bridge.ErrSessionBusy
-		if errors.As(err, &busy) {
-			_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
-				RunID: busy.RunID, SessionID: msg.SessionID, Code: protocol.CodeSessionBusy, Message: "session already has an active run",
-			})})
-			return
+		var limit bridge.ErrTaskLimit
+		var deleting bridge.ErrSessionDeleting
+		var runID string
+		code := protocol.CodeConfigError // a genuine server-side failure by default
+		switch {
+		case errors.As(err, &busy):
+			code, runID = protocol.CodeSessionBusy, busy.RunID
+		case errors.As(err, &limit) || errors.As(err, &deleting):
+			code = protocol.CodeSessionBusy
+		case errors.Is(err, store.ErrNotFound):
+			code = protocol.CodeSessionNotFound
 		}
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
-			SessionID: msg.SessionID, Code: protocol.CodeSessionNotFound, Message: err.Error(),
+			RunID: runID, SessionID: msg.SessionID, Code: code, Message: err.Error(),
 		})})
 		return
 	}
