@@ -131,7 +131,7 @@ interface UseApiResult<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
-  reload: () => Promise<void>;
+  reload: (opts?: { throwOnError?: boolean }) => Promise<void>;
 }
 
 export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []): UseApiResult<T> {
@@ -139,7 +139,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (opts?: { throwOnError?: boolean }) => {
     setLoading(true);
     try {
       const result = await fetcher();
@@ -147,9 +147,10 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
       setError(null);
     } catch (e) {
       setError((e as Error).message);
-      // Re-throw so a caller that awaits reload() (e.g. after a mutation) can
-      // surface the refresh failure; the error state is still set for render.
-      throw e;
+      // Auto-refreshes (useEffect, timers, event handlers) fire-and-forget and
+      // must not reject; only a caller that opts in — a mutation awaiting the
+      // refresh — gets the error propagated. The error state is set either way.
+      if (opts?.throwOnError) throw e;
     } finally {
       setLoading(false);
     }

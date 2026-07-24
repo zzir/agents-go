@@ -90,7 +90,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const { data: sessions, reload } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
-    if (reloadKey) reload().catch(() => {}); // failure surfaced via useApi's error state
+    if (reloadKey) reload(); // auto-refresh: does not throw
   }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
 
@@ -98,7 +98,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
     setCreating(true);
     try {
       const sess = await api.sessions.create('New Chat') as Session;
-      await reload();
+      await reload({ throwOnError: true });
       onSelect(sess.id);
       if (onCreated) onCreated();
     } catch (e) {
@@ -111,7 +111,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handleDelete = async (id: string) => {
     try {
       await api.sessions.delete(id);
-      await reload();
+      await reload({ throwOnError: true });
       if (onDeleteNotify) onDeleteNotify(id);
       if (activeId === id) onSelect(null);
     } catch (e) {
@@ -122,7 +122,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handleFork = async (id: string) => {
     try {
       const forked = await api.sessions.fork(id) as Session;
-      await reload();
+      await reload({ throwOnError: true });
       onSelect(forked.id);
     } catch (e) {
       toast.error((e as Error).message || 'Could not fork chat');
@@ -132,7 +132,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handlePin = async (id: string, pinned: boolean) => {
     try {
       await api.sessions.pin(id, pinned);
-      await reload();
+      await reload({ throwOnError: true });
     } catch (e) {
       toast.error((e as Error).message || 'Could not update pin');
     }
