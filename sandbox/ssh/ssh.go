@@ -335,9 +335,14 @@ func (s *Sandbox) CreateExclusive(_ context.Context, p string, content []byte) e
 	_, werr := f.Write(content)
 	cerr := f.Close()
 	if werr != nil {
+		_ = s.sftp.Remove(full) // clean up the partial file we just created
 		return werr
 	}
-	return cerr
+	if cerr != nil {
+		_ = s.sftp.Remove(full)
+		return cerr
+	}
+	return nil
 }
 
 // RemoveFile implements sandbox.Sandbox.

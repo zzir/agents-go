@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"sync"
 
 	agents "github.com/zzir/agents-go/agents"
 )
@@ -39,10 +40,17 @@ const applyPatchDesc = "Apply a patch to one or more files in the sandbox. Forma
 // already-applied operations are rolled back from an in-memory snapshot.
 func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 	cfg = cfg.withDefaults()
+	// Serialize applies against this sandbox. The default tool loop runs tool
+	// calls concurrently, and one patch's commit-phase rollback (RemoveFile)
+	// could otherwise delete a file another patch just wrote — exclusive-create
+	// only stops two Adds racing, not a rollback racing a concurrent Update.
+	var mu sync.Mutex
 	return agents.NewFunctionTool(
 		"apply_patch",
 		applyPatchDesc,
 		func(ctx context.Context, _ *agents.ToolContext, args applyPatchArgs) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
 			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
 			defer cancel()
 			// A bad patch (parse / locate / missing file) is returned as text so

@@ -121,7 +121,14 @@ type Sandbox interface {
 	Exec(ctx context.Context, req ExecRequest) (*ExecResult, error)
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	WriteFile(ctx context.Context, path string, content []byte) error
+	// CreateExclusive atomically creates path, failing with fs.ErrExist if it
+	// already exists; apply_patch's Add/Move rely on it to reject a clobber
+	// race-free. Added in this version — a source-breaking change: external
+	// backends must implement it (atomic O_EXCL / shell-noclobber create).
+	CreateExclusive(ctx context.Context, path string, content []byte) error
 	ListDir(ctx context.Context, path string) ([]DirEntry, error)
+	RemoveFile(ctx context.Context, path string) error
+	Rename(ctx context.Context, oldPath, newPath string) error
 	Close() error
 }
 

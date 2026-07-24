@@ -196,9 +196,14 @@ func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []by
 	}
 	if _, werr := f.Write(content); werr != nil {
 		_ = f.Close()
+		_ = os.Remove(full) // don't leave a partial file the caller believes was rolled back
 		return werr
 	}
-	return f.Close()
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(full)
+		return cerr
+	}
+	return nil
 }
 
 // RemoveFile removes a file relative to the sandbox working directory.

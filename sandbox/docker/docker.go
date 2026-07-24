@@ -656,9 +656,14 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		}
 		if _, werr := f.Write(content); werr != nil {
 			_ = f.Close()
+			_ = root.Remove(rel)
 			return werr
 		}
-		return f.Close()
+		if cerr := f.Close(); cerr != nil {
+			_ = root.Remove(rel)
+			return cerr
+		}
+		return nil
 	}
 	if s.opts.Persistent {
 		if err := s.ensureImage(ctx); err != nil {
@@ -669,11 +674,16 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 			return fmt.Errorf("docker sandbox: invalid file path %q", p)
 		}
 		b64 := base64.StdEncoding.EncodeToString(content)
-		script := "set -C && "
+		target := shellQuote(cleanPath)
+		// `set -C && > target` atomically creates the empty file, failing if it
+		// already exists (no rm then — that's someone else's file). Once we own
+		// it, drop noclobber and write; if the write fails, remove the partial
+		// file we created so the caller isn't told "rolled back" with junk left.
+		create := "set -C && > " + target + " && { set +C; printf %s " + shellQuote(b64) + " | base64 -d > " + target + " || { rm -f " + target + "; exit 1; }; }"
+		script := create
 		if parent := path.Dir(cleanPath); parent != "." && parent != "" {
-			script = "mkdir -p " + shellQuote(parent) + " && set -C && "
+			script = "mkdir -p " + shellQuote(parent) + " && " + create
 		}
-		script += "printf %s " + shellQuote(b64) + " | base64 -d > " + shellQuote(cleanPath)
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
 		if err != nil {
 			return err
