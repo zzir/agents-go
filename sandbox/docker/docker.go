@@ -674,22 +674,22 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 			return fmt.Errorf("docker sandbox: invalid file path %q", p)
 		}
 		b64 := base64.StdEncoding.EncodeToString(content)
-		target := shellQuote(cleanPath)
 		dir := path.Dir(cleanPath)
 		if dir == "" {
 			dir = "."
 		}
-		dirQ := shellQuote(dir)
-		// Write to a Go-named unpredictable temp file, then publish it with a hard
-		// link (ln fails with EEXIST if the target exists — the atomic exclusive
-		// create). The name is generated here, NOT swept with a shell glob, so we
-		// never delete a user's file and can clean up exactly our own temp.
 		buf := make([]byte, 8)
 		if _, err := rand.Read(buf); err != nil {
 			return err
 		}
-		tmp := path.Join(dir, ".ap."+hex.EncodeToString(buf))
-		tmpQ := shellQuote(tmp)
+		tmpPath := path.Join(dir, ".ap."+hex.EncodeToString(buf))
+		// Prefix every in-container path with "./" so a leading-dash filename (e.g.
+		// "-f") isn't parsed as an option by mkdir/ln/rm — shellQuote only stops
+		// shell expansion, not option parsing. The temp file has a Go-generated
+		// unpredictable name (not a shell glob), so we never touch a user file.
+		target := shellQuote("./" + cleanPath)
+		dirQ := shellQuote("./" + dir)
+		tmpQ := shellQuote("./" + tmpPath)
 		// Leave the temp link in place (no in-script rm) so the host decides what to
 		// do based on the outcome — the target may have been published by ln even
 		// if Exec then reports an error.
@@ -698,16 +698,21 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancelCleanup()
 		if err != nil {
-			// Exec failed (cancel/timeout/inspect error): ln may have already
-			// published the target before the failure. If target and tmp are the
-			// same inode the publish happened even though we return an error — undo
-			// it so "error" always means "target not created". Then drop tmp.
-			_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c",
-				"if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + "; fi; rm -f " + tmpQ}})
+			// Exec failed (cancel/timeout/daemon error): ln may have already
+			// published the target. Undo it if target and tmp are the same inode,
+			// then drop tmp — rm failures propagate to rc. If the cleanup itself
+			// can't be confirmed (same daemon failure), do NOT claim the target
+			// doesn't exist.
+			cScript := "rc=0; if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + " || rc=1; fi; rm -f " + tmpQ + " || rc=1; exit $rc"
+			cres, cerr := s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cScript}})
+			if cerr != nil || cres.ExitCode != 0 {
+				return fmt.Errorf("docker sandbox: create %q failed (%w); cleanup unconfirmed, the target may still exist", p, err)
+			}
 			return err
 		}
 		// Exec ran to completion; drop our temp link (the target, if published,
-		// keeps its own independent hard link).
+		// keeps its own independent hard link). A tmp-remove failure only leaks the
+		// temp file, so it's non-fatal.
 		_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "rm -f " + tmpQ}})
 		if res.ExitCode != 0 {
 			if strings.Contains(res.Stderr, "exists") {

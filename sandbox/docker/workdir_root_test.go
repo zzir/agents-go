@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,5 +115,28 @@ func TestParseFindEntries(t *testing.T) {
 func TestParseFindEntries_Empty(t *testing.T) {
 	if got := parseFindEntries(""); len(got) != 0 {
 		t.Errorf("empty output = %+v, want none", got)
+	}
+}
+
+// TestBindMount_LeadingDashName verifies a filename starting with "-" is treated
+// as a path, not an option: CreateExclusive works on "-f" in bind-mount mode
+// (os.Root uses it as a name). The persistent-shell path guards the same case by
+// prefixing every in-container path with "./".
+func TestBindMount_LeadingDashName(t *testing.T) {
+	work := t.TempDir()
+	s := &Sandbox{opts: Options{WorkDir: work}}
+	ctx := context.Background()
+	if err := s.CreateExclusive(ctx, "-f", []byte("hi")); err != nil {
+		t.Fatalf("CreateExclusive -f: %v", err)
+	}
+	got, err := s.ReadFile(ctx, "-f")
+	if err != nil {
+		t.Fatalf("ReadFile -f: %v", err)
+	}
+	if string(got) != "hi" {
+		t.Fatalf("content = %q, want hi", got)
+	}
+	if err := s.CreateExclusive(ctx, "-f", []byte("x")); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("second create: want fs.ErrExist, got %v", err)
 	}
 }
