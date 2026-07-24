@@ -14,11 +14,22 @@ import (
 // into A and fn is invoked. The result R is returned to the model (serialized to
 // JSON unless it is already a string).
 //
-// Strict mode is enabled by default. To disable it, or to set IsEnabled, mutate
-// the returned tool's exported fields before use:
+// Strict mode is enabled by default: the generated schema marks every field
+// required and forbids unknown properties, and the OpenAI API then guarantees
+// the model sends every field. To relax it — so the model may omit fields whose
+// json tag carries ",omitempty" — set Strict to false before use:
 //
-//	t := agents.NewFunctionTool("get_weather", "look up weather", weatherFn)
+//	t:= agents.NewFunctionTool("get_weather", "look up weather", weatherFn)
 //	t.Strict = false
+//
+// Setting Strict=false relaxes local argument validation automatically: a model
+// call that omits an optional field is accepted instead of failing as a
+// missing-required-key error. The schema advertised to the model, however, is
+// still the strict-shaped one generated at construction (every field listed as
+// required); to also relax what the model is told, replace ParamsJSONSchema with
+// the non-strict schema, e.g.:
+//
+//	t.ParamsJSONSchema, _ = agents.SchemaFor[WeatherArgs](false)
 //
 // This is the Go counterpart of Python's @function_tool decorator; reflection
 // over struct tags replaces runtime signature inspection.
@@ -33,28 +44,48 @@ func NewFunctionTool[A any, R any](
 		return failedFunctionTool(name, description,
 			fmt.Errorf("function tool %q: args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", name, argType))
 	}
-	schema, err := SchemaFor[A](true)
+	strictSchema, err := SchemaFor[A](true)
 	if err != nil {
 		// Schema generation only fails for unsupported types; surface it as a
 		// tool that errors when invoked rather than panicking at construction.
 		return failedFunctionTool(name, description,
 			fmt.Errorf("function tool %q: schema generation failed: %w", name, err))
 	}
+	// The non-strict schema (optional fields not forced required) is what
+	// argument validation must use once the caller disables strict mode;
+	// otherwise the closure would keep enforcing the all-required strict schema
+	// and reject any model call that omits an optional field, leaving the
+	// relaxed tool unusable. Generated eagerly since strict generation already
+	// succeeded; on the off chance it fails, fall back to the strict schema.
+	nonStrictSchema, nerr := SchemaFor[A](false)
+	if nerr != nil {
+		nonStrictSchema = strictSchema
+	}
 
-	return &FunctionTool{
+	t := &FunctionTool{
 		Name:                 name,
 		Description:          description,
-		ParamsJSONSchema:     schema,
+		ParamsJSONSchema:     strictSchema,
 		Strict:               true,
 		FailureErrorFunction: DefaultToolErrorFunction,
-		OnInvoke: func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error) {
-			var args A
-			if err := decodeToolArgs(name, schema, argsJSON, &args); err != nil {
-				return nil, err
-			}
-			return fn(ctx, tc, args)
-		},
 	}
+	t.OnInvoke = func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error) {
+		// Validate against the schema matching the tool's *current* strictness,
+		// read live so a post-construction t.Strict=false actually relaxes which
+		// keys are required. In strict mode honor t.ParamsJSONSchema (defaults to
+		// the strict schema, but respects a caller who replaced it); in
+		// non-strict mode use the relaxed schema so omitted optional fields pass.
+		validationSchema := t.ParamsJSONSchema
+		if !t.Strict {
+			validationSchema = nonStrictSchema
+		}
+		var args A
+		if err := decodeToolArgs(name, validationSchema, argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return fn(ctx, tc, args)
+	}
+	return t
 }
 
 // isStructKind reports whether t is a struct or a pointer to a struct — the
@@ -103,12 +134,12 @@ func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
 // validation, every failure is a *ModelBehaviorError — fed back to the model
 // via the tool's FailureErrorFunction so it can retry with corrected
 // arguments:
-//   - undecodable JSON (syntax) — wrapped in toolArgumentsJSONError for the
-//     dedicated error wording,
-//   - a non-object payload,
-//   - a missing root-level required key (nested required fields are not
-//     enforced; see docs/python_differences.md),
-//   - a type mismatch while decoding into dst.
+// - undecodable JSON (syntax) — wrapped in toolArgumentsJSONError for the
+// dedicated error wording,
+// - a non-object payload,
+// - a missing root-level required key (nested required fields are not
+// enforced; see docs/python_differences.md),
+// - a type mismatch while decoding into dst.
 //
 // An empty or whitespace-only string is treated as "{}" so tools taking a
 // struct with all-optional fields still work (Python parity: input_json or

@@ -55,15 +55,39 @@ func ensureStrictSchemaCopy(schema map[string]any) (map[string]any, error) {
 	return EnsureStrictJSONSchema(copied)
 }
 
-// errBoolSchema builds the error for a boolean JSON Schema ("true"/"false"),
-// which typically comes from an any/interface{} Go field. Strict mode has no
-// way to express an unconstrained value, so surface the problem at
-// construction time instead of a 400 from the API at request time.
-func errBoolSchema(what string, path []string) error {
+// errUnconstrainedSchema builds the error for a JSON Schema node that constrains
+// no value. This has two forms, both produced by a Go any/interface{} field: a
+// boolean "true"/"false" schema (an untagged field), and a bare typeless object
+// such as {"description":...} (a field carrying a jsonschema description tag).
+// Strict mode has no way to express an unconstrained value, so surface the
+// problem at construction time instead of a 400 from the API at request time.
+//
+// json.RawMessage / []byte are deliberately not suggested as a fix: they reflect
+// to a byte-array schema (a JSON array of integers 0-255), not an arbitrary-JSON
+// schema, so they change the argument's meaning rather than relaxing it. Give
+// the field a concrete type, or disable strict mode for this tool/output.
+func errUnconstrainedSchema(what string, path []string) error {
 	return fmt.Errorf(
-		"%s (path=%s) is a boolean schema: an unconstrained schema (any/interface{} field) is not supported in strict mode; "+
-			"use a concrete type (e.g. json.RawMessage or a struct) or disable strict mode",
+		"%s (path=%s) is an unconstrained schema: a Go any/interface{} field has no concrete "+
+			"type (it reflects to a boolean schema, or to a typeless object when it carries a "+
+			"description tag) and cannot be expressed in strict mode; give the field a concrete "+
+			"type (a struct or a specific scalar/slice/map) or disable strict mode for this tool/output",
 		what, strings.Join(path, "/"))
+}
+
+// isUnconstrainedSchema reports whether a normalized schema node constrains no
+// value: it declares neither a concrete "type" nor any construct that stands in
+// for one (a $ref, a combinator, an enum/const, or object/array structure).
+// Such a node is the map form of an any/interface{} field — e.g.
+// {"description":...} — and, like a boolean "true" schema, is rejected by
+// strict mode.
+func isUnconstrainedSchema(node map[string]any) bool {
+	for _, k := range []string{"type", "$ref", "anyOf", "oneOf", "allOf", "enum", "const", "properties", "items"} {
+		if _, ok := node[k]; ok {
+			return false
+		}
+	}
+	return true
 }
 
 func ensureStrict(node map[string]any, path []string, root map[string]any) error {
@@ -112,12 +136,19 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 			ps, ok := prop.(map[string]any)
 			if !ok {
 				if _, isBool := prop.(bool); isBool {
-					return errBoolSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
+					return errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
 				}
 				continue
 			}
 			if err := ensureStrict(ps, append(path, "properties", key), root); err != nil {
 				return err
+			}
+			// A property that still constrains nothing after normalization — the
+			// map form of an any/interface{} field, e.g. {"description":...} —
+			// slips past the boolean-schema guard above but would 400 at request
+			// time, so reject it here too.
+			if isUnconstrainedSchema(ps) {
+				return errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
 			}
 		}
 	}
@@ -127,8 +158,11 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		if err := ensureStrict(items, append(path, "items"), root); err != nil {
 			return err
 		}
+		if isUnconstrainedSchema(items) {
+			return errUnconstrainedSchema("array items", append(path, "items"))
+		}
 	} else if _, isBool := node["items"].(bool); isBool {
-		return errBoolSchema("array items", append(path, "items"))
+		return errUnconstrainedSchema("array items", append(path, "items"))
 	}
 
 	// Unions.

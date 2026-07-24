@@ -59,6 +59,17 @@ type SlidingWindowConfig struct {
 // compaction: when history grows past a threshold, older items beyond the
 // sliding window are summarized by an LLM and replaced with a single
 // summary message.
+//
+// Concurrency follows the Session contract, which does not promise safety for
+// concurrent use of one instance: every method here (including RunCompaction's
+// GetItems -> summarize -> ReplaceSessionItems read-modify-write) assumes serial
+// access to a given session, exactly as the runner drives it — one run at a
+// time, with compaction run only after that run's history has been persisted.
+// Sharing a single SlidingWindowSession across concurrent runs would race on the
+// underlying session's own state regardless of any lock added here, so callers
+// that need that must serialize access themselves (or give each run its own
+// session). No lock is taken; holding one across the summarization model call
+// would serialize unrelated session operations behind a network round-trip.
 type SlidingWindowSession struct {
 	underlying Session
 	cfg        SlidingWindowConfig
@@ -184,12 +195,12 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 // items[:split] (summarized away) and items[split:] (kept verbatim) remain
 // self-consistent Responses sequences:
 //
-//   - a function_call and its function_call_output (paired by call_id) must
-//     land on the same side — splitting them makes the summarization request
-//     itself invalid, or leaves the rewritten history beginning with an
-//     orphaned function_call_output, and either way the next Run is rejected;
-//   - a reasoning item must stay with its successor (the message or
-//     function_call it precedes), so it cannot be the final prefix item.
+// - a function_call and its function_call_output (paired by call_id) must
+// land on the same side — splitting them makes the summarization request
+// itself invalid, or leaves the rewritten history beginning with an
+// orphaned function_call_output, and either way the next Run is rejected;
+// - a reasoning item must stay with its successor (the message or
+// function_call it precedes), so it cannot be the final prefix item.
 //
 // The split only ever moves toward keeping more items (it decreases): an
 // offending pair is kept whole on the keep side. It returns 0 when no valid

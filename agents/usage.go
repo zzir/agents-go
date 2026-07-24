@@ -58,6 +58,37 @@ type Usage struct {
 // NewUsage returns a zero-valued Usage ready to accumulate.
 func NewUsage() *Usage { return &Usage{} }
 
+// Snapshot returns a point-in-time copy of u's counters taken under the same
+// lock Add uses, so it is safe to call while other goroutines accumulate into u
+// concurrently — e.g. reading a shared parent run's usage while parallel
+// agent-as-tool nested runs fold theirs in with Add.
+//
+// The exported counter fields may be read directly only when no goroutine can
+// be calling Add at the same time (for example, after a run has fully
+// completed); reading them while Add runs concurrently is a data race that the
+// race detector flags. Use Snapshot for the concurrent case. The returned value
+// is standalone: RequestUsageEntries is a fresh slice, so it needs no further
+// synchronization and does not alias u's storage. (Its zero-value mutex is
+// unused; copy the returned value only by field, not wholesale.)
+func (u *Usage) Snapshot() Usage {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var entries []RequestUsage
+	if len(u.RequestUsageEntries) > 0 {
+		entries = make([]RequestUsage, len(u.RequestUsageEntries))
+		copy(entries, u.RequestUsageEntries)
+	}
+	return Usage{
+		Requests:            u.Requests,
+		InputTokens:         u.InputTokens,
+		InputTokensDetails:  u.InputTokensDetails,
+		OutputTokens:        u.OutputTokens,
+		OutputTokensDetails: u.OutputTokensDetails,
+		TotalTokens:         u.TotalTokens,
+		RequestUsageEntries: entries,
+	}
+}
+
 // Add aggregates another Usage into the receiver, mirroring Python's Usage.add.
 //
 // Per-request entries are preserved: if other already carries entries they are

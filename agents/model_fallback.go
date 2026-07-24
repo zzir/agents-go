@@ -3,7 +3,9 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"log/slog"
 )
 
 // FallbackModel tries a chain of Models in order until one succeeds.
@@ -122,20 +124,43 @@ func (p *FallbackProvider) WithShouldFallback(f func(error) bool) *FallbackProvi
 // GetModel implements ModelProvider: it resolves name on the primary and each
 // fallback provider, returning a FallbackModel chaining the results (with this
 // provider's classifier applied).
+//
+// Fallback resolution errors are not discarded. If some fallbacks resolve and
+// others do not, the working chain is returned and the failures are logged. If
+// fallbacks were configured but every one fails to resolve, the aggregated
+// error is returned rather than silently degrading to a bare primary — which
+// would disable the fallback protection the caller asked for. With no fallbacks
+// configured at all, the primary is returned unchanged.
 func (p *FallbackProvider) GetModel(name string) (Model, error) {
 	m, err := p.primary.GetModel(name)
 	if err != nil {
 		return nil, err
 	}
-	var fbs []Model
+	var (
+		fbs  []Model
+		errs []error
+	)
 	for _, fp := range p.fallbacks {
 		fm, ferr := fp.GetModel(name)
-		if ferr == nil {
-			fbs = append(fbs, fm)
+		if ferr != nil {
+			errs = append(errs, ferr)
+			continue
 		}
+		fbs = append(fbs, fm)
 	}
 	if len(fbs) == 0 {
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("fallback provider: all %d configured fallback provider(s) failed to resolve model %q: %w",
+				len(errs), name, errors.Join(errs...))
+		}
 		return m, nil
+	}
+	if len(errs) > 0 {
+		// At least one fallback still resolved, so keep the (shorter) chain, but
+		// surface the partial failure — a silently shrunk fallback set otherwise
+		// looks healthy until the moment it is needed.
+		slog.Warn("fallback provider: some fallback providers failed to resolve model; continuing with the rest",
+			"model", name, "failed", len(errs), "resolved", len(fbs), "error", errors.Join(errs...))
 	}
 	return NewFallbackModel(m, fbs...).WithShouldFallback(p.shouldFallback), nil
 }
