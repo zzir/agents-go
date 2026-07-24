@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -138,5 +139,31 @@ func TestBindMount_LeadingDashName(t *testing.T) {
 	}
 	if err := s.CreateExclusive(ctx, "-f", []byte("x")); !errors.Is(err, fs.ErrExist) {
 		t.Fatalf("second create: want fs.ErrExist, got %v", err)
+	}
+}
+
+// TestExclusiveCreateScripts_LeadingDashPrefixed locks the persistent-mode fix:
+// every in-container path is "./"-prefixed so a leading-dash filename is treated
+// as a path, not an option, by mkdir/ln/rm. The persistent Docker path has no
+// daemon-free integration test, so this asserts the prefixing on the pure script
+// builder directly — deleting the "./" in exclusiveCreateScripts fails this test.
+func TestExclusiveCreateScripts_LeadingDashPrefixed(t *testing.T) {
+	create, cleanup, rmTmp := exclusiveCreateScripts("-f", ".ap.dead", "aGk=")
+	if !strings.Contains(create, "./-f") {
+		t.Errorf("create: target not ./-prefixed: %q", create)
+	}
+	if !strings.Contains(cleanup, "./-f") {
+		t.Errorf("cleanup: target not ./-prefixed: %q", cleanup)
+	}
+	if !strings.Contains(create, "./.ap.dead") {
+		t.Errorf("create: tmp not ./-prefixed: %q", create)
+	}
+	if !strings.Contains(rmTmp, "./.ap.dead") {
+		t.Errorf("rmTmp: tmp not ./-prefixed: %q", rmTmp)
+	}
+	// A nested leading-dash directory is prefixed in the mkdir target too.
+	createN, _, _ := exclusiveCreateScripts("-d/f", "-d/.ap.x", "aGk=")
+	if !strings.Contains(createN, "./-d/f") {
+		t.Errorf("nested: target not ./-prefixed: %q", createN)
 	}
 }

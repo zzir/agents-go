@@ -633,10 +633,36 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 	return sandbox.ErrNoWorkDir
 }
 
+// exclusiveCreateScripts builds the in-container shell scripts for an atomic
+// exclusive-create of cleanPath via a temp hard link. Every in-container path is
+// "./"-prefixed so a leading-dash filename (e.g. "-f") is treated as a path, not
+// an option, by mkdir/ln/rm — shellQuote stops shell expansion, not option
+// parsing. The temp file has a Go-generated unpredictable name (not a shell
+// glob), so we never touch a user file. Returns:
+//   - create: write tmp from b64, then hard-link it onto the target. ln fails
+//     with EEXIST if the target exists — the atomic exclusive create.
+//   - cleanup: run when the outcome is unknown (Exec error or timeout). Undo a
+//     target that ln may have published (same inode as tmp), then drop tmp,
+//     propagating any rm failure to the exit code.
+//   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
+func exclusiveCreateScripts(cleanPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
+	dir := path.Dir(cleanPath)
+	if dir == "" {
+		dir = "."
+	}
+	target := shellQuote("./" + cleanPath)
+	dirQ := shellQuote("./" + dir)
+	tmpQ := shellQuote("./" + tmpPath)
+	create = "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
+	cleanup = "rc=0; if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + " || rc=1; fi; rm -f " + tmpQ + " || rc=1; exit $rc"
+	rmTmp = "rm -f " + tmpQ
+	return
+}
+
 // CreateExclusive implements sandbox.Sandbox atomically: bind-mount mode uses
-// O_EXCL under os.Root; persistent mode uses the shell's noclobber (set -C),
-// which makes the redirect fail if the target exists. The parent is created
-// first so adding into a new directory works.
+// O_EXCL under os.Root; persistent mode writes a temp file and publishes it with
+// a hard link (ln fails with EEXIST if the target exists). The parent directory
+// is created first so adding into a new directory works.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	if s.opts.WorkDir != "" {
 		root, err := os.OpenRoot(s.opts.WorkDir)
@@ -683,37 +709,30 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 			return err
 		}
 		tmpPath := path.Join(dir, ".ap."+hex.EncodeToString(buf))
-		// Prefix every in-container path with "./" so a leading-dash filename (e.g.
-		// "-f") isn't parsed as an option by mkdir/ln/rm — shellQuote only stops
-		// shell expansion, not option parsing. The temp file has a Go-generated
-		// unpredictable name (not a shell glob), so we never touch a user file.
-		target := shellQuote("./" + cleanPath)
-		dirQ := shellQuote("./" + dir)
-		tmpQ := shellQuote("./" + tmpPath)
-		// Leave the temp link in place (no in-script rm) so the host decides what to
-		// do based on the outcome — the target may have been published by ln even
-		// if Exec then reports an error.
-		script := "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
-		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
+		createScript, cleanupScript, rmTmpScript := exclusiveCreateScripts(cleanPath, tmpPath, b64)
+		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", createScript}})
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancelCleanup()
-		if err != nil {
-			// Exec failed (cancel/timeout/daemon error): ln may have already
-			// published the target. Undo it if target and tmp are the same inode,
-			// then drop tmp — rm failures propagate to rc. If the cleanup itself
-			// can't be confirmed (same daemon failure), do NOT claim the target
-			// doesn't exist.
-			cScript := "rc=0; if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + " || rc=1; fi; rm -f " + tmpQ + " || rc=1; exit $rc"
-			cres, cerr := s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cScript}})
-			if cerr != nil || cres.ExitCode != 0 {
-				return fmt.Errorf("docker sandbox: create %q failed (%w); cleanup unconfirmed, the target may still exist", p, err)
+		// Both a hard error and a timeout (Exec returns TimedOut:true, ExitCode:-1,
+		// err:nil) are outcome-unknown: ln may have published the target before Exec
+		// stopped, and the temp link is about to be removed. Run the inode-checked
+		// cleanup so a returned error always means "target not created" — unless the
+		// cleanup itself can't be confirmed (same daemon failure / timeout), in
+		// which case we must NOT claim the target is gone.
+		if err != nil || res.TimedOut {
+			cres, cerr := s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cleanupScript}})
+			if cerr != nil || cres.TimedOut || cres.ExitCode != 0 {
+				return fmt.Errorf("docker sandbox: create %q outcome unknown; cleanup unconfirmed, the target may still exist", p)
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("docker sandbox: create %q timed out", p)
 		}
 		// Exec ran to completion; drop our temp link (the target, if published,
 		// keeps its own independent hard link). A tmp-remove failure only leaks the
 		// temp file, so it's non-fatal.
-		_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "rm -f " + tmpQ}})
+		_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", rmTmpScript}})
 		if res.ExitCode != 0 {
 			if strings.Contains(res.Stderr, "exists") {
 				return fmt.Errorf("docker sandbox: create %q: %w", p, fs.ErrExist)
