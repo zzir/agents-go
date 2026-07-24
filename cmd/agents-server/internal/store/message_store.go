@@ -556,6 +556,16 @@ func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessio
 func (s *MessageStore) ForkSession(ctx context.Context, dst *Session, srcSessionID string, upToMessageID int64, exclusive bool) ([]string, error) {
 	var runIDs []string
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Confirm the source still exists inside the tx: a concurrent delete
+		// between the handler's read and here would otherwise yield an empty
+		// message set and a bogus empty fork returned as success.
+		exists, err := tx.NewSelect().Model((*Session)(nil)).Where("id = ?", srcSessionID).Exists(ctx)
+		if err != nil {
+			return fmt.Errorf("fork source check: %w", err)
+		}
+		if !exists {
+			return ErrNotFound
+		}
 		now := time.Now().UTC()
 		dst.CreatedAt = now
 		dst.UpdatedAt = now

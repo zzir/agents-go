@@ -253,7 +253,9 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	// (or a cancelled request) can't leave an orphaned empty session behind.
 	runIDs, err := h.messages.ForkSession(ctx, dst, srcID, upTo, req.Exclusive)
 	if err != nil {
-		internalError(c, err)
+		// A source deleted out from under the fork (ErrNotFound) is a 404, not a
+		// 500; storeError maps it.
+		storeError(c, err)
 		return
 	}
 	if h.traces != nil {

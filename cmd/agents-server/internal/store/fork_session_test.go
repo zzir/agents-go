@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -77,5 +78,22 @@ func TestForkSessionCopiesAtomically(t *testing.T) {
 	}
 	if len(runIDs) != 1 || runIDs[0] != "run1" {
 		t.Fatalf("expected run ids [run1], got %v", runIDs)
+	}
+}
+
+// TestForkSessionMissingSource verifies the in-transaction source check: forking
+// a source that doesn't exist (e.g. deleted concurrently) fails with ErrNotFound
+// and creates no empty dst session.
+func TestForkSessionMissingSource(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	messages := NewMessageStore(db)
+
+	dst := &Session{ID: NewID(), Name: "fork"}
+	if _, err := messages.ForkSession(ctx, dst, "nonexistent-src", 0, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound for a missing source, got %v", err)
+	}
+	if _, err := NewSessionStore(db).Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("dst session must not exist after a missing-source fork")
 	}
 }
