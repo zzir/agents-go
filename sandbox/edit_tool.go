@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"strings"
 
@@ -83,7 +85,11 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			// Codex apply_patch semantics: adding over an existing file is an
 			// error, not a silent overwrite. Without this the undo (RemoveFile)
 			// on a later rollback would delete the clobbered original outright.
-			if targetExists(ctx, sb, p) {
+			exists, terr := targetExists(ctx, sb, p)
+			if terr != nil {
+				return "", fmt.Errorf("add %s: %w", p, terr)
+			}
+			if exists {
 				return "", fmt.Errorf("add %s: file already exists", p)
 			}
 			ops = append(ops, fsOp{
@@ -118,7 +124,11 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 				// an error. Otherwise the two-op move would clobber the
 				// destination and its rollback (undo = RemoveFile dst) would
 				// delete the pre-existing file outright.
-				if targetExists(ctx, sb, e.movePath) {
+				exists, terr := targetExists(ctx, sb, e.movePath)
+				if terr != nil {
+					return "", fmt.Errorf("move %s -> %s: %w", p, e.movePath, terr)
+				}
+				if exists {
 					return "", fmt.Errorf("move %s -> %s: destination already exists", p, e.movePath)
 				}
 				dst, src, snap := e.movePath, p, orig
@@ -165,18 +175,30 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 // targetExists reports whether p already names an entry in the sandbox. It
 // lists p's parent directory rather than reading p, so a large file (which
 // ReadFile would reject with ErrReadLimitExceeded) is still detected and a
-// directory is not slurped into memory. A parent that can't be listed (it does
-// not exist yet, or isn't a directory) means p can't exist either.
-func targetExists(ctx context.Context, sb Sandbox, p string) bool {
+// directory is not slurped into memory.
+//
+// A missing parent (fs.ErrNotExist) means p can't exist yet — a legitimate add
+// into a new directory — so it returns (false, nil). Any other ListDir error
+// (permission denied, a transient backend failure) is returned so the caller
+// fails closed instead of treating an unreadable parent as "absent" and
+// clobbering a file that may well be there.
+//
+// This closes the fail-open hole but not the check-then-write TOCTOU: two
+// concurrent adds of the same path can both observe "absent". Fully preventing
+// that needs an exclusive-create/rename primitive on the Sandbox interface.
+func targetExists(ctx context.Context, sb Sandbox, p string) (bool, error) {
 	entries, err := sb.ListDir(ctx, path.Dir(p))
 	if err != nil {
-		return false
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	base := path.Base(p)
 	for _, e := range entries {
 		if e.Name == base {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
