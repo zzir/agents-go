@@ -713,6 +713,12 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNam
 		}
 		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
 			switch raw.Data.Type {
+			case "response.created":
+				// A new turn is starting: drop the previous (committed) turn's
+				// buffer here, not on the first text/reasoning delta. A turn that
+				// emits only a function call produces no delta, so waiting for one
+				// would keep the prior turn's text and re-annotate it on cancel.
+				startNextTurn()
 			case "response.completed":
 				turnCommitted = true
 			case "response.output_text.delta":

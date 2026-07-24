@@ -529,7 +529,15 @@ func (h *RunHub) Cancel(runID string) bool {
 	if rec == nil {
 		return false
 	}
-	rec.cancel()
+	// resume swaps rec.cancel to the new segment's cancel under rec.mu, so read
+	// it under the same lock — an unsynchronized read here races that write and
+	// could cancel the wrong segment. Invoke it outside the lock.
+	rec.mu.Lock()
+	cancel := rec.cancel
+	rec.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	return true
 }
 
