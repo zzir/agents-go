@@ -16,10 +16,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -631,6 +633,62 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 	return sandbox.ErrNoWorkDir
 }
 
+// CreateExclusive implements sandbox.Sandbox atomically: bind-mount mode uses
+// O_EXCL under os.Root; persistent mode uses the shell's noclobber (set -C),
+// which makes the redirect fail if the target exists. The parent is created
+// first so adding into a new directory works.
+func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
+	if s.opts.WorkDir != "" {
+		root, err := os.OpenRoot(s.opts.WorkDir)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		rel := rootRel(p)
+		if dir := filepath.Dir(rel); dir != "." {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			return err
+		}
+		if _, werr := f.Write(content); werr != nil {
+			_ = f.Close()
+			return werr
+		}
+		return f.Close()
+	}
+	if s.opts.Persistent {
+		if err := s.ensureImage(ctx); err != nil {
+			return err
+		}
+		cleanPath := path.Clean("/" + p)[1:]
+		if cleanPath == "" {
+			return fmt.Errorf("docker sandbox: invalid file path %q", p)
+		}
+		b64 := base64.StdEncoding.EncodeToString(content)
+		script := "set -C && "
+		if parent := path.Dir(cleanPath); parent != "." && parent != "" {
+			script = "mkdir -p " + shellQuote(parent) + " && set -C && "
+		}
+		script += "printf %s " + shellQuote(b64) + " | base64 -d > " + shellQuote(cleanPath)
+		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
+		if err != nil {
+			return err
+		}
+		if res.ExitCode != 0 {
+			if strings.Contains(res.Stderr, "cannot overwrite") || strings.Contains(res.Stderr, "exists") {
+				return fmt.Errorf("docker sandbox: create %q: %w", p, fs.ErrExist)
+			}
+			return fmt.Errorf("docker sandbox: create %q: %s", p, res.Stderr)
+		}
+		return nil
+	}
+	return sandbox.ErrNoWorkDir
+}
+
 // RemoveFile implements sandbox.Sandbox.
 func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 	if s.opts.WorkDir != "" {
@@ -748,6 +806,12 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 			return nil, err
 		}
 		if res.ExitCode != 0 {
+			// A missing directory must surface as fs.ErrNotExist so callers can
+			// tell "absent" from a real failure, uniform with the bind-mount and
+			// local/ssh backends.
+			if strings.Contains(res.Stderr, "No such file") {
+				return nil, fmt.Errorf("docker sandbox: list dir %q: %w", p, fs.ErrNotExist)
+			}
 			return nil, fmt.Errorf("docker sandbox: list dir: %s", res.Stderr)
 		}
 		return parseFindEntries(res.Stdout), nil

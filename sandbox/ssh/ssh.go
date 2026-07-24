@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path"
@@ -297,6 +298,38 @@ func (s *Sandbox) WriteFile(_ context.Context, p string, content []byte) error {
 	}
 	f, err := s.sftp.Create(full)
 	if err != nil {
+		return err
+	}
+	_, werr := f.Write(content)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
+}
+
+// CreateExclusive implements sandbox.Sandbox atomically via SFTP O_EXCL.
+func (s *Sandbox) CreateExclusive(_ context.Context, p string, content []byte) error {
+	if s.opts.WorkDir == "" {
+		return sandbox.ErrNoWorkDir
+	}
+	clean := path.Clean("/" + p)[1:]
+	if clean == "" {
+		return fmt.Errorf("ssh sandbox: invalid file path %q", p)
+	}
+	full := path.Join(s.opts.WorkDir, clean)
+	if parent := path.Dir(full); parent != "." {
+		if err := s.sftp.MkdirAll(parent); err != nil {
+			return fmt.Errorf("ssh sandbox: mkdir %s: %w", parent, err)
+		}
+	}
+	f, err := s.sftp.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		// Normalize an exclusive-create collision to fs.ErrExist so apply_patch
+		// reports it uniformly (some servers surface it as a generic failure).
+		if errors.Is(err, fs.ErrExist) || strings.Contains(strings.ToLower(err.Error()), "exist") {
+			return fmt.Errorf("ssh sandbox: create %q: %w", p, fs.ErrExist)
+		}
 		return err
 	}
 	_, werr := f.Write(content)

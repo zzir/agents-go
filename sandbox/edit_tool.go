@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
 	"strings"
 
 	agents "github.com/zzir/agents-go/agents"
@@ -83,17 +82,20 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 		case opAdd:
 			p, body := e.path, []byte(e.addBody)
 			// Codex apply_patch semantics: adding over an existing file is an
-			// error, not a silent overwrite. Without this the undo (RemoveFile)
-			// on a later rollback would delete the clobbered original outright.
-			exists, terr := targetExists(ctx, sb, p)
-			if terr != nil {
-				return "", fmt.Errorf("add %s: %w", p, terr)
-			}
-			if exists {
-				return "", fmt.Errorf("add %s: file already exists", p)
-			}
+			// error, not a silent overwrite. CreateExclusive is atomic (O_EXCL),
+			// so concurrent adds of the same path can't both succeed, and because
+			// it only creates when the file is absent, the undo (RemoveFile) can
+			// never delete a file another patch already had.
 			ops = append(ops, fsOp{
-				do:   func() error { return sb.WriteFile(ctx, p, body) },
+				do: func() error {
+					if err := sb.CreateExclusive(ctx, p, body); err != nil {
+						if errors.Is(err, fs.ErrExist) {
+							return fmt.Errorf("add %s: file already exists", p)
+						}
+						return err
+					}
+					return nil
+				},
 				undo: func() error { return sb.RemoveFile(ctx, p) },
 				desc: "A " + p,
 			})
@@ -121,20 +123,21 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			newContent := []byte(nc)
 			if e.movePath != "" && e.movePath != p {
 				// Codex apply_patch semantics: renaming onto an existing file is
-				// an error. Otherwise the two-op move would clobber the
-				// destination and its rollback (undo = RemoveFile dst) would
-				// delete the pre-existing file outright.
-				exists, terr := targetExists(ctx, sb, e.movePath)
-				if terr != nil {
-					return "", fmt.Errorf("move %s -> %s: %w", p, e.movePath, terr)
-				}
-				if exists {
-					return "", fmt.Errorf("move %s -> %s: destination already exists", p, e.movePath)
-				}
+				// an error. CreateExclusive is atomic, so the move can't clobber a
+				// destination that appeared concurrently, and its rollback (undo =
+				// RemoveFile dst) only ever deletes the file this move created.
 				dst, src, snap := e.movePath, p, orig
 				ops = append(ops,
 					fsOp{
-						do:   func() error { return sb.WriteFile(ctx, dst, newContent) },
+						do: func() error {
+							if err := sb.CreateExclusive(ctx, dst, newContent); err != nil {
+								if errors.Is(err, fs.ErrExist) {
+									return fmt.Errorf("move %s -> %s: destination already exists", src, dst)
+								}
+								return err
+							}
+							return nil
+						},
 						undo: func() error { return sb.RemoveFile(ctx, dst) },
 						desc: "M " + src + " -> " + dst,
 					},
@@ -170,35 +173,4 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 		}
 	}
 	return "applied patch:\n" + strings.Join(summary, "\n"), nil
-}
-
-// targetExists reports whether p already names an entry in the sandbox. It
-// lists p's parent directory rather than reading p, so a large file (which
-// ReadFile would reject with ErrReadLimitExceeded) is still detected and a
-// directory is not slurped into memory.
-//
-// A missing parent (fs.ErrNotExist) means p can't exist yet — a legitimate add
-// into a new directory — so it returns (false, nil). Any other ListDir error
-// (permission denied, a transient backend failure) is returned so the caller
-// fails closed instead of treating an unreadable parent as "absent" and
-// clobbering a file that may well be there.
-//
-// This closes the fail-open hole but not the check-then-write TOCTOU: two
-// concurrent adds of the same path can both observe "absent". Fully preventing
-// that needs an exclusive-create/rename primitive on the Sandbox interface.
-func targetExists(ctx context.Context, sb Sandbox, p string) (bool, error) {
-	entries, err := sb.ListDir(ctx, path.Dir(p))
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	base := path.Base(p)
-	for _, e := range entries {
-		if e.Name == base {
-			return true, nil
-		}
-	}
-	return false, nil
 }

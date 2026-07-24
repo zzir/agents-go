@@ -89,11 +89,22 @@ func TestApplyPatchValidationAtomic(t *testing.T) {
 	}
 }
 
-// failingSandbox fails the Nth WriteFile so commit-phase rollback can be tested.
+// failingSandbox fails the Nth CreateExclusive (or WriteFile) so commit-phase
+// rollback can be tested. Add/Move create through CreateExclusive; Update writes.
 type failingSandbox struct {
 	Sandbox
-	failWriteAt int
-	writes      int
+	failCreateAt int
+	creates      int
+	failWriteAt  int
+	writes       int
+}
+
+func (f *failingSandbox) CreateExclusive(ctx context.Context, path string, content []byte) error {
+	f.creates++
+	if f.creates == f.failCreateAt {
+		return fmt.Errorf("simulated create failure")
+	}
+	return f.Sandbox.CreateExclusive(ctx, path, content)
 }
 
 func (f *failingSandbox) WriteFile(ctx context.Context, path string, content []byte) error {
@@ -109,7 +120,7 @@ func (f *failingSandbox) WriteFile(ctx context.Context, path string, content []b
 func TestApplyPatchCommitRollback(t *testing.T) {
 	ctx := context.Background()
 	local := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
-	sb := &failingSandbox{Sandbox: local, failWriteAt: 2}
+	sb := &failingSandbox{Sandbox: local, failCreateAt: 2}
 
 	patch := "*** Begin Patch\n" +
 		"*** Add File: a.txt\n" +

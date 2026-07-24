@@ -63,6 +63,11 @@ type Sandbox interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	// WriteFile writes a file in the sandbox, creating parent directories.
 	WriteFile(ctx context.Context, path string, content []byte) error
+	// CreateExclusive atomically creates path with content (creating parent
+	// directories) and fails with fs.ErrExist if it already exists — it never
+	// overwrites. apply_patch's Add/Move use it so the filesystem itself rejects
+	// a clobber, closing the check-then-write race between concurrent tool calls.
+	CreateExclusive(ctx context.Context, path string, content []byte) error
 	// ListDir lists entries in a sandbox directory (empty path = working dir).
 	ListDir(ctx context.Context, path string) ([]DirEntry, error)
 	// RemoveFile removes a file in the sandbox's persistent working directory.

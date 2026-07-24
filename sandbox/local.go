@@ -180,6 +180,27 @@ func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) er
 	return os.WriteFile(full, content, 0o644)
 }
 
+// CreateExclusive implements sandbox.Sandbox with O_EXCL: the create is atomic,
+// so a concurrent apply_patch racing the same new path can't both succeed.
+func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []byte) error {
+	if s.opts.WorkDir == "" {
+		return ErrNoWorkDir
+	}
+	full := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err // fs.ErrExist when it already exists
+	}
+	if _, werr := f.Write(content); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	return f.Close()
+}
+
 // RemoveFile removes a file relative to the sandbox working directory.
 func (s *LocalSandbox) RemoveFile(_ context.Context, p string) error {
 	if s.opts.WorkDir == "" {
