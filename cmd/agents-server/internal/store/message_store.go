@@ -434,36 +434,47 @@ func extractJSONString(raw []byte, key string) string {
 // PopItem removes and returns the most recent REPLAYABLE item, or (nil, nil)
 // when the session holds no such item — the contract the SDK's Session
 // interface requires for an "empty" session. It matches GetItems' filter
-// (non-compacted, non-annotation, non-empty item) so it never pops and deletes
-// a UI-only annotation row or a soft-deleted/compacted row, which would corrupt
-// history or fail to deserialize.
+// (non-compacted, non-annotation, non-empty/{}/null item) so it never pops and
+// deletes a UI-only annotation row or a soft-deleted/compacted row, which would
+// corrupt history or fail to deserialize.
 func (a *SessionAdapter) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
-	var msg Message
+	var item agents.TResponseInputItem
 	err := a.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var msg Message
 		if err := tx.NewSelect().Model(&msg).
 			Where("session_id = ?", a.sessionID).
 			Where("compacted = ?", false).
 			Where("kind IS NULL OR kind <> ?", MessageKindAnnotation).
+			// Empty / {} / null items are unreplayable placeholders GetItems
+			// skips too; excluding them here keeps PopItem from deleting a row
+			// it could never deserialize.
 			Where("item <> ''").
+			Where("item <> '{}'").
+			Where("item <> 'null'").
 			OrderExpr("id DESC").
 			Limit(1).
 			Scan(ctx); err != nil {
 			return err
 		}
-		_, err := tx.NewDelete().Model((*Message)(nil)).
+		// Deserialize BEFORE deleting: if the item can't be decoded, returning
+		// the error rolls the tx back so the row survives instead of being lost.
+		parsed, err := agents.UnmarshalInputItem(NormalizeItemJSON([]byte(msg.Item)))
+		if err != nil {
+			return err
+		}
+		if _, err := tx.NewDelete().Model((*Message)(nil)).
 			Where("id = ?", msg.ID).
-			Exec(ctx)
-		return err
+			Exec(ctx); err != nil {
+			return err
+		}
+		item = parsed
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil // empty session: the Session contract wants (nil, nil)
 		}
 		return nil, fmt.Errorf("session adapter pop item: %w", err)
-	}
-	item, err := agents.UnmarshalInputItem(NormalizeItemJSON([]byte(msg.Item)))
-	if err != nil {
-		return nil, err
 	}
 	return &item, nil
 }
@@ -482,40 +493,52 @@ func (a *SessionAdapter) Clear(ctx context.Context) error {
 // upToMessageID > 0, only messages with id up to that ID are copied (inclusive
 // by default, exclusive when exclusive is true); otherwise all messages are
 // copied. Returns the deduplicated run IDs found in the copied messages.
+//
+// The read and the write run in one transaction so the copy is a consistent
+// snapshot of the source and can't leave a half-written fork behind. (The
+// handler's wider fork — new session + messages + trace events — is still three
+// separate calls; making that whole assembly atomic needs a handler-side
+// transaction, which is out of this method's scope.)
 func (s *MessageStore) ForkMessages(ctx context.Context, srcSessionID, dstSessionID string, upToMessageID int64, exclusive bool) ([]string, error) {
-	var msgs []Message
-	q := s.db.NewSelect().Model(&msgs).
-		Where("session_id = ?", srcSessionID).
-		OrderExpr("id ASC")
-	if upToMessageID > 0 {
-		if exclusive {
-			q = q.Where("id < ?", upToMessageID)
-		} else {
-			q = q.Where("id <= ?", upToMessageID)
-		}
-	}
-	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("fork messages read: %w", err)
-	}
-	if len(msgs) == 0 {
-		return nil, nil
-	}
-	seen := map[string]struct{}{}
 	var runIDs []string
-	now := time.Now().UTC()
-	for i := range msgs {
-		if rid := msgs[i].RunID; rid != "" {
-			if _, ok := seen[rid]; !ok {
-				seen[rid] = struct{}{}
-				runIDs = append(runIDs, rid)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var msgs []Message
+		q := tx.NewSelect().Model(&msgs).
+			Where("session_id = ?", srcSessionID).
+			OrderExpr("id ASC")
+		if upToMessageID > 0 {
+			if exclusive {
+				q = q.Where("id < ?", upToMessageID)
+			} else {
+				q = q.Where("id <= ?", upToMessageID)
 			}
 		}
-		msgs[i].ID = 0
-		msgs[i].SessionID = dstSessionID
-		msgs[i].CreatedAt = now
-	}
-	if _, err := s.db.NewInsert().Model(&msgs).Exec(ctx); err != nil {
-		return nil, fmt.Errorf("fork messages write: %w", err)
+		if err := q.Scan(ctx); err != nil {
+			return fmt.Errorf("fork messages read: %w", err)
+		}
+		if len(msgs) == 0 {
+			return nil
+		}
+		seen := map[string]struct{}{}
+		now := time.Now().UTC()
+		for i := range msgs {
+			if rid := msgs[i].RunID; rid != "" {
+				if _, ok := seen[rid]; !ok {
+					seen[rid] = struct{}{}
+					runIDs = append(runIDs, rid)
+				}
+			}
+			msgs[i].ID = 0
+			msgs[i].SessionID = dstSessionID
+			msgs[i].CreatedAt = now
+		}
+		if _, err := tx.NewInsert().Model(&msgs).Exec(ctx); err != nil {
+			return fmt.Errorf("fork messages write: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return runIDs, nil
 }
@@ -540,6 +563,32 @@ func (s *MessageStore) DeleteBySession(ctx context.Context, sessionID string) er
 
 var _ agents.Session = (*SessionAdapter)(nil)
 
+// terminalTaskStatuses are the spawn-card task_status values that must never be
+// rolled back once shown. They mirror the terminal set Task.Finalize enforces
+// on the durable row (taskTerminalSet / protocol.Task{Completed,Failed,
+// Cancelled}); keeping the display projection first-terminal-wins stops a late
+// or reordered patch from reverting a finished card.
+var terminalTaskStatuses = map[string]bool{
+	"completed": true,
+	"failed":    true,
+	"cancelled": true,
+}
+
+// isTerminalTaskStatus reports whether v (a display's task_status field, decoded
+// as any) is one of the frozen terminal states.
+func isTerminalTaskStatus(v any) bool {
+	s, ok := v.(string)
+	return ok && terminalTaskStatuses[s]
+}
+
+// sameTaskStatus reports whether two decoded task_status values are the same
+// string (so an idempotent re-patch of a terminal status still applies).
+func sameTaskStatus(a, b any) bool {
+	as, aok := a.(string)
+	bs, bok := b.(string)
+	return aok && bok && as == bs
+}
+
 // PatchToolCallDisplay merges patch into the display projection of the
 // tool_call row with the given call id in sessionID. Used when a background
 // task ends: the spawn tool call's card gets the terminal status/summary, so a
@@ -547,40 +596,58 @@ var _ agents.Session = (*SessionAdapter)(nil)
 // minutes after the run). The wire JSON in Item is untouched — display is a
 // UI projection, not replay truth.
 func (s *MessageStore) PatchToolCallDisplay(ctx context.Context, sessionID, callID string, patch map[string]any) error {
-	// Scan every tool_call row of the session (newest first): a spawn card can
-	// be arbitrarily old by the time its task finishes, so a bounded window
-	// would silently drop the terminal patch.
-	var rows []Message
-	if err := s.db.NewSelect().Model(&rows).
-		Column("id", "display").
-		Where("session_id = ?", sessionID).
-		Where("role = ?", "tool_call").
-		OrderExpr("id DESC").
-		Scan(ctx); err != nil {
-		return fmt.Errorf("finding tool call %s: %w", callID, err)
-	}
-	for _, row := range rows {
-		var d map[string]any
-		if len(row.Display) == 0 || json.Unmarshal(row.Display, &d) != nil {
-			continue
+	// Read → merge → write must be one transaction: two patches racing on the
+	// same card (a fast status change and its retry, or two concurrent
+	// finalizers) would otherwise each read the pre-merge display and the later
+	// UPDATE would clobber the earlier one's fields. On SQLite's single writer
+	// the tx serializes them, so every patch merges onto the previous result.
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Scan every tool_call row of the session (newest first): a spawn card can
+		// be arbitrarily old by the time its task finishes, so a bounded window
+		// would silently drop the terminal patch.
+		var rows []Message
+		if err := tx.NewSelect().Model(&rows).
+			Column("id", "display").
+			Where("session_id = ?", sessionID).
+			Where("role = ?", "tool_call").
+			OrderExpr("id DESC").
+			Scan(ctx); err != nil {
+			return fmt.Errorf("finding tool call %s: %w", callID, err)
 		}
-		if d["call_id"] != callID {
-			continue
+		for _, row := range rows {
+			var d map[string]any
+			if len(row.Display) == 0 || json.Unmarshal(row.Display, &d) != nil {
+				continue
+			}
+			if d["call_id"] != callID {
+				continue
+			}
+			// A terminal task_status is frozen (first terminal wins, mirroring
+			// Task.Finalize): a late or reordered patch carrying an earlier
+			// non-terminal status — or a competing terminal — must not roll the
+			// card back. Such a patch is stale; applying it is a no-op. An
+			// idempotent re-patch of the same terminal status still falls
+			// through so it can carry an updated summary.
+			if incoming, ok := patch["task_status"]; ok {
+				if cur := d["task_status"]; isTerminalTaskStatus(cur) && !sameTaskStatus(cur, incoming) {
+					return nil
+				}
+			}
+			for k, v := range patch {
+				d[k] = v
+			}
+			merged, err := json.Marshal(d)
+			if err != nil {
+				return fmt.Errorf("merging display for %s: %w", callID, err)
+			}
+			if _, err := tx.NewUpdate().Model((*Message)(nil)).
+				Set("display = ?", string(merged)).
+				Where("id = ?", row.ID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("patching display for %s: %w", callID, err)
+			}
+			return nil
 		}
-		for k, v := range patch {
-			d[k] = v
-		}
-		merged, err := json.Marshal(d)
-		if err != nil {
-			return fmt.Errorf("merging display for %s: %w", callID, err)
-		}
-		if _, err := s.db.NewUpdate().Model((*Message)(nil)).
-			Set("display = ?", string(merged)).
-			Where("id = ?", row.ID).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("patching display for %s: %w", callID, err)
-		}
-		return nil
-	}
-	return fmt.Errorf("tool call %s not found in session %s: %w", callID, sessionID, ErrNotFound)
+		return fmt.Errorf("tool call %s not found in session %s: %w", callID, sessionID, ErrNotFound)
+	})
 }

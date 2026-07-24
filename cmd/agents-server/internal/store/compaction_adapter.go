@@ -184,25 +184,19 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 
 	beforeCount := len(active)
 
-	err = ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		ids := make([]int64, len(toCompact))
-		for i, m := range toCompact {
-			ids[i] = m.ID
-		}
-		if _, err := tx.NewUpdate().Model((*Message)(nil)).
-			Set("compacted = ?", true).
-			Where("id IN (?)", bun.List(ids)).
-			Exec(ctx); err != nil {
-			return err
-		}
-
-		if _, err := tx.NewInsert().Model(&summaryMsg).Exec(ctx); err != nil {
-			return err
-		}
-		return nil
-	})
+	compactIDs := make([]int64, len(toCompact))
+	for i, m := range toCompact {
+		compactIDs[i] = m.ID
+	}
+	applied, err := ca.persistCompaction(ctx, compactIDs, &summaryMsg)
 	if err != nil {
 		return fmt.Errorf("compaction adapter: persisting: %w", err)
+	}
+	if !applied {
+		// The rows we planned to compact vanished before the write — the session
+		// was deleted concurrently. Nothing changed, so don't fire OnDone with
+		// counts for a compaction that never happened.
+		return nil
 	}
 
 	afterCount := 1 + (len(active) - len(toCompact))
@@ -210,4 +204,34 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		ca.notify.OnDone(beforeCount, afterCount)
 	}
 	return nil
+}
+
+// persistCompaction marks the planned messages compacted and inserts the
+// summary in one transaction, reporting whether it applied. It guards against a
+// concurrent session delete: if the UPDATE touches no rows the target messages
+// are gone (the session was deleted between loading the history and this
+// write), so it skips the summary INSERT rather than orphan a summary row in a
+// session that no longer exists.
+func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []int64, summaryMsg *Message) (bool, error) {
+	applied := false
+	err := ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewUpdate().Model((*Message)(nil)).
+			Set("compacted = ?", true).
+			Where("id IN (?)", bun.List(compactIDs)).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		// Only skip when the driver positively reports zero rows; if it can't
+		// report (err != nil), fall through and insert as before.
+		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			return nil
+		}
+		if _, err := tx.NewInsert().Model(summaryMsg).Exec(ctx); err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	return applied, err
 }

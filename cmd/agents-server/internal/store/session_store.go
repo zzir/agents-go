@@ -122,6 +122,14 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting tasks for session %s: %w", id, err)
 		}
+		// If id is itself a task's hidden child session (deleting it directly,
+		// e.g. via the REST endpoint), drop the owning task row too — otherwise
+		// its child_session_id dangles at a deleted session forever.
+		if _, err := tx.NewDelete().Model((*Task)(nil)).
+			Where("child_session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting owning task for session %s: %w", id, err)
+		}
 		if _, err := tx.NewDelete().Model((*Message)(nil)).
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {

@@ -109,7 +109,15 @@ func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
 
 // Delete removes the row with the given id. Returns an ErrNotFound-wrapping
 // error when the row doesn't exist.
+//
+// Deleting an AgentConfig also cleans up the rows that reference it (see
+// deleteAgentConfig): AgentConfigStore intentionally routes Delete through this
+// generic path, so the cleanup lives here rather than in an override. Every
+// other entity type takes the plain single-row delete unchanged.
 func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
+	if _, ok := any((*T)(nil)).(*AgentConfig); ok {
+		return s.deleteAgentConfig(ctx, id)
+	}
 	res, err := s.db.NewDelete().Model((*T)(nil)).Where("id = ?", id).Exec(ctx)
 	if err == nil {
 		err = requireRows(res)
@@ -118,4 +126,45 @@ func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("deleting %s %s: %w", s.label, id, err)
 	}
 	return nil
+}
+
+// deleteAgentConfig removes an agent config together with the references that
+// would otherwise dangle at a deleted id, all in one transaction:
+// - scoped memories are DELETED — ListForAgent only ever surfaces a memory to
+// its owning agent, so once the agent is gone they are unreachable and
+// would leak forever;
+// - sessions and tasks keep their history but have agent_config_id cleared to
+// the empty (default-agent) state rather than pointing at a ghost config.
+//
+// Returns an ErrNotFound-wrapping error when the agent config doesn't exist.
+func (s *CrudStore[T]) deleteAgentConfig(ctx context.Context, id string) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().Model((*Memory)(nil)).
+			Where("agent_config_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting scoped memories for %s %s: %w", s.label, id, err)
+		}
+		if _, err := tx.NewUpdate().Model((*Session)(nil)).
+			Set("agent_config_id = ?", "").
+			Where("agent_config_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("clearing %s %s from sessions: %w", s.label, id, err)
+		}
+		if _, err := tx.NewUpdate().Model((*Task)(nil)).
+			Set("agent_config_id = ?", "").
+			Where("agent_config_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("clearing %s %s from tasks: %w", s.label, id, err)
+		}
+		res, err := tx.NewDelete().Model((*AgentConfig)(nil)).
+			Where("id = ?", id).
+			Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		if err != nil {
+			return fmt.Errorf("deleting %s %s: %w", s.label, id, err)
+		}
+		return nil
+	})
 }
