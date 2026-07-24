@@ -132,6 +132,10 @@ interface UseApiResult<T> {
   loading: boolean;
   error: string | null;
   reload: (opts?: { throwOnError?: boolean }) => Promise<void>;
+  // mutateData optimistically updates the cached data without a refetch, so a
+  // mutation can migrate the local view immediately and reconcile in the
+  // background.
+  mutateData: (fn: (prev: T | null) => T | null) => void;
 }
 
 export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []): UseApiResult<T> {
@@ -157,9 +161,13 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
+  const mutateData = useCallback((fn: (prev: T | null) => T | null) => {
+    setData(prev => fn(prev));
+  }, []);
+
   useEffect(() => { reload(); }, [reload]);
 
-  return { data, loading, error, reload };
+  return { data, loading, error, reload, mutateData };
 }
 
 type CrudId = string | number;

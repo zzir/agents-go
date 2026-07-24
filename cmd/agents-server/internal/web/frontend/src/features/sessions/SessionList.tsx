@@ -87,24 +87,25 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
 }
 
 export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions, awaitingSessions }: SessionListProps): ReactElement {
-  const { data: sessions, reload } = useApi(() => api.sessions.list() as Promise<Session[]>);
+  const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
     if (reloadKey) reload(); // auto-refresh: does not throw
   }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
 
-  // For every mutation: apply the local state migration as soon as the server
-  // call succeeds, THEN refresh best-effort. A refresh failure is reported on its
-  // own and must never undo a migration for a mutation that already succeeded
-  // (e.g. leaving an already-deleted session still selected and shown).
+  // For every mutation: optimistically update the cached list AND migrate active
+  // state as soon as the server call succeeds, then reconcile with a background
+  // reload. The optimistic list update means a reload failure can't strand a
+  // deleted session in the sidebar, hide a just-created one, or show a stale pin.
   const handleCreate = async () => {
     setCreating(true);
     try {
       const sess = await api.sessions.create('New Chat') as Session;
+      mutateData(prev => (prev ? [sess, ...prev] : [sess]));
       onSelect(sess.id);
       if (onCreated) onCreated();
-      reload({ throwOnError: true }).catch(() => toast.error('Created, but the list failed to refresh'));
+      reload();
     } catch (e) {
       toast.error((e as Error).message || 'Could not create chat');
     } finally {
@@ -119,16 +120,18 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
       toast.error((e as Error).message || 'Could not delete chat');
       return;
     }
+    mutateData(prev => (prev ? prev.filter(s => s.id !== id) : prev));
     if (onDeleteNotify) onDeleteNotify(id);
     if (activeId === id) onSelect(null);
-    reload({ throwOnError: true }).catch(() => toast.error('Deleted, but the list failed to refresh'));
+    reload();
   };
 
   const handleFork = async (id: string) => {
     try {
       const forked = await api.sessions.fork(id) as Session;
+      mutateData(prev => (prev ? [forked, ...prev] : [forked]));
       onSelect(forked.id);
-      reload({ throwOnError: true }).catch(() => toast.error('Forked, but the list failed to refresh'));
+      reload();
     } catch (e) {
       toast.error((e as Error).message || 'Could not fork chat');
     }
@@ -141,7 +144,8 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
       toast.error((e as Error).message || 'Could not update pin');
       return;
     }
-    reload({ throwOnError: true }).catch(() => toast.error('Pinned, but the list failed to refresh'));
+    mutateData(prev => (prev ? prev.map(s => (s.id === id ? { ...s, pinned } : s)) : prev));
+    reload();
   };
 
   const pinned = sessions ? sessions.filter(s => s.pinned) : [];
