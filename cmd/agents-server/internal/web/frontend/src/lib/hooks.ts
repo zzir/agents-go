@@ -142,26 +142,36 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic request id: only the newest reload/mutateData may write data,
+  // error and loading — a slow earlier reload can't overwrite a newer result or
+  // a just-applied optimistic update.
+  const genRef = useRef(0);
 
   const reload = useCallback(async (opts?: { throwOnError?: boolean }) => {
+    const gen = ++genRef.current;
     setLoading(true);
     try {
       const result = await fetcher();
-      setData(result);
-      setError(null);
+      if (gen === genRef.current) {
+        setData(result);
+        setError(null);
+      }
     } catch (e) {
-      setError((e as Error).message);
+      if (gen === genRef.current) setError((e as Error).message);
       // Auto-refreshes (useEffect, timers, event handlers) fire-and-forget and
       // must not reject; only a caller that opts in — a mutation awaiting the
-      // refresh — gets the error propagated. The error state is set either way.
+      // refresh — gets the error propagated.
       if (opts?.throwOnError) throw e;
     } finally {
-      setLoading(false);
+      if (gen === genRef.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   const mutateData = useCallback((fn: (prev: T | null) => T | null) => {
+    // Bump the generation so any in-flight reload's result is discarded — the
+    // optimistic update is the source of truth until a newer reload lands.
+    genRef.current++;
     setData(prev => fn(prev));
   }, []);
 
