@@ -97,6 +97,9 @@ type failingSandbox struct {
 	creates      int
 	failWriteAt  int
 	writes       int
+	// partialWriteAt makes the Nth WriteFile truncate the file and write only
+	// half the content before returning an error.
+	partialWriteAt int
 }
 
 func (f *failingSandbox) CreateExclusive(ctx context.Context, path string, content []byte) error {
@@ -111,6 +114,15 @@ func (f *failingSandbox) WriteFile(ctx context.Context, path string, content []b
 	f.writes++
 	if f.writes == f.failWriteAt {
 		return fmt.Errorf("simulated write failure")
+	}
+	// Reproduce what a full disk or a dropped SFTP connection actually does: the
+	// file is truncated and half the content lands, THEN the error comes back.
+	// os.WriteFile is O_TRUNC, so a failed write is not a no-op.
+	if f.writes == f.partialWriteAt {
+		if err := f.Sandbox.WriteFile(ctx, path, content[:len(content)/2]); err != nil {
+			return err
+		}
+		return fmt.Errorf("simulated partial write failure")
 	}
 	return f.Sandbox.WriteFile(ctx, path, content)
 }
@@ -138,5 +150,41 @@ func TestApplyPatchCommitRollback(t *testing.T) {
 	}
 	if _, err := local.ReadFile(ctx, "b.txt"); err == nil {
 		t.Fatal("b.txt was never written")
+	}
+}
+
+// TestApplyPatchRestoresPartiallyWrittenFile locks the rollback of the op that
+// fails ITSELF. WriteFile truncates before it writes, so a failure mid-write
+// leaves the file damaged — but the failing op never enters `done`, so before
+// this fix its undo never ran and a single-file Update reported "rolled back"
+// over a truncated file.
+func TestApplyPatchRestoresPartiallyWrittenFile(t *testing.T) {
+	ctx := context.Background()
+	local := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	const orig = "one\ntwo\nthree\n"
+	if err := local.WriteFile(ctx, "a.txt", []byte(orig)); err != nil {
+		t.Fatal(err)
+	}
+	// The setup write goes straight to `local`, so the wrapper's 1st write is the
+	// patch's own update — the one we make fail halfway through.
+	sb := &failingSandbox{Sandbox: local, partialWriteAt: 1}
+
+	patch := "*** Begin Patch\n" +
+		"*** Update File: a.txt\n" +
+		" one\n" +
+		"-two\n" +
+		"+TWO\n" +
+		" three\n" +
+		"*** End Patch\n"
+
+	if _, err := applyPatch(ctx, sb, patch); err == nil {
+		t.Fatal("expected the partial write to fail the apply")
+	}
+	got, err := local.ReadFile(ctx, "a.txt")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != orig {
+		t.Fatalf("file left damaged after a failed apply: %q, want %q", got, orig)
 	}
 }

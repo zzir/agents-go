@@ -83,6 +83,26 @@ type fsOp struct {
 	do   func() error
 	undo func(context.Context) error
 	desc string
+	// undoOnError marks an op whose undo is safe to run when its OWN do()
+	// failed. WriteFile/RemoveFile are not atomic — os.WriteFile truncates
+	// before it writes, so a full disk or a dropped SFTP connection leaves the
+	// file truncated or half-written — so the failing op itself has to be
+	// restored from the snapshot, not just the ops before it. It is deliberately
+	// NOT set on CreateExclusive ops: their most common failure is fs.ErrExist,
+	// where the target is someone ELSE's file and the undo (RemoveFile) would
+	// delete it; CreateExclusive also already guarantees it leaves no partial
+	// file behind.
+	undoOnError bool
+}
+
+// rbLabel names an op in a rollback-failure report. The second half of a move
+// carries no summary desc (the move is summarized by its first op), so fall back
+// to a generic label rather than reporting a bare ": error".
+func rbLabel(op fsOp) string {
+	if op.desc == "" {
+		return "(move: remove source)"
+	}
+	return op.desc
 }
 
 // applyPatch runs the two-phase apply: plan (pure, in-memory) then commit
@@ -127,9 +147,10 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 				return "", fmt.Errorf("delete %s: %w", p, rerr)
 			}
 			ops = append(ops, fsOp{
-				do:   func() error { return sb.RemoveFile(ctx, p) },
-				undo: func(ctx context.Context) error { return sb.WriteFile(ctx, p, orig) },
-				desc: "D " + p,
+				do:          func() error { return sb.RemoveFile(ctx, p) },
+				undo:        func(ctx context.Context) error { return sb.WriteFile(ctx, p, orig) },
+				desc:        "D " + p,
+				undoOnError: true,
 			})
 		case opUpdate:
 			p := e.path
@@ -163,16 +184,18 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 						desc: "M " + src + " -> " + dst,
 					},
 					fsOp{
-						do:   func() error { return sb.RemoveFile(ctx, src) },
-						undo: func(ctx context.Context) error { return sb.WriteFile(ctx, src, snap) },
+						do:          func() error { return sb.RemoveFile(ctx, src) },
+						undo:        func(ctx context.Context) error { return sb.WriteFile(ctx, src, snap) },
+						undoOnError: true,
 					},
 				)
 			} else {
 				snap := orig
 				ops = append(ops, fsOp{
-					do:   func() error { return sb.WriteFile(ctx, p, newContent) },
-					undo: func(ctx context.Context) error { return sb.WriteFile(ctx, p, snap) },
-					desc: "U " + p,
+					do:          func() error { return sb.WriteFile(ctx, p, newContent) },
+					undo:        func(ctx context.Context) error { return sb.WriteFile(ctx, p, snap) },
+					desc:        "U " + p,
+					undoOnError: true,
 				})
 			}
 		}
@@ -189,9 +212,19 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			// patch falsely reported as "rolled back".
 			rbCtx, cancelRB := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			var rbErrs []string
+			// The op that just failed may have partially applied: WriteFile
+			// truncates before it writes, so a full disk or a dropped connection
+			// leaves the file damaged even though do() returned an error. Restore
+			// it from the snapshot first, where doing so is safe — otherwise a
+			// single-file Update would report "rolled back" over a truncated file.
+			if op.undoOnError {
+				if uerr := op.undo(rbCtx); uerr != nil {
+					rbErrs = append(rbErrs, rbLabel(op)+": "+uerr.Error())
+				}
+			}
 			for i := len(done) - 1; i >= 0; i-- {
 				if uerr := done[i].undo(rbCtx); uerr != nil {
-					rbErrs = append(rbErrs, done[i].desc+": "+uerr.Error())
+					rbErrs = append(rbErrs, rbLabel(done[i])+": "+uerr.Error())
 				}
 			}
 			cancelRB()
