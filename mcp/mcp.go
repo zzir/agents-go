@@ -121,8 +121,9 @@ type Server struct {
 	// run can hold a *Server pointer past a reconfiguration that closed it.
 	closed atomic.Bool
 
-	mu     sync.Mutex
-	cached []cachedTool // populated lazily when CacheToolsList is set
+	mu       sync.Mutex
+	cached   []cachedTool // populated lazily when CacheToolsList is set
+	cacheGen uint64       // bumped by InvalidateToolsCache; guards a mid-fetch invalidation from being overwritten
 }
 
 // cachedTool pairs an adapted tool with its original (unprefixed) MCP name, used
@@ -292,9 +293,11 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	}
 	// Fast path: a cached list is served under a short critical section, never
 	// while a network call is in flight.
+	var gen uint64
 	if s.opts.CacheToolsList {
 		s.mu.Lock()
 		cached := s.cached
+		gen = s.cacheGen
 		s.mu.Unlock()
 		if cached != nil {
 			return cached, nil
@@ -321,11 +324,15 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	}
 	if s.opts.CacheToolsList {
 		s.mu.Lock()
-		// If another goroutine published a list while we were fetching, prefer
-		// it so every caller converges on the same slice; otherwise cache ours.
+		// If another goroutine published a list while we were fetching, prefer it
+		// so every caller converges on the same slice. Otherwise cache ours only
+		// if no InvalidateToolsCache ran during the fetch (the generation is
+		// unchanged): a list_changed arriving mid-fetch means our result may
+		// already be stale, so return it to this caller but leave the cache empty
+		// for the next call to refetch.
 		if s.cached != nil {
 			list = s.cached
-		} else {
+		} else if s.cacheGen == gen {
 			s.cached = list
 		}
 		s.mu.Unlock()
@@ -371,6 +378,7 @@ func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 func (s *Server) InvalidateToolsCache() {
 	s.mu.Lock()
 	s.cached = nil
+	s.cacheGen++
 	s.mu.Unlock()
 }
 
