@@ -690,16 +690,25 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		}
 		tmp := path.Join(dir, ".ap."+hex.EncodeToString(buf))
 		tmpQ := shellQuote(tmp)
-		script := "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; rc=$?; rm -f " + tmpQ + "; exit $rc"
+		// Leave the temp link in place (no in-script rm) so the host decides what to
+		// do based on the outcome — the target may have been published by ln even
+		// if Exec then reports an error.
+		script := "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancelCleanup()
 		if err != nil {
-			// Exec failed (a cancel/timeout may have SIGKILLed the shell before its
-			// own rm ran): remove our temp on a detached context, best-effort.
-			cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "rm -f " + tmpQ}})
-			cancelCleanup()
+			// Exec failed (cancel/timeout/inspect error): ln may have already
+			// published the target before the failure. If target and tmp are the
+			// same inode the publish happened even though we return an error — undo
+			// it so "error" always means "target not created". Then drop tmp.
+			_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c",
+				"if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + "; fi; rm -f " + tmpQ}})
 			return err
 		}
+		// Exec ran to completion; drop our temp link (the target, if published,
+		// keeps its own independent hard link).
+		_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "rm -f " + tmpQ}})
 		if res.ExitCode != 0 {
 			if strings.Contains(res.Stderr, "exists") {
 				return fmt.Errorf("docker sandbox: create %q: %w", p, fs.ErrExist)

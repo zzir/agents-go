@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	agents "github.com/zzir/agents-go/agents"
 )
@@ -80,7 +81,7 @@ var applyPatchSem = make(chan struct{}, 1)
 // multi-file commit can be rolled back from the in-memory snapshot.
 type fsOp struct {
 	do   func() error
-	undo func() error
+	undo func(context.Context) error
 	desc string
 }
 
@@ -116,7 +117,7 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 					}
 					return nil
 				},
-				undo: func() error { return sb.RemoveFile(ctx, p) },
+				undo: func(ctx context.Context) error { return sb.RemoveFile(ctx, p) },
 				desc: "A " + p,
 			})
 		case opDelete:
@@ -127,7 +128,7 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			}
 			ops = append(ops, fsOp{
 				do:   func() error { return sb.RemoveFile(ctx, p) },
-				undo: func() error { return sb.WriteFile(ctx, p, orig) },
+				undo: func(ctx context.Context) error { return sb.WriteFile(ctx, p, orig) },
 				desc: "D " + p,
 			})
 		case opUpdate:
@@ -158,19 +159,19 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 							}
 							return nil
 						},
-						undo: func() error { return sb.RemoveFile(ctx, dst) },
+						undo: func(ctx context.Context) error { return sb.RemoveFile(ctx, dst) },
 						desc: "M " + src + " -> " + dst,
 					},
 					fsOp{
 						do:   func() error { return sb.RemoveFile(ctx, src) },
-						undo: func() error { return sb.WriteFile(ctx, src, snap) },
+						undo: func(ctx context.Context) error { return sb.WriteFile(ctx, src, snap) },
 					},
 				)
 			} else {
 				snap := orig
 				ops = append(ops, fsOp{
 					do:   func() error { return sb.WriteFile(ctx, p, newContent) },
-					undo: func() error { return sb.WriteFile(ctx, p, snap) },
+					undo: func(ctx context.Context) error { return sb.WriteFile(ctx, p, snap) },
 					desc: "U " + p,
 				})
 			}
@@ -182,8 +183,20 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 	var summary []string
 	for _, op := range ops {
 		if derr := op.do(); derr != nil {
+			// Roll back on a detached context with a short timeout: if do() failed
+			// because ctx was cancelled/timed out, the undo ops must not inherit
+			// that cancellation, or they'd silently fail and leave a half-applied
+			// patch falsely reported as "rolled back".
+			rbCtx, cancelRB := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			var rbErrs []string
 			for i := len(done) - 1; i >= 0; i-- {
-				_ = done[i].undo()
+				if uerr := done[i].undo(rbCtx); uerr != nil {
+					rbErrs = append(rbErrs, done[i].desc+": "+uerr.Error())
+				}
+			}
+			cancelRB()
+			if len(rbErrs) > 0 {
+				return "", fmt.Errorf("apply failed (%w); rollback INCOMPLETE, these changes remain: %s", derr, strings.Join(rbErrs, "; "))
 			}
 			return "", fmt.Errorf("apply aborted and rolled back: %w", derr)
 		}
