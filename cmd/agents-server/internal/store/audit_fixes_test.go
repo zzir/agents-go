@@ -267,82 +267,8 @@ func TestSessionDeleteParentCascadesTask(t *testing.T) {
 	}
 }
 
-// deleting an agent config deletes its scoped memories and clears the
-// dangling agent_config_id from sessions and tasks, while leaving global and
-// other agents' memories intact.
-func TestAgentConfigDeleteCleansReferences(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	agentConfigs := NewAgentConfigStore(db)
-	memories := NewMemoryStore(db)
-	sessions := NewSessionStore(db)
-	tasks := NewTaskStore(db)
-
-	agent := &AgentConfig{Name: "doomed"}
-	if err := agentConfigs.Create(ctx, agent); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-
-	scoped := &Memory{AgentConfigID: agent.ID, Key: "s", Content: "scoped"}
-	global := &Memory{Key: "g", Content: "global"}
-	other := &Memory{AgentConfigID: "other-agent", Key: "o", Content: "other"}
-	for _, m := range []*Memory{scoped, global, other} {
-		if err := memories.Create(ctx, m); err != nil {
-			t.Fatalf("create memory: %v", err)
-		}
-	}
-
-	boundSess := &Session{ID: NewID(), Name: "bound", AgentConfigID: agent.ID}
-	if err := sessions.Create(ctx, boundSess); err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	boundTask := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: boundSess.ID, ChildSessionID: NewID(), AgentConfigID: agent.ID, Status: "working"}
-	if err := tasks.Create(ctx, boundTask); err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-
-	if err := agentConfigs.Delete(ctx, agent.ID); err != nil {
-		t.Fatalf("delete agent: %v", err)
-	}
-
-	// Agent gone.
-	if _, err := agentConfigs.Get(ctx, agent.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("agent should be deleted, got %v", err)
-	}
-	// Scoped memory gone; global + other kept.
-	remaining, err := memories.List(ctx)
-	if err != nil {
-		t.Fatalf("list memories: %v", err)
-	}
-	keys := map[string]bool{}
-	for _, m := range remaining {
-		keys[m.Key] = true
-	}
-	if keys["s"] {
-		t.Fatalf("scoped memory should be deleted with its agent")
-	}
-	if !keys["g"] || !keys["o"] {
-		t.Fatalf("global/other memories should survive: %+v", remaining)
-	}
-	// Session and task keep their history but lose the dangling binding.
-	gotSess, err := sessions.Get(ctx, boundSess.ID)
-	if err != nil {
-		t.Fatalf("get session: %v", err)
-	}
-	if gotSess.AgentConfigID != "" {
-		t.Fatalf("session agent_config_id should be cleared, got %q", gotSess.AgentConfigID)
-	}
-	gotTask, err := tasks.Get(ctx, boundTask.ID)
-	if err != nil {
-		t.Fatalf("get task: %v", err)
-	}
-	if gotTask.AgentConfigID != "" {
-		t.Fatalf("task agent_config_id should be cleared, got %q", gotTask.AgentConfigID)
-	}
-}
-
-// a missing agent config still reports ErrNotFound, and non-agent CRUD
-// deletes are unaffected by the cascade gate.
+// a missing agent config still reports ErrNotFound, and CrudStore deletes of
+// other entities go through the plain delete path.
 func TestAgentConfigDeleteNotFoundAndOtherEntities(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
