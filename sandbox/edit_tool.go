@@ -40,20 +40,15 @@ const applyPatchDesc = "Apply a patch to one or more files in the sandbox. Forma
 // already-applied operations are rolled back from an in-memory snapshot.
 func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 	cfg = cfg.withDefaults()
-	// Serialize applies against this Sandbox INSTANCE. The default tool loop runs
-	// tool calls concurrently, and one patch's commit-phase rollback (RemoveFile)
-	// could otherwise delete a file another patch just wrote — exclusive-create
-	// only stops two Adds racing, not a rollback racing a concurrent Update. The
-	// lock is keyed on the Sandbox, not this tool: the SandboxManager reuses one
-	// Sandbox across runs while rebuilding the tool per run, so a per-tool lock
-	// wouldn't serialize two runs sharing the same filesystem.
-	mu := applyPatchLock(sb)
 	return agents.NewFunctionTool(
 		"apply_patch",
 		applyPatchDesc,
 		func(ctx context.Context, _ *agents.ToolContext, args applyPatchArgs) (string, error) {
-			mu.Lock()
-			defer mu.Unlock()
+			// Serialize all apply_patch commits process-wide (see applyPatchMu):
+			// a rollback must not race a concurrent patch's writes on the same
+			// filesystem, and exclusive-create only stops two Adds racing.
+			applyPatchMu.Lock()
+			defer applyPatchMu.Unlock()
 			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
 			defer cancel()
 			// A bad patch (parse / locate / missing file) is returned as text so
@@ -67,25 +62,14 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 	)
 }
 
-// applyPatchLocks serializes apply_patch commits per Sandbox instance, so one
-// applyPatch's rollback can't race a concurrent applyPatch on the same
-// filesystem. Keyed on the Sandbox value (backends are pointers, comparable);
-// entries are never removed — bounded by the number of live sandboxes.
-var (
-	applyPatchLocksMu sync.Mutex
-	applyPatchLocks   = map[Sandbox]*sync.Mutex{}
-)
-
-func applyPatchLock(sb Sandbox) *sync.Mutex {
-	applyPatchLocksMu.Lock()
-	defer applyPatchLocksMu.Unlock()
-	mu := applyPatchLocks[sb]
-	if mu == nil {
-		mu = &sync.Mutex{}
-		applyPatchLocks[sb] = mu
-	}
-	return mu
-}
+// applyPatchMu serializes ALL apply_patch commits process-wide. A rollback's
+// RemoveFile could otherwise delete a file a concurrent patch just wrote on the
+// same filesystem; exclusive-create only stops two Adds racing, not a rollback
+// racing an Update. A single global lock (rather than one keyed on the Sandbox)
+// keeps this correct without requiring Sandbox to be comparable and without
+// leaking a lock entry per closed sandbox — at the cost of serializing applies
+// across sandboxes, acceptable for a low-frequency, heavyweight operation.
+var applyPatchMu sync.Mutex
 
 // fsOp is a single filesystem mutation paired with its inverse, so a failed
 // multi-file commit can be rolled back from the in-memory snapshot.

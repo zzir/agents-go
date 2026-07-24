@@ -685,7 +685,10 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		// exclusive create). Unlike an in-place write, a SIGKILL on cancel/timeout
 		// can at worst leak the temp file — the real target is never a partial or
 		// corrupt file.
-		script := "mkdir -p " + dirQ + " && tmp=$(mktemp " + dirQ + "/.ap.XXXXXX) && { printf %s " + shellQuote(b64) + " | base64 -d > \"$tmp\" && ln \"$tmp\" " + target + "; rc=$?; rm -f \"$tmp\"; exit $rc; }"
+		// Sweep stale .ap.* temp files a prior kill (cancel/timeout) may have left
+		// in this dir before making our own. apply_patch is serialized
+		// process-wide, so no live temp file is ever concurrently in use here.
+		script := "mkdir -p " + dirQ + " && find " + dirQ + " -maxdepth 1 -type f -name '.ap.*' -delete 2>/dev/null; tmp=$(mktemp " + dirQ + "/.ap.XXXXXX) && { printf %s " + shellQuote(b64) + " | base64 -d > \"$tmp\" && ln \"$tmp\" " + target + "; rc=$?; rm -f \"$tmp\"; exit $rc; }"
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
 		if err != nil {
 			return err
