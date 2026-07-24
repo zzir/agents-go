@@ -429,10 +429,16 @@ export default function App() {
       // A load hiccup on the freshly-forked (empty) session must not abort the
       // regenerate — swallow it so the run still starts below.
       await loadSession(forked.id).catch(() => undefined);
-      updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent }] }));
+      const clientMsgId = nextClientMsgId();
+      updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent, clientMsgId }] }));
       const payload: Record<string, any> = { session_id: forked.id, input: userContent, agent_config_id: agentConfigId };
       if (sandboxId) payload.sandbox_id = sandboxId;
-      wsRef.current.send(EV.runCreate, payload);
+      if (!wsRef.current.send(EV.runCreate, payload)) {
+        // Socket dropped after the fork: roll back the optimistic bubble so the
+        // regenerated turn isn't stranded with no run (matches handleSend).
+        updateSS(forked.id, s => ({ ...s, messages: s.messages.filter((m: { clientMsgId?: string }) => m.clientMsgId !== clientMsgId) }));
+        toast.error('WebSocket disconnected — message not sent');
+      }
     } catch (e: any) {
       toast.error(e.message || 'Regenerate failed');
     }

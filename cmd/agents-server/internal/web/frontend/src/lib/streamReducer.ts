@@ -67,21 +67,37 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs): Msgs {
   const tail = current.slice(i);
   if (tail.length === 0) return persisted;
   const out = [...persisted];
+  // Content-only fallback matches must be one-to-one: a persisted bubble already
+  // claimed by an earlier tail entry can't absorb a second identical one, so two
+  // successive identical sends don't collapse into a single message.
+  const contentConsumed = new Set<number>();
   for (const m of tail) {
     if (m.role === 'user') {
       const u = m as UserEntry & { clientMsgId?: string };
-      const dup = out.some(p => {
+      // Identity keys win: a shared runId or clientMsgId means the same message.
+      // Two DISTINCT optimistic sends of the same text carry different
+      // clientMsgIds and must both survive.
+      let dup = out.some(p => {
         if (p.role !== 'user') return false;
         const pu = p as UserEntry & { clientMsgId?: string };
-        // Prefer stable identity keys over content: two DISTINCT optimistic
-        // sends of the same text carry different clientMsgIds and must both
-        // survive (deduping by content dropped the second). Content equality
-        // is the last-resort match, only when neither side has a shared key
-        // (e.g. a persisted row vs. a broadcast bubble for the same prompt).
         if (pu.runId && u.runId) return pu.runId === u.runId;
         if (pu.clientMsgId && u.clientMsgId) return pu.clientMsgId === u.clientMsgId;
-        return pu.content === u.content;
+        return false;
       });
+      // Content equality is the last resort, only when neither side shares an id
+      // kind (e.g. a persisted row vs. a broadcast bubble for the same prompt),
+      // and each persisted row is consumed at most once.
+      if (!dup) {
+        for (let idx = 0; idx < out.length; idx++) {
+          if (contentConsumed.has(idx)) continue;
+          const p = out[idx];
+          if (p.role !== 'user') continue;
+          const pu = p as UserEntry & { clientMsgId?: string };
+          if (pu.runId && u.runId) continue;
+          if (pu.clientMsgId && u.clientMsgId) continue;
+          if (pu.content === u.content) { contentConsumed.add(idx); dup = true; break; }
+        }
+      }
       if (!dup) out.push(m);
     } else if (m.role === 'turn') {
       const rid = (m as TurnEntry).runId;

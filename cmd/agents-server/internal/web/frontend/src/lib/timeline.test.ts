@@ -194,6 +194,22 @@ describe('stream/replay isomorphism', () => {
     expect(merged2.filter(m => m.role === 'turn')).toHaveLength(1);
   });
 
+  it('mergeLiveTail: two identical optimistic sends both survive one persisted copy', () => {
+    // First "x" is already persisted; two optimistic "x" bubbles (distinct
+    // clientMsgIds, no messageId) sit in the live tail. Content-only dedup is
+    // one-to-one: one bubble consumes the persisted copy, the second must NOT
+    // also collapse onto it — that used to drop the genuine second send.
+    const persisted = buildTimeline([
+      { id: 1, run_id: 'r0', role: 'user', content: 'x' },
+    ]);
+    const live = [
+      { role: 'user', content: 'x', clientMsgId: 'c1' },
+      { role: 'user', content: 'x', clientMsgId: 'c2' },
+    ] as unknown as ReturnType<typeof buildTimeline>;
+    const merged = mergeLiveTail(persisted, live);
+    expect(merged.filter(m => m.role === 'user')).toHaveLength(2);
+  });
+
   it('replay dedup: re-delivered items and repeated run.started do not duplicate', () => {
     // Hub replays after a reconnect re-run the same events; the reducers must
     // be idempotent the same way the timeline rebuild inherently is.
