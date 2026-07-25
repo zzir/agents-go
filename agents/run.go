@@ -55,6 +55,10 @@ type RunOptions struct {
 	// Exec bounds and steers the loop itself.
 	Exec ExecOptions
 
+	// Compaction shrinks the model's context as the conversation grows. The
+	// zero value disables it.
+	Compaction CompactionOptions
+
 	// Guardrails apply to the whole run, in addition to each agent's own
 	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
 	Guardrails []Guardrail
@@ -411,6 +415,10 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
+		// Compact before projecting: the compactor reasons about entries —
+		// their kinds, their turns, their usage — and projection is what turns
+		// whatever survives into model input.
+		entries = r.compactContext(ctx, CompactBeforeRun, entries)
 		history, herr := ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
@@ -1079,6 +1087,19 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				}
 				return res, nil
 			}
+			// Compact mid-run. A run that calls thirty tools overruns its
+			// context window long before the run-level pass would look.
+			compacted, did, cerr := r.recompactAtSavePoint(ctx)
+			if cerr != nil {
+				return nil, r.fail(cerr, originalInput, generatedItems, rawResponses, currentAgent)
+			}
+			if did {
+				// The rebuilt context already contains this run's items, so the
+				// generated list starts over — the same substitution a handoff
+				// input filter makes above.
+				originalInput = compacted
+				generatedItems = nil
+			}
 			continue
 		}
 	}
@@ -1119,7 +1140,7 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 	if err := r.persistSessionItems(ctx); err != nil {
 		return nil, err
 	}
-	r.maybeCompact(ctx)
+	r.compactAfterRun(ctx)
 	return &RunResult{
 		Input: originalInput,
 		// The unfiltered item log: a handoff input filter rewrites the model's
@@ -1286,17 +1307,18 @@ func runItemCallID(it RunItem) (callID string, isCall, isOutput bool) {
 	return "", false, false
 }
 
-// maybeCompact gives a self-compacting session a chance to compact now that the
-// run's items are persisted and the final output is produced. It is
-// best-effort housekeeping: a failure is recorded on the trace instead of
-// turning the successful run into an error. Called once, at final output — Go
-// compacts per run, not per turn (see docs/migration_from_python.md).
-func (r *runner) maybeCompact(ctx context.Context) {
+// compactAfterRun is the CompactAfterRun point: the run's items are persisted
+// and its final output produced, so a self-compacting storage gets its turn to
+// shrink what it keeps.
+//
+// It is best-effort housekeeping: a failure is recorded on the trace instead of
+// turning a successful run into a failed one.
+func (r *runner) compactAfterRun(ctx context.Context) {
 	if r.opts.Conversation.Session == nil {
 		return
 	}
 	// Items produced locally AFTER the last model response — a final turn's
-	// tool/handoff outputs (StopOnFirstTool, rejected calls) or a synthesized
+	// tool/handoff outputs (a terminating tool, rejected calls) or a synthesized
 	// error-handler fallback message — are not on the server's
 	// previous_response_id chain, so compacting from lastResponseID would
 	// erase them from the stored history. Python defers compaction for such

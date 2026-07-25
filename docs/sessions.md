@@ -258,6 +258,61 @@ agents.Run(ctx, agent, "remember my name is Ada",
 
 Before persistence each item is **sanitized** for the Conversations API (mirroring Python's `_sanitize_openai_conversation_item`): stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
 
+### Run-level compaction
+
+Compaction is configured on the **run**, not on the session. Deciding what to
+drop needs the model (to summarize), the usage numbers (to measure) and the
+context window (to compare against) — all three belong to the run, and a
+session decorator holding a summarization model was a shape inherited from
+elsewhere.
+
+```go
+import "github.com/zzir/agents-go/agents/compaction"
+
+strategy := &compaction.PipelineStrategy{Strategies: []compaction.Strategy{
+	// Cheap and lossless first: old tool results fold to one line per tool.
+	&compaction.ToolResultStrategy{Trigger: compaction.TokensExceed(60_000)},
+	// Only then drop whole exchanges.
+	&compaction.TruncationStrategy{Trigger: compaction.TokensExceed(100_000)},
+}}
+
+agents.Run(ctx, agent, "…", agents.RunOptions{
+	Conversation: agents.ConversationOptions{Session: sess},
+	Compaction:   agents.CompactionOptions{Compactor: compaction.New(strategy, nil)},
+})
+```
+
+`compaction.ContextWindowStrategy` derives both thresholds from the model's own
+limits, so you do not have to pick numbers that depend on the model anyway.
+
+**Nothing is deleted.** A strategy marks groups excluded and may leave a folded
+summary behind; the stored log stays whole, and the context the model sees is a
+projection of it. That is what lets a compacted session still be forked, read
+concurrently, and inspected after the fact.
+
+`Points` selects when the run consults the compactor. The zero value means all
+of them:
+
+| Point | When |
+|---|---|
+| `CompactBeforeRun` | after reading the session, before the first model call |
+| `CompactAtSavePoint` | at each turn boundary — after the turn is persisted, before the next model call |
+| `CompactAfterRun` | once the final output is persisted |
+
+`CompactAtSavePoint` is the one that matters for agentic work: a run that calls
+thirty tools overruns its window inside a single run, long before a run-level
+pass would look. At that point the run rebuilds its context from the log rather
+than editing the items in flight — the log is the truth, and a projection of it
+cannot fall out of step with what was stored.
+
+A compaction failure never fails the run: the context it was shrinking is still
+valid, so the error is recorded on the `compaction` trace span and the run
+continues with what it had.
+
+Local compaction and server-managed history are mutually exclusive by
+construction — `UsePreviousResponseID` and `ConversationID` already refuse to
+combine with a local `Session`.
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result. It is the Go counterpart of Python's `OpenAIResponsesCompactionSession`.

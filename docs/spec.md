@@ -364,6 +364,42 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
 - **Deleting removes the entries with it**, atomically where the backend can, so
   no entries survive pointing at a session that is gone.
 
+### 2.5f Compaction ✅ 🚧 (checkpoint persistence)
+
+Compaction is a **run-level** concern. Deciding what to drop needs the model,
+the usage numbers and the context window; all three belong to the run, so the
+configuration does too (`RunOptions.Compaction`).
+
+- **Nothing is deleted.** A strategy marks groups excluded and may leave a
+  folded replacement; the log stays whole and the model's context is a
+  projection of it. That is what keeps a compacted session forkable, readable
+  concurrently, and inspectable after the fact.
+- The run consults its `Compactor` at three points, all three by default:
+
+  | Point | When |
+  |---|---|
+  | `CompactBeforeRun` | after reading the session, before the first model call |
+  | `CompactAtSavePoint` | at each turn boundary, after the turn is persisted |
+  | `CompactAfterRun` | once the final output is persisted |
+
+- **A save-point pass rebuilds the context from the log**, rather than editing
+  the items in flight. The log is the truth; recomputing a projection is cheap
+  and cannot fall out of step with what was stored, whereas splicing a folded
+  summary back into a `[]RunItem` has no faithful representation.
+- **Compaction never fails a run.** The context it was shrinking is still
+  valid, so a failed pass is recorded on the `compaction` span and the run
+  continues with the entries it had.
+- **Local compaction and server-held history do not interact**, because
+  `UsePreviousResponseID` / `ConversationID` already refuse a local `Session` —
+  there are no local entries for a compactor to see.
+- A **self-compacting storage** (`CompactionAware`, e.g. the server-side
+  compact API) takes the `CompactAfterRun` point instead; the two never both
+  run on one session.
+
+🚧 (plan2 P4) `CompactAfterRun` records its result as an append-only
+`EntryKindCompaction` checkpoint, so the next run starts from it rather than
+recomputing.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in
