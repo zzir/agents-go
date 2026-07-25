@@ -12,7 +12,7 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 |---|---|
 | Agents | `agents.Agent{...}` |
 | Run (blocking) | `agents.Run(ctx, agent, input, opts)` |
-| Streaming | `agents.RunStreamed(...)` → `Events()` iterator |
+| Streaming | `agents.Run(...)` returns a `RunStream` (`iter.Seq2`) + `RunControl`; `agents.RunSync(...)` for the result alone |
 | Function tools | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
 | Structured output | `agents.OutputType[T]()` |
 | Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |

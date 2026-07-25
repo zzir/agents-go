@@ -90,7 +90,7 @@ func TestCodeSurvivesTheRunLoop(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: &fakeModel{
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "nope", "c1", `{}`))},
 	}}
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err == nil {
 		t.Fatal("calling an undefined tool should fail the run")
 	}
@@ -98,7 +98,7 @@ func TestCodeSurvivesTheRunLoop(t *testing.T) {
 		t.Errorf("CodeOf(run error) = %q, want %q (err: %v)", got, CodeModelBehavior, err)
 	}
 
-	_, err = Run(context.Background(), &Agent{Name: "a", ModelImpl: &fakeModel{
+	_, err = RunSync(context.Background(), &Agent{Name: "a", ModelImpl: &fakeModel{
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "loop", "c1", `{}`))},
 	}, Tools: []Tool{NewFunctionTool("loop", "loop",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })}},
@@ -129,7 +129,7 @@ func TestToolPanicCode(t *testing.T) {
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "boom", "c1", `{}`))},
 	}, Tools: []Tool{panicking}}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err == nil {
 		t.Fatal("a panicking tool should fail the run")
 	}

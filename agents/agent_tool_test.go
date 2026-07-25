@@ -18,7 +18,7 @@ func TestAgentAsTool(t *testing.T) {
 	}}
 	orch := &Agent{Name: "orchestrator", Tools: []Tool{summarize}, ModelImpl: orchModel}
 
-	res, err := Run(context.Background(), orch, "summarize this", RunOptions{})
+	res, err := RunSync(context.Background(), orch, "summarize this", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

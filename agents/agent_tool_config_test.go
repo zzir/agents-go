@@ -35,7 +35,7 @@ func TestAgentToolOnStreamDeliversEvents(t *testing.T) {
 	})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
 
-	res, err := Run(context.Background(), orch, "go", RunOptions{})
+	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestAgentToolOnStreamHandlerPanicDoesNotFailCall(t *testing.T) {
 	})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
 
-	res, err := Run(context.Background(), orch, "go", RunOptions{})
+	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
 	if err != nil {
 		t.Fatalf("handler panic must not fail the run: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestAgentToolSessionPassthrough(t *testing.T) {
 	tool := sub.AsTool(AgentToolConfig{Name: "specialist", Session: sess})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"remember me"}`)
 
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	items, err := sess.GetItems(context.Background(), 0)
@@ -114,7 +114,7 @@ func TestAgentToolNeedsApprovalGatesParentRun(t *testing.T) {
 	tool := sub.AsTool(AgentToolConfig{Name: "specialist", NeedsApproval: true})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
 
-	res, err := Run(context.Background(), orch, "go", RunOptions{})
+	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestAgentToolNeedsApprovalGatesParentRun(t *testing.T) {
 		t.Fatalf("interruptions = %+v, want the agent tool itself", res.Interruptions)
 	}
 	res.State.Approve(res.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestAgentToolInheritsRunLevelInputGuardrails(t *testing.T) {
 	}
 	_ = nestedRuns
 
-	res, err := Run(context.Background(), orch, "go", RunOptions{Guardrails: []Guardrail{guard}})
+	res, err := RunSync(context.Background(), orch, "go", RunOptions{Guardrails: []Guardrail{guard}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestAgentToolInvocationExposedToExtractor(t *testing.T) {
 	})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
 
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if got == nil || got.ToolName != "specialist" || got.ToolCallID != "c1" {
@@ -228,7 +228,7 @@ func TestAgentToolModifyRunOptions(t *testing.T) {
 	})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
 
-	res, err := Run(context.Background(), orch, "go", RunOptions{})
+	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestAgentAsToolStructuredParams(t *testing.T) {
 	}
 
 	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// The nested agent receives the default structured rendering.
@@ -310,7 +310,7 @@ func TestAgentAsToolValidatesParams(t *testing.T) {
 	// A type mismatch (limit as string) must bounce back to the model as a
 	// tool error, not flow into the nested run.
 	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":"three"}`)
-	res, err := Run(context.Background(), orch, "go", RunOptions{})
+	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestAgentAsToolStructuredWithoutDescriptions(t *testing.T) {
 	tool := AgentAsTool[asToolBareParams](sub, AgentToolConfig{Name: "search"})
 
 	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// No descriptions -> no schema summary, but the structured preamble and
@@ -349,7 +349,7 @@ func TestAgentAsToolIncludeInputSchema(t *testing.T) {
 	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search", IncludeInputSchema: true})
 
 	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
@@ -369,7 +369,7 @@ func TestAgentAsToolCustomInputBuilder(t *testing.T) {
 		},
 	})
 	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
@@ -390,7 +390,7 @@ func TestAgentToolIsEnabledHidesTool(t *testing.T) {
 	m := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "no tools"))}}
 	orch := &Agent{Name: "orchestrator", Tools: []Tool{tool}, ModelImpl: m}
 
-	if _, err := Run(context.Background(), orch, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.lastReq.Tools) != 0 {

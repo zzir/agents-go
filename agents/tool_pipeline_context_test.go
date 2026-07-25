@@ -30,7 +30,7 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 	agent.Tools = []Tool{tool}
 	agent.ModelImpl = model
 
-	if _, err := Run(context.Background(), agent, "hello", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if gotAgent != agent {
@@ -79,7 +79,7 @@ func TestToolHooks_ReceiveToolContext(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
 	hooks := &captureToolHooks{}
-	if _, err := Run(context.Background(), agent, "hi", RunOptions{Hooks: hooks}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Hooks: hooks}); err != nil {
 		t.Fatal(err)
 	}
 	if len(hooks.startIDs) != 1 || hooks.startIDs[0] != "call_42" {
@@ -108,7 +108,7 @@ func TestNeedsApprovalFunc_ReceivesCallID(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := gotCallID.Load().(string); got != "call_99" {
@@ -148,7 +148,7 @@ func TestHandoff_MissingRequiredInput(t *testing.T) {
 	}}
 	source.ModelImpl = model
 
-	_, err := Run(context.Background(), source, "please", RunOptions{})
+	_, err := RunSync(context.Background(), source, "please", RunOptions{})
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
 		t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
@@ -171,7 +171,7 @@ func TestHandoff_InvalidRequiredKey(t *testing.T) {
 	}}
 	source.ModelImpl = model
 
-	_, err := Run(context.Background(), source, "please", RunOptions{})
+	_, err := RunSync(context.Background(), source, "please", RunOptions{})
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
 		t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
@@ -191,7 +191,7 @@ func TestHandoff_ValidInputSucceeds(t *testing.T) {
 	source.ModelImpl = srcModel
 	target.ModelImpl = &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "handled"))}}
 
-	res, err := Run(context.Background(), source, "please", RunOptions{})
+	res, err := RunSync(context.Background(), source, "please", RunOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestToolNotFound_ReturnToModelText(t *testing.T) {
 	}}
 	agent.ModelImpl = model
 
-	res, err := Run(context.Background(), agent, "hi", RunOptions{ToolNotFoundBehavior: ToolNotFoundReturnToModel})
+	res, err := RunSync(context.Background(), agent, "hi", RunOptions{ToolNotFoundBehavior: ToolNotFoundReturnToModel})
 	if err != nil {
 		t.Fatal(err)
 	}

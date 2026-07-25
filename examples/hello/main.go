@@ -21,7 +21,7 @@ func main() {
 		Model:        "gpt-4o",
 	}
 
-	res, err := agents.Run(context.Background(), agent, "用一句话介绍 Go 语言。", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "用一句话介绍 Go 语言。", agents.RunOptions{
 		ModelProvider: provider,
 	})
 	if err != nil {

@@ -30,7 +30,7 @@ func main() {
 		Tools:        []agents.Tool{search},
 	}
 
-	res, err := agents.Run(context.Background(), agent, "What is the latest stable Go version?", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "What is the latest stable Go version?", agents.RunOptions{
 		ModelProvider: openai.NewProvider(),
 	})
 	if err != nil {

@@ -5,10 +5,10 @@ A `Session` persists conversation history across runs, so multi-turn chat needs 
 ```go
 sess := agents.NewInMemorySession()
 
-res1, _ := agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Session: sess, ModelProvider: p})
+res1, _ := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Session: sess, ModelProvider: p})
 // "San Francisco"
 
-res2, _ := agents.Run(ctx, agent, "What state is it in?", agents.RunOptions{Session: sess, ModelProvider: p})
+res2, _ := agents.RunSync(ctx, agent, "What state is it in?", agents.RunOptions{Session: sess, ModelProvider: p})
 // "California" — the agent saw the previous turn
 ```
 
@@ -163,7 +163,7 @@ The pair-safety logic is exported as `agents.SafeSplitPoint(items, split)` for c
 ```go
 last, _ := sess.PopItem(ctx) // remove the assistant answer
 last, _ = sess.PopItem(ctx)  // remove the user question
-res, _ := agents.Run(ctx, agent, correctedQuestion, agents.RunOptions{Session: sess, ModelProvider: p})
+res, _ := agents.RunSync(ctx, agent, correctedQuestion, agents.RunOptions{Session: sess, ModelProvider: p})
 ```
 
 ## Combining history with new input

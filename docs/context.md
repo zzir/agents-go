@@ -18,7 +18,7 @@ type AppContext struct {
 	DB     *sql.DB
 }
 
-res, err := agents.Run(ctx, agent, input, agents.RunOptions{
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 	ModelProvider: provider,
 	Context:       &AppContext{UserID: "u_123", DB: db},
 })

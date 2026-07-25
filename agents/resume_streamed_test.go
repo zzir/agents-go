@@ -3,18 +3,20 @@ package agents
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-// collectItemEvents drains a streamed run and returns its RunItemStreamEvent
+// collectItemEvents drains a run stream and returns its RunItemStreamEvent
 // names in order, suffixed with the tool call id where the item carries one.
-func collectItemEvents(t *testing.T, sr *StreamedResult) []string {
+func collectItemEvents(t *testing.T, stream RunStream) ([]string, *RunResult) {
 	t.Helper()
 	var names []string
-	for ev, err := range sr.Events() {
-		if err != nil {
-			t.Fatalf("stream error: %v", err)
-		}
+	events, res, err := streamRun(stream)
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+	for _, ev := range events {
 		ie, ok := ev.(*RunItemStreamEvent)
 		if !ok {
 			continue
@@ -30,7 +32,7 @@ func collectItemEvents(t *testing.T, sr *StreamedResult) []string {
 		}
 		names = append(names, name)
 	}
-	return names
+	return names, res
 }
 
 // A streamed resume must pick up exactly where the interrupted segment left
@@ -57,11 +59,10 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{gated, free}, ModelImpl: model}
 
-	sr := RunStreamed(context.Background(), agent, "go", RunOptions{})
-	interrupted := collectItemEvents(t, sr)
-	res, err := sr.FinalResult()
-	if err != nil {
-		t.Fatal(err)
+	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
+	interrupted, res := collectItemEvents(t, stream)
+	if res == nil {
+		t.Fatal("stream produced no result")
 	}
 	if len(res.Interruptions) != 1 {
 		t.Fatalf("expected 1 interruption, got %d", len(res.Interruptions))
@@ -75,11 +76,10 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	sr2 := ResumeRunStreamed(context.Background(), res.State, RunOptions{})
-	resumed := collectItemEvents(t, sr2)
-	res2, err := sr2.FinalResult()
-	if err != nil {
-		t.Fatal(err)
+	stream2, _ := ResumeRun(context.Background(), res.State, RunOptions{})
+	resumed, res2 := collectItemEvents(t, stream2)
+	if res2 == nil {
+		t.Fatal("resumed stream produced no result")
 	}
 	wantResumed := []string{
 		"tool_output:call_1",
@@ -114,7 +114,7 @@ func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{gated}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,11 +125,10 @@ func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
 	// Approve only the first call: the resumed run's next turn requests the
 	// tool again and must interrupt again.
 	res.State.Approve(res.Interruptions[0], false)
-	sr := ResumeRunStreamed(context.Background(), res.State, RunOptions{})
-	events := collectItemEvents(t, sr)
-	res2, err := sr.FinalResult()
-	if err != nil {
-		t.Fatal(err)
+	stream, _ := ResumeRun(context.Background(), res.State, RunOptions{})
+	events, res2 := collectItemEvents(t, stream)
+	if res2 == nil {
+		t.Fatal("resumed stream produced no result")
 	}
 	if len(res2.Interruptions) != 1 {
 		t.Fatalf("expected re-interruption, got %d interruptions", len(res2.Interruptions))
@@ -144,17 +143,12 @@ func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
 }
 
 func TestHITL_ResumeRunStreamed_NilState(t *testing.T) {
-	sr := ResumeRunStreamed(context.Background(), nil, RunOptions{})
-	var streamErr error
-	for _, err := range sr.Events() {
-		if err != nil {
-			streamErr = err
-		}
+	stream, _ := ResumeRun(context.Background(), nil, RunOptions{})
+	_, _, err := streamRun(stream)
+	if err == nil {
+		t.Fatal("a nil state must fail the stream")
 	}
-	if streamErr == nil {
-		t.Fatal("expected a terminal stream error for nil state")
-	}
-	if _, err := sr.FinalResult(); err == nil {
-		t.Fatal("expected FinalResult error for nil state")
+	if !strings.Contains(err.Error(), "state must not be nil") {
+		t.Errorf("err = %v, want it to name the nil state", err)
 	}
 }

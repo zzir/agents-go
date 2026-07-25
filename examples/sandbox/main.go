@@ -70,7 +70,7 @@ func run() error {
 		Tools: tools,
 	}
 
-	res, err := agents.Run(context.Background(), agent,
+	res, err := agents.RunSync(context.Background(), agent,
 		"用 Python 计算第 20 个斐波那契数,并打印结果。", agents.RunOptions{
 			ModelProvider: openai.NewProvider(),
 		})

@@ -41,7 +41,7 @@ func main() {
 		Tools:        []agents.Tool{search},
 	}
 
-	res, err := agents.Run(ctx, researcher, "What is the airspeed velocity of an unladen swallow?", agents.RunOptions{
+	res, err := agents.RunSync(ctx, researcher, "What is the airspeed velocity of an unladen swallow?", agents.RunOptions{
 		ModelProvider: provider,
 		MaxTurns:      2, // deliberately too small
 		ErrorHandlers: agents.RunErrorHandlers{
@@ -66,7 +66,7 @@ func main() {
 		OutputType:   agents.OutputType[Report](),
 	}
 
-	res, err = agents.Run(ctx, reporter, "Summarize: the quarterly numbers are up.", agents.RunOptions{
+	res, err = agents.RunSync(ctx, reporter, "Summarize: the quarterly numbers are up.", agents.RunOptions{
 		ModelProvider: provider,
 		ErrorHandlers: agents.RunErrorHandlers{
 			// Fires only if the model's final message fails Report validation

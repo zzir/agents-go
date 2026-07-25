@@ -35,7 +35,7 @@ func main() {
 	ctx := context.Background()
 	opts := agents.RunOptions{ModelProvider: openai.NewProvider()}
 
-	res, err := agents.Run(ctx, agent, "请删除 /tmp/old.log 文件。", opts)
+	res, err := agents.RunSync(ctx, agent, "请删除 /tmp/old.log 文件。", opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func main() {
 				res.State.Reject(item, false, "User denied the operation.")
 			}
 		}
-		res, err = agents.ResumeRun(ctx, res.State, opts)
+		res, err = agents.ResumeRunSync(ctx, res.State, opts)
 		if err != nil {
 			log.Fatal(err)
 		}

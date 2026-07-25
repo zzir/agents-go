@@ -23,7 +23,7 @@ func TestRunnerInvokesCompaction(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
-	_, err := Run(context.Background(), agent, "hello", RunOptions{Model: model, Session: sess})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Model: model, Session: sess})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestRunnerInvokesCompactionWithoutResponseID(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
-	if _, err := Run(context.Background(), agent, "hello", RunOptions{Model: model, Session: sess}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{Model: model, Session: sess}); err != nil {
 		t.Fatal(err)
 	}
 	if len(sess.calls) != 1 {
@@ -77,7 +77,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 		}}
 		agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
 
-		res, err := Run(context.Background(), agent, "go", RunOptions{Session: sess})
+		res, err := RunSync(context.Background(), agent, "go", RunOptions{Session: sess})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +106,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 				return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 			},
 		}}
-		if _, err := Run(context.Background(), agent, "go", opts); err != nil {
+		if _, err := RunSync(context.Background(), agent, "go", opts); err != nil {
 			t.Fatal(err)
 		}
 		if len(sess.calls) != 0 {

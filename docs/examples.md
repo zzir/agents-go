@@ -13,7 +13,7 @@ go run ./examples/hello
 | [`examples/tools`](../examples/tools/main.go) | Typed function tools via `NewFunctionTool` |
 | [`examples/toolimage`](../examples/toolimage/main.go) | A tool returning image content (`ToolOutputImage`) |
 | [`examples/handoffs`](../examples/handoffs/main.go) | A triage agent delegating to specialists with `HandoffTo` |
-| [`examples/streaming`](../examples/streaming/main.go) | Consuming `RunStreamed` events with `range` |
+| [`examples/streaming`](../examples/streaming/main.go) | Ranging a `RunStream` |
 | [`examples/hitl`](../examples/hitl/main.go) | Human-in-the-loop: interrupt, approve/reject, resume |
 | [`examples/errorhandlers`](../examples/errorhandlers/main.go) | `RunOptions.ErrorHandlers`: fallback final outputs for max-turns and invalid structured output |
 | [`examples/tracing`](../examples/tracing/main.go) | The tracing pipeline: tracer → batch processor → console exporter, plus `TraceGroupID`/`TraceMetadata` |

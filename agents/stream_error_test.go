@@ -24,27 +24,31 @@ func (m *cancelStreamModel) StreamResponse(ctx context.Context, _ ModelRequest) 
 	}
 }
 
-// A streamed run cancelled mid-stream must report its terminal error via
-// FinalResult even when the Events channel drops it (RunStreamed's error send
-// loses the select to ctx.Done()). agents-server relies on this: it consults
-// FinalResult after draining Events so an aborted run never vanishes.
-func TestRunStreamed_TerminalErrorAlwaysInFinalResult(t *testing.T) {
+// A failing run always reports its error through the stream. The old design
+// pushed events into a channel and kept the error on the side, so a consumer
+// that stopped early could lose it and had to consult FinalResult separately;
+// there is one path now, and it cannot drop the error.
+func TestRunStream_TerminalErrorAlwaysReachesTheConsumer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	agent := &Agent{Name: "a", ModelImpl: &cancelStreamModel{cancel: cancel}}
 
-	sr := RunStreamed(ctx, agent, "hi", RunOptions{})
+	stream, _ := Run(ctx, agent, "hi", RunOptions{})
+	_, res, err := streamRun(stream)
 
-	// Drain the events WITHOUT inspecting the per-item error, mimicking the drop:
-	// the failure may or may not be delivered here.
-	for range sr.Events() { //nolint:revive // intentional drain
-	}
-
-	_, err := sr.FinalResult()
 	if err == nil {
-		t.Fatal("FinalResult must surface the terminal error even when Events drops it")
+		t.Fatal("the stream must surface the terminal error")
 	}
 	if !errors.Is(err, context.Canceled) {
-		t.Errorf("FinalResult err = %v, want context.Canceled", err)
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if res != nil {
+		t.Errorf("a failed run must not also report a result: %+v", res)
+	}
+
+	// Collect reports the same error rather than the "no result" placeholder.
+	stream2, _ := Run(ctx, agent, "hi", RunOptions{})
+	if _, cerr := stream2.Collect(); !errors.Is(cerr, context.Canceled) {
+		t.Errorf("Collect err = %v, want context.Canceled", cerr)
 	}
 }
 
@@ -64,21 +68,24 @@ func TestStreamedResult_StopAfterTurn(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{gate}, ModelImpl: model}
 
-	sr := RunStreamed(context.Background(), agent, "go", RunOptions{})
-	for ev, err := range sr.Events() {
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
+	var res *RunResult
+	for ev, err := range stream {
 		if err != nil {
 			t.Fatal(err)
+		}
+		if done, ok := ev.(*RunCompletedEvent); ok {
+			res = done.Result
 		}
 		if ie, ok := ev.(*RunItemStreamEvent); ok && ie.Name == "tool_called" {
 			// The turn-1 tool is emitted but still blocked; ask for a graceful
 			// stop, then let the tool finish so the turn completes.
-			sr.StopAfterTurn()
+			ctrl.StopAfterTurn()
 			once.Do(func() { close(released) })
 		}
 	}
-	res, err := sr.FinalResult()
-	if err != nil {
-		t.Fatalf("graceful stop returned error: %v", err)
+	if res == nil {
+		t.Fatal("graceful stop produced no result")
 	}
 	if model.calls != 1 {
 		t.Errorf("model calls = %d, want 1 (stopped after turn 1)", model.calls)
@@ -97,10 +104,10 @@ func TestStreamedResult_InitialAgentUpdated(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	sr := RunStreamed(context.Background(), agent, "go", RunOptions{})
+	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
 	var agentUpdated int
 	first := true
-	for ev, err := range sr.Events() {
+	for ev, err := range stream {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,9 +132,9 @@ func TestStreamedResult_HandoffEmitsToolCalled(t *testing.T) {
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "transfer_to_billing", "h1", `{}`))}},
 		Handoffs:  []Handoff{HandoffTo(billing)},
 	}
-	sr := RunStreamed(context.Background(), triage, "q", RunOptions{})
+	stream, _ := Run(context.Background(), triage, "q", RunOptions{})
 	var toolCalledHandoff, handoffRequested int
-	for ev, err := range sr.Events() {
+	for ev, err := range stream {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,43 +159,85 @@ func TestStreamedResult_HandoffEmitsToolCalled(t *testing.T) {
 	}
 }
 
-// A streaming run that fails before its first model call (here via an
-// input-guardrail tripwire) must leave no orphan user message in the session.
-func TestStreamedResult_NoOrphanInputOnPreModelFailure(t *testing.T) {
-	session := NewInMemorySession()
-	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-	agent := &Agent{
-		Name:      "a",
-		ModelImpl: model,
-		Guardrails: []Guardrail{{
-			Name:   "block",
-			Stages: []GuardrailStage{StageInput},
-			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
-				return Trip(nil), nil
-			},
-		}},
-	}
-
-	sr := RunStreamed(context.Background(), agent, "hi", RunOptions{Session: session})
-	var streamErr error
-	for _, err := range sr.Events() {
-		if err != nil {
-			streamErr = err
+// Whether a tripped input guardrail leaves an orphan user message — and
+// whether it spends tokens — is decided by Blocking, and by nothing else.
+//
+// The two entry points used to disagree here: streaming ran input guardrails
+// synchronously before the first model call, blocking raced them. One loop
+// means one answer, and Blocking is the knob that was already documented for
+// exactly this ("use it when a tripwire must prevent any token spend").
+func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
+	newAgent := func(model *fakeModel, blocking bool) *Agent {
+		return &Agent{
+			Name:      "a",
+			ModelImpl: model,
+			Guardrails: []Guardrail{{
+				Name:     "block",
+				Stages:   []GuardrailStage{StageInput},
+				Blocking: blocking,
+				Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+					return Trip(nil), nil
+				},
+			}},
 		}
 	}
-	_, ferr := sr.FinalResult()
-	var tw *GuardrailTripwireError
-	if !errors.As(ferr, &tw) && !errors.As(streamErr, &tw) {
-		t.Fatalf("expected *GuardrailTripwireError, got final=%v stream=%v", ferr, streamErr)
+	tripped := func(t *testing.T, err error) {
+		t.Helper()
+		var tw *GuardrailTripwireError
+		if !errors.As(err, &tw) {
+			t.Fatalf("expected *GuardrailTripwireError, got %v", err)
+		}
 	}
-	// The guardrail tripped before the model call, so nothing was persisted.
-	items, _ := session.GetItems(context.Background(), 0)
-	if len(items) != 0 {
-		t.Errorf("session has %d orphan items, want 0", len(items))
-	}
-	if model.calls != 0 {
-		t.Errorf("model was called %d times, want 0", model.calls)
-	}
+
+	// Blocking: the guardrail is a gate. It finishes before anything is
+	// persisted and before the model is reached, so a tripwire leaves the
+	// session untouched and costs nothing.
+	t.Run("blocking leaves nothing behind", func(t *testing.T) {
+		session := NewInMemorySession()
+		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
+		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Session: session})
+		_, _, err := streamRun(stream)
+		tripped(t, err)
+
+		if items, _ := session.GetItems(context.Background(), 0); len(items) != 0 {
+			t.Errorf("session has %d orphan items, want 0", len(items))
+		}
+		if model.calls != 0 {
+			t.Errorf("model was called %d times, want 0", model.calls)
+		}
+	})
+
+	// Racing (the default): the guardrail runs alongside the model call, so by
+	// the time it trips the input is persisted and the request is in flight.
+	// That is the trade for not serializing every guardrail ahead of every
+	// model call — and why Blocking exists.
+	t.Run("racing persists the input", func(t *testing.T) {
+		session := NewInMemorySession()
+		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
+		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Session: session})
+		_, _, err := streamRun(stream)
+		tripped(t, err)
+
+		items, _ := session.GetItems(context.Background(), 0)
+		if len(items) != 1 {
+			t.Errorf("session has %d items, want the 1 user input", len(items))
+		}
+	})
+
+	// RunSync must answer the same way — the two entry points share the loop.
+	t.Run("RunSync agrees", func(t *testing.T) {
+		session := NewInMemorySession()
+		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
+		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Session: session})
+		tripped(t, err)
+
+		if items, _ := session.GetItems(context.Background(), 0); len(items) != 0 {
+			t.Errorf("RunSync left %d orphan items where Run leaves 0", len(items))
+		}
+		if model.calls != 0 {
+			t.Errorf("RunSync called the model %d times where Run calls 0", model.calls)
+		}
+	})
 }
 
 func TestRunStreamed_Events(t *testing.T) {
@@ -203,12 +252,13 @@ func TestRunStreamed_Events(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	sr := RunStreamed(context.Background(), agent, "weather?", RunOptions{})
+	stream, _ := Run(context.Background(), agent, "weather?", RunOptions{})
 	var raw, toolCalled, toolOutput, message int
-	for event, err := range sr.Events() {
-		if err != nil {
-			t.Fatal(err)
-		}
+	events, res, err := streamRun(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
 		switch e := event.(type) {
 		case *RawResponsesStreamEvent:
 			raw++
@@ -222,10 +272,6 @@ func TestRunStreamed_Events(t *testing.T) {
 				message++
 			}
 		}
-	}
-	res, err := sr.FinalResult()
-	if err != nil {
-		t.Fatal(err)
 	}
 	if res.FinalOutputString() != "it is sunny" {
 		t.Errorf("final = %q", res.FinalOutputString())
@@ -252,12 +298,13 @@ func TestRunStreamed_AgentUpdatedOnHandoff(t *testing.T) {
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "transfer_to_billing", "c1", `{}`))}},
 		Handoffs:  []Handoff{HandoffTo(billing)},
 	}
-	sr := RunStreamed(context.Background(), triage, "billing q", RunOptions{})
+	stream, _ := Run(context.Background(), triage, "billing q", RunOptions{})
 	var agentUpdated int
-	for event, err := range sr.Events() {
-		if err != nil {
-			t.Fatal(err)
-		}
+	events, res, err := streamRun(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
 		if _, ok := event.(*AgentUpdatedStreamEvent); ok {
 			agentUpdated++
 		}
@@ -267,7 +314,6 @@ func TestRunStreamed_AgentUpdatedOnHandoff(t *testing.T) {
 	if agentUpdated != 2 {
 		t.Errorf("agent_updated events = %d, want 2", agentUpdated)
 	}
-	res, _ := sr.FinalResult()
 	if res.LastAgent != billing {
 		t.Errorf("last agent = %v, want billing", res.LastAgent.Name)
 	}

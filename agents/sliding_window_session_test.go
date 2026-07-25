@@ -191,7 +191,7 @@ func TestSlidingWindow_IntegrationWithRunner(t *testing.T) {
 	})
 
 	agent := &Agent{Name: "a", Model: "m"}
-	_, err := Run(context.Background(), agent, "hello", RunOptions{Model: runModel, Session: sw})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Model: runModel, Session: sw})
 	if err != nil {
 		t.Fatal(err)
 	}

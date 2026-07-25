@@ -51,7 +51,7 @@ func main() {
 		"Given everything so far, where do I want to go and when?",
 	}
 	for _, q := range turns {
-		res, err := agents.Run(ctx, agent, q, agents.RunOptions{
+		res, err := agents.RunSync(ctx, agent, q, agents.RunOptions{
 			ModelProvider: provider,
 			Session:       sess,
 		})

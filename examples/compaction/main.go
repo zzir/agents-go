@@ -35,7 +35,7 @@ func main() {
 		"What do you remember about me?",
 	}
 	for _, p := range prompts {
-		res, err := agents.Run(ctx, agent, p, opts)
+		res, err := agents.RunSync(ctx, agent, p, opts)
 		if err != nil {
 			log.Fatal(err)
 		}

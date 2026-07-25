@@ -1,11 +1,13 @@
 # Streaming
 
-`agents.RunStreamed` runs the same agent loop as `Run` but emits events while it executes — raw model deltas, completed run items, and agent switches.
+`agents.Run` returns a run as a **stream** plus a control handle. Nothing
+executes until the stream is ranged.
 
 ```go
-sr := agents.RunStreamed(ctx, agent, "Tell me 5 jokes.", agents.RunOptions{ModelProvider: provider})
+stream, ctrl := agents.Run(ctx, agent, "Tell me 5 jokes.", agents.RunOptions{ModelProvider: provider})
 
-for event, err := range sr.Events() {
+var res *agents.RunResult
+for event, err := range stream {
 	if err != nil {
 		log.Fatal(err) // terminal error; iteration stops
 	}
@@ -19,39 +21,91 @@ for event, err := range sr.Events() {
 		fmt.Printf("\n[%s]\n", ev.Name) // e.g. message_output_created, tool_called, tool_output
 	case *agents.AgentUpdatedStreamEvent:
 		fmt.Printf("\n[now talking to %s]\n", ev.NewAgent.Name)
+	case *agents.RunCompletedEvent:
+		res = ev.Result // the finished run, delivered as the last event
 	}
 }
-
-res, err := sr.FinalResult() // the completed RunResult, same as a non-streamed run
+_ = ctrl
 ```
 
-`Events()` is an `iter.Seq2[StreamEvent, error]` — Go's range-over-func replaces Python's `async for`.
+`RunStream` is an `iter.Seq2[StreamEvent, error]` — Go's range-over-func
+replaces Python's `async for`.
+
+For the result and nothing else, use `RunSync`:
+
+```go
+res, err := agents.RunSync(ctx, agent, "Tell me 5 jokes.", opts)
+```
+
+`RunSync` is not merely `Run` with the events discarded — it also calls the
+model **without** streaming, since nobody is watching the deltas. That is the
+only behavioral difference between the two entry points. If you already hold a
+stream and decide you want just the result, `stream.Collect()` folds it.
+
+## The run happens on your goroutine
+
+Ranging the stream *is* the run. There is no producer goroutine and no channel
+between you and the loop.
+
+That has one consequence worth stating plainly: **abandoning the stream stops
+the run.** A `break`, an early `return`, a failing assertion — the loop unwinds
+and the run ends where it stood, mid-turn. Nothing leaks, and there is no
+context you have to remember to cancel.
+
+It has a second: **a slow consumer slows the run.** For a single consumer that
+is backpressure working correctly. For one run feeding several consumers at
+different speeds — a server broadcasting to several browsers — put a
+[`Fanout`](#fanning-out-to-many-consumers) between them.
 
 ## Event types
 
 ### Raw response events
 
-`*RawResponsesStreamEvent` passes through every OpenAI Responses streaming event (`response.created`, `response.output_text.delta`, …). Use these for token-level UI streaming.
+`*RawResponsesStreamEvent` passes through every OpenAI Responses streaming event
+(`response.created`, `response.output_text.delta`, …). Use these for token-level
+UI streaming. Only `Run` produces them; `RunSync` makes one blocking call.
 
 ### Run item events and agent events
 
-`*RunItemStreamEvent` fires when an item is **complete** (a full message, a tool call, a tool result) — the right granularity for "Fetching the weather…"-style progress, ignoring per-token noise. Event names mirror Python: `message_output_created`, `tool_called`, `tool_output`, `handoff_requested`, `handoff_occured`, `reasoning_item_created`.
+`*RunItemStreamEvent` fires when an item is **complete** (a full message, a tool
+call, a tool result) — the right granularity for "Fetching the weather…"-style
+progress, ignoring per-token noise. Names: `message_output_created`,
+`tool_called`, `tool_output`, `handoff_requested`, `handoff_occured`,
+`reasoning_item_created`.
 
-`*AgentUpdatedStreamEvent` fires when a handoff switches the active agent.
+A handoff surfaces as **both** `tool_called` and `handoff_requested`: the model
+called a tool, and that tool was a handoff.
 
-## Controlling and inspecting a running stream
+`*AgentUpdatedStreamEvent` fires once for the starting agent, then on each
+handoff.
 
-The `*StreamedResult` returned by `RunStreamed` exposes three helpers you can call from the event-consuming goroutine while the run is still in flight:
+### The completion event
 
-- `sr.StopAfterTurn()` requests a **graceful** stop: the in-flight turn finishes — including its tool calls and session save — and then the run stops cleanly before the next turn begins, with no error and a nil `FinalOutput`. It is the counterpart of Python's `StreamedResult.cancel(mode="after_turn")`; to stop *immediately* instead, cancel the run's context (Python's "immediate" mode).
-- `sr.CurrentAgent()` returns the agent handling the turn in progress, or nil before the first turn starts.
-- `sr.CurrentTurn()` returns the 1-based number of the turn in progress, or 0 before the first turn starts.
+`*RunCompletedEvent` is terminal and carries the finished `*RunResult`. It is
+emitted exactly once, last, on a run that ends without error — which is how a
+stream carries its result, and why there is no separate call to forget.
+
+## Controlling a live run
+
+`RunControl` is safe to use from another goroutine, including before you start
+ranging.
+
+- `ctrl.StopAfterTurn()` requests a **graceful** stop: the in-flight turn
+  finishes — tool calls and session save included — and the run then stops
+  cleanly before the next turn, with no error and a nil `FinalOutput`. **This is
+  the one that leaves the session consistent**: breaking out of the range loop
+  stops mid-turn, and cancelling the context does the same, harder.
+- `ctrl.Phase()` reports what the run is doing right now (`model`, `tools`,
+  `guardrails`, `persisting`, `compaction`, `idle`). Advisory — useful for a
+  progress indicator during a long silence.
+- `ctrl.CurrentAgent()` / `ctrl.CurrentTurn()` report who is handling the turn
+  in progress and which turn it is (nil / 0 before the first turn).
 
 ```go
-for event, err := range sr.Events() {
+for event, err := range stream {
 	if err != nil { log.Fatal(err) }
-	if sr.CurrentTurn() >= maxUserTurns {
-		sr.StopAfterTurn() // let this turn finish, then stop
+	if ctrl.CurrentTurn() >= maxUserTurns {
+		ctrl.StopAfterTurn() // let this turn finish, then stop
 	}
 	// … handle event …
 }
@@ -59,7 +113,44 @@ for event, err := range sr.Events() {
 
 ## Semantics
 
-- Events are delivered on a buffered channel; the producing goroutine blocks when you stop consuming. **If you break out of the loop early, cancel the run's context** — otherwise the run goroutine leaks waiting to deliver.
-- A failing run yields one terminal error from the iterator, and `FinalResult()` returns the same error.
-- Everything else works as in `Run`: sessions are saved on completion, guardrails fire (input guardrails run synchronously before the first model call in streamed mode), tracing records the same spans.
-- A streamed run can pause for [tool approval](human_in_the_loop.md): iterate to the end, then check `FinalResult()`'s `Interruptions`/`State` and resume with `agents.ResumeRun` (the resumed run is non-streamed).
+- A failing run ends with a non-nil error from the iterator and emits **no**
+  `RunCompletedEvent`. There is nowhere else to look — the error cannot reach
+  one place and be lost from another.
+- Everything else works as in `RunSync`: sessions are saved per turn, guardrails
+  fire, tracing records the same spans. Input guardrails race the first model
+  call in both entry points; set `Blocking: true` to gate instead
+  ([Guardrails](guardrails.md)).
+- A run can pause for [tool approval](human_in_the_loop.md): range to the end,
+  read `Interruptions` / `State` off the result, and resume with
+  `agents.ResumeRun` — which returns a stream of its own, so the continuation
+  streams like the original. The resumed stream does not re-emit the paused
+  turn's items; it picks up with the approved tools' outputs.
+
+## Fanning out to many consumers
+
+One run, several consumers reading at different speeds — use `agents.Fanout`. It
+buffers per subscriber, so a slow one cannot stall the run or its peers, and it
+**reports** what it had to drop rather than dropping silently:
+
+```go
+f := agents.NewFanout[agents.StreamEvent](agents.FanoutOptions{Replay: 512, Subscriber: 512})
+go func() {
+	defer f.Close()
+	for ev, err := range stream {
+		if err != nil {
+			return
+		}
+		f.Publish(ev)
+	}
+}()
+
+sub, cancel := f.Subscribe(0)
+defer cancel()
+for item, err := range sub {
+	var gap *agents.GapError
+	if errors.As(err, &gap) {
+		// This subscriber fell behind. Resync from gap.LastGood.
+	}
+	render(item.Value)
+}
+```

@@ -27,7 +27,7 @@ func TestCallModelInputFilter_EditsInputAndInstructions(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("original")}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	_, err := Run(context.Background(), agent, "hello", RunOptions{
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{
 		Model: model,
 		CallModelInputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
 			sawInstr = d.Instructions
@@ -72,7 +72,7 @@ func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{slow}}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "slow", 3), {ResponseID: "done"}}}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{Model: model, MaxToolConcurrency: 1})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Model: model, MaxToolConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 func TestToolNotFound_DefaultAborts(t *testing.T) {
 	agent := &Agent{Name: "a"}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "ghost", 1)}}
-	_, err := Run(context.Background(), agent, "go", RunOptions{Model: model})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Model: model})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want tool-not-found abort", err)
 	}
@@ -93,7 +93,7 @@ func TestToolNotFound_DefaultAborts(t *testing.T) {
 func TestToolNotFound_ReturnToModelContinues(t *testing.T) {
 	agent := &Agent{Name: "a"}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "ghost", 1), {ResponseID: "recovered"}}}
-	res, err := Run(context.Background(), agent, "go", RunOptions{
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Model:                model,
 		ToolNotFoundBehavior: ToolNotFoundReturnToModel,
 	})
@@ -123,7 +123,7 @@ func TestHandoffInputFilter_RunLevelDefault(t *testing.T) {
 		{ResponseID: "final"},                 // target finishes
 	}}
 
-	_, err := Run(context.Background(), starter, "go", RunOptions{
+	_, err := RunSync(context.Background(), starter, "go", RunOptions{
 		Model: model,
 		HandoffInputFilter: func(d HandoffInputData) HandoffInputData {
 			called++
@@ -173,7 +173,7 @@ func TestReasoningItemIDPolicy_Omit(t *testing.T) {
 
 	// Default (preserve): the reasoning id reaches the model on turn 2.
 	model, agent := build()
-	if _, err := Run(context.Background(), agent, "hi", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	id, ok := reasoningInputID(model.lastReq.Input)
@@ -186,7 +186,7 @@ func TestReasoningItemIDPolicy_Omit(t *testing.T) {
 
 	// Omit: the reasoning id is stripped.
 	model, agent = build()
-	if _, err := Run(context.Background(), agent, "hi", RunOptions{ReasoningItemIDPolicy: ReasoningItemIDOmit}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{ReasoningItemIDPolicy: ReasoningItemIDOmit}); err != nil {
 		t.Fatal(err)
 	}
 	id, ok = reasoningInputID(model.lastReq.Input)

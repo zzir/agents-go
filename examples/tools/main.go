@@ -30,7 +30,7 @@ func main() {
 		Tools:        []agents.Tool{getWeather},
 	}
 
-	res, err := agents.Run(context.Background(), agent, "上海今天天气怎么样？", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "上海今天天气怎么样？", agents.RunOptions{
 		ModelProvider: openai.NewProvider(),
 	})
 	if err != nil {

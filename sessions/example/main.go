@@ -47,14 +47,14 @@ func run() error {
 	}
 	opts := agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()}
 
-	res1, err := agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
+	res1, err := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
 	if err != nil {
 		return err
 	}
 	fmt.Println("Q1:", res1.FinalOutputString())
 
 	// No history threading: the session replays turn 1 from SQLite.
-	res2, err := agents.Run(ctx, agent, "What state is it in?", opts)
+	res2, err := agents.RunSync(ctx, agent, "What state is it in?", opts)
 	if err != nil {
 		return err
 	}

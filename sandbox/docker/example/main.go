@@ -48,7 +48,7 @@ func run() error {
 		Tools:        []agents.Tool{runPython},
 	}
 
-	res, err := agents.Run(context.Background(), agent,
+	res, err := agents.RunSync(context.Background(), agent,
 		"用 Python 计算 1 到 100 的素数个数,并打印结果。", agents.RunOptions{
 			ModelProvider: openai.NewProvider(),
 		})

@@ -112,7 +112,7 @@ func TestRun_SingleTurnPlainText(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hello world"))}}
 	agent := &Agent{Name: "assistant", Instructions: StaticInstructions("be nice"), ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "hi", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestRun_ToolCallThenFinal(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "weather in SF?", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "weather in SF?", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestRun_StructuredOutput(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "analyze", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "analyze", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{MaxTurns: 2})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{MaxTurns: 2})
 	if err == nil {
 		t.Fatal("expected MaxTurnsError")
 	}
@@ -228,7 +228,7 @@ func TestRun_StopOnFirstTool(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestRun_UnknownToolErrors(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
@@ -270,7 +270,7 @@ func TestRun_Handoff(t *testing.T) {
 		Handoffs:  []Handoff{HandoffTo(billing)},
 	}
 
-	res, err := Run(context.Background(), triage, "I have a billing question", RunOptions{})
+	res, err := RunSync(context.Background(), triage, "I have a billing question", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestRun_ParallelTools(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{toolA, toolB}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "do both", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "do both", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestRun_IsEnabledHidesTool(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "hi", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(model.lastReq.Tools) != 0 {
@@ -347,7 +347,7 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 	model := &fakeModel{responses: responses}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{MaxTurns: MaxTurnsUnlimited})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{MaxTurns: MaxTurnsUnlimited})
 	if err != nil {
 		t.Fatalf("unlimited run should not hit a turn cap: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{MaxTurns: 5})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{MaxTurns: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 	}
 	res.State.Approve(res.Interruptions[0], false)
 	// A tiny opts.MaxTurns must be ignored — the state's budget of 5 governs.
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{MaxTurns: 1})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{MaxTurns: 1})
 	if err != nil {
 		t.Fatalf("resume should run under the state's budget, not opts: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 		}},
 	}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
 	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
 		t.Fatalf("err = %v, want *GuardrailTripwireError", err)

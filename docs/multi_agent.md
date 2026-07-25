@@ -79,16 +79,16 @@ Plain Go is often the clearest orchestrator — deterministic, testable, cheap:
 
 ```go
 // Chain: outline -> approve -> write
-outline, err := agents.Run(ctx, outliner, topic, opts)
+outline, err := agents.RunSync(ctx, outliner, topic, opts)
 if err != nil { return err }
 
-check, err := agents.Run(ctx, reviewer, outline.FinalOutputString(), opts)
+check, err := agents.RunSync(ctx, reviewer, outline.FinalOutputString(), opts)
 if err != nil { return err }
 if verdict, _ := agents.FinalOutputAs[Verdict](check); !verdict.Good {
 	return fmt.Errorf("outline rejected: %s", verdict.Reason)
 }
 
-story, err := agents.Run(ctx, writer, outline.FinalOutputString(), opts)
+story, err := agents.RunSync(ctx, writer, outline.FinalOutputString(), opts)
 ```
 
 Patterns that map directly from the Python docs:
@@ -103,7 +103,7 @@ g, gctx := errgroup.WithContext(ctx)
 results := make([]*agents.RunResult, len(questions))
 for i, q := range questions {
 	g.Go(func() error {
-		res, err := agents.Run(gctx, analyst, q, opts)
+		res, err := agents.RunSync(gctx, analyst, q, opts)
 		results[i] = res
 		return err
 	})

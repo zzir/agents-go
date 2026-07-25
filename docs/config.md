@@ -25,7 +25,7 @@ provider = openai.NewProvider(
 Every agent in a run resolves its model through the provider passed in `RunOptions`:
 
 ```go
-res, err := agents.Run(ctx, agent, input, agents.RunOptions{ModelProvider: provider})
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{ModelProvider: provider})
 ```
 
 ## Default model
@@ -56,7 +56,7 @@ agent.ModelSettings = &agents.ModelSettings{
 A run-level override merges over each agent's own settings:
 
 ```go
-res, err := agents.Run(ctx, agent, input, agents.RunOptions{
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 	ModelProvider: provider,
 	ModelSettings: &agents.ModelSettings{Temperature: agents.Ptr(0.0)},
 })

@@ -36,7 +36,7 @@ func main() {
 		Tools: []agents.Tool{skills.ReadFileTool(dir)},
 	}
 
-	res, err := agents.Run(context.Background(), agent,
+	res, err := agents.RunSync(context.Background(), agent,
 		"Summarize a PDF for me — what process should you follow?", agents.RunOptions{
 			ModelProvider: openai.NewProvider(),
 		})

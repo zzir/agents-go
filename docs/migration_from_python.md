@@ -21,7 +21,7 @@ For what this SDK deliberately does not provide (and why), read
 | `Agent(name=..., instructions=...)` | `&agents.Agent{Name: ..., Instructions: agents.StaticInstructions(...)}` |
 | `instructions=` callable | `agents.InstructionsFunc(func(ctx, rc, agent) (string, error))` |
 | `Runner.run` / `Runner.run_sync` | `agents.Run(ctx, agent, input, opts)` (Go has no sync/async split) |
-| `Runner.run_streamed` | `agents.RunStreamed(ctx, agent, input, opts)` |
+| `Runner.run_streamed` | `agents.Run(ctx, agent, input, opts)` → `(RunStream, RunControl)`. `agents.RunSync` is the non-streaming counterpart of `Runner.run` |
 | `run_config` / `Runner.run(...)` kwargs | `agents.RunOptions{...}` |
 | `@function_tool` decorator | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
 | pydantic argument model + docstring | argument struct + `json:"..."`/`jsonschema:"..."` tags |
@@ -40,7 +40,7 @@ For what this SDK deliberately does not provide (and why), read
 | `set_default_openai_key` / globals | none — pass `openai.NewProvider(...)` explicitly in `RunOptions` |
 | `custom_data_extractor=` (function tools) | `FunctionTool.CustomDataExtractor` (SDK-only tool output metadata; [tools](tools.md#sdk-only-custom-data)) |
 | `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.PreApprovalToolInputGuardrails` |
-| resume a paused run (state as input to `Runner.run` / `Runner.run_streamed`) | `agents.ResumeRun(ctx, state, opts)` / `agents.ResumeRunStreamed(ctx, state, opts)` |
+| resume a paused run (state as input to `Runner.run` / `Runner.run_streamed`) | `agents.ResumeRunSync(ctx, state, opts)` / `agents.ResumeRun(ctx, state, opts)` |
 | `error_handlers={"max_turns": ..., "model_refusal": ..., "invalid_final_output": ...}` | `RunOptions.ErrorHandlers` struct (`MaxTurns` / `ModelRefusal` / `InvalidFinalOutput` fields); handlers return `(*RunErrorHandlerResult, error)` — `(nil, nil)` declines like Python's `None`; `include_in_history=True` default becomes the `ExcludeFromHistory` zero value |
 
 ## Language-level differences
@@ -66,7 +66,7 @@ For what this SDK deliberately does not provide (and why), read
 | Model refusal | raises `ModelRefusalError` (recoverable via `error_handlers`) | same: `*ModelRefusalError` carrying the refusal, recoverable via `RunOptions.ErrorHandlers.ModelRefusal` |
 | Handoff input filter | receives `input_history` / `pre_handoff_items` / `new_items` separately | receives one flattened `InputHistory`; the session always keeps the unfiltered conversation. `NestHandoffHistory` ports `nest_handoff_history` (fold + flatten) on top of this |
 | HITL state | `RunState` JSON (Python format) | `RunState` JSON round-trips **Go↔Go only**, and rebuilding needs an agent-name registry (Go functions don't serialize). The state carries `max_turns` so `ResumeRun` continues under the original budget; resumed `NewItems` deserialize as raw items (`ItemType()` survives, concrete type assertions don't) |
-| Input guardrail timing | parallel with the **whole first turn** (model call + tool execution); a tripwire cancels the in-flight model task (not billed, no `on_llm_end`) | `Run` overlaps them with the model call only — tools never start before guardrails pass, and a tripwire does not cancel the in-flight model call (it completes, is billed, and fires `OnLLMEnd` before the run aborts); `RunStreamed` runs them synchronously before the first call |
+| Input guardrail timing | parallel with the **whole first turn** (model call + tool execution); a tripwire cancels the in-flight model task (not billed, no `on_llm_end`) | Overlapped with the model call only — tools never start before guardrails pass, and a tripwire does not cancel the in-flight call (it completes, is billed, and fires `OnLLMEnd` before the run aborts). Both entry points behave identically; `Blocking: true` gates instead of racing |
 | Streamed text items | `message_output_created` fires once per completed message | same (use raw delta events for token-level UI) |
 | Session backends | SQLite / SQLAlchemy / Redis / encrypted / OpenAI Conversations / compaction | `InMemorySession` + `FileSession` (JSONL) in core; `sessions` module adds SQLite/PostgreSQL via bun; `openai.ConversationsSession` (server-side via the Conversations API); `openai.CompactionSession` (`responses.compact` decorator, attempted once per run vs Python's per turn); implement `Session` for anything else |
 | Tracing backend | OpenAI traces dashboard by default | generic tracer → processor → exporter pipeline (console/HTTP/custom); **not** the OpenAI dashboard wire format. Traces export at start, spans at finish |

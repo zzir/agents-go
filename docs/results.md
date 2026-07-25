@@ -1,6 +1,6 @@
 # Results
 
-`agents.Run` (and `FinalResult()` of a streamed run) returns a `*agents.RunResult`:
+`agents.RunSync` returns a `*agents.RunResult`; a stream delivers the same value as its terminal `*RunCompletedEvent`:
 
 ```go
 type RunResult struct {
@@ -67,7 +67,7 @@ for _, it := range res.NewItems {
 	next = append(next, in)
 }
 next = append(next, agents.InputItemsFromText("And why is that?")...)
-res2, err := agents.Run(ctx, res.LastAgent, next, opts)
+res2, err := agents.RunSync(ctx, res.LastAgent, next, opts)
 ```
 
 (With a [Session](sessions.md) this bookkeeping is automatic.)
@@ -85,7 +85,7 @@ res2, err := agents.Run(ctx, res.LastAgent, next, opts)
 When a run fails, the returned error usually embeds `agents.AgentsError` with a `Details` field carrying the partial run state:
 
 ```go
-res, err := agents.Run(ctx, agent, input, opts)
+res, err := agents.RunSync(ctx, agent, input, opts)
 if err != nil {
 	if ae, ok := agents.AsAgentsError(err); ok && ae.Details != nil {
 		log.Printf("failed after %d items, usage so far: %+v", len(ae.Details.NewItems), ae.Details.Usage)

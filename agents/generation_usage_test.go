@@ -30,7 +30,7 @@ func TestGenerationSpanRecordsUsage(t *testing.T) {
 		{ResponseID: "r1", Usage: &Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}},
 	}}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{Model: model, Tracer: tracing.NewTracer(proc)})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Model: model, Tracer: tracing.NewTracer(proc)})
 	if err != nil {
 		t.Fatal(err)
 	}

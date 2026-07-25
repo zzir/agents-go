@@ -35,7 +35,7 @@ func TestLLMHooks_FireAroundModelCall(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("sys prompt")}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	_, err := Run(context.Background(), agent, "hello", RunOptions{Model: model, Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Model: model, Hooks: hooks})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestLLMHooks_AgentScopedFire(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("x"), Hooks: ah}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	if _, err := Run(context.Background(), agent, "hi", RunOptions{Model: model}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Model: model}); err != nil {
 		t.Fatal(err)
 	}
 	if ah.starts != 1 || ah.ends != 1 {
@@ -88,7 +88,7 @@ func TestLLMHooks_StartErrorAbortsRun(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("x")}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{Model: model, Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Model: model, Hooks: hooks})
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want veto", err)
 	}
@@ -115,7 +115,7 @@ func TestHooks_AgentEndFiresBeforeOutputGuardrail(t *testing.T) {
 	}
 	hooks := &endOrderHooks{onEnd: func() { order = append(order, "agent_end") }}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
 	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
 		t.Fatalf("want *GuardrailTripwireError, got %v", err)
@@ -151,7 +151,7 @@ func TestHooks_AgentHandoffFiresOnSource(t *testing.T) {
 		Hooks:     sourceHooks,
 	}
 
-	if _, err := Run(context.Background(), source, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), source, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !sourceHooks.handoffFired {
@@ -197,7 +197,7 @@ func TestRunResult_NewItemsUnfilteredAfterHandoffFilter(t *testing.T) {
 
 	// NestHandoffHistory folds prior history into a summary, resetting the
 	// model's generatedItems view on handoff.
-	res, err := Run(context.Background(), source, "go", RunOptions{
+	res, err := RunSync(context.Background(), source, "go", RunOptions{
 		HandoffInputFilter: NestHandoffHistory(NestHistoryOptions{}),
 	})
 	if err != nil {

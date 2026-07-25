@@ -83,7 +83,7 @@ agent := &agents.Agent{
 	OutputType:   agents.OutputType[CalendarEvent](),
 }
 
-res, _ := agents.Run(ctx, agent, input, opts)
+res, _ := agents.RunSync(ctx, agent, input, opts)
 event, ok := agents.FinalOutputAs[CalendarEvent](res)
 ```
 

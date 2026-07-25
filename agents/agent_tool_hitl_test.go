@@ -39,7 +39,7 @@ func TestAgentTool_NestedApprovalSurfacesToParent(t *testing.T) {
 	var ran bool
 	outer := nestedApprovalSetup(t, &ran)
 
-	res, err := Run(context.Background(), outer, "handle it", RunOptions{})
+	res, err := RunSync(context.Background(), outer, "handle it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestAgentTool_NestedApproveResumes(t *testing.T) {
 	var ran bool
 	outer := nestedApprovalSetup(t, &ran)
 
-	res, err := Run(context.Background(), outer, "handle it", RunOptions{})
+	res, err := RunSync(context.Background(), outer, "handle it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestAgentTool_NestedApproveResumes(t *testing.T) {
 
 	// Approve the surfaced nested interruption and resume the parent run.
 	res.State.Approve(res.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAgentTool_NestedRejectResumes(t *testing.T) {
 	var ran bool
 	outer := nestedApprovalSetup(t, &ran)
 
-	res, err := Run(context.Background(), outer, "handle it", RunOptions{})
+	res, err := RunSync(context.Background(), outer, "handle it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestAgentTool_NestedRejectResumes(t *testing.T) {
 	// Reject the nested interruption: the parent run still completes, the nested
 	// tool never runs, and the inner agent recovers from the rejection message.
 	res.State.Reject(res.Interruptions[0], false, "denied by policy")
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestAgentTool_NestedUsageAccumulatesIntoParent(t *testing.T) {
 		}},
 	}
 
-	res, err := Run(context.Background(), outer, "handle it", RunOptions{})
+	res, err := RunSync(context.Background(), outer, "handle it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestAgentTool_NestedStateSerializationRoundTrip(t *testing.T) {
 		}},
 	}
 
-	res, err := Run(context.Background(), outer, "handle it", RunOptions{})
+	res, err := RunSync(context.Background(), outer, "handle it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestAgentTool_NestedStateSerializationRoundTrip(t *testing.T) {
 
 	// Approve the surfaced nested interruption on the rebuilt state and resume.
 	rebuilt.Approve(rebuilt.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), rebuilt, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), rebuilt, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

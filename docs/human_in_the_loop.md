@@ -25,7 +25,7 @@ deleteRepo.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, 
 When the model requests an approval-gated tool, `Run` returns **without executing anything from that turn** — so nothing runs twice after resumption:
 
 ```go
-res, err := agents.Run(ctx, agent, "delete the prod repo", opts)
+res, err := agents.RunSync(ctx, agent, "delete the prod repo", opts)
 if err != nil {
 	log.Fatal(err)
 }
@@ -39,7 +39,7 @@ for len(res.Interruptions) > 0 {
 			res.State.Reject(item, false, "denied by operator")
 		}
 	}
-	res, err = agents.ResumeRun(ctx, res.State, opts)
+	res, err = agents.ResumeRunSync(ctx, res.State, opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,7 +52,7 @@ fmt.Println(res.FinalOutputString())
 - `Reject`'s message (default: `"Tool execution was not approved."`) is sent to the model as the tool output so it can adapt.
 - Pass `always=true` to `Approve`/`Reject` to apply the decision to **every future call of that tool** in the run.
 - A resumed run can pause again (new approval-gated calls), hence the loop. The turn budget continues counting from where the run paused.
-- Streamed runs pause the same way: drain `Events()`, then check `FinalResult()` and resume with `ResumeRunStreamed` to keep streaming (or `ResumeRun` for a blocking continuation). The resumed stream does not re-emit the paused turn's own items — it picks up with the approved tools' outputs and every later turn.
+- Streams pause the same way: range to the end, read `Interruptions`/`State` off the `*RunCompletedEvent`'s result, and resume with `ResumeRun` (a stream) or `ResumeRunSync` (the result alone). The resumed stream does not re-emit the paused turn's own items — it picks up with the approved tools' outputs and every later turn.
 - Once a call has an explicit approve/reject decision, resuming does **not** re-invoke `NeedsApprovalFunc` for it — the checker's side effects and errors cannot re-fire for an already-resolved call.
 
 ## Pre-approval guardrails
@@ -60,7 +60,7 @@ fmt.Println(res.FinalOutputString())
 By default a tool's [input guardrails](guardrails.md#tool-guardrails) run only after approval, right before execution. `RunOptions.PreApprovalToolInputGuardrails` also runs them **before** the approval interruption is surfaced:
 
 ```go
-res, err := agents.Run(ctx, agent, input, agents.RunOptions{
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 	PreApprovalToolInputGuardrails: true,
 	// ...
 })
@@ -83,7 +83,7 @@ state, err := agents.RunStateFromJSON(data, map[string]*agents.Agent{
 })
 if err != nil { … }
 state.Approve(state.Interruptions[0], false)
-res, err := agents.ResumeRun(ctx, state, opts)
+res, err := agents.ResumeRunSync(ctx, state, opts)
 ```
 
 Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** mapping agent names back to your `*Agent` values. The format round-trips Go↔Go only — it is not compatible with the Python SDK's `RunState` JSON.

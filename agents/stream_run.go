@@ -31,37 +31,12 @@ func usageFromStreamResponse(resp *responses.Response) *Usage {
 	}
 }
 
-// runStreamedLoop drives a streamed run. It shares runner.loop with Run —
-// setting runner.sr switches the loop into streaming mode (raw event
-// forwarding, run-item/agent-updated events, synchronous input guardrails);
-// see the runner.sr field for the full list of differences.
-func runStreamedLoop(ctx context.Context, startAgent *Agent, input any, opts RunOptions, sr *StreamedResult) (*RunResult, error) {
-	r, modelInput, finishTrace, err := prepareRun(ctx, startAgent, input, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer finishTrace()
-	r.sr = sr
-	return r.loop(ctx, startAgent, modelInput)
-}
-
-// emitStreamItem emits a run item's stream event to the consumer. A handoff
-// call additionally emits a tool_called event wrapping the underlying function
-// call, so a handoff surfaces as BOTH tool_called and handoff_requested —
-// matching Python, which emits tool_called during model streaming and
-// handoff_requested during side effects.
-func (r *runner) emitStreamItem(ctx context.Context, it RunItem) {
-	if hc, ok := it.(*HandoffCallItem); ok {
-		r.sr.emit(ctx, &RunItemStreamEvent{Name: "tool_called", Item: &ToolCallItem{Agent: hc.Agent, Raw: hc.Raw}})
-	}
-	r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(it), Item: it})
-}
-
 // streamOneModelCall streams a single model call, forwarding each raw event to
 // the consumer and assembling the final ModelResponse from the completed event.
+// Only Run takes this path; RunSync makes one blocking GetResponse call.
 // The first event's arrival is stamped on the generation span as
 // time_to_first_token_ms.
-func (r *runner) streamOneModelCall(ctx context.Context, sr *StreamedResult, span *tracing.SpanHandle, model Model, req ModelRequest) (*ModelResponse, error) {
+func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest) (*ModelResponse, error) {
 	var final *ModelResponse
 	acc := &streamAccumulator{}
 	start := time.Now()
@@ -77,7 +52,9 @@ func (r *runner) streamOneModelCall(ctx context.Context, sr *StreamedResult, spa
 			first = true
 			span.Set("time_to_first_token_ms", time.Since(start).Milliseconds())
 		}
-		sr.emit(ctx, &RawResponsesStreamEvent{Data: event})
+		if !r.emit(&RawResponsesStreamEvent{Data: event}) {
+			return nil, errConsumerStopped
+		}
 		acc.processEvent(event)
 		if event.Type == "response.completed" {
 			completed := event.AsResponseCompleted()

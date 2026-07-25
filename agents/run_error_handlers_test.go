@@ -40,7 +40,7 @@ func TestErrorHandlers_InvalidFinalOutput_FailsWithoutHandler(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
 		t.Fatalf("error = %v, want *ModelBehaviorError", err)
@@ -58,7 +58,7 @@ func TestErrorHandlers_InvalidFinalOutput_RecoversValidatedFallback(t *testing.T
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
 	}}
-	res, err := Run(context.Background(), agent, "hi", opts)
+	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestErrorHandlers_InvalidFinalOutput_ExcludeFromHistory(t *testing.T) {
 			}, nil
 		},
 	}}
-	res, err := Run(context.Background(), agent, "hi", opts)
+	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestErrorHandlers_InvalidFinalOutput_RejectsInvalidFallback(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: map[string]any{"unexpected": "value"}}, nil
 		},
 	}}
-	_, err := Run(context.Background(), agent, "hi", opts)
+	_, err := RunSync(context.Background(), agent, "hi", opts)
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("error = %v, want *UserError", err)
@@ -144,7 +144,7 @@ func TestErrorHandlers_InvalidFinalOutput_CanDecline(t *testing.T) {
 			return nil, nil
 		},
 	}}
-	_, err := Run(context.Background(), agent, "hi", opts)
+	_, err := RunSync(context.Background(), agent, "hi", opts)
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
 		t.Fatalf("error = %v, want the original *ModelBehaviorError", err)
@@ -166,7 +166,7 @@ func TestErrorHandlers_InvalidFinalOutput_IgnoresOtherModelBehaviorErrors(t *tes
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "x", Score: 0}}, nil
 		},
 	}}
-	_, err := Run(context.Background(), agent, "hi", opts)
+	_, err := RunSync(context.Background(), agent, "hi", opts)
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
 		t.Fatalf("error = %v, want *ModelBehaviorError", err)
@@ -188,7 +188,7 @@ func TestErrorHandlers_EmptyStructuredOutput_RunsAgainWithoutHandler(t *testing.
 			}}
 			agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-			res, err := Run(context.Background(), agent, "hi", RunOptions{})
+			res, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,7 +219,7 @@ func TestErrorHandlers_EmptyStructuredOutput_RecoversWithoutAnotherTurn(t *testi
 					return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 				},
 			}}
-			res, err := Run(context.Background(), agent, "hi", opts)
+			res, err := RunSync(context.Background(), agent, "hi", opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -244,7 +244,7 @@ func TestErrorHandlers_ModelRefusal_Recovers(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: "safe fallback"}, nil
 		},
 	}}
-	res, err := Run(context.Background(), agent, "hi", opts)
+	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestErrorHandlers_ModelRefusal_FailsWithoutHandler(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(refusalOutput(t, "cannot help"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	var re *ModelRefusalError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ModelRefusalError", err)
@@ -283,7 +283,7 @@ func TestErrorHandlers_RefusalTakesPrecedenceOverText(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	var re *ModelRefusalError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *ModelRefusalError", err)
@@ -311,7 +311,7 @@ func TestErrorHandlers_MaxTurns_Recovers(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: "ran out of turns"}, nil
 		},
 	}}
-	res, err := Run(context.Background(), agent, "go", opts)
+	res, err := RunSync(context.Background(), agent, "go", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestErrorHandlers_MaxTurns_DeclineKeepsError(t *testing.T) {
 			return nil, nil
 		},
 	}}
-	_, err := Run(context.Background(), agent, "go", opts)
+	_, err := RunSync(context.Background(), agent, "go", opts)
 	if !errors.Is(err, ErrMaxTurns) {
 		t.Fatalf("error = %v, want ErrMaxTurns", err)
 	}
@@ -367,7 +367,7 @@ func TestErrorHandlers_HandlerErrorAbortsRun(t *testing.T) {
 			return nil, boom
 		},
 	}}
-	_, err := Run(context.Background(), agent, "hi", opts)
+	_, err := RunSync(context.Background(), agent, "hi", opts)
 	if !errors.Is(err, boom) {
 		t.Fatalf("error = %v, want the handler's own error", err)
 	}
@@ -385,7 +385,7 @@ func TestErrorHandlers_WrappedOutputType_WrapsFallback(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: []string{"a", "b"}}, nil
 		},
 	}}
-	res, err := Run(context.Background(), agent, "hi", opts)
+	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
 	}}
-	if _, err := Run(context.Background(), agent, "hi", opts); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", opts); err != nil {
 		t.Fatal(err)
 	}
 	items, err := session.GetItems(context.Background(), 0)
@@ -443,7 +443,7 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 		},
 	}}
-	if _, err := Run(context.Background(), agent, "go", opts); err != nil {
+	if _, err := RunSync(context.Background(), agent, "go", opts); err != nil {
 		t.Fatal(err)
 	}
 	items, err := session.GetItems(context.Background(), 0)
@@ -468,21 +468,18 @@ func TestErrorHandlers_Streamed_EmitsSynthesizedMessage(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
 	}}
-	sr := RunStreamed(context.Background(), agent, "hi", opts)
+	stream, _ := Run(context.Background(), agent, "hi", opts)
 	var messageEvents []string
-	for event, err := range sr.Events() {
-		if err != nil {
-			t.Fatal(err)
-		}
+	events, res, err := streamRun(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
 		if ie, ok := event.(*RunItemStreamEvent); ok && ie.Name == "message_output_created" {
 			if m, ok := ie.Item.(*MessageOutputItem); ok {
 				messageEvents = append(messageEvents, m.Text())
 			}
 		}
-	}
-	res, err := sr.FinalResult()
-	if err != nil {
-		t.Fatal(err)
 	}
 	if got, _ := FinalOutputAs[sentiment](res); got.Label != "fallback" {
 		t.Errorf("final output = %#v", res.FinalOutput)
@@ -508,21 +505,18 @@ func TestErrorHandlers_Streamed_MaxTurnsRecovery(t *testing.T) {
 			return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 		},
 	}}
-	sr := RunStreamed(context.Background(), agent, "go", opts)
+	stream, _ := Run(context.Background(), agent, "go", opts)
 	sawSynthesized := false
-	for event, err := range sr.Events() {
-		if err != nil {
-			t.Fatal(err)
-		}
+	events, res, err := streamRun(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
 		if ie, ok := event.(*RunItemStreamEvent); ok && ie.Name == "message_output_created" {
 			if m, ok := ie.Item.(*MessageOutputItem); ok && m.Text() == "budget spent" {
 				sawSynthesized = true
 			}
 		}
-	}
-	res, err := sr.FinalResult()
-	if err != nil {
-		t.Fatal(err)
 	}
 	if res.FinalOutputString() != "budget spent" {
 		t.Errorf("final output = %q", res.FinalOutputString())

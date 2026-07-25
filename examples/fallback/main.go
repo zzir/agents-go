@@ -60,7 +60,7 @@ func main() {
 		ModelImpl:    model,
 	}
 
-	res, err := agents.Run(context.Background(), agent, "In one sentence, what is a fallback chain?", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "In one sentence, what is a fallback chain?", agents.RunOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}

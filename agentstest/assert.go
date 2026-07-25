@@ -70,18 +70,36 @@ func MessageTexts(items []agents.RunItem) []string {
 	return out
 }
 
-// CollectEvents drains a streamed run and returns its events. It fails the test
-// on a stream error, so the caller can assert on the events directly.
-func CollectEvents(tb testing.TB, sr *agents.StreamedResult) []agents.StreamEvent {
+// CollectEvents drives a run stream to completion and returns the events it
+// produced, excluding the terminal completion. It fails the test on a stream
+// error, so the caller can assert on the events directly.
+func CollectEvents(tb testing.TB, stream agents.RunStream) []agents.StreamEvent {
+	tb.Helper()
+	events, _ := CollectRun(tb, stream)
+	return events
+}
+
+// CollectRun drives a run stream to completion and returns both halves: the
+// events it produced and the result it ended with. It fails the test on a
+// stream error or a stream that ended without a result.
+func CollectRun(tb testing.TB, stream agents.RunStream) ([]agents.StreamEvent, *agents.RunResult) {
 	tb.Helper()
 	var events []agents.StreamEvent
-	for ev, err := range sr.Events() {
+	var res *agents.RunResult
+	for ev, err := range stream {
 		if err != nil {
 			tb.Fatalf("stream error: %v", err)
 		}
+		if done, ok := ev.(*agents.RunCompletedEvent); ok {
+			res = done.Result
+			continue
+		}
 		events = append(events, ev)
 	}
-	return events
+	if res == nil {
+		tb.Fatal("the run stream ended without a result")
+	}
+	return events, res
 }
 
 // RunItemEventNames returns the name of every run-item event in a stream, in

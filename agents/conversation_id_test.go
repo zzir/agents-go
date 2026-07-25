@@ -38,7 +38,7 @@ func TestConversationIDSendsIncrementalInput(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
-	_, err := Run(context.Background(), agent, "hello", RunOptions{
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{
 		Model:          model,
 		ConversationID: "conv_abc",
 	})
@@ -67,7 +67,7 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 	})
 	agent := &Agent{Name: "a", Model: "m", Tools: []Tool{echo}}
 
-	_, err := Run(context.Background(), agent, "hello", RunOptions{
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{
 		Model:          model,
 		ConversationID: "conv_abc",
 	})
@@ -89,7 +89,7 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 
 func TestConversationIDRejectsSession(t *testing.T) {
 	agent := &Agent{Name: "a", Model: "m"}
-	_, err := Run(context.Background(), agent, "hi", RunOptions{
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{
 		Model:          &recordingModel{},
 		ConversationID: "conv_abc",
 		Session:        NewInMemorySession(),
@@ -117,7 +117,7 @@ func TestPreviousResponseID(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestPreviousResponseID_Disabled(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "go", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if model.lastReq.PreviousResponseID != "" {
@@ -167,13 +167,8 @@ func TestPreviousResponseID_Streaming(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	sr := RunStreamed(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
-	for _, err := range sr.Events() {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	res, err := sr.FinalResult()
+	stream, _ := Run(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
+	_, res, err := streamRun(stream)
 	if err != nil {
 		t.Fatal(err)
 	}

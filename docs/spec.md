@@ -40,6 +40,23 @@ from upstream.
 
 ## 2. Core invariants
 
+### 2.0 Entry points ✅
+
+`Run` returns `(RunStream, RunControl)`; `RunSync` returns `(*RunResult, error)`.
+`ResumeRun` / `ResumeRunSync` are the same pair for a paused run.
+
+- **A run executes on the consumer's goroutine.** Ranging the stream advances
+  the loop; abandoning it stops the run where it stands. There is no producer
+  goroutine to leak and no context that must be cancelled on early exit.
+- **The result is the stream's terminal event** (`RunCompletedEvent`), emitted
+  exactly once on a run that ends without error. A failing run ends with a
+  non-nil error and emits no completion — an outcome can never reach one channel
+  and be lost from another.
+- **The only behavioral difference between the two entry points is the model
+  call**: `Run` streams it so raw events reach the consumer, `RunSync` makes one
+  blocking call. Everything else — guardrail timing, persistence points, hooks,
+  tracing — is identical, because there is one loop.
+
 ### 2.1 The run loop ✅
 
 A run consists of **turns**. One turn = **one model call** plus every side effect
@@ -134,10 +151,16 @@ otherwise (plain text)
 
 | When | What is written |
 |---|---|
-| Run start (blocking mode) | The new user input |
-| Just before the first model call (streaming mode) | The new user input — deferred so a pre-first-turn failure leaves no orphan message |
+| Just before the first model call | The new user input — deferred so a failure ahead of that leaves no orphan message ✅ |
 | End of each turn | The items produced by that turn |
 | Final turn | **After output guardrails pass** — a tripped final output is never persisted |
+
+Whether a tripped input guardrail leaves the user message behind is decided by
+`Blocking`, and by nothing else: ✅ a blocking guardrail finishes before the
+save and before the model is reached, so a tripwire leaves the session
+untouched and costs nothing; a racing one (the default) trips while the model
+call is in flight, so the input is persisted and the request was made. Both
+entry points answer identically.
 
 **Core invariant — `safePersistBoundary`:** the stored conversation never
 contains a function call without its output. When a run pauses for approval, the

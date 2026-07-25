@@ -3,13 +3,13 @@
 Run agents with one of three entry points:
 
 - `agents.Run(ctx, agent, input, opts)` — runs the loop to completion, returns a `*RunResult`
-- `agents.RunStreamed(ctx, agent, input, opts)` — same loop, but streams events as they happen ([Streaming](streaming.md))
+- `agents.Run(ctx, agent, input, opts)` — the same loop as a stream you range, plus a control handle ([Streaming](streaming.md))
 - `agents.ResumeRun(ctx, state, opts)` — continues a run paused for tool approval ([Human-in-the-loop](human_in_the_loop.md))
 
 `input` is either a `string` (treated as a user message) or a `[]agents.TResponseInputItem` — the OpenAI Responses API item list, exactly as in Python.
 
 ```go
-res, err := agents.Run(ctx, agent, "Write a haiku about recursion.", agents.RunOptions{
+res, err := agents.RunSync(ctx, agent, "Write a haiku about recursion.", agents.RunOptions{
 	ModelProvider: provider,
 })
 ```
@@ -75,10 +75,10 @@ Each `Run` is one logical turn of a conversation. To carry history across runs y
 2. **Thread items manually** — build the next input from the previous result:
 
    ```go
-   res1, _ := agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
+   res1, _ := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
    input := append(res1.Input, mustInputItems(res1.NewItems)...) // via item.ToInputItem()
    input = append(input, agents.InputItemsFromText("What state is it in?")...)
-   res2, _ := agents.Run(ctx, agent, input, opts)
+   res2, _ := agents.RunSync(ctx, agent, input, opts)
    ```
 
 3. **Let the server keep state** — two server-managed options, each sending only new items each turn instead of resending history. Neither may be combined with a local `Session` (the run errors if you try):
@@ -92,7 +92,7 @@ The `context.Context` you pass governs the whole run: cancel it to abort between
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 defer cancel()
-res, err := agents.Run(ctx, agent, input, opts)
+res, err := agents.RunSync(ctx, agent, input, opts)
 ```
 
 Per-tool timeouts are a [tool-level setting](tools.md#timeouts).
@@ -180,7 +180,7 @@ classification wins, because it knows the most about the failure.
 A handler receives the error and a `RunErrorData` snapshot (input, items so far, their input-item form, raw responses, last agent) and returns the fallback:
 
 ```go
-res, err := agents.Run(ctx, agent, "Analyze this long transcript", agents.RunOptions{
+res, err := agents.RunSync(ctx, agent, "Analyze this long transcript", agents.RunOptions{
 	ModelProvider: provider,
 	MaxTurns:      3,
 	ErrorHandlers: agents.RunErrorHandlers{

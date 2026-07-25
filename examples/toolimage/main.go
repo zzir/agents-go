@@ -54,7 +54,7 @@ func main() {
 		Tools:        []agents.Tool{swatch},
 	}
 
-	res, err := agents.Run(context.Background(), agent,
+	res, err := agents.RunSync(context.Background(), agent,
 		"Render a blue swatch and tell me what color you see.",
 		agents.RunOptions{ModelProvider: openai.NewProvider()})
 	if err != nil {

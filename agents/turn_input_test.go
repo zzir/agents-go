@@ -47,7 +47,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "new question", RunOptions{Session: session}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Session: session}); err != nil {
 		t.Fatal(err)
 	}
 	if !itemsContain(seen, "MARKER_FROM_HISTORY") {
@@ -73,7 +73,7 @@ func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "original", RunOptions{
+	_, err := RunSync(context.Background(), agent, "original", RunOptions{
 		CallModelInputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
 			d.Input = InputItemsFromText("REWRITTEN_BY_FILTER")
 			return d, nil
@@ -111,7 +111,7 @@ func TestTurnInput_VisibleToGuardrails(t *testing.T) {
 			},
 		}},
 	}
-	if _, err := Run(context.Background(), agent, "guarded question", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "guarded question", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -140,7 +140,7 @@ func TestTurnInput_AdvancesPerTurn(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "start", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "start", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -181,7 +181,7 @@ func TestTurnInput_ReturnsACopy(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "hello", RunOptions{}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if firstLen == 0 || firstLen != secondLen {

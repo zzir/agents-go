@@ -114,47 +114,49 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 }
 
 // ResumeRun continues a paused run after approvals have been recorded on the
-// state. It re-processes the interrupted model response (now that decisions are
-// available) and runs the loop to completion or the next interruption.
-func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (*RunResult, error) {
-	return resumeLoop(ctx, state, opts, nil)
+// state, returning it as a stream plus a control handle — the same shape as
+// Run, and with the same semantics: nothing executes until the stream is
+// ranged.
+//
+// Items the interrupted segment already emitted before pausing (the paused
+// turn's message and tool-call items) are not re-emitted; the stream picks up
+// with the side effects of the approval decisions and every later turn.
+func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, RunControl) {
+	ctrl := newRunControl()
+	return func(yield func(StreamEvent, error) bool) {
+		resumeStream(ctx, state, opts, ctrl, true, yield)
+	}, ctrl
 }
 
-// ResumeRunStreamed is ResumeRun in streaming mode: it continues a paused run
-// and streams events as they are produced, exactly like RunStreamed does for a
-// fresh run. Items the interrupted segment already emitted before pausing (the
-// paused turn's message and tool-call items) are not re-emitted; the stream
-// picks up with the side effects of the approval decisions (tool outputs) and
-// every later turn.
-func ResumeRunStreamed(ctx context.Context, state *RunState, opts RunOptions) *StreamedResult {
-	sr := &StreamedResult{ch: make(chan streamMsg, 64)}
-
-	go func() {
-		defer close(sr.ch)
-		res, err := resumeLoop(ctx, state, opts, sr)
-		sr.setFinal(res, err)
-		if err != nil {
-			// Same rationale as RunStreamed: the error is recorded via setFinal,
-			// so when the consumer has gone away and the buffer is full, dropping
-			// this send avoids leaking the goroutine.
-			select {
-			case sr.ch <- streamMsg{err: err}:
-			case <-ctx.Done():
-			}
-		}
-	}()
-
-	return sr
+// ResumeRunSync continues a paused run to completion and returns its result.
+// It is ResumeRun without the stream, matching RunSync.
+func ResumeRunSync(ctx context.Context, state *RunState, opts RunOptions) (*RunResult, error) {
+	ctrl := newRunControl()
+	stream := RunStream(func(yield func(StreamEvent, error) bool) {
+		resumeStream(ctx, state, opts, ctrl, false, yield)
+	})
+	return stream.Collect()
 }
 
-// resumeLoop is the shared body of ResumeRun and ResumeRunStreamed; a non-nil
-// sr switches the loop into streaming mode.
-func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, sr *StreamedResult) (*RunResult, error) {
+func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
+	r, res, err := resumeLoop(ctx, state, opts, ctrl, rawEvents, yield)
+	if r == nil {
+		// The failure happened before a runner existed (nil state, bad options).
+		yield(nil, err)
+		return
+	}
+	r.finishStream(res, err)
+}
+
+// resumeLoop is the shared body of ResumeRun and ResumeRunSync. It returns the
+// runner alongside the outcome so the caller can report through the stream; a
+// nil runner means the failure predates one existing.
+func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) (*runner, *RunResult, error) {
 	if state == nil {
-		return nil, newUserError("ResumeRun: state must not be nil")
+		return nil, nil, newUserError("ResumeRun: state must not be nil")
 	}
 	if err := validateServerState(opts); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Turn budget on resume: the interrupted run's own budget always wins, so
 	// repeated interrupt/resume cycles stay under the original limit
@@ -196,7 +198,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, sr *Strea
 	// this ResumeRun is already consuming. Mirrors Python's
 	// normalize_resumed_input.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
-	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, sr: sr}
+	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
 	// Seed the guardrail-result accumulators from the state so the resumed run's
 	// RunResult still reports the pre-pause results. First-turn input guardrails
 	// are not re-run on resume, so this is the only way they survive (Python
@@ -229,7 +231,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, sr *Strea
 		// new state so repeated interrupt/resume cycles keep it.
 		res.State.MaxTurns = maxTurns
 	}
-	return res, err
+	return r, res, err
 }
 
 // --- Serialization ---

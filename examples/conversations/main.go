@@ -22,11 +22,11 @@ func main() {
 	agent := &agents.Agent{Name: "assistant", Model: "gpt-4o"}
 	opts := agents.RunOptions{Session: sess, ModelProvider: provider}
 
-	if _, err := agents.Run(ctx, agent, "My name is Ada. Remember it.", opts); err != nil {
+	if _, err := agents.RunSync(ctx, agent, "My name is Ada. Remember it.", opts); err != nil {
 		log.Fatal(err)
 	}
 
-	res, err := agents.Run(ctx, agent, "What is my name?", opts)
+	res, err := agents.RunSync(ctx, agent, "What is my name?", opts)
 	if err != nil {
 		log.Fatal(err)
 	}

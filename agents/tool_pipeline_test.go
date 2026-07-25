@@ -49,7 +49,7 @@ func TestToolPipeline_HandledErrorFiresOnToolEndAndOutputGuardrails(t *testing.T
 	hooks := &toolHookRec{}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{Hooks: hooks})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Hooks: hooks})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestToolPipeline_InputGuardrailRejectSkipsHooks(t *testing.T) {
 	hooks := &toolHookRec{}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "go", RunOptions{Hooks: hooks}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Hooks: hooks}); err != nil {
 		t.Fatal(err)
 	}
 	if len(hooks.order) != 0 {
@@ -110,7 +110,7 @@ func TestToolPipeline_StopOnFirstToolStringifiesForPlainText(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestToolPipeline_RejectedCallParticipatesInToolUseBehavior(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestToolPipeline_RejectedCallParticipatesInToolUseBehavior(t *testing.T) {
 	// Reject, then resume: the rejected call is the only tool, StopOnFirstTool
 	// makes its rejection message the final output.
 	res.State.Reject(res.Interruptions[0], false, "not allowed")
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestToolPipeline_ConcurrentFailureDeterministicWinner(t *testing.T) {
 	}}}
 	agent := &Agent{Name: "a", Tools: []Tool{first, second}, ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil || !strings.Contains(err.Error(), "first-error") {
 		t.Errorf("err = %v, want the lowest-index (first) tool's error", err)
 	}
@@ -201,7 +201,7 @@ func TestToolInputGuardrailReject(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
 		t.Fatalf("expected *GuardrailTripwireError, got %T (%v)", err, err)
@@ -251,7 +251,7 @@ func TestToolError_FeedsBackToModel(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatalf("run should not fail when tool error is fed back: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestToolError_FatalWhenNil(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := Run(context.Background(), agent, "go", RunOptions{}); err == nil {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("expected run to fail when FailureErrorFunction is nil")
 	}
 }
@@ -308,7 +308,7 @@ func TestToolUseBehaviorFunc(t *testing.T) {
 		}),
 	}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

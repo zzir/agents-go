@@ -144,7 +144,7 @@ func TestHandoff_OnHandoffAndInputFilter(t *testing.T) {
 	}
 
 	targetModel := target.ModelImpl.(*fakeModel)
-	res, err := Run(context.Background(), src, "original long conversation", RunOptions{})
+	res, err := RunSync(context.Background(), src, "original long conversation", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

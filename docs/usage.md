@@ -3,7 +3,7 @@
 The SDK tracks token usage for every run. Read it from the result:
 
 ```go
-res, _ := agents.Run(ctx, agent, input, opts)
+res, _ := agents.RunSync(ctx, agent, input, opts)
 u := res.Usage
 fmt.Printf("requests=%d input=%d output=%d total=%d cached=%d reasoning=%d\n",
 	u.Requests, u.InputTokens, u.OutputTokens, u.TotalTokens,

@@ -214,7 +214,7 @@ func TestNewFunctionTool_BrokenSchemaFailsBeforeModelCall(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %v, want *UserError for the broken tool schema", err)

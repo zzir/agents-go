@@ -29,7 +29,7 @@ func main() {
 		}),
 	}
 
-	res, err := agents.Run(context.Background(), agent, "Say hello.",
+	res, err := agents.RunSync(context.Background(), agent, "Say hello.",
 		agents.RunOptions{ModelProvider: openai.NewProvider()})
 	if err != nil {
 		log.Fatal(err)

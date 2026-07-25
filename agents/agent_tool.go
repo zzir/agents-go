@@ -269,28 +269,31 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 	}
 }
 
-// runNestedAgent executes (or resumes) the nested run, blocking or streamed
-// depending on cfg.OnStream.
+// runNestedAgent executes (or resumes) the nested run. Without an OnStream
+// handler it collects; with one, it forwards each event to the handler as it
+// arrives.
 func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunState, opts RunOptions, cfg AgentToolConfig, tc *ToolContext, argsJSON string) (*RunResult, error) {
 	if cfg.OnStream == nil {
 		if paused != nil {
-			return ResumeRun(ctx, paused, opts)
+			return ResumeRunSync(ctx, paused, opts)
 		}
-		return Run(ctx, a, input, opts)
+		return RunSync(ctx, a, input, opts)
 	}
 
-	var sr *StreamedResult
+	var stream RunStream
 	if paused != nil {
-		sr = ResumeRunStreamed(ctx, paused, opts)
+		stream, _ = ResumeRun(ctx, paused, opts)
 	} else {
-		sr = RunStreamed(ctx, a, input, opts)
+		stream, _ = Run(ctx, a, input, opts)
 	}
 
 	// Dispatch callbacks from a background goroutine so a slow handler does not
-	// stall event consumption (Python: background queue + dispatch task).
-	// canceled mirrors Python's dispatch_task.cancel(): once the parent is
-	// canceled, backlogged events are drained without invoking the callback —
-	// OnStream never fires after the tool call has returned.
+	// stall the run — the stream now runs on THIS goroutine, so a blocking
+	// handler would hold up the nested run itself.
+	//
+	// canceled mirrors the parent's cancellation: once it fires, backlogged
+	// events drain without invoking the callback, so OnStream never fires after
+	// the tool call has returned.
 	var canceled atomic.Bool
 	events := make(chan AgentToolStreamEvent, 64)
 	done := make(chan struct{})
@@ -305,17 +308,27 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 	}()
 
 	current := a
-	for ev, eerr := range sr.Events() {
+	var res *RunResult
+	var runErr error
+	for ev, eerr := range stream {
 		if eerr != nil {
-			// Terminal errors also surface via FinalResult below.
+			runErr = eerr
 			break
 		}
-		if up, ok := ev.(*AgentUpdatedStreamEvent); ok && up.NewAgent != nil {
-			current = up.NewAgent
+		switch e := ev.(type) {
+		case *AgentUpdatedStreamEvent:
+			if e.NewAgent != nil {
+				current = e.NewAgent
+			}
+		case *RunCompletedEvent:
+			res = e.Result
+			// The completion is the loop's own bookkeeping, not something a
+			// handler watching the nested agent should see.
+			continue
 		}
 		if ctx.Err() != nil {
-			// Parent canceled: keep draining so the producer can finish and
-			// set the final result, but stop dispatching to the handler.
+			// Parent canceled: keep draining so the run can finish and record
+			// its result, but stop dispatching to the handler.
 			canceled.Store(true)
 			continue
 		}
@@ -337,16 +350,15 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 	close(events)
 	if ctx.Err() == nil {
 		// Normal completion waits for the handler backlog to drain;
-		// cancellation does not (Python: queue join vs. dispatch task cancel —
-		// the canceled flag above makes the leftover drain a no-op).
+		// cancellation does not (the canceled flag makes the leftover drain a
+		// no-op).
 		<-done
 	}
-	res, err := sr.FinalResult()
-	if res == nil && err == nil {
-		// The consumer stopped before the producer finished (cancellation).
-		err = ctx.Err()
+	if res == nil && runErr == nil {
+		// The stream ended without completing — cancellation.
+		runErr = ctx.Err()
 	}
-	return res, err
+	return res, runErr
 }
 
 // dispatchAgentToolStreamEvent invokes the OnStream callback, recovering any

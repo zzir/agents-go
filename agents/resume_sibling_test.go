@@ -49,7 +49,7 @@ func TestResume_SiblingToolNotReExecutedAfterNestedApproval(t *testing.T) {
 		}},
 	}
 
-	res, err := Run(context.Background(), outer, "handle it", RunOptions{})
+	res, err := RunSync(context.Background(), outer, "handle it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestResume_SiblingToolNotReExecutedAfterNestedApproval(t *testing.T) {
 
 	// Approve the surfaced nested interruption and resume the parent run.
 	res.State.Approve(res.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

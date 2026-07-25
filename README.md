@@ -66,7 +66,7 @@ func main() {
 		Model:        "gpt-4o",
 	}
 
-	res, err := agents.Run(context.Background(), agent, "Hello!", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "Hello!", agents.RunOptions{
 		ModelProvider: openai.NewProvider(), // reads OPENAI_API_KEY
 	})
 	if err != nil {
@@ -97,19 +97,24 @@ agent := &agents.Agent{Name: "bot", Model: "gpt-4o", Tools: []agents.Tool{getWea
 Structured output is the same idea in reverse: `OutputType[T]()` on the agent,
 `FinalOutputAs[T](res)` on the result — see [Agents](docs/agents.md).
 
-**Streaming.** Events arrive as a standard Go iterator:
+**Streaming.** A run *is* an iterator. `Run` returns one plus a control handle;
+the run advances as you consume it, so abandoning the loop stops the run instead
+of leaking a goroutine.
 
 ```go
-sr := agents.RunStreamed(ctx, agent, "tell me a story", opts)
-for event, err := range sr.Events() {
+stream, ctrl := agents.Run(ctx, agent, "tell me a story", opts)
+for event, err := range stream {
 	if err != nil { panic(err) }
-	if e, ok := event.(*agents.RunItemStreamEvent); ok {
+	switch e := event.(type) {
+	case *agents.RunItemStreamEvent:
 		if msg, ok := e.Item.(*agents.MessageOutputItem); ok {
 			fmt.Println(msg.Text())
 		}
+	case *agents.RunCompletedEvent:
+		fmt.Println("done:", e.Result.FinalOutputString())
 	}
 }
-res, _ := sr.FinalResult()
+_ = ctrl // StopAfterTurn, Phase, CurrentAgent, CurrentTurn
 ```
 
 **Human-in-the-loop.** Runs pause for approval and survive process restarts:
@@ -117,12 +122,12 @@ res, _ := sr.FinalResult()
 ```go
 tool.NeedsApproval = true
 
-res, _ := agents.Run(ctx, agent, "delete everything", opts)
+res, _ := agents.RunSync(ctx, agent, "delete everything", opts)
 for len(res.Interruptions) > 0 {
 	for _, item := range res.Interruptions {
 		res.State.Approve(item, false) // or res.State.Reject(item, false, "no")
 	}
-	res, _ = agents.ResumeRun(ctx, res.State, opts)
+	res, _ = agents.ResumeRunSync(ctx, res.State, opts)
 }
 ```
 

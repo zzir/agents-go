@@ -29,7 +29,7 @@ func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +75,12 @@ func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.State.Approve(res.Interruptions[0], false)
-	if _, err := ResumeRun(context.Background(), res.State, RunOptions{}); err != nil {
+	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{}); err != nil {
 		t.Fatalf("resume failed (checker was re-invoked?): %v", err)
 	}
 }
@@ -115,7 +115,7 @@ func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
 	}
 	agent := preApprovalFixture(t, g, &ran)
 
-	res, err := Run(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
+	res, err := RunSync(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestPreApprovalGuardrail_PassStillInterruptsAndRerunsOnResume(t *testing.T)
 	agent := preApprovalFixture(t, g, &ran)
 	opts := RunOptions{PreApprovalToolInputGuardrails: true}
 
-	res, err := Run(context.Background(), agent, "send", opts)
+	res, err := RunSync(context.Background(), agent, "send", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestPreApprovalGuardrail_PassStillInterruptsAndRerunsOnResume(t *testing.T)
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	if _, err := ResumeRun(context.Background(), res.State, opts); err != nil {
+	if _, err := ResumeRunSync(context.Background(), res.State, opts); err != nil {
 		t.Fatal(err)
 	}
 	// Passing calls revalidate the same guardrails right before execution.
@@ -191,7 +191,7 @@ func TestPreApprovalGuardrail_OffByDefault(t *testing.T) {
 	}
 	agent := preApprovalFixture(t, g, &ran)
 
-	res, err := Run(context.Background(), agent, "send", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "send", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestPreApprovalGuardrail_TripwireHaltsRun(t *testing.T) {
 	}
 	agent := preApprovalFixture(t, g, &ran)
 
-	_, err := Run(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
+	_, err := RunSync(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
 	var tripErr *GuardrailTripwireError
 	if !errors.As(err, &tripErr) {
 		t.Fatalf("expected *GuardrailTripwireError, got %v", err)
@@ -263,7 +263,7 @@ func TestCustomData_AttachedToRunItemNotModel(t *testing.T) {
 		return map[string]any{"renderer": "table", "id": 7}, nil
 	})
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestCustomData_EmptyAndNilNormalizeToNil(t *testing.T) {
 	agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
 		return map[string]any{}, nil
 	})
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestCustomData_NonJSONCompatibleFailsRun(t *testing.T) {
 			agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
 				return map[string]any{"bad": value}, nil
 			})
-			_, err := Run(context.Background(), agent, "go", RunOptions{})
+			_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 			var uerr *UserError
 			if !errors.As(err, &uerr) {
 				t.Fatalf("expected UserError, got %v", err)
@@ -324,7 +324,7 @@ func TestCustomData_ExtractorErrorAbortsRun(t *testing.T) {
 	agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
 		return nil, errors.New("boom")
 	})
-	if _, err := Run(context.Background(), agent, "go", RunOptions{}); err == nil || !strings.Contains(err.Error(), "boom") {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected extractor error to abort the run, got %v", err)
 	}
 }
@@ -350,7 +350,7 @@ func TestCustomData_SurvivesRunStateRoundTrip(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool, gated}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestCustomData_SurvivesRunStateRoundTrip(t *testing.T) {
 	}
 
 	state.Approve(state.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), state, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), state, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

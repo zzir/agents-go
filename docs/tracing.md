@@ -11,7 +11,7 @@ defer processor.Shutdown(context.Background())
 
 tracer := tracing.NewTracer(processor)
 
-res, err := agents.Run(ctx, agent, input, agents.RunOptions{
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 	ModelProvider: provider,
 	Tracer:        tracer,
 })

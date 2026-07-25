@@ -119,7 +119,7 @@ Every consulted guardrail produces a `GuardrailResult`, allowing decisions
 included:
 
 ```go
-res, err := agents.Run(ctx, agent, "hi", opts)
+res, err := agents.RunSync(ctx, agent, "hi", opts)
 for _, g := range res.GuardrailResults {
     fmt.Println(g.Stage, g.Guardrail.Name, g.Decision.Action, g.Decision.OutputInfo)
 }

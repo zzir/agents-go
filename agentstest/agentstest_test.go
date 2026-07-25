@@ -28,7 +28,7 @@ func TestTextModel_SingleTurn(t *testing.T) {
 	model := agentstest.TextModel("hello world")
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
 
-	res, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestResponseBuilder_ToolCallThenAnswer(t *testing.T) {
 		ModelImpl: model,
 	}
 
-	res, err := agents.Run(context.Background(), agent, "weather in SF?", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "weather in SF?", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestUsageAccumulates(t *testing.T) {
 
 	var seen []string
 	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{weatherTool(t, &seen)}, ModelImpl: model}
-	res, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestFail_SurfacesModelError(t *testing.T) {
 	model := agentstest.NewResponseBuilder().Fail(sentinel).Build()
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
 
-	_, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	_, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want it to wrap %v", err, sentinel)
 	}
@@ -121,7 +121,7 @@ func TestRefusal_FailsTheRun(t *testing.T) {
 	model := agentstest.NewResponseBuilder().Refusal("I can't help with that").Build()
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
 
-	_, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	_, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	var refusal *agents.ModelRefusalError
 	if !errors.As(err, &refusal) {
 		t.Fatalf("err = %v (%T), want *agents.ModelRefusalError", err, err)
@@ -140,7 +140,7 @@ func TestExhaustedScript_YieldsEmptyOutput(t *testing.T) {
 		Build()
 	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{weatherTool(t, &seen)}, ModelImpl: model}
 
-	res, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,12 +158,8 @@ func TestStreaming_EventsAndFinalResult(t *testing.T) {
 	var seen []string
 	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{weatherTool(t, &seen)}, ModelImpl: model}
 
-	sr := agents.RunStreamed(context.Background(), agent, "hi", agents.RunOptions{})
-	events := agentstest.CollectEvents(t, sr)
-	res, err := sr.FinalResult()
-	if err != nil {
-		t.Fatal(err)
-	}
+	stream, _ := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	events, res := agentstest.CollectRun(t, stream)
 	agentstest.AssertFinalOutput(t, res, "it is sunny")
 
 	names := agentstest.RunItemEventNames(events)
@@ -179,9 +175,9 @@ func TestStreamTextDeltas(t *testing.T) {
 	model.StreamTextDeltas = true
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
 
-	sr := agents.RunStreamed(context.Background(), agent, "hi", agents.RunOptions{})
+	stream, _ := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
 	var delta strings.Builder
-	for ev, err := range sr.Events() {
+	for ev, err := range stream {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +202,7 @@ func TestRaw_UnknownItemTypeIsNotClassified(t *testing.T) {
 		Build()
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
 
-	res, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +215,7 @@ func TestRaw_UnknownItemTypeIsNotClassified(t *testing.T) {
 func TestMessageTexts(t *testing.T) {
 	model := agentstest.TextModel("first")
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
-	res, err := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
+	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

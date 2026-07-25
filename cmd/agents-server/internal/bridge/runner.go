@@ -294,17 +294,13 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, input, provider, sendEvent)
 	}
 
-	sr := agents.RunStreamed(ctx, agent, input, opts)
-	r.hub.setStopHook(runID, sr.StopAfterTurn)
-	streamedText, streamedReasoning := r.drainStream(sr, runID, built.HandoffToolNames, sendEvent)
-
-	// FinalResult is the source of truth for how the run ended. A terminal error
-	// can arrive via the event channel above OR — on a context-cancel race inside
-	// RunStreamed, where the error send loses the select to ctx.Done() and is
-	// dropped — surface only here. Consulting FinalResult catches both, so an
-	// aborted run always records its outcome (a marker plus any in-flight
-	// thinking) instead of vanishing.
-	res, err := sr.FinalResult()
+	stream, ctrl := agents.Run(ctx, agent, input, opts)
+	r.hub.setStopHook(runID, ctrl.StopAfterTurn)
+	// The stream carries both halves of the outcome: the run's result as its
+	// terminal event, or a terminal error. There is no second place to consult
+	// — the old API kept the error on the side of the event channel, where a
+	// cancellation race could drop it from one and leave it only in the other.
+	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
 	if err != nil {
 		if isCancellation(ctx, err) {
 			r.savePartialTurn(sessionID, runID, agent.Model, input, "cancelled", "", streamedReasoning, streamedText, "", "")
@@ -438,7 +434,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	// live to the client instead of surfacing only in the terminal
 	// run.output — a resume that silently swallowed its middle turns is what
 	// made approved runs "jump" to their final answer.
-	sr := agents.ResumeRunStreamed(ctx, state, agents.RunOptions{
+	stream, ctrl := agents.ResumeRun(ctx, state, agents.RunOptions{
 		Session:               resumeSession,
 		ModelProvider:         provider,
 		MaxTurns:              built.MaxTurns,
@@ -451,10 +447,8 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		Guardrails:            built.RunGuardrails,
 		Context:               trustSessionID(sessionID, task), // exec_command gate reads a session id here
 	})
-	r.hub.setStopHook(runID, sr.StopAfterTurn)
-	streamedText, streamedReasoning := r.drainStream(sr, runID, built.HandoffToolNames, sendEvent)
-
-	res, err := sr.FinalResult()
+	r.hub.setStopHook(runID, ctrl.StopAfterTurn)
+	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
 	if err != nil {
 		return failTurn(built.Agent.Model, "resume_error", err, streamedReasoning, streamedText)
 	}
@@ -545,17 +539,10 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 		Instructions: agents.StaticInstructions("You generate concise chat titles. Reply with ONLY the title text, nothing else. No quotes. Under 30 characters."),
 	}
 	prompt := "Generate a short title for this chat:\n\n" + userInput
-	sr := agents.RunStreamed(ctx, titleAgent, prompt, agents.RunOptions{
+	res, err := agents.RunSync(ctx, titleAgent, prompt, agents.RunOptions{
 		ModelProvider: provider,
 		MaxTurns:      1,
 	})
-	for _, err := range sr.Events() {
-		if err != nil {
-			log.Warn().Err(err).Msg("title gen: stream error")
-			return
-		}
-	}
-	res, err := sr.FinalResult()
 	if err != nil {
 		log.Warn().Err(err).Msg("title gen: run failed")
 		return
@@ -695,7 +682,7 @@ func (r *Runner) CancelRun(runID string) {
 // first delta arrives: by then the SDK has persisted the previous turn (its
 // stepRunAgain ran before the next model call), so the buffer correctly holds
 // only the still-unpersisted in-flight turn.
-func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNames map[string]bool, send func(string, any)) (streamedText, streamedReasoning string) {
+func (r *Runner) drainStream(stream agents.RunStream, runID string, handoffNames map[string]bool, send func(string, any)) (res *agents.RunResult, streamedText, streamedReasoning string, runErr error) {
 	var text, reasoning strings.Builder
 	turnCommitted := false // response.completed seen; the SDK will persist this turn after its tools run
 	startNextTurn := func() {
@@ -705,9 +692,16 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNam
 			turnCommitted = false
 		}
 	}
-	for event, err := range sr.Events() {
+	for event, err := range stream {
 		if err != nil {
+			runErr = err
 			break
+		}
+		if done, ok := event.(*agents.RunCompletedEvent); ok {
+			// The stream's terminal event carries the finished run; it is the
+			// loop's own bookkeeping and not something the client renders.
+			res = done.Result
+			continue
 		}
 		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
 			switch raw.Data.Type {
@@ -729,7 +723,7 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNam
 		}
 		r.handleStreamEvent(event, runID, handoffNames, send)
 	}
-	return text.String(), reasoning.String()
+	return res, text.String(), reasoning.String(), runErr
 }
 
 // runErrorFor builds the run.error for a terminal run failure. The code comes

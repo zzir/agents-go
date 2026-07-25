@@ -47,7 +47,7 @@ func run() error {
 		Tools:        []agents.Tool{weather},
 	}
 
-	res, err := agents.Run(context.Background(), agent, "What's the weather in Kyoto?", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "What's the weather in Kyoto?", agents.RunOptions{
 		ModelProvider: openai.NewProvider(), // reads OPENAI_API_KEY
 		Tracer:        tracer,
 		TraceGroupID:  "thread-42",                          // one chat thread across runs

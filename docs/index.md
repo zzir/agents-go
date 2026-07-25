@@ -48,7 +48,7 @@ func main() {
 		Instructions: agents.StaticInstructions("You are a concise, helpful assistant."),
 	}
 
-	res, err := agents.Run(context.Background(), agent, "Write a haiku about Go.", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "Write a haiku about Go.", agents.RunOptions{
 		ModelProvider: provider,
 	})
 	if err != nil {

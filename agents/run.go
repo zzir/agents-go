@@ -177,19 +177,76 @@ type RunOptions struct {
 	parentSpanID string
 }
 
-// Run executes the agent loop until the agent produces a final output, hands off
-// to another agent that finishes, or the turn budget is exhausted. input may be
-// a string or a []TResponseInputItem; use InputItemsFromText for the common
-// single-message case.
+// Run starts an agent run and returns it as a stream plus a control handle.
+// Nothing executes until the stream is ranged: the run happens on the
+// consumer's goroutine, one event at a time.
 //
-// It is the Go counterpart of the Python SDK's Runner.run.
-func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
+// input may be a string or a []TResponseInputItem; use InputItemsFromText for
+// the common single-message case.
+//
+//	stream, ctrl := agents.Run(ctx, agent, "hi", agents.RunOptions{})
+//	for ev, err := range stream {
+//	    if err != nil { return err }
+//	    ...
+//	}
+//
+// For the result and nothing else, use RunSync — it also skips streaming the
+// model call, which Run needs in order to forward raw events.
+//
+// Abandoning the stream stops the run where it stands. To stop cleanly at a
+// turn boundary, call ctrl.StopAfterTurn and keep ranging until the stream
+// ends.
+func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, RunControl) {
+	ctrl := newRunControl()
+	return func(yield func(StreamEvent, error) bool) {
+		runStream(ctx, agent, input, opts, ctrl, true, yield)
+	}, ctrl
+}
+
+// RunSync executes a run to completion and returns its result. It is Run
+// without the stream: the model is called without streaming, and no raw model
+// events are produced.
+//
+// It is the entry point to reach for unless you need to observe a run as it
+// happens.
+func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
+	ctrl := newRunControl()
+	stream := RunStream(func(yield func(StreamEvent, error) bool) {
+		runStream(ctx, agent, input, opts, ctrl, false, yield)
+	})
+	return stream.Collect()
+}
+
+// runStream is the body shared by Run and RunSync: prepare, loop, and report
+// the outcome as the stream's terminal event or terminal error.
+func runStream(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r, modelInput, finishTrace, err := prepareRun(ctx, agent, input, opts)
 	if err != nil {
-		return nil, err
+		yield(nil, err)
+		return
 	}
 	defer finishTrace()
-	return r.loop(ctx, agent, modelInput)
+	r.yield = yield
+	r.ctrl = ctrl
+	r.rawEvents = rawEvents
+
+	res, err := r.loop(ctx, agent, modelInput)
+	r.finishStream(res, err)
+}
+
+// finishStream reports a completed loop to the consumer. A consumer that
+// already stopped is told nothing further — yield has returned false, so there
+// is nobody listening.
+func (r *runner) finishStream(res *RunResult, err error) {
+	r.ctrl.setPhase(PhaseIdle)
+	if r.consumerStopped || errors.Is(err, errConsumerStopped) {
+		return
+	}
+	if err != nil {
+		r.yield(nil, err)
+		return
+	}
+	r.yield(&RunCompletedEvent{Result: res}, nil)
 }
 
 // prepareRun builds the runner shared by Run and RunStreamed: it normalizes
@@ -310,14 +367,29 @@ type runner struct {
 	trace     *tracing.TraceHandle // non-nil when tracing is enabled
 	agentSpan *tracing.SpanHandle  // current agent span, parent of generation/tool spans
 
-	// sr, when non-nil, makes loop run in streaming mode: raw model events
-	// and run-item/agent-updated events are emitted to it, the model is
-	// called via StreamResponse, and input guardrails run synchronously
-	// before the first model call instead of concurrently with it (the
-	// documented difference from blocking runs). These are the ONLY
-	// behavioral differences between Run and RunStreamed — everything else
-	// lives once in loop.
-	sr *StreamedResult
+	// yield delivers events to the consumer ranging the RunStream. It is
+	// always set for a run started through Run or RunSync — there is no
+	// "non-streaming mode" any more, only a consumer that discards.
+	//
+	// It returns false once the consumer stops ranging; emit records that in
+	// consumerStopped and the loop unwinds through errConsumerStopped.
+	yield func(StreamEvent, error) bool
+
+	// ctrl is the handle the caller got back from Run: the graceful-stop flag,
+	// the phase indicator, and the live agent/turn.
+	ctrl *runControl
+
+	// rawEvents asks for the model to be called through StreamResponse so its
+	// raw events reach the consumer. RunSync leaves it false and gets a single
+	// GetResponse call instead.
+	//
+	// This is the ONE remaining difference between the two entry points. It
+	// used to be six, all keyed off a nil check on the streaming handle.
+	rawEvents bool
+
+	// consumerStopped is set by emit when the consumer stopped ranging. The
+	// loop checks it wherever it checks for cancellation.
+	consumerStopped bool
 
 	// sessionItems accumulates every generated item for session persistence.
 	// Unlike the loop's generatedItems it is never reset by a handoff input
@@ -449,28 +521,22 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 	// Persist the new user input up front (original run only; a resume's input
 	// was saved before it paused). Mirrors Python persisting input before the
-	// loop, so a run that fails on its very first turn still records the prompt.
-	// Streaming runs defer this to just before the first model call so a
-	// pre-model failure (e.g. an input-guardrail tripwire) leaves no orphan user
-	// message (matching Python's _stream_input_persisted timing).
-	if r.resume == nil && r.sr == nil {
-		if err := r.persistUserInput(ctx); err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-	}
+	// Runs defer the one-time user-input save to just before the first model
+	// call (see below), so a failure ahead of that — a blocking input-guardrail
+	// tripwire, a bad model config — leaves no orphan user message behind.
 
-	// Streaming: announce the starting agent before the first turn, for both
-	// fresh and resumed runs (matching Python's initial AgentUpdatedStreamEvent).
-	if r.sr != nil {
-		r.sr.setCurrent(currentAgent, startTurn)
-		r.sr.emit(ctx, &AgentUpdatedStreamEvent{NewAgent: currentAgent})
+	// Announce the starting agent before the first turn, for both fresh and
+	// resumed runs.
+	r.ctrl.setCurrent(currentAgent, startTurn)
+	if !r.emit(&AgentUpdatedStreamEvent{NewAgent: currentAgent}) {
+		return nil, errConsumerStopped
 	}
 
 	for turn := startTurn; ; turn++ {
 		// After a completed turn, a caller may ask a streamed run to stop
 		// gracefully: the current turn (incl. tools + session save) has finished,
 		// so return cleanly with no error before starting the next one.
-		if r.sr != nil && turn > startTurn && r.sr.stopRequested() {
+		if turn > startTurn && r.ctrl.stopRequested() {
 			return &RunResult{
 				Input:            originalInput,
 				NewItems:         r.sessionItems,
@@ -494,11 +560,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// Publish the live turn/agent so a streaming consumer can inspect them
-		// (guarded by a mutex; the run loop and the consumer race).
-		if r.sr != nil {
-			r.sr.setCurrent(currentAgent, turn)
-		}
+		// Publish the live turn/agent for RunControl (guarded by a mutex; the
+		// run loop and the caller race).
+		r.ctrl.setCurrent(currentAgent, turn)
 
 		if shouldRunStartHooks {
 			if err := callAgentStart(ctx, r.opts.Hooks, currentAgent, r.rc); err != nil {
@@ -595,39 +659,28 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				}
 				gspan.Finish()
 			}
-			// Parallel guardrails: streaming runs them synchronously here, blocking
-			// races them against the model call (see the guardCh path below).
+			// Non-blocking guardrails race the model call: a tripwire cancels it,
+			// so the run fails without waiting for a response nobody will use.
+			//
+			// This used to be the blocking entry point's behavior only —
+			// streaming ran them synchronously first, which is what the guardrail
+			// docs called "the documented difference". There is one entry point
+			// now, and racing is the behavior the docs describe.
 			if len(parallel) > 0 {
-				if r.sr != nil {
-					gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-					res, gerr := runStageConcurrent(ctx, r.rc, parallel,
+				guardCh = make(chan inputGuardOutcome, 1)
+				gctx, gcancel := context.WithCancel(ctx)
+				cancelInputGuardrails = gcancel
+				parentID := r.agentParentID() // read before the goroutine races a handoff
+				go func() {
+					gspan := r.trace.StartGuardrailSpan("input", parentID)
+					res, gerr := runStageConcurrent(gctx, r.rc, parallel,
 						GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
-					r.recordGuardrailResults(res...)
-					if repl, ok := inputReplacement(res); ok {
-						originalInput = repl
-					}
 					if gerr != nil {
 						gspan.SetError(gerr.Error(), nil)
-						gspan.Finish()
-						return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
 					}
 					gspan.Finish()
-				} else {
-					guardCh = make(chan inputGuardOutcome, 1)
-					gctx, gcancel := context.WithCancel(ctx)
-					cancelInputGuardrails = gcancel
-					parentID := r.agentParentID() // read before the goroutine races a handoff
-					go func() {
-						gspan := r.trace.StartGuardrailSpan("input", parentID)
-						res, gerr := runStageConcurrent(gctx, r.rc, parallel,
-							GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
-						if gerr != nil {
-							gspan.SetError(gerr.Error(), nil)
-						}
-						gspan.Finish()
-						guardCh <- inputGuardOutcome{results: res, err: gerr}
-					}()
-				}
+					guardCh <- inputGuardOutcome{results: res, err: gerr}
+				}()
 			}
 		}
 
@@ -639,11 +692,19 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			resp = pendingResponse
 			pendingResponse = nil
 		} else {
-			// Streaming defers the one-time user-input save to here — just before
-			// the first model call — so a failure earlier in the turn (e.g. an
-			// input-guardrail tripwire) leaves no orphan user message in the
-			// session (persistUserInput is idempotent via r.userInputSaved).
-			if r.sr != nil && r.resume == nil {
+			// The one-time user-input save. It lands here, not at loop start, so
+			// a failure ahead of the first model call leaves no orphan user
+			// message. What that covers depends on the guardrail:
+			//
+			//   - A Blocking input guardrail has already finished. A tripwire
+			//     means nothing is persisted and the model is never called.
+			//   - A racing one has not. Its tripwire arrives while the model
+			//     call is in flight, so the input IS persisted and the model IS
+			//     called (then cancelled) — the documented trade for not
+			//     serializing every guardrail ahead of every model call.
+			//
+			// persistUserInput is idempotent via userInputSaved.
+			if r.resume == nil {
 				if err := r.persistUserInput(ctx); err != nil {
 					return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 				}
@@ -710,8 +771,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					span.Finish()
 					return nil, r.fail(tripwire, originalInput, generatedItems, rawResponses, currentAgent)
 				}
-			case r.sr != nil:
-				resp, err = r.streamOneModelCall(ctx, r.sr, span, model, req)
+			case r.rawEvents:
+				resp, err = r.streamOneModelCall(ctx, span, model, req)
 			default:
 				resp, err = model.GetResponse(ctx, req)
 			}
@@ -737,12 +798,14 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 
-		// Streaming: emit events for the model-produced items. A resumed turn
-		// re-processes the interrupted response whose items the paused segment
-		// already emitted, so only a fresh model call emits here.
-		if r.sr != nil && !resumedTurn {
+		// Emit the model-produced items. A resumed turn re-processes the
+		// interrupted response whose items the paused segment already emitted,
+		// so only a fresh model call emits here.
+		if !resumedTurn {
 			for _, it := range processed.NewItems {
-				r.emitStreamItem(ctx, it)
+				if !r.emitItem(it) {
+					return nil, errConsumerStopped
+				}
 			}
 		}
 
@@ -752,17 +815,17 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 
-		// Streaming: emit events for items produced by side effects
-		// (tool/handoff outputs). On a fresh turn NewStepItems begins with
-		// processed.NewItems (already emitted above); on a resumed turn it
-		// holds only side-effect items, so everything is new to the stream.
-		if r.sr != nil {
-			emitFrom := len(processed.NewItems)
-			if resumedTurn {
-				emitFrom = 0
-			}
-			for _, it := range step.NewStepItems[emitFrom:] {
-				r.emitStreamItem(ctx, it)
+		// Emit items produced by side effects (tool/handoff outputs). On a fresh
+		// turn NewStepItems begins with processed.NewItems (already emitted
+		// above); on a resumed turn it holds only side-effect items, so
+		// everything there is new to the stream.
+		emitFrom := len(processed.NewItems)
+		if resumedTurn {
+			emitFrom = 0
+		}
+		for _, it := range step.NewStepItems[emitFrom:] {
+			if !r.emitItem(it) {
+				return nil, errConsumerStopped
 			}
 		}
 
@@ -834,8 +897,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			currentAgent = step.NewAgent
 			shouldRunStartHooks = true
-			if r.sr != nil {
-				r.sr.emit(ctx, &AgentUpdatedStreamEvent{NewAgent: currentAgent})
+			if !r.emit(&AgentUpdatedStreamEvent{NewAgent: currentAgent}) {
+				return nil, errConsumerStopped
 			}
 			continue
 		case stepInterruption:
@@ -969,8 +1032,8 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, orig
 		// finishRun reports r.sessionItems as NewItems, so the synthesized
 		// fallback message joins the run there (and the session).
 		r.sessionItems = append(r.sessionItems, rec.message)
-		if r.sr != nil {
-			r.sr.emit(ctx, &RunItemStreamEvent{Name: runItemEventName(rec.message), Item: rec.message})
+		if !r.emit(&RunItemStreamEvent{Name: runItemEventName(rec.message), Item: rec.message}) {
+			return nil, errConsumerStopped
 		}
 	}
 	return r.finishRun(ctx, agent, originalInput, rawResponses, rec.finalOutput)

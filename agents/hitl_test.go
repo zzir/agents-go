@@ -27,7 +27,7 @@ func TestHITL_InterruptThenApprove(t *testing.T) {
 	var ran bool
 	agent := approvalAgentAndModel(t, &ran)
 
-	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestHITL_InterruptThenApprove(t *testing.T) {
 
 	// Approve and resume.
 	res.State.Approve(res.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,12 +69,12 @@ func TestHITL_InterruptThenReject(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.State.Reject(res.Interruptions[0], false, "denied by policy")
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestHITL_StateSerializationRoundTrip(t *testing.T) {
 	var ran bool
 	agent := approvalAgentAndModel(t, &ran)
 
-	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestHITL_StateSerializationRoundTrip(t *testing.T) {
 
 	// Approve on the rebuilt state and resume.
 	state.Approve(state.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), state, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), state, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestHITL_ApproveToolsAgentLevel(t *testing.T) {
 		ApproveTools: []string{"delete_db"},
 	}
 
-	res, err := Run(context.Background(), agent, "delete it", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestHITL_ApproveToolsAgentLevel(t *testing.T) {
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	res2, err := ResumeRun(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestHITL_ApproveToolsWildcard(t *testing.T) {
 		ApproveTools: []string{"*"},
 	}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestHITL_ApproveToolsWildcard(t *testing.T) {
 func TestHITL_UnknownAgentInRegistry(t *testing.T) {
 	var ran bool
 	agent := approvalAgentAndModel(t, &ran)
-	res, _ := Run(context.Background(), agent, "go", RunOptions{})
+	res, _ := RunSync(context.Background(), agent, "go", RunOptions{})
 	data, _ := res.State.MarshalJSON()
 
 	_, err := RunStateFromJSON(data, map[string]*Agent{}) // empty registry
@@ -229,7 +229,7 @@ func TestRun_TracingEmitsSpans(t *testing.T) {
 	})
 	agent := &Agent{Name: "tracer-agent", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{Tracer: tr})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Tracer: tr})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestRun_TracingGuardrailAndHandoffSpans(t *testing.T) {
 		}},
 	}
 
-	if _, err := Run(context.Background(), src, "go", RunOptions{Tracer: newTestTracer(col)}); err != nil {
+	if _, err := RunSync(context.Background(), src, "go", RunOptions{Tracer: newTestTracer(col)}); err != nil {
 		t.Fatal(err)
 	}
 	if col.named("agent:") != 2 {
@@ -369,7 +369,7 @@ func TestApprovalStore_Precedence(t *testing.T) {
 func TestApprovalStore_SerializationRoundTrip(t *testing.T) {
 	var ran bool
 	agent := approvalAgentAndModel(t, &ran)
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

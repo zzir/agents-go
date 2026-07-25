@@ -49,7 +49,7 @@ func TestGuardrailResults_ToolStagesSurfacedOnResult(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestGuardrailResults_OneGuardrailCoversManyStages(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model, Guardrails: []Guardrail{scanner}}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestGuardrailResults_RunErrorDetailsCarriesResults(t *testing.T) {
 		}},
 	}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	base, ok := AsAgentsError(err)
 	if !ok {
 		t.Fatalf("err = %T, want an SDK error", err)
@@ -159,7 +159,7 @@ func TestGuardrailResults_RunStateRoundTrip(t *testing.T) {
 		}},
 	}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestInputStageTripwire(t *testing.T) {
 			},
 		}},
 	}
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
 		t.Fatalf("err = %v (%T), want *GuardrailTripwireError", err, err)
@@ -255,7 +255,7 @@ func TestOutputStageTripwire(t *testing.T) {
 			},
 		}},
 	}
-	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
 		t.Fatalf("err = %v (%T), want *GuardrailTripwireError", err, err)
@@ -287,7 +287,7 @@ func TestRunAndAgentGuardrailsBothApply(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
 	agent := &Agent{Name: "a", ModelImpl: model, Guardrails: []Guardrail{mk("agent")}}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{Guardrails: []Guardrail{mk("run")}})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Guardrails: []Guardrail{mk("run")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestBlockingInputGuardrailPreventsModelCall(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := Run(context.Background(), agent, "go", RunOptions{
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Guardrails: []Guardrail{{
 			Name:     "gate",
 			Stages:   []GuardrailStage{StageInput},
@@ -338,7 +338,7 @@ func TestOutputStageReplace(t *testing.T) {
 			},
 		}},
 	}
-	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

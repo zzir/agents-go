@@ -19,11 +19,14 @@ func main() {
 		Model:        "gpt-4o",
 	}
 
-	sr := agents.RunStreamed(context.Background(), agent, "讲一个关于 Gopher 的短故事。", agents.RunOptions{
+	// Run returns the run as a stream: nothing happens until it is ranged, and
+	// the run advances on this goroutine, one event at a time.
+	stream, _ := agents.Run(context.Background(), agent, "讲一个关于 Gopher 的短故事。", agents.RunOptions{
 		ModelProvider: openai.NewProvider(),
 	})
 
-	for event, err := range sr.Events() {
+	var res *agents.RunResult
+	for event, err := range stream {
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -34,12 +37,11 @@ func main() {
 			}
 		case *agents.AgentUpdatedStreamEvent:
 			fmt.Println("-> now running:", e.NewAgent.Name)
+		case *agents.RunCompletedEvent:
+			// The stream's last event carries the finished run.
+			res = e.Result
 		}
 	}
 
-	res, err := sr.FinalResult()
-	if err != nil {
-		log.Fatal(err)
-	}
 	fmt.Println("\nfinal:", res.FinalOutputString())
 }
