@@ -5,104 +5,56 @@ import (
 	"fmt"
 )
 
-// ForkSession copies the entire history from src into dst, producing a full
-// clone. dst is cleared first so it contains exactly what src had at the time
-// of the call.
+// ForkSession extracts a session's active branch into another session,
+// producing an independent conversation that shares its past.
+//
+// It is not "copy everything": abandoned branches stay behind, because the
+// point of a fork is to continue from where the conversation actually is. Entry
+// ids are preserved, so an update entry that names one still finds its target.
+//
+// dst is cleared first, so it holds exactly the extracted branch.
 func ForkSession(ctx context.Context, src, dst *Session) error {
-	entries, err := src.Entries(ctx, Cursor{})
+	path, err := src.PathEntries(ctx)
 	if err != nil {
 		return fmt.Errorf("fork: reading source session: %w", err)
 	}
-	if err := dst.Clear(ctx); err != nil {
-		return fmt.Errorf("fork: clearing destination session: %w", err)
-	}
-	if len(entries) == 0 {
-		return nil
-	}
-	if err := dst.Append(ctx, entries...); err != nil {
-		return fmt.Errorf("fork: writing to destination session: %w", err)
-	}
-	return nil
+	return writeFork(ctx, dst, path)
 }
 
-// ForkSessionAt copies the first n entries from src into dst, producing a
-// point-in-time fork. n is clamped to the source length: n <= 0 copies
-// nothing, n >= len(entries) copies everything. dst is cleared first.
+// ForkSessionAt extracts the branch up to and including entryID, producing a
+// point-in-time fork — "start over from here".
 //
-// Choose n on a paired-item boundary: cutting between a function_call and its
-// function_call_output leaves a dangling call in dst, and the API rejects such
-// a history on the next run. When forking after a tool call, include both the
-// call and its output.
-func ForkSessionAt(ctx context.Context, src, dst *Session, n int) error {
-	entries, err := src.Entries(ctx, Cursor{})
+// entryID must be on the source's active branch. Choose it on a paired-item
+// boundary: cutting between a function_call and its output leaves a dangling
+// call, which the API rejects on the next run.
+func ForkSessionAt(ctx context.Context, src, dst *Session, entryID string) error {
+	all, err := src.Entries(ctx, Cursor{})
 	if err != nil {
 		return fmt.Errorf("fork: reading source session: %w", err)
 	}
+	path := PathToLeaf(all, entryID)
+	if len(path) == 0 {
+		return newUserError("fork: entry %q is not on the source session's history", entryID)
+	}
+	return writeFork(ctx, dst, path)
+}
+
+func writeFork(ctx context.Context, dst *Session, path []SessionEntry) error {
 	if err := dst.Clear(ctx); err != nil {
 		return fmt.Errorf("fork: clearing destination session: %w", err)
 	}
-	if n <= 0 || len(entries) == 0 {
+	if len(path) == 0 {
 		return nil
 	}
-	if n > len(entries) {
-		n = len(entries)
+	// Seq is the destination store's to assign; ids and parent links are the
+	// conversation's and travel with it.
+	forked := make([]SessionEntry, len(path))
+	for i, e := range path {
+		e.Seq = 0
+		forked[i] = e
 	}
-	if err := dst.Append(ctx, entries[:n]...); err != nil {
+	if err := dst.Append(ctx, forked...); err != nil {
 		return fmt.Errorf("fork: writing to destination session: %w", err)
 	}
 	return nil
-}
-
-// IndexOfItemID scans items for the first one whose server-assigned ID matches
-// id, returning its zero-based index. Only items the model produced carry IDs
-// (output messages, function calls, function call outputs, reasoning items);
-// user-created "easy" messages have no ID and are never matched.
-//
-// Use this to convert a server-assigned ID into a fork-point index. Always
-// check ok — forking with a not-found index would silently produce an empty
-// fork:
-//
-//	idx, ok := agents.IndexOfItemID(items, "msg_abc123")
-//	if !ok {
-//		return fmt.Errorf("item %q not in session", "msg_abc123")
-//	}
-//	err := agents.ForkSessionAt(ctx, src, dst, idx+1) // include the matched item
-func IndexOfItemID(items []TResponseInputItem, id string) (int, bool) {
-	for i := range items {
-		if itemID(&items[i]) == id {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-// itemID extracts the server-assigned ID from an input item, or "" if the item
-// variant has no ID (e.g. EasyInputMessage).
-func itemID(item *TResponseInputItem) string {
-	switch {
-	case item.OfOutputMessage != nil:
-		return item.OfOutputMessage.ID
-	case item.OfFunctionCall != nil:
-		return item.OfFunctionCall.ID.Or("")
-	case item.OfFunctionCallOutput != nil:
-		return item.OfFunctionCallOutput.ID.Or("")
-	case item.OfReasoning != nil:
-		return item.OfReasoning.ID
-	case item.OfComputerCall != nil:
-		return item.OfComputerCall.ID
-	case item.OfComputerCallOutput != nil:
-		return item.OfComputerCallOutput.ID.Or("")
-	case item.OfFileSearchCall != nil:
-		return item.OfFileSearchCall.ID
-	case item.OfWebSearchCall != nil:
-		return item.OfWebSearchCall.ID
-	case item.OfCodeInterpreterCall != nil:
-		return item.OfCodeInterpreterCall.ID
-	case item.OfMcpCall != nil:
-		return item.OfMcpCall.ID
-	case item.OfMcpApprovalRequest != nil:
-		return item.OfMcpApprovalRequest.ID
-	default:
-		return ""
-	}
 }

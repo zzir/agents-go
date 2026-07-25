@@ -136,7 +136,11 @@ func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) er
 	if len(entries) == 0 {
 		return nil
 	}
-	rows, err := s.encodeEntries(entries)
+	prevLeaf, err := s.leaf(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := s.encodeEntries(ctx, entries, prevLeaf)
 	if err != nil {
 		return err
 	}
@@ -199,7 +203,7 @@ func (s *Session) Clear(ctx context.Context) error {
 // failure mid-rewrite rolls back to the previous history instead of leaving the
 // session empty. Only this session ID's rows are touched.
 func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
-	rows, err := s.encodeEntries(entries)
+	rows, err := s.encodeEntries(ctx, entries, "")
 	if err != nil {
 		return err
 	}
@@ -218,21 +222,20 @@ func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionE
 // encodeEntries prepares entries for insertion, filling in the fields the store
 // owns. A caller-supplied id is kept, so an entry re-added by a fork or a
 // replace keeps the identity an update entry points at.
-func (s *Session) encodeEntries(entries []agents.SessionEntry) ([]entry, error) {
-	rows := make([]entry, 0, len(entries))
-	for i, e := range entries {
-		if e.Kind == "" {
-			e.Kind = agents.EntryKindItem
-		}
-		if e.CreatedAt.IsZero() {
-			e.CreatedAt = time.Now().UTC()
-		}
-		if e.ID == "" {
-			// The row's autoincrement id is not known before the insert, so the
-			// entry id is minted here instead. It only has to be unique within
-			// the session, which is all an update entry needs to point at one.
-			e.ID = fmt.Sprintf("%s-%d-%d", s.sessionID, time.Now().UnixNano(), i)
-		}
+func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEntry, prevLeaf string) ([]entry, error) {
+	// The row's autoincrement id is not known before the insert, so entry ids
+	// are minted here. They only have to be unique within the session, which is
+	// all an update entry needs to point at one.
+	stamp := time.Now().UnixNano()
+	idFor := func(seq int64) string {
+		return fmt.Sprintf("%s-%d-%d", s.sessionID, stamp, seq)
+	}
+	prepared := agents.PrepareAppend(entries, prevLeaf, 0, idFor)
+	rows := make([]entry, 0, len(prepared))
+	for _, e := range prepared {
+		// Seq belongs to the database's autoincrement, not this counter;
+		// decodeEntry fills it from the row id on the way back out.
+		e.Seq = 0
 		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("encoding session entry: %w", err)
@@ -240,6 +243,15 @@ func (s *Session) encodeEntries(entries []agents.SessionEntry) ([]entry, error) 
 		rows = append(rows, entry{SessionID: s.sessionID, Kind: string(e.Kind), Entry: string(data)})
 	}
 	return rows, nil
+}
+
+// leaf reports the session's current branch tip, for linking an append.
+func (s *Session) leaf(ctx context.Context) (string, error) {
+	entries, err := s.Entries(ctx, agents.Cursor{})
+	if err != nil {
+		return "", err
+	}
+	return agents.LeafOf(entries), nil
 }
 
 func decodeEntry(r entry) (agents.SessionEntry, error) {

@@ -24,6 +24,8 @@ const (
 	EntryKindTerminal EntryKind = "terminal"
 	// EntryKindUpdate amends an earlier entry's display. See UpdatePayload.
 	EntryKindUpdate EntryKind = "update"
+	// EntryKindLeaf moves the session's active branch. See LeafPayload.
+	EntryKindLeaf EntryKind = "leaf"
 	// EntryKindCustom is the extension point; CustomType names the subtype.
 	EntryKindCustom EntryKind = "custom"
 )
@@ -47,6 +49,13 @@ type SessionEntry struct {
 	// what a Cursor pages on: an offset shifts under a concurrent append, a
 	// sequence number does not.
 	Seq int64 `json:"seq,omitzero"`
+	// ParentID is the entry this one follows. Empty means a root.
+	//
+	// A session is a tree, not a list, because branching is the natural shape
+	// of "try that again differently": the abandoned attempt stays recorded
+	// instead of being deleted, and two branches can share everything before
+	// the point they diverge rather than duplicating it.
+	ParentID string `json:"parent_id,omitzero"`
 	// Kind says what this entry holds.
 	Kind EntryKind `json:"kind"`
 	// CustomType names the subtype when Kind is EntryKindCustom.
@@ -142,6 +151,39 @@ func EntryFromRunItem(it RunItem, responseID string) (SessionEntry, error) {
 // the model: an error banner, a cancellation notice, partial output.
 func NewAnnotationEntry(display ItemDisplay, src Source) SessionEntry {
 	return SessionEntry{Kind: EntryKindAnnotation, Source: src, Display: &display}
+}
+
+// LeafPayload is the body of an EntryKindLeaf entry: it moves the session's
+// active branch to another entry.
+//
+// Switching branches is an APPEND, not a mutable pointer. That is what keeps
+// the switch itself part of the history — you can see that a branch was
+// abandoned and when — and what lets the current leaf be derived by folding the
+// log rather than stored beside it, where it could disagree after a crash.
+type LeafPayload struct {
+	// TargetID is the entry that becomes the new leaf.
+	TargetID string `json:"target_id"`
+}
+
+// NewLeafEntry builds an entry moving the active branch to targetID.
+func NewLeafEntry(targetID string) (SessionEntry, error) {
+	raw, err := json.Marshal(LeafPayload{TargetID: targetID})
+	if err != nil {
+		return SessionEntry{}, fmt.Errorf("encoding leaf payload: %w", err)
+	}
+	return SessionEntry{Kind: EntryKindLeaf, Payload: raw}, nil
+}
+
+// LeafPayload decodes a leaf entry's payload.
+func (e SessionEntry) LeafPayload() (LeafPayload, error) {
+	if e.Kind != EntryKindLeaf {
+		return LeafPayload{}, fmt.Errorf("entry %q is a %s entry, not a leaf move", e.ID, e.Kind)
+	}
+	var p LeafPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return LeafPayload{}, fmt.Errorf("decoding leaf payload: %w", err)
+	}
+	return p, nil
 }
 
 // NewUpdateEntry builds an entry amending an earlier entry's display.

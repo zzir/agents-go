@@ -59,16 +59,28 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]SessionEntry, erro
 // — so everything before it is already represented and re-sending it would
 // duplicate the history compaction just folded away.
 func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
-	entries, err := s.storage.Entries(ctx, cur)
+	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err
 	}
-	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Kind == EntryKindCompaction {
-			return entries[i:], nil
+	// Walk the active branch, not the append order: an abandoned attempt is
+	// still recorded, and sending it would show the model a conversation that
+	// contradicts itself. PathToLeaf stops at a compaction checkpoint, which
+	// already stands in for everything before it.
+	path := PathToLeaf(all, LeafOf(all))
+	if len(path) == 0 {
+		// No parent links yet (a session written before branching, or one
+		// whose entries carry none): fall back to append order, trimmed at the
+		// last checkpoint.
+		path = all
+		for i := len(path) - 1; i >= 0; i-- {
+			if path[i].Kind == EntryKindCompaction {
+				path = path[i:]
+				break
+			}
 		}
 	}
-	return entries, nil
+	return PageEntries(path, Cursor{AfterSeq: cur.AfterSeq, Limit: cur.Limit}), nil
 }
 
 // ContextItems returns the model input the session projects to.

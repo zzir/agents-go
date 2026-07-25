@@ -294,6 +294,31 @@ particular is not in `SessionStorage` because a run never pops; requiring it
 would tax stores that cannot (a server-managed conversation) for a feature the
 run loop does not use.
 
+### 2.5d Sessions are trees ✅
+
+An entry names its parent, so a session is a walk rather than a pile.
+
+- **Branching abandons without deleting.** ✅ Moving the active branch leaves the
+  old attempt recorded and off the path; "try that again differently" costs
+  nothing and loses nothing.
+- **Switching branches is an append**, not a mutable pointer: `EntryKindLeaf`.
+  That keeps the switch itself in the history, and lets the current leaf be
+  **derived by folding the log** rather than stored beside it where it could
+  disagree after a crash.
+- **The model sees the active branch**, not append order. Sending an abandoned
+  attempt would show a conversation that contradicts itself.
+- **Parent links are assigned by storage**, which is the only layer that knows
+  the ids it is about to mint. `PrepareAppend` is shared so every backend links
+  identically — a store that got this wrong would read back as disconnected
+  roots, which no single-append test would catch.
+- **A walk stops at a compaction checkpoint** and at a missing parent (an
+  ancestor may have been folded away). A repeated id also stops it, so a corrupt
+  session reads short instead of hanging.
+
+**Fork extracts a branch; branch moves within one session.** ✅ A fork carries
+entry ids across unchanged, so an update entry naming one still finds its
+target.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in

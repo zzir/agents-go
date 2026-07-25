@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -204,16 +203,21 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 	release := acquire(s.lockKey)
 	defer release()
 
-	// Ids are assigned under the lock, from the current line count, so two
-	// concurrent appends to the same file cannot mint the same id.
-	next, err := s.lineCount()
+	// Ids and parent links are assigned under the lock, from what the file
+	// already holds, so two concurrent appends cannot mint the same id or link
+	// to a tip that moved.
+	existing, err := s.readEntries()
 	if err != nil {
 		return err
 	}
+	var seq int64
+	if n := len(existing); n > 0 {
+		seq = existing[n-1].Seq
+	}
+	prepared := agents.PrepareAppend(entries, agents.LeafOf(existing), seq, s.entryID)
 	var buf bytes.Buffer
-	for i := range entries {
-		next++
-		data, err := json.Marshal(stamp(entries[i], next))
+	for i := range prepared {
+		data, err := json.Marshal(prepared[i])
 		if err != nil {
 			return fmt.Errorf("marshaling session entry: %w", err)
 		}
@@ -242,9 +246,10 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
 func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.SessionEntry) error {
-	lines := make([][]byte, 0, len(entries))
-	for i := range entries {
-		data, err := json.Marshal(stamp(entries[i], i+1))
+	prepared := agents.PrepareAppend(entries, "", 0, s.entryID)
+	lines := make([][]byte, 0, len(prepared))
+	for i := range prepared {
+		data, err := json.Marshal(prepared[i])
 		if err != nil {
 			return fmt.Errorf("marshaling session entry: %w", err)
 		}
@@ -288,32 +293,23 @@ func (s *FileSession) Clear(_ context.Context) error {
 	return nil
 }
 
-// lineCount reports how many entries the file already holds. Callers must hold
-// the per-path lock.
-func (s *FileSession) lineCount() (int, error) {
+// readEntries decodes the file's entries. Callers must hold the per-path lock.
+func (s *FileSession) readEntries() ([]agents.SessionEntry, error) {
 	lines, err := s.readLines()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return len(lines), nil
+	out := make([]agents.SessionEntry, 0, len(lines))
+	for _, line := range lines {
+		var e agents.SessionEntry
+		if json.Unmarshal(line, &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
-// stamp fills in the fields the store owns. A caller-supplied id is kept, so an
-// entry re-added by a fork or a replace keeps the identity an update entry
-// points at.
-func stamp(e agents.SessionEntry, n int) agents.SessionEntry {
-	if e.ID == "" {
-		e.ID = fmt.Sprintf("e%d", n)
-	}
-	e.Seq = int64(n)
-	if e.CreatedAt.IsZero() {
-		e.CreatedAt = time.Now().UTC()
-	}
-	if e.Kind == "" {
-		e.Kind = agents.EntryKindItem
-	}
-	return e
-}
+func (s *FileSession) entryID(seq int64) string { return fmt.Sprintf("e%d", seq) }
 
 // readLines returns the non-empty lines of the session file, or nil if it does
 // not exist yet. Callers must hold the per-path lock.

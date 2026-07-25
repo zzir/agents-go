@@ -104,12 +104,17 @@ func (s *InMemoryStorage) Metadata(context.Context) (SessionMetadata, error) {
 func (s *InMemoryStorage) Append(_ context.Context, entries ...SessionEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, e := range entries {
-		s.seq++
-		s.entries = append(s.entries, stampEntry(e, fmt.Sprintf("%s-e%d", s.id, s.seq), s.seq))
+	prepared := PrepareAppend(entries, LeafOf(s.entries), s.seq, s.entryID)
+	s.entries = append(s.entries, prepared...)
+	if n := len(prepared); n > 0 {
+		s.seq = prepared[n-1].Seq
 	}
 	s.updatedAt = time.Now().UTC()
 	return nil
+}
+
+func (s *InMemoryStorage) entryID(seq int64) string {
+	return fmt.Sprintf("%s-e%d", s.id, seq)
 }
 
 // Entry implements SessionStorage.
@@ -158,9 +163,10 @@ func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...SessionEn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries = nil
-	for _, e := range entries {
-		s.seq++
-		s.entries = append(s.entries, stampEntry(e, fmt.Sprintf("%s-e%d", s.id, s.seq), s.seq))
+	prepared := PrepareAppend(entries, "", s.seq, s.entryID)
+	s.entries = prepared
+	if n := len(prepared); n > 0 {
+		s.seq = prepared[n-1].Seq
 	}
 	s.updatedAt = time.Now().UTC()
 	return nil
@@ -208,21 +214,48 @@ func PageEntries(entries []SessionEntry, cur Cursor) []SessionEntry {
 	return append([]SessionEntry(nil), out...)
 }
 
-// stampEntry fills in the fields a store owns: id, sequence number and creation
-// time. A caller-supplied id is kept, so an entry re-added by a fork keeps the
-// identity an update entry points at.
-func stampEntry(e SessionEntry, id string, seq int64) SessionEntry {
-	if e.ID == "" {
-		e.ID = id
+// PrepareAppend fills in the fields a store owns — id, sequence number,
+// creation time — and links each entry to the branch it extends.
+//
+// Backends call it so every store links identically. Parent linking cannot be
+// done by the caller: the id of the entry before is assigned here, so only the
+// store can chain a batch. Getting it wrong produces a session that reads back
+// as a set of disconnected roots, which is not a failure any test of a single
+// append would catch.
+//
+// prevLeaf is the branch tip before this batch; idFor mints an id for the
+// entry at the given sequence number.
+func PrepareAppend(entries []SessionEntry, prevLeaf string, nextSeq int64, idFor func(seq int64) string) []SessionEntry {
+	out := make([]SessionEntry, 0, len(entries))
+	parent := prevLeaf
+	for _, e := range entries {
+		nextSeq++
+		if e.ID == "" {
+			e.ID = idFor(nextSeq)
+		}
+		e.Seq = nextSeq
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = time.Now().UTC()
+		}
+		if e.Kind == "" {
+			e.Kind = EntryKindItem
+		}
+		if e.Kind == EntryKindLeaf {
+			// A leaf move is a marker, not a node: it has no parent, and it
+			// moves the tip to its target rather than extending the branch.
+			if p, err := e.LeafPayload(); err == nil {
+				parent = p.TargetID
+			}
+			out = append(out, e)
+			continue
+		}
+		if e.ParentID == "" {
+			e.ParentID = parent
+		}
+		parent = e.ID
+		out = append(out, e)
 	}
-	e.Seq = seq
-	if e.CreatedAt.IsZero() {
-		e.CreatedAt = time.Now().UTC()
-	}
-	if e.Kind == "" {
-		e.Kind = EntryKindItem
-	}
-	return e
+	return out
 }
 
 // ReplaceStorageEntries swaps a store's whole history. It is Clear followed by Append
