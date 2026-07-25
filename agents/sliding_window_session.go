@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openai/openai-go/v3/responses"
-
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -99,19 +97,19 @@ func NewSlidingWindowSession(underlying Session, cfg SlidingWindowConfig) *Slidi
 	return &SlidingWindowSession{underlying: underlying, cfg: cfg}
 }
 
-// GetItems delegates to the underlying session.
-func (s *SlidingWindowSession) GetItems(ctx context.Context, limit int) ([]TResponseInputItem, error) {
-	return s.underlying.GetItems(ctx, limit)
+// GetEntries delegates to the underlying session.
+func (s *SlidingWindowSession) GetEntries(ctx context.Context, limit int) ([]SessionEntry, error) {
+	return s.underlying.GetEntries(ctx, limit)
 }
 
-// AddItems delegates to the underlying session.
-func (s *SlidingWindowSession) AddItems(ctx context.Context, items []TResponseInputItem) error {
-	return s.underlying.AddItems(ctx, items)
+// AddEntries delegates to the underlying session.
+func (s *SlidingWindowSession) AddEntries(ctx context.Context, entries []SessionEntry) error {
+	return s.underlying.AddEntries(ctx, entries)
 }
 
-// PopItem delegates to the underlying session.
-func (s *SlidingWindowSession) PopItem(ctx context.Context) (*TResponseInputItem, error) {
-	return s.underlying.PopItem(ctx)
+// PopEntry delegates to the underlying session.
+func (s *SlidingWindowSession) PopEntry(ctx context.Context) (*SessionEntry, error) {
+	return s.underlying.PopEntry(ctx)
 }
 
 // Clear delegates to the underlying session.
@@ -127,7 +125,14 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 		return nil
 	}
 
-	items, err := s.underlying.GetItems(ctx, 0)
+	entries, err := s.underlying.GetEntries(ctx, 0)
+	if err != nil {
+		return err
+	}
+	// Compaction works on what the model reads, so it starts from the
+	// projection rather than the raw entries: an annotation is not context and
+	// must not be summarized as if it were.
+	items, err := ProjectEntries(entries, nil)
 	if err != nil {
 		return err
 	}
@@ -176,16 +181,15 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 		return fmt.Errorf("sliding window compaction: summary model returned no output text")
 	}
 
-	summaryItem := responses.ResponseInputItemParamOfMessage(
-		SummaryMarker+"\n\n"+summaryText,
-		responses.EasyInputMessageRoleSystem,
-	)
-
-	replacement := make([]TResponseInputItem, 0, 1+len(toKeep))
-	replacement = append(replacement, summaryItem)
-	replacement = append(replacement, toKeep...)
-
-	if err := ReplaceSessionItems(ctx, s.underlying, replacement); err != nil {
+	// The result is ONE compaction checkpoint carrying the summary and the tail
+	// it kept. Keeping the retained items inside the checkpoint makes it
+	// self-contained: reading it gives the whole context that replaced the
+	// history it folded away, with no separate range to track.
+	checkpoint, err := newCompactionEntry(SummaryMarker+"\n\n"+summaryText, toKeep)
+	if err != nil {
+		return fmt.Errorf("sliding window compaction: %w", err)
+	}
+	if err := ReplaceSessionEntries(ctx, s.underlying, []SessionEntry{checkpoint}); err != nil {
 		return fmt.Errorf("sliding window compaction: replacing history: %w", err)
 	}
 	return nil

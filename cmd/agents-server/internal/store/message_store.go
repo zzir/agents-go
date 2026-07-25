@@ -132,9 +132,55 @@ func NewAnnotationMessage(sessionID, runID, role, content string) Message {
 	}
 }
 
-// GetItems returns the session's stored input items oldest first; a positive
+// GetEntries implements agents.Session.
+//
+// It returns item entries only. Annotation rows are already excluded from the
+// model's view by the query below; surfacing them here as annotation entries is
+// part of converging this adapter on the entry model (plan1 P4), not of moving
+// the interface.
+func (a *SessionAdapter) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+	items, err := a.getItems(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return agents.NewItemEntries(items, agents.Source{})
+}
+
+// AddEntries implements agents.Session. Item entries are stored as message
+// rows; other kinds are rejected rather than dropped, because this adapter owns
+// its own store and could represent them — a silent loss here would be a bug,
+// not a limitation.
+func (a *SessionAdapter) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+	items := make([]agents.TResponseInputItem, 0, len(entries))
+	for _, e := range entries {
+		if e.Kind != "" && e.Kind != agents.EntryKindItem {
+			return fmt.Errorf("session adapter: cannot store a %q entry yet", e.Kind)
+		}
+		item, err := e.InputItem()
+		if err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	return a.addItems(ctx, items)
+}
+
+// PopEntry implements agents.Session.
+func (a *SessionAdapter) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+	item, err := a.popItem(ctx)
+	if err != nil || item == nil {
+		return nil, err
+	}
+	e, err := agents.NewItemEntry(*item, agents.Source{})
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// getItems returns the session's stored input items oldest first; a positive
 // limit returns only the most recent limit items (still in chronological order).
-func (a *SessionAdapter) GetItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
+func (a *SessionAdapter) getItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
 	q := a.db.NewSelect().Model((*Message)(nil)).
 		Column("item", "source_model", "role").
 		Where("session_id = ?", a.sessionID).
@@ -266,7 +312,7 @@ func NormalizeItemJSON(raw []byte) []byte {
 }
 
 // AddItems appends items to the session, persisting each as a Message.
-func (a *SessionAdapter) AddItems(ctx context.Context, items []agents.TResponseInputItem) error {
+func (a *SessionAdapter) addItems(ctx context.Context, items []agents.TResponseInputItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -437,7 +483,7 @@ func extractJSONString(raw []byte, key string) string {
 // (non-compacted, non-annotation, non-empty/{}/null item) so it never pops and
 // deletes a UI-only annotation row or a soft-deleted/compacted row, which would
 // corrupt history or fail to deserialize.
-func (a *SessionAdapter) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
+func (a *SessionAdapter) popItem(ctx context.Context) (*agents.TResponseInputItem, error) {
 	var item agents.TResponseInputItem
 	err := a.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var msg Message

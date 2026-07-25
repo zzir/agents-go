@@ -31,9 +31,9 @@ func TestFileSession_WriteLinesCleansTempOnRenameFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// ReplaceItems routes through writeLines; the rename at its tail must fail.
-	if err := sess.ReplaceItems(ctx, agents.InputItemsFromText("hello")); err == nil {
-		t.Fatal("ReplaceItems succeeded, but the rename onto a directory should fail")
+	// ReplaceEntries routes through writeLines; the rename at its tail must fail.
+	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("hello"))); err == nil {
+		t.Fatal("ReplaceEntries succeeded, but the rename onto a directory should fail")
 	}
 
 	// The temp file is created in filepath.Dir(sessionPath) == dir; none may

@@ -16,7 +16,7 @@ func TestSessionAdapterPopItem(t *testing.T) {
 	a := NewSessionAdapter(db, sid)
 
 	// Empty session -> (nil, nil), not an error.
-	got, err := a.PopItem(ctx)
+	got, err := a.PopEntry(ctx)
 	if err != nil || got != nil {
 		t.Fatalf("empty session: got=%v err=%v, want nil,nil", got, err)
 	}
@@ -36,7 +36,7 @@ func TestSessionAdapterPopItem(t *testing.T) {
 
 	// The newest ROW is the annotation and the one before is compacted, but
 	// PopItem must skip both and return the real item.
-	got, err = a.PopItem(ctx)
+	got, err = a.PopEntry(ctx)
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestSessionAdapterPopItem(t *testing.T) {
 	}
 
 	// No replayable items left -> (nil, nil) again even though rows exist.
-	got, err = a.PopItem(ctx)
+	got, err = a.PopEntry(ctx)
 	if err != nil || got != nil {
 		t.Fatalf("no replayable items: got=%v err=%v, want nil,nil", got, err)
 	}

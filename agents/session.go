@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -16,22 +17,24 @@ import (
 // It is the Go counterpart of the Python SDK's Session protocol. Implementations
 // live in subpackages (e.g. memory.FileSession).
 type Session interface {
-	// GetItems returns stored items oldest-first. A limit <= 0 returns all
-	// items; a positive limit returns the most recent `limit` items.
-	GetItems(ctx context.Context, limit int) ([]TResponseInputItem, error)
-	// AddItems appends items to the session history.
-	AddItems(ctx context.Context, items []TResponseInputItem) error
-	// PopItem removes and returns the most recent item, or nil if empty.
-	PopItem(ctx context.Context) (*TResponseInputItem, error)
-	// Clear removes all items from the session.
+	// GetEntries returns stored entries oldest-first. A limit <= 0 returns all
+	// entries; a positive limit returns the most recent `limit`.
+	GetEntries(ctx context.Context, limit int) ([]SessionEntry, error)
+	// AddEntries appends entries to the session history. An entry with no ID
+	// gets one from the store; an entry with no CreatedAt gets the store's
+	// clock.
+	AddEntries(ctx context.Context, entries []SessionEntry) error
+	// PopEntry removes and returns the most recent entry, or nil if empty.
+	PopEntry(ctx context.Context) (*SessionEntry, error)
+	// Clear removes all entries from the session.
 	Clear(ctx context.Context) error
 }
 
 // SessionSettings configures how a run reads a Session. It is the Go counterpart
 // of Python's SessionSettings.
 type SessionSettings struct {
-	// Limit caps how many of the most recent items GetItems loads at run start.
-	// Zero (the default) means no limit — the full history is loaded.
+	// Limit caps how many of the most recent entries GetEntries loads at run
+	// start. Zero (the default) means no limit — the full history is loaded.
 	Limit int
 }
 
@@ -118,27 +121,26 @@ func fingerprintCounts(items []TResponseInputItem) map[string]int {
 	return counts
 }
 
-// ItemsReplacer is an optional Session capability: atomically replace the
-// entire stored history with a new item list. Backends that can do this in one
-// step (a file rename, a DB transaction) should implement it so history
-// rewrites — compaction, summarization — cannot leave the session empty when
-// a failure lands between clearing and re-adding.
-type ItemsReplacer interface {
-	ReplaceItems(ctx context.Context, items []TResponseInputItem) error
+// EntriesReplacer is an optional Session capability: atomically replace the
+// entire stored history. Backends that can do this in one step (a file rename,
+// a DB transaction) should implement it so a history rewrite cannot leave the
+// session empty when a failure lands between clearing and re-adding.
+type EntriesReplacer interface {
+	ReplaceEntries(ctx context.Context, entries []SessionEntry) error
 }
 
-// ReplaceSessionItems swaps a session's stored history for items. When the
-// session implements ItemsReplacer the swap is atomic; otherwise it falls back
-// to Clear followed by AddItems, which can leave the session empty if AddItems
+// ReplaceSessionEntries swaps a session's stored history. When the session
+// implements EntriesReplacer the swap is atomic; otherwise it falls back to
+// Clear followed by AddEntries, which can leave the session empty if AddEntries
 // fails or the process crashes between the two calls.
-func ReplaceSessionItems(ctx context.Context, s Session, items []TResponseInputItem) error {
-	if r, ok := s.(ItemsReplacer); ok {
-		return r.ReplaceItems(ctx, items)
+func ReplaceSessionEntries(ctx context.Context, s Session, entries []SessionEntry) error {
+	if r, ok := s.(EntriesReplacer); ok {
+		return r.ReplaceEntries(ctx, entries)
 	}
 	if err := s.Clear(ctx); err != nil {
 		return err
 	}
-	return s.AddItems(ctx, items)
+	return s.AddEntries(ctx, entries)
 }
 
 // CompactionArgs carry the context a CompactionAwareSession needs to decide
@@ -170,44 +172,45 @@ type CompactionAwareSession interface {
 
 // InMemorySession is a goroutine-safe in-memory Session, useful for tests and
 // short-lived conversations. History is lost when the process exits.
-//
-// GetItems returns a copy of the item slice, but the items share underlying
-// pointers with the store; treat returned items as read-only.
 type InMemorySession struct {
-	mu    sync.Mutex
-	items []TResponseInputItem
+	mu      sync.Mutex
+	entries []SessionEntry
+	nextID  int
 }
 
 // NewInMemorySession returns an empty in-memory session.
 func NewInMemorySession() *InMemorySession { return &InMemorySession{} }
 
-// GetItems implements Session.
-func (s *InMemorySession) GetItems(_ context.Context, limit int) ([]TResponseInputItem, error) {
+// GetEntries implements Session.
+func (s *InMemorySession) GetEntries(_ context.Context, limit int) ([]SessionEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if limit <= 0 || limit >= len(s.items) {
-		return append([]TResponseInputItem(nil), s.items...), nil
+	if limit <= 0 || limit >= len(s.entries) {
+		return append([]SessionEntry(nil), s.entries...), nil
 	}
-	return append([]TResponseInputItem(nil), s.items[len(s.items)-limit:]...), nil
+	return append([]SessionEntry(nil), s.entries[len(s.entries)-limit:]...), nil
 }
 
-// AddItems implements Session.
-func (s *InMemorySession) AddItems(_ context.Context, items []TResponseInputItem) error {
+// AddEntries implements Session, assigning ids and timestamps where absent.
+func (s *InMemorySession) AddEntries(_ context.Context, entries []SessionEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items = append(s.items, items...)
+	for _, e := range entries {
+		s.nextID++
+		s.entries = append(s.entries, stampEntry(e, fmt.Sprintf("e%d", s.nextID)))
+	}
 	return nil
 }
 
-// PopItem implements Session.
-func (s *InMemorySession) PopItem(_ context.Context) (*TResponseInputItem, error) {
+// PopEntry implements Session.
+func (s *InMemorySession) PopEntry(_ context.Context) (*SessionEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.items) == 0 {
+	if len(s.entries) == 0 {
 		return nil, nil
 	}
-	last := s.items[len(s.items)-1]
-	s.items = s.items[:len(s.items)-1]
+	last := s.entries[len(s.entries)-1]
+	s.entries = s.entries[:len(s.entries)-1]
 	return &last, nil
 }
 
@@ -215,23 +218,64 @@ func (s *InMemorySession) PopItem(_ context.Context) (*TResponseInputItem, error
 func (s *InMemorySession) Clear(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items = nil
+	s.entries = nil
 	return nil
 }
 
-// ReplaceItems implements ItemsReplacer: the whole history is swapped under a
-// single lock acquisition.
-func (s *InMemorySession) ReplaceItems(_ context.Context, items []TResponseInputItem) error {
+// ReplaceEntries implements EntriesReplacer: the whole history is swapped under
+// a single lock acquisition.
+func (s *InMemorySession) ReplaceEntries(_ context.Context, entries []SessionEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items = append([]TResponseInputItem(nil), items...)
+	s.entries = nil
+	for _, e := range entries {
+		s.nextID++
+		s.entries = append(s.entries, stampEntry(e, fmt.Sprintf("e%d", s.nextID)))
+	}
 	return nil
 }
 
 var (
-	_ Session       = (*InMemorySession)(nil)
-	_ ItemsReplacer = (*InMemorySession)(nil)
+	_ Session         = (*InMemorySession)(nil)
+	_ EntriesReplacer = (*InMemorySession)(nil)
 )
+
+// stampEntry fills in the fields a store owns: the id and the creation time. A
+// caller-supplied id is kept, so an entry can be re-added (a fork, a replace)
+// without losing the identity an update entry points at.
+func stampEntry(e SessionEntry, id string) SessionEntry {
+	if e.ID == "" {
+		e.ID = id
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now().UTC()
+	}
+	if e.Kind == "" {
+		e.Kind = EntryKindItem
+	}
+	return e
+}
+
+// MarshalEntries serializes entries to JSON, suitable for database storage.
+func MarshalEntries(entries []SessionEntry) ([]byte, error) {
+	if entries == nil {
+		entries = []SessionEntry{}
+	}
+	return json.Marshal(entries)
+}
+
+// UnmarshalEntries decodes entries produced by MarshalEntries. It tolerates
+// nil, empty and "null" input by returning a nil slice.
+func UnmarshalEntries(data []byte) ([]SessionEntry, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return nil, nil
+	}
+	var entries []SessionEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("unmarshal session entries: %w", err)
+	}
+	return entries, nil
+}
 
 // MarshalItems serializes a slice of input items to JSON, suitable for database
 // storage. It handles nil slices gracefully (returning "[]").
@@ -267,4 +311,31 @@ func UnmarshalItems(data []byte) ([]TResponseInputItem, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// SessionItems reads a session's history as the model input items it projects
+// to — the conversation as the model would see it, with annotations and other
+// non-context entries left out.
+//
+// It is the read shortcut for callers that only care about the conversation;
+// use GetEntries directly to see everything a session holds.
+func SessionItems(ctx context.Context, s Session, limit int) ([]TResponseInputItem, error) {
+	entries, err := s.GetEntries(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return ProjectEntries(entries, nil)
+}
+
+// AddSessionItems appends plain Responses items to a session as item entries.
+// It is the write shortcut for callers that have items rather than entries.
+func AddSessionItems(ctx context.Context, s Session, items []TResponseInputItem, src Source) error {
+	if len(items) == 0 {
+		return nil
+	}
+	entries, err := NewItemEntries(items, src)
+	if err != nil {
+		return err
+	}
+	return s.AddEntries(ctx, entries)
 }

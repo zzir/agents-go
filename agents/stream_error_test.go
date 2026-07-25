@@ -199,7 +199,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
-		if items, _ := session.GetItems(context.Background(), 0); len(items) != 0 {
+		if items, _ := SessionItems(context.Background(), session, 0); len(items) != 0 {
 			t.Errorf("session has %d orphan items, want 0", len(items))
 		}
 		if model.calls != 0 {
@@ -218,7 +218,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
-		items, _ := session.GetItems(context.Background(), 0)
+		items, _ := SessionItems(context.Background(), session, 0)
 		if len(items) != 1 {
 			t.Errorf("session has %d items, want the 1 user input", len(items))
 		}
@@ -231,7 +231,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session}})
 		tripped(t, err)
 
-		if items, _ := session.GetItems(context.Background(), 0); len(items) != 0 {
+		if items, _ := SessionItems(context.Background(), session, 0); len(items) != 0 {
 			t.Errorf("RunSync left %d orphan items where Run leaves 0", len(items))
 		}
 		if model.calls != 0 {

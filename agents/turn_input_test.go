@@ -31,7 +31,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AddItems(context.Background(), []TResponseInputItem{prior}); err != nil {
+	if err := AddSessionItems(context.Background(), session, []TResponseInputItem{prior}, Source{}); err != nil {
 		t.Fatal(err)
 	}
 

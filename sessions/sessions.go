@@ -3,16 +3,20 @@
 // database driver dependencies never reach the core SDK's dependency graph —
 // callers who use only InMemorySession or memory.FileSession pay nothing for it.
 //
-// Conversation items are stored one row per item, serialized with
-// agents.MarshalInputItem (and read back with agents.UnmarshalInputItem) so the
-// Responses item encoding round-trips exactly as it does for FileSession.
+// Session entries are stored one row per entry, the whole entry serialized as
+// JSON in a single column. Entry kinds and their payloads are an open set, so a
+// column per field would make every new kind a schema migration — and a build
+// that meets a kind it does not know must still read the row back intact.
 package sessions
 
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
+	"time"
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -22,14 +26,20 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// message is the row model: one stored conversation item, ordered by the
+// entry is the row model: one stored session entry, ordered by the
 // autoincrement id within a session.
-type message struct {
-	bun.BaseModel `bun:"table:agent_messages,alias:m"`
+//
+// The whole entry is stored as JSON in one column rather than spread across
+// typed columns. Kinds and their payloads are an open set — a build that meets
+// an entry kind it does not know must still read the row back intact — and a
+// column per field would make every new kind a schema migration.
+type entry struct {
+	bun.BaseModel `bun:"table:agent_entries,alias:e"`
 
 	ID        int64  `bun:"id,pk,autoincrement"`
 	SessionID string `bun:"session_id,notnull"`
-	Item      string `bun:"item,notnull"` // JSON of agents.TResponseInputItem
+	Kind      string `bun:"kind,notnull"`  // indexed for kind-filtered reads
+	Entry     string `bun:"entry,notnull"` // JSON of agents.SessionEntry
 }
 
 // Session is a bun-backed agents.Session scoped to one session ID. Multiple
@@ -66,26 +76,30 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 	return New(db, sessionID), db
 }
 
-// CreateSchema creates the agent_messages table and its lookup index if they do
+// CreateSchema creates the agent_entries table and its lookup index if they do
 // not already exist. It is safe to call repeatedly.
+//
+// The schema changed shape when sessions moved from items to entries; there is
+// no migration from agent_messages. This project does not ship migrations —
+// rebuild the database.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
-	if _, err := db.NewCreateTable().Model((*message)(nil)).IfNotExists().Exec(ctx); err != nil {
+	if _, err := db.NewCreateTable().Model((*entry)(nil)).IfNotExists().Exec(ctx); err != nil {
 		return err
 	}
 	_, err := db.NewCreateIndex().
-		Model((*message)(nil)).
-		Index("idx_agent_messages_session").
+		Model((*entry)(nil)).
+		Index("idx_agent_entries_session").
 		Column("session_id", "id").
 		IfNotExists().
 		Exec(ctx)
 	return err
 }
 
-// GetItems implements agents.Session. A limit <= 0 returns all items
-// oldest-first; a positive limit returns the most recent `limit` items, still
+// GetEntries implements agents.Session. A limit <= 0 returns all entries
+// oldest-first; a positive limit returns the most recent `limit`, still
 // oldest-first.
-func (s *Session) GetItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
-	var rows []message
+func (s *Session) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+	var rows []entry
 	q := s.db.NewSelect().Model(&rows).Where("session_id = ?", s.sessionID)
 	if limit > 0 {
 		q = q.Order("id DESC").Limit(limit)
@@ -98,36 +112,32 @@ func (s *Session) GetItems(ctx context.Context, limit int) ([]agents.TResponseIn
 	if limit > 0 {
 		slices.Reverse(rows) // most-recent-first -> oldest-first
 	}
-	items := make([]agents.TResponseInputItem, 0, len(rows))
+	out := make([]agents.SessionEntry, 0, len(rows))
 	for _, r := range rows {
-		item, err := agents.UnmarshalInputItem([]byte(r.Item))
+		e, err := decodeEntry(r)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		out = append(out, e)
 	}
-	return items, nil
+	return out, nil
 }
 
-// AddItems implements agents.Session.
-func (s *Session) AddItems(ctx context.Context, items []agents.TResponseInputItem) error {
-	if len(items) == 0 {
+// AddEntries implements agents.Session.
+func (s *Session) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+	if len(entries) == 0 {
 		return nil
 	}
-	rows := make([]message, 0, len(items))
-	for _, item := range items {
-		data, err := agents.MarshalInputItem(item)
-		if err != nil {
-			return err
-		}
-		rows = append(rows, message{SessionID: s.sessionID, Item: string(data)})
+	rows, err := s.encodeEntries(entries)
+	if err != nil {
+		return err
 	}
-	_, err := s.db.NewInsert().Model(&rows).Exec(ctx)
+	_, err = s.db.NewInsert().Model(&rows).Exec(ctx)
 	return err
 }
 
-// PopItem implements agents.Session, removing and returning the most recent
-// item (or nil if the session is empty).
+// PopEntry implements agents.Session, removing and returning the most recent
+// entry (or nil if the session is empty).
 //
 // Concurrency: a plain transaction with SELECT max(id) then DELETE does not
 // stop two concurrent pops from reading the same row under PostgreSQL READ
@@ -138,12 +148,12 @@ func (s *Session) AddItems(ctx context.Context, items []agents.TResponseInputIte
 // (RowsAffected == 0) retries with the next candidate. Every retry means some
 // other pop succeeded, so the loop is lock-free and terminates when the
 // session runs empty.
-func (s *Session) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
+func (s *Session) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var row message
+		var row entry
 		err := s.db.NewSelect().Model(&row).
 			Where("session_id = ?", s.sessionID).
 			Order("id DESC").Limit(1).Scan(ctx)
@@ -153,44 +163,40 @@ func (s *Session) PopItem(ctx context.Context) (*agents.TResponseInputItem, erro
 		if err != nil {
 			return nil, err
 		}
-		res, err := s.db.NewDelete().Model((*message)(nil)).Where("id = ?", row.ID).Exec(ctx)
+		res, err := s.db.NewDelete().Model((*entry)(nil)).Where("id = ?", row.ID).Exec(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			// A concurrent pop claimed this row between our select and
-			// delete; try again with whatever is now the most recent item.
+			// delete; try again with whatever is now the most recent entry.
 			continue
 		}
-		item, err := agents.UnmarshalInputItem([]byte(row.Item))
+		e, err := decodeEntry(row)
 		if err != nil {
 			return nil, err
 		}
-		return &item, nil
+		return &e, nil
 	}
 }
 
-// Clear implements agents.Session, removing every item for this session ID.
+// Clear implements agents.Session, removing every entry for this session ID.
 func (s *Session) Clear(ctx context.Context) error {
-	_, err := s.db.NewDelete().Model((*message)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx)
+	_, err := s.db.NewDelete().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx)
 	return err
 }
 
-// ReplaceItems implements agents.ItemsReplacer: the delete of the old history
-// and the insert of the new one run in a single transaction, so a failure
-// mid-rewrite rolls back to the previous history instead of leaving the
+// ReplaceEntries implements agents.EntriesReplacer: the delete of the old
+// history and the insert of the new one run in a single transaction, so a
+// failure mid-rewrite rolls back to the previous history instead of leaving the
 // session empty. Only this session ID's rows are touched.
-func (s *Session) ReplaceItems(ctx context.Context, items []agents.TResponseInputItem) error {
-	rows := make([]message, 0, len(items))
-	for _, item := range items {
-		data, err := agents.MarshalInputItem(item)
-		if err != nil {
-			return err
-		}
-		rows = append(rows, message{SessionID: s.sessionID, Item: string(data)})
+func (s *Session) ReplaceEntries(ctx context.Context, entries []agents.SessionEntry) error {
+	rows, err := s.encodeEntries(entries)
+	if err != nil {
+		return err
 	}
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewDelete().Model((*message)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx); err != nil {
+		if _, err := tx.NewDelete().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx); err != nil {
 			return err
 		}
 		if len(rows) == 0 {
@@ -201,7 +207,42 @@ func (s *Session) ReplaceItems(ctx context.Context, items []agents.TResponseInpu
 	})
 }
 
+// encodeEntries prepares entries for insertion, filling in the fields the store
+// owns. A caller-supplied id is kept, so an entry re-added by a fork or a
+// replace keeps the identity an update entry points at.
+func (s *Session) encodeEntries(entries []agents.SessionEntry) ([]entry, error) {
+	rows := make([]entry, 0, len(entries))
+	for i, e := range entries {
+		if e.Kind == "" {
+			e.Kind = agents.EntryKindItem
+		}
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = time.Now().UTC()
+		}
+		if e.ID == "" {
+			// The row's autoincrement id is not known before the insert, so the
+			// entry id is minted here instead. It only has to be unique within
+			// the session, which is all an update entry needs to point at one.
+			e.ID = fmt.Sprintf("%s-%d-%d", s.sessionID, time.Now().UnixNano(), i)
+		}
+		data, err := json.Marshal(e)
+		if err != nil {
+			return nil, fmt.Errorf("encoding session entry: %w", err)
+		}
+		rows = append(rows, entry{SessionID: s.sessionID, Kind: string(e.Kind), Entry: string(data)})
+	}
+	return rows, nil
+}
+
+func decodeEntry(r entry) (agents.SessionEntry, error) {
+	var e agents.SessionEntry
+	if err := json.Unmarshal([]byte(r.Entry), &e); err != nil {
+		return agents.SessionEntry{}, fmt.Errorf("decoding session entry %d: %w", r.ID, err)
+	}
+	return e, nil
+}
+
 var (
-	_ agents.Session       = (*Session)(nil)
-	_ agents.ItemsReplacer = (*Session)(nil)
+	_ agents.Session         = (*Session)(nil)
+	_ agents.EntriesReplacer = (*Session)(nil)
 )

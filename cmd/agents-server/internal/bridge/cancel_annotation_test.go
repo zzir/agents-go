@@ -7,6 +7,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -81,7 +82,7 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 	// Display-only: none of these annotations may be replayed to the model.
-	items, err := store.NewSessionAdapter(db, sid).GetItems(context.Background(), 0)
+	items, err := agents.SessionItems(context.Background(), store.NewSessionAdapter(db, sid), 0)
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}

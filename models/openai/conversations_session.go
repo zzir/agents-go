@@ -73,10 +73,21 @@ func (s *ConversationsSession) ensureID(ctx context.Context) (string, error) {
 	return s.id, nil
 }
 
-// GetItems implements agents.Session. A limit <= 0 returns the whole
-// conversation oldest-first; a positive limit returns the most recent `limit`
-// items, also oldest-first.
-func (s *ConversationsSession) GetItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
+// GetEntries implements agents.Session. A limit <= 0 returns the whole
+// conversation oldest-first; a positive limit returns the most recent `limit`,
+// also oldest-first.
+//
+// Every entry is an item entry: the server holds Responses items and nothing
+// else, so nothing a run recorded outside the conversation itself comes back.
+func (s *ConversationsSession) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+	items, err := s.getItems(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return agents.NewItemEntries(items, agents.Source{})
+}
+
+func (s *ConversationsSession) getItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
 	id, err := s.lockedEnsureID(ctx)
 	if err != nil {
 		return nil, err
@@ -114,7 +125,30 @@ func (s *ConversationsSession) GetItems(ctx context.Context, limit int) ([]agent
 // POST /conversations/{id}/items ("You may add up to 20 items at a time").
 const conversationItemsBatchLimit = 20
 
-// AddItems implements agents.Session. Items are appended in API-sized batches
+// AddEntries implements agents.Session.
+//
+// **Only item entries are stored.** A server-managed conversation holds
+// Responses items; there is nowhere on the server for an annotation, a terminal
+// record or a custom entry, so those are dropped rather than failing the write.
+// Losing a UI annotation degrades a timeline; failing the run because one could
+// not be stored server-side is worse. Use a local Session when everything a run
+// records must survive.
+func (s *ConversationsSession) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+	items := make([]agents.TResponseInputItem, 0, len(entries))
+	for _, e := range entries {
+		if e.Kind != agents.EntryKindItem {
+			continue
+		}
+		item, err := e.InputItem()
+		if err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	return s.addItems(ctx, items)
+}
+
+// addItems appends items in API-sized batches
 // (conversationItemsBatchLimit per request), since the runner saves a whole
 // run's items in one call and long runs easily exceed the per-request cap.
 //
@@ -122,7 +156,7 @@ const conversationItemsBatchLimit = 20
 // (sanitizeConversationItem): provider-only fields are dropped, stale top-level
 // ids are stripped except where the create-item schema requires them, and
 // reasoning items lacking both an id and encrypted content are omitted entirely.
-func (s *ConversationsSession) AddItems(ctx context.Context, in []agents.TResponseInputItem) error {
+func (s *ConversationsSession) addItems(ctx context.Context, in []agents.TResponseInputItem) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -230,9 +264,9 @@ func isNonEmptyString(v any) bool {
 	return ok && s != ""
 }
 
-// PopItem implements agents.Session: it removes and returns the most recent
+// PopEntry implements agents.Session: it removes and returns the most recent
 // item, or nil if the conversation is empty.
-func (s *ConversationsSession) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
+func (s *ConversationsSession) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
 	id, err := s.lockedEnsureID(ctx)
 	if err != nil {
 		return nil, err
@@ -258,7 +292,12 @@ func (s *ConversationsSession) PopItem(ctx context.Context) (*agents.TResponseIn
 	if _, err := s.svc.Items.Delete(ctx, id, raw.ID); err != nil {
 		return nil, fmt.Errorf("deleting conversation item: %w", err)
 	}
-	return &item, nil
+	entry, err := agents.NewItemEntry(item, agents.Source{})
+	if err != nil {
+		return nil, err
+	}
+	entry.ID = raw.ID
+	return &entry, nil
 }
 
 // Clear implements agents.Session by deleting the server-side conversation. A

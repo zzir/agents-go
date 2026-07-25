@@ -34,7 +34,7 @@ func TestRunnerInvokesCompaction(t *testing.T) {
 		t.Errorf("compaction ResponseID = %q, want resp_42", sess.calls[0].ResponseID)
 	}
 	// History was still persisted to the underlying session.
-	items, _ := sess.GetItems(context.Background(), 0)
+	items, _ := SessionItems(context.Background(), sess, 0)
 	if len(items) == 0 {
 		t.Error("expected persisted items in the underlying session")
 	}

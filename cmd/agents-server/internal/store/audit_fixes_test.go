@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
-
-	"github.com/zzir/agents-go/agents"
 )
 
 // displayOf returns the decoded display projection of the tool_call row with
@@ -146,7 +144,7 @@ func TestPopItemRollsBackOnUndecodableRow(t *testing.T) {
 		t.Fatalf("insert bad: %v", err)
 	}
 
-	if _, err := a.PopItem(ctx); err == nil {
+	if _, err := a.PopEntry(ctx); err == nil {
 		t.Fatal("expected an error popping an undecodable row")
 	}
 	// Neither row was deleted — no silent data loss.
@@ -178,14 +176,14 @@ func TestPopItemSkipsPlaceholderItems(t *testing.T) {
 		t.Fatalf("insert placeholders: %v", err)
 	}
 
-	got, err := a.PopItem(ctx)
+	got, err := a.PopEntry(ctx)
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected the real item, got nil")
 	}
-	raw, err := agents.MarshalInputItem(*got)
+	raw, err := json.Marshal(got.Item)
 	if err != nil {
 		t.Fatalf("marshal popped: %v", err)
 	}

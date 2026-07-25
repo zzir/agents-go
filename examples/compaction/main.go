@@ -42,6 +42,6 @@ func main() {
 		fmt.Printf("> %s\n%s\n\n", p, res.FinalOutputString())
 	}
 
-	items, _ := sess.GetItems(ctx, 0)
+	items, _ := agents.SessionItems(ctx, sess, 0)
 	fmt.Printf("stored items after the chat: %d (compaction keeps this bounded)\n", len(items))
 }

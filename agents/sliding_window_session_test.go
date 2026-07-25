@@ -41,7 +41,7 @@ func TestSlidingWindow_NoBelowThreshold(t *testing.T) {
 		userItem("e"), assistantItem("f"),
 		userItem("g"), assistantItem("h"),
 	}
-	if err := sess.AddItems(context.Background(), items); err != nil {
+	if err := AddSessionItems(context.Background(), sess, items, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,7 +51,7 @@ func TestSlidingWindow_NoBelowThreshold(t *testing.T) {
 	if model.calls != 0 {
 		t.Errorf("model was called %d times, want 0", model.calls)
 	}
-	got, _ := sess.GetItems(context.Background(), 0)
+	got, _ := SessionItems(context.Background(), sess, 0)
 	if len(got) != 8 {
 		t.Errorf("items = %d, want 8", len(got))
 	}
@@ -72,7 +72,7 @@ func TestSlidingWindow_CompactsAboveThreshold(t *testing.T) {
 		userItem("e"), assistantItem("f"),
 		userItem("g"),
 	}
-	if err := sess.AddItems(context.Background(), items); err != nil {
+	if err := AddSessionItems(context.Background(), sess, items, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +82,7 @@ func TestSlidingWindow_CompactsAboveThreshold(t *testing.T) {
 	if model.calls != 1 {
 		t.Fatalf("model calls = %d, want 1", model.calls)
 	}
-	got, _ := sess.GetItems(context.Background(), 0)
+	got, _ := SessionItems(context.Background(), sess, 0)
 	if len(got) != 4 {
 		t.Fatalf("items after compaction = %d, want 4 (1 summary + 3 kept)", len(got))
 	}
@@ -105,7 +105,7 @@ func TestSlidingWindow_ForceIgnoresThreshold(t *testing.T) {
 		userItem("c"), assistantItem("d"),
 		userItem("e"),
 	}
-	if err := sess.AddItems(context.Background(), items); err != nil {
+	if err := AddSessionItems(context.Background(), sess, items, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,7 +115,7 @@ func TestSlidingWindow_ForceIgnoresThreshold(t *testing.T) {
 	if model.calls != 1 {
 		t.Fatalf("model calls = %d, want 1", model.calls)
 	}
-	got, _ := sess.GetItems(context.Background(), 0)
+	got, _ := SessionItems(context.Background(), sess, 0)
 	if len(got) != 3 {
 		t.Errorf("items = %d, want 3 (1 summary + 2 kept)", len(got))
 	}
@@ -134,7 +134,7 @@ func TestSlidingWindow_SkipsSummaryOfSummary(t *testing.T) {
 		systemItem(SummaryMarker + "\n\nPrior summary text"),
 		userItem("a"), assistantItem("b"), userItem("c"),
 	}
-	if err := sess.AddItems(context.Background(), items); err != nil {
+	if err := AddSessionItems(context.Background(), sess, items, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,7 +157,7 @@ func TestSlidingWindow_CustomShouldCompact(t *testing.T) {
 	})
 
 	items := []TResponseInputItem{userItem("a"), assistantItem("b")}
-	if err := sess.AddItems(context.Background(), items); err != nil {
+	if err := AddSessionItems(context.Background(), sess, items, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +167,7 @@ func TestSlidingWindow_CustomShouldCompact(t *testing.T) {
 	if model.calls != 1 {
 		t.Errorf("model calls = %d, want 1", model.calls)
 	}
-	got, _ := sess.GetItems(context.Background(), 0)
+	got, _ := SessionItems(context.Background(), sess, 0)
 	if len(got) != 2 {
 		t.Errorf("items = %d, want 2 (1 summary + 1 kept)", len(got))
 	}
@@ -186,9 +186,9 @@ func TestSlidingWindow_IntegrationWithRunner(t *testing.T) {
 	})
 
 	// Seed some history so compaction triggers.
-	_ = sess.AddItems(context.Background(), []TResponseInputItem{
+	_ = AddSessionItems(context.Background(), sess, []TResponseInputItem{
 		userItem("old1"), assistantItem("old2"),
-	})
+	}, Source{})
 
 	agent := &Agent{Name: "a", Model: "m"}
 	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sw}, Model: ModelOptions{Override: runModel}})

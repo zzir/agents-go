@@ -14,29 +14,107 @@ res2, _ := agents.RunSync(ctx, agent, "What state is it in?", agents.RunOptions{
 
 ## The Session interface
 
+A session stores **entries**, not bare items. An entry is a Responses item plus
+what the run knew about it — who produced it, how to render it, which model call
+it belongs to — or something that is not a Responses item at all.
+
 ```go
 type Session interface {
-	// GetItems returns stored items oldest-first. limit <= 0 returns all;
-	// a positive limit returns the most recent `limit` items.
-	GetItems(ctx context.Context, limit int) ([]TResponseInputItem, error)
-	// AddItems appends items to the history.
-	AddItems(ctx context.Context, items []TResponseInputItem) error
-	// PopItem removes and returns the most recent item, or nil if empty.
-	PopItem(ctx context.Context) (*TResponseInputItem, error)
-	// Clear removes all items.
+	// GetEntries returns stored entries oldest-first. limit <= 0 returns all;
+	// a positive limit returns the most recent `limit`.
+	GetEntries(ctx context.Context, limit int) ([]SessionEntry, error)
+	// AddEntries appends entries to the history.
+	AddEntries(ctx context.Context, entries []SessionEntry) error
+	// PopEntry removes and returns the most recent entry, or nil if empty.
+	PopEntry(ctx context.Context) (*SessionEntry, error)
+	// Clear removes everything.
 	Clear(ctx context.Context) error
 }
 ```
 
+Storing items alone left everything else homeless — an error banner, the partial
+output of a cancelled run, a compaction checkpoint, terminal output. Consumers
+grew side tables for those and then had to merge two orderings back together at
+read time.
+
+| Kind | What it holds |
+|---|---|
+| `item` | A Responses item — the conversation itself |
+| `annotation` | For people, not the model: an error, a cancellation notice |
+| `compaction` | A checkpoint: a summary plus the tail it retained |
+| `terminal` | Interactive terminal output |
+| `update` | An amendment to an earlier entry's display (see below) |
+| `custom` | The extension point; `CustomType` names the subtype |
+
+The vocabulary is **open**: a build that meets a kind it does not know ignores
+the entry rather than failing, so a session written by a newer version stays
+readable.
+
+If you only want the conversation, `agents.SessionItems` reads a session as the
+items it projects to, and `agents.AddSessionItems` appends plain items.
+
 Implement it against any store (Postgres, Redis, …). Use `agents.MarshalInputItem` / `agents.UnmarshalInputItem` for encoding — they handle two openai-go serialization quirks (assistant messages and `"type"`-less easy messages) that naive JSON round-trips get wrong.
 
-Backends that can swap the whole history in one step should also implement the optional `agents.ItemsReplacer` capability:
+Backends that can swap the whole history in one step should also implement the optional `agents.EntriesReplacer` capability:
 
 ```go
-type ItemsReplacer interface {
-	ReplaceItems(ctx context.Context, items []TResponseInputItem) error // atomic swap
+type EntriesReplacer interface {
+	ReplaceEntries(ctx context.Context, entries []SessionEntry) error // atomic swap
 }
 ```
+
+## Projection: what the model reads
+
+Recording something and sending it to the model are different acts. An
+`EntryProjector` decides, per kind, which entries become model input:
+
+| Kind | Projected by default? |
+|---|---|
+| `item` | Yes — it *is* the conversation |
+| `compaction` | Yes — the summary (as a **system** message; nobody said it) plus its retained tail |
+| everything else | **No** |
+
+Override per kind through `RunOptions.Conversation.Projectors`. The usual reason
+is the opposite of suppression — letting the model see terminal output:
+
+```go
+agents.RunOptions{Conversation: agents.ConversationOptions{
+	Session: sess,
+	Projectors: map[agents.EntryKind]agents.EntryProjector{
+		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.TResponseInputItem, error) {
+			var p struct{ Command string `json:"command"` }
+			if err := json.Unmarshal(e.Payload, &p); err != nil { return nil, err }
+			return agents.InputItemsFromText("$ " + p.Command), nil
+		},
+	},
+}}
+```
+
+Mapping a kind to `nil` suppresses it instead.
+
+## Entries are append-only
+
+Nothing is ever rewritten in place. That is what lets a session be forked,
+shared and read concurrently without a writer invalidating a reader's view.
+
+Some displays are only settled long after their turn ended — a background task
+card whose task runs for minutes while the parent turn finished in seconds. That
+is an **update entry**: a new entry naming the one it amends, folded in by
+`agents.FoldUpdates` at read time.
+
+```go
+upd, _ := agents.NewUpdateEntry(targetEntryID, agents.ItemDisplay{Text: "done"})
+sess.AddEntries(ctx, []agents.SessionEntry{upd})
+```
+
+Two rules make this more than a workaround:
+
+- **An update may be stored before its target.** Association is by id, so the
+  "task finished before the parent turn was persisted" race does not need
+  handling — it does not exist.
+- **An update whose target is missing is ignored, not an error.** The target may
+  have been folded away by compaction, and failing an entire read over a stale
+  pointer would make history unloadable.
 
 History rewriters (compaction, summarization) go through `agents.ReplaceSessionItems`, which uses `ReplaceItems` when available and only falls back to the non-atomic `Clear`+`AddItems` otherwise — implementing it removes the failure window where a crash between the two calls leaves the session empty. All built-in backends (`InMemorySession`, `FileSession`, SQLite/PostgreSQL) implement it.
 

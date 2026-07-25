@@ -31,7 +31,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	t.Helper()
 	ctx := context.Background()
 
-	got, err := s.GetItems(ctx, 0)
+	got, err := agents.SessionItems(ctx, s, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,11 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	in := []agents.TResponseInputItem{item("a"), item("b"), item("c")}
-	if err := s.AddItems(ctx, in); err != nil {
+	if err := agents.AddSessionItems(ctx, s, in, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err = s.GetItems(ctx, 0)
+	got, err = agents.SessionItems(ctx, s, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	// Most recent 2, still oldest-first => b, c.
-	got, err = s.GetItems(ctx, 2)
+	got, err = agents.SessionItems(ctx, s, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,14 +67,21 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	// Pop returns the most recent (c) and shrinks the history.
-	last, err := s.PopItem(ctx)
+	last, err := s.PopEntry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last == nil || jsonOf(t, *last) != jsonOf(t, in[2]) {
-		t.Errorf("pop: got %v, want c", last)
+	if last == nil {
+		t.Fatal("pop returned nothing")
 	}
-	got, _ = s.GetItems(ctx, 0)
+	lastItem, err := last.InputItem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jsonOf(t, lastItem) != jsonOf(t, in[2]) {
+		t.Errorf("pop: got %v, want c", lastItem)
+	}
+	got, _ = agents.SessionItems(ctx, s, 0)
 	if len(got) != 2 {
 		t.Errorf("after pop: got %d items, want 2", len(got))
 	}
@@ -82,12 +89,12 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	if err := s.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = s.GetItems(ctx, 0)
+	got, _ = agents.SessionItems(ctx, s, 0)
 	if len(got) != 0 {
 		t.Errorf("after clear: got %d items, want 0", len(got))
 	}
 
-	last, err = s.PopItem(ctx)
+	last, err = s.PopEntry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +129,10 @@ func TestSQLite_SessionIsolation(t *testing.T) {
 	}
 	b := sessions.New(db, "b")
 
-	if err := a.AddItems(ctx, []agents.TResponseInputItem{item("only-a")}); err != nil {
+	if err := agents.AddSessionItems(ctx, a, []agents.TResponseInputItem{item("only-a")}, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := b.GetItems(ctx, 0)
+	got, _ := agents.SessionItems(ctx, b, 0)
 	if len(got) != 0 {
 		t.Errorf("session b leaked %d items from a", len(got))
 	}
@@ -151,4 +158,14 @@ func TestPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	runSessionContract(t, s)
+}
+
+// mustEntries wraps plain items as item entries for tests exercising replace.
+func mustEntries(t *testing.T, items []agents.TResponseInputItem) []agents.SessionEntry {
+	t.Helper()
+	entries, err := agents.NewItemEntries(items, agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
 }

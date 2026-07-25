@@ -63,7 +63,7 @@ func TestConversationsSession_AddItemsPartialFailureReported(t *testing.T) {
 		items = append(items, agents.InputItemsFromText("m"+strconv.Itoa(i))...)
 	}
 
-	err := s.AddItems(ctx, items)
+	err := agents.AddSessionItems(ctx, s, items, agents.Source{})
 	if err == nil {
 		t.Fatal("AddItems returned nil, want an error when a later batch fails")
 	}
@@ -98,7 +98,7 @@ func TestConversationsSession_AddItemsFirstBatchFailureIsPlain(t *testing.T) {
 		option.WithMaxRetries(0),
 	)
 
-	err := s.AddItems(ctx, agents.InputItemsFromText("only"))
+	err := agents.AddSessionItems(ctx, s, agents.InputItemsFromText("only"), agents.Source{})
 	if err == nil {
 		t.Fatal("AddItems returned nil, want an error")
 	}

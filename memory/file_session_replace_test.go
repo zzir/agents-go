@@ -9,7 +9,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-func TestFileSession_ReplaceItems(t *testing.T) {
+func TestFileSession_ReplaceEntries(t *testing.T) {
 	ctx := context.Background()
 	sess, err := NewFileSession(t.TempDir(), "replace-1")
 	if err != nil {
@@ -19,17 +19,17 @@ func TestFileSession_ReplaceItems(t *testing.T) {
 	old := agents.InputItemsFromText("old-1")
 	old = append(old, agents.InputItemsFromText("old-2")...)
 	old = append(old, agents.InputItemsFromText("old-3")...)
-	if err := sess.AddItems(ctx, old); err != nil {
+	if err := agents.AddSessionItems(ctx, sess, old, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
 	repl := agents.InputItemsFromText("new-1")
 	repl = append(repl, agents.InputItemsFromText("new-2")...)
-	if err := sess.ReplaceItems(ctx, repl); err != nil {
+	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, repl)); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := sess.GetItems(ctx, 0)
+	got, err := agents.SessionItems(ctx, sess, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,19 +57,19 @@ func TestFileSession_ReplaceItems(t *testing.T) {
 	}
 }
 
-func TestFileSession_ReplaceItemsEmptyClears(t *testing.T) {
+func TestFileSession_ReplaceEntriesEmptyClears(t *testing.T) {
 	ctx := context.Background()
 	sess, err := NewFileSession(t.TempDir(), "replace-empty")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AddItems(ctx, agents.InputItemsFromText("hello")); err != nil {
+	if err := agents.AddSessionItems(ctx, sess, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.ReplaceItems(ctx, nil); err != nil {
+	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, nil)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := sess.GetItems(ctx, 0)
+	got, err := agents.SessionItems(ctx, sess, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,16 +86,16 @@ func TestFileSession_ReplaceSessionItemsUsesAtomicPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := any(sess).(agents.ItemsReplacer); !ok {
-		t.Fatal("FileSession must implement agents.ItemsReplacer")
+	if _, ok := any(sess).(agents.EntriesReplacer); !ok {
+		t.Fatal("FileSession must implement agents.EntriesReplacer")
 	}
-	if err := sess.AddItems(ctx, agents.InputItemsFromText("before")); err != nil {
+	if err := agents.AddSessionItems(ctx, sess, agents.InputItemsFromText("before"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.ReplaceSessionItems(ctx, sess, agents.InputItemsFromText("after")); err != nil {
+	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("after"))); err != nil {
 		t.Fatal(err)
 	}
-	got, err := sess.GetItems(ctx, 0)
+	got, err := agents.SessionItems(ctx, sess, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

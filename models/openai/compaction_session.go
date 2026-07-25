@@ -109,19 +109,19 @@ func NewCompactionSession(underlying agents.Session, opts CompactionOptions, cli
 	}, nil
 }
 
-// GetItems implements agents.Session.
-func (s *CompactionSession) GetItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
-	return s.underlying.GetItems(ctx, limit)
+// GetEntries implements agents.Session.
+func (s *CompactionSession) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+	return s.underlying.GetEntries(ctx, limit)
 }
 
-// AddItems implements agents.Session.
-func (s *CompactionSession) AddItems(ctx context.Context, items []agents.TResponseInputItem) error {
-	return s.underlying.AddItems(ctx, items)
+// AddEntries implements agents.Session.
+func (s *CompactionSession) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+	return s.underlying.AddEntries(ctx, entries)
 }
 
-// PopItem implements agents.Session.
-func (s *CompactionSession) PopItem(ctx context.Context) (*agents.TResponseInputItem, error) {
-	return s.underlying.PopItem(ctx)
+// PopEntry implements agents.Session.
+func (s *CompactionSession) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+	return s.underlying.PopEntry(ctx)
 }
 
 // Clear implements agents.Session.
@@ -133,7 +133,10 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 // history via responses.compact when the decision hook (or args.Force) says so,
 // replacing the underlying session's items with the compacted output.
 func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.CompactionArgs) error {
-	items, err := s.underlying.GetItems(ctx, 0)
+	// Server-side compaction operates on the conversation the model reads, so
+	// it starts from the projection: an annotation is not context and must not
+	// be sent to responses.compact as if it were.
+	items, err := agents.SessionItems(ctx, s.underlying, 0)
 	if err != nil {
 		return err
 	}
@@ -173,9 +176,13 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 	out = stripOrphanedAssistantIDs(out)
 	span.Set("after_items", len(out))
 
-	// ReplaceSessionItems swaps atomically when the underlying session supports
-	// it, so a failed write cannot leave the history cleared but empty.
-	if err := agents.ReplaceSessionItems(ctx, s.underlying, out); err != nil {
+	// ReplaceSessionEntries swaps atomically when the underlying session
+	// supports it, so a failed write cannot leave the history cleared but empty.
+	replacement, err := agents.NewItemEntries(out, agents.Source{Type: agents.SourceCompaction})
+	if err != nil {
+		return fmt.Errorf("compaction: encoding compacted history: %w", err)
+	}
+	if err := agents.ReplaceSessionEntries(ctx, s.underlying, replacement); err != nil {
 		return fmt.Errorf("compaction: replacing history: %w", err)
 	}
 	return nil

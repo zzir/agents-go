@@ -55,13 +55,13 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		items, _ := sess.GetItems(ctx, 0)
+		items, _ := agents.SessionItems(ctx, sess, 0)
 		fmt.Printf("Q: %s\nA: %s\n(session now holds %d items)\n\n", q, res.FinalOutputString(), len(items))
 	}
 
 	// After compaction the history starts with a single summary message; the
 	// final answer above still knows about Kyoto because the summary carries it.
-	items, err := sess.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, sess, 0)
 	if err != nil {
 		log.Fatal(err)
 	}

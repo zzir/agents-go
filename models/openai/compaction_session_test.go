@@ -94,7 +94,7 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 	for range 12 {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
-	if err := under.AddItems(ctx, seed); err != nil {
+	if err := agents.AddSessionItems(ctx, under, seed, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,7 +108,7 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := under.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, under, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +130,9 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	under := agents.NewInMemorySession()
-	_ = under.AddItems(ctx, []agents.TResponseInputItem{
+	_ = agents.AddSessionItems(ctx, under, []agents.TResponseInputItem{
 		mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`),
-	})
+	}, agents.Source{})
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1"},
 		option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
 	if err != nil {

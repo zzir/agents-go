@@ -143,7 +143,7 @@ func TestSessionAdapterReplayPolicy(t *testing.T) {
 	}
 
 	// Same model: everything except the annotation replays, ids intact.
-	items, err := sa.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, sa, 0)
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestSessionAdapterReplayPolicy(t *testing.T) {
 
 	// Different model: reasoning dropped, assistant id stripped.
 	sa.SetModel("model-b")
-	items, err = sa.GetItems(ctx, 0)
+	items, err = agents.SessionItems(ctx, sa, 0)
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestGetItemsFrontLoadsCompactionSummary(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	items, err := sa.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, sa, 0)
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}

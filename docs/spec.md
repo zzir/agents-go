@@ -228,6 +228,42 @@ Multiple updates to one target merge in sequence order. An update whose target
 does not exist is ignored, not an error — the target may have been folded away
 by compaction.
 
+### 2.5b Session entries ✅
+
+A session stores **entries**, not bare Responses items. An entry carries the
+item plus what the run knew about it — provenance, display, the model call it
+belongs to — or something that is not a Responses item at all (an annotation, a
+compaction checkpoint, terminal output).
+
+- **The kind vocabulary is open.** A build that meets a kind it does not know
+  ignores the entry rather than failing, so a session written by a newer version
+  stays readable.
+- **Projection decides what the model reads.** Items and compaction checkpoints
+  project by default; annotations, terminal output and custom entries do not.
+  Recording something and putting it in the model's mouth are different acts.
+  `RunOptions.Conversation.Projectors` overrides this per kind.
+- **A compaction summary projects as a *system* message**, not a user one:
+  nobody said it, and attributing it to the user would put words in their mouth.
+- **A checkpoint is self-contained** — it carries the retained tail inside it,
+  so reading it gives the whole context that replaced the folded history.
+
+**Entries are append-only.** ✅ Nothing is rewritten in place; that is what lets
+a session be forked, shared and read concurrently without a writer invalidating
+a reader's view. A display settled after its turn ended is expressed as an
+**update entry** naming its target, folded in at read time:
+
+- Updates apply in stored order; the last write wins per field.
+- **An update may be stored before its target.** Association is by id, so the
+  "the task finished before the parent turn was persisted" race does not need
+  handling — it cannot occur.
+- **An update whose target is missing is ignored, not an error.** The target may
+  have been folded away by compaction, and failing an entire read over a stale
+  pointer would make history unloadable.
+
+A server-managed conversation (`openai.ConversationsSession`) can hold only
+items; other kinds are dropped on write, because failing a run over a UI
+annotation that could not be stored server-side is worse than losing it.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in

@@ -412,7 +412,7 @@ func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
 	if _, err := RunSync(context.Background(), agent, "hi", opts); err != nil {
 		t.Fatal(err)
 	}
-	items, err := session.GetItems(context.Background(), 0)
+	items, err := SessionItems(context.Background(), session, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 	if _, err := RunSync(context.Background(), agent, "go", opts); err != nil {
 		t.Fatal(err)
 	}
-	items, err := session.GetItems(context.Background(), 0)
+	items, err := SessionItems(context.Background(), session, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

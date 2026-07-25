@@ -27,7 +27,7 @@ func TestPathLocks_ConcurrentAddItemsSamePath(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if err := sess.AddItems(ctx, agents.InputItemsFromText(fmt.Sprintf("msg-%d", i))); err != nil {
+			if err := agents.AddSessionItems(ctx, sess, agents.InputItemsFromText(fmt.Sprintf("msg-%d", i)), agents.Source{}); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -38,7 +38,7 @@ func TestPathLocks_ConcurrentAddItemsSamePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := sess.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, sess, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,11 +68,11 @@ func TestPathLocks_TableShrinksToZero(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if err := sess.AddItems(ctx, agents.InputItemsFromText("hello")); err != nil {
+			if err := agents.AddSessionItems(ctx, sess, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 				t.Error(err)
 				return
 			}
-			if _, err := sess.GetItems(ctx, 0); err != nil {
+			if _, err := agents.SessionItems(ctx, sess, 0); err != nil {
 				t.Error(err)
 				return
 			}

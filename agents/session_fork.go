@@ -9,45 +9,45 @@ import (
 // clone. dst is cleared first so it contains exactly what src had at the time
 // of the call.
 func ForkSession(ctx context.Context, src, dst Session) error {
-	items, err := src.GetItems(ctx, 0)
+	entries, err := src.GetEntries(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("fork: reading source session: %w", err)
 	}
 	if err := dst.Clear(ctx); err != nil {
 		return fmt.Errorf("fork: clearing destination session: %w", err)
 	}
-	if len(items) == 0 {
+	if len(entries) == 0 {
 		return nil
 	}
-	if err := dst.AddItems(ctx, items); err != nil {
+	if err := dst.AddEntries(ctx, entries); err != nil {
 		return fmt.Errorf("fork: writing to destination session: %w", err)
 	}
 	return nil
 }
 
-// ForkSessionAt copies the first n items from src into dst, producing a
+// ForkSessionAt copies the first n entries from src into dst, producing a
 // point-in-time fork. n is clamped to the source length: n <= 0 copies
-// nothing, n >= len(items) copies everything. dst is cleared first.
+// nothing, n >= len(entries) copies everything. dst is cleared first.
 //
 // Choose n on a paired-item boundary: cutting between a function_call and its
 // function_call_output leaves a dangling call in dst, and the API rejects such
 // a history on the next run. When forking after a tool call, include both the
 // call and its output.
 func ForkSessionAt(ctx context.Context, src, dst Session, n int) error {
-	items, err := src.GetItems(ctx, 0)
+	entries, err := src.GetEntries(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("fork: reading source session: %w", err)
 	}
 	if err := dst.Clear(ctx); err != nil {
 		return fmt.Errorf("fork: clearing destination session: %w", err)
 	}
-	if n <= 0 || len(items) == 0 {
+	if n <= 0 || len(entries) == 0 {
 		return nil
 	}
-	if n > len(items) {
-		n = len(items)
+	if n > len(entries) {
+		n = len(entries)
 	}
-	if err := dst.AddItems(ctx, items[:n]); err != nil {
+	if err := dst.AddEntries(ctx, entries[:n]); err != nil {
 		return fmt.Errorf("fork: writing to destination session: %w", err)
 	}
 	return nil

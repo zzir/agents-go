@@ -52,7 +52,7 @@ type compactingSession struct {
 }
 
 func (s *compactingSession) RunCompaction(ctx context.Context, args CompactionArgs) error {
-	items, err := s.GetItems(ctx, 0)
+	items, err := SessionItems(ctx, s, 0)
 	if err != nil {
 		return err
 	}

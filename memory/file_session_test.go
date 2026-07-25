@@ -18,11 +18,11 @@ func TestFileSession_RoundTrip(t *testing.T) {
 
 	items := agents.InputItemsFromText("hello")
 	items = append(items, agents.InputItemsFromText("world")...)
-	if err := sess.AddItems(ctx, items); err != nil {
+	if err := agents.AddSessionItems(ctx, sess, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := sess.GetItems(ctx, 0)
+	got, err := agents.SessionItems(ctx, sess, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	}
 
 	// Limit returns the most recent N, oldest-first.
-	last, err := sess.GetItems(ctx, 1)
+	last, err := agents.SessionItems(ctx, sess, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,14 +43,18 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	}
 
 	// Pop removes the most recent.
-	popped, err := sess.PopItem(ctx)
+	popped, err := sess.PopEntry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if popped == nil || popped.OfMessage.Content.OfString.Value != "world" {
+	poppedItem, perr := popped.InputItem()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	if popped == nil || poppedItem.OfMessage.Content.OfString.Value != "world" {
 		t.Errorf("popped = %+v", popped)
 	}
-	remaining, _ := sess.GetItems(ctx, 0)
+	remaining, _ := agents.SessionItems(ctx, sess, 0)
 	if len(remaining) != 1 {
 		t.Errorf("after pop: %d items, want 1", len(remaining))
 	}
@@ -59,7 +63,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	if err := sess.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
-	empty, _ := sess.GetItems(ctx, 0)
+	empty, _ := agents.SessionItems(ctx, sess, 0)
 	if len(empty) != 0 {
 		t.Errorf("after clear: %d items, want 0", len(empty))
 	}
@@ -73,7 +77,7 @@ func TestFileSession_PersistsAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.AddItems(ctx, agents.InputItemsFromText("remember me")); err != nil {
+	if err := agents.AddSessionItems(ctx, a, agents.InputItemsFromText("remember me"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +86,7 @@ func TestFileSession_PersistsAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, _ := b.GetItems(ctx, 0)
+	items, _ := agents.SessionItems(ctx, b, 0)
 	if len(items) != 1 {
 		t.Errorf("reopened session lost history: %d items", len(items))
 	}
@@ -94,10 +98,10 @@ func TestFileSession_IsolationBySessionID(t *testing.T) {
 	a, _ := NewFileSession(dir, "a")
 	b, _ := NewFileSession(dir, "b")
 
-	if err := a.AddItems(ctx, agents.InputItemsFromText("for-a")); err != nil {
+	if err := agents.AddSessionItems(ctx, a, agents.InputItemsFromText("for-a"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	bItems, _ := b.GetItems(ctx, 0)
+	bItems, _ := agents.SessionItems(ctx, b, 0)
 	if len(bItems) != 0 {
 		t.Errorf("session b leaked items from a: %d", len(bItems))
 	}
@@ -106,7 +110,7 @@ func TestFileSession_IsolationBySessionID(t *testing.T) {
 func TestFileSession_PopOnEmpty(t *testing.T) {
 	ctx := context.Background()
 	sess, _ := NewFileSession(t.TempDir(), "empty")
-	item, err := sess.PopItem(ctx)
+	item, err := sess.PopEntry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +160,7 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range writes {
-			if err := a.AddItems(context.Background(), agents.InputItemsFromText("from-a")); err != nil {
+			if err := agents.AddSessionItems(context.Background(), a, agents.InputItemsFromText("from-a"), agents.Source{}); err != nil {
 				t.Error(err)
 				return
 			}
@@ -166,7 +170,7 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range writes / 4 {
-			item, err := b.PopItem(context.Background())
+			item, err := b.PopEntry(context.Background())
 			if err != nil {
 				t.Error(err)
 				return
@@ -178,11 +182,22 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 	}()
 	wg.Wait()
 
-	items, err := a.GetItems(context.Background(), 0)
+	items, err := agents.SessionItems(context.Background(), a, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := len(items) + popped; got != writes {
 		t.Errorf("items+popped = %d, want %d (lost writes)", got, writes)
 	}
+}
+
+// mustEntries wraps plain items as item entries for tests that exercise the
+// replace path.
+func mustEntries(t *testing.T, items []agents.TResponseInputItem) []agents.SessionEntry {
+	t.Helper()
+	entries, err := agents.NewItemEntries(items, agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
 }

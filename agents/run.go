@@ -141,6 +141,17 @@ type ConversationOptions struct {
 	// the server holds history, so the runner sends only new items each turn. It
 	// is server-managed state and must not be combined with a local Session.
 	ConversationID string
+
+	// Projectors overrides how session entries become model input, per entry
+	// kind. It is the single place that answers "what does the model get to
+	// read": the defaults send items and compaction checkpoints and nothing
+	// else, so an annotation or terminal output is recorded without being put
+	// in the model's mouth.
+	//
+	// A projector mapped to nil suppresses that kind entirely. The common
+	// override is the opposite — projecting EntryKindTerminal as a user message
+	// so the model can see what was run by hand.
+	Projectors map[EntryKind]EntryProjector
 }
 
 // ExecOptions bounds and steers the run loop.
@@ -349,7 +360,14 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	modelInput := userInput
 	if opts.Conversation.Session != nil {
 		limit := resolveSessionLimit(opts.Conversation.Settings, opts.Conversation.Session)
-		history, herr := opts.Conversation.Session.GetItems(ctx, limit)
+		entries, herr := opts.Conversation.Session.GetEntries(ctx, limit)
+		if herr != nil {
+			return nil, nil, nil, herr
+		}
+		// Projection decides what the model reads. An annotation, terminal
+		// output or an entry kind this build does not know is recorded but not
+		// sent — the caller opts it in through Conversation.Projectors.
+		history, herr := ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
@@ -1111,7 +1129,11 @@ func (r *runner) persistUserInput(ctx context.Context) error {
 	if r.opts.Conversation.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
 		return nil
 	}
-	if err := r.opts.Conversation.Session.AddItems(ctx, r.userInput); err != nil {
+	entries, err := NewItemEntries(r.userInput, Source{Type: SourceUser})
+	if err != nil {
+		return err
+	}
+	if err := r.opts.Conversation.Session.AddEntries(ctx, entries); err != nil {
 		return err
 	}
 	r.userInputSaved = true
@@ -1133,12 +1155,18 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 	if end <= r.persistedSessionItems {
 		return nil
 	}
-	toSave, err := itemsToInputList(r.sessionItems[r.persistedSessionItems:end])
-	if err != nil {
-		return err
+	toSave := make([]SessionEntry, 0, end-r.persistedSessionItems)
+	for _, it := range r.sessionItems[r.persistedSessionItems:end] {
+		// Provenance and display ride along, so a reader gets the same timeline
+		// the run produced instead of re-deriving it from the wire item.
+		e, err := EntryFromRunItem(it, r.lastResponseID)
+		if err != nil {
+			return err
+		}
+		toSave = append(toSave, e)
 	}
 	if len(toSave) > 0 {
-		if err := r.opts.Conversation.Session.AddItems(ctx, toSave); err != nil {
+		if err := r.opts.Conversation.Session.AddEntries(ctx, toSave); err != nil {
 			return err
 		}
 	}

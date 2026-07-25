@@ -123,10 +123,10 @@ func TestNormalizeStoredInput_KeepsDuplicateMessages(t *testing.T) {
 // persists at an interruption) must not reach the model as an orphan.
 func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	sess := NewInMemorySession()
-	if err := sess.AddItems(context.Background(), []TResponseInputItem{
+	if err := AddSessionItems(context.Background(), sess, []TResponseInputItem{
 		userMsg("earlier question"),
 		fnCall("dangling"), // no output — a paused Python turn
-	}); err != nil {
+	}, Source{}); err != nil {
 		t.Fatal(err)
 	}
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "answer"))}}

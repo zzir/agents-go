@@ -65,7 +65,7 @@ func TestConversationsSession_AddItemsBatchesAtAPILimit(t *testing.T) {
 	for i := range 45 {
 		items = append(items, agents.InputItemsFromText("msg-"+strconv.Itoa(i))...)
 	}
-	if err := s.AddItems(ctx, items); err != nil {
+	if err := agents.AddSessionItems(ctx, s, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,7 +95,7 @@ func TestConversationsSession_AddItemsSingleBatchUnderLimit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := NewConversationsSession(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
 
-	if err := s.AddItems(ctx, agents.InputItemsFromText("only")); err != nil {
+	if err := agents.AddSessionItems(ctx, s, agents.InputItemsFromText("only"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
@@ -140,7 +140,7 @@ func seededCompactionSession(t *testing.T, baseURL string, n int, under agents.S
 	for range n {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
-	if err := under.AddItems(ctx, seed); err != nil {
+	if err := agents.AddSessionItems(ctx, under, seed, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1", Mode: CompactionModeInput},
@@ -210,7 +210,7 @@ func TestRunCompactionNilStartSpanIsSafe(t *testing.T) {
 	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := under.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, under, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,11 +237,11 @@ func (r *replaceRecordingSession) Clear(ctx context.Context) error {
 	return r.InMemorySession.Clear(ctx)
 }
 
-func (r *replaceRecordingSession) ReplaceItems(ctx context.Context, items []agents.TResponseInputItem) error {
+func (r *replaceRecordingSession) ReplaceEntries(ctx context.Context, entries []agents.SessionEntry) error {
 	r.mu.Lock()
 	r.replaceCalls++
 	r.mu.Unlock()
-	return r.InMemorySession.ReplaceItems(ctx, items)
+	return r.InMemorySession.ReplaceEntries(ctx, entries)
 }
 
 func TestRunCompactionUsesAtomicReplace(t *testing.T) {
@@ -264,7 +264,7 @@ func TestRunCompactionUsesAtomicReplace(t *testing.T) {
 		t.Errorf("Clear calls = %d, want 0 (history must not go through a clear+add window)", clearCalls)
 	}
 
-	items, err := under.GetItems(ctx, 0)
+	items, err := agents.SessionItems(ctx, under, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

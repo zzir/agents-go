@@ -1,6 +1,6 @@
 // Package memory provides persistent Session implementations for the agents SDK.
 //
-// FileSession stores conversation history as a JSONL file (one item per line),
+// FileSession stores conversation history as a JSONL file (one entry per line),
 // with zero external dependencies. It suits single-machine, moderate-volume use;
 // for high concurrency or large histories, implement agents.Session against a
 // database of your choice.
@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -137,9 +138,9 @@ func sanitizeSessionID(id string) string {
 	return strings.Trim(b.String(), ".")
 }
 
-// GetItems returns stored items oldest-first. A limit <= 0 returns all items; a
-// positive limit returns the most recent `limit` items (still oldest-first).
-func (s *FileSession) GetItems(_ context.Context, limit int) ([]agents.TResponseInputItem, error) {
+// GetEntries returns stored entries oldest-first. A limit <= 0 returns all; a
+// positive limit returns the most recent `limit` (still oldest-first).
+func (s *FileSession) GetEntries(_ context.Context, limit int) ([]agents.SessionEntry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -147,40 +148,48 @@ func (s *FileSession) GetItems(_ context.Context, limit int) ([]agents.TResponse
 		return nil, err
 	}
 	// Decode everything first (skipping corrupt lines) so a bad line cannot
-	// shrink the window below limit while older valid items exist.
-	items := make([]agents.TResponseInputItem, 0, len(lines))
+	// shrink the window below limit while older valid entries exist.
+	entries := make([]agents.SessionEntry, 0, len(lines))
 	for _, line := range lines {
-		item, err := agents.UnmarshalInputItem(line)
-		if err != nil {
+		var e agents.SessionEntry
+		if err := json.Unmarshal(line, &e); err != nil {
 			// Skip corrupt lines rather than failing the whole read.
 			continue
 		}
-		items = append(items, item)
+		entries = append(entries, e)
 	}
-	if limit > 0 && limit < len(items) {
-		items = items[len(items)-limit:]
+	if limit > 0 && limit < len(entries) {
+		entries = entries[len(entries)-limit:]
 	}
-	return items, nil
+	return entries, nil
 }
 
-// AddItems appends items to the session file. The batch is marshaled up front
-// and written with a single write call, so a marshal failure writes nothing
-// and a crash cannot interleave half-written lines from this batch.
-func (s *FileSession) AddItems(_ context.Context, items []agents.TResponseInputItem) error {
-	if len(items) == 0 {
+// AddEntries appends entries to the session file. The batch is marshaled up
+// front and written with a single write call, so a marshal failure writes
+// nothing and a crash cannot interleave half-written lines from this batch.
+func (s *FileSession) AddEntries(_ context.Context, entries []agents.SessionEntry) error {
+	if len(entries) == 0 {
 		return nil
 	}
+	release := acquire(s.lockKey)
+	defer release()
+
+	// Ids are assigned under the lock, from the current line count, so two
+	// concurrent appends to the same file cannot mint the same id.
+	next, err := s.lineCount()
+	if err != nil {
+		return err
+	}
 	var buf bytes.Buffer
-	for i := range items {
-		data, err := json.Marshal(items[i])
+	for i := range entries {
+		next++
+		data, err := json.Marshal(stamp(entries[i], next))
 		if err != nil {
-			return fmt.Errorf("marshaling session item: %w", err)
+			return fmt.Errorf("marshaling session entry: %w", err)
 		}
 		buf.Write(data)
 		buf.WriteByte('\n')
 	}
-	release := acquire(s.lockKey)
-	defer release()
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -198,16 +207,16 @@ func (s *FileSession) AddItems(_ context.Context, items []agents.TResponseInputI
 	return f.Close()
 }
 
-// ReplaceItems implements agents.ItemsReplacer: the entire history is swapped
-// in one atomic file rewrite (temp file + fsync + rename), so a crash or
-// write failure can never leave the session empty or half-written. An empty
-// item list removes the file, matching Clear.
-func (s *FileSession) ReplaceItems(_ context.Context, items []agents.TResponseInputItem) error {
-	lines := make([][]byte, 0, len(items))
-	for i := range items {
-		data, err := json.Marshal(items[i])
+// ReplaceEntries implements agents.EntriesReplacer: the entire history is
+// swapped in one atomic file rewrite (temp file + fsync + rename), so a crash
+// or write failure can never leave the session empty or half-written. An empty
+// list removes the file, matching Clear.
+func (s *FileSession) ReplaceEntries(_ context.Context, entries []agents.SessionEntry) error {
+	lines := make([][]byte, 0, len(entries))
+	for i := range entries {
+		data, err := json.Marshal(stamp(entries[i], i+1))
 		if err != nil {
-			return fmt.Errorf("marshaling session item: %w", err)
+			return fmt.Errorf("marshaling session entry: %w", err)
 		}
 		lines = append(lines, data)
 	}
@@ -216,10 +225,10 @@ func (s *FileSession) ReplaceItems(_ context.Context, items []agents.TResponseIn
 	return s.writeLines(lines)
 }
 
-// PopItem removes and returns the most recent item, or nil if the session is
-// empty. The file is rewritten atomically. The item is decoded before the file
+// PopEntry removes and returns the most recent entry, or nil if the session is
+// empty. The file is rewritten atomically. The entry is decoded before the file
 // is touched, so a corrupt last line is reported without destroying it.
-func (s *FileSession) PopItem(_ context.Context) (*agents.TResponseInputItem, error) {
+func (s *FileSession) PopEntry(_ context.Context) (*agents.SessionEntry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -229,18 +238,17 @@ func (s *FileSession) PopItem(_ context.Context) (*agents.TResponseInputItem, er
 	if len(lines) == 0 {
 		return nil, nil
 	}
-	last := lines[len(lines)-1]
-	item, err := agents.UnmarshalInputItem(last)
-	if err != nil {
+	var e agents.SessionEntry
+	if err := json.Unmarshal(lines[len(lines)-1], &e); err != nil {
 		return nil, err
 	}
 	if err := s.writeLines(lines[:len(lines)-1]); err != nil {
 		return nil, err
 	}
-	return &item, nil
+	return &e, nil
 }
 
-// Clear removes all items in the session.
+// Clear removes all entries in the session.
 func (s *FileSession) Clear(_ context.Context) error {
 	release := acquire(s.lockKey)
 	defer release()
@@ -248,6 +256,32 @@ func (s *FileSession) Clear(_ context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// lineCount reports how many entries the file already holds. Callers must hold
+// the per-path lock.
+func (s *FileSession) lineCount() (int, error) {
+	lines, err := s.readLines()
+	if err != nil {
+		return 0, err
+	}
+	return len(lines), nil
+}
+
+// stamp fills in the fields the store owns. A caller-supplied id is kept, so an
+// entry re-added by a fork or a replace keeps the identity an update entry
+// points at.
+func stamp(e agents.SessionEntry, n int) agents.SessionEntry {
+	if e.ID == "" {
+		e.ID = fmt.Sprintf("e%d", n)
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now().UTC()
+	}
+	if e.Kind == "" {
+		e.Kind = agents.EntryKindItem
+	}
+	return e
 }
 
 // readLines returns the non-empty lines of the session file, or nil if it does
@@ -324,6 +358,6 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 }
 
 var (
-	_ agents.Session       = (*FileSession)(nil)
-	_ agents.ItemsReplacer = (*FileSession)(nil)
+	_ agents.Session         = (*FileSession)(nil)
+	_ agents.EntriesReplacer = (*FileSession)(nil)
 )
