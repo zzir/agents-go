@@ -205,6 +205,15 @@ type ExecOptions struct {
 	// RunConfig.reasoning_item_id_policy.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
 
+	// PrepareNextTurn rebuilds the next turn's configuration at the turn
+	// boundary, returning nil to leave it to the usual resolution.
+	//
+	// It is how a run changes shape mid-flight — swap in a cheaper model once
+	// the hard part is done, withdraw a tool after it has been used, tighten
+	// the instructions — without mutating the Agent, which a concurrent run
+	// may be reading.
+	PrepareNextTurn func(ctx context.Context, tr *TurnResult) (*TurnSnapshot, error)
+
 	// ShouldStopAfterTurn ends the run after a turn that would otherwise
 	// continue, instead of calling the model again.
 	//
@@ -627,6 +636,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	var serverItemCount int
 	var serverCursorActive bool
 
+	// pending holds a snapshot supplied by PrepareNextTurn at the last save
+	// point, to be used instead of resolving the next turn from the agent.
+	var pending *TurnSnapshot
+
 	// Persist the new user input up front (original run only; a resume's input
 	// was saved before it paused). Mirrors Python persisting input before the
 	// Runs defer the one-time user-input save to just before the first model
@@ -686,50 +699,45 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			r.agentSpan = r.trace.StartAgentSpan(currentAgent.Name, r.opts.parentSpanID)
 		}
 
-		model, err := r.resolveModel(currentAgent)
-		if err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-		systemPrompt, err := currentAgent.GetSystemPrompt(ctx, r.rc)
-		if err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-		prompt, err := currentAgent.GetPrompt(ctx, r.rc)
-		if err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-		outputSchema := agentOutputSchema(currentAgent)
-		if err := outputSchemaError(outputSchema); err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-		handoffs, err := r.enabledHandoffs(ctx, currentAgent)
-		if err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-		tools, err := r.enabledTools(ctx, currentAgent)
-		if err != nil {
-			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-		}
-
 		// Build the model input. In previous_response_id mode, send only the
 		// items the server does not yet have; otherwise send the full history.
-		var modelInput []TResponseInputItem
+		var turnInput []TResponseInputItem
 		var prevID string
+		var inputErr error
 		switch {
 		case r.opts.Conversation.UsePreviousResponseID && previousResponseID != "":
-			modelInput, err = itemsToInputList(generatedItems[serverItemCount:])
+			turnInput, inputErr = itemsToInputList(generatedItems[serverItemCount:])
 			prevID = previousResponseID
 		case r.opts.Conversation.ConversationID != "" && serverCursorActive:
 			// The conversation already holds prior items server-side.
-			modelInput, err = itemsToInputList(generatedItems[serverItemCount:])
+			turnInput, inputErr = itemsToInputList(generatedItems[serverItemCount:])
 		default:
-			modelInput, err = buildModelInput(originalInput, generatedItems)
+			turnInput, inputErr = buildModelInput(originalInput, generatedItems)
 		}
+		if inputErr != nil {
+			return nil, r.fail(inputErr, originalInput, generatedItems, rawResponses, currentAgent)
+		}
+		// Optionally strip reasoning-item ids before sending them to the model.
+		turnInput = applyReasoningItemIDPolicy(turnInput, r.opts.Exec.ReasoningItemIDPolicy)
+
+		snapshot, err := r.buildSnapshot(ctx, currentAgent, turnInput)
 		if err != nil {
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
-		// Optionally strip reasoning-item ids before sending them to the model.
-		modelInput = applyReasoningItemIDPolicy(modelInput, r.opts.Exec.ReasoningItemIDPolicy)
+		// A turn hook may have replaced the snapshot at the previous save
+		// point; from here on the turn reads it and not the agent. Its Input is
+		// overwritten: a prepared snapshot is almost always a copy of the
+		// previous turn's, and honoring its Input would replay that turn — the
+		// tool call and its output silently gone from what the model is sent.
+		if pending != nil {
+			pending.Input = turnInput
+			snapshot = pending
+			pending = nil
+		}
+		model, systemPrompt, prompt := snapshot.Model, snapshot.Instructions, snapshot.Prompt
+		outputSchema, handoffs, tools := snapshot.OutputSchema, snapshot.Handoffs, snapshot.Tools
+		modelInput := snapshot.Input
+
 		// Publish the turn's input so input guardrails, hooks and tools all see
 		// exactly what the model is being sent. CallModelInputFilter may still
 		// edit it below, in which case this is refreshed.
@@ -831,7 +839,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				SystemInstructions: systemPrompt,
 				Prompt:             prompt,
 				Input:              modelInput,
-				Settings:           r.resolveSettings(currentAgent),
+				Settings:           snapshot.Settings,
 				Tools:              tools,
 				OutputSchema:       outputSchema,
 				Handoffs:           handoffs,
@@ -980,8 +988,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// A handoff is a turn boundary too: control is about to leave this
 			// agent, which is exactly the moment a caller may want to stop.
 			// Asked before the input filter runs, so the hook sees the turn as
-			// it happened.
-			stop, out, serr := r.stopAfterTurn(ctx, currentAgent, turn, resp, step.NewStepItems)
+			// it happened. The rest of the save point does not apply — the next
+			// turn belongs to a different agent, so its snapshot is resolved
+			// fresh and its context is about to be rewritten by the filter.
+			stop, out, serr := r.stopAfterTurn(ctx, currentAgent, turn, resp, snapshot, step.NewStepItems)
 			if serr != nil {
 				return nil, r.fail(serr, originalInput, generatedItems, rawResponses, currentAgent)
 			}
@@ -1071,35 +1081,31 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				State:            state,
 			}, nil
 		case stepRunAgain:
-			// Persist the just-completed turn (all tool calls have their outputs)
-			// before looping, so a later cancel keeps this turn's work.
-			if err := r.persistSessionItems(ctx); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-			}
-			stop, out, serr := r.stopAfterTurn(ctx, currentAgent, turn, resp, step.NewStepItems)
+			sp, serr := r.savePoint(ctx, savePointInput{
+				Turn:     turn,
+				Agent:    currentAgent,
+				Snapshot: snapshot,
+				Response: resp,
+				NewItems: step.NewStepItems,
+			})
 			if serr != nil {
 				return nil, r.fail(serr, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			if stop {
-				res, ferr := r.finishRun(ctx, currentAgent, originalInput, rawResponses, out)
+			if sp.Stop {
+				res, ferr := r.finishRun(ctx, currentAgent, originalInput, rawResponses, sp.FinalOutput)
 				if ferr != nil {
 					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 				return res, nil
 			}
-			// Compact mid-run. A run that calls thirty tools overruns its
-			// context window long before the run-level pass would look.
-			compacted, did, cerr := r.recompactAtSavePoint(ctx)
-			if cerr != nil {
-				return nil, r.fail(cerr, originalInput, generatedItems, rawResponses, currentAgent)
-			}
-			if did {
+			if sp.Recompacted {
 				// The rebuilt context already contains this run's items, so the
 				// generated list starts over — the same substitution a handoff
 				// input filter makes above.
-				originalInput = compacted
+				originalInput = sp.Input
 				generatedItems = nil
 			}
+			pending = sp.NextSnapshot
 			continue
 		}
 	}

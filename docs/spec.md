@@ -183,7 +183,46 @@ otherwise (plain text)
     → the message text is the final output (possibly the empty string)
 ```
 
-### 2.3b Stopping early ✅
+### 2.3a The save point ✅
+
+The **save point** is the turn boundary: the turn's assistant message and every
+tool result are persisted, and the next model call has not happened yet.
+
+It is one place in the code, and its step order is the contract:
+
+1. flush the turn to the session
+2. ask `ShouldStopAfterTurn`
+3. compact ([§2.5f](#25f-compaction-)), rebuilding the context from the log
+4. call `PrepareNextTurn`
+
+Persisting first is what makes the rest safe: a run that stops at step 2, or
+whose context is rewritten at step 3, has its history already written. Asking
+to stop before compacting means the decision is made against the turn that
+actually happened rather than a shortened view of it.
+
+A **handoff** reaches only step 1 and 2. The next turn belongs to a different
+agent, so its snapshot is resolved fresh, and its context is about to be
+rewritten by the handoff input filter.
+
+### 2.3b Turn snapshots ✅
+
+A turn is resolved into a `TurnSnapshot` — agent, model, settings,
+instructions, prompt, tools, handoffs, output schema, input — before the model
+is called, and the turn reads the snapshot from then on rather than the agent.
+
+- `PrepareNextTurn` may return a replacement, which applies to **one turn**;
+  the turn after resolves afresh, so dynamic instructions still change per turn.
+- It is how a run changes shape mid-flight (swap to a cheaper model, withdraw a
+  tool once used) **without mutating the `Agent`**, which a concurrent run may
+  be reading.
+- **The runner owns `Input`.** A returned snapshot has it replaced with the
+  next turn's real input. A prepared snapshot is nearly always a copy of the
+  previous turn's, and honoring its `Input` would replay that turn with the
+  tool call and its output missing — a silent corruption, since the run still
+  looks like it is progressing. To edit what a call sends, use
+  `ModelOptions.InputFilter`, which runs per turn on the input the loop built.
+
+### 2.3c Stopping early ✅
 
 A turn that would otherwise continue can be ended from two places, and only
 two:
@@ -194,9 +233,7 @@ two:
 | run | `ExecOptions.ShouldStopAfterTurn` | the turn's last message, else its last tool output |
 
 - `Terminate` requires **unanimity** across the batch ([§2.7b](#27b-tool-results-)).
-- `ShouldStopAfterTurn` is consulted at the **turn boundary** — after the turn's
-  items are persisted, before the next model call — at both branches that would
-  take another turn, including a handoff. A run stopped there has its full
+- `ShouldStopAfterTurn` is consulted at the **save point** ([§2.3a](#23a-the-save-point-)), at both branches that would take another turn, including a handoff. A run stopped there has its full
   history saved and needs no unwinding, and stopping at a handoff means control
   never leaves the agent.
 - It is **not** consulted on a turn that already ends the run: asking whether to

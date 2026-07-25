@@ -97,6 +97,36 @@ res, err := agents.RunSync(ctx, agent, input, opts)
 
 Per-tool timeouts are a [tool-level setting](tools.md#timeouts).
 
+## Turn hooks
+
+A turn is resolved into a `TurnSnapshot` — agent, model, settings, instructions,
+prompt, tools, handoffs, output schema, input — before the model is called. Two
+`ExecOptions` hooks see it at the **save point**: the moment the turn's message
+and every tool result are persisted, and the next model call has not happened.
+
+```go
+opts.Exec.ShouldStopAfterTurn = func(ctx context.Context, tr *agents.TurnResult) (bool, error) {
+	return slices.Contains(tr.ToolCallNames(), "save_report"), nil
+}
+
+opts.Exec.PrepareNextTurn = func(ctx context.Context, tr *agents.TurnResult) (*agents.TurnSnapshot, error) {
+	next := *tr.Snapshot
+	next.Tools = nil                    // withdraw the tools now that they have run
+	next.Model = cheapModel             // finish on something cheaper
+	return &next, nil
+}
+```
+
+`PrepareNextTurn` applies to **one** turn; the turn after resolves afresh. It
+changes the run without mutating the `Agent`, which a concurrent run may be
+reading.
+
+**The runner owns `Snapshot.Input`** and replaces whatever a returned snapshot
+carries. A prepared snapshot is nearly always a copy of the previous turn's, so
+honoring its input would replay that turn with the tool call and its output
+missing. To edit what a call sends, use `ModelOptions.InputFilter`, which runs
+per turn on the input the loop built.
+
 ## Middleware
 
 `RunOptions.Middlewares` wraps a run, outermost first. It is where optional
