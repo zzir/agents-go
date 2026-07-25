@@ -408,11 +408,10 @@ func (m *blockingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[
 	return func(func(*TResponseStreamEvent, error) bool) {}
 }
 
-// An input-guardrail tripwire cancels the in-flight model call and neither
-// bills usage nor fires OnLLMEnd (Python parity).
+// An input-guardrail tripwire cancels the in-flight model call rather than
+// waiting for a response nobody will use.
 func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 	model := &blockingModel{called: make(chan struct{}), cancelled: make(chan struct{})}
-	hooks := &llmHookRec{}
 	agent := &Agent{
 		Name:      "a",
 		ModelImpl: model,
@@ -426,7 +425,7 @@ func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 		}},
 	}
 
-	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
 		t.Fatalf("err = %v, want *GuardrailTripwireError", err)
@@ -435,11 +434,5 @@ func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 	case <-model.cancelled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("model call was not cancelled by the tripwire")
-	}
-	// OnLLMEnd must not have fired, and no end recorded.
-	for _, o := range hooks.order {
-		if o == "end" {
-			t.Error("OnLLMEnd fired despite the tripwire cancelling the call")
-		}
 	}
 }

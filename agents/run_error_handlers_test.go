@@ -300,12 +300,15 @@ func TestErrorHandlers_MaxTurns_Recovers(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c3", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	var endOutput any
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model,
+		OnEnd: func(_ context.Context, _ *RunContext, output any) error {
+			endOutput = output
+			return nil
+		}}
 
 	var seen RunErrorHandlerInput
-	var endOutput any
-	hooks := &recordingEndHooks{onEnd: func(output any) { endOutput = output }}
-	opts := RunOptions{Hooks: hooks, Exec: ExecOptions{MaxTurns: 2, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{MaxTurns: 2, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			seen = in
 			return &RunErrorHandlerResult{FinalOutput: "ran out of turns"}, nil
@@ -524,15 +527,4 @@ func TestErrorHandlers_Streamed_MaxTurnsRecovery(t *testing.T) {
 	if !sawSynthesized {
 		t.Error("stream never emitted the synthesized fallback message")
 	}
-}
-
-// recordingEndHooks records OnAgentEnd's output value.
-type recordingEndHooks struct {
-	BaseRunHooks
-	onEnd func(output any)
-}
-
-func (h *recordingEndHooks) OnAgentEnd(ctx context.Context, rc *RunContext, agent *Agent, output any) error {
-	h.onEnd(output)
-	return nil
 }

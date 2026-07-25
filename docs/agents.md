@@ -35,7 +35,7 @@ The most common fields:
 | `Handoffs` | Agents this agent can delegate to ([Handoffs](handoffs.md)) |
 | `InputGuardrails` / `OutputGuardrails` | Validation that can stop the run ([Guardrails](guardrails.md)) |
 | `OutputType` | Structured output schema (below) |
-| `Hooks` | Agent-scoped lifecycle callbacks |
+| `OnStart` / `OnEnd` | Callbacks around this agent's turn |
 | `ToolUseBehavior` | What happens after tools run (below) |
 
 ## Dynamic instructions
@@ -109,22 +109,35 @@ agent.ToolUseBehavior = agents.ToolUseBehaviorFunc(   // custom decision
 
 To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn — the inverse of Python's `reset_tool_choice=True` default.
 
-## Lifecycle hooks
+## Per-agent callbacks
 
-Observe (or veto) an agent's lifecycle by setting `Hooks`. Embed `BaseAgentHooks` and override what you need; any hook returning an error aborts the run:
+Two optional fields fire around this agent's participation in a run:
 
 ```go
-type myHooks struct{ agents.BaseAgentHooks }
-
-func (myHooks) OnToolStart(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, tool agents.Tool) error {
-	log.Printf("%s invoking %s", agent.Name, tool.ToolName())
-	return nil
+agent.OnStart = func(ctx context.Context, rc *agents.RunContext) error {
+	return checkQuota(rc)   // returning an error aborts the run
 }
-
-agent.Hooks = myHooks{}
+agent.OnEnd = func(ctx context.Context, rc *agents.RunContext, output any) error {
+	return audit(output)
+}
 ```
 
-Available callbacks: `OnStart`, `OnEnd`, `OnHandoff` (fires on the receiving agent), `OnToolStart`, `OnToolEnd`, `OnLLMStart`, `OnLLMEnd`. `OnLLMStart`/`OnLLMEnd` bracket each model call (with the system prompt and input items, then the response); they do not fire on a HITL-resumed turn, which reuses the interrupted response without calling the model. Run-scoped equivalents exist on `RunOptions.Hooks` ([Running agents](running_agents.md)).
+They are per-**agent**, which is why they exist as fields rather than being
+folded into middleware: a handoff swaps the agent, and with it these callbacks,
+in a way run-level middleware cannot express. `OnEnd` fires on the agent that
+produced the final output — after a handoff, that is the agent handed *to*.
+
+Everything else the SDK used to expose as lifecycle hooks now has a better home:
+
+| Was | Now | Difference |
+|---|---|---|
+| `OnAgentStart` / `OnHandoff` | `*AgentUpdatedStreamEvent` on the stream | — |
+| `OnToolStart` / `OnToolEnd` | `Guardrail{Stages: StageToolInput/StageToolOutput}` | Can **rewrite**, not only refuse |
+| `OnLLMStart` / `OnLLMEnd` | `RunOptions.Model.InputFilter`, `*RawResponsesStreamEvent` | Filter can **rewrite** |
+| `OnAgentEnd` (run-scoped) | `*RunCompletedEvent` | — |
+
+The eight-method interfaces, their empty base structs and the composite wrapper
+are gone. What replaced them can do strictly more.
 
 ## Cloning
 

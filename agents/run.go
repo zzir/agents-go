@@ -59,8 +59,10 @@ type RunOptions struct {
 	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
 	Guardrails []Guardrail
 
-	// Hooks receives run-scoped lifecycle callbacks.
-	Hooks RunHooks
+	// Middlewares wrap the run, outermost first. They are where optional
+	// policy lives — logging, retrying, recovering — so the loop does not grow
+	// a field and a branch for each one.
+	Middlewares []RunMiddleware
 
 	// Observe configures tracing.
 	Observe ObserveOptions
@@ -247,9 +249,7 @@ type ObserveOptions struct {
 // ends.
 func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, RunControl) {
 	ctrl := newRunControl()
-	return func(yield func(StreamEvent, error) bool) {
-		runStream(ctx, agent, input, opts, ctrl, true, yield)
-	}, ctrl
+	return withMiddleware(ctx, agent, input, opts, ctrl, true), ctrl
 }
 
 // RunSync executes a run to completion and returns its result. It is Run
@@ -260,10 +260,38 @@ func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStre
 // happens.
 func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
 	ctrl := newRunControl()
-	stream := RunStream(func(yield func(StreamEvent, error) bool) {
-		runStream(ctx, agent, input, opts, ctrl, false, yield)
-	})
-	return stream.Collect()
+	return withMiddleware(ctx, agent, input, opts, ctrl, false).Collect()
+}
+
+// withMiddleware builds the run's stream through the configured middleware
+// chain. Input normalization happens once, up front, so a middleware inspects
+// and edits the same item list the loop will use rather than a string it would
+// have to normalize itself.
+func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
+	base := func(ctx context.Context, in RunInput) RunStream {
+		return func(yield func(StreamEvent, error) bool) {
+			runStream(ctx, in.Agent, in.Input, *in.Opts, ctrl, rawEvents, yield)
+		}
+	}
+	if len(opts.Middlewares) == 0 {
+		return func(yield func(StreamEvent, error) bool) {
+			runStream(ctx, agent, input, opts, ctrl, rawEvents, yield)
+		}
+	}
+
+	return func(yield func(StreamEvent, error) bool) {
+		items, err := normalizeInput(input)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		in := RunInput{Agent: agent, Input: items, Opts: &opts}
+		for ev, ierr := range chainMiddleware(base, opts.Middlewares)(ctx, in) {
+			if !yield(ev, ierr) {
+				return
+			}
+		}
+	}
 }
 
 // runStream is the body shared by Run and RunSync: prepare, loop, and report
@@ -622,8 +650,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		r.ctrl.setCurrent(currentAgent, turn)
 
 		if shouldRunStartHooks {
-			if err := callAgentStart(ctx, r.opts.Hooks, currentAgent, r.rc); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			if currentAgent.OnStart != nil {
+				if err := currentAgent.OnStart(ctx, r.rc); err != nil {
+					return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+				}
 			}
 			shouldRunStartHooks = false
 			// Start an agent span (parent of this agent's generation/tool spans).
@@ -774,9 +804,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				systemPrompt, modelInput = edited.Instructions, edited.Input
 				r.rc.setTurnInput(modelInput)
 			}
-			if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, r.rc, systemPrompt, modelInput); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-			}
 			req := ModelRequest{
 				SystemInstructions: systemPrompt,
 				Prompt:             prompt,
@@ -843,9 +870,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// so bill usage and surface the response to OnLLMEnd.
 			r.rc.Usage.Add(resp.Usage)
 			rawResponses = append(rawResponses, resp)
-			if err := callLLMEnd(ctx, r.opts.Hooks, currentAgent, r.rc, resp); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-			}
 		}
 		r.lastResponseID = resp.ResponseID
 		r.lastStore = r.resolveSettings(currentAgent).Store
@@ -928,9 +952,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// unfiltered log, so the handoff input filter below (which rewrites
 			// generatedItems) never affects what the session keeps.
 			if err := r.persistSessionItems(ctx); err != nil {
-				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-			}
-			if err := callHandoff(ctx, r.opts.Hooks, currentAgent, step.NewAgent, r.rc); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			if step.Handoff != nil {
@@ -1029,8 +1050,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 // session persistence and compaction (kept after guardrails, matching Python's
 // streaming path: a guardrail-tripped final output is not persisted).
 func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TResponseInputItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
-	if err := callAgentEnd(ctx, r.opts.Hooks, agent, r.rc, finalOutput); err != nil {
-		return nil, err
+	if agent.OnEnd != nil {
+		if err := agent.OnEnd(ctx, r.rc, finalOutput); err != nil {
+			return nil, err
+		}
 	}
 	// Output guardrails: run-level ones first, then the producing agent's.
 	// A Replace decision substitutes the final output and the run continues.

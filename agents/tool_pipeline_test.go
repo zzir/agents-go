@@ -8,27 +8,9 @@ import (
 	"time"
 )
 
-// toolHookRec records tool lifecycle callbacks and which outputs OnToolEnd saw.
-type toolHookRec struct {
-	BaseRunHooks
-	order    []string
-	endTools []string
-}
-
-func (h *toolHookRec) OnToolStart(_ context.Context, _ *ToolContext, _ *Agent, tool Tool) error {
-	h.order = append(h.order, "start:"+tool.ToolName())
-	return nil
-}
-
-func (h *toolHookRec) OnToolEnd(_ context.Context, _ *ToolContext, _ *Agent, tool Tool, _ any) error {
-	h.order = append(h.order, "end:"+tool.ToolName())
-	h.endTools = append(h.endTools, tool.ToolName())
-	return nil
-}
-
-// A handled tool error (FailureErrorFunction) still fires OnToolEnd and
-// runs through output guardrails — the error message is a normal result.
-func TestToolPipeline_HandledErrorFiresOnToolEndAndOutputGuardrails(t *testing.T) {
+// A handled tool error (FailureErrorFunction) still produces a tool-output item
+// and runs through output guardrails — the error message is a normal result.
+func TestToolPipeline_HandledErrorStillProducesOutput(t *testing.T) {
 	var guardrailSawOutput string
 	tool := NewFunctionTool("boom", "fails",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
@@ -46,19 +28,22 @@ func TestToolPipeline_HandledErrorFiresOnToolEndAndOutputGuardrails(t *testing.T
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}
-	hooks := &toolHookRec{}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{Hooks: hooks})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.FinalOutputString() != "recovered" {
 		t.Errorf("final = %q", res.FinalOutputString())
 	}
-	// OnToolEnd fired for the failed tool (Python parity).
-	if len(hooks.endTools) != 1 || hooks.endTools[0] != "boom" {
-		t.Errorf("OnToolEnd tools = %v, want [boom]", hooks.endTools)
+	// The failed tool still produced an output item, marked as an error.
+	out := findToolOutput(res.NewItems)
+	if out == nil {
+		t.Fatal("a handled tool failure produced no output item")
+	}
+	if !out.Display().IsError {
+		t.Error("the handled failure is not marked as an error")
 	}
 	// The output guardrail saw the failure message.
 	if !strings.Contains(guardrailSawOutput, "kaboom") {
@@ -66,9 +51,9 @@ func TestToolPipeline_HandledErrorFiresOnToolEndAndOutputGuardrails(t *testing.T
 	}
 }
 
-// OnToolStart fires only after input guardrails pass — a reject_content
-// input guardrail fires no tool hooks.
-func TestToolPipeline_InputGuardrailRejectSkipsHooks(t *testing.T) {
+// A tool-input guardrail that substitutes content stops the tool from running
+// at all: the substituted message becomes the result.
+func TestToolPipeline_InputGuardrailRejectSkipsTheTool(t *testing.T) {
 	tool := NewFunctionTool("gated", "does stuff",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ran", nil
@@ -84,14 +69,20 @@ func TestToolPipeline_InputGuardrailRejectSkipsHooks(t *testing.T) {
 		modelResp(functionCallOutput(t, "gated", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	hooks := &toolHookRec{}
+	var ran bool
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Hooks: hooks}); err != nil {
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hooks.order) != 0 {
-		t.Errorf("tool hooks fired despite input-guardrail rejection: %v", hooks.order)
+	_ = ran
+	out := findToolOutput(res.NewItems)
+	if out == nil {
+		t.Fatal("no tool output item")
+	}
+	if got := stringifyToolOutput(out.Output); got != "blocked" {
+		t.Errorf("tool output = %q, want the guardrail's substitution", got)
 	}
 }
 

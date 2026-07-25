@@ -40,7 +40,7 @@ type RunOptions struct {
 	ToolNotFoundBehavior  ToolNotFoundBehavior // unknown tool call: abort (default) or return error to model
 	HandoffInputFilter    func(HandoffInputData) HandoffInputData // default filter for handoffs without their own
 	ErrorHandlers         RunErrorHandlers // recover from max-turns/refusal/invalid-output failures (below)
-	Hooks                 RunHooks         // run-scoped lifecycle callbacks
+	Middlewares           []RunMiddleware  // wrap the run, outermost first
 	Session               Session          // conversation persistence (docs: Sessions)
 	SessionInputCallback  SessionInputCallback // combine stored history with new input (docs: Sessions)
 	SessionSettings       *SessionSettings // how the run reads the Session, e.g. Limit (docs: Sessions)
@@ -97,20 +97,36 @@ res, err := agents.RunSync(ctx, agent, input, opts)
 
 Per-tool timeouts are a [tool-level setting](tools.md#timeouts).
 
-## Run-scoped hooks
+## Middleware
 
-`RunOptions.Hooks` receives callbacks across every agent in the run. Embed `BaseRunHooks` and override what you need; returning an error aborts the run.
+`RunOptions.Middlewares` wraps a run, outermost first. It is where optional
+policy lives — logging, retrying, recovering, rewriting input — so the loop does
+not grow a field and a branch for each one.
 
 ```go
-type auditHooks struct{ agents.BaseRunHooks }
+mw := agents.RunMiddlewareFunc(func(ctx context.Context, next agents.RunFunc, in agents.RunInput) agents.RunStream {
+	in.Opts.Exec.MaxTurns = 5          // adjust the run
+	return next(ctx, in)               // ...or do not call next at all
+})
 
-func (auditHooks) OnHandoff(ctx context.Context, rc *agents.RunContext, from, to *agents.Agent) error {
-	log.Printf("handoff %s -> %s", from.Name, to.Name)
-	return nil
-}
+agents.RunSync(ctx, agent, "hi", agents.RunOptions{
+	Middlewares: []agents.RunMiddleware{agents.LoggingMiddleware{}, mw},
+})
 ```
 
-Callbacks: `OnAgentStart`, `OnAgentEnd`, `OnHandoff`, `OnToolStart`, `OnToolEnd`, `OnLLMStart`, `OnLLMEnd`. `OnToolStart`/`OnToolEnd` receive a `*ToolContext` identifying the specific call (tool, call id, arguments, agent) rather than the run-wide `*RunContext`. `OnLLMStart`/`OnLLMEnd` bracket each model call (the second carries the `*ModelResponse`); they do not fire on a HITL-resumed turn. Tool callbacks may fire concurrently (tools run in parallel), so hooks must be goroutine-safe.
+A middleware that only observes calls `next` and re-yields the stream unchanged;
+one that intervenes can inspect events, replace them, run the loop twice, or
+refuse before the model is ever called.
+
+**What is deliberately not middleware**: handoffs, guardrails, session
+persistence and tracing. Those are not policy layered over the loop, they *are*
+the loop — a handoff changes which agent the state machine is in, guardrails
+race the model call and cancel it, persistence has a boundary only the loop
+knows. Expressing them as middleware would turn three invariants into implicit
+protocols between wrappers.
+
+For callbacks tied to a specific agent rather than the whole run, see
+[`Agent.OnStart` / `Agent.OnEnd`](agents.md#per-agent-callbacks).
 
 ## Errors
 

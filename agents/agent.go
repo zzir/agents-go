@@ -186,9 +186,17 @@ type Agent struct {
 	// OutputType, when non-nil, requests structured output validated against the
 	// schema. A nil OutputType yields plain text.
 	OutputType OutputSchema
-
-	// Hooks receives agent-scoped lifecycle callbacks.
-	Hooks AgentHooks
+	// OnStart runs before this agent takes a turn; returning an error aborts
+	// the run. OnEnd runs after it produces the final output.
+	//
+	// These are per-AGENT, which is why they survived the removal of the hook
+	// interfaces: a handoff swaps the agent, and with it these callbacks, in a
+	// way run-level middleware cannot express. Everything else the old
+	// eight-method interfaces observed is now on the event stream or in a
+	// guardrail, both of which can also rewrite rather than only refuse.
+	OnStart func(ctx context.Context, rc *RunContext) error
+	// OnEnd runs after this agent produces the run's final output.
+	OnEnd func(ctx context.Context, rc *RunContext, output any) error
 
 	// ToolUseBehavior controls post-tool-call behavior. Nil means RunLLMAgain.
 	ToolUseBehavior ToolUseBehavior

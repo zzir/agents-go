@@ -587,10 +587,6 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				return nil
 			}
 
-			if err := callToolStart(gctx, r.opts.Hooks, agent, tc, run.Tool); err != nil {
-				return err
-			}
-
 			span := r.trace.StartFunctionSpan(run.Call.Name, r.agentParentID())
 			defer span.Finish() // idempotent; covers panics in user tool code
 			if span.Span != nil {
@@ -660,9 +656,6 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				out = msg
 			}
 
-			if err := callToolEnd(gctx, r.opts.Hooks, agent, tc, run.Tool, out); err != nil {
-				return err
-			}
 			outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
 			// The tool's own view of its call: UI data, renderer, error flag.
 			// These come straight from the result — the tool knew all of it when

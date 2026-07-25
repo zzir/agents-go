@@ -38,11 +38,6 @@ type AgentToolConfig struct {
 	// field on the returned *FunctionTool.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
-	// Hooks receives the nested run's lifecycle callbacks. Hooks are never
-	// inherited from the parent run; this is the only way to observe a nested
-	// run's lifecycle.
-	Hooks RunHooks
-
 	// Session gives the nested run conversation state of its own. The parent
 	// run's Session is never inherited — to share history, pass the same
 	// Session here explicitly.
@@ -464,7 +459,6 @@ func nestedRunOptions(parent *RunContext, cfg AgentToolConfig) RunOptions {
 	if parent != nil {
 		opts.Context = parent.Context
 	}
-	opts.Hooks = cfg.Hooks
 	opts.Conversation.Session = cfg.Session
 	opts.Conversation.ConversationID = cfg.ConversationID
 	return opts

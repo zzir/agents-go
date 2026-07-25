@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -47,46 +48,54 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 	}
 }
 
-// captureToolHooks records the ToolContext passed to the tool lifecycle hooks so
-// concurrent calls can be distinguished by call id.
-type captureToolHooks struct {
-	BaseRunHooks
-	startIDs []string
-	endIDs   []string
-}
+// A tool-stage guardrail sees the specific CALL, not just the run: it gets the
+// call id, so concurrent calls to one tool are distinguishable. That is what
+// replaced the tool lifecycle hooks, and unlike them it can also rewrite.
+func TestToolGuardrail_ReceivesTheCallIdentity(t *testing.T) {
+	var mu sync.Mutex
+	var inputCalls, outputCalls []string
 
-func (h *captureToolHooks) OnToolStart(_ context.Context, tc *ToolContext, _ *Agent, _ Tool) error {
-	h.startIDs = append(h.startIDs, tc.ToolCallID)
-	return nil
-}
-
-func (h *captureToolHooks) OnToolEnd(_ context.Context, tc *ToolContext, _ *Agent, _ Tool, _ any) error {
-	h.endIDs = append(h.endIDs, tc.ToolCallID)
-	return nil
-}
-
-// TestToolHooks_ReceiveToolContext verifies OnToolStart/OnToolEnd receive the
-// per-call ToolContext instead of only the shared RunContext.
-func TestToolHooks_ReceiveToolContext(t *testing.T) {
 	tool := NewFunctionTool("probe", "probe",
-		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
-			return "ok", nil
-		})
+		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
+	tool.Guardrails = []Guardrail{{
+		Name:   "watch",
+		Stages: []GuardrailStage{StageToolInput, StageToolOutput},
+		Run: func(_ context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if p.Stage == StageToolInput {
+				inputCalls = append(inputCalls, p.ToolCallID)
+			} else {
+				outputCalls = append(outputCalls, p.ToolCallID)
+			}
+			return Allow(nil), nil
+		},
+	}}
 	model := &fakeModel{responses: []*ModelResponse{
-		modelResp(functionCallOutput(t, "probe", "call_42", `{}`)),
+		modelResp(
+			functionCallOutput(t, "probe", "call_42", `{}`),
+			functionCallOutput(t, "probe", "call_43", `{}`),
+		),
 		modelResp(messageOutput(t, "done")),
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	hooks := &captureToolHooks{}
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Hooks: hooks}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(hooks.startIDs) != 1 || hooks.startIDs[0] != "call_42" {
-		t.Errorf("OnToolStart call ids = %v, want [call_42]", hooks.startIDs)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(inputCalls) != 2 || len(outputCalls) != 2 {
+		t.Fatalf("guardrail saw %d input and %d output stages, want 2 each", len(inputCalls), len(outputCalls))
 	}
-	if len(hooks.endIDs) != 1 || hooks.endIDs[0] != "call_42" {
-		t.Errorf("OnToolEnd call ids = %v, want [call_42]", hooks.endIDs)
+	for _, ids := range [][]string{inputCalls, outputCalls} {
+		seen := map[string]bool{}
+		for _, id := range ids {
+			seen[id] = true
+		}
+		if !seen["call_42"] || !seen["call_43"] {
+			t.Errorf("concurrent calls were not distinguishable: %v", ids)
+		}
 	}
 }
 
