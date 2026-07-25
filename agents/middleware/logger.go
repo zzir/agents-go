@@ -1,19 +1,20 @@
-package agents
+package middleware
 
 import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/zzir/agents-go/agents"
 )
 
-// LoggingMiddleware logs a run's shape: when it starts, what it produced, how
-// it ended.
+// Logging logs a run's shape: when it starts, what it produced, how it ended.
 //
 // It exists as much to demonstrate the interface as to be used — an observing
 // middleware calls next, ranges the stream it gets back, and re-yields
 // everything unchanged. Note what it must not do: swallow an event, or return
 // before the consumer has seen the terminal one.
-type LoggingMiddleware struct {
+type Logging struct {
 	// Logger receives the records. Nil uses slog.Default.
 	Logger *slog.Logger
 	// LogItems logs each run item as it is produced. Off by default: on a long
@@ -21,8 +22,8 @@ type LoggingMiddleware struct {
 	LogItems bool
 }
 
-// Run implements RunMiddleware.
-func (m LoggingMiddleware) Run(ctx context.Context, next RunFunc, in RunInput) RunStream {
+// Run implements agents.RunMiddleware.
+func (m Logging) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) agents.RunStream {
 	log := m.Logger
 	if log == nil {
 		log = slog.Default()
@@ -32,7 +33,7 @@ func (m LoggingMiddleware) Run(ctx context.Context, next RunFunc, in RunInput) R
 		agentName = in.Agent.Name
 	}
 
-	return func(yield func(StreamEvent, error) bool) {
+	return func(yield func(agents.StreamEvent, error) bool) {
 		start := time.Now()
 		log.InfoContext(ctx, "run started", "agent", agentName, "input_items", len(in.Input))
 
@@ -42,18 +43,18 @@ func (m LoggingMiddleware) Run(ctx context.Context, next RunFunc, in RunInput) R
 				log.ErrorContext(ctx, "run failed",
 					"agent", agentName,
 					"error", err,
-					"code", CodeOf(err),
+					"code", agents.CodeOf(err),
 					"duration", time.Since(start))
 				yield(nil, err)
 				return
 			}
 			switch e := ev.(type) {
-			case *RunItemStreamEvent:
+			case *agents.RunItemStreamEvent:
 				items++
 				if m.LogItems {
 					log.DebugContext(ctx, "run item", "agent", agentName, "item", e.Name)
 				}
-			case *RunCompletedEvent:
+			case *agents.RunCompletedEvent:
 				log.InfoContext(ctx, "run finished",
 					"agent", agentName,
 					"items", items,
@@ -71,7 +72,7 @@ func (m LoggingMiddleware) Run(ctx context.Context, next RunFunc, in RunInput) R
 	}
 }
 
-func turnsOf(res *RunResult) int {
+func turnsOf(res *agents.RunResult) int {
 	if res == nil {
 		return 0
 	}

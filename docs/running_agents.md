@@ -110,7 +110,7 @@ mw := agents.RunMiddlewareFunc(func(ctx context.Context, next agents.RunFunc, in
 })
 
 agents.RunSync(ctx, agent, "hi", agents.RunOptions{
-	Middlewares: []agents.RunMiddleware{agents.LoggingMiddleware{}, mw},
+	Middlewares: []agents.RunMiddleware{middleware.Logging{}, mw},
 })
 ```
 
@@ -118,12 +118,58 @@ A middleware that only observes calls `next` and re-yields the stream unchanged;
 one that intervenes can inspect events, replace them, run the loop twice, or
 refuse before the model is ever called.
 
+### Built-in middleware
+
+`agents/middleware` ships the run-level policies that come up most:
+
+| | What it does |
+|---|---|
+| `middleware.Loop` | Re-runs the agent until an `Evaluator` accepts the answer, feeding each rejected attempt back with the reason |
+| `middleware.Approval` | Answers approval interruptions from a standing `ApprovalPolicy` and resumes, so the caller only sees the pauses the policy declined |
+| `middleware.Retry` | Re-runs a **failed** run |
+| `middleware.Logging` | Logs a run's shape: start, items, how it ended |
+
+```go
+import "github.com/zzir/agents-go/agents/middleware"
+
+opts.Middlewares = []agents.RunMiddleware{
+	middleware.Retry{MaxAttempts: 3},
+	middleware.Approval{Policy: middleware.AllowTools("read_file", "list_files")},
+	middleware.Loop{Evaluate: func(ctx context.Context, res *agents.RunResult) (middleware.Evaluation, error) {
+		if looksRight(res.FinalOutputString()) {
+			return middleware.Stop(), nil
+		}
+		return middleware.Continue("the answer must cite a source"), nil
+	}},
+}
+```
+
+**Order is behavior, not style.** `Approval` must sit *inside* `Loop`: outside
+it, the loop's first attempt comes back paused with no answer, and the
+evaluator judges an empty string. The rule of thumb is that a middleware which
+resolves something about one attempt goes inside one that decides whether to
+make another attempt.
+
+`Loop` is the shape middleware exists for: the run loop knows when a model has
+*finished talking* and nothing more, while "good enough" is the caller's
+question — a critic agent, a schema check, a compiler.
+
+`middleware.Retry` and `agents.NewRetryModel` are different and usually both
+right. The model decorator retries one call (a 429, a dropped connection) and
+the run never notices; the middleware retries the whole run, which is what a
+failure the loop could not absorb needs. A failed run is retried from the
+start, not resumed — resuming means guessing which side effects already
+happened, and the SDK cannot know.
+
 **What is deliberately not middleware**: handoffs, guardrails, session
-persistence and tracing. Those are not policy layered over the loop, they *are*
-the loop — a handoff changes which agent the state machine is in, guardrails
-race the model call and cancel it, persistence has a boundary only the loop
-knows. Expressing them as middleware would turn three invariants into implicit
-protocols between wrappers.
+persistence, tracing, and `ExecOptions.ErrorHandlers`. Those are not policy
+layered over the loop, they *are* the loop — a handoff changes which agent the
+state machine is in, guardrails race the model call and cancel it, persistence
+has a boundary only the loop knows, and an error handler needs the run's
+in-flight items to build `RunErrorData` and the loop's completion path to
+persist what it recovers. A middleware sees a terminal error and can
+reconstruct neither. Expressing them as middleware would turn invariants into
+implicit protocols between wrappers.
 
 For callbacks tied to a specific agent rather than the whole run, see
 [`Agent.OnStart` / `Agent.OnEnd`](agents.md#per-agent-callbacks).

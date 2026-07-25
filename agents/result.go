@@ -73,3 +73,13 @@ type ToolApprovalItem struct {
 	// re-process it on resume.
 	Raw TResponseOutputItem
 }
+
+// ToInputList returns the run's whole conversation as model input: the input it
+// started from followed by everything it produced.
+//
+// It is what you feed the next run to continue a conversation without a
+// Session — and what a middleware that re-runs an agent hands to the second
+// attempt, so the agent sees what it already said rather than repeating it.
+func (r *RunResult) ToInputList() ([]TResponseInputItem, error) {
+	return buildModelInput(r.Input, r.NewItems)
+}

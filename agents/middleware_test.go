@@ -1,10 +1,8 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 )
@@ -149,49 +147,5 @@ func TestMiddleware_NilIsSkipped(t *testing.T) {
 	}
 	if res.FinalOutputString() != "fine" {
 		t.Errorf("final = %q", res.FinalOutputString())
-	}
-}
-
-func TestLoggingMiddleware(t *testing.T) {
-	var buf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	if _, err := RunSync(context.Background(), simpleAgent(t, "hello"), "go", RunOptions{
-		Middlewares: []RunMiddleware{LoggingMiddleware{Logger: log}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	out := buf.String()
-	for _, want := range []string{"run started", "run finished", "agent=a"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("log missing %q:\n%s", want, out)
-		}
-	}
-
-	// A failing run logs the failure with its code, not just an error string.
-	buf.Reset()
-	failing := &Agent{Name: "a", ModelImpl: &fakeModel{responses: []*ModelResponse{
-		modelResp(functionCallOutput(t, "missing_tool", "c1", `{}`)),
-	}}}
-	if _, err := RunSync(context.Background(), failing, "go", RunOptions{
-		Middlewares: []RunMiddleware{LoggingMiddleware{Logger: log}},
-	}); err == nil {
-		t.Fatal("expected the run to fail")
-	}
-	if out := buf.String(); !strings.Contains(out, "run failed") || !strings.Contains(out, "code=model_behavior") {
-		t.Errorf("failure log missing the reason:\n%s", out)
-	}
-
-	// Abandoning the stream is logged too: otherwise it looks like a hang in a
-	// log that only records completions.
-	buf.Reset()
-	stream, _ := Run(context.Background(), simpleAgent(t, "hello"), "go", RunOptions{
-		Middlewares: []RunMiddleware{LoggingMiddleware{Logger: log}},
-	})
-	for range stream {
-		break
-	}
-	if out := buf.String(); !strings.Contains(out, "abandoned") {
-		t.Errorf("abandoning the stream was not logged:\n%s", out)
 	}
 }

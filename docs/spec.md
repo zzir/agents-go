@@ -444,7 +444,8 @@ that tool only.
 **`Replace` semantics:** the decision's `Message` replaces the inspected content.
 
 - `input` — appended as a single user text message replacing the original input.
-  For finer rewriting use the model-input middleware (🚧 plan3) instead.
+  For finer rewriting use `ModelOptions.InputFilter`, which edits the exact
+  items sent without changing what is saved.
 - `output` — replaces the final output value.
 - `tool_input` — the tool does not execute; `Message` becomes its result.
 - `tool_output` — replaces the content returned to the model.
@@ -573,7 +574,7 @@ When a budget trips mid-turn, the current tool batch is allowed to finish before
 the run stops. Stopping mid-batch would leave dangling calls, which
 [§2.5](#25-session-persistence-boundaries-) forbids.
 
-### 2.10 Errors and recovery ✅ 🚧 (plan3 middleware only)
+### 2.10 Errors and recovery ✅
 
 - Every SDK error carries a stable `ErrorCode`, read with `CodeOf(err)`. ✅
   `CodeOf` unwraps `%w` chains, so a code survives the run loop's own wrapping
@@ -595,9 +596,10 @@ the run stops. Stopping mid-batch would leave dangling calls, which
 - Submodule errors (`sandbox`, `sessions`, `mcp`, `skills`) are classified **at
   the module boundary**, not deep inside. ✅
 - Recoverable failures are handled by error handlers (max turns, model refusal,
-  invalid final output). 🚧 (plan3) these become middleware.
+  invalid final output), **in the loop, not as middleware** ✅ — see
+  [§2.12](#212-middleware-).
 - A fallback message synthesized by a recovery handler is tagged
-  🚧 (plan1) `Source{Type: SourceErrorHandler}`.
+  `Source{Type: SourceErrorHandler}`. ✅
 
 ---
 
@@ -622,6 +624,48 @@ One producer's events reach many independent consumers through `Fanout[T]`.
 Rejected alternatives, both worse: dropping silently (corrupts the consumer's
 view undetectably) and disconnecting the slow subscriber (turns a recoverable
 hiccup into a visible failure).
+
+---
+
+### 2.12 Middleware ✅
+
+`RunOptions.Middlewares` wraps a run, **outermost first** — the order they are
+read in is the order they see the run.
+
+A middleware wraps a *whole run*: it may edit the input and options, call `next`
+zero or more times, and replace or suppress events. That is what it is good at
+— retrying, re-running with feedback, resuming from an interruption — and it is
+also what bounds it.
+
+**What is not middleware, and why:**
+
+| | Why it stays in the loop |
+|---|---|
+| Handoffs | Change which agent the state machine is in |
+| Guardrails | Race the model call and can cancel it |
+| Session persistence | Has a boundary only the loop knows ([§2.5](#25-session-persistence-boundaries-)) |
+| Tracing | Spans nest with the loop's own structure |
+| `ExecOptions.ErrorHandlers` | Needs the run's in-flight items to build `RunErrorData`, and the loop's completion path to persist what it recovers. A middleware sees a terminal error and can reconstruct neither |
+| `ModelOptions.InputFilter` | Per **turn**, not per run |
+
+Expressing any of them as middleware would turn an invariant into an implicit
+protocol between wrappers.
+
+**A middleware must not swallow the stream.** One that re-enters the run
+forwards each attempt's events and holds back only `RunCompletedEvent`, which
+is the one event whose meaning it owns — "this attempt finished" versus "the
+run finished". A middleware that buffered everything until it was satisfied
+would make a long retry look like a hang, which is the opposite of what
+streaming is for.
+
+**Order is behavior.** A middleware that resolves something about *one attempt*
+(answering an approval pause) must sit inside one that decides whether to make
+*another attempt* (an evaluator loop, a retry). Reversed, the outer one judges
+a result the inner one had not finished producing.
+
+**A middleware that resumes strips `Middlewares` first.** The chain is already
+unwound at that point; resuming with the run's own options would re-enter that
+middleware and every one outside it.
 
 ---
 
