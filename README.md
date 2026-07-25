@@ -5,8 +5,9 @@
 **Build production AI agents in Go** — tools, handoffs, guardrails, sessions,
 human-in-the-loop, streaming, tracing.
 
-A Go port of the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python)
-(tracking **v0.18.2**), faithful to its semantics and idiomatic in its APIs.
+Built on the OpenAI **Responses API**. Started as a port of the
+[OpenAI Agents SDK](https://github.com/openai/openai-agents-python), now evolving
+on its own — behavior is [specified](docs/spec.md), not inherited.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/zzir/agents-go.svg)](https://pkg.go.dev/github.com/zzir/agents-go)
 [![CI](https://github.com/zzir/agents-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zzir/agents-go/actions/workflows/ci.yml)
@@ -16,14 +17,15 @@ A Go port of the [OpenAI Agents SDK](https://github.com/openai/openai-agents-pyt
 [Documentation](https://zzir.github.io/agents-go/) ·
 [Feature reference](docs/features.md) ·
 [Examples](docs/examples.md) ·
-[Coming from Python?](docs/python_differences.md)
+[Coming from Python?](docs/migration_from_python.md)
 
 </div>
 
 ## Why agents-go?
 
-- **Same semantics as the Python SDK** — same run loop, same item model, same
-  defaults. Every intentional divergence is [documented](docs/python_differences.md).
+- **Specified behavior** — the run loop, guardrail timing, persistence
+  boundaries and budget semantics are written down in [spec.md](docs/spec.md),
+  not left to the reader to infer.
 - **Type-safe by construction** — tools are generic Go functions; argument
   schemas and structured outputs come from your structs, not runtime dicts.
 - **Durable human-in-the-loop** — pause a run for approval, serialize its state

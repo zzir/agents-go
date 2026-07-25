@@ -6,7 +6,7 @@ Tools let agents take actions. The Go SDK currently supports three kinds of tool
 - **Agents as tools**: a whole agent exposed as a callable tool ([Agent orchestration](multi_agent.md))
 - **MCP tools**: tools served by a Model Context Protocol server ([MCP](mcp.md))
 
-Hosted OpenAI tools (web search, file search, code interpreter, computer use) are **not supported yet** — see [Differences from Python](python_differences.md).
+Hosted OpenAI tools (web search, file search, code interpreter, computer use) are **not supported yet** — see [Differences from Python](migration_from_python.md).
 
 ## Function tools
 

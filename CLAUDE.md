@@ -2,10 +2,14 @@
 
 ## What this is
 
-A Go port of [openai-agents-python](https://github.com/openai/openai-agents-python),
-tracking **v0.18.2**. The Python source is the reference spec — match its
-semantics. Intentional divergences and open gaps are cataloged in
-[docs/python_differences.md](docs/python_differences.md); keep it current.
+A Go SDK for building agents on the OpenAI Responses API. It began as a port of
+[openai-agents-python](https://github.com/openai/openai-agents-python) and shares
+its core concepts (agents, handoffs, guardrails, sessions), but **evolves
+independently** — it no longer tracks upstream.
+
+Behavior is specified in [docs/spec.md](docs/spec.md), not inherited.
+[docs/migration_from_python.md](docs/migration_from_python.md) maps the two APIs
+for users arriving from Python.
 
 Module path: `github.com/zzir/agents-go` (NOT `goagents`, despite the local
 directory name).
@@ -23,8 +27,10 @@ golangci-lint run                     # CI uses golangci-lint v2.12
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with six modules; non-root modules keep
-heavy deps out of core and `require` the root via `replace => ..`:
+Go workspace (`go.work`, gitignored) with six modules. **A submodule exists only
+to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
+anything dependency-free stays in the root module. Non-root modules `require` the
+root via `replace => ..`:
 
 - **root** — the SDK
 - **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
@@ -64,6 +70,9 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 
 ## Design decisions (deliberate — don't "fix" without cause)
 
+The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-goals),
+§3 (capabilities not provided) and §5 (recorded decisions). The two that come up most:
+
 - **Responses API only.** Chat Completions is intentionally NOT supported and
   will not be ported. Internal item types are Responses types.
 - **No hosted tools.** Every `Tool` is a locally-executed `FunctionTool`; the
@@ -72,10 +81,14 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 
 ## Conventions
 
-- **Match upstream semantics.** Behavior questions are answered by the Python
-  SDK, not invented; check `docs/python_differences.md` before assuming a gap
-  is intentional.
-- **Docs mirror the Python docs 1:1** (`docs/`). Any functional change must
-  update the relevant `docs/` page — and `README.md` when it affects the
-  feature set or quick-start. New public capabilities get a runnable example
-  under `examples/`.
+- **Behavior is specified, not inherited.** Answer behavior questions from
+  `docs/spec.md`. When it does not cover a case: decide, implement, and add the
+  invariant to `spec.md` **in the same change**. Open questions live in
+  `spec.md` §6 — implementing one means moving it out of §6 first.
+- **Upstream watch, not upstream parity.** After each upstream minor release,
+  review its changelog and record the decision (ported / declined + why) in
+  `docs/upstream_watch.md`. There is no obligation to match.
+- **Docs track the code.** Any functional change must update the relevant
+  `docs/` page — and `README.md` when it affects the feature set or
+  quick-start. New public capabilities get a runnable example under
+  `examples/`.

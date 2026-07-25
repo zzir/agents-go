@@ -25,7 +25,7 @@ provider = openai.NewProvider(option.WithAPIKey("…"))  // any openai-go option
 provider = provider.WithDefaultModel("gpt-4o-mini")    // model used when Agent.Model is empty
 ```
 
-Unlike the Python SDK, this port ships **no built-in default model** ([differences](python_differences.md)): a model must be named per agent (`Agent.Model`) or configured on the provider (`WithDefaultModel`). Resolving an agent that names no model, with no provider default set, returns a `*agents.UserError` — the caller is expected to be explicit about the model.
+Unlike the Python SDK, this port ships **no built-in default model** ([differences](migration_from_python.md)): a model must be named per agent (`Agent.Model`) or configured on the provider (`WithDefaultModel`). Resolving an agent that names no model, with no provider default set, returns a `*agents.UserError` — the caller is expected to be explicit about the model.
 
 Only the **Responses API** is implemented (`openai.ResponsesModel`); there is no Chat Completions fallback. Any OpenAI-compatible gateway that speaks the Responses API works via `option.WithBaseURL`, and you can drive several such providers in one run with retries and fallback — see [Retries, fallback, and multiple providers](#retries-fallback-and-multiple-providers).
 
@@ -139,7 +139,7 @@ agent.ModelSettings = &agents.ModelSettings{
 Notes:
 
 - `ToolChoice` of `"required"` or a specific tool name is automatically released after the agent calls a tool, preventing infinite loops — see [Agents](agents.md#tool-use-behavior). Any value other than `"auto"`/`"required"`/`"none"` is sent as a function tool name (the SDK has no provider-hosted tools).
-- `PromptCacheKey` is forwarded as the Responses API `prompt_cache_key` to improve prompt-cache hit rates. Unlike the Python SDK, the runner **never auto-generates** one ([differences](python_differences.md)): set it explicitly, or supply your own via `ExtraBody["prompt_cache_key"]`. Empty means unset.
+- `PromptCacheKey` is forwarded as the Responses API `prompt_cache_key` to improve prompt-cache hit rates. Unlike the Python SDK, the runner **never auto-generates** one ([differences](migration_from_python.md)): set it explicitly, or supply your own via `ExtraBody["prompt_cache_key"]`. Empty means unset.
 - `PromptCacheOptions` configures prompt caching: `Mode` is `"implicit"` (default) or `"explicit"`, `TTL` is the minimum cache-entry lifetime (currently only `"30m"`). With `"explicit"` mode, mark cache breakpoints on input content parts (`prompt_cache_breakpoint`) to control which prompt prefixes are cached. nil leaves it unset.
 - `ContextManagement` passes server-side context-management entries through to the Responses API — currently `ContextManagement{Type: "compaction", CompactThreshold: agents.Ptr(int64(...))}`, where a nil `CompactThreshold` leaves the threshold to the server. A nil/empty slice leaves it unset.
 - The per-run overlay replaces `ExtraHeaders` / `ExtraQuery` / `ExtraBody` **wholesale** when the override sets them (matching Python's `ModelSettings.resolve`), rather than merging per key: a run-level `ExtraBody` shadows the agent's `ExtraBody` entirely, it does not union with it.

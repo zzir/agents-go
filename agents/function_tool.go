@@ -138,7 +138,7 @@ func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
 // dedicated error wording,
 // - a non-object payload,
 // - a missing root-level required key (nested required fields are not
-// enforced; see docs/python_differences.md),
+// enforced; see docs/migration_from_python.md),
 // - a type mismatch while decoding into dst.
 //
 // An empty or whitespace-only string is treated as "{}" so tools taking a

@@ -5,3 +5,9 @@ go.work
 go.work.sum
 
 dist/
+
+# Working plans for the independent-evolution rework. They are design scratch,
+# not deliverables — the decisions that survive land in docs/spec.md, and the
+# execution order in ROADMAP.md is local scheduling.
+/plan*.md
+/ROADMAP.md

@@ -10,7 +10,7 @@
 - **Tracing**: built-in spans for every model call, tool call, handoff and guardrail
 - **Sandboxes**: run model-generated code in locked-down Docker containers
 
-The SDK follows the Python design closely — same run loop, same item model, same defaults — while staying idiomatic Go: generics instead of runtime reflection magic, `context.Context` for cancellation, errors instead of exceptions. See [Differences from the Python SDK](python_differences.md) for the complete comparison.
+The SDK follows the Python design closely — same run loop, same item model, same defaults — while staying idiomatic Go: generics instead of runtime reflection magic, `context.Context` for cancellation, errors instead of exceptions. See [Differences from the Python SDK](migration_from_python.md) for the complete comparison.
 
 ## Installation
 
@@ -76,4 +76,4 @@ func main() {
 | Observability | [Tracing](tracing.md) |
 | Examples | [Examples](examples.md) |
 | API index | [Feature reference](features.md) — every capability mapped to its API |
-| Coming from Python? | [Differences from the Python SDK](python_differences.md) |
+| Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |
