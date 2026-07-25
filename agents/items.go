@@ -165,3 +165,15 @@ func InputItemsFromText(text string) []TResponseInputItem {
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleUser),
 	}
 }
+
+// InputItemsFromSystemText builds a single system message.
+//
+// It is what the runtime uses to say something itself — a compaction summary,
+// a folded record of tool calls. Attributing such content to the user or the
+// assistant would put words in someone's mouth, and the model would treat it as
+// something that was actually said.
+func InputItemsFromSystemText(text string) []TResponseInputItem {
+	return []TResponseInputItem{
+		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleSystem),
+	}
+}

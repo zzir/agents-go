@@ -3,8 +3,6 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/openai/openai-go/v3/responses"
 )
 
 // EntryProjector turns a session entry into the model input items it
@@ -59,10 +57,8 @@ func projectCompaction(e SessionEntry) ([]TResponseInputItem, error) {
 	out := make([]TResponseInputItem, 0, len(p.Retained)+1)
 	if p.Summary != "" {
 		// A system message, not a user one: nobody said this. It is context the
-		// runtime supplies in place of history it folded away, and attributing
-		// it to the user would put words in their mouth.
-		out = append(out, responses.ResponseInputItemParamOfMessage(
-			p.Summary, responses.EasyInputMessageRoleSystem))
+		// runtime supplies in place of history it folded away.
+		out = append(out, InputItemsFromSystemText(p.Summary)...)
 	}
 	for i, raw := range p.Retained {
 		item, err := UnmarshalInputItem(raw)
