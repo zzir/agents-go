@@ -379,12 +379,10 @@ the target is one behavior — concurrent, with cancellation.
 
 ### 2.7 Tools
 
-#### Return values ✅ 🚧
+#### Return values ✅
 
-🚧 (plan4) return values become
-`ToolResult{Content, Details, Display, Usage, AddedTools, Terminate}`.
-
-What the model sees:
+A tool returns a `ToolResult` ([§2.7b](#27b-tool-results-)); plain values are
+wrapped. What the model sees, given the result's `Content`:
 
 | The tool returns | The model sees |
 |---|---|
@@ -438,6 +436,33 @@ that some of what a tool knows is **not for the model**:
 
 A tool that returns a plain value (string, struct, `ToolOutputContent`) is
 wrapped automatically, so the ordinary tool is unchanged.
+
+### 2.7c Tool capabilities are side interfaces ✅
+
+Beyond its name, everything a tool can do is an **optional interface** rather
+than a method on `Tool`: `InvokableTool`, `DescribableTool`,
+`ApprovalRequiredTool`, `GuardedTool`, `TimeoutTool`, `SequentialTool`,
+`EnableableTool`, `FailureHandlingTool`.
+
+- The runner resolves them **only** through `ToolAs[T](tool)`, which walks the
+  `Unwrap() Tool` chain the way `errors.As` walks an error chain. A tool that
+  provides nothing beyond `Tool` is legal and runs with every default.
+- A **bare type assertion is a bug**, and the reason this is specified at all:
+  `tool.(ApprovalRequiredTool)` compiles and returns false through any wrapper,
+  silently reporting that a tool needing approval needs none. Nothing in the
+  type system catches it, so the rule is "always `ToolAs`".
+- `WithApproval`, `WithTimeout`, `WithGuardrails`, `WithEnabled`,
+  `WithSequential` and `WithFailureHandler` wrap any tool. They stack in **any
+  order**, and every capability underneath stays reachable.
+- `WithGuardrails` **appends** to the wrapped tool's own guardrails. Replacing
+  them would let a wrapper disarm a tool's checks without saying so.
+- A wrapper never changes what the model is told: name, description and schema
+  come from the tool underneath.
+
+There is deliberately no `WithFatalErrors`. "Errors abort the run" is the
+absence of a failure handler, and a wrapper cannot express an absence —
+`ToolAs` would walk straight past it to the inner tool's handler. Set
+`FailureErrorFunction = nil` on the tool itself.
 
 ### 2.8 Nested agent-as-tool attribution ✅
 
@@ -581,6 +606,11 @@ prompt provides the base, instructions append to it.
 
 An unexported marker method keeps the set of tool kinds closed to the package.
 This is how the "no hosted tools" decision is enforced, not an oversight.
+
+Sealed is not the same as unextensible: a caller cannot invent a tool *kind*,
+but the `WithXxx` decorators of [§2.7c](#27c-tool-capabilities-are-side-interfaces-)
+compose freely over any tool, so behavior stays open while the wire contract
+stays closed.
 
 ### 5.5 Internal item types are Responses wire types
 

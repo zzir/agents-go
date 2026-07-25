@@ -21,11 +21,14 @@ import (
 func convertTools(tools []agents.Tool, handoffs []agents.Handoff) ([]responses.ToolUnionParam, error) {
 	out := make([]responses.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {
-		ft, ok := t.(*agents.FunctionTool)
+		// Through ToolAs, not a bare assertion: a decorated tool (approval,
+		// timeout, guardrails) still has to reach the model with the same
+		// name and schema as the tool underneath it.
+		d, ok := agents.ToolAs[agents.DescribableTool](t)
 		if !ok {
 			return nil, fmt.Errorf("openai: unsupported tool type %T (only function tools are supported)", t)
 		}
-		out = append(out, functionToolParam(ft.Name, ft.Description, ft.ParamsJSONSchema, ft.Strict))
+		out = append(out, functionToolParam(t.ToolName(), d.ToolDescription(), d.ToolParamsSchema(), d.ToolStrict()))
 	}
 	for _, h := range handoffs {
 		out = append(out, functionToolParam(h.ToolName, h.ToolDescription, h.InputJSONSchema, h.StrictJSONSchema))

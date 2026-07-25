@@ -108,17 +108,72 @@ func DefaultToolErrorFunction(_ context.Context, _ *ToolContext, err error) stri
 	return "An error occurred while running the tool. Please try again. Error: " + err.Error()
 }
 
-// requiresApproval reports whether a specific call to this tool needs approval.
-func (t *FunctionTool) requiresApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
-	if t.NeedsApprovalFunc != nil {
-		return t.NeedsApprovalFunc(ctx, rc, argsJSON, callID)
-	}
-	return t.NeedsApproval, nil
-}
-
 // ToolName implements Tool.
 func (t *FunctionTool) ToolName() string { return t.Name }
 
 func (t *FunctionTool) isTool() {}
 
 var _ Tool = (*FunctionTool)(nil)
+
+// FunctionTool declares its capabilities through the side interfaces, so a
+// runner asks every tool the same way — ToolAs — whether the capability came
+// from a field here or from a decorator wrapped around it.
+
+// Invoke implements InvokableTool.
+func (t *FunctionTool) Invoke(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
+	if t.OnInvoke == nil {
+		return ToolResult{}, newUserError("function tool %q has no OnInvoke", t.Name)
+	}
+	return t.OnInvoke(ctx, tc, argsJSON)
+}
+
+// ToolDescription implements DescribableTool.
+func (t *FunctionTool) ToolDescription() string { return t.Description }
+
+// ToolParamsSchema implements DescribableTool.
+func (t *FunctionTool) ToolParamsSchema() map[string]any { return t.ParamsJSONSchema }
+
+// ToolStrict implements DescribableTool.
+func (t *FunctionTool) ToolStrict() bool { return t.Strict }
+
+// NeedsToolApproval implements ApprovalRequiredTool.
+func (t *FunctionTool) NeedsToolApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
+	if t.NeedsApprovalFunc != nil {
+		return t.NeedsApprovalFunc(ctx, rc, argsJSON, callID)
+	}
+	return t.NeedsApproval, nil
+}
+
+// ToolGuardrails implements GuardedTool.
+func (t *FunctionTool) ToolGuardrails() []Guardrail { return t.Guardrails }
+
+// ToolTimeout implements TimeoutTool.
+func (t *FunctionTool) ToolTimeout() time.Duration { return t.Timeout }
+
+// IsToolEnabled implements EnableableTool.
+func (t *FunctionTool) IsToolEnabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error) {
+	if t.IsEnabled == nil {
+		return true, nil
+	}
+	return t.IsEnabled(ctx, rc, agent)
+}
+
+// HandleToolFailure implements FailureHandlingTool. A tool whose
+// FailureErrorFunction is nil deliberately does NOT satisfy the interface at
+// runtime — the runner checks for nil — so its errors abort the run.
+func (t *FunctionTool) HandleToolFailure(ctx context.Context, tc *ToolContext, err error) string {
+	if t.FailureErrorFunction == nil {
+		return ""
+	}
+	return t.FailureErrorFunction(ctx, tc, err)
+}
+
+var (
+	_ InvokableTool        = (*FunctionTool)(nil)
+	_ DescribableTool      = (*FunctionTool)(nil)
+	_ ApprovalRequiredTool = (*FunctionTool)(nil)
+	_ GuardedTool          = (*FunctionTool)(nil)
+	_ TimeoutTool          = (*FunctionTool)(nil)
+	_ EnableableTool       = (*FunctionTool)(nil)
+	_ FailureHandlingTool  = (*FunctionTool)(nil)
+)

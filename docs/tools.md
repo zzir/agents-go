@@ -79,6 +79,45 @@ t.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Age
 
 Tools can carry their own input/output guardrails — see [Guardrails](guardrails.md#tool-guardrails).
 
+### Decorators: adding a capability to a tool you did not build
+
+Every capability above is also available as a wrapper, for tools you did not
+construct — one returned by `agent.AsTool(...)`, by an MCP server, or by a
+library:
+
+```go
+tool = agents.WithApprovalAlways(tool)
+tool = agents.WithTimeout(tool, 30*time.Second)
+tool = agents.WithGuardrails(tool, myGuardrail)   // appends to the tool's own
+tool = agents.WithEnabled(tool, onlyForAdmins)
+tool = agents.WithSequential(tool)
+tool = agents.WithFailureHandler(tool, agents.DefaultToolErrorFunction)
+```
+
+Wrappers stack in any order and compose with the tool's own settings.
+`WithGuardrails` in particular **adds** to whatever the wrapped tool already
+carries rather than replacing it, so wrapping can never silently disarm a
+tool's own checks.
+
+The runner discovers capabilities with `agents.ToolAs[T]`, which walks the
+wrapper chain the way `errors.As` walks an error chain:
+
+```go
+if a, ok := agents.ToolAs[agents.ApprovalRequiredTool](tool); ok { ... }
+```
+
+**Use `ToolAs`, never a bare type assertion.** `tool.(ApprovalRequiredTool)`
+compiles and returns false through a wrapper — a wrapper only satisfies the
+`Tool` interface itself — so an assertion silently reports that the tool needs
+no approval. That failure mode is why the capabilities are side interfaces
+(`ApprovalRequiredTool`, `GuardedTool`, `TimeoutTool`, `SequentialTool`,
+`EnableableTool`, `FailureHandlingTool`, `InvokableTool`, `DescribableTool`)
+resolved through one accessor instead of methods on `Tool`.
+
+A wrapper you write yourself only has to embed the unexported shell's contract:
+forward `ToolName`, implement `Unwrap() Tool`, and add the one interface it
+provides.
+
 ### Structured / multimodal output
 
 By default a tool's return value goes back to the model as text (JSON for non-string values). To hand the model **native image or file input** instead, return a `ToolOutputContent` — or a `[]ToolOutputContent` for several parts — which becomes a `function_call_output` content list:

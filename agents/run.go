@@ -1389,12 +1389,12 @@ func traceTools(tools []Tool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		m := map[string]any{"name": t.ToolName()}
-		if ft, ok := t.(*FunctionTool); ok {
-			if ft.Description != "" {
-				m["description"] = ft.Description
+		if d, ok := ToolAs[DescribableTool](t); ok {
+			if desc := d.ToolDescription(); desc != "" {
+				m["description"] = desc
 			}
-			if ft.ParamsJSONSchema != nil {
-				m["parameters"] = ft.ParamsJSONSchema
+			if schema := d.ToolParamsSchema(); schema != nil {
+				m["parameters"] = schema
 			}
 		}
 		out = append(out, m)
@@ -1505,23 +1505,21 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error) {
 	out := make([]Tool, 0, len(agent.Tools))
 	for _, t := range agent.Tools {
-		if ft, ok := t.(*FunctionTool); ok {
-			// A tool built from an unusable schema/argument type is never sent to
-			// the model — fail the run now with a *UserError instead of letting
-			// the model call it and receive a schema error (Python raises at
-			// decoration time; Go defers construction errors to keep constructors
-			// single-valued, so the runner surfaces them here).
-			if ft.constructionErr != nil {
-				return nil, newUserError("tool %q: %v", ft.Name, ft.constructionErr)
+		// A tool built from an unusable schema/argument type is never sent to
+		// the model — fail the run now with a *UserError instead of letting the
+		// model call it and receive a schema error. Construction errors are
+		// deferred so constructors stay single-valued, so the runner surfaces
+		// them here.
+		if ft, ok := ToolAs[*FunctionTool](t); ok && ft.constructionErr != nil {
+			return nil, newUserError("tool %q: %v", ft.Name, ft.constructionErr)
+		}
+		if e, ok := ToolAs[EnableableTool](t); ok {
+			enabled, err := e.IsToolEnabled(ctx, r.rc, agent)
+			if err != nil {
+				return nil, err
 			}
-			if ft.IsEnabled != nil {
-				ok, err := ft.IsEnabled(ctx, r.rc, agent)
-				if err != nil {
-					return nil, err
-				}
-				if !ok {
-					continue
-				}
+			if !enabled {
+				continue
 			}
 		}
 		out = append(out, t)
@@ -1540,14 +1538,14 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 	// UserError for duplicates too).
 	seen := make(map[string]bool, len(out))
 	for _, t := range out {
-		ft, ok := t.(*FunctionTool)
-		if !ok {
+		name := t.ToolName()
+		if name == "" {
 			continue
 		}
-		if seen[ft.Name] {
-			return nil, newUserError("duplicate tool name %q on agent %q: tool names must be unique across Agent.Tools and MCP server tools", ft.Name, agent.Name)
+		if seen[name] {
+			return nil, newUserError("duplicate tool name %q on agent %q: tool names must be unique across Agent.Tools and MCP server tools", name, agent.Name)
 		}
-		seen[ft.Name] = true
+		seen[name] = true
 	}
 	return out, nil
 }
