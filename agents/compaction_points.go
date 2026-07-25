@@ -175,3 +175,55 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []TResponseInp
 	// rejects.
 	return normalizeStoredInput(history), true, nil
 }
+
+// CompactionCheckpointer is an optional Compactor capability: describe the last
+// pass as an append-only checkpoint entry.
+//
+// It is optional because a compactor that only reshapes the context in memory
+// is perfectly useful — it just has nothing durable to say, and requiring every
+// implementation to invent a checkpoint would tax the simple case for the
+// benefit of the elaborate one.
+type CompactionCheckpointer interface {
+	// Checkpoint returns the entry recording what the compactor folded away.
+	// ok is false when nothing was folded, so no checkpoint is claimed for a
+	// compaction that did not happen.
+	Checkpoint() (SessionEntry, bool, error)
+}
+
+// checkpointAfterRun records the run's compaction as an append-only checkpoint,
+// so the next run starts from the shorter context instead of recomputing it.
+//
+// It reports whether it wrote one. Failure is not fatal — a missing checkpoint
+// costs the next run one more compaction pass, which is exactly what happened
+// before checkpoints existed.
+func (r *runner) checkpointAfterRun(ctx context.Context) bool {
+	if !r.opts.Compaction.active(CompactAfterRun) || r.opts.Conversation.Session == nil {
+		return false
+	}
+	cp, ok := r.opts.Compaction.Compactor.(CompactionCheckpointer)
+	if !ok {
+		return false
+	}
+
+	// Compact once more over the whole persisted history: the passes during the
+	// run happened before this turn's items existed.
+	entries, err := r.opts.Conversation.Session.ContextEntries(ctx, Cursor{})
+	if err != nil {
+		return false
+	}
+	if compacted := r.compactContext(ctx, CompactAfterRun, entries); len(compacted) == len(entries) {
+		return false
+	}
+
+	entry, ok, err := cp.Checkpoint()
+	if err != nil || !ok {
+		if err != nil {
+			r.trace.StartCompactionSpan(r.agentParentID()).SetError(err.Error(), nil)
+		}
+		return false
+	}
+	if err := r.opts.Conversation.Session.Append(ctx, entry); err != nil {
+		return false
+	}
+	return true
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/compaction"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -91,6 +92,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	// pairing constraints; the message-split mapping below leaves them on the
 	// same side as their preceding convertible neighbor.
 	items := make([]agents.TResponseInputItem, 0, len(active))
+	entries := make([]agents.SessionEntry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
 		m := &active[i]
@@ -104,11 +106,15 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		if raw == nil {
 			continue
 		}
-		item, err := agents.UnmarshalInputItem(NormalizeItemJSON(raw))
+		normalized := NormalizeItemJSON(raw)
+		item, err := agents.UnmarshalInputItem(normalized)
 		if err != nil {
 			continue
 		}
 		items = append(items, item)
+		// The grouping below reads the wire JSON, so carry it alongside rather
+		// than re-marshaling what we just decoded.
+		entries = append(entries, agents.SessionEntry{Kind: agents.EntryKindItem, Item: normalized})
 		itemMsgIdx = append(itemMsgIdx, i)
 	}
 
@@ -124,16 +130,17 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 
 	// A pure count-based split can cut through a function_call / output pair,
 	// making the summary request itself invalid or leaving the kept history
-	// starting with an orphaned output. Move the split so both sides stay
-	// self-consistent; 0 means no valid non-empty prefix exists, so skip this
-	// compaction pass rather than risk corrupting the history.
-	itemSplit = agents.SafeSplitPoint(items, itemSplit)
+	// starting with an orphaned output. Snap the split to a group boundary so
+	// both sides stay self-consistent; 0 means no valid non-empty prefix
+	// exists, so skip this pass rather than risk corrupting the history.
+	itemSplit = compaction.SafeSplit(entries, itemSplit)
 	if itemSplit <= 0 {
 		return nil
 	}
 	toSummarize := items[:itemSplit]
 
-	if agents.IsSingleSummary(toSummarize) {
+	// Summarizing a summary produces a paraphrase of a paraphrase.
+	if compaction.IsSummaryOnly(entries[:itemSplit]) {
 		return nil
 	}
 

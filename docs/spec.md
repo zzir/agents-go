@@ -364,7 +364,7 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
 - **Deleting removes the entries with it**, atomically where the backend can, so
   no entries survive pointing at a session that is gone.
 
-### 2.5f Compaction ✅ 🚧 (checkpoint persistence)
+### 2.5f Compaction ✅
 
 Compaction is a **run-level** concern. Deciding what to drop needs the model,
 the usage numbers and the context window; all three belong to the run, so the
@@ -396,9 +396,20 @@ configuration does too (`RunOptions.Compaction`).
   compact API) takes the `CompactAfterRun` point instead; the two never both
   run on one session.
 
-🚧 (plan2 P4) `CompactAfterRun` records its result as an append-only
-`EntryKindCompaction` checkpoint, so the next run starts from it rather than
-recomputing.
+**A checkpoint is appended, never a rewrite.** `CompactAfterRun` records the
+pass as an `EntryKindCompaction` entry whose payload names the entries it
+folded (`ExcludedIDs`) and carries the retained tail. The folded entries stay
+in the session untouched, so a reader can offer to expand them and a fork from
+before the checkpoint still finds its full history; `ContextEntries` starts at
+the most recent checkpoint, so the next run reads the shorter context without
+recomputing the pass.
+
+Writing a checkpoint is an optional capability (`CompactionCheckpointer`): a
+compactor that only reshapes the context in memory is useful and has nothing
+durable to say.
+
+The one path that still rewrites is `openai.CompactionSession`, because the
+server's compact API returns a replacement rather than a decision.
 
 ### 2.6 Guardrails ✅
 

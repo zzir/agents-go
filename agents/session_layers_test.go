@@ -75,7 +75,7 @@ func TestContextEntries_StartsAtTheLastCheckpoint(t *testing.T) {
 	if err := sess.AppendItems(ctx, InputItemsFromText("ancient"), Source{}); err != nil {
 		t.Fatal(err)
 	}
-	cp, err := newCompactionEntry("SUMMARY", InputItemsFromText("kept"))
+	cp, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY"}, InputItemsFromText("kept"))
 	if err != nil {
 		t.Fatal(err)
 	}

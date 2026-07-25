@@ -20,7 +20,6 @@ go run ./examples/hello
 | [`examples/fallback`](../examples/fallback/main.go) | Retry + fallback model decorators, with `WithShouldFallback` classification |
 | [`examples/compaction`](../examples/compaction/main.go) | `openai.CompactionSession`: server-side history compaction via `responses.compact` |
 | [`examples/runcompaction`](../examples/runcompaction/main.go) | Run-level compaction: a `compaction.Strategy` folding tool results mid-run, at the turn boundary |
-| [`examples/slidingwindow`](../examples/slidingwindow/main.go) | `SlidingWindowSession`: provider-agnostic history summarization with pair-safe splits |
 | [`examples/conversations`](../examples/conversations/main.go) | `openai.ConversationsSession`: history stored server-side via the Conversations API |
 | [`examples/prompt`](../examples/prompt/main.go) | Binding an OpenAI stored prompt via `Agent.Prompt` |
 | [`examples/bravesearch`](../examples/bravesearch/main.go) | The Brave web-search tool (`tools/bravesearch`) |

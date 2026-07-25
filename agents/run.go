@@ -1317,6 +1317,12 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	if r.opts.Conversation.Session == nil {
 		return
 	}
+	// A configured Compactor records its result as a checkpoint. It and a
+	// self-compacting storage never both apply: compactContext stands aside
+	// when the storage compacts itself.
+	if r.checkpointAfterRun(ctx) {
+		return
+	}
 	// Items produced locally AFTER the last model response — a final turn's
 	// tool/handoff outputs (a terminating tool, rejected calls) or a synthesized
 	// error-handler fallback message — are not on the server's

@@ -3,6 +3,7 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // EntryProjector turns a session entry into the model input items it
@@ -35,6 +36,27 @@ func projectItem(e SessionEntry) ([]TResponseInputItem, error) {
 	return []TResponseInputItem{item}, nil
 }
 
+// SummaryMarker prefixes a compaction summary. It is how a later pass
+// recognizes an existing summary and refuses to summarize it again, which is
+// what stops a long conversation from decaying into a summary of a summary of
+// a summary.
+const SummaryMarker = "[Conversation Summary]"
+
+// DefaultSummaryPrompt is the default system prompt used to summarize
+// conversation history during compaction.
+var DefaultSummaryPrompt = strings.TrimSpace(`
+You are a conversation summarizer. You will receive a portion of a
+conversation between a user and an AI assistant. Summarize it into a
+concise factual account that preserves:
+- Key decisions and conclusions
+- Important facts, names, numbers, and code identifiers mentioned
+- The current state of any ongoing task
+- Any commitments or action items
+
+Be concise but complete. Do not add commentary. Do not invent information.
+Output only the summary text.
+`)
+
 // CompactionPayload is the body of a compaction checkpoint: a summary of what
 // was folded away, plus the entries kept verbatim after it.
 //
@@ -42,17 +64,45 @@ func projectItem(e SessionEntry) ([]TResponseInputItem, error) {
 // the session, so the checkpoint is self-contained: reading it gives the whole
 // context that replaced the history it summarizes, with no separate range to
 // track.
+//
+// A checkpoint is APPENDED, never a rewrite. The entries it folds stay in the
+// session exactly as they were — ExcludedIDs names them, so a UI can offer to
+// expand what was compacted, and a fork from before the checkpoint still finds
+// its full history.
 type CompactionPayload struct {
 	// Summary is the text that stands in for the folded history.
 	Summary string `json:"summary"`
 	// Retained are the items kept verbatim after the summary.
 	Retained []json.RawMessage `json:"retained,omitzero"`
+	// PrevSummary is the summary this one supersedes, when a checkpoint
+	// updates an earlier one rather than starting fresh.
+	PrevSummary string `json:"prev_summary,omitzero"`
+	// ExcludedIDs are the entries this checkpoint folded away. They are still
+	// in the session; this is what lets a reader offer them back.
+	ExcludedIDs []string `json:"excluded_ids,omitzero"`
+	// TokensBefore and TokensAfter estimate the context on either side of the
+	// pass, so a session can report what compaction bought without recomputing
+	// it.
+	TokensBefore int `json:"tokens_before,omitzero"`
+	TokensAfter  int `json:"tokens_after,omitzero"`
+}
+
+// CompactionPayload decodes a compaction checkpoint's payload.
+func (e SessionEntry) CompactionPayload() (CompactionPayload, error) {
+	if e.Kind != EntryKindCompaction {
+		return CompactionPayload{}, fmt.Errorf("entry %q is a %s entry, not a compaction checkpoint", e.ID, e.Kind)
+	}
+	var p CompactionPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return CompactionPayload{}, fmt.Errorf("decoding compaction payload for entry %q: %w", e.ID, err)
+	}
+	return p, nil
 }
 
 func projectCompaction(e SessionEntry) ([]TResponseInputItem, error) {
-	var p CompactionPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return nil, fmt.Errorf("decoding compaction payload for entry %q: %w", e.ID, err)
+	p, err := e.CompactionPayload()
+	if err != nil {
+		return nil, err
 	}
 	out := make([]TResponseInputItem, 0, len(p.Retained)+1)
 	if p.Summary != "" {
@@ -152,18 +202,18 @@ func FoldUpdates(entries []SessionEntry) []SessionEntry {
 	return out
 }
 
-// newCompactionEntry builds a compaction checkpoint from a summary and the
-// items kept verbatim after it.
-func newCompactionEntry(summary string, retained []TResponseInputItem) (SessionEntry, error) {
-	payload := CompactionPayload{Summary: summary}
+// NewCompactionEntry builds a compaction checkpoint. retained are the items
+// kept verbatim after the summary; the rest of the payload describes what the
+// pass folded away.
+func NewCompactionEntry(p CompactionPayload, retained []TResponseInputItem) (SessionEntry, error) {
 	for i, item := range retained {
 		raw, err := MarshalInputItem(item)
 		if err != nil {
 			return SessionEntry{}, fmt.Errorf("encoding retained item %d: %w", i, err)
 		}
-		payload.Retained = append(payload.Retained, raw)
+		p.Retained = append(p.Retained, raw)
 	}
-	raw, err := json.Marshal(payload)
+	raw, err := json.Marshal(p)
 	if err != nil {
 		return SessionEntry{}, fmt.Errorf("encoding compaction payload: %w", err)
 	}
@@ -172,4 +222,26 @@ func newCompactionEntry(summary string, retained []TResponseInputItem) (SessionE
 		Source:  Source{Type: SourceCompaction},
 		Payload: raw,
 	}, nil
+}
+
+// ExtractOutputText returns the first output_text content from a model
+// response output. Used to extract summary text from a compaction call.
+func ExtractOutputText(output []TResponseOutputItem) string {
+	for _, item := range output {
+		b := []byte(item.RawJSON())
+		var probe struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(b, &probe) == nil {
+			for _, c := range probe.Content {
+				if c.Type == "output_text" && c.Text != "" {
+					return c.Text
+				}
+			}
+		}
+	}
+	return ""
 }

@@ -34,7 +34,7 @@ See [Sessions](sessions.md) and [Context management](context.md).
 |---|---|
 | Sessions | `agents.Session`, `InMemorySession`, `memory.FileSession` (JSONL), `sessions` module (SQLite/Postgres) |
 | Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
-| History compaction | `openai.CompactionSession` (server-side `responses.compact`), `agents.NewSlidingWindowSession` (local summarize) |
+| History compaction | `RunOptions.Compaction` + `agents/compaction` strategies (local, append-only checkpoints), `openai.CompactionSession` (server-side `responses.compact`) |
 | Session forking | `agents.ForkSession` / `ForkSessionAt` / `IndexOfItemID` |
 | Server-side state | `RunOptions.Conversation.UsePreviousResponseID` / `RunOptions.Conversation.ConversationID` |
 | Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` |

@@ -62,3 +62,76 @@ func (c *Compactor) Index() *Index {
 }
 
 var _ agents.Compactor = (*Compactor)(nil)
+
+// Checkpoint builds an append-only compaction checkpoint from the compactor's
+// current index: what the pass folded away, and the context that stands in its
+// place.
+//
+// It reports ok=false when there is nothing to record — no pass has excluded
+// anything, so a checkpoint would claim a compaction that did not happen.
+//
+// The checkpoint is a new entry, never a rewrite. The entries it names in
+// ExcludedIDs stay in the session exactly as they were, which is what lets a
+// reader offer to expand them and a fork from before the checkpoint still find
+// its full history.
+func (c *Compactor) Checkpoint() (agents.SessionEntry, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.idx == nil {
+		return agents.SessionEntry{}, false, nil
+	}
+
+	var excluded []string
+	var prevSummary string
+	before := 0
+	for _, g := range c.idx.Groups {
+		before += g.Tokens
+		if !g.Excluded {
+			if g.Kind == GroupSummary {
+				// The checkpoint this one continues from: recording it lets an
+				// updating summarizer see what it is revising.
+				if p, err := summaryOf(g); err == nil && p != "" {
+					prevSummary = p
+				}
+			}
+			continue
+		}
+		for _, e := range g.Entries {
+			if e.ID != "" {
+				excluded = append(excluded, e.ID)
+			}
+		}
+	}
+	if len(excluded) == 0 {
+		return agents.SessionEntry{}, false, nil
+	}
+
+	retained, err := agents.ProjectEntries(c.idx.IncludedEntries(), nil)
+	if err != nil {
+		return agents.SessionEntry{}, false, err
+	}
+	e, err := agents.NewCompactionEntry(agents.CompactionPayload{
+		PrevSummary:  prevSummary,
+		ExcludedIDs:  excluded,
+		TokensBefore: before,
+		TokensAfter:  c.idx.ContextTokens(),
+	}, retained)
+	if err != nil {
+		return agents.SessionEntry{}, false, err
+	}
+	return e, true, nil
+}
+
+// summaryOf reads the summary text out of a checkpoint group.
+func summaryOf(g *Group) (string, error) {
+	for _, e := range g.Entries {
+		p, err := e.CompactionPayload()
+		if err != nil {
+			return "", err
+		}
+		if p.Summary != "" {
+			return p.Summary, nil
+		}
+	}
+	return "", nil
+}

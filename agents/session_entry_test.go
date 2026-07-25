@@ -213,7 +213,7 @@ func TestRunPersistsEntriesWithProvenanceAndDisplay(t *testing.T) {
 // the tail it kept, with no separate range to track.
 func TestCompactionCheckpointProjection(t *testing.T) {
 	kept := InputItemsFromText("the most recent question")
-	e, err := newCompactionEntry("SUMMARY: earlier discussion", kept)
+	e, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY: earlier discussion"}, kept)
 	if err != nil {
 		t.Fatal(err)
 	}

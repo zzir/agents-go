@@ -138,7 +138,7 @@ func TestTree_PathStopsAtCompaction(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()
 	appendText(t, sess, "ancient")
-	cp, err := newCompactionEntry("SUMMARY", nil)
+	cp, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

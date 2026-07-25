@@ -189,3 +189,86 @@ func TestCompactionPoint_Has(t *testing.T) {
 		t.Error("a combined point reports a member it does not have")
 	}
 }
+
+// checkpointingCompactor drops the oldest entry and reports a checkpoint for it.
+type checkpointingCompactor struct {
+	dropped []string
+}
+
+func (c *checkpointingCompactor) Compact(_ context.Context, entries []SessionEntry) ([]SessionEntry, error) {
+	if len(entries) < 2 {
+		return entries, nil
+	}
+	c.dropped = append(c.dropped, entries[0].ID)
+	return entries[1:], nil
+}
+
+func (c *checkpointingCompactor) Checkpoint() (SessionEntry, bool, error) {
+	if len(c.dropped) == 0 {
+		return SessionEntry{}, false, nil
+	}
+	e, err := NewCompactionEntry(CompactionPayload{
+		Summary:     "earlier discussion",
+		ExcludedIDs: c.dropped,
+	}, InputItemsFromText("the kept tail"))
+	return e, err == nil, err
+}
+
+// The after-run checkpoint is what makes compaction persist: the next run reads
+// from it instead of recomputing the same pass.
+func TestCompaction_AfterRunWritesACheckpoint(t *testing.T) {
+	ctx := context.Background()
+	sess := seededSession(t, "one", "two", "three")
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	if _, err := RunSync(ctx, agent, "now", RunOptions{
+		Conversation: ConversationOptions{Session: sess},
+		Compaction:   CompactionOptions{Compactor: &checkpointingCompactor{}, Points: CompactAfterRun},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := sess.Entries(ctx, Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint *SessionEntry
+	for i := range all {
+		if all[i].Kind == EntryKindCompaction {
+			checkpoint = &all[i]
+		}
+	}
+	if checkpoint == nil {
+		t.Fatal("no checkpoint was appended")
+	}
+	p, err := checkpoint.CompactionPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.ExcludedIDs) == 0 {
+		t.Error("the checkpoint names nothing as excluded")
+	}
+
+	// Nothing was rewritten: every folded entry is still in the log, which is
+	// what lets a reader expand them and a fork keep its full history.
+	byID := map[string]bool{}
+	for _, e := range all {
+		byID[e.ID] = true
+	}
+	for _, id := range p.ExcludedIDs {
+		if !byID[id] {
+			t.Errorf("entry %q was excluded AND removed; compaction must only append", id)
+		}
+	}
+
+	// The next run starts at the checkpoint, so it reads the summary and the
+	// retained tail rather than the folded history.
+	ctxEntries, err := sess.ContextEntries(ctx, Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ctxEntries) == 0 || ctxEntries[0].Kind != EntryKindCompaction {
+		t.Errorf("context starts with %v, want the checkpoint", ctxEntries)
+	}
+}
