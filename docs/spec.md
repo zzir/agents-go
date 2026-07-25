@@ -319,6 +319,22 @@ An entry names its parent, so a session is a walk rather than a pile.
 entry ids across unchanged, so an update entry naming one still finds its
 target.
 
+### 2.5e Session lifecycles ✅
+
+A `SessionRepo` owns which sessions exist, separately from their contents.
+
+- **Existence is recorded, not inferred.** A session created with no entries is
+  still listable; inferring existence from contents makes "empty" and "never
+  created" the same state.
+- **`Hidden` belongs to the session**, not to each caller's filter. A session
+  that serves another one (a background task's history) is excluded from
+  listings by default.
+- **Opening an unknown session is an error**, never an empty session. A wrong id
+  that reads as a fresh conversation makes a run start over instead of
+  continuing, which is worse than failing.
+- **Deleting removes the entries with it**, atomically where the backend can, so
+  no entries survive pointing at a session that is gone.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in

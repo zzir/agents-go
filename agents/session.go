@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/zzir/agents-go/tracing"
@@ -143,6 +144,11 @@ func (s *Session) Metadata(ctx context.Context) (SessionMetadata, error) {
 
 // Clear removes every entry.
 func (s *Session) Clear(ctx context.Context) error { return s.storage.Clear(ctx) }
+
+// ErrSessionNotFound is what a repo reports for an id it does not hold. Opening
+// a session that does not exist must not look like opening an empty one: a run
+// would start over instead of continuing, which is worse than an error.
+var ErrSessionNotFound = errors.New("agents: session not found")
 
 // SessionRepo owns session lifecycles: creating, opening, listing and deleting
 // them. A backend that holds many sessions implements it once instead of every

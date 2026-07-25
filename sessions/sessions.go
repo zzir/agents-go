@@ -29,17 +29,33 @@ import (
 // entry is the row model: one stored session entry, ordered by the
 // autoincrement id within a session.
 //
-// The whole entry is stored as JSON in one column rather than spread across
-// typed columns. Kinds and their payloads are an open set — a build that meets
-// an entry kind it does not know must still read the row back intact — and a
-// column per field would make every new kind a schema migration.
+// EntryID, ParentID and Kind are lifted out of the JSON so the database can
+// answer point lookups and kind filters with an index, instead of the whole
+// session being loaded and scanned in Go. Everything else stays in the blob:
+// entry kinds and payloads are an open set, and a column per field would make
+// each new kind a schema migration.
 type entry struct {
 	bun.BaseModel `bun:"table:agent_entries,alias:e"`
 
 	ID        int64  `bun:"id,pk,autoincrement"`
 	SessionID string `bun:"session_id,notnull"`
-	Kind      string `bun:"kind,notnull"`  // indexed for kind-filtered reads
+	EntryID   string `bun:"entry_id,notnull"`
+	ParentID  string `bun:"parent_id"`
+	Kind      string `bun:"kind,notnull"`
 	Entry     string `bun:"entry,notnull"` // JSON of agents.SessionEntry
+}
+
+// sessionRow records a session's existence and metadata, so a repo can list
+// sessions that hold no entries yet and so "hidden" is a property of the
+// session rather than something inferred from its contents.
+type sessionRow struct {
+	bun.BaseModel `bun:"table:agent_sessions,alias:s"`
+
+	ID        string    `bun:"id,pk"`
+	Title     string    `bun:"title"`
+	Hidden    bool      `bun:"hidden"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
 // Session is a bun-backed agents.Session scoped to one session ID. Multiple
@@ -83,13 +99,25 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 // no migration from agent_messages. This project does not ship migrations —
 // rebuild the database.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
-	if _, err := db.NewCreateTable().Model((*entry)(nil)).IfNotExists().Exec(ctx); err != nil {
-		return err
+	for _, model := range []any{(*entry)(nil), (*sessionRow)(nil)} {
+		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
+			return err
+		}
 	}
-	_, err := db.NewCreateIndex().
+	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_session").
 		Column("session_id", "id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return err
+	}
+	// Point lookups by entry id: without this, resolving one entry means
+	// reading the whole session.
+	_, err := db.NewCreateIndex().
+		Model((*entry)(nil)).
+		Index("idx_agent_entries_entry_id").
+		Column("session_id", "entry_id").
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -240,18 +268,38 @@ func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEnt
 		if err != nil {
 			return nil, fmt.Errorf("encoding session entry: %w", err)
 		}
-		rows = append(rows, entry{SessionID: s.sessionID, Kind: string(e.Kind), Entry: string(data)})
+		rows = append(rows, entry{
+			SessionID: s.sessionID,
+			EntryID:   e.ID,
+			ParentID:  e.ParentID,
+			Kind:      string(e.Kind),
+			Entry:     string(data),
+		})
 	}
 	return rows, nil
 }
 
 // leaf reports the session's current branch tip, for linking an append.
+//
+// Only the last row is read: the tip is either that entry, or — when it is a
+// leaf move — the entry it points at. Folding the whole session to learn the
+// same thing would make every append cost a full read.
 func (s *Session) leaf(ctx context.Context) (string, error) {
-	entries, err := s.Entries(ctx, agents.Cursor{})
+	var row entry
+	err := s.db.NewSelect().Model(&row).
+		Where("session_id = ?", s.sessionID).
+		Order("id DESC").Limit(1).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	return agents.LeafOf(entries), nil
+	e, derr := decodeEntry(row)
+	if derr != nil {
+		return "", derr
+	}
+	return agents.LeafOf([]agents.SessionEntry{e}), nil
 }
 
 func decodeEntry(r entry) (agents.SessionEntry, error) {
@@ -271,30 +319,46 @@ var (
 	_ agents.EntryPopper    = (*Session)(nil)
 )
 
-// Metadata implements agents.SessionStorage.
+// Metadata implements agents.SessionStorage. It counts rather than loading, and
+// merges in the session row when one exists (a session created through a repo).
 func (s *Session) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
 	n, err := s.db.NewSelect().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Count(ctx)
 	if err != nil {
 		return agents.SessionMetadata{}, err
 	}
-	return agents.SessionMetadata{ID: s.sessionID, EntryCount: n}, nil
+	md := agents.SessionMetadata{ID: s.sessionID, EntryCount: n}
+
+	var row sessionRow
+	err = s.db.NewSelect().Model(&row).Where("id = ?", s.sessionID).Limit(1).Scan(ctx)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// A session used directly, without a repo: entries are all there is.
+		return md, nil
+	case err != nil:
+		return md, err
+	}
+	md.Title, md.Hidden = row.Title, row.Hidden
+	md.CreatedAt, md.UpdatedAt = row.CreatedAt, row.UpdatedAt
+	return md, nil
 }
 
-// Entry implements agents.SessionStorage.
+// Entry implements agents.SessionStorage with an indexed lookup rather than a
+// scan of the session.
 func (s *Session) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
-	var rows []entry
-	if err := s.db.NewSelect().Model(&rows).
-		Where("session_id = ?", s.sessionID).Order("id ASC").Scan(ctx); err != nil {
+	var row entry
+	err := s.db.NewSelect().Model(&row).
+		Where("session_id = ?", s.sessionID).
+		Where("entry_id = ?", id).
+		Limit(1).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	for _, r := range rows {
-		e, err := decodeEntry(r)
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == id {
-			return &e, nil
-		}
+	e, derr := decodeEntry(row)
+	if derr != nil {
+		return nil, derr
 	}
-	return nil, nil
+	return &e, nil
 }

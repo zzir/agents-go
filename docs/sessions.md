@@ -94,6 +94,28 @@ A field maintained in parallel with the log has to be updated on every write and
 can disagree with the log after a crash, a concurrent writer, or a fork. A fold
 cannot.
 
+## Managing many sessions
+
+A `SessionRepo` owns which sessions exist, separately from what each one holds.
+
+```go
+repo, _ := memory.NewRepo("./sessions")          // or sessions.NewRepo(db)
+sess, _ := repo.Create(ctx, agents.CreateOptions{Title: "New chat"})
+list, _ := repo.List(ctx, agents.ListOptions{})  // hidden sessions left out
+```
+
+Two things it fixes:
+
+- **A session exists because it was created**, not because it happens to have
+  entries. A fresh conversation is listable before anyone speaks.
+- **`Hidden` marks a session that serves another one** — a background task's
+  private history. Listings exclude them by default, so every caller stops
+  maintaining that filter and stops forgetting it.
+
+**Opening a session that does not exist is an error**, never an empty one:
+`agents.ErrSessionNotFound`. A typo in an id would otherwise look like a fresh
+conversation, and the run would start over instead of continuing.
+
 ## Optional storage capabilities
 
 Not every store can do everything, and the interface does not pretend otherwise.
