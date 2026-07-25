@@ -448,6 +448,10 @@ Swagger/Redoc UI — import the YAML into your own tool.
 
 Endpoint: `GET /ws`
 
+> The target shape this protocol is moving toward — one `run.entry` event,
+> entry ids on streaming deltas, SDK-owned error codes — is frozen in
+> [PROTOCOL.md](PROTOCOL.md). What follows is what ships today.
+
 The WebSocket does not accept a token in the query string. After connecting, the
 client must authenticate at the application level by sending
 `{"type":"auth","token":"..."}` as the first message. The server replies with
