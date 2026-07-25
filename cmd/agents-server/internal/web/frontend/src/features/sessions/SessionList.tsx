@@ -1,5 +1,5 @@
 import './sessions.css';
-import { useState, useEffect, useRef, type ReactElement, type RefObject } from 'react';
+import { useState, useEffect, useRef, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
 import { ActionList, ActionMenu } from '@primer/react';
 import { StackIcon, KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
@@ -35,6 +35,19 @@ interface SessionListProps {
   awaitingSessions?: Set<string>;
 }
 
+// ActionMenu.Overlay renders through a portal, but React synthetic events still
+// bubble along the REACT tree — so a click on a menu item ALSO reaches the
+// enclosing session row's onSelect and silently switches the active chat. That
+// turned "delete another chat" into: switch to the chat being deleted, delete
+// it, then 404 on the now-missing id and land on the empty state. Every menu
+// action therefore stops the event before it leaves the menu.
+function menuAction(fn: () => void) {
+  return (e: SyntheticEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+}
+
 function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFork, onDelete }: SessionItemProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -64,18 +77,18 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
       <ActionMenu open={menuOpen} onOpenChange={setMenuOpen} anchorRef={anchorRef as RefObject<HTMLElement>}>
         <ActionMenu.Overlay>
           <ActionList>
-            <ActionList.Item onSelect={() => onPin(s.id, !s.pinned)}>
+            <ActionList.Item onSelect={menuAction(() => onPin(s.id, !s.pinned))}>
               <ActionList.LeadingVisual>
                 {s.pinned ? <PinSlashIcon size={16} /> : <PinIcon size={16} />}
               </ActionList.LeadingVisual>
               {s.pinned ? 'Unpin' : 'Pin'}
             </ActionList.Item>
-            <ActionList.Item onSelect={() => onFork(s.id)}>
+            <ActionList.Item onSelect={menuAction(() => onFork(s.id))}>
               <ActionList.LeadingVisual><RepoForkedIcon size={16} /></ActionList.LeadingVisual>
               Fork
             </ActionList.Item>
             <ActionList.Divider />
-            <ActionList.Item variant="danger" onSelect={() => onDelete(s.id)}>
+            <ActionList.Item variant="danger" onSelect={menuAction(() => onDelete(s.id))}>
               <ActionList.LeadingVisual><TrashIcon size={16} /></ActionList.LeadingVisual>
               Delete
             </ActionList.Item>
