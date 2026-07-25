@@ -7,10 +7,6 @@ import (
 	"slices"
 )
 
-// fakeResponsesID marks output items synthesized by the SDK rather than
-// returned by the model, matching the Python SDK's FAKE_RESPONSES_ID.
-const fakeResponsesID = "__fake_id__"
-
 // RunErrorData is a snapshot of the run's progress passed to a RunErrorHandler.
 // It mirrors the Python SDK's RunErrorData.
 type RunErrorData struct {
@@ -121,6 +117,7 @@ type errorRecovery struct {
 // surfaces the original error (or keeps its default behavior).
 func (r *runner) resolveErrorRecovery(
 	ctx context.Context,
+	kind string,
 	handler RunErrorHandler,
 	cause error,
 	agent *Agent,
@@ -148,7 +145,7 @@ func (r *runner) resolveErrorRecovery(
 	}
 	rec := &errorRecovery{finalOutput: validated}
 	if !res.ExcludeFromHistory {
-		msg, merr := synthesizeMessageOutputItem(agent, formatFinalOutputText(agent, validated))
+		msg, merr := synthesizeMessageOutputItem(agent, formatFinalOutputText(agent, validated), kind)
 		if merr != nil {
 			return nil, merr
 		}
@@ -224,12 +221,15 @@ func formatFinalOutputText(agent *Agent, v any) string {
 }
 
 // synthesizeMessageOutputItem builds a completed assistant message carrying a
-// handler's fallback output text, marked with the fake response id (the
-// counterpart of Python's create_message_output_item). It round-trips through
-// JSON so the union item is indistinguishable from a model-produced one.
-func synthesizeMessageOutputItem(agent *Agent, text string) (*MessageOutputItem, error) {
+// handler's fallback output text. It round-trips through JSON so the union item
+// is indistinguishable on the wire from a model-produced one.
+//
+// It carries no id. The SDK used to stamp a sentinel one ("__fake_id__") to
+// mark it as synthesized, which meant every consumer that cared had to know
+// that string. Provenance is Source's job now, and the item is genuinely
+// id-less: there is no server-side response to point at.
+func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*MessageOutputItem, error) {
 	payload := map[string]any{
-		"id":     fakeResponsesID,
 		"type":   "message",
 		"role":   "assistant",
 		"status": "completed",
@@ -247,5 +247,9 @@ func synthesizeMessageOutputItem(agent *Agent, text string) (*MessageOutputItem,
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return nil, err
 	}
-	return &MessageOutputItem{Agent: agent, Raw: item}, nil
+	return &MessageOutputItem{
+		Agent: agent,
+		Raw:   item,
+		Src:   Source{Type: SourceErrorHandler, ID: handlerKind},
+	}, nil
 }

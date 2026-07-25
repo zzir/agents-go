@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 )
 
@@ -62,6 +63,19 @@ func OutputToInput(out []TResponseOutputItem) ([]TResponseInputItem, error) {
 	return items, nil
 }
 
+// knownOutputTypes are the output item types the SDK models with a typed
+// variant. Anything else round-trips through param.Override instead — see
+// outputItemToInput.
+//
+// It is the same set processModelResponse switches on; keeping one list means a
+// type cannot become "known" to one and unknown to the other.
+var knownOutputTypes = map[string]bool{
+	"message":              true,
+	"reasoning":            true,
+	"function_call":        true,
+	"function_call_output": true,
+}
+
 func outputItemToInput(out TResponseOutputItem) (TResponseInputItem, error) {
 	var in TResponseInputItem
 	raw := out.RawJSON()
@@ -75,10 +89,23 @@ func outputItemToInput(out TResponseOutputItem) (TResponseInputItem, error) {
 		p := out.AsMessage().ToParam()
 		return TResponseInputItem{OfOutputMessage: &p}, nil
 	}
+	// A type we do not model goes back on the wire byte for byte. Decoding it
+	// into the typed union would drop every field the union does not know, and
+	// the API added the type for a reason — a client that silently discards it
+	// corrupts the conversation rather than merely ignoring a feature.
+	if !knownOutputTypes[out.Type] {
+		return rawInputOverride(raw), nil
+	}
 	if err := json.Unmarshal([]byte(raw), &in); err != nil {
 		return in, err
 	}
 	return in, nil
+}
+
+// rawInputOverride wraps raw wire JSON as an input item that serializes back to
+// exactly those bytes.
+func rawInputOverride(raw string) TResponseInputItem {
+	return param.Override[TResponseInputItem](json.RawMessage(raw))
 }
 
 // MarshalInputItem serializes an input item to JSON. It is the inverse of
@@ -114,10 +141,21 @@ func UnmarshalInputItem(data []byte) (TResponseInputItem, error) {
 	// "type" discriminator, so decode it directly. Require a role so arbitrary
 	// JSON objects are rejected instead of becoming empty messages.
 	var easy responses.EasyInputMessageParam
-	if err := json.Unmarshal(data, &easy); err != nil || easy.Role == "" {
-		return item, fmt.Errorf("decoding input item: unrecognized item shape: %s", data)
+	if err := json.Unmarshal(data, &easy); err == nil && easy.Role != "" {
+		return TResponseInputItem{OfMessage: &easy}, nil
 	}
-	return TResponseInputItem{OfMessage: &easy}, nil
+	// A typed item the union does not know: keep the bytes rather than reject
+	// them. Stored history can outlive this SDK's type coverage — a session
+	// written by a newer build, or one holding an item type added after it was
+	// written — and refusing to read it back would make the whole conversation
+	// unloadable over one item.
+	//
+	// A "type" is required, so genuinely malformed JSON still errors instead of
+	// being smuggled through as an opaque blob.
+	if typ := probe.Type; typ != "" {
+		return rawInputOverride(string(data)), nil
+	}
+	return item, fmt.Errorf("decoding input item: unrecognized item shape: %s", data)
 }
 
 // InputItemsFromText builds a single-message input list from a user string. It

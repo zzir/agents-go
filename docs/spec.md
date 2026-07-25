@@ -85,7 +85,8 @@ for turn := 1; ; turn++ {
     build model input
     (first turn) run input guardrails
     call the model
-    classify the response into message / tool call / handoff call / reasoning / unknown
+    classify the response into message / tool call / handoff call / reasoning /
+    unknown (kept verbatim, see §2.1b)
     execute side effects (§2.2)
     persist (§2.5)
     decide: continue / final output / interrupt
@@ -99,6 +100,40 @@ for turn := 1; ; turn++ {
    can close out in prose. With that option disabled, return `*MaxTurnsError`.
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
 4. The model produced a final output → see [§2.3](#23-deciding-the-final-output-).
+
+### 2.1b Items ✅
+
+Every `RunItem` reports two things beyond its payload:
+
+- **`Source()` — who produced it.** The zero value is the model.
+  `IsExternal()` separates what came from outside the SDK (the model, the
+  caller) from what the runner synthesized (a tool output, a handoff
+  acknowledgement, an error handler's fallback). The runner uses it to decide
+  whether history ends on a local item; a context provider uses it to avoid
+  re-ingesting its own injections.
+
+  This replaced a sentinel response id (`__fake_id__`) stamped on synthesized
+  items, which every consumer that cared had to know and string-compare.
+  Provenance is not an id.
+
+- **`Display()` — the projection a renderer needs**, produced by the SDK, which
+  knows the wire format. It is a **hint**: a consumer that ignores it entirely
+  must still render correctly from the item's own fields. That is what keeps
+  `ItemDisplay` free to gain fields without breaking anyone.
+
+Both survive `RunState` serialization, so a resumed run reports the same
+provenance and renders the same timeline as before the pause.
+
+**An unknown output item is kept, never dropped.** ✅ A model output type this
+SDK does not model becomes an `UnknownOutputItem` carrying the original bytes,
+and goes back on the wire byte for byte on the next turn. Dropping it is not
+"ignoring a feature" — the next turn resends a history the model does not
+recognize as its own.
+
+The same rule reaches storage: `UnmarshalInputItem` accepts a typed item the
+union does not know and preserves its bytes, so a session written by a newer
+build stays readable. An item with no `type` is still rejected, so malformed
+JSON does not slip through as an opaque blob.
 
 ### 2.2 Ordering within a turn ✅
 

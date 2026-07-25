@@ -1061,7 +1061,7 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []TResponseInputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
 	// Handlers see the session view of the run (never reset by handoff input
 	// filters), like Python's session_items-based RunErrorData for max_turns.
-	rec, err := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
+	rec, err := r.resolveErrorRecovery(ctx, "max_turns", r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
 	if err != nil || rec == nil {
 		return nil, err
 	}
@@ -1251,15 +1251,14 @@ func endsWithLocalItem(items []RunItem) bool {
 	if len(items) == 0 {
 		return false
 	}
-	switch it := items[len(items)-1].(type) {
-	case *ToolCallOutputItem, *HandoffOutputItem:
-		return true
-	case *MessageOutputItem:
-		return it.Raw.ID == fakeResponsesID
-	case *rawInputRunItem:
-		return it.Kind == "tool_call_output" || it.Kind == "handoff_output"
-	}
-	return false
+	// Anything the runner synthesized — a tool output, a handoff
+	// acknowledgement, an error handler's fallback message — is local. The
+	// model's own output and the caller's input are not.
+	//
+	// This used to be a type switch that string-compared a sentinel id on
+	// messages and re-derived the answer from a kind string on restored items;
+	// provenance answers it directly, and correctly for item types added later.
+	return !items[len(items)-1].Source().IsExternal()
 }
 
 // mergeNestedStates combines any agent-as-tool nested states still cached on

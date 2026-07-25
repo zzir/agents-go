@@ -271,12 +271,12 @@ func TestCustomData_AttachedToRunItemNotModel(t *testing.T) {
 	if out == nil {
 		t.Fatal("no ToolCallOutputItem in NewItems")
 	}
-	if out.CustomData["renderer"] != "table" {
-		t.Errorf("CustomData = %v", out.CustomData)
+	if out.Extra["renderer"] != "table" {
+		t.Errorf("CustomData = %v", out.Extra)
 	}
 	// json.Unmarshal turns numbers into float64 — the JSON round-trip contract.
-	if out.CustomData["id"] != float64(7) {
-		t.Errorf("CustomData id = %v (%T)", out.CustomData["id"], out.CustomData["id"])
+	if out.Extra["id"] != float64(7) {
+		t.Errorf("CustomData id = %v (%T)", out.Extra["id"], out.Extra["id"])
 	}
 	// Never part of the replayed input item.
 	in, err := out.ToInputItem()
@@ -296,8 +296,8 @@ func TestCustomData_EmptyAndNilNormalizeToNil(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out := findToolOutput(res.NewItems); out == nil || out.CustomData != nil {
-		t.Errorf("empty map should normalize to nil, got %v", out.CustomData)
+	if out := findToolOutput(res.NewItems); out == nil || out.Extra != nil {
+		t.Errorf("empty map should normalize to nil, got %v", out.Extra)
 	}
 }
 
@@ -362,8 +362,16 @@ func TestCustomData_SurvivesRunStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"custom_data"`) {
-		t.Fatal("serialized state missing custom_data")
+	// The extractor's output now rides in the item's display projection rather
+	// than a bespoke custom_data key, so a consumer reading a paused state gets
+	// it from the same place it gets everything else it renders.
+	if !strings.Contains(string(data), `"extra"`) {
+		t.Fatalf("serialized state lost the extractor's data: %s", data)
+	}
+	// Provenance survives too: without it, a resumed run reports every restored
+	// item as a plain model output.
+	if !strings.Contains(string(data), `"type":"tool"`) {
+		t.Errorf("serialized state lost the tool output's source: %s", data)
 	}
 	state, err := RunStateFromJSON(data, map[string]*Agent{"a": agent})
 	if err != nil {
@@ -373,8 +381,14 @@ func TestCustomData_SurvivesRunStateRoundTrip(t *testing.T) {
 	if out == nil {
 		t.Fatal("restored state lost the typed tool output item")
 	}
-	if out.CustomData["k"] != "v" {
-		t.Errorf("restored CustomData = %v", out.CustomData)
+	if out.Extra["k"] != "v" {
+		t.Errorf("restored Extra = %v", out.Extra)
+	}
+	if got := out.Display().Extra["k"]; got != "v" {
+		t.Errorf("Display().Extra = %v, want the extractor's data", got)
+	}
+	if src := out.Source(); src.Type != SourceTool {
+		t.Errorf("restored tool output source = %v, want tool", src)
 	}
 
 	state.Approve(state.Interruptions[0], false)

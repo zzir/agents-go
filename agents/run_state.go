@@ -240,9 +240,13 @@ type serialItem struct {
 	Type  string          `json:"type"`
 	Agent string          `json:"agent"`
 	Input json.RawMessage `json:"input"`
-	// CustomData carries a ToolCallOutputItem's SDK-only custom data, so it
-	// survives HITL interruptions. Absent for other item kinds.
-	CustomData map[string]any `json:"custom_data,omitempty"`
+	// Source and Display carry the item's provenance and its UI projection
+	// across an interruption. Without them a resumed run reports every restored
+	// item as a plain model output with nothing to render, and a consumer that
+	// reloads a paused conversation sees a different timeline than the one it
+	// was showing before the pause.
+	Source  Source      `json:"source,omitzero"`
+	Display ItemDisplay `json:"display,omitzero"`
 }
 
 type serialResponse struct {
@@ -504,9 +508,12 @@ func serializeItems(items []RunItem) ([]serialItem, error) {
 		if a := it.AgentRef(); a != nil {
 			agentName = a.Name
 		}
-		si := serialItem{Type: it.ItemType(), Agent: agentName, Input: raw}
-		if o, ok := it.(*ToolCallOutputItem); ok && len(o.CustomData) > 0 {
-			si.CustomData = o.CustomData
+		si := serialItem{
+			Type:    it.ItemType(),
+			Agent:   agentName,
+			Input:   raw,
+			Source:  it.Source(),
+			Display: it.Display(),
 		}
 		out = append(out, si)
 	}
@@ -636,14 +643,25 @@ func deserializeItems(items []serialItem, lookup func(string) *Agent) ([]RunItem
 		if err != nil {
 			return nil, err
 		}
-		if len(si.CustomData) > 0 && si.Type == "tool_call_output" {
-			// Restore as a typed item so the SDK-only custom data stays
+		if si.Type == "tool_call_output" && len(si.Display.Extra) > 0 {
+			// Restore as a typed item so the SDK-only extra data stays
 			// reachable after a round-trip. Output is not serialized; only the
-			// replayed input form and the custom data survive.
-			out = append(out, &ToolCallOutputItem{Agent: lookup(si.Agent), Raw: item, CustomData: si.CustomData})
+			// replayed input form and the extra data survive.
+			out = append(out, &ToolCallOutputItem{
+				Agent:   lookup(si.Agent),
+				Raw:     item,
+				Extra:   si.Display.Extra,
+				IsError: si.Display.IsError,
+			})
 			continue
 		}
-		out = append(out, &rawInputRunItem{Agent: lookup(si.Agent), RawInput: item, Kind: si.Type})
+		out = append(out, &rawInputRunItem{
+			Agent:    lookup(si.Agent),
+			RawInput: item,
+			Kind:     si.Type,
+			Src:      si.Source,
+			Disp:     si.Display,
+		})
 	}
 	return out, nil
 }

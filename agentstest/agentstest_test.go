@@ -192,10 +192,10 @@ func TestStreamTextDeltas(t *testing.T) {
 	}
 }
 
-func TestRaw_UnknownItemTypeIsNotClassified(t *testing.T) {
-	// A type the SDK does not model. Today the runner drops it (see
-	// docs/spec.md §2.2 / plan1); this test pins the current behavior so the
-	// change is deliberate when plan1 lands.
+func TestRaw_UnknownItemTypeIsKept(t *testing.T) {
+	// A type the SDK does not model. It used to be dropped; it is now kept as
+	// an UnknownOutputItem and resent verbatim, because dropping it corrupts
+	// the conversation rather than merely ignoring a feature.
 	model := agentstest.NewResponseBuilder().
 		Raw(`{"type":"some_future_call","id":"x1","status":"completed"}`).
 		Text("done anyway").
@@ -207,8 +207,8 @@ func TestRaw_UnknownItemTypeIsNotClassified(t *testing.T) {
 		t.Fatal(err)
 	}
 	agentstest.AssertFinalOutput(t, res, "done anyway")
-	if got := agentstest.ItemTypes(res.NewItems); !slices.Equal(got, []string{"message_output"}) {
-		t.Errorf("item types = %v; the unknown item should currently be dropped", got)
+	if got := agentstest.ItemTypes(res.NewItems); !slices.Equal(got, []string{"unknown", "message_output"}) {
+		t.Errorf("item types = %v, want the unknown item kept alongside the message", got)
 	}
 }
 

@@ -153,7 +153,7 @@ func inputItemDedupeKey(m map[string]any) string {
 	if typ == "message" {
 		return ""
 	}
-	if id, ok := m["id"].(string); ok && id != "" && id != fakeResponsesID {
+	if id, ok := m["id"].(string); ok && id != "" {
 		return "id:" + typ + ":" + id
 	}
 	if cid, ok := m["call_id"].(string); ok && cid != "" {

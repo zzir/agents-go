@@ -154,8 +154,14 @@ func processModelResponse(
 			pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
 			pr.Functions = append(pr.Functions, toolRunFunction{Tool: ft, Call: call})
 		default:
-			// The supported tool set produces only the item types handled above;
-			// ignore any other output item type defensively.
+			// An item type this SDK does not model. Keeping it is not optional:
+			// the Responses API gains types faster than any client tracks them,
+			// and dropping one corrupts the conversation, because the next turn
+			// resends a history the model does not recognize as its own.
+			//
+			// UnknownOutputItem carries the bytes through untouched. It used to
+			// be silently discarded here.
+			pr.NewItems = append(pr.NewItems, &UnknownOutputItem{Agent: agent, Raw: output})
 		}
 	}
 	return pr, nil
@@ -308,7 +314,7 @@ func (r *runner) executeToolsAndSideEffects(
 						AgentsError: AgentsError{Code: CodeModelRefusal, Message: "model refused to respond: " + refusal},
 						Refusal:     refusal,
 					}
-					rec, herr := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.ModelRefusal, refErr, agent,
+					rec, herr := r.resolveErrorRecovery(ctx, "model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {
 						return nil, herr
@@ -329,7 +335,7 @@ func (r *runner) executeToolsAndSideEffects(
 					final, err = outputSchema.ValidateJSON(text)
 					if err != nil {
 						mbErr := newModelBehaviorError("failed to parse structured output: %v", err)
-						rec, herr := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
+						rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 							originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 						if herr != nil {
 							return nil, herr
@@ -347,7 +353,7 @@ func (r *runner) executeToolsAndSideEffects(
 					// handler, or run the model again (never a hard failure —
 					// Python parity).
 					mbErr := newModelBehaviorError("model returned no final output for the structured output type")
-					rec, herr := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
+					rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {
 						return nil, herr
@@ -645,7 +651,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				if cerr != nil {
 					return fmt.Errorf("tool %q custom data extractor failed: %w", run.Call.Name, cerr)
 				}
-				if outputItem.CustomData, cerr = normalizeCustomData(data); cerr != nil {
+				if outputItem.Extra, cerr = normalizeCustomData(data); cerr != nil {
 					return cerr
 				}
 			}
@@ -945,7 +951,7 @@ func (r *runner) checkToolUseBehavior(ctx context.Context, agent *Agent, results
 		for i, res := range results {
 			var custom map[string]any
 			if res.outputItem != nil {
-				custom = res.outputItem.CustomData
+				custom = res.outputItem.Extra
 			}
 			public[i] = FunctionToolResult{ToolName: res.tool.Name, Output: res.output, CustomData: custom}
 		}

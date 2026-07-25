@@ -117,7 +117,7 @@ t.CustomDataExtractor = func(ctx context.Context, cdc agents.FunctionToolCustomD
 }
 ```
 
-The extractor runs after a successful invocation and its output guardrails, receiving the invocation's `ToolContext`, the `Tool`, the model-visible `Output`, and the `RawItem` that will be replayed. The result lands on `ToolCallOutputItem.CustomData` (read it from `RunResult.NewItems`) and on `FunctionToolResult.CustomData` (visible to a `ToolUseBehaviorFunc`), and survives `RunState` serialization across [human-in-the-loop](human_in_the_loop.md) interruptions. The map must survive a JSON round-trip — non-JSON values (NaN/Inf floats, channels, cycles) fail the run with a `UserError`; an empty map normalizes to nil. This is the Go counterpart of Python's `custom_data_extractor`.
+The extractor runs after a successful invocation and its output guardrails, receiving the invocation's `ToolContext`, the `Tool`, the model-visible `Output`, and the `RawItem` that will be replayed. The result lands on `ToolCallOutputItem.Extra`, surfaced through `Display().Extra` (read either from `RunResult.NewItems`) and on `FunctionToolResult.CustomData` (visible to a `ToolUseBehaviorFunc`), and survives `RunState` serialization across [human-in-the-loop](human_in_the_loop.md) interruptions. The map must survive a JSON round-trip — non-JSON values (NaN/Inf floats, channels, cycles) fail the run with a `UserError`; an empty map normalizes to nil. This is the Go counterpart of Python's `custom_data_extractor`.
 
 ### Hand-built tools
 
