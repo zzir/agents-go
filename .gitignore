@@ -11,3 +11,22 @@ dist/
 # execution order in ROADMAP.md is local scheduling.
 /plan*.md
 /ROADMAP.md
+
+# Executables built in place. `go build ./...` inside a main package writes the
+# binary next to its source, which is how an 18MB artifact once reached a
+# commit; CI now builds to /dev/null, and these keep a manual build out too.
+/examples/*/[a-z]*
+!/examples/*/*.go
+!/examples/*/go.mod
+!/examples/*/go.sum
+!/examples/*/*.md
+/cmd/*/[a-z]*
+!/cmd/*/*.go
+!/cmd/*/go.mod
+!/cmd/*/go.sum
+!/cmd/*/*.md
+!/cmd/*/Makefile
+!/cmd/*/cmd/
+!/cmd/*/internal/
+!/cmd/*/dist/
+!/cmd/*/*.png

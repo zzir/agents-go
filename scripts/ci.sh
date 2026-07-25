@@ -33,8 +33,10 @@ step "Test sandbox backend modules"
 step "Test tracing/otel module"
 (cd tracing/otel && go vet ./... && go test ./...)
 # The otel example has its own go.mod (it pulls the OTel stdout exporter), so
-# `go build ./...` at the root does not reach it.
-(cd examples/otel && go vet ./... && go build ./...)
+# `go build ./...` at the root does not reach it. Discard the output: a bare
+# `go build` in a main package writes the executable into the source tree, and
+# an 18MB binary once made it into a commit that way.
+(cd examples/otel && go vet ./... && go build -o /dev/null ./...)
 
 step "Test sessions module"
 (cd sessions && go vet ./... && go test ./...)
