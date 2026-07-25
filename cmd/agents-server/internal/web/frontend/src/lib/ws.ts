@@ -58,8 +58,13 @@ export class WSClient {
     this.ws = new WebSocket(`${proto}//${location.host}/ws`);
 
     let authed = false;
+    // Whether this socket ever completed the WebSocket handshake. A close with
+    // opened === false means the server was unreachable (down, restarting,
+    // offline) — NOT a rejected token, so it must not count as an auth failure.
+    let opened = false;
 
     this.ws.onopen = () => {
+      opened = true;
       // Backoff is reset only once auth.ok arrives (below), not here: a socket
       // that opens, fails auth, and is closed by the server must NOT reset the
       // delay, or a rejected token reconnects every second forever.
@@ -92,11 +97,13 @@ export class WSClient {
 
     this.ws.onclose = () => {
       if (this._closed) return;
-      // Closed before authenticating: the server rejects a bad token by
-      // silently closing (no error frame). Count consecutive pre-auth closes
-      // and, once it's clearly not a one-off blip, surface it so the app can
-      // prompt a re-login instead of hammering reconnects.
-      if (!authed) {
+      // Closed AFTER opening but before authenticating: the server rejects a
+      // bad token by silently closing (no error frame). Count consecutive such
+      // closes and, once it's clearly not a one-off blip, surface it so the app
+      // can prompt a re-login instead of hammering reconnects. A close that
+      // never opened is an unreachable server (restart, network drop) — that
+      // must NOT log the user out, so it is not counted.
+      if (opened && !authed) {
         this._authFailures++;
         if (this._authFailures >= 3) this.onAuthFail?.();
       }
