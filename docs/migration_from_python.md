@@ -1,6 +1,18 @@
-# Differences from the Python SDK
+# Coming from the Python SDK
 
-`agents-go` tracks [openai-agents-python](https://github.com/openai/openai-agents-python) v0.18.2: the run loop, item model, defaults (max turns 10, strict schemas on, tool errors fed back to the model, `tool_choice` reset after tool use) and most names map one-to-one. This page lists everything that intentionally differs — first how the same concepts look in Go, then what each side has that the other lacks.
+`agents-go` began as a port of [openai-agents-python](https://github.com/openai/openai-agents-python)
+and still shares its core concepts — agents, handoffs, guardrails, sessions, the
+run loop shape, and most names map one-to-one. It **no longer tracks** the Python
+SDK: behavior is specified in [spec.md](spec.md) and the two evolve independently.
+
+This page is a **migration guide for people arriving from the Python SDK**, not a
+parity report. It maps the concepts, then lists the differences you will notice.
+For what this SDK deliberately does not provide (and why), read
+[spec.md §1.2 and §3](spec.md); for upstream changes we have reviewed, see
+[upstream_watch.md](upstream_watch.md).
+
+> The comparison below was written against Python SDK **v0.18.2**, the last
+> version this project tracked. Later Python releases are not reflected here.
 
 ## API mapping
 
@@ -79,7 +91,7 @@
 | Generation span usage keys | per-call usage includes cached and cache-write input-token breakdowns | `input_tokens` / `output_tokens` / `total_tokens` only — the breakdowns live on `Usage.InputTokensDetails`, not on spans |
 | Prompt cache key | may auto-generate a `prompt_cache_key` (sniffing the endpoint) and carry it across a resumed run | typed `ModelSettings.PromptCacheKey` field only — the runner never auto-generates one, sniffs the endpoint, or persists it in `RunState` ("Option A"); set it explicitly or via `ExtraBody["prompt_cache_key"]` |
 | Stored-prompt variables | prompt variable values may be text or content (image/file) inputs | only string (text) values are supported; a non-string variable is rejected with a `*UserError` rather than silently stringified |
-| `RunContext.TurnInput` | `turn_input` is the model input for the current turn | reconstructed from the run's new input plus the conversation generated so far; it does **not** include prior Session history — a Go-only approximation |
+| `RunContext.TurnInput` | `turn_input` attribute | `TurnInput()` method (guarded, returns a copy): exactly what was sent to the model this turn, after session history, handoff filtering, compaction and `CallModelInputFilter`. Under `UsePreviousResponseID` / `ConversationID` only new items go on the wire, so that is what it reports |
 | Reasoning-item id omit | `reasoning_item_id_policy="omit"` drops the `id` key entirely | `ReasoningItemIDOmit` blanks the reasoning id to `""` (openai-go always marshals the `id` key) rather than dropping it — only the stale value is removed |
 | MCP client-side validation & naming | `_validate_required_parameters` raises; server-name prefix dedup runs through a shared cross-server manager | a missing required argument is a `*UserError` but, because MCP tools carry `DefaultToolErrorFunction`, it is fed back to the model rather than aborting; `IncludeServerInToolNames` collision-dedup is **per-server only** (no cross-server name manager) |
 | Guardrail default name | an unnamed guardrail falls back to the guardrail function's `__name__` | fixed labels `"input_guardrail"` / `"output_guardrail"` — Go has no function-name reflection |
@@ -87,21 +99,25 @@
 | `RunState` schema version | its own state versioning | `RunStateSchemaVersion` is `"1.3"` (bumped for nested-state serialization, then guardrail-result carriage); a state stamped with any other version is rejected by strict version equality, as before |
 | Guardrail results across resume | `RunState` serializes input/output/tool guardrail results and re-seeds them on resume | same intent — carried on `RunState` and rehydrated so a resumed `RunResult` still reports them — but serialized **lossily**: the guardrail's live `Run` func does not round-trip, so a decoded result carries a name-only stub guardrail plus the output payload (`OutputInfo` via a JSON round-trip) |
 
-## Not implemented in Go
+## In Python, not here
 
-- **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing, Go provides `apply_patch` as a **sandbox-backed** function tool — Codex-style patches applied through the `Sandbox` abstraction, not the hosted OpenAI `apply_patch`; [tools](tools.md))
-- **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
-- **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
-- **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others. (`OpenAIConversationsSession` and `OpenAIResponsesCompactionSession` **are** ported, as `openai.ConversationsSession` and `openai.CompactionSession`.)
-- **Realtime and voice agents**
-- **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
-- **Responses-over-WebSocket transport** (`OpenAIResponsesWSModel`, `use_responses_websocket`) and the `Model.close()` / `ModelProvider.aclose()` / run-scoped `Model._cleanup_on_run_end` (v0.18) lifecycle hooks — HTTP only; a custom Go `Model` manages its own connections
-- **Hosted multi-agent beta** (`OpenAIHostedMultiAgentModel`, v0.18.2 experimental) — server-side subagent orchestration over the Responses WebSocket; falls under both the no-hosted-tools and HTTP-only decisions above
-- **`agent.as_tool(previous_response_id=...)`** — the only as_tool option not ported: Go's `RunOptions` has no explicit response-id entry point (`UsePreviousResponseID` is an automatic bool chain). The rest of the surface exists on `AgentToolConfig` (`OnStream`, `IsEnabled`, `NeedsApproval`/`Func`, `FailureErrorFunction`, `Hooks`, `Session`, `ConversationID`, `ModifyRunOptions` as the `run_config` override, `InputBuilder`/`IncludeInputSchema`) plus `AgentAsTool[Params]` for typed parameters (a free function — Go methods cannot take type parameters). Builders return text only, not item lists
-- **MCP-level `custom_data_extractor`** — Python's MCP servers (and hosted tools) accept their own custom-data extractors with access to the raw `CallToolResult`; in Go only `FunctionTool.CustomDataExtractor` exists, and MCP-bridged tools don't expose the raw result to it
-- **`ModelSettings.extra_args`** — the free-form request-passthrough dict is intentionally not ported: `ExtraBody` (with `ExtraHeaders` / `ExtraQuery`) already covers forwarding arbitrary fields to the provider request
+Two kinds of entry are mixed below: **deliberate non-goals** (recorded in
+[spec.md §1.2 / §3](spec.md) — they will not appear) and **things nobody has
+needed yet** (open to contribution). Each entry says which it is.
 
-## Go-only additions
+- *(non-goal)* **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing, Go provides `apply_patch` as a **sandbox-backed** function tool — Codex-style patches applied through the `Sandbox` abstraction, not the hosted OpenAI `apply_patch`; [tools](tools.md))
+- *(non-goal)* **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
+- *(non-goal)* **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
+- *(not yet)* **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others. (`OpenAIConversationsSession` and `OpenAIResponsesCompactionSession` **are** ported, as `openai.ConversationsSession` and `openai.CompactionSession`.)
+- *(non-goal)* **Realtime and voice agents**
+- *(non-goal)* **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
+- *(not yet)* **Responses-over-WebSocket transport** (`OpenAIResponsesWSModel`, `use_responses_websocket`) and the `Model.close()` / `ModelProvider.aclose()` / run-scoped `Model._cleanup_on_run_end` (v0.18) lifecycle hooks — HTTP only; a custom Go `Model` manages its own connections
+- *(non-goal)* **Hosted multi-agent beta** (`OpenAIHostedMultiAgentModel`, v0.18.2 experimental) — server-side subagent orchestration over the Responses WebSocket; falls under both the no-hosted-tools and HTTP-only decisions above
+- *(not yet)* **`agent.as_tool(previous_response_id=...)`** — the only as_tool option not ported: Go's `RunOptions` has no explicit response-id entry point (`UsePreviousResponseID` is an automatic bool chain). The rest of the surface exists on `AgentToolConfig` (`OnStream`, `IsEnabled`, `NeedsApproval`/`Func`, `FailureErrorFunction`, `Hooks`, `Session`, `ConversationID`, `ModifyRunOptions` as the `run_config` override, `InputBuilder`/`IncludeInputSchema`) plus `AgentAsTool[Params]` for typed parameters (a free function — Go methods cannot take type parameters). Builders return text only, not item lists
+- *(not yet)* **MCP-level `custom_data_extractor`** — Python's MCP servers (and hosted tools) accept their own custom-data extractors with access to the raw `CallToolResult`; in Go only `FunctionTool.CustomDataExtractor` exists, and MCP-bridged tools don't expose the raw result to it
+- *(non-goal)* **`ModelSettings.extra_args`** — the free-form request-passthrough dict is intentionally not ported: `ExtraBody` (with `ExtraHeaders` / `ExtraQuery`) already covers forwarding arbitrary fields to the provider request
+
+## Beyond the Python SDK
 
 - **Self-hosted [sandboxes](sandbox.md)**: run model-written code in your own infrastructure — locked-down Docker containers (`sandbox/docker`) or a remote host over SSH (`sandbox/ssh`) — exposed via `sandbox.CodeTool`. Python has since grown its own sandbox stack (self-hosted `docker` / `unix_local` in core plus hosted providers — e2b / daytona / cloudflare / runloop / vercel — as extensions) with a PTY session model; the Go `Sandbox` interface predates it and stays a deliberately smaller surface: Exec + file operations, no PTY sessions, no hosted providers, plus an SSH backend Python lacks
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
