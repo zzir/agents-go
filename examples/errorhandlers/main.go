@@ -19,7 +19,7 @@ import (
 // Report is the structured output the second agent must produce.
 type Report struct {
 	Summary  string `json:"summary"`
-	Fallback bool   `json:"fallback" jsonschema:"description=true when this report was synthesized by an error handler"`
+	Fallback bool   `json:"fallback" jsonschema:"true when this report was synthesized by an error handler"`
 }
 
 func main() {

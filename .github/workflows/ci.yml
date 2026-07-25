@@ -36,6 +36,25 @@ jobs:
       - name: Test skills module
         run: (cd skills && go vet ./... && go test ./...)
 
+      # go build proves the examples compile; this proves they still run. A bad
+      # struct tag or a nil provider is a runtime failure the compiler misses,
+      # and the examples are what a reader copies first.
+      - name: Examples run (fake Responses API)
+        run: go run ./cmd/verifyexamples
+
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -39,6 +39,20 @@ step "Test skills module"
 step "Test agents-server module"
 (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
+step "Examples run (fake Responses API)"
+# go build proves they compile; this proves they still *work*. Every API change
+# rewrites all of them, and a runtime break (bad struct tag, nil provider,
+# infinite loop) is invisible to the compiler.
+go run ./cmd/verifyexamples
+
+step "govulncheck"
+if command -v govulncheck >/dev/null; then
+  govulncheck ./...
+else
+  echo "govulncheck not installed; skipping (CI runs it)." >&2
+  echo "Install: go install golang.org/x/vuln/cmd/govulncheck@latest" >&2
+fi
+
 step "OpenAPI spec up to date"
 (cd cmd/agents-server \
   && go tool swag init --v3.1 -g main.go --parseDependency --parseInternal -o internal/docs --outputTypes yaml --quiet \
