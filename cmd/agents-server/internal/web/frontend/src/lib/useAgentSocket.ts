@@ -756,6 +756,18 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       updateSS(sid, s => s.liveAgentName === p.agent_name ? s : { ...s, liveAgentName: p.agent_name || null });
     });
 
+    // This connection fell behind and the server dropped events for it — for
+    // this connection only; the run is unaffected. Without this the timeline
+    // would be quietly missing whatever was dropped, which is indistinguishable
+    // from content that never existed. Refetching is the cheap correct fix: the
+    // persisted history is authoritative.
+    ws.on(EV.runGap, (p: { run_id: string; dropped: number; last_good: number }) => {
+      const sid = runMapRef.current[p.run_id];
+      if (!sid) return;
+      console.warn(`dropped ${p.dropped} event(s) after seq ${p.last_good}; refetching`);
+      reloadMessages(sid);
+    });
+
     ws.on(EV.runCompaction, (p: { run_id: string; phase: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;

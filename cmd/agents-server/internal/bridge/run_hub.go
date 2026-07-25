@@ -2,10 +2,12 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -124,6 +126,17 @@ func TaskStatusFor(s RunStatus) string {
 	}
 }
 
+// newRunFanout builds a run's event broadcaster. Replay is sized to
+// EventBufferCap so a reconnecting client can be caught up; each subscriber
+// gets the same allowance, so a connection has to fall a full buffer behind
+// before it loses anything.
+func newRunFanout() *agents.Fanout[*protocol.Envelope] {
+	return agents.NewFanout[*protocol.Envelope](agents.FanoutOptions{
+		Replay:     EventBufferCap,
+		Subscriber: EventBufferCap,
+	})
+}
+
 // SeqSink receives a hub event together with its sequence number. It is the
 // seq-aware form of EventSink used by SSE (which needs the seq for the
 // Last-Event-ID id line).
@@ -169,17 +182,15 @@ type runRecord struct {
 	// before the next turn. Distinct from cancel (a hard context abort).
 	stopAfterTurn func()
 
-	// sendMu serializes a run's publishes end to end (seq assignment through
-	// fan-out) so a single subscriber can never observe events out of sequence
-	// when two goroutines publish concurrently. It is ordered BEFORE mu:
-	// publish takes sendMu, then mu briefly to mutate state, releases mu, and
-	// fans out still holding sendMu. No path takes sendMu while holding mu.
-	sendMu sync.Mutex
+	// fanout owns everything about delivery: sequence assignment, the replay
+	// ring, per-subscriber buffering, and the slow-subscriber policy. The hub
+	// used to hand-roll all of it; agents.Fanout is that machinery, single
+	// sourced, so a subscriber that falls behind is TOLD (a *agents.GapError on
+	// its own stream) instead of silently losing events.
+	fanout *agents.Fanout[*protocol.Envelope]
 
 	mu      sync.Mutex
-	seq     int
-	buffer  []SeqEnvelope
-	subs    map[int]SeqSink
+	subs    map[int]func()
 	nextSub int
 	endedAt time.Time
 }
@@ -283,7 +294,8 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 		cancel: seg.cancel,
 		done:   seg.done,
-		subs:   make(map[int]SeqSink),
+		subs:   make(map[int]func()),
+		fanout: newRunFanout(),
 	}
 	h.runs[runID] = rec
 	h.bySession[sessionID] = runID
@@ -339,7 +351,8 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 			cancel: seg.cancel,
 			done:   seg.done,
-			subs:   make(map[int]SeqSink),
+			subs:   make(map[int]func()),
+			fanout: newRunFanout(),
 		}
 		h.runs[runID] = rec
 		h.bySession[sessionID] = runID
@@ -405,29 +418,14 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 		return
 	}
 
-	rec.sendMu.Lock()
-	defer rec.sendMu.Unlock()
+	rec.fanout.Publish(env)
 
 	rec.mu.Lock()
-	rec.seq++
-	item := SeqEnvelope{Seq: rec.seq, Env: env}
-	rec.buffer = append(rec.buffer, item)
-	if len(rec.buffer) > EventBufferCap {
-		rec.buffer = rec.buffer[len(rec.buffer)-EventBufferCap:]
-	}
 	if st, ok := terminalStatusForEvent(env.Type); ok {
 		rec.info.Status = st
 	}
-	rec.info.LastSeq = rec.seq
-	subs := make([]SeqSink, 0, len(rec.subs))
-	for _, s := range rec.subs {
-		subs = append(subs, s)
-	}
+	rec.info.LastSeq = rec.fanout.LastSeq()
 	rec.mu.Unlock()
-
-	for _, s := range subs {
-		s(item)
-	}
 }
 
 // Subscribe attaches a plain sink (seq discarded) to the run's live event
@@ -439,8 +437,13 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (int, bool
 // SubscribeSeq attaches sink to the run's live event stream after replaying
 // any buffered events with seq > fromSeq (pass 0 to replay everything
 // retained). It returns a subscriber id for Unsubscribe and whether the run
-// exists. Events emitted between replay and registration cannot be lost: the
-// record lock is held across both.
+// exists.
+//
+// The sink runs on its own goroutine, fed by the subscriber's buffer, so a slow
+// sink no longer runs on the publishing goroutine and cannot affect its peers.
+// If it falls far enough behind that its buffer overflows, it is delivered a
+// gap event naming the range it missed — the client resubscribes from LastSeq
+// rather than rendering a timeline that is quietly incomplete.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (int, bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -449,16 +452,32 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (int, boo
 		return 0, false
 	}
 
+	stream, cancel := rec.fanout.Subscribe(fromSeq)
+
 	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	for _, item := range rec.buffer {
-		if item.Seq > fromSeq {
-			sink(item)
-		}
-	}
 	rec.nextSub++
 	id := rec.nextSub
-	rec.subs[id] = sink
+	rec.subs[id] = cancel
+	rec.mu.Unlock()
+
+	go func() {
+		for item, err := range stream {
+			var gap *agents.GapError
+			if errors.As(err, &gap) {
+				env, mkErr := protocol.NewEnvelope(protocol.EventRunGap, protocol.RunGap{
+					RunID:    runID,
+					Dropped:  gap.Dropped,
+					LastGood: gap.LastGood,
+					Next:     gap.Next,
+				})
+				if mkErr == nil {
+					sink(SeqEnvelope{Seq: gap.LastGood, Env: env})
+				}
+			}
+			sink(SeqEnvelope{Seq: item.Seq, Env: item.Value})
+		}
+	}()
+
 	return id, true
 }
 
@@ -471,8 +490,12 @@ func (h *RunHub) Unsubscribe(runID string, subID int) {
 		return
 	}
 	rec.mu.Lock()
+	cancel := rec.subs[subID]
 	delete(rec.subs, subID)
 	rec.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // finish marks a run terminal: interrupted when it paused for approval,
@@ -618,6 +641,12 @@ func (h *RunHub) gcLoop() {
 	for {
 		select {
 		case <-h.rootCtx.Done():
+			// Shutdown: end every broadcaster so subscriber goroutines exit.
+			h.mu.Lock()
+			for _, rec := range h.runs {
+				rec.fanout.Close()
+			}
+			h.mu.Unlock()
 			return
 		case <-ticker.C:
 			now := time.Now()
@@ -628,6 +657,10 @@ func (h *RunHub) gcLoop() {
 				rec.mu.Unlock()
 				if expired {
 					delete(h.runs, id)
+					// Close the broadcaster too, or the goroutine feeding each
+					// still-attached sink blocks forever on a record nothing
+					// can reach any more.
+					rec.fanout.Close()
 				}
 			}
 			h.mu.Unlock()

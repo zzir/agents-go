@@ -296,6 +296,30 @@ the run stops. Stopping mid-batch would leave dangling calls, which
 
 ---
 
+### 2.11 Event fan-out ✅
+
+One producer's events reach many independent consumers through `Fanout[T]`.
+
+- **Publishing never blocks on a consumer.** A subscriber that cannot keep up
+  loses items rather than stalling the producer or its peers.
+- **A dropped item is always reported.** The next delivery on that subscriber's
+  stream is preceded by a `*GapError` naming the range it lost. Silent loss is
+  not an option the API offers: a consumer cannot distinguish a timeline missing
+  content from one that never had it.
+- **Sequence numbers are monotonic and assigned atomically with delivery**, so a
+  subscriber never observes a higher number before a lower one — including when
+  several goroutines publish concurrently.
+- **A subscriber's replay backlog precedes anything published after it
+  attached.** Registration and backlog delivery are one atomic step.
+- `Close` means "nothing more will be published", not "discard what you have":
+  already-buffered items are still delivered.
+
+Rejected alternatives, both worse: dropping silently (corrupts the consumer's
+view undetectably) and disconnecting the slow subscriber (turns a recoverable
+hiccup into a visible failure).
+
+---
+
 ## 3. Capabilities deliberately not provided
 
 Beyond the non-goals in [§1.2](#12-non-goals):

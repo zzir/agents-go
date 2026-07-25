@@ -3,7 +3,9 @@ package bridge
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
@@ -24,16 +26,22 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 
 	// A subscriber attaching mid-run replays the buffered events, then sees
 	// live ones.
-	var got []string
-	subID, ok := h.Subscribe("run1", 0, func(e *protocol.Envelope) { got = append(got, e.Type) })
+	sink := newAsyncSink()
+	subID, ok := h.Subscribe("run1", 0, sink.plain)
 	if !ok {
 		t.Fatal("subscribe failed")
 	}
-	if len(got) != 2 || got[0] != "run.started" || got[1] != "run.step" {
+	if !sink.wait(t, 2) {
+		t.Fatalf("replay delivered %d of 2", sink.count())
+	}
+	if got := sink.gotTypes(); got[0] != "run.started" || got[1] != "run.step" {
 		t.Fatalf("replay wrong: %v", got)
 	}
 	h.publish("run1", env("run.output"))
-	if len(got) != 3 || got[2] != "run.output" {
+	if !sink.wait(t, 3) {
+		t.Fatalf("live delivery landed %d of 3", sink.count())
+	}
+	if got := sink.gotTypes(); got[2] != "run.output" {
 		t.Fatalf("live delivery wrong: %v", got)
 	}
 
@@ -44,16 +52,23 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 	}
 
 	// from_seq replays only events after the cursor.
-	var after []int
-	h.SubscribeSeq("run1", 2, func(item SeqEnvelope) { after = append(after, item.Seq) })
-	if len(after) != 1 || after[0] != 3 {
+	cursor := newAsyncSink()
+	if _, ok := h.SubscribeSeq("run1", 2, cursor.seq); !ok {
+		t.Fatal("cursor subscribe failed")
+	}
+	if !cursor.wait(t, 1) {
+		t.Fatal("from_seq replay delivered nothing")
+	}
+	if after := cursor.gotSeqs(); len(after) != 1 || after[0] != 3 {
 		t.Fatalf("from_seq replay wrong: %v", after)
 	}
 
 	h.Unsubscribe("run1", subID)
 	h.publish("run1", env("run.step"))
-	if len(got) != 3 {
-		t.Fatalf("unsubscribed sink still received events: %v", got)
+	// Give a delivery that must NOT happen a chance to happen.
+	time.Sleep(50 * time.Millisecond)
+	if n := sink.count(); n != 3 {
+		t.Fatalf("unsubscribed sink still received events: %v", sink.gotTypes())
 	}
 }
 
@@ -135,8 +150,8 @@ func TestRunHubResumeSameID(t *testing.T) {
 	h.publish("run1", env("run.interrupted"))
 
 	// A client attached during the first segment...
-	var got []string
-	if _, ok := h.Subscribe("run1", 3, func(e *protocol.Envelope) { got = append(got, e.Type) }); !ok {
+	sink := newAsyncSink()
+	if _, ok := h.Subscribe("run1", 3, sink.plain); !ok {
 		t.Fatal("subscribe failed")
 	}
 
@@ -164,7 +179,10 @@ func TestRunHubResumeSameID(t *testing.T) {
 	}
 	h.publish("run1", env("run.started"))
 	h.publish("run1", env("run.output"))
-	if len(got) != 2 || got[0] != "run.started" || got[1] != "run.output" {
+	if !sink.wait(t, 2) {
+		t.Fatalf("existing subscriber got %d of 2 resumed events", sink.count())
+	}
+	if got := sink.gotTypes(); got[0] != "run.started" || got[1] != "run.output" {
 		t.Fatalf("existing subscriber missed resumed events: %v", got)
 	}
 	if info, _ := h.Info("run1"); info.LastSeq != 5 {
@@ -231,12 +249,21 @@ func TestFinalVsTerminalRunEvent(t *testing.T) {
 	h.publish("r", env("run.started"))
 	h.publish("r", env("run.output"))
 
+	sink := newAsyncSink()
+	if _, ok := h.SubscribeSeq("r", 0, sink.seq); !ok {
+		t.Fatal("subscribe failed")
+	}
+	if !sink.wait(t, 4) {
+		t.Fatalf("only %d of 4 replayed events delivered", sink.count())
+	}
 	var finals []int
-	h.SubscribeSeq("r", 0, func(item SeqEnvelope) {
+	sink.mu.Lock()
+	for _, item := range sink.envs {
 		if IsFinalRunEvent(item.Env.Type) {
 			finals = append(finals, item.Seq)
 		}
-	})
+	}
+	sink.mu.Unlock()
 	if len(finals) != 1 || finals[0] != 4 {
 		t.Fatalf("final events on replay = %v, want [4] (the run.output, not the old interrupt)", finals)
 	}
@@ -334,4 +361,67 @@ func TestResumeRefusesFinishedRecord(t *testing.T) {
 	if _, _, err := h.resume("r3", "s3", "", "", nil); err != nil {
 		t.Fatalf("resume of interrupted record: %v", err)
 	}
+}
+
+// asyncSink is a test sink that records deliveries and lets a test wait for
+// them. Each subscriber's sink runs on its own goroutine, fed by its own
+// buffer, so that a slow sink never runs on the publishing goroutine — which
+// means a test must wait for delivery rather than reading a slice straight
+// after Subscribe or publish returns.
+type asyncSink struct {
+	mu    sync.Mutex
+	types []string
+	seqs  []int
+	envs  []SeqEnvelope
+	bell  chan struct{}
+}
+
+func newAsyncSink() *asyncSink { return &asyncSink{bell: make(chan struct{}, 1024)} }
+
+func (a *asyncSink) seq(item SeqEnvelope) {
+	a.mu.Lock()
+	a.types = append(a.types, item.Env.Type)
+	a.seqs = append(a.seqs, item.Seq)
+	a.envs = append(a.envs, item)
+	a.mu.Unlock()
+	select {
+	case a.bell <- struct{}{}:
+	default:
+	}
+}
+
+func (a *asyncSink) plain(e *protocol.Envelope) { a.seq(SeqEnvelope{Env: e}) }
+
+func (a *asyncSink) count() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.types)
+}
+
+// wait blocks until n deliveries have landed, or the deadline passes. It
+// returns whether the count was reached, so a test can assert "exactly n" by
+// waiting for n and then confirming no extras arrive.
+func (a *asyncSink) wait(t *testing.T, n int) bool {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for a.count() < n {
+		select {
+		case <-a.bell:
+		case <-deadline:
+			return false
+		}
+	}
+	return true
+}
+
+func (a *asyncSink) gotTypes() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.types...)
+}
+
+func (a *asyncSink) gotSeqs() []int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]int(nil), a.seqs...)
 }

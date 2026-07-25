@@ -238,9 +238,17 @@ func (h *RunHandler) Events(c *gin.Context) {
 		fromSeq, _ = strconv.Atoi(q)
 	}
 
-	// The events buffer matches the hub's replay buffer so replaying a full
-	// history is lossless; live events beyond that are dropped under
-	// backpressure (client backfills via from_seq after reconnecting).
+	ctx := c.Request.Context()
+
+	// This buffer hands events from the subscriber goroutine to the HTTP
+	// writer. It does NOT drop: the sink blocks, which pushes back into the
+	// hub's per-subscriber buffer, and THAT is where a slow client is dropped —
+	// with a run.gap telling it what it missed. A second silent drop here would
+	// lose events the hub believes it delivered.
+	//
+	// Blocking is only safe because the sink runs on its own goroutine; it used
+	// to run on the publishing goroutine, where it had to be non-blocking.
+	//
 	// Only a FINAL event (output/error/cancelled) closes the stream, via its
 	// own guaranteed channel. run.interrupted is NOT final under same-id
 	// resume — a replayed historical interrupt must flow as an ordinary event,
@@ -258,7 +266,7 @@ func (h *RunHandler) Events(c *gin.Context) {
 		}
 		select {
 		case events <- item:
-		default:
+		case <-ctx.Done():
 		}
 	}
 
@@ -274,7 +282,6 @@ func (h *RunHandler) Events(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	ctx := c.Request.Context()
 	// A heartbeat keeps intermediaries from idling the connection out.
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()

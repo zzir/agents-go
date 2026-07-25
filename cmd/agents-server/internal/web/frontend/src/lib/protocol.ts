@@ -29,6 +29,7 @@ export const EV = {
   runInterrupted: 'run.interrupted',
   runCancelled: 'run.cancelled',
   runCompaction: 'run.compaction',
+  runGap: 'run.gap',
   sessionTitleUpdated: 'session.title_updated',
   traceSpan: 'trace.span',
 

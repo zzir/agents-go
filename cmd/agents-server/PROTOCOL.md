@@ -158,6 +158,18 @@ Streaming partial tool results (plan4 P3 `ToolContext.Emit`) reuse F1: a
 
 ---
 
+## F4a · `run.gap` — a connection that fell behind is told
+
+**Landed.** A connection whose buffer overflows receives, on that connection
+only, `{run_id, dropped, last_good, next}`. The run is unaffected; its other
+subscribers are unaffected.
+
+The client refetches (or resubscribes with `from_seq = last_good`). Before this,
+the SSE handler dropped silently on a full buffer and the client had no way to
+know — the timeline was quietly incomplete.
+
+---
+
 ## F5 · Uplink gains the three queue semantics
 
 plan3's `RunControl` has three ways to inject into a live run. They are

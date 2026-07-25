@@ -39,6 +39,7 @@ const (
 	EventRunInterrupted      = "run.interrupted"
 	EventRunCancelled        = "run.cancelled"
 	EventRunCompaction       = "run.compaction"
+	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
 	EventTraceSpan           = "trace.span"
 
@@ -302,6 +303,23 @@ type RunCompaction struct {
 	RunID  string `json:"run_id"`
 	Phase  string `json:"phase"`
 	Detail string `json:"detail,omitempty"`
+}
+
+// RunGap tells one connection that it fell behind and events were dropped for
+// it. Only that connection receives it; the run itself is unaffected.
+//
+// It exists because the alternative is worse. Dropping silently leaves a
+// timeline quietly missing a tool result, which looks exactly like one that
+// never had it; disconnecting punishes a user for a slow render. The client
+// resubscribes with from_seq = last_good to fill the hole.
+type RunGap struct {
+	RunID string `json:"run_id"`
+	// Dropped is how many events were discarded for this connection.
+	Dropped int `json:"dropped"`
+	// LastGood is the sequence number to resubscribe from.
+	LastGood int `json:"last_good"`
+	// Next is the sequence number of the event delivered right after the gap.
+	Next int `json:"next"`
 }
 
 // Session events

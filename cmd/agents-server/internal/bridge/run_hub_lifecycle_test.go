@@ -145,13 +145,8 @@ func TestPublishSeqOrderingUnderConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var mu sync.Mutex
-	var seqs []int
-	if _, ok := h.SubscribeSeq("run1", 0, func(item SeqEnvelope) {
-		mu.Lock()
-		seqs = append(seqs, item.Seq)
-		mu.Unlock()
-	}); !ok {
+	sink := newAsyncSink()
+	if _, ok := h.SubscribeSeq("run1", 0, sink.seq); !ok {
 		t.Fatal("subscribe failed")
 	}
 
@@ -166,13 +161,13 @@ func TestPublishSeqOrderingUnderConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(seqs) != n {
-		t.Fatalf("subscriber received %d events, want %d", len(seqs), n)
+	if !sink.wait(t, n) {
+		t.Fatalf("subscriber received %d events, want %d", sink.count(), n)
 	}
-	// A single subscriber's deliveries must be strictly increasing in seq: the
-	// per-run sendMu makes assignment and delivery one atomic step.
+	seqs := sink.gotSeqs()
+	// A single subscriber's deliveries must be strictly increasing in seq:
+	// Fanout holds its publish lock across sequence assignment AND delivery, so
+	// the two are one atomic step.
 	for i := 1; i < len(seqs); i++ {
 		if seqs[i] <= seqs[i-1] {
 			t.Fatalf("out-of-order delivery at %d: seq %d after %d", i, seqs[i], seqs[i-1])
