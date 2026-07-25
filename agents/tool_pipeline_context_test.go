@@ -20,7 +20,7 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 			gotAgent = tc.Agent
 			gotCallID = tc.ToolCall.AsFunctionCall().CallID
 			gotCallName = tc.ToolCall.AsFunctionCall().Name
-			turnInputLen = len(tc.TurnInput)
+			turnInputLen = len(tc.TurnInput())
 			return "ok", nil
 		})
 	model := &fakeModel{responses: []*ModelResponse{

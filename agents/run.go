@@ -91,15 +91,9 @@ type RunOptions struct {
 	// history across all handoffs.
 	HandoffInputFilter func(HandoffInputData) HandoffInputData
 
-	// InputGuardrails run on the first turn's input in addition to the starting
-	// agent's own InputGuardrails (the run-level ones run first). The counterpart
-	// of Python's RunConfig.input_guardrails.
-	InputGuardrails []InputGuardrail
-
-	// OutputGuardrails run on the final output in addition to the producing
-	// agent's own OutputGuardrails (the run-level ones run first). The
-	// counterpart of Python's RunConfig.output_guardrails.
-	OutputGuardrails []OutputGuardrail
+	// Guardrails apply to the whole run, in addition to each agent's own
+	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
+	Guardrails []Guardrail
 
 	// ErrorHandlers supplies per-error-kind recovery handlers that can turn a
 	// failing run — max turns exceeded, a model refusal, or an invalid
@@ -302,7 +296,7 @@ type modelCallOutcome struct {
 // tripwire/error off their goroutine, so the main loop can both honor the
 // tripwire and record every result on the RunResult.
 type inputGuardOutcome struct {
-	results []InputGuardrailResult
+	results []GuardrailResult
 	err     error
 }
 
@@ -354,34 +348,41 @@ type runner struct {
 	lastResponseID string
 	lastStore      *bool
 
-	// inputGuardrailResults / outputGuardrailResults accumulate every guardrail
-	// result (run-level + agent-level) for RunResult exposure. They are appended
-	// only from the main loop goroutine, so they need no lock.
-	inputGuardrailResults  []InputGuardrailResult
-	outputGuardrailResults []OutputGuardrailResult
-
-	// toolGuardrailMu guards the tool-guardrail result accumulators below, which
-	// are appended from the concurrent per-tool-call goroutines in
-	// runFunctionTools (unlike the run-level results above).
-	toolGuardrailMu            sync.Mutex
-	toolInputGuardrailResults  []ToolInputGuardrailResult
-	toolOutputGuardrailResults []ToolOutputGuardrailResult
+	// guardrailMu guards guardrailResults: the tool stages record from the
+	// concurrent per-tool-call goroutines in runFunctionTools, while the input
+	// and output stages record from the main loop.
+	guardrailMu      sync.Mutex
+	guardrailResults []GuardrailResult
 }
 
-// recordToolInputGuardrailResult appends a tool input guardrail's result under
-// the lock, since concurrent tool calls record results in parallel.
-func (r *runner) recordToolInputGuardrailResult(res ToolInputGuardrailResult) {
-	r.toolGuardrailMu.Lock()
-	r.toolInputGuardrailResults = append(r.toolInputGuardrailResults, res)
-	r.toolGuardrailMu.Unlock()
+// recordGuardrailResults appends guardrail results under the lock, since
+// concurrent tool calls record in parallel.
+func (r *runner) recordGuardrailResults(res ...GuardrailResult) {
+	if len(res) == 0 {
+		return
+	}
+	r.guardrailMu.Lock()
+	r.guardrailResults = append(r.guardrailResults, res...)
+	r.guardrailMu.Unlock()
 }
 
-// recordToolOutputGuardrailResult appends a tool output guardrail's result under
-// the lock (see recordToolInputGuardrailResult).
-func (r *runner) recordToolOutputGuardrailResult(res ToolOutputGuardrailResult) {
-	r.toolGuardrailMu.Lock()
-	r.toolOutputGuardrailResults = append(r.toolOutputGuardrailResults, res)
-	r.toolGuardrailMu.Unlock()
+// snapshotGuardrailResults copies the accumulated results for a RunResult.
+func (r *runner) snapshotGuardrailResults() []GuardrailResult {
+	r.guardrailMu.Lock()
+	defer r.guardrailMu.Unlock()
+	return append([]GuardrailResult(nil), r.guardrailResults...)
+}
+
+// runGuardrails is the run-level guardrail set for an agent: run-scoped ones
+// first, then the agent's own.
+func (r *runner) runGuardrails(agent *Agent) []Guardrail {
+	if len(r.opts.Guardrails) == 0 {
+		return agent.Guardrails
+	}
+	out := make([]Guardrail, 0, len(r.opts.Guardrails)+len(agent.Guardrails))
+	out = append(out, r.opts.Guardrails...)
+	out = append(out, agent.Guardrails...)
+	return out
 }
 
 // agentParentID returns the current agent span's ID for nesting child spans.
@@ -471,15 +472,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// so return cleanly with no error before starting the next one.
 		if r.sr != nil && turn > startTurn && r.sr.stopRequested() {
 			return &RunResult{
-				Input:                      originalInput,
-				NewItems:                   r.sessionItems,
-				RawResponses:               rawResponses,
-				LastAgent:                  currentAgent,
-				Usage:                      r.rc.Usage,
-				InputGuardrailResults:      r.inputGuardrailResults,
-				OutputGuardrailResults:     r.outputGuardrailResults,
-				ToolInputGuardrailResults:  r.toolInputGuardrailResults,
-				ToolOutputGuardrailResults: r.toolOutputGuardrailResults,
+				Input:            originalInput,
+				NewItems:         r.sessionItems,
+				RawResponses:     rawResponses,
+				LastAgent:        currentAgent,
+				Usage:            r.rc.Usage,
+				GuardrailResults: r.snapshotGuardrailResults(),
 			}, nil
 		}
 		if r.maxTurns > 0 && turn > r.maxTurns {
@@ -558,6 +556,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		}
 		// Optionally strip reasoning-item ids before sending them to the model.
 		modelInput = applyReasoningItemIDPolicy(modelInput, r.opts.ReasoningItemIDPolicy)
+		// Publish the turn's input so input guardrails, hooks and tools all see
+		// exactly what the model is being sent. CallModelInputFilter may still
+		// edit it below, in which case this is refreshed.
+		r.rc.setTurnInput(modelInput)
 
 		// On the first turn, run input guardrails (run-level ones first, then the
 		// starting agent's). A guardrail with Blocking=true runs to
@@ -568,10 +570,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// ran before an interruption, so a resumed run skips them.
 		var guardCh chan inputGuardOutcome
 		if turn == startTurn && r.resume == nil {
-			all := make([]InputGuardrail, 0, len(r.opts.InputGuardrails)+len(startAgent.InputGuardrails))
-			all = append(all, r.opts.InputGuardrails...)
-			all = append(all, startAgent.InputGuardrails...)
-			var sequential, parallel []InputGuardrail
+			all := selectStage(r.runGuardrails(startAgent), StageInput)
+			var sequential, parallel []Guardrail
 			for _, g := range all {
 				if g.Blocking {
 					sequential = append(sequential, g)
@@ -582,8 +582,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// Sequential (blocking) guardrails: a tripwire prevents the model call.
 			if len(sequential) > 0 {
 				gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-				res, gerr := runInputGuardrails(ctx, r.rc, startAgent, sequential, originalInput)
-				r.inputGuardrailResults = append(r.inputGuardrailResults, res...)
+				res, gerr := runStageConcurrent(ctx, r.rc, sequential,
+					GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
+				r.recordGuardrailResults(res...)
+				if repl, ok := inputReplacement(res); ok {
+					originalInput = repl
+				}
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)
 					gspan.Finish()
@@ -596,8 +600,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if len(parallel) > 0 {
 				if r.sr != nil {
 					gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-					res, gerr := runInputGuardrails(ctx, r.rc, startAgent, parallel, originalInput)
-					r.inputGuardrailResults = append(r.inputGuardrailResults, res...)
+					res, gerr := runStageConcurrent(ctx, r.rc, parallel,
+						GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
+					r.recordGuardrailResults(res...)
+					if repl, ok := inputReplacement(res); ok {
+						originalInput = repl
+					}
 					if gerr != nil {
 						gspan.SetError(gerr.Error(), nil)
 						gspan.Finish()
@@ -611,7 +619,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					parentID := r.agentParentID() // read before the goroutine races a handoff
 					go func() {
 						gspan := r.trace.StartGuardrailSpan("input", parentID)
-						res, gerr := runInputGuardrails(gctx, r.rc, startAgent, parallel, originalInput)
+						res, gerr := runStageConcurrent(gctx, r.rc, parallel,
+							GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
 						if gerr != nil {
 							gspan.SetError(gerr.Error(), nil)
 						}
@@ -645,6 +654,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 				systemPrompt, modelInput = edited.Instructions, edited.Input
+				r.rc.setTurnInput(modelInput)
 			}
 			if err := callLLMStart(ctx, r.opts.Hooks, currentAgent, r.rc, systemPrompt, modelInput); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
@@ -677,7 +687,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				}()
 				var tripwire error
 				readGuard := func(g inputGuardOutcome) {
-					r.inputGuardrailResults = append(r.inputGuardrailResults, g.results...)
+					r.recordGuardrailResults(g.results...)
 					tripwire = g.err
 				}
 				select {
@@ -862,10 +872,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// Carry the guardrail results accumulated so far so a resumed run's
 				// RunResult still reports them: first-turn input guardrails are not
 				// re-run on resume (Python parity), so this is their only source.
-				InputGuardrailResults:      r.inputGuardrailResults,
-				OutputGuardrailResults:     r.outputGuardrailResults,
-				ToolInputGuardrailResults:  r.toolInputGuardrailResults,
-				ToolOutputGuardrailResults: r.toolOutputGuardrailResults,
+				GuardrailResults: r.snapshotGuardrailResults(),
 				// Carry any paused agent-as-tool nested states so ResumeRun
 				// continues them; merge with any already cached on the run context
 				// from an earlier resume of the same parent run. Serialized in
@@ -876,16 +883,13 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Input: originalInput,
 				// Unfiltered log for observability (State.GeneratedItems keeps the
 				// filtered view for resume correctness).
-				NewItems:                   r.sessionItems,
-				RawResponses:               rawResponses,
-				LastAgent:                  currentAgent,
-				Usage:                      r.rc.Usage,
-				InputGuardrailResults:      r.inputGuardrailResults,
-				OutputGuardrailResults:     r.outputGuardrailResults,
-				ToolInputGuardrailResults:  r.toolInputGuardrailResults,
-				ToolOutputGuardrailResults: r.toolOutputGuardrailResults,
-				Interruptions:              step.Interruptions,
-				State:                      state,
+				NewItems:         r.sessionItems,
+				RawResponses:     rawResponses,
+				LastAgent:        currentAgent,
+				Usage:            r.rc.Usage,
+				GuardrailResults: r.snapshotGuardrailResults(),
+				Interruptions:    step.Interruptions,
+				State:            state,
 			}, nil
 		case stepRunAgain:
 			// Persist the just-completed turn (all tool calls have their outputs)
@@ -909,19 +913,23 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 		return nil, err
 	}
 	// Output guardrails: run-level ones first, then the producing agent's.
-	outGuardrails := make([]OutputGuardrail, 0, len(r.opts.OutputGuardrails)+len(agent.OutputGuardrails))
-	outGuardrails = append(outGuardrails, r.opts.OutputGuardrails...)
-	outGuardrails = append(outGuardrails, agent.OutputGuardrails...)
-	if len(outGuardrails) > 0 {
+	// A Replace decision substitutes the final output and the run continues.
+	if outGuardrails := selectStage(r.runGuardrails(agent), StageOutput); len(outGuardrails) > 0 {
 		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
-		res, gerr := runOutputGuardrails(ctx, r.rc, agent, outGuardrails, finalOutput)
-		r.outputGuardrailResults = append(r.outputGuardrailResults, res...)
+		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
+			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})
+		r.recordGuardrailResults(res...)
 		if gerr != nil {
 			gspan.SetError(gerr.Error(), nil)
+			gspan.Finish()
+			return nil, gerr
 		}
 		gspan.Finish()
-		if gerr != nil {
-			return nil, gerr
+		for _, g := range res {
+			if g.Decision.Action == GuardrailReplace {
+				finalOutput = g.Decision.Message
+				break
+			}
 		}
 	}
 	if err := r.persistSessionItems(ctx); err != nil {
@@ -933,15 +941,12 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 		// The unfiltered item log: a handoff input filter rewrites the model's
 		// view (generatedItems) but never what the result reports (Python parity:
 		// new_items = session_items).
-		NewItems:                   r.sessionItems,
-		RawResponses:               raw,
-		FinalOutput:                finalOutput,
-		LastAgent:                  agent,
-		Usage:                      r.rc.Usage,
-		InputGuardrailResults:      r.inputGuardrailResults,
-		OutputGuardrailResults:     r.outputGuardrailResults,
-		ToolInputGuardrailResults:  r.toolInputGuardrailResults,
-		ToolOutputGuardrailResults: r.toolOutputGuardrailResults,
+		NewItems:         r.sessionItems,
+		RawResponses:     raw,
+		FinalOutput:      finalOutput,
+		LastAgent:        agent,
+		Usage:            r.rc.Usage,
+		GuardrailResults: r.snapshotGuardrailResults(),
 	}, nil
 }
 
@@ -983,13 +988,12 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 		newItems = r.sessionItems
 	}
 	details := &RunErrorDetails{
-		Input:                  input,
-		NewItems:               newItems,
-		RawResponses:           raw,
-		LastAgent:              last,
-		Usage:                  r.rc.Usage,
-		InputGuardrailResults:  r.inputGuardrailResults,
-		OutputGuardrailResults: r.outputGuardrailResults,
+		Input:            input,
+		NewItems:         newItems,
+		RawResponses:     raw,
+		LastAgent:        last,
+		Usage:            r.rc.Usage,
+		GuardrailResults: r.snapshotGuardrailResults(),
 	}
 	var ae *AgentsError
 	if asAgentsError(err, &ae) {
@@ -1096,7 +1100,7 @@ func runItemCallID(it RunItem) (callID string, isCall, isOutput bool) {
 // run's items are persisted and the final output is produced. It is
 // best-effort housekeeping: a failure is recorded on the trace instead of
 // turning the successful run into an error. Called once, at final output — Go
-// compacts per run, not per turn (see docs/python_differences.md).
+// compacts per run, not per turn (see docs/migration_from_python.md).
 func (r *runner) maybeCompact(ctx context.Context) {
 	if r.opts.Session == nil {
 		return

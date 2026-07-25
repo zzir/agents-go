@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -106,14 +107,19 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(built.Agent.InputGuardrails) != 0 || len(built.Agent.OutputGuardrails) != 0 {
-		t.Errorf("root agent still carries guardrails: in=%d out=%d",
-			len(built.Agent.InputGuardrails), len(built.Agent.OutputGuardrails))
+	if len(built.Agent.Guardrails) != 0 {
+		t.Errorf("root agent still carries %d guardrail(s); they should be lifted to the run level",
+			len(built.Agent.Guardrails))
 	}
-	if len(built.RunInputGuardrails) != 1 {
-		t.Errorf("RunInputGuardrails = %d, want 1", len(built.RunInputGuardrails))
+	if len(built.RunGuardrails) != 2 {
+		t.Errorf("RunGuardrails = %d, want 2 (one input + one output)", len(built.RunGuardrails))
 	}
-	if len(built.RunOutputGuardrails) != 1 {
-		t.Errorf("RunOutputGuardrails = %d, want 1", len(built.RunOutputGuardrails))
+	var sawInput, sawOutput bool
+	for _, g := range built.RunGuardrails {
+		sawInput = sawInput || g.Covers(agents.StageInput)
+		sawOutput = sawOutput || g.Covers(agents.StageOutput)
+	}
+	if !sawInput || !sawOutput {
+		t.Errorf("RunGuardrails stages: input=%v output=%v, want both", sawInput, sawOutput)
 	}
 }

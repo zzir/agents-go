@@ -88,7 +88,8 @@ triage.InputGuardrails = []agents.InputGuardrail{{
 ```
 {% endraw %}
 
-When a tripwire fires, `Run` returns an `*agents.InputGuardrailTripwireError`.
+When a tripwire fires, `Run` returns an `*agents.GuardrailTripwireError`;
+`tw.Stage()` says which stage fired.
 
 ## Add a function tool
 

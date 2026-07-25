@@ -140,23 +140,24 @@ func TestAgentToolInheritsRunLevelInputGuardrails(t *testing.T) {
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"BLOCKED payload"}`)
 
 	guardCalls := 0
-	guard := InputGuardrail{
+	guard := Guardrail{
 		Name:     "no-blocked",
+		Stages:   []GuardrailStage{StageInput},
 		Blocking: true,
-		Run: func(_ context.Context, _ *RunContext, _ *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
+		Run: func(_ context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
 			guardCalls++
-			for _, it := range input {
+			for _, it := range p.Input {
 				b, _ := MarshalInputItem(it)
 				if strings.Contains(string(b), "BLOCKED") {
-					return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+					return Trip(nil), nil
 				}
 			}
-			return GuardrailFunctionOutput{}, nil
+			return Allow(nil), nil
 		},
 	}
 	_ = nestedRuns
 
-	res, err := Run(context.Background(), orch, "go", RunOptions{InputGuardrails: []InputGuardrail{guard}})
+	res, err := Run(context.Background(), orch, "go", RunOptions{Guardrails: []Guardrail{guard}})
 	if err != nil {
 		t.Fatal(err)
 	}

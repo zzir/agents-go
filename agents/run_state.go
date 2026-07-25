@@ -15,7 +15,7 @@ import (
 //
 // The version is checked for STRICT equality on decode: a state stamped with any
 // other version — older or newer — is rejected rather than best-effort decoded
-// (see RunStateFromJSON; recorded in docs/python_differences.md). The list below
+// (see RunStateFromJSON; recorded in docs/migration_from_python.md). The list below
 // is why each version bumped, not a promise of cross-version compatibility: 1.1
 // replaced the per-call approval maps with per-tool entries, 1.2 added the nested
 // agent-as-tool states and the reasoning-item id policy, and 1.3 added the
@@ -76,16 +76,12 @@ type RunState struct {
 	// before this field existed → ReasoningItemIDPreserve (the default).
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
 
-	// InputGuardrailResults / OutputGuardrailResults and the two tool-guardrail
-	// result slices carry the guardrail results accumulated before the pause, so a
-	// resumed run's RunResult still reports them. First-turn input guardrails are
-	// not re-run on resume (Python parity), so the carried state is their only
-	// source. Serialized lossily (guardrail name + output payload, no live func);
-	// absent in pre-1.3 states → nil.
-	InputGuardrailResults      []InputGuardrailResult
-	OutputGuardrailResults     []OutputGuardrailResult
-	ToolInputGuardrailResults  []ToolInputGuardrailResult
-	ToolOutputGuardrailResults []ToolOutputGuardrailResult
+	// GuardrailResults carries every guardrail result accumulated before the
+	// pause, across all stages, so a resumed run's RunResult still reports them.
+	// First-turn input guardrails are not re-run on resume, so the carried state
+	// is their only source. Serialized lossily: the guardrail's live Run func
+	// does not round-trip, so a decoded result carries a name-only stub.
+	GuardrailResults []GuardrailResult
 
 	// nestedToolStates carries the paused RunState of any agent-as-tool nested
 	// run, keyed by the parent tool call id, so ResumeRun continues the nested
@@ -205,10 +201,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, sr *Strea
 	// RunResult still reports the pre-pause results. First-turn input guardrails
 	// are not re-run on resume, so this is the only way they survive (Python
 	// parity: the resume loop seeds its accumulators from run_state).
-	r.inputGuardrailResults = state.InputGuardrailResults
-	r.outputGuardrailResults = state.OutputGuardrailResults
-	r.toolInputGuardrailResults = state.ToolInputGuardrailResults
-	r.toolOutputGuardrailResults = state.ToolOutputGuardrailResults
+	r.guardrailResults = state.GuardrailResults
 	// Restore the tool-use tracker so tool_choice stays reset for every agent
 	// that had used tools before the pause (not only the interrupted one).
 	if len(state.ToolsUsed) > 0 {
@@ -299,28 +292,20 @@ type serialRunState struct {
 
 	// Guardrail results accumulated before the pause (schema ≥ 1.3), serialized
 	// lossily as name + output payload — the live guardrail func is not restored.
-	InputGuardrailResults      []serialGuardrailResult     `json:"input_guardrail_results,omitempty"`
-	OutputGuardrailResults     []serialGuardrailResult     `json:"output_guardrail_results,omitempty"`
-	ToolInputGuardrailResults  []serialToolGuardrailResult `json:"tool_input_guardrail_results,omitempty"`
-	ToolOutputGuardrailResults []serialToolGuardrailResult `json:"tool_output_guardrail_results,omitempty"`
+	GuardrailResults []serialGuardrailResult `json:"guardrail_results,omitempty"`
 }
 
-// serialGuardrailResult is the persisted form of an input/output guardrail
-// result: the guardrail's name plus its output payload. The guardrail's live Run
-// func cannot serialize, so a decoded result carries a name-only stub guardrail.
+// serialGuardrailResult is the persisted form of a guardrail result at any
+// stage: the guardrail's name and stage plus its decision. The guardrail's live
+// Run func cannot serialize, so a decoded result carries a name-only stub.
 type serialGuardrailResult struct {
-	Name              string          `json:"name,omitempty"`
-	TripwireTriggered bool            `json:"tripwire_triggered,omitempty"`
-	OutputInfo        json.RawMessage `json:"output_info,omitempty"`
-}
-
-// serialToolGuardrailResult is the persisted form of a tool guardrail result.
-type serialToolGuardrailResult struct {
 	Name       string          `json:"name,omitempty"`
+	Stage      string          `json:"stage,omitempty"`
+	Action     int             `json:"action,omitempty"`
+	Message    string          `json:"message,omitempty"`
 	ToolName   string          `json:"tool_name,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Behavior   int             `json:"behavior,omitempty"`
-	Message    string          `json:"message,omitempty"`
+	Arguments  string          `json:"arguments,omitempty"`
 	OutputInfo json.RawMessage `json:"output_info,omitempty"`
 }
 
@@ -351,67 +336,21 @@ func unmarshalOutputInfo(raw json.RawMessage) any {
 	return v
 }
 
-func toSerialInputGuardrailResults(rs []InputGuardrailResult) []serialGuardrailResult {
+func toSerialGuardrailResults(rs []GuardrailResult) []serialGuardrailResult {
 	if len(rs) == 0 {
 		return nil
 	}
 	out := make([]serialGuardrailResult, len(rs))
 	for i, r := range rs {
 		out[i] = serialGuardrailResult{
-			Name:              r.Guardrail.Name,
-			TripwireTriggered: r.Output.TripwireTriggered,
-			OutputInfo:        marshalOutputInfo(r.Output.OutputInfo),
-		}
-	}
-	return out
-}
-
-func toSerialOutputGuardrailResults(rs []OutputGuardrailResult) []serialGuardrailResult {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make([]serialGuardrailResult, len(rs))
-	for i, r := range rs {
-		out[i] = serialGuardrailResult{
-			Name:              r.Guardrail.Name,
-			TripwireTriggered: r.Output.TripwireTriggered,
-			OutputInfo:        marshalOutputInfo(r.Output.OutputInfo),
-		}
-	}
-	return out
-}
-
-func toSerialToolInputGuardrailResults(rs []ToolInputGuardrailResult) []serialToolGuardrailResult {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make([]serialToolGuardrailResult, len(rs))
-	for i, r := range rs {
-		out[i] = serialToolGuardrailResult{
 			Name:       r.Guardrail.Name,
+			Stage:      string(r.Stage),
+			Action:     int(r.Decision.Action),
+			Message:    r.Decision.Message,
 			ToolName:   r.ToolName,
 			ToolCallID: r.ToolCallID,
-			Behavior:   int(r.Output.Behavior),
-			Message:    r.Output.Message,
-			OutputInfo: marshalOutputInfo(r.Output.OutputInfo),
-		}
-	}
-	return out
-}
-
-func toSerialToolOutputGuardrailResults(rs []ToolOutputGuardrailResult) []serialToolGuardrailResult {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make([]serialToolGuardrailResult, len(rs))
-	for i, r := range rs {
-		out[i] = serialToolGuardrailResult{
-			Name:       r.Guardrail.Name,
-			ToolName:   r.ToolName,
-			ToolCallID: r.ToolCallID,
-			Behavior:   int(r.Output.Behavior),
-			Message:    r.Output.Message,
-			OutputInfo: marshalOutputInfo(r.Output.OutputInfo),
+			Arguments:  r.Arguments,
+			OutputInfo: marshalOutputInfo(r.Decision.OutputInfo),
 		}
 	}
 	return out
@@ -420,61 +359,20 @@ func toSerialToolOutputGuardrailResults(rs []ToolOutputGuardrailResult) []serial
 // The from-serial helpers rebuild results with a name-only stub guardrail (the
 // live Run func does not round-trip), mirroring Python's guardrail-result revival.
 
-func fromSerialInputGuardrailResults(rs []serialGuardrailResult) []InputGuardrailResult {
+func fromSerialGuardrailResults(rs []serialGuardrailResult) []GuardrailResult {
 	if len(rs) == 0 {
 		return nil
 	}
-	out := make([]InputGuardrailResult, len(rs))
+	out := make([]GuardrailResult, len(rs))
 	for i, r := range rs {
-		out[i] = InputGuardrailResult{
-			Guardrail: InputGuardrail{Name: r.Name},
-			Output:    GuardrailFunctionOutput{OutputInfo: unmarshalOutputInfo(r.OutputInfo), TripwireTriggered: r.TripwireTriggered},
-		}
-	}
-	return out
-}
-
-func fromSerialOutputGuardrailResults(rs []serialGuardrailResult) []OutputGuardrailResult {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make([]OutputGuardrailResult, len(rs))
-	for i, r := range rs {
-		out[i] = OutputGuardrailResult{
-			Guardrail: OutputGuardrail{Name: r.Name},
-			Output:    GuardrailFunctionOutput{OutputInfo: unmarshalOutputInfo(r.OutputInfo), TripwireTriggered: r.TripwireTriggered},
-		}
-	}
-	return out
-}
-
-func fromSerialToolInputGuardrailResults(rs []serialToolGuardrailResult) []ToolInputGuardrailResult {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make([]ToolInputGuardrailResult, len(rs))
-	for i, r := range rs {
-		out[i] = ToolInputGuardrailResult{
-			Guardrail:  ToolInputGuardrail{Name: r.Name},
+		stage := GuardrailStage(r.Stage)
+		out[i] = GuardrailResult{
+			Guardrail:  Guardrail{Name: r.Name, Stages: []GuardrailStage{stage}},
+			Stage:      stage,
+			Decision:   GuardrailDecision{Action: GuardrailAction(r.Action), Message: r.Message, OutputInfo: unmarshalOutputInfo(r.OutputInfo)},
 			ToolName:   r.ToolName,
 			ToolCallID: r.ToolCallID,
-			Output:     ToolGuardrailFunctionOutput{OutputInfo: unmarshalOutputInfo(r.OutputInfo), Behavior: ToolGuardrailBehavior(r.Behavior), Message: r.Message},
-		}
-	}
-	return out
-}
-
-func fromSerialToolOutputGuardrailResults(rs []serialToolGuardrailResult) []ToolOutputGuardrailResult {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make([]ToolOutputGuardrailResult, len(rs))
-	for i, r := range rs {
-		out[i] = ToolOutputGuardrailResult{
-			Guardrail:  ToolOutputGuardrail{Name: r.Name},
-			ToolName:   r.ToolName,
-			ToolCallID: r.ToolCallID,
-			Output:     ToolGuardrailFunctionOutput{OutputInfo: unmarshalOutputInfo(r.OutputInfo), Behavior: ToolGuardrailBehavior(r.Behavior), Message: r.Message},
+			Arguments:  r.Arguments,
 		}
 	}
 	return out
@@ -500,17 +398,14 @@ func reasoningPolicyFromString(s string) ReasoningItemIDPolicy {
 // MarshalJSON serializes the run state to JSON for persistence.
 func (s *RunState) MarshalJSON() ([]byte, error) {
 	out := serialRunState{
-		SchemaVersion:              RunStateSchemaVersion,
-		CurrentTurn:                s.CurrentTurn,
-		MaxTurns:                   s.MaxTurns,
-		PersistedSessionItems:      s.PersistedSessionItems,
-		ToolsUsed:                  s.ToolsUsed,
-		Usage:                      s.Usage,
-		ReasoningItemIDPolicy:      reasoningPolicyToString(s.ReasoningItemIDPolicy),
-		InputGuardrailResults:      toSerialInputGuardrailResults(s.InputGuardrailResults),
-		OutputGuardrailResults:     toSerialOutputGuardrailResults(s.OutputGuardrailResults),
-		ToolInputGuardrailResults:  toSerialToolInputGuardrailResults(s.ToolInputGuardrailResults),
-		ToolOutputGuardrailResults: toSerialToolOutputGuardrailResults(s.ToolOutputGuardrailResults),
+		SchemaVersion:         RunStateSchemaVersion,
+		CurrentTurn:           s.CurrentTurn,
+		MaxTurns:              s.MaxTurns,
+		PersistedSessionItems: s.PersistedSessionItems,
+		ToolsUsed:             s.ToolsUsed,
+		Usage:                 s.Usage,
+		ReasoningItemIDPolicy: reasoningPolicyToString(s.ReasoningItemIDPolicy),
+		GuardrailResults:      toSerialGuardrailResults(s.GuardrailResults),
 	}
 	if s.CurrentAgent != nil {
 		out.CurrentAgent = s.CurrentAgent.Name
@@ -639,18 +534,15 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	lookup := func(name string) *Agent { return registry[name] }
 
 	st := &RunState{
-		CurrentAgent:               lookup(in.CurrentAgent),
-		CurrentTurn:                in.CurrentTurn,
-		MaxTurns:                   in.MaxTurns,
-		PersistedSessionItems:      in.PersistedSessionItems,
-		ToolsUsed:                  in.ToolsUsed,
-		Usage:                      in.Usage,
-		ReasoningItemIDPolicy:      reasoningPolicyFromString(in.ReasoningItemIDPolicy),
-		InputGuardrailResults:      fromSerialInputGuardrailResults(in.InputGuardrailResults),
-		OutputGuardrailResults:     fromSerialOutputGuardrailResults(in.OutputGuardrailResults),
-		ToolInputGuardrailResults:  fromSerialToolInputGuardrailResults(in.ToolInputGuardrailResults),
-		ToolOutputGuardrailResults: fromSerialToolOutputGuardrailResults(in.ToolOutputGuardrailResults),
-		Approvals:                  NewApprovalStore(),
+		CurrentAgent:          lookup(in.CurrentAgent),
+		CurrentTurn:           in.CurrentTurn,
+		MaxTurns:              in.MaxTurns,
+		PersistedSessionItems: in.PersistedSessionItems,
+		ToolsUsed:             in.ToolsUsed,
+		Usage:                 in.Usage,
+		ReasoningItemIDPolicy: reasoningPolicyFromString(in.ReasoningItemIDPolicy),
+		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),
+		Approvals:             NewApprovalStore(),
 	}
 	if st.CurrentAgent == nil {
 		return nil, newUserError("run state references unknown agent %q; add it to the registry", in.CurrentAgent)

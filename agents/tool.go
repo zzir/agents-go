@@ -55,10 +55,10 @@ type FunctionTool struct {
 	// model; returning false hides the tool for that run.
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
 
-	// InputGuardrails inspect the tool arguments before OnInvoke runs.
-	InputGuardrails []ToolInputGuardrail
-	// OutputGuardrails inspect the tool's result after OnInvoke runs.
-	OutputGuardrails []ToolOutputGuardrail
+	// Guardrails inspect this tool's calls. Only their tool stages
+	// (StageToolInput / StageToolOutput) are consulted; put run-wide guardrails
+	// on the Agent instead.
+	Guardrails []Guardrail
 
 	// Timeout bounds a single invocation of this tool. When it expires the
 	// invocation's context is canceled and the call fails with a

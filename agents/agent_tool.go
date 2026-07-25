@@ -429,10 +429,8 @@ func nestedRunOptions(parent *RunContext, cfg AgentToolConfig) RunOptions {
 		// see the same rewriting the parent configured.
 		opts.HandoffInputFilter = parent.inheritedOpts.HandoffInputFilter
 		opts.CallModelInputFilter = parent.inheritedOpts.CallModelInputFilter
-		// Inherit run-level guardrails: Python's nested run reuses the whole
-		// parent RunConfig, including its input/output guardrails.
-		opts.InputGuardrails = parent.inheritedOpts.InputGuardrails
-		opts.OutputGuardrails = parent.inheritedOpts.OutputGuardrails
+		// Inherit run-level guardrails so a nested run is guarded like its parent.
+		opts.Guardrails = parent.inheritedOpts.Guardrails
 	}
 	if parent != nil {
 		// Join the parent's trace so the nested run's spans are attributed to

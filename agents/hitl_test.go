@@ -257,10 +257,11 @@ func TestRun_TracingGuardrailAndHandoffSpans(t *testing.T) {
 		Name:      "src",
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "transfer_to_target", "c1", `{}`))}},
 		Handoffs:  []Handoff{HandoffTo(target)},
-		InputGuardrails: []InputGuardrail{{
-			Name: "g",
-			Run: func(ctx context.Context, rc *RunContext, a *Agent, in []TResponseInputItem) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{}, nil
+		Guardrails: []Guardrail{{
+			Name:   "g",
+			Stages: []GuardrailStage{StageInput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Allow(nil), nil
 			},
 		}},
 	}

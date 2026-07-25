@@ -179,16 +179,6 @@ func (r *runner) executeToolsAndSideEffects(
 	preStepItems []RunItem,
 	resp *ModelResponse,
 ) (*singleStepResult, error) {
-	// Refresh the run context's turn input so tools, guardrails and hooks can
-	// inspect the conversation that led to the current tool calls (Python parity:
-	// context_wrapper.turn_input, set at the start of each turn). The runner does
-	// not thread the fully prepared model input into this function, so it is
-	// reconstructed from the new input persisted this run plus the generated
-	// conversation so far; session history loaded before the run is not included.
-	if turnInput, terr := r.currentTurnInput(); terr == nil {
-		r.rc.TurnInput = turnInput
-	}
-
 	newStepItems := make([]RunItem, 0, len(pr.NewItems))
 	if !resumed {
 		newStepItems = append(newStepItems, pr.NewItems...)
@@ -553,7 +543,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			// Tool input guardrails run BEFORE the OnToolStart hooks (Python
 			// parity): a reject_content guardrail resolves the call with a
 			// substituted output and fires no tool hooks at all.
-			if rejected, msg, err := r.runToolInputGuardrails(gctx, agent, run); err != nil {
+			if rejected, msg, err := r.runToolStage(gctx, agent, StageToolInput, run, nil); err != nil {
 				return err
 			} else if rejected {
 				results[i] = functionToolResult{
@@ -627,7 +617,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 
 			// Common tail for success and handled-error outputs.
 			// Tool output guardrails: may reject (substitute content) or raise.
-			if rejected, msg, err := r.runToolOutputGuardrails(gctx, agent, run, out); err != nil {
+			if rejected, msg, err := r.runToolStage(gctx, agent, StageToolOutput, run, out); err != nil {
 				return err
 			} else if rejected {
 				out = msg
@@ -736,7 +726,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 		// pass still re-run the same guardrails right before execution after
 		// approval, so time-sensitive checks are revalidated on resume.
 		if r.opts.PreApprovalToolInputGuardrails {
-			preRejected, msg, gerr := r.runToolInputGuardrails(ctx, agent, run)
+			preRejected, msg, gerr := r.runToolStage(ctx, agent, StageToolInput, run, nil)
 			if gerr != nil {
 				return nil, nil, nil, gerr
 			}
@@ -765,67 +755,43 @@ func agentApprovesToolName(agent *Agent, toolName string) bool {
 	return false
 }
 
-// runToolInputGuardrails runs a tool's input guardrails. It returns
-// (rejected, replacementMessage, error): rejected with a message means the tool
-// should be skipped and the message returned to the model; an error halts the run.
-func (r *runner) runToolInputGuardrails(ctx context.Context, agent *Agent, run toolRunFunction) (bool, string, error) {
-	for _, g := range run.Tool.InputGuardrails {
-		out, err := g.Run(ctx, r.rc, ToolInputGuardrailData{
-			Agent:      agent,
-			ToolName:   run.Call.Name,
-			ToolCallID: run.Call.CallID,
-			Arguments:  run.Call.Arguments,
-		})
-		if err != nil {
-			return false, "", err
-		}
-		// Record every guardrail's result — allow, reject and raise alike — so
-		// RunResult.ToolInputGuardrailResults surfaces non-tripping decisions too
-		// (Python parity: tool_execution appends before the behavior switch).
-		r.recordToolInputGuardrailResult(ToolInputGuardrailResult{
-			Guardrail: g, ToolName: run.Call.Name, ToolCallID: run.Call.CallID, Output: out,
-		})
-		switch out.Behavior {
-		case ToolGuardrailRejectContent:
-			return true, out.Message, nil
-		case ToolGuardrailRaiseException:
-			return false, "", &ToolGuardrailTripwireError{
-				AgentsError:   AgentsError{Message: "tool input guardrail " + g.Name + " tripwire triggered"},
-				GuardrailName: g.Name, ToolName: run.Call.Name, Output: out,
-			}
-		}
+// toolGuardrails is the guardrail set consulted for one tool call: run-level
+// and agent-level guardrails first (their tool stages cover every tool), then
+// the tool's own.
+func (r *runner) toolGuardrails(agent *Agent, tool *FunctionTool) []Guardrail {
+	runLevel := r.runGuardrails(agent)
+	if len(runLevel) == 0 {
+		return tool.Guardrails
 	}
-	return false, "", nil
+	out := make([]Guardrail, 0, len(runLevel)+len(tool.Guardrails))
+	out = append(out, runLevel...)
+	out = append(out, tool.Guardrails...)
+	return out
 }
 
-// runToolOutputGuardrails runs a tool's output guardrails on its result.
-func (r *runner) runToolOutputGuardrails(ctx context.Context, agent *Agent, run toolRunFunction, output any) (bool, string, error) {
-	for _, g := range run.Tool.OutputGuardrails {
-		out, err := g.Run(ctx, r.rc, ToolOutputGuardrailData{
-			Agent:      agent,
-			ToolName:   run.Call.Name,
-			ToolCallID: run.Call.CallID,
-			Arguments:  run.Call.Arguments,
-			Output:     output,
-		})
-		if err != nil {
-			return false, "", err
-		}
-		// Record every guardrail's result (see runToolInputGuardrails).
-		r.recordToolOutputGuardrailResult(ToolOutputGuardrailResult{
-			Guardrail: g, ToolName: run.Call.Name, ToolCallID: run.Call.CallID, Output: out,
-		})
-		switch out.Behavior {
-		case ToolGuardrailRejectContent:
-			return true, out.Message, nil
-		case ToolGuardrailRaiseException:
-			return false, "", &ToolGuardrailTripwireError{
-				AgentsError:   AgentsError{Message: "tool output guardrail " + g.Name + " tripwire triggered"},
-				GuardrailName: g.Name, ToolName: run.Call.Name, Output: out,
-			}
-		}
+// runToolStage runs the guardrails covering stage for one tool call. It returns
+// (replaced, replacementMessage, error): replaced means the call's result is
+// the message — at StageToolInput the tool is skipped, at StageToolOutput its
+// result is substituted. An error halts the run.
+//
+// Guardrails run in order and stop at the first Replace: once one has
+// substituted the content, running the rest against the original is meaningless.
+// Every consulted guardrail's result is recorded, allowing decisions included,
+// so callers can read each one's OutputInfo.
+func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage GuardrailStage, run toolRunFunction, output any) (bool, string, error) {
+	results, msg, replaced, err := runStageSequential(ctx, r.rc, r.toolGuardrails(agent, run.Tool), GuardrailPayload{
+		Stage:      stage,
+		Agent:      agent,
+		ToolName:   run.Call.Name,
+		ToolCallID: run.Call.CallID,
+		Arguments:  run.Call.Arguments,
+		Output:     output,
+	})
+	r.recordGuardrailResults(results...)
+	if err != nil {
+		return false, "", err
 	}
-	return false, "", nil
+	return replaced, msg, nil
 }
 
 // invokeTool runs a tool's OnInvoke, enforcing FunctionTool.Timeout when set.
@@ -1019,23 +985,6 @@ func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffIn
 		return h.InputFilter
 	}
 	return r.opts.HandoffInputFilter
-}
-
-// currentTurnInput reconstructs the model input for the current turn from the
-// runner's state: the new input persisted this run followed by the generated
-// conversation so far. It is the closest approximation to Python's
-// context_wrapper.turn_input available without the runner threading the fully
-// prepared model input into the step. Session history loaded before the run is
-// not represented (see RunContext.TurnInput).
-func (r *runner) currentTurnInput() ([]TResponseInputItem, error) {
-	generated, err := itemsToInputList(r.sessionItems)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TResponseInputItem, 0, len(r.userInput)+len(generated))
-	out = append(out, r.userInput...)
-	out = append(out, generated...)
-	return out, nil
 }
 
 func lastMessageItem(items []RunItem) *MessageOutputItem {

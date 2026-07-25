@@ -416,19 +416,20 @@ func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 	agent := &Agent{
 		Name:      "a",
 		ModelImpl: model,
-		InputGuardrails: []InputGuardrail{{
-			Name: "trip",
-			Run: func(_ context.Context, _ *RunContext, _ *Agent, _ []TResponseInputItem) (GuardrailFunctionOutput, error) {
+		Guardrails: []Guardrail{{
+			Name:   "trip",
+			Stages: []GuardrailStage{StageInput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
 				<-model.called // ensure the model call is in flight first
-				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+				return Trip(nil), nil
 			},
 		}},
 	}
 
 	_, err := Run(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
-	var tw *InputGuardrailTripwireError
+	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
-		t.Fatalf("err = %v, want InputGuardrailTripwireError", err)
+		t.Fatalf("err = %v, want *GuardrailTripwireError", err)
 	}
 	select {
 	case <-model.cancelled:

@@ -13,12 +13,9 @@ type RunErrorDetails struct {
 	RawResponses []*ModelResponse
 	LastAgent    *Agent
 	Usage        *Usage
-	// InputGuardrailResults / OutputGuardrailResults hold the guardrail results
-	// accumulated before the failure, mirroring Python's RunErrorDetails
-	// (exceptions.py). Tool guardrail results are deliberately not included —
-	// Python's RunErrorDetails does not carry them either.
-	InputGuardrailResults  []InputGuardrailResult
-	OutputGuardrailResults []OutputGuardrailResult
+	// GuardrailResults holds every guardrail result accumulated before the
+	// failure, across all stages. Filter by GuardrailResult.Stage.
+	GuardrailResults []GuardrailResult
 }
 
 // AgentsError is the base type for errors raised by the SDK. Match concrete

@@ -104,20 +104,21 @@ func TestHooks_AgentEndFiresBeforeOutputGuardrail(t *testing.T) {
 	agent := &Agent{
 		Name:      "a",
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "leak"))}},
-		OutputGuardrails: []OutputGuardrail{{
-			Name: "pii",
-			Run: func(_ context.Context, _ *RunContext, _ *Agent, output any) (GuardrailFunctionOutput, error) {
+		Guardrails: []Guardrail{{
+			Name:   "pii",
+			Stages: []GuardrailStage{StageOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
 				order = append(order, "guardrail")
-				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+				return Trip(nil), nil
 			},
 		}},
 	}
 	hooks := &endOrderHooks{onEnd: func() { order = append(order, "agent_end") }}
 
 	_, err := Run(context.Background(), agent, "hi", RunOptions{Hooks: hooks})
-	var tw *OutputGuardrailTripwireError
+	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
-		t.Fatalf("want OutputGuardrailTripwireError, got %v", err)
+		t.Fatalf("want *GuardrailTripwireError, got %v", err)
 	}
 	if len(order) != 2 || order[0] != "agent_end" || order[1] != "guardrail" {
 		t.Errorf("order = %v, want [agent_end guardrail]", order)

@@ -4,33 +4,48 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// Every executed tool guardrail — including a non-tripping "allow" — is
-// surfaced on RunResult.Tool{Input,Output}GuardrailResults with its OutputInfo.
-func TestGuardrailResults_ToolGuardrailsSurfacedOnResult(t *testing.T) {
-	tool := NewFunctionTool("act", "acts",
+// resultsFor returns the guardrail results recorded for one stage.
+func resultsFor(rs []GuardrailResult, stage GuardrailStage) []GuardrailResult {
+	var out []GuardrailResult
+	for _, r := range rs {
+		if r.Stage == stage {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func TestGuardrailResults_ToolStagesSurfacedOnResult(t *testing.T) {
+	tool := NewFunctionTool("echo", "echoes",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
-			return "done", nil
+			return "echoed", nil
 		})
-	tool.InputGuardrails = []ToolInputGuardrail{{
-		Name: "in_gr",
-		Run: func(ctx context.Context, rc *RunContext, data ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			return AllowTool("in-info"), nil
+	tool.Guardrails = []Guardrail{
+		{
+			Name:   "arg_check",
+			Stages: []GuardrailStage{StageToolInput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Allow(map[string]any{"checked": true}), nil
+			},
 		},
-	}}
-	tool.OutputGuardrails = []ToolOutputGuardrail{{
-		Name: "out_gr",
-		Run: func(ctx context.Context, rc *RunContext, data ToolOutputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			return AllowTool("out-info"), nil
+		{
+			Name:   "out_check",
+			Stages: []GuardrailStage{StageToolOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Allow("clean"), nil
+			},
 		},
-	}}
+	}
 	model := &fakeModel{responses: []*ModelResponse{
-		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
-		modelResp(messageOutput(t, "final")),
+		modelResp(functionCallOutput(t, "echo", "c1", `{}`)),
+		modelResp(messageOutput(t, "done")),
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
@@ -38,63 +53,93 @@ func TestGuardrailResults_ToolGuardrailsSurfacedOnResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.ToolInputGuardrailResults) != 1 {
-		t.Fatalf("ToolInputGuardrailResults = %d, want 1", len(res.ToolInputGuardrailResults))
+	in := resultsFor(res.GuardrailResults, StageToolInput)
+	if len(in) != 1 || in[0].Guardrail.Name != "arg_check" {
+		t.Fatalf("tool-input results = %+v", in)
 	}
-	if got := res.ToolInputGuardrailResults[0]; got.Guardrail.Name != "in_gr" ||
-		got.ToolName != "act" || got.ToolCallID != "c1" || got.Output.OutputInfo != "in-info" {
-		t.Errorf("input result = %+v", got)
+	if in[0].ToolName != "echo" || in[0].ToolCallID != "c1" {
+		t.Errorf("tool-input result identity = %q/%q, want echo/c1", in[0].ToolName, in[0].ToolCallID)
 	}
-	if len(res.ToolOutputGuardrailResults) != 1 {
-		t.Fatalf("ToolOutputGuardrailResults = %d, want 1", len(res.ToolOutputGuardrailResults))
+	out := resultsFor(res.GuardrailResults, StageToolOutput)
+	if len(out) != 1 || out[0].Guardrail.Name != "out_check" {
+		t.Fatalf("tool-output results = %+v", out)
 	}
-	if got := res.ToolOutputGuardrailResults[0]; got.Guardrail.Name != "out_gr" ||
-		got.ToolName != "act" || got.Output.OutputInfo != "out-info" {
-		t.Errorf("output result = %+v", got)
+	// Allowing decisions are recorded too, so callers can read OutputInfo.
+	if out[0].Decision.OutputInfo != "clean" {
+		t.Errorf("output info = %#v, want clean", out[0].Decision.OutputInfo)
 	}
 }
 
-// A failed run's RunErrorDetails carries the input and output guardrail
-// results accumulated before the failure (Python parity: exceptions.py).
-func TestGuardrailResults_RunErrorDetailsCarriesGuardrailResults(t *testing.T) {
+// One guardrail covering several stages is consulted at each of them — the
+// case that previously required four separate guardrail types.
+func TestGuardrailResults_OneGuardrailCoversManyStages(t *testing.T) {
+	// Stages are recorded from different goroutines (the input guardrail races
+	// the model call, tool stages run in the tool goroutines), so the recorder
+	// takes a lock rather than relying on the run loop's sequencing.
+	var mu sync.Mutex
+	var stages []GuardrailStage
+	scanner := Guardrail{
+		Name:   "scanner",
+		Stages: []GuardrailStage{StageInput, StageToolInput, StageToolOutput, StageOutput},
+		Run: func(_ context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
+			mu.Lock()
+			stages = append(stages, p.Stage)
+			mu.Unlock()
+			return Allow(nil), nil
+		},
+	}
+	tool := NewFunctionTool("echo", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "echoed", nil
+	})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "echo", "c1", `{}`)),
+		modelResp(messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model, Guardrails: []Guardrail{scanner}}
+
+	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []GuardrailStage{StageInput, StageToolInput, StageToolOutput, StageOutput} {
+		if len(resultsFor(res.GuardrailResults, want)) != 1 {
+			mu.Lock()
+			seen := append([]GuardrailStage(nil), stages...)
+			mu.Unlock()
+			t.Errorf("stage %s: got %d results, want 1 (all: %v)", want, len(resultsFor(res.GuardrailResults, want)), seen)
+		}
+	}
+}
+
+func TestGuardrailResults_RunErrorDetailsCarriesResults(t *testing.T) {
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "leak"))}}
 	agent := &Agent{
 		Name:      "a",
-		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}},
-		InputGuardrails: []InputGuardrail{{
-			Name:     "in_gr",
-			Blocking: true, // deterministic: recorded before the model call
-			Run: func(ctx context.Context, rc *RunContext, agent *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{OutputInfo: "in-info"}, nil
-			},
-		}},
-		OutputGuardrails: []OutputGuardrail{{
-			Name: "out_gr",
-			Run: func(ctx context.Context, rc *RunContext, agent *Agent, output any) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{OutputInfo: "out-info", TripwireTriggered: true}, nil
+		ModelImpl: model,
+		Guardrails: []Guardrail{{
+			Name:   "pii",
+			Stages: []GuardrailStage{StageOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Trip(map[string]any{"reason": "ssn"}), nil
 			},
 		}},
 	}
 
 	_, err := Run(context.Background(), agent, "go", RunOptions{})
-	if err == nil {
-		t.Fatal("expected the output guardrail tripwire to fail the run")
+	base, ok := AsAgentsError(err)
+	if !ok {
+		t.Fatalf("err = %T, want an SDK error", err)
 	}
-	ae, ok := AsAgentsError(err)
-	if !ok || ae.Details == nil {
-		t.Fatalf("no RunErrorDetails on error %v", err)
+	if base.Details == nil {
+		t.Fatal("error details missing")
 	}
-	if len(ae.Details.InputGuardrailResults) != 1 || ae.Details.InputGuardrailResults[0].Output.OutputInfo != "in-info" {
-		t.Errorf("Details.InputGuardrailResults = %+v", ae.Details.InputGuardrailResults)
-	}
-	if len(ae.Details.OutputGuardrailResults) != 1 || ae.Details.OutputGuardrailResults[0].Output.OutputInfo != "out-info" {
-		t.Errorf("Details.OutputGuardrailResults = %+v", ae.Details.OutputGuardrailResults)
+	got := resultsFor(base.Details.GuardrailResults, StageOutput)
+	if len(got) != 1 || got[0].Guardrail.Name != "pii" {
+		t.Fatalf("details guardrail results = %+v", base.Details.GuardrailResults)
 	}
 }
 
-// Guardrail results are carried on the interruption RunState and survive a
-// JSON round-trip (lossily: name + output payload), so a resumed run can still
-// report them.
-func TestGuardrailResults_RunStateRoundTripPreservesGuardrailResults(t *testing.T) {
+func TestGuardrailResults_RunStateRoundTrip(t *testing.T) {
 	tool := NewFunctionTool("delete_db", "deletes",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "deleted", nil
@@ -104,11 +149,12 @@ func TestGuardrailResults_RunStateRoundTripPreservesGuardrailResults(t *testing.
 		Name:      "a",
 		Tools:     []Tool{tool},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "delete_db", "c1", `{}`))}},
-		InputGuardrails: []InputGuardrail{{
+		Guardrails: []Guardrail{{
 			Name:     "in_gr",
+			Stages:   []GuardrailStage{StageInput},
 			Blocking: true,
-			Run: func(ctx context.Context, rc *RunContext, agent *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{OutputInfo: map[string]any{"score": 0.5}}, nil
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Allow(map[string]any{"score": 0.5}), nil
 			},
 		}},
 	}
@@ -120,8 +166,9 @@ func TestGuardrailResults_RunStateRoundTripPreservesGuardrailResults(t *testing.
 	if res.State == nil {
 		t.Fatal("expected a paused RunState")
 	}
-	if len(res.State.InputGuardrailResults) != 1 || res.State.InputGuardrailResults[0].Guardrail.Name != "in_gr" {
-		t.Fatalf("State.InputGuardrailResults = %+v", res.State.InputGuardrailResults)
+	staged := resultsFor(res.State.GuardrailResults, StageInput)
+	if len(staged) != 1 || staged[0].Guardrail.Name != "in_gr" {
+		t.Fatalf("State.GuardrailResults = %+v", res.State.GuardrailResults)
 	}
 
 	data, err := res.State.MarshalJSON()
@@ -132,22 +179,25 @@ func TestGuardrailResults_RunStateRoundTripPreservesGuardrailResults(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rebuilt.InputGuardrailResults) != 1 {
-		t.Fatalf("rebuilt.InputGuardrailResults = %d, want 1", len(rebuilt.InputGuardrailResults))
+	got := resultsFor(rebuilt.GuardrailResults, StageInput)
+	if len(got) != 1 {
+		t.Fatalf("rebuilt input-stage results = %d, want 1", len(got))
 	}
-	got := rebuilt.InputGuardrailResults[0]
-	if got.Guardrail.Name != "in_gr" {
-		t.Errorf("rebuilt guardrail name = %q, want in_gr", got.Guardrail.Name)
+	if got[0].Guardrail.Name != "in_gr" {
+		t.Errorf("rebuilt guardrail name = %q, want in_gr", got[0].Guardrail.Name)
+	}
+	if got[0].Stage != StageInput {
+		t.Errorf("rebuilt stage = %q, want %q", got[0].Stage, StageInput)
 	}
 	// OutputInfo round-trips through JSON, so the concrete map becomes map[string]any.
-	m, ok := got.Output.OutputInfo.(map[string]any)
+	m, ok := got[0].Decision.OutputInfo.(map[string]any)
 	if !ok || m["score"] != 0.5 {
-		t.Errorf("rebuilt OutputInfo = %#v, want {score:0.5}", got.Output.OutputInfo)
+		t.Errorf("rebuilt OutputInfo = %#v, want {score:0.5}", got[0].Decision.OutputInfo)
 	}
 }
 
 // A streamed final Response with no usage block counts as zero requests,
-// matching the blocking path (Python's Usage() fallback).
+// matching the blocking path.
 func TestGuardrailResults_StreamUsageAbsentIsZeroRequests(t *testing.T) {
 	var noUsage responses.Response
 	if err := json.Unmarshal([]byte(`{"id":"r","output":[]}`), &noUsage); err != nil {
@@ -166,114 +216,133 @@ func TestGuardrailResults_StreamUsageAbsentIsZeroRequests(t *testing.T) {
 	}
 }
 
-func TestInputGuardrailTripwire(t *testing.T) {
+func TestInputStageTripwire(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}
 	agent := &Agent{
 		Name:      "a",
 		ModelImpl: model,
-		InputGuardrails: []InputGuardrail{{
-			Name: "block",
-			Run: func(_ context.Context, rc *RunContext, agent *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+		Guardrails: []Guardrail{{
+			Name:   "block",
+			Stages: []GuardrailStage{StageInput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Trip("nope"), nil
 			},
 		}},
 	}
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
-	var tw *InputGuardrailTripwireError
+	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
-		t.Fatalf("expected InputGuardrailTripwireError, got %T (%v)", err, err)
+		t.Fatalf("err = %v (%T), want *GuardrailTripwireError", err, err)
 	}
-	if tw.Result.Guardrail.Name != "block" {
-		t.Errorf("guardrail name = %q", tw.Result.Guardrail.Name)
+	if tw.Stage() != StageInput {
+		t.Errorf("stage = %q, want %q", tw.Stage(), StageInput)
+	}
+	if tw.Result.Decision.OutputInfo != "nope" {
+		t.Errorf("output info = %#v", tw.Result.Decision.OutputInfo)
 	}
 }
 
-func TestOutputGuardrailTripwire(t *testing.T) {
-	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "leak"))}}
+func TestOutputStageTripwire(t *testing.T) {
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "secret"))}}
 	agent := &Agent{
 		Name:      "a",
 		ModelImpl: model,
-		OutputGuardrails: []OutputGuardrail{{
-			Name: "pii",
-			Run: func(_ context.Context, rc *RunContext, agent *Agent, output any) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{TripwireTriggered: output == "leak"}, nil
+		Guardrails: []Guardrail{{
+			Name:   "leak",
+			Stages: []GuardrailStage{StageOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Trip(nil), nil
 			},
 		}},
 	}
-	_, err := Run(context.Background(), agent, "hi", RunOptions{})
-	var tw *OutputGuardrailTripwireError
+	_, err := Run(context.Background(), agent, "go", RunOptions{})
+	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
-		t.Fatalf("expected OutputGuardrailTripwireError, got %T (%v)", err, err)
+		t.Fatalf("err = %v (%T), want *GuardrailTripwireError", err, err)
+	}
+	if tw.Stage() != StageOutput {
+		t.Errorf("stage = %q, want %q", tw.Stage(), StageOutput)
+	}
+	if tw.Result.Checked != "secret" {
+		t.Errorf("checked value = %#v, want the final output", tw.Result.Checked)
 	}
 }
 
-// Run-level guardrails run in addition to agent-level ones, and every
-// guardrail's result (including non-tripping) is exposed on the RunResult.
-func TestRunLevelGuardrails_MergeAndExposeResults(t *testing.T) {
-	agentGuard := OutputGuardrail{
-		Name: "agent-og",
-		Run: func(_ context.Context, _ *RunContext, _ *Agent, _ any) (GuardrailFunctionOutput, error) {
-			return GuardrailFunctionOutput{OutputInfo: "agent-checked"}, nil
-		},
+// Run-level and agent-level guardrails both apply.
+//
+// The callback must be goroutine-safe: guardrails at one stage run
+// concurrently, so a shared counter needs synchronization.
+func TestRunAndAgentGuardrailsBothApply(t *testing.T) {
+	var ran atomic.Int32
+	mk := func(name string) Guardrail {
+		return Guardrail{
+			Name:   name,
+			Stages: []GuardrailStage{StageOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				ran.Add(1)
+				return Allow(nil), nil
+			},
+		}
 	}
-	runInputGuard := InputGuardrail{
-		Name: "run-ig",
-		Run: func(_ context.Context, _ *RunContext, _ *Agent, _ []TResponseInputItem) (GuardrailFunctionOutput, error) {
-			return GuardrailFunctionOutput{OutputInfo: "input-checked"}, nil
-		},
-	}
-	runOutputGuard := OutputGuardrail{
-		Name: "run-og",
-		Run: func(_ context.Context, _ *RunContext, _ *Agent, _ any) (GuardrailFunctionOutput, error) {
-			return GuardrailFunctionOutput{OutputInfo: "run-checked"}, nil
-		},
-	}
-	agent := &Agent{
-		Name:             "a",
-		ModelImpl:        &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}},
-		OutputGuardrails: []OutputGuardrail{agentGuard},
-	}
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
+	agent := &Agent{Name: "a", ModelImpl: model, Guardrails: []Guardrail{mk("agent")}}
 
-	res, err := Run(context.Background(), agent, "go", RunOptions{
-		InputGuardrails:  []InputGuardrail{runInputGuard},
-		OutputGuardrails: []OutputGuardrail{runOutputGuard},
-	})
+	res, err := Run(context.Background(), agent, "go", RunOptions{Guardrails: []Guardrail{mk("run")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.InputGuardrailResults) != 1 || res.InputGuardrailResults[0].Output.OutputInfo != "input-checked" {
-		t.Errorf("input guardrail results = %+v", res.InputGuardrailResults)
+	if got := len(resultsFor(res.GuardrailResults, StageOutput)); got != 2 {
+		t.Fatalf("output results = %d, want 2 (run-level + agent-level)", got)
 	}
-	// Both the run-level and the agent-level output guardrails ran.
-	if len(res.OutputGuardrailResults) != 2 {
-		t.Fatalf("output guardrail results = %d, want 2 (run-level + agent-level)", len(res.OutputGuardrailResults))
-	}
-	// Non-tripping OutputInfo and the checked output/agent are exposed.
-	if res.OutputGuardrailResults[0].AgentOutput != "hi" || res.OutputGuardrailResults[0].Agent != agent {
-		t.Errorf("output guardrail result missing agent/output: %+v", res.OutputGuardrailResults[0])
+	if got := ran.Load(); got != 2 {
+		t.Errorf("guardrails run = %d, want 2", got)
 	}
 }
 
-// An input guardrail with Blocking=true runs before the model call,
-// so a tripwire prevents the call entirely.
-func TestRunLevelGuardrails_SequentialBlocksModel(t *testing.T) {
+// A Blocking input guardrail runs before the model call, so a tripwire
+// prevents the call entirely.
+func TestBlockingInputGuardrailPreventsModelCall(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	_, err := Run(context.Background(), agent, "go", RunOptions{
-		InputGuardrails: []InputGuardrail{{
+		Guardrails: []Guardrail{{
 			Name:     "gate",
-			Blocking: true, // run before the model call
-			Run: func(_ context.Context, _ *RunContext, _ *Agent, _ []TResponseInputItem) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+			Stages:   []GuardrailStage{StageInput},
+			Blocking: true,
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Trip(nil), nil
 			},
 		}},
 	})
-	var tw *InputGuardrailTripwireError
+	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
-		t.Fatalf("err = %v, want InputGuardrailTripwireError", err)
+		t.Fatalf("err = %v, want *GuardrailTripwireError", err)
 	}
 	if model.calls != 0 {
-		t.Errorf("model called %d times; a sequential guardrail tripwire must block the call", model.calls)
+		t.Errorf("model called %d times; a blocking guardrail tripwire must prevent the call", model.calls)
+	}
+}
+
+// Replace at the output stage substitutes the final output and lets the run finish.
+func TestOutputStageReplace(t *testing.T) {
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "my ssn is 123"))}}
+	agent := &Agent{
+		Name:      "a",
+		ModelImpl: model,
+		Guardrails: []Guardrail{{
+			Name:   "redact",
+			Stages: []GuardrailStage{StageOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Replace("[redacted]", nil), nil
+			},
+		}},
+	}
+	res, err := Run(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FinalOutputString() != "[redacted]" {
+		t.Errorf("final output = %q, want [redacted]", res.FinalOutputString())
 	}
 }

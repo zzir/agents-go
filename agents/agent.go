@@ -178,11 +178,10 @@ type Agent struct {
 	// MCPServers are MCP servers whose tools are exposed to the agent.
 	MCPServers []MCPServer
 
-	// InputGuardrails run on the original input before the agent executes.
-	InputGuardrails []InputGuardrail
-
-	// OutputGuardrails run on the agent's final output.
-	OutputGuardrails []OutputGuardrail
+	// Guardrails inspect the run at the stages each one declares. Guardrails
+	// here cover the whole run: their tool stages apply to every tool the agent
+	// exposes, not just one.
+	Guardrails []Guardrail
 
 	// OutputType, when non-nil, requests structured output validated against the
 	// schema. A nil OutputType yields plain text.

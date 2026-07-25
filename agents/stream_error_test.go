@@ -160,10 +160,11 @@ func TestStreamedResult_NoOrphanInputOnPreModelFailure(t *testing.T) {
 	agent := &Agent{
 		Name:      "a",
 		ModelImpl: model,
-		InputGuardrails: []InputGuardrail{{
-			Name: "block",
-			Run: func(_ context.Context, rc *RunContext, agent *Agent, input []TResponseInputItem) (GuardrailFunctionOutput, error) {
-				return GuardrailFunctionOutput{TripwireTriggered: true}, nil
+		Guardrails: []Guardrail{{
+			Name:   "block",
+			Stages: []GuardrailStage{StageInput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Trip(nil), nil
 			},
 		}},
 	}
@@ -176,9 +177,9 @@ func TestStreamedResult_NoOrphanInputOnPreModelFailure(t *testing.T) {
 		}
 	}
 	_, ferr := sr.FinalResult()
-	var tw *InputGuardrailTripwireError
+	var tw *GuardrailTripwireError
 	if !errors.As(ferr, &tw) && !errors.As(streamErr, &tw) {
-		t.Fatalf("expected InputGuardrailTripwireError, got final=%v stream=%v", ferr, streamErr)
+		t.Fatalf("expected *GuardrailTripwireError, got final=%v stream=%v", ferr, streamErr)
 	}
 	// The guardrail tripped before the model call, so nothing was persisted.
 	items, _ := session.GetItems(context.Background(), 0)

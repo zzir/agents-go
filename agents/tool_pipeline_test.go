@@ -34,11 +34,12 @@ func TestToolPipeline_HandledErrorFiresOnToolEndAndOutputGuardrails(t *testing.T
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "", errors.New("kaboom")
 		})
-	tool.OutputGuardrails = []ToolOutputGuardrail{{
-		Name: "redact",
-		Run: func(ctx context.Context, rc *RunContext, data ToolOutputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			guardrailSawOutput, _ = data.Output.(string)
-			return ToolGuardrailFunctionOutput{}, nil
+	tool.Guardrails = []Guardrail{{
+		Name:   "redact",
+		Stages: []GuardrailStage{StageToolOutput},
+		Run: func(_ context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
+			guardrailSawOutput, _ = p.Output.(string)
+			return Allow(nil), nil
 		},
 	}}
 	model := &fakeModel{responses: []*ModelResponse{
@@ -72,10 +73,11 @@ func TestToolPipeline_InputGuardrailRejectSkipsHooks(t *testing.T) {
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ran", nil
 		})
-	tool.InputGuardrails = []ToolInputGuardrail{{
-		Name: "block",
-		Run: func(ctx context.Context, rc *RunContext, data ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			return ToolGuardrailFunctionOutput{Behavior: ToolGuardrailRejectContent, Message: "blocked"}, nil
+	tool.Guardrails = []Guardrail{{
+		Name:   "block",
+		Stages: []GuardrailStage{StageToolInput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+			return Replace("blocked", nil), nil
 		},
 	}}
 	model := &fakeModel{responses: []*ModelResponse{
@@ -186,10 +188,11 @@ func TestToolInputGuardrailReject(t *testing.T) {
 		t.Error("tool should not run when input guardrail rejects")
 		return "ran", nil
 	})
-	tool.InputGuardrails = []ToolInputGuardrail{{
-		Name: "guard",
-		Run: func(ctx context.Context, rc *RunContext, d ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			return RejectToolContent("not allowed", nil), nil
+	tool.Guardrails = []Guardrail{{
+		Name:   "guard",
+		Stages: []GuardrailStage{StageToolInput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+			return Replace("not allowed", nil), nil
 		},
 	}}
 	model := &fakeModel{responses: []*ModelResponse{
@@ -218,10 +221,11 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 	tool := NewFunctionTool("leaky", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "secret", nil
 	})
-	tool.OutputGuardrails = []ToolOutputGuardrail{{
-		Name: "guard",
-		Run: func(ctx context.Context, rc *RunContext, d ToolOutputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			return RaiseToolException(nil), nil
+	tool.Guardrails = []Guardrail{{
+		Name:   "guard",
+		Stages: []GuardrailStage{StageToolOutput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+			return Trip(nil), nil
 		},
 	}}
 	model := &fakeModel{responses: []*ModelResponse{
@@ -230,9 +234,9 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
 	_, err := Run(context.Background(), agent, "go", RunOptions{})
-	var tw *ToolGuardrailTripwireError
+	var tw *GuardrailTripwireError
 	if !errors.As(err, &tw) {
-		t.Fatalf("expected ToolGuardrailTripwireError, got %T (%v)", err, err)
+		t.Fatalf("expected *GuardrailTripwireError, got %T (%v)", err, err)
 	}
 }
 

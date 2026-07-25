@@ -77,13 +77,12 @@ type BuildResult struct {
 	// handoff, which would otherwise render as a tool card that never completes.
 	HandoffToolNames map[string]bool
 
-	// RunInputGuardrails / RunOutputGuardrails are the entry (root) agent's
-	// guardrails, lifted to the RUN level so they cover the whole run — crucially,
-	// the final output regardless of which agent produced it after a handoff.
-	// Handoff-target agents keep their own agent-level guardrails; the root's are
-	// moved here (and cleared off the root agent) to avoid double-running.
-	RunInputGuardrails  []agents.InputGuardrail
-	RunOutputGuardrails []agents.OutputGuardrail
+	// RunGuardrails are the entry (root) agent's guardrails, lifted to the RUN
+	// level so they cover the whole run — crucially, the final output regardless
+	// of which agent produced it after a handoff. Handoff-target agents keep
+	// their own agent-level guardrails; the root's are moved here (and cleared
+	// off the root agent) to avoid double-running.
+	RunGuardrails []agents.Guardrail
 }
 
 // BuildFullAgent constructs an *agents.Agent from a config ID, loading all
@@ -130,10 +129,8 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// they run once (the SDK merges run-level + producing-agent guardrails).
 	// Handoff targets, built recursively, keep their own agent-level guardrails.
 	if result.Agent != nil {
-		result.RunInputGuardrails = result.Agent.InputGuardrails
-		result.RunOutputGuardrails = result.Agent.OutputGuardrails
-		result.Agent.InputGuardrails = nil
-		result.Agent.OutputGuardrails = nil
+		result.RunGuardrails = result.Agent.Guardrails
+		result.Agent.Guardrails = nil
 	}
 	// Safety net for configs saved before the API started rejecting the flag:
 	// agents-server always runs with a persisted session, and the SDK refuses
@@ -230,14 +227,14 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
-		agent.InputGuardrails = ig
+		agent.Guardrails = append(agent.Guardrails, ig...)
 	}
 	if ac.Guardrails.OutputGuardrails != "" && deps.Guardrails != nil {
 		og, gerr := deps.Guardrails.BuildOutputGuardrails(ctx, ac.Guardrails.OutputGuardrails)
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
-		agent.OutputGuardrails = og
+		agent.Guardrails = append(agent.Guardrails, og...)
 	}
 
 	// HITL tool approval and structured-output schema — decoded in spec.

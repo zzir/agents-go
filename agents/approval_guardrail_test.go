@@ -87,7 +87,7 @@ func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 
 // --- #3487 parity: pre-approval tool input guardrails. ---
 
-func preApprovalFixture(t *testing.T, guardrail ToolInputGuardrail, ran *atomic.Int32) *Agent {
+func preApprovalFixture(t *testing.T, guardrail Guardrail, ran *atomic.Int32) *Agent {
 	t.Helper()
 	tool := NewFunctionTool("send_mail", "sends mail",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
@@ -95,7 +95,7 @@ func preApprovalFixture(t *testing.T, guardrail ToolInputGuardrail, ran *atomic.
 			return "sent", nil
 		})
 	tool.NeedsApproval = true
-	tool.InputGuardrails = []ToolInputGuardrail{guardrail}
+	tool.Guardrails = []Guardrail{guardrail}
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "send_mail", "call_1", `{}`)),
 		modelResp(messageOutput(t, "understood")),
@@ -105,11 +105,12 @@ func preApprovalFixture(t *testing.T, guardrail ToolInputGuardrail, ran *atomic.
 
 func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
 	var ran, guardrailRuns atomic.Int32
-	g := ToolInputGuardrail{
-		Name: "block",
-		Run: func(ctx context.Context, rc *RunContext, data ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
+	g := Guardrail{
+		Name:   "block",
+		Stages: []GuardrailStage{StageToolInput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
 			guardrailRuns.Add(1)
-			return RejectToolContent("blocked by policy", nil), nil
+			return Replace("blocked by policy", nil), nil
 		},
 	}
 	agent := preApprovalFixture(t, g, &ran)
@@ -143,11 +144,12 @@ func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
 
 func TestPreApprovalGuardrail_PassStillInterruptsAndRerunsOnResume(t *testing.T) {
 	var ran, guardrailRuns atomic.Int32
-	g := ToolInputGuardrail{
-		Name: "count",
-		Run: func(ctx context.Context, rc *RunContext, data ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
+	g := Guardrail{
+		Name:   "count",
+		Stages: []GuardrailStage{StageToolInput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
 			guardrailRuns.Add(1)
-			return AllowTool(nil), nil
+			return Allow(nil), nil
 		},
 	}
 	agent := preApprovalFixture(t, g, &ran)
@@ -179,11 +181,12 @@ func TestPreApprovalGuardrail_PassStillInterruptsAndRerunsOnResume(t *testing.T)
 
 func TestPreApprovalGuardrail_OffByDefault(t *testing.T) {
 	var ran, guardrailRuns atomic.Int32
-	g := ToolInputGuardrail{
-		Name: "block",
-		Run: func(ctx context.Context, rc *RunContext, data ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
+	g := Guardrail{
+		Name:   "block",
+		Stages: []GuardrailStage{StageToolInput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
 			guardrailRuns.Add(1)
-			return RejectToolContent("blocked", nil), nil
+			return Replace("blocked", nil), nil
 		},
 	}
 	agent := preApprovalFixture(t, g, &ran)
@@ -202,18 +205,19 @@ func TestPreApprovalGuardrail_OffByDefault(t *testing.T) {
 
 func TestPreApprovalGuardrail_TripwireHaltsRun(t *testing.T) {
 	var ran atomic.Int32
-	g := ToolInputGuardrail{
-		Name: "trip",
-		Run: func(ctx context.Context, rc *RunContext, data ToolInputGuardrailData) (ToolGuardrailFunctionOutput, error) {
-			return RaiseToolException(nil), nil
+	g := Guardrail{
+		Name:   "trip",
+		Stages: []GuardrailStage{StageToolInput},
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+			return Trip(nil), nil
 		},
 	}
 	agent := preApprovalFixture(t, g, &ran)
 
 	_, err := Run(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
-	var tripErr *ToolGuardrailTripwireError
+	var tripErr *GuardrailTripwireError
 	if !errors.As(err, &tripErr) {
-		t.Fatalf("expected ToolGuardrailTripwireError, got %v", err)
+		t.Fatalf("expected *GuardrailTripwireError, got %v", err)
 	}
 	if ran.Load() != 0 {
 		t.Error("tool must not run after tripwire")

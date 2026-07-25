@@ -284,8 +284,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	}
 	opts.SessionSettings = sessionSettingsFor(built.HistoryLimit)
 	opts.ReasoningItemIDPolicy = built.ReasoningItemIDPolicy
-	opts.InputGuardrails = built.RunInputGuardrails
-	opts.OutputGuardrails = built.RunOutputGuardrails
+	opts.Guardrails = built.RunGuardrails
 	opts.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
 
 	// Name the session in parallel with the run — the title needs only the user's
@@ -449,8 +448,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		ErrorHandlers:         built.ErrorHandlers,
 		SessionSettings:       sessionSettingsFor(built.HistoryLimit),
 		ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
-		InputGuardrails:       built.RunInputGuardrails,
-		OutputGuardrails:      built.RunOutputGuardrails,
+		Guardrails:            built.RunGuardrails,
 		Context:               trustSessionID(sessionID, task), // exec_command gate reads a session id here
 	})
 	r.hub.setStopHook(runID, sr.StopAfterTurn)
@@ -736,18 +734,16 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNam
 
 // guardrailRunError builds the run.error for a terminal run failure. A guardrail
 // tripwire gets a distinct "guardrail_tripwire" code plus the guardrail name and
-// stage (input/output) so the UI can render a "blocked by guardrail X" state
+// the stage it fired at, so the UI can render a "blocked by guardrail X" state
 // instead of a generic red error — and, on an output trip, mark the answer that
 // already streamed as retracted. Any other error keeps the caller's fallback code.
 func guardrailRunError(runID string, err error, fallback string) protocol.RunError {
 	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
-	var ig *agents.InputGuardrailTripwireError
-	var og *agents.OutputGuardrailTripwireError
-	switch {
-	case errors.As(err, &ig):
-		e.Code, e.Guardrail, e.Stage = protocol.CodeGuardrailTripwire, ig.Result.Guardrail.Name, "input"
-	case errors.As(err, &og):
-		e.Code, e.Guardrail, e.Stage = protocol.CodeGuardrailTripwire, og.Result.Guardrail.Name, "output"
+	var tw *agents.GuardrailTripwireError
+	if errors.As(err, &tw) {
+		e.Code = protocol.CodeGuardrailTripwire
+		e.Guardrail = tw.Result.Guardrail.Name
+		e.Stage = string(tw.Stage())
 	}
 	return e
 }

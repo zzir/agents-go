@@ -23,8 +23,8 @@
 //
 // # Guardrails
 //
-// Input, output and tool-level guardrails ([InputGuardrail], [OutputGuardrail],
-// [ToolInputGuardrail], [ToolOutputGuardrail]) can halt a run or substitute tool
+// A single [Guardrail] type covers every stage ([StageInput], [StageOutput],
+// [StageToolInput], [StageToolOutput]) and can halt a run or substitute tool
 // content when a tripwire fires.
 //
 // # Sessions

@@ -19,7 +19,7 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 | Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` |
 | Handoffs | `agents.HandoffTo(targetAgent)` |
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})`; typed params via `agents.AgentAsTool[Params](agent, cfg)` (validated, structured input rendering) |
-| Guardrails | `InputGuardrails`, `OutputGuardrails`, tool-level guardrails (incl. pre-approval via `RunOptions.PreApprovalToolInputGuardrails`) |
+| Guardrails | One `Guardrail` type across four `Stage`s (input / output / tool input / tool output), on the run, an agent or a single tool (incl. pre-approval via `RunOptions.PreApprovalToolInputGuardrails`) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Error recovery | `RunOptions.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
 | SDK-only tool output metadata | `FunctionTool.CustomDataExtractor` → `ToolCallOutputItem.CustomData` (never sent to the model) |

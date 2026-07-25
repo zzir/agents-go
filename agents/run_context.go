@@ -22,12 +22,10 @@ type RunContext struct {
 	// Approvals tracks human-in-the-loop tool approval decisions.
 	Approvals *ApprovalStore
 
-	// TurnInput is the model input for the turn currently executing: the
-	// conversation the model was shown before it produced the response whose
-	// tools are now running. The runner refreshes it at the start of each turn
-	// so tools, guardrails and hooks can inspect the input that led to the call.
-	// It mirrors the Python SDK's RunContextWrapper.turn_input.
-	TurnInput []TResponseInputItem
+	// turnInputMu guards turnInput: the run loop refreshes it while tools,
+	// guardrails and hooks read it from their own goroutines.
+	turnInputMu sync.RWMutex
+	turnInput   []TResponseInputItem
 
 	// inheritedOpts carries the run's model provider/model so nested runs (e.g.
 	// agent-as-tool) inherit them. Set by the runner; not user-facing.
@@ -51,20 +49,54 @@ type RunContext struct {
 	nestedToolStates map[string]*RunState
 }
 
+// TurnInput returns the model input for the turn currently executing: exactly
+// what was sent to the model, after session history, handoff filtering,
+// compaction and any CallModelInputFilter have been applied.
+//
+// Under UsePreviousResponseID or ConversationID the server holds the history
+// and only new items are sent, so TurnInput reports those new items — what went
+// on the wire, not a reconstruction of the full conversation.
+//
+// It is empty before the first turn's input is built. The returned slice is a
+// copy, but the items in it are shared with the live request: treat them as
+// read-only.
+func (rc *RunContext) TurnInput() []TResponseInputItem {
+	if rc == nil {
+		return nil
+	}
+	rc.turnInputMu.RLock()
+	defer rc.turnInputMu.RUnlock()
+	if len(rc.turnInput) == 0 {
+		return nil
+	}
+	return append([]TResponseInputItem(nil), rc.turnInput...)
+}
+
+// setTurnInput publishes the turn's model input. The runner calls it once the
+// input is final, and again if CallModelInputFilter edits it.
+func (rc *RunContext) setTurnInput(items []TResponseInputItem) {
+	if rc == nil {
+		return
+	}
+	rc.turnInputMu.Lock()
+	rc.turnInput = items
+	rc.turnInputMu.Unlock()
+}
+
 // takeNestedToolState returns and removes the cached nested run state for a
 // parent tool call id, if any. Used by an agent-as-tool on resume to continue
 // its paused nested run.
-func (c *RunContext) takeNestedToolState(callID string) *RunState {
-	c.nestedMu.Lock()
-	defer c.nestedMu.Unlock()
-	if c.nestedToolStates == nil {
+func (rc *RunContext) takeNestedToolState(callID string) *RunState {
+	rc.nestedMu.Lock()
+	defer rc.nestedMu.Unlock()
+	if rc.nestedToolStates == nil {
 		return nil
 	}
-	st, ok := c.nestedToolStates[callID]
+	st, ok := rc.nestedToolStates[callID]
 	if !ok {
 		return nil
 	}
-	delete(c.nestedToolStates, callID)
+	delete(rc.nestedToolStates, callID)
 	return st
 }
 
