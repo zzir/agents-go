@@ -833,7 +833,7 @@ export function ChatView({
   }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
   // The dep must change on every content growth, not just on new messages:
-  //.chat-messages opts out of native scroll anchoring, so streamed text and
+  // .chat-messages opts out of native scroll anchoring, so streamed text and
   // reasoning deltas only keep the view pinned if they re-fire this effect.
   const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(
     messages.length + (streaming?.length ?? 0) + (reasoning?.length ?? 0),

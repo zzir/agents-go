@@ -11,7 +11,7 @@ import (
 )
 
 // TestFileSession_WriteLinesCleansTempOnRenameFailure ensures the atomic-rewrite
-// path does not leak a.session-* temp file when the final os.Rename fails.
+// path does not leak a .session-* temp file when the final os.Rename fails.
 //
 // The failure is injected by making the session path an existing directory:
 // renaming a freshly written temp file onto a directory fails with EISDIR on
