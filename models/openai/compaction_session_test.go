@@ -52,7 +52,7 @@ func TestCompactionCandidateCount(t *testing.T) {
 }
 
 func TestNewCompactionSessionRejects(t *testing.T) {
-	under := agents.NewInMemorySession()
+	under := agents.NewInMemoryStorage("test")
 	if _, err := NewCompactionSession(under, CompactionOptions{Model: "claude-3"}); err == nil {
 		t.Error("non-OpenAI model should be rejected")
 	}
@@ -88,13 +88,13 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	under := agents.NewInMemorySession()
+	under := agents.NewInMemoryStorage("test")
 	// Seed enough candidate items to clear the threshold.
 	seed := []agents.TResponseInputItem{}
 	for range 12 {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
-	if err := agents.AddSessionItems(ctx, under, seed, agents.Source{}); err != nil {
+	if err := agents.NewSession(under).AppendItems(ctx, seed, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,7 +108,7 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := agents.SessionItems(ctx, under, 0)
+	items, err := agents.NewSession(under).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +129,8 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	t.Cleanup(srv.Close)
 
-	under := agents.NewInMemorySession()
-	_ = agents.AddSessionItems(ctx, under, []agents.TResponseInputItem{
+	under := agents.NewInMemoryStorage("test")
+	_ = agents.NewSession(under).AppendItems(ctx, []agents.TResponseInputItem{
 		mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`),
 	}, agents.Source{})
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1"},

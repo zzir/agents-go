@@ -60,7 +60,7 @@ type CompactionOptions struct {
 // the run finishes and its items are saved). The decision hook still bounds how
 // often the responses.compact API is actually called.
 type CompactionSession struct {
-	underlying agents.Session
+	underlying agents.SessionStorage
 	svc        responses.ResponseService
 	model      string
 	mode       CompactionMode
@@ -68,15 +68,15 @@ type CompactionSession struct {
 }
 
 var (
-	_ agents.Session                = (*CompactionSession)(nil)
-	_ agents.CompactionAwareSession = (*CompactionSession)(nil)
+	_ agents.SessionStorage  = (*CompactionSession)(nil)
+	_ agents.CompactionAware = (*CompactionSession)(nil)
 )
 
 // NewCompactionSession wraps underlying with automatic responses.compact
 // compaction. Pass openai-go request options (option.WithAPIKey, …) just as for
 // NewProvider. It rejects wrapping a ConversationsSession (which manages its own
 // server-side history) and a non-OpenAI compaction model.
-func NewCompactionSession(underlying agents.Session, opts CompactionOptions, clientOpts ...option.RequestOption) (*CompactionSession, error) {
+func NewCompactionSession(underlying agents.SessionStorage, opts CompactionOptions, clientOpts ...option.RequestOption) (*CompactionSession, error) {
 	if _, ok := underlying.(*ConversationsSession); ok {
 		return nil, fmt.Errorf("CompactionSession cannot wrap a ConversationsSession (it manages its own server-side history)")
 	}
@@ -109,22 +109,27 @@ func NewCompactionSession(underlying agents.Session, opts CompactionOptions, cli
 	}, nil
 }
 
-// GetEntries implements agents.Session.
-func (s *CompactionSession) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
-	return s.underlying.GetEntries(ctx, limit)
+// Metadata implements agents.SessionStorage.
+func (s *CompactionSession) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+	return s.underlying.Metadata(ctx)
 }
 
-// AddEntries implements agents.Session.
-func (s *CompactionSession) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
-	return s.underlying.AddEntries(ctx, entries)
+// Entries implements agents.SessionStorage.
+func (s *CompactionSession) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+	return s.underlying.Entries(ctx, cur)
 }
 
-// PopEntry implements agents.Session.
-func (s *CompactionSession) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
-	return s.underlying.PopEntry(ctx)
+// Entry implements agents.SessionStorage.
+func (s *CompactionSession) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+	return s.underlying.Entry(ctx, id)
 }
 
-// Clear implements agents.Session.
+// Append implements agents.SessionStorage.
+func (s *CompactionSession) Append(ctx context.Context, entries ...agents.SessionEntry) error {
+	return s.underlying.Append(ctx, entries...)
+}
+
+// Clear implements agents.SessionStorage.
 func (s *CompactionSession) Clear(ctx context.Context) error {
 	return s.underlying.Clear(ctx)
 }
@@ -136,7 +141,14 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 	// Server-side compaction operates on the conversation the model reads, so
 	// it starts from the projection: an annotation is not context and must not
 	// be sent to responses.compact as if it were.
-	items, err := agents.SessionItems(ctx, s.underlying, 0)
+	entries, err := s.underlying.Entries(ctx, agents.Cursor{})
+	if err != nil {
+		return err
+	}
+	// Server-side compaction operates on the conversation the model reads, so
+	// it starts from the projection: an annotation is not context and must not
+	// be sent to responses.compact as if it were.
+	items, err := agents.ProjectEntries(entries, nil)
 	if err != nil {
 		return err
 	}
@@ -182,7 +194,7 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 	if err != nil {
 		return fmt.Errorf("compaction: encoding compacted history: %w", err)
 	}
-	if err := agents.ReplaceSessionEntries(ctx, s.underlying, replacement); err != nil {
+	if err := agents.ReplaceStorageEntries(ctx, s.underlying, replacement...); err != nil {
 		return fmt.Errorf("compaction: replacing history: %w", err)
 	}
 	return nil

@@ -138,9 +138,9 @@ func sanitizeSessionID(id string) string {
 	return strings.Trim(b.String(), ".")
 }
 
-// GetEntries returns stored entries oldest-first. A limit <= 0 returns all; a
-// positive limit returns the most recent `limit` (still oldest-first).
-func (s *FileSession) GetEntries(_ context.Context, limit int) ([]agents.SessionEntry, error) {
+// Entries implements agents.SessionStorage, returning entries in append order
+// paginated by cursor.
+func (s *FileSession) Entries(_ context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -158,16 +158,46 @@ func (s *FileSession) GetEntries(_ context.Context, limit int) ([]agents.Session
 		}
 		entries = append(entries, e)
 	}
-	if limit > 0 && limit < len(entries) {
-		entries = entries[len(entries)-limit:]
-	}
-	return entries, nil
+	return agents.PageEntries(entries, cur), nil
 }
 
-// AddEntries appends entries to the session file. The batch is marshaled up
+// Metadata implements agents.SessionStorage.
+func (s *FileSession) Metadata(_ context.Context) (agents.SessionMetadata, error) {
+	release := acquire(s.lockKey)
+	defer release()
+	md := agents.SessionMetadata{ID: s.path}
+	lines, err := s.readLines()
+	if err != nil {
+		return md, err
+	}
+	md.EntryCount = len(lines)
+	if fi, serr := os.Stat(s.path); serr == nil {
+		md.UpdatedAt = fi.ModTime().UTC()
+	}
+	return md, nil
+}
+
+// Entry implements agents.SessionStorage.
+func (s *FileSession) Entry(_ context.Context, id string) (*agents.SessionEntry, error) {
+	release := acquire(s.lockKey)
+	defer release()
+	lines, err := s.readLines()
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range lines {
+		var e agents.SessionEntry
+		if json.Unmarshal(line, &e) == nil && e.ID == id {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
+// Append adds entries to the session file. The batch is marshaled up
 // front and written with a single write call, so a marshal failure writes
 // nothing and a crash cannot interleave half-written lines from this batch.
-func (s *FileSession) AddEntries(_ context.Context, entries []agents.SessionEntry) error {
+func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -211,7 +241,7 @@ func (s *FileSession) AddEntries(_ context.Context, entries []agents.SessionEntr
 // swapped in one atomic file rewrite (temp file + fsync + rename), so a crash
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
-func (s *FileSession) ReplaceEntries(_ context.Context, entries []agents.SessionEntry) error {
+func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.SessionEntry) error {
 	lines := make([][]byte, 0, len(entries))
 	for i := range entries {
 		data, err := json.Marshal(stamp(entries[i], i+1))
@@ -275,6 +305,7 @@ func stamp(e agents.SessionEntry, n int) agents.SessionEntry {
 	if e.ID == "" {
 		e.ID = fmt.Sprintf("e%d", n)
 	}
+	e.Seq = int64(n)
 	if e.CreatedAt.IsZero() {
 		e.CreatedAt = time.Now().UTC()
 	}
@@ -358,6 +389,7 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 }
 
 var (
-	_ agents.Session         = (*FileSession)(nil)
-	_ agents.EntriesReplacer = (*FileSession)(nil)
+	_ agents.SessionStorage = (*FileSession)(nil)
+	_ agents.AtomicReplacer = (*FileSession)(nil)
+	_ agents.EntryPopper    = (*FileSession)(nil)
 )

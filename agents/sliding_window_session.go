@@ -33,7 +33,7 @@ Be concise but complete. Do not add commentary. Do not invent information.
 Output only the summary text.
 `)
 
-// SlidingWindowConfig configures a SlidingWindowSession.
+// SlidingWindowConfig configures a SlidingWindowStorage.
 type SlidingWindowConfig struct {
 	// Threshold is the number of items beyond the window that triggers
 	// compaction. For example, with Threshold=6 and WindowSize=3,
@@ -53,7 +53,7 @@ type SlidingWindowConfig struct {
 	ShouldCompact func(totalItems int) bool
 }
 
-// SlidingWindowSession decorates any Session with provider-agnostic
+// SlidingWindowStorage decorates any Session with provider-agnostic
 // compaction: when history grows past a threshold, older items beyond the
 // sliding window are summarized by an LLM and replaced with a single
 // summary message.
@@ -63,23 +63,23 @@ type SlidingWindowConfig struct {
 // GetItems -> summarize -> ReplaceSessionItems read-modify-write) assumes serial
 // access to a given session, exactly as the runner drives it — one run at a
 // time, with compaction run only after that run's history has been persisted.
-// Sharing a single SlidingWindowSession across concurrent runs would race on the
+// Sharing a single SlidingWindowStorage across concurrent runs would race on the
 // underlying session's own state regardless of any lock added here, so callers
 // that need that must serialize access themselves (or give each run its own
 // session). No lock is taken; holding one across the summarization model call
 // would serialize unrelated session operations behind a network round-trip.
-type SlidingWindowSession struct {
-	underlying Session
+type SlidingWindowStorage struct {
+	underlying SessionStorage
 	cfg        SlidingWindowConfig
 }
 
 var (
-	_ Session                = (*SlidingWindowSession)(nil)
-	_ CompactionAwareSession = (*SlidingWindowSession)(nil)
+	_ SessionStorage  = (*SlidingWindowStorage)(nil)
+	_ CompactionAware = (*SlidingWindowStorage)(nil)
 )
 
-// NewSlidingWindowSession wraps underlying with sliding-window compaction.
-func NewSlidingWindowSession(underlying Session, cfg SlidingWindowConfig) *SlidingWindowSession {
+// NewSlidingWindowStorage wraps underlying with sliding-window compaction.
+func NewSlidingWindowStorage(underlying SessionStorage, cfg SlidingWindowConfig) *SlidingWindowStorage {
 	if cfg.Threshold <= 0 {
 		cfg.Threshold = defaultSlidingWindowThreshold
 	}
@@ -94,38 +94,43 @@ func NewSlidingWindowSession(underlying Session, cfg SlidingWindowConfig) *Slidi
 	if cfg.SummaryPrompt == "" {
 		cfg.SummaryPrompt = DefaultSummaryPrompt
 	}
-	return &SlidingWindowSession{underlying: underlying, cfg: cfg}
+	return &SlidingWindowStorage{underlying: underlying, cfg: cfg}
 }
 
-// GetEntries delegates to the underlying session.
-func (s *SlidingWindowSession) GetEntries(ctx context.Context, limit int) ([]SessionEntry, error) {
-	return s.underlying.GetEntries(ctx, limit)
+// Metadata delegates to the underlying storage.
+func (s *SlidingWindowStorage) Metadata(ctx context.Context) (SessionMetadata, error) {
+	return s.underlying.Metadata(ctx)
 }
 
-// AddEntries delegates to the underlying session.
-func (s *SlidingWindowSession) AddEntries(ctx context.Context, entries []SessionEntry) error {
-	return s.underlying.AddEntries(ctx, entries)
+// Append delegates to the underlying storage.
+func (s *SlidingWindowStorage) Append(ctx context.Context, entries ...SessionEntry) error {
+	return s.underlying.Append(ctx, entries...)
 }
 
-// PopEntry delegates to the underlying session.
-func (s *SlidingWindowSession) PopEntry(ctx context.Context) (*SessionEntry, error) {
-	return s.underlying.PopEntry(ctx)
+// Entry delegates to the underlying storage.
+func (s *SlidingWindowStorage) Entry(ctx context.Context, id string) (*SessionEntry, error) {
+	return s.underlying.Entry(ctx, id)
 }
 
-// Clear delegates to the underlying session.
-func (s *SlidingWindowSession) Clear(ctx context.Context) error {
+// Entries delegates to the underlying storage.
+func (s *SlidingWindowStorage) Entries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
+	return s.underlying.Entries(ctx, cur)
+}
+
+// Clear delegates to the underlying storage.
+func (s *SlidingWindowStorage) Clear(ctx context.Context) error {
 	return s.underlying.Clear(ctx)
 }
 
 // RunCompaction implements CompactionAwareSession. It summarizes older
 // items via SummaryModel and replaces them with a single summary message,
 // keeping the most recent WindowSize items intact.
-func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args CompactionArgs) error {
+func (s *SlidingWindowStorage) RunCompaction(ctx context.Context, args CompactionArgs) error {
 	if s.cfg.SummaryModel == nil {
 		return nil
 	}
 
-	entries, err := s.underlying.GetEntries(ctx, 0)
+	entries, err := s.underlying.Entries(ctx, Cursor{})
 	if err != nil {
 		return err
 	}
@@ -189,7 +194,7 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 	if err != nil {
 		return fmt.Errorf("sliding window compaction: %w", err)
 	}
-	if err := ReplaceSessionEntries(ctx, s.underlying, []SessionEntry{checkpoint}); err != nil {
+	if err := ReplaceStorageEntries(ctx, s.underlying, checkpoint); err != nil {
 		return fmt.Errorf("sliding window compaction: replacing history: %w", err)
 	}
 	return nil
@@ -214,7 +219,7 @@ func (s *SlidingWindowSession) RunCompaction(ctx context.Context, args Compactio
 //
 // It is exported for external Session implementations that rewrite history
 // (compaction, summarization, forking) and need the same pair-safety
-// guarantee; SlidingWindowSession uses it internally.
+// guarantee; SlidingWindowStorage uses it internally.
 func SafeSplitPoint(items []TResponseInputItem, split int) int {
 	if split < 0 {
 		return 0
@@ -285,7 +290,7 @@ func earliestStraddlingPair(items []TResponseInputItem, split int) int {
 	return best
 }
 
-func (s *SlidingWindowSession) summarize(ctx context.Context, items []TResponseInputItem) (string, error) {
+func (s *SlidingWindowStorage) summarize(ctx context.Context, items []TResponseInputItem) (string, error) {
 	resp, err := s.cfg.SummaryModel.GetResponse(ctx, ModelRequest{
 		SystemInstructions: s.cfg.SummaryPrompt,
 		Input:              items,

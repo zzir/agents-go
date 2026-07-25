@@ -95,21 +95,29 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	return err
 }
 
-// GetEntries implements agents.Session. A limit <= 0 returns all entries
-// oldest-first; a positive limit returns the most recent `limit`, still
-// oldest-first.
-func (s *Session) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+// Entries implements agents.SessionStorage, paginating by cursor.
+func (s *Session) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
 	var rows []entry
 	q := s.db.NewSelect().Model(&rows).Where("session_id = ?", s.sessionID)
-	if limit > 0 {
-		q = q.Order("id DESC").Limit(limit)
+	if cur.AfterSeq > 0 {
+		q = q.Where("id > ?", cur.AfterSeq)
+	}
+	// A negative limit means "the most recent N", which the database answers by
+	// reading in reverse and flipping below — far cheaper than reading the
+	// whole session to slice its tail.
+	limit := cur.Limit
+	if limit < 0 {
+		q = q.Order("id DESC").Limit(-limit)
 	} else {
 		q = q.Order("id ASC")
+		if limit > 0 {
+			q = q.Limit(limit)
+		}
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, err
 	}
-	if limit > 0 {
+	if limit < 0 {
 		slices.Reverse(rows) // most-recent-first -> oldest-first
 	}
 	out := make([]agents.SessionEntry, 0, len(rows))
@@ -123,8 +131,8 @@ func (s *Session) GetEntries(ctx context.Context, limit int) ([]agents.SessionEn
 	return out, nil
 }
 
-// AddEntries implements agents.Session.
-func (s *Session) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+// Append implements agents.SessionStorage.
+func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -190,7 +198,7 @@ func (s *Session) Clear(ctx context.Context) error {
 // history and the insert of the new one run in a single transaction, so a
 // failure mid-rewrite rolls back to the previous history instead of leaving the
 // session empty. Only this session ID's rows are touched.
-func (s *Session) ReplaceEntries(ctx context.Context, entries []agents.SessionEntry) error {
+func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
 	rows, err := s.encodeEntries(entries)
 	if err != nil {
 		return err
@@ -239,10 +247,42 @@ func decodeEntry(r entry) (agents.SessionEntry, error) {
 	if err := json.Unmarshal([]byte(r.Entry), &e); err != nil {
 		return agents.SessionEntry{}, fmt.Errorf("decoding session entry %d: %w", r.ID, err)
 	}
+	// The row's autoincrement id IS the sequence number: it is what a cursor
+	// pages on, and it is assigned by the database rather than guessed here.
+	e.Seq = r.ID
 	return e, nil
 }
 
 var (
-	_ agents.Session         = (*Session)(nil)
-	_ agents.EntriesReplacer = (*Session)(nil)
+	_ agents.SessionStorage = (*Session)(nil)
+	_ agents.AtomicReplacer = (*Session)(nil)
+	_ agents.EntryPopper    = (*Session)(nil)
 )
+
+// Metadata implements agents.SessionStorage.
+func (s *Session) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+	n, err := s.db.NewSelect().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Count(ctx)
+	if err != nil {
+		return agents.SessionMetadata{}, err
+	}
+	return agents.SessionMetadata{ID: s.sessionID, EntryCount: n}, nil
+}
+
+// Entry implements agents.SessionStorage.
+func (s *Session) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+	var rows []entry
+	if err := s.db.NewSelect().Model(&rows).
+		Where("session_id = ?", s.sessionID).Order("id ASC").Scan(ctx); err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		e, err := decodeEntry(r)
+		if err != nil {
+			return nil, err
+		}
+		if e.ID == id {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}

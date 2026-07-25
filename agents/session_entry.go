@@ -43,6 +43,10 @@ type SessionEntry struct {
 	// ID identifies the entry within its session. Storage assigns it when
 	// empty.
 	ID string `json:"id"`
+	// Seq is the entry's position in append order, assigned by storage. It is
+	// what a Cursor pages on: an offset shifts under a concurrent append, a
+	// sequence number does not.
+	Seq int64 `json:"seq,omitzero"`
 	// Kind says what this entry holds.
 	Kind EntryKind `json:"kind"`
 	// CustomType names the subtype when Kind is EntryKindCustom.

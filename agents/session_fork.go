@@ -8,8 +8,8 @@ import (
 // ForkSession copies the entire history from src into dst, producing a full
 // clone. dst is cleared first so it contains exactly what src had at the time
 // of the call.
-func ForkSession(ctx context.Context, src, dst Session) error {
-	entries, err := src.GetEntries(ctx, 0)
+func ForkSession(ctx context.Context, src, dst *Session) error {
+	entries, err := src.Entries(ctx, Cursor{})
 	if err != nil {
 		return fmt.Errorf("fork: reading source session: %w", err)
 	}
@@ -19,7 +19,7 @@ func ForkSession(ctx context.Context, src, dst Session) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	if err := dst.AddEntries(ctx, entries); err != nil {
+	if err := dst.Append(ctx, entries...); err != nil {
 		return fmt.Errorf("fork: writing to destination session: %w", err)
 	}
 	return nil
@@ -33,8 +33,8 @@ func ForkSession(ctx context.Context, src, dst Session) error {
 // function_call_output leaves a dangling call in dst, and the API rejects such
 // a history on the next run. When forking after a tool call, include both the
 // call and its output.
-func ForkSessionAt(ctx context.Context, src, dst Session, n int) error {
-	entries, err := src.GetEntries(ctx, 0)
+func ForkSessionAt(ctx context.Context, src, dst *Session, n int) error {
+	entries, err := src.Entries(ctx, Cursor{})
 	if err != nil {
 		return fmt.Errorf("fork: reading source session: %w", err)
 	}
@@ -47,7 +47,7 @@ func ForkSessionAt(ctx context.Context, src, dst Session, n int) error {
 	if n > len(entries) {
 		n = len(entries)
 	}
-	if err := dst.AddEntries(ctx, entries[:n]); err != nil {
+	if err := dst.Append(ctx, entries[:n]...); err != nil {
 		return fmt.Errorf("fork: writing to destination session: %w", err)
 	}
 	return nil

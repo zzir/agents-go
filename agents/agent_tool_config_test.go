@@ -98,7 +98,7 @@ func TestAgentToolSessionPassthrough(t *testing.T) {
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := SessionItems(context.Background(), sess, 0)
+	items, err := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

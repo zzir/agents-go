@@ -20,7 +20,7 @@ func main() {
 	sess := openai.NewConversationsSession()
 
 	agent := &agents.Agent{Name: "assistant", Model: "gpt-4o"}
-	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: provider}}
+	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: agents.NewSession(sess)}, Model: agents.ModelOptions{Provider: provider}}
 
 	if _, err := agents.RunSync(ctx, agent, "My name is Ada. Remember it.", opts); err != nil {
 		log.Fatal(err)

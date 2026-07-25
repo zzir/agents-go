@@ -132,25 +132,60 @@ func NewAnnotationMessage(sessionID, runID, role, content string) Message {
 	}
 }
 
-// GetEntries implements agents.Session.
+// Entries implements agents.SessionStorage.
 //
 // It returns item entries only. Annotation rows are already excluded from the
 // model's view by the query below; surfacing them here as annotation entries is
 // part of converging this adapter on the entry model (plan1 P4), not of moving
 // the interface.
-func (a *SessionAdapter) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+func (a *SessionAdapter) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+	limit := 0
+	if cur.Limit < 0 {
+		limit = -cur.Limit
+	}
 	items, err := a.getItems(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
-	return agents.NewItemEntries(items, agents.Source{})
+	entries, err := agents.NewItemEntries(items, agents.Source{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].Seq = int64(i + 1)
+	}
+	return agents.PageEntries(entries, agents.Cursor{AfterSeq: cur.AfterSeq}), nil
 }
 
-// AddEntries implements agents.Session. Item entries are stored as message
+// Metadata implements agents.SessionStorage.
+func (a *SessionAdapter) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+	n, err := a.db.NewSelect().Model((*Message)(nil)).
+		Where("session_id = ?", a.sessionID).Count(ctx)
+	if err != nil {
+		return agents.SessionMetadata{}, err
+	}
+	return agents.SessionMetadata{ID: a.sessionID, EntryCount: n}, nil
+}
+
+// Entry implements agents.SessionStorage.
+func (a *SessionAdapter) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+	entries, err := a.Entries(ctx, agents.Cursor{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].ID == id {
+			return &entries[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// Append implements agents.SessionStorage. Item entries are stored as message
 // rows; other kinds are rejected rather than dropped, because this adapter owns
 // its own store and could represent them — a silent loss here would be a bug,
 // not a limitation.
-func (a *SessionAdapter) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+func (a *SessionAdapter) Append(ctx context.Context, entries ...agents.SessionEntry) error {
 	items := make([]agents.TResponseInputItem, 0, len(entries))
 	for _, e := range entries {
 		if e.Kind != "" && e.Kind != agents.EntryKindItem {
@@ -165,7 +200,7 @@ func (a *SessionAdapter) AddEntries(ctx context.Context, entries []agents.Sessio
 	return a.addItems(ctx, items)
 }
 
-// PopEntry implements agents.Session.
+// PopEntry implements agents.EntryPopper.
 func (a *SessionAdapter) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
 	item, err := a.popItem(ctx)
 	if err != nil || item == nil {
@@ -646,7 +681,10 @@ func (s *MessageStore) DeleteBySession(ctx context.Context, sessionID string) er
 	return err
 }
 
-var _ agents.Session = (*SessionAdapter)(nil)
+var (
+	_ agents.SessionStorage = (*SessionAdapter)(nil)
+	_ agents.EntryPopper    = (*SessionAdapter)(nil)
+)
 
 // terminalTaskStatuses are the spawn-card task_status values that must never be
 // rolled back once shown. They mirror the terminal set Task.Finalize enforces

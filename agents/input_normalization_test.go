@@ -123,7 +123,7 @@ func TestNormalizeStoredInput_KeepsDuplicateMessages(t *testing.T) {
 // persists at an interruption) must not reach the model as an orphan.
 func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	sess := NewInMemorySession()
-	if err := AddSessionItems(context.Background(), sess, []TResponseInputItem{
+	if err := NewSession(sess).AppendItems(context.Background(), []TResponseInputItem{
 		userMsg("earlier question"),
 		fnCall("dangling"), // no output — a paused Python turn
 	}, Source{}); err != nil {
@@ -132,7 +132,7 @@ func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "answer"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 	// The model must not have received the dangling call.

@@ -26,7 +26,7 @@ func main() {
 	}
 
 	agent := &agents.Agent{Name: "assistant", Model: "gpt-4o"}
-	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: provider}}
+	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: agents.NewSession(sess)}, Model: agents.ModelOptions{Provider: provider}}
 
 	prompts := []string{
 		"My favorite color is teal.",
@@ -42,6 +42,6 @@ func main() {
 		fmt.Printf("> %s\n%s\n\n", p, res.FinalOutputString())
 	}
 
-	items, _ := agents.SessionItems(ctx, sess, 0)
+	items, _ := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
 	fmt.Printf("stored items after the chat: %d (compaction keeps this bounded)\n", len(items))
 }

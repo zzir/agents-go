@@ -19,17 +19,17 @@ func TestFileSession_ReplaceEntries(t *testing.T) {
 	old := agents.InputItemsFromText("old-1")
 	old = append(old, agents.InputItemsFromText("old-2")...)
 	old = append(old, agents.InputItemsFromText("old-3")...)
-	if err := agents.AddSessionItems(ctx, sess, old, agents.Source{}); err != nil {
+	if err := agents.NewSession(sess).AppendItems(ctx, old, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
 	repl := agents.InputItemsFromText("new-1")
 	repl = append(repl, agents.InputItemsFromText("new-2")...)
-	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, repl)); err != nil {
+	if err := agents.ReplaceStorageEntries(ctx, sess, mustEntries(t, repl)...); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := agents.SessionItems(ctx, sess, 0)
+	got, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,13 +63,13 @@ func TestFileSession_ReplaceEntriesEmptyClears(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.AddSessionItems(ctx, sess, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
+	if err := agents.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, nil)); err != nil {
+	if err := agents.ReplaceStorageEntries(ctx, sess, mustEntries(t, nil)...); err != nil {
 		t.Fatal(err)
 	}
-	got, err := agents.SessionItems(ctx, sess, 0)
+	got, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,16 +86,16 @@ func TestFileSession_ReplaceSessionItemsUsesAtomicPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := any(sess).(agents.EntriesReplacer); !ok {
-		t.Fatal("FileSession must implement agents.EntriesReplacer")
+	if _, ok := any(sess).(agents.AtomicReplacer); !ok {
+		t.Fatal("FileSession must implement agents.AtomicReplacer")
 	}
-	if err := agents.AddSessionItems(ctx, sess, agents.InputItemsFromText("before"), agents.Source{}); err != nil {
+	if err := agents.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("before"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.ReplaceSessionEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("after"))); err != nil {
+	if err := agents.ReplaceStorageEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("after"))...); err != nil {
 		t.Fatal(err)
 	}
-	got, err := agents.SessionItems(ctx, sess, 0)
+	got, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

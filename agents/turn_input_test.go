@@ -31,7 +31,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AddSessionItems(context.Background(), session, []TResponseInputItem{prior}, Source{}); err != nil {
+	if err := session.AppendItems(context.Background(), []TResponseInputItem{prior}, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,7 +47,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: session}}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}}); err != nil {
 		t.Fatal(err)
 	}
 	if !itemsContain(seen, "MARKER_FROM_HISTORY") {

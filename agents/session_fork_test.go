@@ -17,7 +17,7 @@ func TestForkSession_FullCopy(t *testing.T) {
 		responses.ResponseInputItemParamOfMessage("hi", responses.EasyInputMessageRoleAssistant),
 		responses.ResponseInputItemParamOfMessage("how are you", responses.EasyInputMessageRoleUser),
 	}
-	if err := AddSessionItems(ctx, src, items, Source{}); err != nil {
+	if err := src.AppendItems(ctx, items, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -25,12 +25,12 @@ func TestForkSession_FullCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := SessionItems(ctx, dst, 0)
+	got, _ := dst.ContextItems(ctx, Cursor{})
 	if len(got) != 3 {
 		t.Fatalf("got %d items, want 3", len(got))
 	}
 
-	srcItems, _ := SessionItems(ctx, src, 0)
+	srcItems, _ := src.ContextItems(ctx, Cursor{})
 	if len(srcItems) != 3 {
 		t.Fatal("source was modified")
 	}
@@ -42,7 +42,7 @@ func TestForkSession_EmptySource(t *testing.T) {
 	dst := NewInMemorySession()
 
 	// Pre-populate dst to verify it gets cleared.
-	_ = AddSessionItems(ctx, dst, []TResponseInputItem{
+	_ = NewSession(dst).AppendItems(ctx, []TResponseInputItem{
 		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
 	}, Source{})
 
@@ -50,7 +50,7 @@ func TestForkSession_EmptySource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := SessionItems(ctx, dst, 0)
+	got, _ := dst.ContextItems(ctx, Cursor{})
 	if len(got) != 0 {
 		t.Fatalf("got %d items, want 0 (dst should be cleared)", len(got))
 	}
@@ -66,7 +66,7 @@ func TestForkSessionAt(t *testing.T) {
 		responses.ResponseInputItemParamOfMessage("c", responses.EasyInputMessageRoleUser),
 		responses.ResponseInputItemParamOfMessage("d", responses.EasyInputMessageRoleAssistant),
 	}
-	_ = AddSessionItems(ctx, src, items, Source{})
+	_ = src.AppendItems(ctx, items, Source{})
 
 	tests := []struct {
 		name string
@@ -86,7 +86,7 @@ func TestForkSessionAt(t *testing.T) {
 			if err := ForkSessionAt(ctx, src, dst, tt.n); err != nil {
 				t.Fatal(err)
 			}
-			got, _ := SessionItems(ctx, dst, 0)
+			got, _ := dst.ContextItems(ctx, Cursor{})
 			if len(got) != tt.want {
 				t.Fatalf("got %d items, want %d", len(got), tt.want)
 			}
@@ -99,10 +99,10 @@ func TestForkSessionAt_ClearsDst(t *testing.T) {
 	src := NewInMemorySession()
 	dst := NewInMemorySession()
 
-	_ = AddSessionItems(ctx, src, []TResponseInputItem{
+	_ = NewSession(src).AppendItems(ctx, []TResponseInputItem{
 		responses.ResponseInputItemParamOfMessage("a", responses.EasyInputMessageRoleUser),
 	}, Source{})
-	_ = AddSessionItems(ctx, dst, []TResponseInputItem{
+	_ = NewSession(dst).AppendItems(ctx, []TResponseInputItem{
 		responses.ResponseInputItemParamOfMessage("old1", responses.EasyInputMessageRoleUser),
 		responses.ResponseInputItemParamOfMessage("old2", responses.EasyInputMessageRoleUser),
 	}, Source{})
@@ -111,7 +111,7 @@ func TestForkSessionAt_ClearsDst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := SessionItems(ctx, dst, 0)
+	got, _ := dst.ContextItems(ctx, Cursor{})
 	if len(got) != 1 {
 		t.Fatalf("got %d items, want 1 (dst should contain only forked items)", len(got))
 	}

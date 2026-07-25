@@ -195,11 +195,11 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	t.Run("blocking leaves nothing behind", func(t *testing.T) {
 		session := NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session}})
+		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}})
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
-		if items, _ := SessionItems(context.Background(), session, 0); len(items) != 0 {
+		if items, _ := session.ContextItems(context.Background(), Cursor{}); len(items) != 0 {
 			t.Errorf("session has %d orphan items, want 0", len(items))
 		}
 		if model.calls != 0 {
@@ -214,11 +214,11 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	t.Run("racing persists the input", func(t *testing.T) {
 		session := NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Conversation: ConversationOptions{Session: session}})
+		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}})
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
-		items, _ := SessionItems(context.Background(), session, 0)
+		items, _ := session.ContextItems(context.Background(), Cursor{})
 		if len(items) != 1 {
 			t.Errorf("session has %d items, want the 1 user input", len(items))
 		}
@@ -228,10 +228,10 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	t.Run("RunSync agrees", func(t *testing.T) {
 		session := NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session}})
+		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}})
 		tripped(t, err)
 
-		if items, _ := SessionItems(context.Background(), session, 0); len(items) != 0 {
+		if items, _ := session.ContextItems(context.Background(), Cursor{}); len(items) != 0 {
 			t.Errorf("RunSync left %d orphan items where Run leaves 0", len(items))
 		}
 		if model.calls != 0 {

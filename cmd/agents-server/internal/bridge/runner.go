@@ -70,9 +70,9 @@ func sessionSettingsFor(limit int) *agents.SessionSettings {
 // wrapCompaction wraps sa with the compaction adapter when the agent config
 // enables it. An empty summary model falls back to the agent's own model, so
 // leaving the field blank does not silently disable compaction.
-func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) agents.Session {
+func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *agents.Session {
 	if !built.CompactionEnabled || provider == nil {
-		return sa
+		return agents.NewSession(sa)
 	}
 	modelName := built.CompactionModel
 	if modelName == "" {
@@ -80,12 +80,12 @@ func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agent
 	}
 	summaryModel, err := provider.GetModel(modelName)
 	if err != nil || summaryModel == nil {
-		return sa
+		return agents.NewSession(sa)
 	}
-	return store.NewCompactionAdapter(sa, summaryModel,
+	return agents.NewSession(store.NewCompactionAdapter(sa, summaryModel,
 		built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
 		compactionNotifier(send, runID),
-	)
+	))
 }
 
 // NewRunner creates a Runner backed by the given database and agent

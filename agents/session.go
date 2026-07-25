@@ -4,30 +4,162 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/zzir/agents-go/tracing"
 )
 
-// Session persists conversation history across runs. When a Session is supplied
-// via RunOptions, the runner loads prior items and prepends them to the input,
-// then saves the new user input and generated items after the run completes.
+// Session is a conversation's history: a SessionStorage plus the semantics that
+// turn stored entries into what a model reads.
 //
-// It is the Go counterpart of the Python SDK's Session protocol. Implementations
-// live in subpackages (e.g. memory.FileSession).
-type Session interface {
-	// GetEntries returns stored entries oldest-first. A limit <= 0 returns all
-	// entries; a positive limit returns the most recent `limit`.
-	GetEntries(ctx context.Context, limit int) ([]SessionEntry, error)
-	// AddEntries appends entries to the session history. An entry with no ID
-	// gets one from the store; an entry with no CreatedAt gets the store's
-	// clock.
-	AddEntries(ctx context.Context, entries []SessionEntry) error
-	// PopEntry removes and returns the most recent entry, or nil if empty.
-	PopEntry(ctx context.Context) (*SessionEntry, error)
-	// Clear removes all entries from the session.
-	Clear(ctx context.Context) error
+// It is a concrete type, not an interface. Storage varies — a file, a table, a
+// map — but "how history becomes model input" does not, and making it an
+// interface meant every backend re-answered it. They drifted, which is how one
+// store ended up projecting compaction summaries in a different order than
+// another.
+type Session struct {
+	storage    SessionStorage
+	projectors map[EntryKind]EntryProjector
+}
+
+// SessionOption configures a Session.
+type SessionOption func(*Session)
+
+// WithProjectors overrides how entry kinds become model input for this session.
+// A run's RunOptions.Conversation.Projectors takes precedence over these.
+func WithProjectors(p map[EntryKind]EntryProjector) SessionOption {
+	return func(s *Session) { s.projectors = p }
+}
+
+// NewSession wraps storage as a session.
+func NewSession(storage SessionStorage, opts ...SessionOption) *Session {
+	s := &Session{storage: storage}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// NewInMemorySession returns a session backed by in-memory storage, for tests
+// and short-lived conversations.
+func NewInMemorySession() *Session { return NewSession(NewInMemoryStorage("mem")) }
+
+// Storage exposes the underlying store, for callers that need a capability the
+// Session does not surface.
+func (s *Session) Storage() SessionStorage { return s.storage }
+
+// Entries returns the session's entries in append order.
+func (s *Session) Entries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
+	return s.storage.Entries(ctx, cur)
+}
+
+// ContextEntries returns the entries that make up the model's view, from the
+// most recent compaction checkpoint onward.
+//
+// A checkpoint is self-contained — it carries the summary and the tail it kept
+// — so everything before it is already represented and re-sending it would
+// duplicate the history compaction just folded away.
+func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
+	entries, err := s.storage.Entries(ctx, cur)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == EntryKindCompaction {
+			return entries[i:], nil
+		}
+	}
+	return entries, nil
+}
+
+// ContextItems returns the model input the session projects to.
+func (s *Session) ContextItems(ctx context.Context, cur Cursor) ([]TResponseInputItem, error) {
+	entries, err := s.ContextEntries(ctx, cur)
+	if err != nil {
+		return nil, err
+	}
+	return ProjectEntries(entries, s.projectors)
+}
+
+// Append records entries.
+func (s *Session) Append(ctx context.Context, entries ...SessionEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	return s.storage.Append(ctx, entries...)
+}
+
+// AppendItems records plain Responses items as item entries.
+func (s *Session) AppendItems(ctx context.Context, items []TResponseInputItem, src Source) error {
+	if len(items) == 0 {
+		return nil
+	}
+	entries, err := NewItemEntries(items, src)
+	if err != nil {
+		return err
+	}
+	return s.storage.Append(ctx, entries...)
+}
+
+// Entry returns one entry by id, or nil when there is none.
+func (s *Session) Entry(ctx context.Context, id string) (*SessionEntry, error) {
+	return s.storage.Entry(ctx, id)
+}
+
+// State folds the session's entries into the state they imply — the last agent,
+// the last response id, tool calls still awaiting outputs.
+func (s *Session) State(ctx context.Context) (DerivedState, error) {
+	entries, err := s.storage.Entries(ctx, Cursor{})
+	if err != nil {
+		return DerivedState{}, err
+	}
+	return ReduceState(entries), nil
+}
+
+// Stats summarizes the session.
+func (s *Session) Stats(ctx context.Context) (SessionStats, error) {
+	entries, err := s.storage.Entries(ctx, Cursor{})
+	if err != nil {
+		return SessionStats{}, err
+	}
+	return Stats(entries), nil
+}
+
+// Metadata describes the session without reading its contents.
+func (s *Session) Metadata(ctx context.Context) (SessionMetadata, error) {
+	return s.storage.Metadata(ctx)
+}
+
+// Clear removes every entry.
+func (s *Session) Clear(ctx context.Context) error { return s.storage.Clear(ctx) }
+
+// SessionRepo owns session lifecycles: creating, opening, listing and deleting
+// them. A backend that holds many sessions implements it once instead of every
+// caller reimplementing "which sessions exist".
+type SessionRepo interface {
+	Create(ctx context.Context, opts CreateOptions) (*Session, error)
+	Open(ctx context.Context, id string) (*Session, error)
+	List(ctx context.Context, opts ListOptions) ([]SessionMetadata, error)
+	Delete(ctx context.Context, id string) error
+}
+
+// CreateOptions configures a new session.
+type CreateOptions struct {
+	// ID names the session. Empty lets the repo assign one.
+	ID string
+	// Title is a human-facing name.
+	Title string
+	// Hidden marks a session that exists to serve another — a background task's
+	// private history. List leaves hidden sessions out by default, so callers
+	// stop maintaining that filter individually and stop forgetting it.
+	Hidden bool
+}
+
+// ListOptions filters a session listing.
+type ListOptions struct {
+	// IncludeHidden returns sessions that serve other sessions too.
+	IncludeHidden bool
+	// Cursor paginates the listing.
+	Cursor Cursor
 }
 
 // SessionSettings configures how a run reads a Session. It is the Go counterpart
@@ -38,13 +170,6 @@ type SessionSettings struct {
 	Limit int
 }
 
-// SessionSettingsAware is an optional Session capability: expose a default
-// SessionSettings that a run applies unless RunOptions.Conversation.Settings overrides
-// it. It mirrors Python reading session.session_settings.
-type SessionSettingsAware interface {
-	DefaultSessionSettings() SessionSettings
-}
-
 // SessionInputCallback combines a session's stored history with the run's new
 // input into the item list sent to the model. Returning an error aborts the run.
 // It is the Go counterpart of Python's SessionInputCallback: the default (nil)
@@ -53,17 +178,11 @@ type SessionSettingsAware interface {
 // from history — are persisted back to the session.
 type SessionInputCallback func(history, newInput []TResponseInputItem) ([]TResponseInputItem, error)
 
-// resolveSessionLimit resolves the effective GetItems limit: an explicit
-// RunOptions.SessionSettings.Limit wins, then a Session-level default, else 0
-// (no limit). Mirrors Python's resolve_session_limit.
-func resolveSessionLimit(override *SessionSettings, session Session) int {
+// resolveSessionLimit resolves how many of the most recent entries a run loads.
+// Zero means no limit.
+func resolveSessionLimit(override *SessionSettings) int {
 	if override != nil && override.Limit > 0 {
 		return override.Limit
-	}
-	if sa, ok := session.(SessionSettingsAware); ok {
-		if d := sa.DefaultSessionSettings(); d.Limit > 0 {
-			return d.Limit
-		}
 	}
 	return 0
 }
@@ -121,28 +240,6 @@ func fingerprintCounts(items []TResponseInputItem) map[string]int {
 	return counts
 }
 
-// EntriesReplacer is an optional Session capability: atomically replace the
-// entire stored history. Backends that can do this in one step (a file rename,
-// a DB transaction) should implement it so a history rewrite cannot leave the
-// session empty when a failure lands between clearing and re-adding.
-type EntriesReplacer interface {
-	ReplaceEntries(ctx context.Context, entries []SessionEntry) error
-}
-
-// ReplaceSessionEntries swaps a session's stored history. When the session
-// implements EntriesReplacer the swap is atomic; otherwise it falls back to
-// Clear followed by AddEntries, which can leave the session empty if AddEntries
-// fails or the process crashes between the two calls.
-func ReplaceSessionEntries(ctx context.Context, s Session, entries []SessionEntry) error {
-	if r, ok := s.(EntriesReplacer); ok {
-		return r.ReplaceEntries(ctx, entries)
-	}
-	if err := s.Clear(ctx); err != nil {
-		return err
-	}
-	return s.AddEntries(ctx, entries)
-}
-
 // CompactionArgs carry the context a CompactionAwareSession needs to decide
 // whether (and how) to compact its history after a run.
 type CompactionArgs struct {
@@ -160,100 +257,15 @@ type CompactionArgs struct {
 	StartSpan func() *tracing.SpanHandle
 }
 
-// CompactionAwareSession is a Session that can compact its own stored history —
-// e.g. by replacing older items with a model-generated summary via the OpenAI
-// responses.compact API. After a run is persisted, the runner calls
-// RunCompaction so the session can shrink history when it has grown large. It is
-// the Go counterpart of Python's OpenAIResponsesCompactionAwareSession.
-type CompactionAwareSession interface {
-	Session
+// CompactionAware is a SessionStorage that can compact its own history — by
+// summarizing older entries, or by handing them to a server-side compaction
+// API. After a run is persisted, the runner calls RunCompaction so the store can
+// shrink history that has grown large.
+//
+// It is a storage capability, not a session one: compaction rewrites what is
+// stored, and the semantics layer above has nothing to decide about it.
+type CompactionAware interface {
 	RunCompaction(ctx context.Context, args CompactionArgs) error
-}
-
-// InMemorySession is a goroutine-safe in-memory Session, useful for tests and
-// short-lived conversations. History is lost when the process exits.
-type InMemorySession struct {
-	mu      sync.Mutex
-	entries []SessionEntry
-	nextID  int
-}
-
-// NewInMemorySession returns an empty in-memory session.
-func NewInMemorySession() *InMemorySession { return &InMemorySession{} }
-
-// GetEntries implements Session.
-func (s *InMemorySession) GetEntries(_ context.Context, limit int) ([]SessionEntry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if limit <= 0 || limit >= len(s.entries) {
-		return append([]SessionEntry(nil), s.entries...), nil
-	}
-	return append([]SessionEntry(nil), s.entries[len(s.entries)-limit:]...), nil
-}
-
-// AddEntries implements Session, assigning ids and timestamps where absent.
-func (s *InMemorySession) AddEntries(_ context.Context, entries []SessionEntry) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, e := range entries {
-		s.nextID++
-		s.entries = append(s.entries, stampEntry(e, fmt.Sprintf("e%d", s.nextID)))
-	}
-	return nil
-}
-
-// PopEntry implements Session.
-func (s *InMemorySession) PopEntry(_ context.Context) (*SessionEntry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.entries) == 0 {
-		return nil, nil
-	}
-	last := s.entries[len(s.entries)-1]
-	s.entries = s.entries[:len(s.entries)-1]
-	return &last, nil
-}
-
-// Clear implements Session.
-func (s *InMemorySession) Clear(_ context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries = nil
-	return nil
-}
-
-// ReplaceEntries implements EntriesReplacer: the whole history is swapped under
-// a single lock acquisition.
-func (s *InMemorySession) ReplaceEntries(_ context.Context, entries []SessionEntry) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries = nil
-	for _, e := range entries {
-		s.nextID++
-		s.entries = append(s.entries, stampEntry(e, fmt.Sprintf("e%d", s.nextID)))
-	}
-	return nil
-}
-
-var (
-	_ Session         = (*InMemorySession)(nil)
-	_ EntriesReplacer = (*InMemorySession)(nil)
-)
-
-// stampEntry fills in the fields a store owns: the id and the creation time. A
-// caller-supplied id is kept, so an entry can be re-added (a fork, a replace)
-// without losing the identity an update entry points at.
-func stampEntry(e SessionEntry, id string) SessionEntry {
-	if e.ID == "" {
-		e.ID = id
-	}
-	if e.CreatedAt.IsZero() {
-		e.CreatedAt = time.Now().UTC()
-	}
-	if e.Kind == "" {
-		e.Kind = EntryKindItem
-	}
-	return e
 }
 
 // MarshalEntries serializes entries to JSON, suitable for database storage.
@@ -311,31 +323,4 @@ func UnmarshalItems(data []byte) ([]TResponseInputItem, error) {
 		items = append(items, item)
 	}
 	return items, nil
-}
-
-// SessionItems reads a session's history as the model input items it projects
-// to — the conversation as the model would see it, with annotations and other
-// non-context entries left out.
-//
-// It is the read shortcut for callers that only care about the conversation;
-// use GetEntries directly to see everything a session holds.
-func SessionItems(ctx context.Context, s Session, limit int) ([]TResponseInputItem, error) {
-	entries, err := s.GetEntries(ctx, limit)
-	if err != nil {
-		return nil, err
-	}
-	return ProjectEntries(entries, nil)
-}
-
-// AddSessionItems appends plain Responses items to a session as item entries.
-// It is the write shortcut for callers that have items rather than entries.
-func AddSessionItems(ctx context.Context, s Session, items []TResponseInputItem, src Source) error {
-	if len(items) == 0 {
-		return nil
-	}
-	entries, err := NewItemEntries(items, src)
-	if err != nil {
-		return err
-	}
-	return s.AddEntries(ctx, entries)
 }

@@ -114,7 +114,7 @@ type ConversationOptions struct {
 	// Session, when set, supplies and persists conversation history: prior items
 	// are prepended to the input, and the new input plus generated items are
 	// saved after the run completes.
-	Session Session
+	Session *Session
 
 	// SessionInputCallback customizes how stored session history is combined with
 	// the run's new input. Nil (the default) appends new input to history; a
@@ -359,14 +359,15 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	// only the genuinely new items are persisted (r.userInput is narrowed).
 	modelInput := userInput
 	if opts.Conversation.Session != nil {
-		limit := resolveSessionLimit(opts.Conversation.Settings, opts.Conversation.Session)
-		entries, herr := opts.Conversation.Session.GetEntries(ctx, limit)
+		// Read from the most recent compaction checkpoint onward, then project:
+		// a checkpoint already represents everything before it, and projection
+		// decides what the model reads. An annotation or terminal entry is
+		// recorded but not sent unless Conversation.Projectors says otherwise.
+		cur := Cursor{Limit: -resolveSessionLimit(opts.Conversation.Settings)}
+		entries, herr := opts.Conversation.Session.ContextEntries(ctx, cur)
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
-		// Projection decides what the model reads. An annotation, terminal
-		// output or an entry kind this build does not know is recorded but not
-		// sent — the caller opts it in through Conversation.Projectors.
 		history, herr := ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
@@ -1129,11 +1130,7 @@ func (r *runner) persistUserInput(ctx context.Context) error {
 	if r.opts.Conversation.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
 		return nil
 	}
-	entries, err := NewItemEntries(r.userInput, Source{Type: SourceUser})
-	if err != nil {
-		return err
-	}
-	if err := r.opts.Conversation.Session.AddEntries(ctx, entries); err != nil {
+	if err := r.opts.Conversation.Session.AppendItems(ctx, r.userInput, Source{Type: SourceUser}); err != nil {
 		return err
 	}
 	r.userInputSaved = true
@@ -1166,7 +1163,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		toSave = append(toSave, e)
 	}
 	if len(toSave) > 0 {
-		if err := r.opts.Conversation.Session.AddEntries(ctx, toSave); err != nil {
+		if err := r.opts.Conversation.Session.Append(ctx, toSave...); err != nil {
 			return err
 		}
 	}
@@ -1244,7 +1241,7 @@ func (r *runner) maybeCompact(ctx context.Context) {
 	if endsWithLocalItem(r.sessionItems) {
 		return
 	}
-	if cs, ok := r.opts.Conversation.Session.(CompactionAwareSession); ok {
+	if cs, ok := r.opts.Conversation.Session.Storage().(CompactionAware); ok {
 		// The span starts lazily — only when the session actually compacts —
 		// so no-op passes don't clutter the trace.
 		var cspan *tracing.SpanHandle

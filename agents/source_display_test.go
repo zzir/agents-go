@@ -294,7 +294,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 		modelResp(messageOutput(t, "done")),
 	}}}
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Conversation: ConversationOptions{Session: session},
+		Conversation: ConversationOptions{Session: NewSession(session)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 	// fail the whole conversation.
 	next := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "second"))}}
 	if _, err := RunSync(context.Background(), &Agent{Name: "a", ModelImpl: next}, "again", RunOptions{
-		Conversation: ConversationOptions{Session: session},
+		Conversation: ConversationOptions{Session: NewSession(session)},
 	}); err != nil {
 		t.Fatalf("reloading a session holding an unknown item failed: %v", err)
 	}

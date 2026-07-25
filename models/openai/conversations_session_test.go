@@ -105,18 +105,18 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	s, fake := newTestSession(t)
 
 	// Empty AddItems is a no-op and does not create a conversation.
-	if err := agents.AddSessionItems(ctx, s, nil, agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, nil, agents.Source{}); err != nil {
 		t.Fatalf("empty AddItems: %v", err)
 	}
 
-	if err := agents.AddSessionItems(ctx, s, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.AddSessionItems(ctx, s, agents.InputItemsFromText("world"), agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("world"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	all, err := agents.SessionItems(ctx, s, 0)
+	all, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	}
 
 	// Limit returns the most recent item, oldest-first ordering preserved.
-	recent, err := agents.SessionItems(ctx, s, 1)
+	recent, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{Limit: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	if !itemContains(t, poppedItem, "world") {
 		t.Fatalf("PopEntry = %v", poppedItem)
 	}
-	if remaining, _ := agents.SessionItems(ctx, s, 0); len(remaining) != 1 {
+	if remaining, _ := agents.NewSession(s).ContextItems(ctx, agents.Cursor{}); len(remaining) != 1 {
 		t.Fatalf("after pop len = %d, want 1", len(remaining))
 	}
 

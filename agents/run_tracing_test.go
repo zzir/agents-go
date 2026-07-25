@@ -46,13 +46,13 @@ func (p *recordingProcessor) spansOfType(typ string) []*tracing.Span {
 // the CompactionArgs.StartSpan contract: no-op below the threshold, otherwise
 // open the span and annotate it.
 type compactingSession struct {
-	*InMemorySession
+	*InMemoryStorage
 	threshold int
 	fail      bool
 }
 
 func (s *compactingSession) RunCompaction(ctx context.Context, args CompactionArgs) error {
-	items, err := SessionItems(ctx, s, 0)
+	items, err := NewSession(s).ContextItems(ctx, Cursor{})
 	if err != nil {
 		return err
 	}
@@ -119,8 +119,8 @@ func TestFunctionSpanRecordsInputOutput(t *testing.T) {
 func TestCompactionSpan(t *testing.T) {
 	t.Run("noop pass emits no span", func(t *testing.T) {
 		agent, proc := tracingAgent(t)
-		sess := &compactingSession{InMemorySession: NewInMemorySession(), threshold: 100}
-		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: sess}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+		sess := &compactingSession{InMemoryStorage: NewInMemoryStorage("test"), threshold: 100}
+		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 			t.Fatal(err)
 		}
 		if got := proc.spansOfType(tracing.SpanTypeCompaction); len(got) != 0 {
@@ -130,8 +130,8 @@ func TestCompactionSpan(t *testing.T) {
 
 	t.Run("real pass emits annotated span", func(t *testing.T) {
 		agent, proc := tracingAgent(t)
-		sess := &compactingSession{InMemorySession: NewInMemorySession(), threshold: 1}
-		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: sess}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+		sess := &compactingSession{InMemoryStorage: NewInMemoryStorage("test"), threshold: 1}
+		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 			t.Fatal(err)
 		}
 		spans := proc.spansOfType(tracing.SpanTypeCompaction)
@@ -148,11 +148,11 @@ func TestCompactionSpan(t *testing.T) {
 
 	t.Run("failure lands on span, run still succeeds", func(t *testing.T) {
 		agent, proc := tracingAgent(t)
-		sess := &compactingSession{InMemorySession: NewInMemorySession(), threshold: 1, fail: true}
+		sess := &compactingSession{InMemoryStorage: NewInMemoryStorage("test"), threshold: 1, fail: true}
 		// Compaction is best-effort housekeeping after the run's items are
 		// saved: its failure is recorded on the span, not returned to the
 		// caller whose run already produced a final output.
-		res, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: sess}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}})
+		res, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}})
 		if err != nil {
 			t.Fatalf("compaction failure must not fail the run: %v", err)
 		}

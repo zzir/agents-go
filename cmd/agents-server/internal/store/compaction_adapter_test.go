@@ -136,7 +136,7 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 
 	// The surviving history must still be replayable as a self-consistent
 	// sequence: the call/output pair is intact after the summary.
-	items, err := agents.SessionItems(context.Background(), sa, 0)
+	items, err := agents.NewSession(sa).ContextItems(context.Background(), agents.Cursor{})
 	if err != nil {
 		t.Fatalf("GetItems: %v", err)
 	}

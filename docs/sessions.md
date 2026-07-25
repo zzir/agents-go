@@ -12,25 +12,37 @@ res2, _ := agents.RunSync(ctx, agent, "What state is it in?", agents.RunOptions{
 // "California" — the agent saw the previous turn
 ```
 
-## The Session interface
+## Three layers
+
+A session is split into what varies and what does not.
+
+```go
+// 1. Storage — physical reads and writes. Understands nothing about meaning.
+type SessionStorage interface {
+	Metadata(ctx context.Context) (SessionMetadata, error)
+	Append(ctx context.Context, entries ...SessionEntry) error
+	Entry(ctx context.Context, id string) (*SessionEntry, error)
+	Entries(ctx context.Context, cur Cursor) ([]SessionEntry, error)
+	Clear(ctx context.Context) error
+}
+
+// 2. Session — a concrete type, not an interface. Turns entries into meaning.
+sess := agents.NewSession(storage)
+sess.ContextItems(ctx, agents.Cursor{})  // what the model reads
+sess.State(ctx)                          // last agent, pending tool calls
+sess.Stats(ctx)                          // counts and usage
+
+// 3. SessionRepo — lifecycles: create, open, list, delete.
+```
+
+**`Session` is a struct on purpose.** Storage varies — a file, a table, a map —
+but "how history becomes model input" does not. As an interface, every backend
+re-answered it, and they drifted: one store ordered compaction summaries
+differently than another.
 
 A session stores **entries**, not bare items. An entry is a Responses item plus
 what the run knew about it — who produced it, how to render it, which model call
 it belongs to — or something that is not a Responses item at all.
-
-```go
-type Session interface {
-	// GetEntries returns stored entries oldest-first. limit <= 0 returns all;
-	// a positive limit returns the most recent `limit`.
-	GetEntries(ctx context.Context, limit int) ([]SessionEntry, error)
-	// AddEntries appends entries to the history.
-	AddEntries(ctx context.Context, entries []SessionEntry) error
-	// PopEntry removes and returns the most recent entry, or nil if empty.
-	PopEntry(ctx context.Context) (*SessionEntry, error)
-	// Clear removes everything.
-	Clear(ctx context.Context) error
-}
-```
 
 Storing items alone left everything else homeless — an error banner, the partial
 output of a cancelled run, a compaction checkpoint, terminal output. Consumers
@@ -50,18 +62,47 @@ The vocabulary is **open**: a build that meets a kind it does not know ignores
 the entry rather than failing, so a session written by a newer version stays
 readable.
 
-If you only want the conversation, `agents.SessionItems` reads a session as the
-items it projects to, and `agents.AddSessionItems` appends plain items.
-
-Implement it against any store (Postgres, Redis, …). Use `agents.MarshalInputItem` / `agents.UnmarshalInputItem` for encoding — they handle two openai-go serialization quirks (assistant messages and `"type"`-less easy messages) that naive JSON round-trips get wrong.
-
-Backends that can swap the whole history in one step should also implement the optional `agents.EntriesReplacer` capability:
+## Reading: cursors, not offsets
 
 ```go
-type EntriesReplacer interface {
-	ReplaceEntries(ctx context.Context, entries []SessionEntry) error // atomic swap
-}
+page1, _ := sess.Entries(ctx, agents.Cursor{Limit: 50})
+page2, _ := sess.Entries(ctx, agents.Cursor{AfterSeq: page1[len(page1)-1].Seq, Limit: 50})
 ```
+
+Entries keep arriving, so an offset shifts under a concurrent append and page
+two silently skips or repeats. A sequence number does not move.
+
+A **negative** limit takes the most recent N instead of the oldest — how a run
+bounds the history it loads.
+
+`ContextEntries` starts at the most recent compaction checkpoint: a checkpoint
+stands in for everything before it, and re-sending that history would undo the
+compaction.
+
+## Derived state
+
+`State` and `Stats` are folds over the entries, not fields kept beside them.
+
+```go
+st, _ := sess.State(ctx)
+st.LastAgent        // who spoke last
+st.LastResponseID   // what server-managed conversation state chains from
+st.PendingCallIDs   // tool calls recorded without outputs — a paused run
+```
+
+A field maintained in parallel with the log has to be updated on every write and
+can disagree with the log after a crash, a concurrent writer, or a fork. A fold
+cannot.
+
+## Optional storage capabilities
+
+Not every store can do everything, and the interface does not pretend otherwise.
+
+| Capability | For |
+|---|---|
+| `AtomicReplacer` | Swapping the whole history in one step, so a rewrite cannot leave the session empty |
+| `EntryPopper` | Removing the most recent entry. **Not** in `SessionStorage`: a run never pops, and requiring it would tax stores that cannot (a server-managed conversation) |
+| `CompactionAware` | Compacting its own history after a run |
 
 ## Projection: what the model reads
 

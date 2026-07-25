@@ -65,7 +65,7 @@ func TestConversationsSession_AddItemsBatchesAtAPILimit(t *testing.T) {
 	for i := range 45 {
 		items = append(items, agents.InputItemsFromText("msg-"+strconv.Itoa(i))...)
 	}
-	if err := agents.AddSessionItems(ctx, s, items, agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,7 +95,7 @@ func TestConversationsSession_AddItemsSingleBatchUnderLimit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := NewConversationsSession(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
 
-	if err := agents.AddSessionItems(ctx, s, agents.InputItemsFromText("only"), agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("only"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
@@ -133,14 +133,14 @@ func newCompactStub(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func seededCompactionSession(t *testing.T, baseURL string, n int, under agents.Session) *CompactionSession {
+func seededCompactionSession(t *testing.T, baseURL string, n int, under agents.SessionStorage) *CompactionSession {
 	t.Helper()
 	ctx := t.Context()
 	seed := make([]agents.TResponseInputItem, 0, n)
 	for range n {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
-	if err := agents.AddSessionItems(ctx, under, seed, agents.Source{}); err != nil {
+	if err := agents.NewSession(under).AppendItems(ctx, seed, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1", Mode: CompactionModeInput},
@@ -204,13 +204,13 @@ func TestRunCompactionNoSpanOnNoOpPass(t *testing.T) {
 func TestRunCompactionNilStartSpanIsSafe(t *testing.T) {
 	ctx := t.Context()
 	srv := newCompactStub(t)
-	under := agents.NewInMemorySession()
+	under := agents.NewInMemoryStorage("test")
 	sess := seededCompactionSession(t, srv.URL, 12, under)
 
 	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := agents.SessionItems(ctx, under, 0)
+	items, err := agents.NewSession(under).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestRunCompactionNilStartSpanIsSafe(t *testing.T) {
 // replaceRecordingSession wraps InMemorySession, counting Clear and
 // ReplaceItems calls to prove which write path compaction uses.
 type replaceRecordingSession struct {
-	*agents.InMemorySession
+	*agents.InMemoryStorage
 	mu           sync.Mutex
 	clearCalls   int
 	replaceCalls int
@@ -234,20 +234,20 @@ func (r *replaceRecordingSession) Clear(ctx context.Context) error {
 	r.mu.Lock()
 	r.clearCalls++
 	r.mu.Unlock()
-	return r.InMemorySession.Clear(ctx)
+	return r.InMemoryStorage.Clear(ctx)
 }
 
-func (r *replaceRecordingSession) ReplaceEntries(ctx context.Context, entries []agents.SessionEntry) error {
+func (r *replaceRecordingSession) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
 	r.mu.Lock()
 	r.replaceCalls++
 	r.mu.Unlock()
-	return r.InMemorySession.ReplaceEntries(ctx, entries)
+	return r.InMemoryStorage.ReplaceEntries(ctx, entries...)
 }
 
 func TestRunCompactionUsesAtomicReplace(t *testing.T) {
 	ctx := t.Context()
 	srv := newCompactStub(t)
-	under := &replaceRecordingSession{InMemorySession: agents.NewInMemorySession()}
+	under := &replaceRecordingSession{InMemoryStorage: agents.NewInMemoryStorage("test")}
 	sess := seededCompactionSession(t, srv.URL, 12, under)
 
 	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
@@ -264,7 +264,7 @@ func TestRunCompactionUsesAtomicReplace(t *testing.T) {
 		t.Errorf("Clear calls = %d, want 0 (history must not go through a clear+add window)", clearCalls)
 	}
 
-	items, err := agents.SessionItems(ctx, under, 0)
+	items, err := agents.NewSession(under).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

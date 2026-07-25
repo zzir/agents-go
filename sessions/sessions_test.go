@@ -31,7 +31,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	t.Helper()
 	ctx := context.Background()
 
-	got, err := agents.SessionItems(ctx, s, 0)
+	got, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,11 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	in := []agents.TResponseInputItem{item("a"), item("b"), item("c")}
-	if err := agents.AddSessionItems(ctx, s, in, agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, in, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err = agents.SessionItems(ctx, s, 0)
+	got, err = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	// Most recent 2, still oldest-first => b, c.
-	got, err = agents.SessionItems(ctx, s, 2)
+	got, err = agents.NewSession(s).ContextItems(ctx, agents.Cursor{Limit: -2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	if jsonOf(t, lastItem) != jsonOf(t, in[2]) {
 		t.Errorf("pop: got %v, want c", lastItem)
 	}
-	got, _ = agents.SessionItems(ctx, s, 0)
+	got, _ = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
 	if len(got) != 2 {
 		t.Errorf("after pop: got %d items, want 2", len(got))
 	}
@@ -89,7 +89,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	if err := s.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = agents.SessionItems(ctx, s, 0)
+	got, _ = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
 	if len(got) != 0 {
 		t.Errorf("after clear: got %d items, want 0", len(got))
 	}
@@ -129,10 +129,10 @@ func TestSQLite_SessionIsolation(t *testing.T) {
 	}
 	b := sessions.New(db, "b")
 
-	if err := agents.AddSessionItems(ctx, a, []agents.TResponseInputItem{item("only-a")}, agents.Source{}); err != nil {
+	if err := agents.NewSession(a).AppendItems(ctx, []agents.TResponseInputItem{item("only-a")}, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := agents.SessionItems(ctx, b, 0)
+	got, _ := agents.NewSession(b).ContextItems(ctx, agents.Cursor{})
 	if len(got) != 0 {
 		t.Errorf("session b leaked %d items from a", len(got))
 	}

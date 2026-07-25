@@ -31,7 +31,7 @@ type ConversationsSession struct {
 	id string
 }
 
-var _ agents.Session = (*ConversationsSession)(nil)
+var _ agents.SessionStorage = (*ConversationsSession)(nil)
 
 // NewConversationsSession builds a ConversationsSession with its own OpenAI
 // client. Pass openai-go request options (option.WithAPIKey, option.WithBaseURL,
@@ -73,18 +73,53 @@ func (s *ConversationsSession) ensureID(ctx context.Context) (string, error) {
 	return s.id, nil
 }
 
-// GetEntries implements agents.Session. A limit <= 0 returns the whole
-// conversation oldest-first; a positive limit returns the most recent `limit`,
-// also oldest-first.
+// Entries implements agents.SessionStorage, oldest-first. A negative cursor
+// limit fetches the most recent -Limit entries.
 //
 // Every entry is an item entry: the server holds Responses items and nothing
 // else, so nothing a run recorded outside the conversation itself comes back.
-func (s *ConversationsSession) GetEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+func (s *ConversationsSession) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+	limit := 0
+	if cur.Limit < 0 {
+		limit = -cur.Limit
+	}
 	items, err := s.getItems(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
-	return agents.NewItemEntries(items, agents.Source{})
+	entries, err := agents.NewItemEntries(items, agents.Source{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].Seq = int64(i + 1)
+	}
+	return agents.PageEntries(entries, agents.Cursor{AfterSeq: cur.AfterSeq}), nil
+}
+
+// Metadata implements agents.SessionStorage. The server owns the conversation,
+// so only its id is known here.
+func (s *ConversationsSession) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+	id, err := s.ConversationID(ctx)
+	if err != nil {
+		return agents.SessionMetadata{}, err
+	}
+	return agents.SessionMetadata{ID: id}, nil
+}
+
+// Entry implements agents.SessionStorage by scanning the conversation; the API
+// has no per-item fetch.
+func (s *ConversationsSession) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+	entries, err := s.Entries(ctx, agents.Cursor{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].ID == id {
+			return &entries[i], nil
+		}
+	}
+	return nil, nil
 }
 
 func (s *ConversationsSession) getItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
@@ -125,7 +160,7 @@ func (s *ConversationsSession) getItems(ctx context.Context, limit int) ([]agent
 // POST /conversations/{id}/items ("You may add up to 20 items at a time").
 const conversationItemsBatchLimit = 20
 
-// AddEntries implements agents.Session.
+// Append implements agents.SessionStorage.
 //
 // **Only item entries are stored.** A server-managed conversation holds
 // Responses items; there is nowhere on the server for an annotation, a terminal
@@ -133,7 +168,7 @@ const conversationItemsBatchLimit = 20
 // Losing a UI annotation degrades a timeline; failing the run because one could
 // not be stored server-side is worse. Use a local Session when everything a run
 // records must survive.
-func (s *ConversationsSession) AddEntries(ctx context.Context, entries []agents.SessionEntry) error {
+func (s *ConversationsSession) Append(ctx context.Context, entries ...agents.SessionEntry) error {
 	items := make([]agents.TResponseInputItem, 0, len(entries))
 	for _, e := range entries {
 		if e.Kind != agents.EntryKindItem {

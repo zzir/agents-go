@@ -264,6 +264,36 @@ A server-managed conversation (`openai.ConversationsSession`) can hold only
 items; other kinds are dropped on write, because failing a run over a UI
 annotation that could not be stored server-side is worse than losing it.
 
+### 2.5c Session layering ✅
+
+A session is three layers, split along what varies:
+
+- **`SessionStorage`** reads and writes entries and understands nothing about
+  what they mean.
+- **`Session`** is a concrete type, not an interface, that turns entries into
+  the model's view. Storage varies; "how history becomes model input" does not,
+  and as an interface every backend re-answered it and they drifted.
+- **`SessionRepo`** owns lifecycles — create, open, list, delete.
+
+**Reads page on sequence numbers, not offsets.** ✅ Entries keep arriving, so an
+offset shifts under a concurrent append and a second page silently skips or
+repeats. A negative `Cursor.Limit` takes the most recent N.
+
+**Derived state is a fold, never a stored field.** ✅ `State` and `Stats`
+recompute from the entries. A field maintained beside the log has to be updated
+on every write and can disagree with it after a crash, a concurrent writer or a
+fork; a fold cannot.
+
+**`ContextEntries` starts at the most recent compaction checkpoint** ✅ — the
+checkpoint stands in for everything before it, and re-sending that history would
+undo the compaction.
+
+Capabilities a store may or may not have are **optional interfaces**, not
+required methods: `AtomicReplacer`, `EntryPopper`, `CompactionAware`. Popping in
+particular is not in `SessionStorage` because a run never pops; requiring it
+would tax stores that cannot (a server-managed conversation) for a feature the
+run loop does not use.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in

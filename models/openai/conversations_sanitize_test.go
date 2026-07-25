@@ -62,7 +62,7 @@ func TestConversationsSession_AddSanitizes(t *testing.T) {
 		mustItem(t, `{"type":"reasoning","summary":[]}`),
 		mustItem(t, `{"role":"user","content":"hello"}`),
 	}
-	if err := agents.AddSessionItems(ctx, s, items, agents.Source{}); err != nil {
+	if err := agents.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()

@@ -7,23 +7,23 @@ import (
 	"testing"
 )
 
-// recordingSession wraps an InMemorySession and records each AddEntries batch,
-// so tests can assert how many times (and with what) the runner persisted.
+// recordingStorage wraps InMemoryStorage and records each Append batch, so
+// tests can assert how many times (and with what) the runner persisted.
 type recordingSession struct {
-	*InMemorySession
+	*InMemoryStorage
 	mu      sync.Mutex
 	batches [][]SessionEntry
 }
 
 func newRecordingSession() *recordingSession {
-	return &recordingSession{InMemorySession: NewInMemorySession()}
+	return &recordingSession{InMemoryStorage: NewInMemoryStorage("test")}
 }
 
-func (s *recordingSession) AddEntries(ctx context.Context, entries []SessionEntry) error {
+func (s *recordingSession) Append(ctx context.Context, entries ...SessionEntry) error {
 	s.mu.Lock()
 	s.batches = append(s.batches, append([]SessionEntry(nil), entries...))
 	s.mu.Unlock()
-	return s.InMemorySession.AddEntries(ctx, entries)
+	return s.InMemoryStorage.Append(ctx, entries...)
 }
 
 func (s *recordingSession) saveCount() int {
@@ -103,7 +103,7 @@ func TestSession_PersistsEachTurn(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{echoTool(nil)}, ModelImpl: model}
 
 	sess := newRecordingSession()
-	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -112,7 +112,7 @@ func TestSession_PersistsEachTurn(t *testing.T) {
 		t.Errorf("expected incremental saves (>=3), got %d", got)
 	}
 
-	items, _ := SessionItems(context.Background(), sess, 0)
+	items, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	st := classify(items)
 	if st.users != 1 {
 		t.Errorf("users = %d, want 1", st.users)
@@ -138,12 +138,12 @@ func TestSession_CancelKeepsCompletedTurns(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{echoTool(nil)}, ModelImpl: model}
 
 	sess := newRecordingSession()
-	_, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
+	_, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 
-	items, _ := SessionItems(context.Background(), sess, 0)
+	items, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	st := classify(items)
 	if st.users != 1 {
 		t.Errorf("user input lost: users = %d, want 1", st.users)
@@ -165,11 +165,11 @@ func TestSession_FailedFirstTurnKeepsUserInput(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	sess := newRecordingSession()
-	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}}); !errors.Is(err, context.Canceled) {
+	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 
-	items, _ := SessionItems(context.Background(), sess, 0)
+	items, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	if st := classify(items); st.users != 1 || st.assistants != 0 {
 		t.Errorf("want just the user prompt, got users=%d assistants=%d", st.users, st.assistants)
 	}
@@ -183,7 +183,7 @@ func TestSession_InterruptionHoldsBackPendingCall(t *testing.T) {
 	agent := approvalAgentAndModel(t, &ran)
 	sess := newRecordingSession()
 
-	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{Conversation: ConversationOptions{Session: sess}})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,18 +192,18 @@ func TestSession_InterruptionHoldsBackPendingCall(t *testing.T) {
 	}
 
 	// Paused: only the prompt is stored — the pending call is withheld.
-	paused, _ := SessionItems(context.Background(), sess, 0)
+	paused, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	if st := classify(paused); st.users != 1 || st.calls != 0 || st.outputs != 0 {
 		t.Errorf("at pause want user only, got users=%d calls=%d outputs=%d", st.users, st.calls, st.outputs)
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
+	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Resumed to completion: the call and its output are both present and paired.
-	final, _ := SessionItems(context.Background(), sess, 0)
+	final, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	st := classify(final)
 	if st.users != 1 || st.calls != 1 || st.outputs != 1 {
 		t.Errorf("after resume want 1/1/1, got users=%d calls=%d outputs=%d", st.users, st.calls, st.outputs)
@@ -231,7 +231,7 @@ func TestSession_ResumeDoesNotDuplicate(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{safeTool, danger}, ModelImpl: model}
 
 	sess := newRecordingSession()
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,11 +240,11 @@ func TestSession_ResumeDoesNotDuplicate(t *testing.T) {
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
+	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 
-	items, _ := SessionItems(context.Background(), sess, 0)
+	items, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	st := classify(items)
 	if st.users != 1 {
 		t.Errorf("user duplicated: users = %d, want 1", st.users)
@@ -285,9 +285,9 @@ func TestRunState_PersistedCursorRoundTrip(t *testing.T) {
 // SessionSettings.Limit caps how many history items are loaded at run start.
 func TestSessionSettings_Limit(t *testing.T) {
 	session := NewInMemorySession()
-	_ = AddSessionItems(context.Background(), session, InputItemsFromText("h1"), Source{})
-	_ = AddSessionItems(context.Background(), session, InputItemsFromText("h2"), Source{})
-	_ = AddSessionItems(context.Background(), session, InputItemsFromText("h3"), Source{})
+	_ = session.AppendItems(context.Background(), InputItemsFromText("h1"), Source{})
+	_ = session.AppendItems(context.Background(), InputItemsFromText("h2"), Source{})
+	_ = session.AppendItems(context.Background(), InputItemsFromText("h3"), Source{})
 
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
@@ -306,7 +306,7 @@ func TestSessionSettings_Limit(t *testing.T) {
 // items — not history carried through the callback — are persisted.
 func TestSessionInputCallback_DiffPersistsOnlyNew(t *testing.T) {
 	session := NewInMemorySession()
-	_ = AddSessionItems(context.Background(), session, InputItemsFromText("history"), Source{})
+	_ = session.AppendItems(context.Background(), InputItemsFromText("history"), Source{})
 
 	var gotHistory, gotNew []TResponseInputItem
 	cb := func(history, newInput []TResponseInputItem) ([]TResponseInputItem, error) {
@@ -332,7 +332,7 @@ func TestSessionInputCallback_DiffPersistsOnlyNew(t *testing.T) {
 	}
 	// The session must not re-persist the history item: it should hold exactly
 	// [history, fresh, done-message] — three items, with "history" appearing once.
-	items, _ := SessionItems(context.Background(), session, 0)
+	items, _ := session.ContextItems(context.Background(), Cursor{})
 	if len(items) != 3 {
 		t.Fatalf("session length = %d, want 3 (history not re-persisted)", len(items))
 	}
@@ -348,16 +348,16 @@ func TestInMemorySession(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	// First run.
-	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
+	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
-	items, _ := SessionItems(ctx, sess, 0)
+	items, _ := NewSession(sess).ContextItems(ctx, Cursor{})
 	if len(items) < 2 {
 		t.Fatalf("session should have user input + assistant msg, got %d", len(items))
 	}
 
 	// Second run: history must be prepended to the model input.
-	if _, err := RunSync(ctx, agent, "what did I say?", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
+	if _, err := RunSync(ctx, agent, "what did I say?", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 	// The second call's input should include the prior turn's items plus both

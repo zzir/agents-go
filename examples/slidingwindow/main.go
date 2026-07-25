@@ -1,4 +1,4 @@
-// Command slidingwindow demonstrates agents.SlidingWindowSession: a
+// Command slidingwindow demonstrates agents.SlidingWindowStorage: a
 // provider-agnostic alternative to openai.CompactionSession that summarizes
 // older history with any Model you supply, keeping the newest WindowSize items
 // verbatim. The split point is pair-aware — a function_call and its output
@@ -32,7 +32,7 @@ func main() {
 	// Wrap any Session; after each run the runner gives the wrapper a chance
 	// to compact, and once more than Threshold items sit beyond the window it
 	// replaces them with one summary message.
-	sess := agents.NewSlidingWindowSession(agents.NewInMemorySession(), agents.SlidingWindowConfig{
+	sess := agents.NewSlidingWindowStorage(agents.NewInMemorySession(), agents.SlidingWindowConfig{
 		Threshold:    4,
 		WindowSize:   2,
 		SummaryModel: summaryModel,
@@ -51,17 +51,17 @@ func main() {
 		"Given everything so far, where do I want to go and when?",
 	}
 	for _, q := range turns {
-		res, err := agents.RunSync(ctx, agent, q, agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: provider}})
+		res, err := agents.RunSync(ctx, agent, q, agents.RunOptions{Conversation: agents.ConversationOptions{Session: agents.NewSession(sess)}, Model: agents.ModelOptions{Provider: provider}})
 		if err != nil {
 			log.Fatal(err)
 		}
-		items, _ := agents.SessionItems(ctx, sess, 0)
+		items, _ := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
 		fmt.Printf("Q: %s\nA: %s\n(session now holds %d items)\n\n", q, res.FinalOutputString(), len(items))
 	}
 
 	// After compaction the history starts with a single summary message; the
 	// final answer above still knows about Kyoto because the summary carries it.
-	items, err := agents.SessionItems(ctx, sess, 0)
+	items, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}

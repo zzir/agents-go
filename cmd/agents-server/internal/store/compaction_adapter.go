@@ -33,8 +33,8 @@ type CompactionAdapter struct {
 }
 
 var (
-	_ agents.Session                = (*CompactionAdapter)(nil)
-	_ agents.CompactionAwareSession = (*CompactionAdapter)(nil)
+	_ agents.SessionStorage  = (*CompactionAdapter)(nil)
+	_ agents.CompactionAware = (*CompactionAdapter)(nil)
 )
 
 // NewCompactionAdapter wraps sa with soft-delete compaction.

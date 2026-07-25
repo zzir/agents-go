@@ -7,7 +7,7 @@ import (
 
 // fakeCompactionSession is an InMemorySession that also records RunCompaction calls.
 type fakeCompactionSession struct {
-	*InMemorySession
+	*InMemoryStorage
 	calls []CompactionArgs
 }
 
@@ -17,13 +17,13 @@ func (s *fakeCompactionSession) RunCompaction(_ context.Context, args Compaction
 }
 
 func TestRunnerInvokesCompaction(t *testing.T) {
-	sess := &fakeCompactionSession{InMemorySession: NewInMemorySession()}
+	sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 	model := &recordingModel{responses: []*ModelResponse{
 		{Output: []TResponseOutputItem{messageOutput(t, "hi")}, Usage: NewUsage(), ResponseID: "resp_42"},
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
-	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}, Model: ModelOptions{Override: model}})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Model: ModelOptions{Override: model}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,22 +34,22 @@ func TestRunnerInvokesCompaction(t *testing.T) {
 		t.Errorf("compaction ResponseID = %q, want resp_42", sess.calls[0].ResponseID)
 	}
 	// History was still persisted to the underlying session.
-	items, _ := SessionItems(context.Background(), sess, 0)
+	items, _ := NewSession(sess).ContextItems(context.Background(), Cursor{})
 	if len(items) == 0 {
 		t.Error("expected persisted items in the underlying session")
 	}
 }
 
 // When the model returns no response ID, compaction is still invoked — the
-// session decides whether to act (e.g. SlidingWindowSession ignores ResponseID).
+// session decides whether to act (e.g. SlidingWindowStorage ignores ResponseID).
 func TestRunnerInvokesCompactionWithoutResponseID(t *testing.T) {
-	sess := &fakeCompactionSession{InMemorySession: NewInMemorySession()}
+	sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 	model := &recordingModel{responses: []*ModelResponse{
 		{Output: []TResponseOutputItem{messageOutput(t, "hi")}, Usage: NewUsage()}, // no ResponseID
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
-	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}, Model: ModelOptions{Override: model}}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Model: ModelOptions{Override: model}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(sess.calls) != 1 {
@@ -67,7 +67,7 @@ func TestRunnerInvokesCompactionWithoutResponseID(t *testing.T) {
 // has_local_tool_outputs deferral).
 func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 	t.Run("stop on first tool", func(t *testing.T) {
-		sess := &fakeCompactionSession{InMemorySession: NewInMemorySession()}
+		sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 		tool := NewFunctionTool("compute", "computes",
 			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 				return "the-answer", nil
@@ -77,7 +77,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 		}}
 		agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
 
-		res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
+		res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +90,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 	})
 
 	t.Run("max turns recovery message", func(t *testing.T) {
-		sess := &fakeCompactionSession{InMemorySession: NewInMemorySession()}
+		sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 		tool := NewFunctionTool("loop", "loops",
 			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 				return "again", nil
@@ -101,7 +101,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 		}}
 		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-		opts := RunOptions{Conversation: ConversationOptions{Session: sess}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
+		opts := RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 			MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 				return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 			},

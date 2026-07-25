@@ -82,7 +82,7 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 	// Display-only: none of these annotations may be replayed to the model.
-	items, err := agents.SessionItems(context.Background(), store.NewSessionAdapter(db, sid), 0)
+	items, err := agents.NewSession(store.NewSessionAdapter(db, sid)).ContextItems(context.Background(), agents.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}

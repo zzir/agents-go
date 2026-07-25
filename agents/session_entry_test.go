@@ -170,12 +170,12 @@ func TestRunPersistsEntriesWithProvenanceAndDisplay(t *testing.T) {
 	}}}
 
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Conversation: ConversationOptions{Session: session},
+		Conversation: ConversationOptions{Session: NewSession(session)},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	entries, err := session.GetEntries(context.Background(), 0)
+	entries, err := session.Entries(context.Background(), Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

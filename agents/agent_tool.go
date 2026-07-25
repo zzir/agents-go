@@ -46,7 +46,7 @@ type AgentToolConfig struct {
 	// Session gives the nested run conversation state of its own. The parent
 	// run's Session is never inherited — to share history, pass the same
 	// Session here explicitly.
-	Session Session
+	Session *Session
 
 	// ConversationID attaches the nested run to a server-side OpenAI
 	// conversation. Like a top-level run, the nested run can use only one
