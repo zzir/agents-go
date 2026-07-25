@@ -30,6 +30,12 @@ step "Test sandbox backend modules"
 (cd sandbox/docker && go vet ./... && go test ./...)
 (cd sandbox/ssh && go vet ./... && go test ./...)
 
+step "Test tracing/otel module"
+(cd tracing/otel && go vet ./... && go test ./...)
+# The otel example has its own go.mod (it pulls the OTel stdout exporter), so
+# `go build ./...` at the root does not reach it.
+(cd examples/otel && go vet ./... && go build ./...)
+
 step "Test sessions module"
 (cd sessions && go vet ./... && go test ./...)
 
@@ -66,7 +72,7 @@ if command -v golangci-lint >/dev/null; then
   golangci-lint run                            # root: lint + formatters
   (cd cmd/agents-server && golangci-lint run)  # agents-server: lint + formatters
   # The support submodules don't run full golangci; check their formatting only.
-  for m in sandbox/docker sandbox/ssh sessions skills; do
+  for m in sandbox/docker sandbox/ssh sessions skills tracing/otel; do
     out=$(cd "$m" && golangci-lint fmt --diff)
     if [ -n "$out" ]; then
       echo "$m is not gofmt/goimports-clean:"; echo "$out"; exit 1

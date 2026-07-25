@@ -19,11 +19,14 @@ func TestNewTraceID_Format(t *testing.T) {
 	}
 }
 
+// Span ids are 8 bytes so tracing/otel can reuse them verbatim as OTel span
+// ids; trace ids are 16, which OTel also expects. Widening either would force
+// every OTel-shaped exporter to truncate, silently and inconsistently.
 func TestNewSpanID_Format(t *testing.T) {
-	re := regexp.MustCompile(`^span_[0-9a-f]{24}$`)
+	re := regexp.MustCompile(`^span_[0-9a-f]{16}$`)
 	id1, id2 := NewSpanID(), NewSpanID()
 	if !re.MatchString(id1) {
-		t.Errorf("span ID %q does not match span_<24 hex>", id1)
+		t.Errorf("span ID %q does not match span_<16 hex> (8 bytes, an OTel span id)", id1)
 	}
 	if id1 == id2 {
 		t.Errorf("two span IDs collided: %q", id1)

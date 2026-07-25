@@ -56,6 +56,10 @@ from upstream.
   call**: `Run` streams it so raw events reach the consumer, `RunSync` makes one
   blocking call. Everything else — guardrail timing, persistence points, hooks,
   tracing — is identical, because there is one loop.
+- **A trace always closes**, including when the consumer abandons the stream. ✅
+  The run executes inside the iterator, so `yield` returning false unwinds the
+  loop and the deferred trace finish runs; there is no window in which nobody
+  owns the trace. Every span it opened is finished and exported.
 
 ### 2.0b Option grouping ✅
 
@@ -429,6 +433,27 @@ a line protocol — was considered and **rejected**. It buys crash isolation and
 independent working directories at the cost of IPC, serialization, and a second
 lifecycle to manage. Nested runs already give us independent sessions and
 configuration; the isolation is not worth the machinery at this scale.
+
+### 5.6b Tracing stays vendor-neutral; OpenTelemetry is a separate module
+
+The core `tracing` package has no dependencies: a span is a flat record with
+string ids and a `Data` map. `tracing/otel` translates that into OTel spans and
+carries the OTel SDK, per §5.7.
+
+The reconstruction is not free — our spans are exported after they finish, often
+children first, while OTel builds trees from live spans through a context. It
+works by pinning a custom `IDGenerator` to the ids the span already has. Two
+invariants fall out and must hold:
+
+- **`tracing.NewSpanID` is 8 bytes and `NewTraceID` is 16** — the OTel widths.
+  Widening either would force every OTel-shaped exporter to truncate, silently
+  and inconsistently.
+- **The exporter requires a batch processor.** Pinning is stateful, so `Export`
+  serializes; it is not a synchronous per-span processor.
+
+The alternative — making the core emit OTel spans directly — was rejected:
+it puts a heavy, fast-moving dependency in every consumer's build for a feature
+most do not use.
 
 ### 5.7 A submodule exists only to keep a heavy dependency out of the core
 

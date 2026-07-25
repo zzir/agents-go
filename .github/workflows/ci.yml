@@ -36,6 +36,11 @@ jobs:
       - name: Test skills module
         run: (cd skills && go vet ./... && go test ./...)
 
+      - name: Test tracing/otel module
+        run: |
+          (cd tracing/otel && go vet ./... && go test ./...)
+          (cd examples/otel && go vet ./... && go build ./...)
+
       # go build proves the examples compile; this proves they still run. A bad
       # struct tag or a nil provider is a runtime failure the compiler misses,
       # and the examples are what a reader copies first.

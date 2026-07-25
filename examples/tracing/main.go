@@ -26,7 +26,7 @@ func main() {
 }
 
 func run() error {
-	// Console exporter for demos; swap in NewHTTPExporter (or your own
+	// Console exporter for demos; swap in your own exporter (or
 	// Exporter) to ship spans to a collector instead.
 	exporter := tracing.NewConsoleExporter(os.Stderr)
 	processor := tracing.NewBatchProcessor(exporter, tracing.BatchProcessorOptions{})

@@ -109,3 +109,65 @@ Span callbacks can fire from concurrent goroutines (parallel tools, input guardr
 ## Sensitive data
 
 Spans record names, timing, error messages and small attributes such as `response_id` — not prompts, completions or tool payloads. If you add attributes from your own hooks, apply your data policies accordingly.
+
+## OpenTelemetry
+
+`tracing/otel` exports our traces as OTel spans. It is a **separate module** —
+the OTel SDK is a heavy dependency with its own release cadence, and the core
+stays vendor-neutral ([spec.md §5.7](spec.md)).
+
+```go
+import agentsotel "github.com/zzir/agents-go/tracing/otel"
+
+tp, exp, err := agentsotel.NewTracerProvider(sdktrace.WithBatcher(otlpExporter))
+if err != nil { return err }
+defer tp.Shutdown(ctx)
+
+proc := tracing.NewBatchProcessor(exp, tracing.BatchProcessorOptions{})
+tracer := tracing.NewTracer(proc)
+```
+
+Runnable version: [`examples/otel`](../examples/otel/main.go).
+
+### How the tree survives
+
+Our spans are flat records with string ids, exported in batches *after* they
+finish — usually children before parents. OTel builds its tree from live spans
+nested through a context, which no longer exists by then.
+
+The exporter rebuilds it by **pinning**: it sets a custom `IDGenerator` to the
+exact ids the span already has, injects the parent as a remote `SpanContext`,
+and starts and ends the span with its original timestamps. Trace ids, span ids,
+parent links and durations all survive, including when a child is exported
+before its already-finished parent.
+
+Two consequences:
+
+- **Drive it with a batch processor.** The pinning is stateful, so `Export`
+  serializes; it is not usable as a synchronous per-span processor.
+- **Span ids are 8 bytes** (`tracing.NewSpanID`) because that is an OTel span
+  id. Widening them would force this exporter — and any other OTel-shaped one —
+  to truncate silently.
+
+### Attribute mapping
+
+Pinned to GenAI semantic conventions **v1.38.0** (they are still experimental
+upstream and have renamed keys between releases, so the version is recorded in
+`attributes.go` rather than tracking whatever the SDK ships).
+
+| Our span | OTel name | Key attributes |
+|---|---|---|
+| agent | `invoke_agent {name}` | `gen_ai.operation.name`, `gen_ai.agent.name` |
+| generation | `chat {model}` | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.id`, `gen_ai.usage.*` |
+| function | `execute_tool {name}` | `gen_ai.operation.name`, `gen_ai.tool.name` |
+| handoff | `handoff` | `agents.handoff.tool` |
+| guardrail | `guardrail` | `agents.guardrail.stage` |
+| compaction | `compact` | `agents.compaction.before_items` / `after_items` |
+
+Concepts with no GenAI equivalent use an `agents.` prefix rather than a
+`gen_ai.` one that would imply a convention covering them. An error maps to
+`codes.Error` plus `error.type`, carrying the SDK's `ErrorCode` — a stable,
+low-cardinality value, which is what the convention asks for.
+
+The workflow name and trace group id land on the trace's **root span only**;
+repeating them on every child would multiply a constant across the trace.

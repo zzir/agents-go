@@ -91,8 +91,16 @@ func main() {
 }
 
 func runExample(root, name, baseURL string) (string, error) {
-	cmd := exec.Command("go", "run", "./examples/"+name)
-	cmd.Dir = root
+	// An example with its own go.mod (one that needs a dependency the core must
+	// not carry) runs from its own directory. Skipping those would quietly
+	// shrink coverage exactly where the wiring is most unusual.
+	dir := filepath.Join(root, "examples", name)
+	cmd := exec.Command("go", "run", ".")
+	cmd.Dir = dir
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+		cmd = exec.Command("go", "run", "./examples/"+name)
+		cmd.Dir = root
+	}
 	cmd.Env = append(os.Environ(),
 		"OPENAI_BASE_URL="+baseURL,
 		"OPENAI_API_KEY=verifyexamples",
