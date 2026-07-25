@@ -282,6 +282,21 @@ func (r *runner) executeToolsAndSideEffects(
 		return r.executeHandoff(ctx, agent, pr.Handoffs, newStepItems)
 	}
 
+	// Every tool in the batch asked to stop: honor it, using the last output as
+	// the final result.
+	//
+	// Unanimity is the rule, not "any". One tool wanting to stop while another
+	// is still working is not a decision the SDK can make for them, and
+	// stopping anyway would throw away the other's result — which the model
+	// asked for and the user paid for.
+	if allTerminate(functionResults) {
+		return &singleStepResult{
+			NewStepItems: newStepItems,
+			NextStep:     stepFinalOutput,
+			FinalOutput:  coerceToolFinalOutput(agent, functionResults[len(functionResults)-1].output),
+		}, nil
+	}
+
 	// tool_use_behavior: stop using a tool's output as the final result.
 	stop, output, err := r.checkToolUseBehavior(ctx, agent, functionResults)
 	if err != nil {
@@ -461,6 +476,12 @@ type functionToolResult struct {
 	callID              string
 	nestedInterruptions []*ToolApprovalItem
 	nestedState         *RunState
+	// usage is what the tool spent on model calls of its own (an agent-as-tool's
+	// nested run, a summarization step). Nil when the tool called no model.
+	usage *Usage
+	// terminate is the tool asking the run to stop after this batch. It only
+	// takes effect when every tool in the batch asks.
+	terminate bool
 }
 
 // toolPanicError is what a panic recovered from user tool code (the tool
@@ -581,7 +602,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			if logToolData {
 				span.Set("input", run.Call.Arguments)
 			}
-			out, err := invokeTool(gctx, run.Tool, tc, run.Call.Arguments)
+			result, err := invokeTool(gctx, run.Tool, tc, run.Call.Arguments)
+			out := result.ModelOutput()
 			if err != nil {
 				// An agent-as-tool whose nested run paused for approval is not a
 				// failure: record the surfaced interruptions and the paused
@@ -619,6 +641,10 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				// and OnToolEnd all see it (Python parity: the error is converted
 				// inside the invocation, then handled like a normal result).
 				out = run.Tool.FailureErrorFunction(gctx, tc, err)
+				// A handled failure is still a failure as far as the UI is
+				// concerned; the model sees the message either way.
+				result = TextResult(stringifyToolOutput(out))
+				result.IsError = true
 			} else {
 				if logToolData {
 					span.Set("output", stringifyToolOutput(out))
@@ -638,28 +664,24 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				return err
 			}
 			outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
-			// SDK-only custom data: extracted after guardrails from the final
-			// model-visible output, attached to the run item but never to the
-			// replayed input item.
-			if run.Tool.CustomDataExtractor != nil {
-				data, cerr := run.Tool.CustomDataExtractor(gctx, FunctionToolCustomDataContext{
-					ToolContext: tc,
-					Tool:        run.Tool,
-					Output:      out,
-					RawItem:     outputItem.Raw,
-				})
-				if cerr != nil {
-					return fmt.Errorf("tool %q custom data extractor failed: %w", run.Call.Name, cerr)
-				}
-				if outputItem.Extra, cerr = normalizeCustomData(data); cerr != nil {
-					return cerr
-				}
+			// The tool's own view of its call: UI data, renderer, error flag.
+			// These come straight from the result — the tool knew all of it when
+			// it returned, so there is no second pass to run and nothing for a
+			// consumer to patch in afterwards.
+			details, derr := normalizeDetails(result.Details)
+			if derr != nil {
+				return fmt.Errorf("tool %q: %w", run.Call.Name, derr)
 			}
+			outputItem.Extra = details
+			outputItem.Renderer = result.Display
+			outputItem.IsError = result.IsError
 			results[i] = functionToolResult{
 				callID:     run.Call.CallID,
 				tool:       run.Tool,
 				outputItem: outputItem,
 				output:     out,
+				usage:      result.Usage,
+				terminate:  result.Terminate,
 			}
 			return nil
 		})
@@ -814,9 +836,9 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 // result (or panic) is delivered to a buffered channel private to this call
 // and discarded — it never touches shared state. Cancellation of the caller's
 // ctx is reported as ctx.Err(), never as a timeout.
-func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJSON string) (any, error) {
+func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJSON string) (ToolResult, error) {
 	if tool.OnInvoke == nil {
-		return nil, newUserError("function tool %q has no OnInvoke", tool.Name)
+		return ToolResult{}, newUserError("function tool %q has no OnInvoke", tool.Name)
 	}
 	if tool.Timeout <= 0 {
 		return tool.OnInvoke(ctx, tc, argsJSON)
@@ -825,7 +847,7 @@ func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJS
 	defer cancel()
 
 	type invokeOutcome struct {
-		out any
+		out ToolResult
 		err error
 	}
 	// Buffered so the goroutine can always deliver its (possibly late) result
@@ -857,15 +879,15 @@ func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJS
 		// error that merely lands near the deadline passes through unchanged.
 		if res.err != nil && errors.Is(res.err, context.DeadlineExceeded) &&
 			tctx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-			return nil, timeoutErr()
+			return ToolResult{}, timeoutErr()
 		}
 		return res.out, res.err
 	case <-tctx.Done():
 		// Only the tool's own deadline (not a caller cancellation) is a timeout.
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return ToolResult{}, ctx.Err()
 		}
-		return nil, timeoutErr()
+		return ToolResult{}, timeoutErr()
 	}
 }
 
@@ -925,6 +947,20 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 		NewAgent:     target,
 		Handoff:      &h,
 	}, nil
+}
+
+// allTerminate reports whether every tool in the batch asked the run to stop.
+// An empty batch does not.
+func allTerminate(results []functionToolResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, res := range results {
+		if !res.terminate {
+			return false
+		}
+	}
+	return true
 }
 
 // checkToolUseBehavior applies an agent's ToolUseBehavior to the function tool

@@ -177,7 +177,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 		IsEnabled:            cfg.IsEnabled,
 		NeedsApproval:        cfg.NeedsApproval,
 		NeedsApprovalFunc:    cfg.NeedsApprovalFunc,
-		OnInvoke: func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error) {
+		OnInvoke: func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
 			nestedOpts := nestedRunOptions(tc.RunContext, cfg)
 			if cfg.ModifyRunOptions != nil {
 				cfg.ModifyRunOptions(&nestedOpts)
@@ -217,26 +217,26 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				switch {
 				case validate != nil:
 					if uerr := validate(argsJSON); uerr != nil {
-						return nil, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
+						return ToolResult{}, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
 					}
 				case cfg.InputBuilder == nil && !info.structured:
 					var args agentToolInput
 					if uerr := json.Unmarshal([]byte(argsJSON), &args); uerr != nil {
-						return nil, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
+						return ToolResult{}, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
 					}
 				default:
 					if !json.Valid([]byte(argsJSON)) {
-						return nil, newModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
+						return ToolResult{}, newModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
 					}
 				}
 				input, ierr := resolveAgentToolInput(argsJSON, info, cfg.InputBuilder)
 				if ierr != nil {
-					return nil, fmt.Errorf("agent tool %q: building input: %w", name, ierr)
+					return ToolResult{}, fmt.Errorf("agent tool %q: building input: %w", name, ierr)
 				}
 				res, err = runNestedAgent(ctx, a, input, nil, nestedOpts, cfg, tc, argsJSON)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("agent tool %q run failed: %w", name, err)
+				return ToolResult{}, fmt.Errorf("agent tool %q run failed: %w", name, err)
 			}
 			// The nested run paused for approval: surface its interruptions to the
 			// parent run (via the sentinel below) instead of returning an output,
@@ -244,7 +244,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			// Usage is not folded in yet — it will be when the resumed nested run
 			// finally completes, carrying its full usage.
 			if len(res.Interruptions) > 0 {
-				return nil, &nestedRunInterrupt{
+				return ToolResult{}, &nestedRunInterrupt{
 					callID:        tc.ToolCallID,
 					state:         res.State,
 					interruptions: res.Interruptions,
@@ -261,10 +261,20 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				ToolCallID: tc.ToolCallID,
 				Arguments:  argsJSON,
 			}
+			out := agentToolOutput(res)
 			if cfg.CustomOutputExtractor != nil {
-				return cfg.CustomOutputExtractor(res)
+				custom, cerr := cfg.CustomOutputExtractor(res)
+				if cerr != nil {
+					return ToolResult{}, cerr
+				}
+				out = custom
 			}
-			return agentToolOutput(res), nil
+			// Report the nested run's usage on the result so it is attributable
+			// to THIS tool call, not just folded into the run total where
+			// nothing says which call spent it.
+			result := resultFromValue(out)
+			result.Usage = res.Usage
+			return result, nil
 		},
 	}
 }

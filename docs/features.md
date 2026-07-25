@@ -22,7 +22,7 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 | Guardrails | One `Guardrail` type across four `Stage`s (input / output / tool input / tool output), on the run, an agent or a single tool (incl. pre-approval via `RunOptions.Exec.PreApprovalToolInputGuardrails`) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
 | Error recovery | `RunOptions.Exec.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
-| SDK-only tool output metadata | `FunctionTool.CustomDataExtractor` → `ToolCallOutputItem.Extra` / `Display().Extra` (never sent to the model) |
+| Tool result contract | `ToolResult{Content, Details, Display, Usage, Terminate, IsError}` — UI data and per-call usage alongside the model-facing value |
 | Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
 | Composite hooks | `agents.CompositeRunHooks(hooks...)` |
 

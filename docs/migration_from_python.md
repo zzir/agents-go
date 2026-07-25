@@ -38,7 +38,7 @@ For what this SDK deliberately does not provide (and why), read
 | exceptions (`MaxTurnsExceeded`, …) | error values (`*MaxTurnsError`, …) matched with `errors.As` |
 | `RunErrorDetails` on exceptions | `AgentsError.Details`, reachable via `agents.AsAgentsError(err)` |
 | `set_default_openai_key` / globals | none — pass `openai.NewProvider(...)` explicitly in `RunOptions` |
-| `custom_data_extractor=` (function tools) | `FunctionTool.CustomDataExtractor` (SDK-only tool output metadata; [tools](tools.md#sdk-only-custom-data)) |
+| `custom_data_extractor=` (function tools) | `ToolResult.Details` — the tool declares its UI data when it returns, instead of a second extraction pass ([tools](tools.md#returning-more-than-a-value-toolresult)) |
 | `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.Exec.PreApprovalToolInputGuardrails` |
 | resume a paused run (state as input to `Runner.run` / `Runner.run_streamed`) | `agents.ResumeRunSync(ctx, state, opts)` / `agents.ResumeRun(ctx, state, opts)` |
 | `error_handlers={"max_turns": ..., "model_refusal": ..., "invalid_final_output": ...}` | `RunOptions.Exec.ErrorHandlers` struct (`MaxTurns` / `ModelRefusal` / `InvalidFinalOutput` fields); handlers return `(*RunErrorHandlerResult, error)` — `(nil, nil)` declines like Python's `None`; `include_in_history=True` default becomes the `ExcludeFromHistory` zero value |
@@ -114,7 +114,7 @@ needed yet** (open to contribution). Each entry says which it is.
 - *(not yet)* **Responses-over-WebSocket transport** (`OpenAIResponsesWSModel`, `use_responses_websocket`) and the `Model.close()` / `ModelProvider.aclose()` / run-scoped `Model._cleanup_on_run_end` (v0.18) lifecycle hooks — HTTP only; a custom Go `Model` manages its own connections
 - *(non-goal)* **Hosted multi-agent beta** (`OpenAIHostedMultiAgentModel`, v0.18.2 experimental) — server-side subagent orchestration over the Responses WebSocket; falls under both the no-hosted-tools and HTTP-only decisions above
 - *(not yet)* **`agent.as_tool(previous_response_id=...)`** — the only as_tool option not ported: Go's `RunOptions` has no explicit response-id entry point (`UsePreviousResponseID` is an automatic bool chain). The rest of the surface exists on `AgentToolConfig` (`OnStream`, `IsEnabled`, `NeedsApproval`/`Func`, `FailureErrorFunction`, `Hooks`, `Session`, `ConversationID`, `ModifyRunOptions` as the `run_config` override, `InputBuilder`/`IncludeInputSchema`) plus `AgentAsTool[Params]` for typed parameters (a free function — Go methods cannot take type parameters). Builders return text only, not item lists
-- *(not yet)* **MCP-level `custom_data_extractor`** — Python's MCP servers (and hosted tools) accept their own custom-data extractors with access to the raw `CallToolResult`; in Go only `FunctionTool.CustomDataExtractor` exists, and MCP-bridged tools don't expose the raw result to it
+- *(not yet)* **MCP-level `custom_data_extractor`** — Python's MCP servers accept their own custom-data extractors with access to the raw `CallToolResult`; Go's MCP bridge reports `IsError` but does not yet let a caller project the raw result into `ToolResult.Details`
 - *(non-goal)* **`ModelSettings.extra_args`** — the free-form request-passthrough dict is intentionally not ported: `ExtraBody` (with `ExtraHeaders` / `ExtraQuery`) already covers forwarding arbitrary fields to the provider request
 
 ## Beyond the Python SDK

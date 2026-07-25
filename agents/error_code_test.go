@@ -120,7 +120,7 @@ func TestToolPanicCode(t *testing.T) {
 		Description:      "boom",
 		ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
 		Strict:           true,
-		OnInvoke: func(context.Context, *ToolContext, string) (any, error) {
+		OnInvoke: func(context.Context, *ToolContext, string) (ToolResult, error) {
 			panic("kaboom")
 		},
 		// nil FailureErrorFunction: the panic aborts the run.

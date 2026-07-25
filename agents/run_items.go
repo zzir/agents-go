@@ -37,9 +37,13 @@ type RunItem interface {
 // must still be able to render correctly from the item's own fields; that is
 // what keeps Display free to gain fields without breaking anyone.
 type ItemDisplay struct {
-	// Kind is the renderer to use: message, tool_call, tool_output, reasoning,
+	// Kind is the item kind: message, tool_call, tool_output, reasoning,
 	// handoff, unknown. An unrecognized kind must fall back, not fail.
 	Kind string `json:"kind"`
+	// Renderer is a tool's requested renderer ("diff", "terminal", "table", …),
+	// from ToolResult.Display. A consumer that does not know the name falls
+	// back to plain text rather than failing.
+	Renderer string `json:"renderer,omitzero"`
 	// Text is the human-readable body: a message's text, a reasoning summary.
 	Text string `json:"text,omitzero"`
 	// CallID ties a tool call to its output.
@@ -145,10 +149,12 @@ type ToolCallOutputItem struct {
 	Agent  *Agent
 	Raw    TResponseInputItem
 	Output any
-	// Extra is SDK-only data attached by the tool's CustomDataExtractor. It is
+	// Extra is SDK-only data the tool attached via ToolResult.Details. It is
 	// not part of Raw, never reaches the model, and surfaces through
 	// Display().Extra. It survives RunState serialization.
 	Extra map[string]any
+	// Renderer is the tool's ToolResult.Display hint.
+	Renderer string
 	// IsError marks a result that reports a tool failure.
 	IsError bool
 }
@@ -166,10 +172,11 @@ func (i *ToolCallOutputItem) Source() Source { return Source{Type: SourceTool} }
 // Display implements RunItem.
 func (i *ToolCallOutputItem) Display() ItemDisplay {
 	d := ItemDisplay{
-		Kind:    DisplayToolOutput,
-		Output:  stringifyToolOutput(i.Output),
-		IsError: i.IsError,
-		Extra:   i.Extra,
+		Kind:     DisplayToolOutput,
+		Renderer: i.Renderer,
+		Output:   stringifyToolOutput(i.Output),
+		IsError:  i.IsError,
+		Extra:    i.Extra,
 	}
 	if fco := i.Raw.OfFunctionCallOutput; fco != nil {
 		d.CallID = fco.CallID

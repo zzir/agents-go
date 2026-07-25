@@ -59,7 +59,7 @@ func TestNewFunctionTool_Invocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "sunny in Shanghai" {
+	if out.ModelOutput() != "sunny in Shanghai" {
 		t.Errorf("output = %v", out)
 	}
 }
@@ -105,7 +105,7 @@ func TestNewFunctionTool_EmptyArgsAllOptional(t *testing.T) {
 		})
 	for _, in := range []string{"", "  \n", "{}"} {
 		out, err := tool.OnInvoke(context.Background(), &ToolContext{}, in)
-		if err != nil || out != "ok" {
+		if err != nil || out.ModelOutput() != "ok" {
 			t.Errorf("input %q: out=%v err=%v", in, out, err)
 		}
 	}

@@ -35,7 +35,7 @@ func TestNewFunctionTool_NonStrictAllowsOmittedOptional(t *testing.T) {
 	if err != nil {
 		t.Fatalf("non-strict: omitted optional field should be accepted, got %v", err)
 	}
-	if out != "Paris" {
+	if out.ModelOutput() != "Paris" {
 		t.Errorf("out = %v, want Paris", out)
 	}
 

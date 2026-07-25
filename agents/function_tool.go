@@ -69,7 +69,7 @@ func NewFunctionTool[A any, R any](
 		Strict:               true,
 		FailureErrorFunction: DefaultToolErrorFunction,
 	}
-	t.OnInvoke = func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error) {
+	t.OnInvoke = func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
 		// Validate against the schema matching the tool's *current* strictness,
 		// read live so a post-construction t.Strict=false actually relaxes which
 		// keys are required. In strict mode honor t.ParamsJSONSchema (defaults to
@@ -81,9 +81,15 @@ func NewFunctionTool[A any, R any](
 		}
 		var args A
 		if err := decodeToolArgs(name, validationSchema, argsJSON, &args); err != nil {
-			return nil, err
+			return ToolResult{}, err
 		}
-		return fn(ctx, tc, args)
+		out, err := fn(ctx, tc, args)
+		if err != nil {
+			return ToolResult{}, err
+		}
+		// A tool that returns a ToolResult means it; anything else is wrapped,
+		// so the ordinary `return "sunny", nil` keeps working.
+		return resultFromValue(out), nil
 	}
 	return t
 }
@@ -110,8 +116,8 @@ func failedFunctionTool(name, description string, err error) *FunctionTool {
 		Strict:               true,
 		FailureErrorFunction: DefaultToolErrorFunction,
 		constructionErr:      err,
-		OnInvoke: func(context.Context, *ToolContext, string) (any, error) {
-			return nil, err
+		OnInvoke: func(context.Context, *ToolContext, string) (ToolResult, error) {
+			return ToolResult{}, err
 		},
 	}
 }
@@ -188,7 +194,7 @@ func decodeToolArgs(toolName string, schema map[string]any, argsJSON string, dst
 func NewRawFunctionTool(
 	name, description string,
 	paramsSchema map[string]any,
-	fn func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error),
+	fn func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error),
 ) *FunctionTool {
 	normalized, err := ensureStrictSchemaCopy(paramsSchema)
 	if err != nil {

@@ -224,15 +224,15 @@ func TestPreApprovalGuardrail_TripwireHaltsRun(t *testing.T) {
 	}
 }
 
-// --- #3486/#3657 parity: SDK-only custom data for tool outputs. ---
+// --- SDK-only data on tool outputs, carried by ToolResult.Details. ---
 
-func customDataAgent(t *testing.T, extractor func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error)) *Agent {
+// detailsAgent builds an agent whose single tool returns the given result.
+func detailsAgent(t *testing.T, result func() (ToolResult, error)) *Agent {
 	t.Helper()
 	tool := NewFunctionTool("get_data", "returns data",
-		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
-			return "tool_result", nil
+		func(ctx context.Context, tc *ToolContext, args struct{}) (ToolResult, error) {
+			return result()
 		})
-	tool.CustomDataExtractor = extractor
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "get_data", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
@@ -249,18 +249,14 @@ func findToolOutput(items []RunItem) *ToolCallOutputItem {
 	return nil
 }
 
-func TestCustomData_AttachedToRunItemNotModel(t *testing.T) {
-	agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
-		if cdc.Output != "tool_result" {
-			t.Errorf("extractor Output = %v", cdc.Output)
-		}
-		if cdc.Tool == nil || cdc.Tool.Name != "get_data" {
-			t.Error("extractor Tool not populated")
-		}
-		if cdc.ToolContext == nil || cdc.ToolContext.ToolCallID != "call_1" {
-			t.Error("extractor ToolContext not populated")
-		}
-		return map[string]any{"renderer": "table", "id": 7}, nil
+// Details reach the run item and the display projection; they never reach the
+// model. The tool declares them when it returns — there is no second extraction
+// pass and nothing for a consumer to patch in afterwards.
+func TestDetails_AttachedToRunItemNotModel(t *testing.T) {
+	agent := detailsAgent(t, func() (ToolResult, error) {
+		return TextResult("tool_result").
+			WithDisplay("table").
+			WithDetails(map[string]any{"renderer": "table", "id": 7}), nil
 	})
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
@@ -272,71 +268,75 @@ func TestCustomData_AttachedToRunItemNotModel(t *testing.T) {
 		t.Fatal("no ToolCallOutputItem in NewItems")
 	}
 	if out.Extra["renderer"] != "table" {
-		t.Errorf("CustomData = %v", out.Extra)
+		t.Errorf("Extra = %v", out.Extra)
 	}
 	// json.Unmarshal turns numbers into float64 — the JSON round-trip contract.
 	if out.Extra["id"] != float64(7) {
-		t.Errorf("CustomData id = %v (%T)", out.Extra["id"], out.Extra["id"])
+		t.Errorf("Extra id = %v (%T)", out.Extra["id"], out.Extra["id"])
 	}
+	d := out.Display()
+	if d.Renderer != "table" {
+		t.Errorf("Display().Renderer = %q, want the tool's hint", d.Renderer)
+	}
+	if d.Extra["renderer"] != "table" {
+		t.Errorf("Display().Extra = %v", d.Extra)
+	}
+	if d.Output != "tool_result" {
+		t.Errorf("Display().Output = %q", d.Output)
+	}
+
 	// Never part of the replayed input item.
 	in, err := out.ToInputItem()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if raw, err := in.MarshalJSON(); err == nil && strings.Contains(string(raw), "renderer") {
-		t.Error("custom data leaked into the model-visible input item")
+		t.Error("details leaked into the model-visible input item")
 	}
 }
 
-func TestCustomData_EmptyAndNilNormalizeToNil(t *testing.T) {
-	agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
-		return map[string]any{}, nil
+func TestDetails_EmptyNormalizesToNil(t *testing.T) {
+	agent := detailsAgent(t, func() (ToolResult, error) {
+		return TextResult("x").WithDetails(map[string]any{}), nil
 	})
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out := findToolOutput(res.NewItems); out == nil || out.Extra != nil {
-		t.Errorf("empty map should normalize to nil, got %v", out.Extra)
+		t.Errorf("an empty map should normalize to nil, got %v", out.Extra)
 	}
 }
 
-func TestCustomData_NonJSONCompatibleFailsRun(t *testing.T) {
+// A value that cannot be serialized fails while the tool call is still
+// identifiable, rather than at persistence time long after.
+func TestDetails_NonJSONCompatibleFailsRun(t *testing.T) {
 	for name, value := range map[string]any{
 		"nan":  math.NaN(),
 		"inf":  math.Inf(1),
 		"chan": make(chan int),
 	} {
 		t.Run(name, func(t *testing.T) {
-			agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
-				return map[string]any{"bad": value}, nil
+			agent := detailsAgent(t, func() (ToolResult, error) {
+				return TextResult("x").WithDetails(map[string]any{"bad": value}), nil
 			})
 			_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 			var uerr *UserError
 			if !errors.As(err, &uerr) {
 				t.Fatalf("expected UserError, got %v", err)
 			}
+			if !strings.Contains(err.Error(), "get_data") {
+				t.Errorf("the error should name the tool: %v", err)
+			}
 		})
 	}
 }
 
-func TestCustomData_ExtractorErrorAbortsRun(t *testing.T) {
-	agent := customDataAgent(t, func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
-		return nil, errors.New("boom")
-	})
-	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("expected extractor error to abort the run, got %v", err)
-	}
-}
-
-func TestCustomData_SurvivesRunStateRoundTrip(t *testing.T) {
+func TestDetails_SurviveRunStateRoundTrip(t *testing.T) {
 	tool := NewFunctionTool("get_data", "returns data",
-		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
-			return "tool_result", nil
+		func(ctx context.Context, tc *ToolContext, args struct{}) (ToolResult, error) {
+			return TextResult("tool_result").WithDetails(map[string]any{"k": "v"}), nil
 		})
-	tool.CustomDataExtractor = func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error) {
-		return map[string]any{"k": "v"}, nil
-	}
 	gated := NewFunctionTool("guarded", "needs ok",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "fine", nil

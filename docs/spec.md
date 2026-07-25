@@ -308,6 +308,30 @@ An empty result with no error is a **success with no output**, not a failure.
 - Approval decisions may be scoped ("this call", "all calls to this tool", …);
   the caller expresses the scope on the `RunState`.
 
+### 2.7b Tool results ✅
+
+A tool returns a `ToolResult`, not a bare value. The distinction it makes is
+that some of what a tool knows is **not for the model**:
+
+- `Content` reaches the model. `Details` never does — it lands on the item's
+  `Display().Extra`, for the UI and for logs.
+- `Details` must survive a JSON round-trip. A value that cannot fails the run
+  **at the tool call**, while it is still identifiable, not at persistence time.
+  An empty map normalizes to nil.
+- `Usage` accounts for model calls the tool made itself, so nested spend is
+  attributable to the call that caused it rather than only appearing in the run
+  total.
+- **`Terminate` requires unanimity.** The run stops after a batch only when
+  every tool in it asks. One tool wanting to stop while another is still
+  working is not a decision the SDK can make for them, and stopping anyway
+  would discard the other's result.
+- `IsError` marks a failure for renderers; the content still reaches the model,
+  which is how a tool that failed usefully lets the model recover. A tool error
+  handled by `FailureErrorFunction` sets it automatically.
+
+A tool that returns a plain value (string, struct, `ToolOutputContent`) is
+wrapped automatically, so the ordinary tool is unchanged.
+
 ### 2.8 Nested agent-as-tool attribution ✅
 
 | Aspect | Attribution |

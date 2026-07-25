@@ -68,7 +68,7 @@ func TestSearchSendsRequestAndFormats(t *testing.T) {
 		t.Errorf("count = %q, want %q", gotCount, "3")
 	}
 
-	text, ok := out.(string)
+	text, ok := out.ModelOutput().(string)
 	if !ok {
 		t.Fatalf("output type = %T, want string", out)
 	}

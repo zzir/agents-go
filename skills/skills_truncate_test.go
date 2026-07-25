@@ -36,7 +36,7 @@ func TestReadFileToolTruncationMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := out.(string)
+	s := out.ModelOutput().(string)
 	if !strings.Contains(s, "[... truncated: file is") {
 		t.Errorf("capped read must end with a truncation marker; tail = %q", s[len(s)-120:])
 	}
@@ -52,7 +52,7 @@ func TestReadFileToolTruncationMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(small.(string), "truncated") {
+	if strings.Contains(small.ModelOutput().(string), "truncated") {
 		t.Error("a file under the cap must not carry a truncation marker")
 	}
 }

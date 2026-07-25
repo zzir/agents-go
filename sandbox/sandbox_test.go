@@ -179,7 +179,7 @@ func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := out.(string)
+	s, _ := out.ModelOutput().(string)
 	if !strings.Contains(s, "hi from sandbox") {
 		t.Errorf("tool output missing stdout: %q", s)
 	}
@@ -215,7 +215,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := out.(string); !strings.Contains(s, "wrote") {
+	if s, _ := out.ModelOutput().(string); !strings.Contains(s, "wrote") {
 		t.Errorf("write_file output = %q", s)
 	}
 
@@ -228,7 +228,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := out.(string); !strings.Contains(s, "hello file tools") {
+	if s, _ := out.ModelOutput().(string); !strings.Contains(s, "hello file tools") {
 		t.Errorf("read_file output = %q", s)
 	}
 
@@ -241,7 +241,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := out.(string); !strings.Contains(s, "test.txt") {
+	if s, _ := out.ModelOutput().(string); !strings.Contains(s, "test.txt") {
 		t.Errorf("list_files output = %q", s)
 	}
 }
@@ -253,7 +253,7 @@ func TestReadFileTool_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := out.(string)
+	s, _ := out.ModelOutput().(string)
 	if !strings.Contains(s, "error") {
 		t.Errorf("expected error for missing file, got: %q", s)
 	}

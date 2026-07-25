@@ -410,14 +410,14 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 		// so it can recover, matching the SDK-wide default; without this every
 		// MCP error would abort the whole run.
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
-		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (any, error) {
+		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			// Always send an "arguments" object — an empty {} rather than an
 			// omitted field — matching the Python SDK, which passes an empty
 			// dict; some servers reject calls with no arguments key.
 			args := map[string]any{}
 			if strings.TrimSpace(argsJSON) != "" {
 				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-					return nil, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("mcp tool %q: invalid arguments: %w", exposedName, err))
+					return agents.ToolResult{}, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("mcp tool %q: invalid arguments: %w", exposedName, err))
 				}
 				if args == nil { // argsJSON was JSON null
 					args = map[string]any{}
@@ -427,11 +427,11 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			// the server: a missing required key is a *agents.UserError, matching
 			// the Python SDK's _validate_required_parameters.
 			if err := validateRequiredArgs(s.name, originalName, required, args); err != nil {
-				return nil, err
+				return agents.ToolResult{}, err
 			}
 			meta, err := s.resolveMeta(ctx, tc, originalName, args, staticMeta)
 			if err != nil {
-				return nil, err
+				return agents.ToolResult{}, err
 			}
 			// The server is always called with the original (unprefixed) name.
 			params := &mcpsdk.CallToolParams{Name: originalName, Arguments: args}
@@ -449,18 +449,40 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			}); err != nil {
 				// A transport/protocol failure is fed back to the model via the
 				// FailureErrorFunction (SDK-wide default) so it can recover.
-				return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))
+				return agents.ToolResult{}, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))
 			}
-			// An isError result is NOT an error: its content (usually the error
-			// message) passes to the model verbatim, matching the Python SDK,
-			// which never inspects result.isError in invoke_mcp_tool.
-			return resultOutput(result, s.opts.UseStructuredContent), nil
+			// An isError result is NOT a Go error: its content (usually the
+			// error message) passes to the model verbatim so it can recover.
+			// It IS marked as an error on the result, so a UI can render it as
+			// one — previously that distinction was lost entirely.
+			out := agents.ToolResult{IsError: result.IsError}
+			switch v := resultOutput(result, s.opts.UseStructuredContent).(type) {
+			case string:
+				out.Content = []agents.ToolOutputContent{agents.ToolOutputText{Text: v}}
+			default:
+				out = agents.TextResult(stringifyMCPOutput(v))
+				out.IsError = result.IsError
+			}
+			return out, nil
 		},
 	}
 	if s.opts.RequireApproval != nil && s.opts.RequireApproval(originalName) {
 		tool.NeedsApproval = true
 	}
 	return tool
+}
+
+// stringifyMCPOutput renders a structured MCP result as the text the model
+// sees, matching how the SDK stringifies any non-string tool output.
+func stringifyMCPOutput(v any) string {
+	if v == nil {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }
 
 // resolveMeta computes the _meta to send with a call_tool request: the resolver's

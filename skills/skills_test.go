@@ -185,7 +185,7 @@ func TestReadFileTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.(string), "# PDF processing") {
+	if !strings.Contains(out.ModelOutput().(string), "# PDF processing") {
 		t.Errorf("read content missing body:\n%v", out)
 	}
 

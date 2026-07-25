@@ -71,7 +71,7 @@ func TestMCP_ToolNamePrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "echo: hi" {
+	if out.ModelOutput() != "echo: hi" {
 		t.Errorf("call output = %v, want 'echo: hi'", out)
 	}
 }

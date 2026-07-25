@@ -49,8 +49,13 @@ type FunctionTool struct {
 	// Strict toggles OpenAI strict-mode schema validation.
 	Strict bool
 	// OnInvoke runs the tool. argsJSON is the raw JSON arguments string emitted
-	// by the model. The returned value is serialized back to the model.
-	OnInvoke func(ctx context.Context, tc *ToolContext, argsJSON string) (any, error)
+	// by the model.
+	//
+	// The result carries everything about the call, not just the model-facing
+	// value: UI data that must not reach the model, the renderer to use, token
+	// usage the tool spent itself, and whether the run should stop. Use
+	// TextResult for the common case.
+	OnInvoke func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error)
 	// IsEnabled, when non-nil, is consulted before exposing the tool to the
 	// model; returning false hides the tool for that run.
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
@@ -83,16 +88,6 @@ type FunctionTool struct {
 	// nil, the error aborts the run. NewFunctionTool installs
 	// DefaultToolErrorFunction; set this field to nil to make tool errors fatal.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
-
-	// CustomDataExtractor, when non-nil, runs after a successful invocation
-	// (and its output guardrails) to produce SDK-only custom data — renderer
-	// hints, IDs, or other JSON-compatible metadata — attached to the resulting
-	// ToolCallOutputItem.CustomData and FunctionToolResult.CustomData but never
-	// sent back to the model. The returned map must survive a JSON round-trip;
-	// anything else (NaN/Inf floats, channels, cycles, ...) fails the run with
-	// a UserError. Returning an error aborts the run. The data survives
-	// RunState serialization across human-in-the-loop interruptions.
-	CustomDataExtractor func(ctx context.Context, cdc FunctionToolCustomDataContext) (map[string]any, error)
 
 	// constructionErr records a schema/argument-type failure detected when the
 	// tool was built (see failedFunctionTool). The runner surfaces it before the

@@ -18,7 +18,7 @@ func invokeTool(t *testing.T, tool agents.Tool, args string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := out.(string)
+	s, _ := out.ModelOutput().(string)
 	return s
 }
 

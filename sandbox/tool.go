@@ -77,8 +77,8 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 			Description:      cfg.Description,
 			ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
 			Strict:           true,
-			OnInvoke: func(context.Context, *agents.ToolContext, string) (any, error) {
-				return nil, agents.Classify(agents.CodeUserError, fmt.Errorf("code tool %q: schema generation failed: %w", cfg.Name, schemaErr))
+			OnInvoke: func(context.Context, *agents.ToolContext, string) (agents.ToolResult, error) {
+				return agents.ToolResult{}, agents.Classify(agents.CodeUserError, fmt.Errorf("code tool %q: schema generation failed: %w", cfg.Name, schemaErr))
 			},
 		}
 	}
@@ -88,10 +88,10 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 		ParamsJSONSchema:  schema,
 		Strict:            true,
 		NeedsApprovalFunc: cfg.NeedsApprovalFunc,
-		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
+		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-				return nil, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err))
+				return agents.ToolResult{}, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err))
 			}
 
 			timeout := cfg.Timeout
@@ -113,9 +113,18 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 				Timeout: timeout,
 			})
 			if err != nil {
-				return nil, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("code tool %q: %w", cfg.Name, err))
+				return agents.ToolResult{}, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("code tool %q: %w", cfg.Name, err))
 			}
-			return formatResult(res, cfg.MaxOutputBytes), nil
+			// The exit code and streams belong in Details, not only folded into
+			// the text the model reads: a UI showing a command should not have
+			// to parse "exit_code: 1" back out of a formatted blob.
+			return agents.TextResult(formatResult(res, cfg.MaxOutputBytes)).
+				WithDisplay("terminal").
+				WithDetails(map[string]any{
+					"command":   cmd,
+					"exit_code": res.ExitCode,
+					"timed_out": res.TimedOut,
+				}), nil
 		},
 	}
 }

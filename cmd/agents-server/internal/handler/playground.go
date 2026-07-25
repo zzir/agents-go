@@ -124,8 +124,8 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 			Name:             t.Name,
 			Description:      t.Description,
 			ParamsJSONSchema: t.Parameters,
-			OnInvoke: func(context.Context, *agents.ToolContext, string) (any, error) {
-				return nil, errors.New("playground tools are not executable")
+			OnInvoke: func(context.Context, *agents.ToolContext, string) (agents.ToolResult, error) {
+				return agents.ToolResult{}, errors.New("playground tools are not executable")
 			},
 		})
 	}

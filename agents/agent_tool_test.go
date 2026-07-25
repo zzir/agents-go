@@ -45,7 +45,7 @@ func TestAgentAsTool_CustomExtractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "extracted:raw" {
+	if out.ModelOutput() != "extracted:raw" {
 		t.Errorf("out = %v", out)
 	}
 }

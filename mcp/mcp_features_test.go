@@ -142,7 +142,7 @@ func TestMCP_RequiredArgValidation(t *testing.T) {
 	}
 	// A valid call still works.
 	out, err := ft.OnInvoke(context.Background(), tc, `{"text":"hi"}`)
-	if err != nil || out != "echo: hi" {
+	if err != nil || out.ModelOutput() != "echo: hi" {
 		t.Fatalf("valid call failed: out=%v err=%v", out, err)
 	}
 }
@@ -198,7 +198,7 @@ func TestMCP_ToolMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]any
-	if err := json.Unmarshal([]byte(out.(string)), &got); err != nil {
+	if err := json.Unmarshal([]byte(out.ModelOutput().(string)), &got); err != nil {
 		t.Fatalf("meta not JSON: %v (%v)", err, out)
 	}
 	if got["from"] != "resolver" || got["static"] != true {

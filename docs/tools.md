@@ -106,22 +106,51 @@ The three content parts mirror the Responses API:
 
 A runnable example lives in `examples/toolimage`. This is the Go counterpart of Python's `ToolOutputText` / `ToolOutputImage` / `ToolOutputFileContent`; it is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
 
-### SDK-only custom data
+### Returning more than a value: `ToolResult`
 
-`CustomDataExtractor` attaches JSON-compatible metadata — renderer hints, record IDs, anything your app needs alongside the tool result — to the tool's output item **without sending it to the model**:
+A tool that needs to say more than "here is the answer" returns a `ToolResult`
+instead of a plain value:
 
 ```go
-t := agents.NewFunctionTool("query_orders", "…", queryOrders)
-t.CustomDataExtractor = func(ctx context.Context, cdc agents.FunctionToolCustomDataContext) (map[string]any, error) {
-	return map[string]any{"renderer": "table", "row_count": countRows(cdc.Output)}, nil
-}
+agents.NewFunctionTool("query_orders", "…",
+	func(ctx context.Context, tc *agents.ToolContext, args Query) (agents.ToolResult, error) {
+		rows := query(args)
+		return agents.TextResult(summarize(rows)).
+			WithDisplay("table").
+			WithDetails(map[string]any{"row_count": len(rows)}), nil
+	})
 ```
 
-The extractor runs after a successful invocation and its output guardrails, receiving the invocation's `ToolContext`, the `Tool`, the model-visible `Output`, and the `RawItem` that will be replayed. The result lands on `ToolCallOutputItem.Extra`, surfaced through `Display().Extra` (read either from `RunResult.NewItems`) and on `FunctionToolResult.CustomData` (visible to a `ToolUseBehaviorFunc`), and survives `RunState` serialization across [human-in-the-loop](human_in_the_loop.md) interruptions. The map must survive a JSON round-trip — non-JSON values (NaN/Inf floats, channels, cycles) fail the run with a `UserError`; an empty map normalizes to nil. This is the Go counterpart of Python's `custom_data_extractor`.
+| Field | What it is for |
+|---|---|
+| `Content` | What the model sees — text, images, files |
+| `Details` | Structured data for the UI and logs. **Never reaches the model.** Lands on `Display().Extra` |
+| `Display` | The renderer you would like: `"diff"`, `"terminal"`, `"table"`, `"json"`, `"markdown"`. A hint — an unknown name falls back to text |
+| `Usage` | Tokens the tool spent on model calls **of its own** (an agent-as-tool's nested run, a summarization step) |
+| `Terminate` | Ask the run to stop after this batch |
+| `IsError` | Render as a failure. The content still goes to the model, so it can recover |
+
+Everything else keeps working: a tool returning a `string`, a struct, or a
+`[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is
+still the shortest correct tool.
+
+**`Details` must survive a JSON round-trip.** A value that cannot (NaN/Inf
+floats, channels, cycles) fails the run *while the tool call is still
+identifiable*, rather than at persistence time long after. An empty map
+normalizes to nil.
+
+**`Terminate` needs unanimity.** The run stops only when every tool in the batch
+asks. One tool wanting to stop while another is still working is not a decision
+the SDK can make for them, and stopping anyway would throw away the other's
+result.
+
+This replaces `CustomDataExtractor`, which ran a second pass over the finished
+call to produce UI data, and the consumer-side patching that attached it
+afterwards. The tool already knew all of it at the moment it returned.
 
 ### Hand-built tools
 
-`FunctionTool` is an exported struct, so advanced callers can build one directly with a custom `ParamsJSONSchema` and raw-JSON `OnInvoke`:
+`FunctionTool` is an exported struct, so advanced callers can build one directly with a custom `ParamsJSONSchema` and raw-JSON `OnInvoke` (which returns a `ToolResult` — use `agents.TextResult` for the common case):
 
 ```go
 t := &agents.FunctionTool{
