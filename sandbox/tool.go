@@ -78,7 +78,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 			ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
 			Strict:           true,
 			OnInvoke: func(context.Context, *agents.ToolContext, string) (any, error) {
-				return nil, fmt.Errorf("code tool %q: schema generation failed: %w", cfg.Name, schemaErr)
+				return nil, agents.Classify(agents.CodeUserError, fmt.Errorf("code tool %q: schema generation failed: %w", cfg.Name, schemaErr))
 			},
 		}
 	}
@@ -91,7 +91,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (any, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-				return nil, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err)
+				return nil, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err))
 			}
 
 			timeout := cfg.Timeout
@@ -113,7 +113,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 				Timeout: timeout,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("code tool %q: %w", cfg.Name, err)
+				return nil, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("code tool %q: %w", cfg.Name, err))
 			}
 			return formatResult(res, cfg.MaxOutputBytes), nil
 		},

@@ -55,13 +55,23 @@ const (
 // RunError.Code values. Same single-point rule as the event constants: the
 // frontend branches on these to pick recovery behavior, so a misspelled code
 // downgrades a handled error to the generic path without any signal.
+//
+// Two origins share one flat namespace on the wire (PROTOCOL.md F3):
+//
+//   - SDK codes come from agents.CodeOf(err) and are NOT redeclared here —
+//     the SDK owns that vocabulary and adds to it without a change in this
+//     package. The frontend mirror lists them for exhaustive rendering only.
+//   - Transport codes below describe failures that happen before or outside a
+//     run, where no SDK error exists to classify.
+//
+// The two sets must not collide. A client that does not recognize a code falls
+// back to generic error rendering, so the SDK may ship a new one first.
 const (
-	CodeSessionBusy       = "session_busy"
-	CodeSessionNotFound   = "session_not_found"
-	CodeRunNotFound       = "run_not_found"
-	CodeApprovalFailed    = "approval_failed"
-	CodeGuardrailTripwire = "guardrail_tripwire"
-	CodeConfigError       = "config_error"
+	CodeSessionBusy     = "session_busy"
+	CodeSessionNotFound = "session_not_found"
+	CodeRunNotFound     = "run_not_found"
+	CodeApprovalFailed  = "approval_failed"
+	CodeConfigError     = "config_error"
 )
 
 // NewEnvelope marshals payload and wraps it in an Envelope of the given type.

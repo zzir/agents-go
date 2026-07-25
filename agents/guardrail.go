@@ -185,6 +185,7 @@ func (e *GuardrailTripwireError) Stage() GuardrailStage { return e.Result.Stage 
 func newTripwireError(res GuardrailResult) *GuardrailTripwireError {
 	return &GuardrailTripwireError{
 		AgentsError: AgentsError{
+			Code:    CodeGuardrailTripwire,
 			Message: fmt.Sprintf("%s guardrail %s tripwire triggered", res.Stage, res.Guardrail.resolvedName()),
 		},
 		Result: res,

@@ -305,7 +305,7 @@ func (r *runner) executeToolsAndSideEffects(
 				// or structured content in the same message.
 				if refusal := extractMessageRefusal(lastMessage.Raw); refusal != "" {
 					refErr := &ModelRefusalError{
-						AgentsError: AgentsError{Message: "model refused to respond: " + refusal},
+						AgentsError: AgentsError{Code: CodeModelRefusal, Message: "model refused to respond: " + refusal},
 						Refusal:     refusal,
 					}
 					rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.ModelRefusal, refErr, agent,
@@ -474,9 +474,14 @@ func (e *toolPanicError) Error() string {
 }
 
 // fatalError formats the panic for the run-aborting path, appending the stack
-// captured at recover time.
+// captured at recover time and classifying it as CodeToolPanic. The panic
+// itself stays in the chain, so errors.As still reaches *toolPanicError.
 func (e *toolPanicError) fatalError() error {
-	return fmt.Errorf("%w\n\n%s", e, e.stack)
+	return &AgentsError{
+		Code:    CodeToolPanic,
+		Message: fmt.Sprintf("%v\n\n%s", e, e.stack),
+		cause:   e,
+	}
 }
 
 // runFunctionTools invokes every function tool call concurrently, returning
@@ -835,7 +840,7 @@ func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJS
 
 	timeoutErr := func() error {
 		return &ToolTimeoutError{
-			AgentsError: AgentsError{Message: fmt.Sprintf("tool %q timed out after %v", tool.Name, tool.Timeout)},
+			AgentsError: AgentsError{Code: CodeToolTimeout, Message: fmt.Sprintf("tool %q timed out after %v", tool.Name, tool.Timeout)},
 			ToolName:    tool.Name,
 		}
 	}

@@ -163,7 +163,7 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 	})
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		return fmt.Errorf("mcp: connecting to %q: %w", s.name, err)
+		return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: connecting to %q: %w", s.name, err))
 	}
 	s.session = session
 	return nil
@@ -286,10 +286,10 @@ func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
 // when CacheToolsList is set) or reusing the cache.
 func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	if s.session == nil {
-		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	if s.closed.Load() {
-		return nil, fmt.Errorf("mcp: server %q is closed", s.name)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is closed", s.name))
 	}
 	// Fast path: a cached list is served under a short critical section, never
 	// while a network call is in flight.
@@ -315,7 +315,7 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 		return e
 	})
 	if err != nil {
-		return nil, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err))
 	}
 	names := s.exposedNames(res.Tools)
 	list := make([]cachedTool, 0, len(res.Tools))
@@ -417,7 +417,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			args := map[string]any{}
 			if strings.TrimSpace(argsJSON) != "" {
 				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-					return nil, fmt.Errorf("mcp tool %q: invalid arguments: %w", exposedName, err)
+					return nil, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("mcp tool %q: invalid arguments: %w", exposedName, err))
 				}
 				if args == nil { // argsJSON was JSON null
 					args = map[string]any{}
@@ -442,14 +442,14 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			if err := s.runWithRetries(ctx, func() error {
 				var e error
 				if s.closed.Load() {
-					return fmt.Errorf("mcp: server %q is closed", s.name)
+					return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is closed", s.name))
 				}
 				result, e = s.session.CallTool(ctx, params)
 				return e
 			}); err != nil {
 				// A transport/protocol failure is fed back to the model via the
 				// FailureErrorFunction (SDK-wide default) so it can recover.
-				return nil, fmt.Errorf("mcp tool %q call failed: %w", originalName, err)
+				return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))
 			}
 			// An isError result is NOT an error: its content (usually the error
 			// message) passes to the model verbatim, matching the Python SDK,
@@ -793,7 +793,7 @@ func jsonTextPart(c mcpsdk.Content) agents.ToolOutputText {
 // turned into agent instructions via GetPrompt. params may be nil.
 func (s *Server) ListPrompts(ctx context.Context, params *mcpsdk.ListPromptsParams) (*mcpsdk.ListPromptsResult, error) {
 	if s.session == nil {
-		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	return s.session.ListPrompts(ctx, params)
 }
@@ -802,7 +802,7 @@ func (s *Server) ListPrompts(ctx context.Context, params *mcpsdk.ListPromptsPara
 // messages can seed an agent's instructions or input.
 func (s *Server) GetPrompt(ctx context.Context, params *mcpsdk.GetPromptParams) (*mcpsdk.GetPromptResult, error) {
 	if s.session == nil {
-		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	return s.session.GetPrompt(ctx, params)
 }
@@ -810,7 +810,7 @@ func (s *Server) GetPrompt(ctx context.Context, params *mcpsdk.GetPromptParams) 
 // ListResources returns the resources the server exposes. params may be nil.
 func (s *Server) ListResources(ctx context.Context, params *mcpsdk.ListResourcesParams) (*mcpsdk.ListResourcesResult, error) {
 	if s.session == nil {
-		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	return s.session.ListResources(ctx, params)
 }
@@ -818,7 +818,7 @@ func (s *Server) ListResources(ctx context.Context, params *mcpsdk.ListResources
 // ReadResource reads a resource by URI.
 func (s *Server) ReadResource(ctx context.Context, params *mcpsdk.ReadResourceParams) (*mcpsdk.ReadResourceResult, error) {
 	if s.session == nil {
-		return nil, fmt.Errorf("mcp: server %q is not connected", s.name)
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	return s.session.ReadResource(ctx, params)
 }

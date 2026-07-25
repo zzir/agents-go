@@ -123,9 +123,51 @@ All failures come back as Go errors. The SDK's typed errors embed `agents.Agents
 | `*ModelRefusalError` | The model refused to respond; carries the refusal text |
 | `*UserError` | You used the SDK incorrectly (e.g. no model provider, invalid output schema) |
 | `*ToolTimeoutError` | A tool exceeded its `FunctionTool.Timeout` |
-| `*InputGuardrailTripwireError` / `*OutputGuardrailTripwireError` / `*ToolGuardrailTripwireError` | A guardrail tripped |
+| `*GuardrailTripwireError` | A guardrail tripped; `Stage()` says where |
 
 Every SDK error carries `Details *RunErrorDetails` (input, items generated so far, raw responses, last agent, usage) so you can inspect partial progress — see [Results](results.md#errors).
+
+### Error codes
+
+For anything that has to *travel* — an HTTP response, a WebSocket frame, a log
+line — match on the code rather than the type. `CodeOf` unwraps `%w` chains, so
+it works on whatever `Run` returned regardless of how the run loop wrapped it:
+
+```go
+switch agents.CodeOf(err) {
+case agents.CodeMaxTurns:          // "max_turns_exceeded"
+case agents.CodeGuardrailTripwire: // "guardrail_tripwire"
+case agents.CodeToolTimeout:       // "tool_timeout"
+case agents.CodeUnknown:           // not an SDK error, or unclassified
+}
+```
+
+| Code | Produced by |
+|---|---|
+| `max_turns_exceeded` | `*MaxTurnsError` |
+| `model_behavior` | `*ModelBehaviorError` |
+| `model_refusal` | `*ModelRefusalError` |
+| `user_error` | `*UserError` |
+| `tool_timeout` | `*ToolTimeoutError` |
+| `tool_panic` | A tool panic on the fatal path (`FailureErrorFunction == nil`) |
+| `guardrail_tripwire` | `*GuardrailTripwireError` |
+| `sandbox_exec` | A sandbox command that failed to run |
+| `mcp` | An MCP server connection or tool call |
+| `unknown` | Anything else, including a plain error from your own code |
+
+**The set is open.** Handle an unrecognized code generically — the SDK adds
+codes without a breaking change, and a consumer that treats an unknown code as
+impossible breaks on upgrade.
+
+To contribute a code from your own tool, use `Classify`. It tags the error
+without hiding it, so `errors.Is` and `errors.As` still reach the original:
+
+```go
+return nil, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("build: %w", err))
+```
+
+An error that already carries a code is returned unchanged — the innermost
+classification wins, because it knows the most about the failure.
 
 ## Error handlers
 

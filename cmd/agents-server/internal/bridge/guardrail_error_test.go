@@ -16,7 +16,7 @@ func TestGuardrailRunError(t *testing.T) {
 			Guardrail: agents.Guardrail{Name: "no_pii"},
 		},
 	}
-	if e := guardrailRunError("r1", inTrip, "stream_error"); e.Code != "guardrail_tripwire" || e.Guardrail != "no_pii" || e.Stage != "input" {
+	if e := runErrorFor("r1", inTrip, "stream_error"); e.Code != "guardrail_tripwire" || e.Guardrail != "no_pii" || e.Stage != "input" {
 		t.Errorf("input trip = %+v, want code=guardrail_tripwire guardrail=no_pii stage=input", e)
 	}
 
@@ -26,11 +26,11 @@ func TestGuardrailRunError(t *testing.T) {
 			Guardrail: agents.Guardrail{Name: "no_secrets"},
 		},
 	}
-	if e := guardrailRunError("r1", outTrip, "stream_error"); e.Code != "guardrail_tripwire" || e.Guardrail != "no_secrets" || e.Stage != "output" {
+	if e := runErrorFor("r1", outTrip, "stream_error"); e.Code != "guardrail_tripwire" || e.Guardrail != "no_secrets" || e.Stage != "output" {
 		t.Errorf("output trip = %+v, want code=guardrail_tripwire guardrail=no_secrets stage=output", e)
 	}
 
-	if e := guardrailRunError("r1", errors.New("boom"), "resume_error"); e.Code != "resume_error" || e.Guardrail != "" || e.Stage != "" {
+	if e := runErrorFor("r1", errors.New("boom"), "resume_error"); e.Code != "resume_error" || e.Guardrail != "" || e.Stage != "" {
 		t.Errorf("plain error = %+v, want fallback code resume_error, no guardrail fields", e)
 	}
 }

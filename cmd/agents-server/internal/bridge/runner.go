@@ -312,7 +312,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		} else {
 			// Persist the guardrail name/stage alongside the error so a reload
 			// rebuilds the "Blocked by guardrail X" card, not a generic error.
-			gerr := guardrailRunError(runID, err, "stream_error")
+			gerr := runErrorFor(runID, err, "stream_error")
 			r.savePartialTurn(sessionID, runID, agent.Model, input, "error", err.Error(), streamedReasoning, streamedText, gerr.Guardrail, gerr.Stage)
 			sendEvent(protocol.EventRunError, gerr)
 			return mkErrResult(gerr.Code, err.Error())
@@ -407,7 +407,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "cancelled", "", partialReasoning, partialText, "", "")
 			sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
 		} else {
-			gerr := guardrailRunError(runID, err, code)
+			gerr := runErrorFor(runID, err, code)
 			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText, gerr.Guardrail, gerr.Stage)
 			sendEvent(protocol.EventRunError, gerr)
 			return mkErrResult(gerr.Code, err.Error())
@@ -732,16 +732,22 @@ func (r *Runner) drainStream(sr *agents.StreamedResult, runID string, handoffNam
 	return text.String(), reasoning.String()
 }
 
-// guardrailRunError builds the run.error for a terminal run failure. A guardrail
-// tripwire gets a distinct "guardrail_tripwire" code plus the guardrail name and
-// the stage it fired at, so the UI can render a "blocked by guardrail X" state
-// instead of a generic red error — and, on an output trip, mark the answer that
-// already streamed as retracted. Any other error keeps the caller's fallback code.
-func guardrailRunError(runID string, err error, fallback string) protocol.RunError {
+// runErrorFor builds the run.error for a terminal run failure. The code comes
+// from the SDK (agents.CodeOf) so this stays correct as the SDK's vocabulary
+// grows — there is deliberately no mapping table here. An error the SDK did not
+// classify keeps the caller's transport-level fallback code.
+//
+// A guardrail tripwire additionally carries the guardrail name and the stage it
+// fired at, which no code can express: the UI renders "blocked by guardrail X"
+// instead of a generic red error and, on an output trip, marks the answer that
+// already streamed as retracted.
+func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
+	if code := agents.CodeOf(err); code != agents.CodeUnknown {
+		e.Code = string(code)
+	}
 	var tw *agents.GuardrailTripwireError
 	if errors.As(err, &tw) {
-		e.Code = protocol.CodeGuardrailTripwire
 		e.Guardrail = tw.Result.Guardrail.Name
 		e.Stage = string(tw.Stage())
 	}

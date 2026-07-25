@@ -41,13 +41,31 @@ export const EV = {
 } as const;
 
 // RunError.code values the client branches on for recovery behavior.
+//
+// Two origins share one flat namespace (see cmd/agents-server/PROTOCOL.md F3):
+// TRANSPORT codes mirror internal/protocol/messages.go — failures that happen
+// before or outside a run; SDK codes mirror agents.ErrorCode and grow with the
+// SDK, so an unrecognized code MUST fall back to generic error rendering rather
+// than being treated as impossible.
 export const ERR = {
+  // Transport — mirrors protocol.Code* in messages.go
   sessionBusy: 'session_busy',
   sessionNotFound: 'session_not_found',
   runNotFound: 'run_not_found',
   approvalFailed: 'approval_failed',
-  guardrailTripwire: 'guardrail_tripwire',
   configError: 'config_error',
+
+  // SDK — mirrors agents.Code* in agents/errors.go
+  guardrailTripwire: 'guardrail_tripwire',
+  maxTurns: 'max_turns_exceeded',
+  modelBehavior: 'model_behavior',
+  modelRefusal: 'model_refusal',
+  userError: 'user_error',
+  toolTimeout: 'tool_timeout',
+  toolPanic: 'tool_panic',
+  sandboxExec: 'sandbox_exec',
+  mcp: 'mcp',
+  unknown: 'unknown',
 } as const;
 
 // Mirror of protocol.TaskNotificationPrefix: a user-input message the server
