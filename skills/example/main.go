@@ -37,9 +37,7 @@ func main() {
 	}
 
 	res, err := agents.RunSync(context.Background(), agent,
-		"Summarize a PDF for me — what process should you follow?", agents.RunOptions{
-			ModelProvider: openai.NewProvider(),
-		})
+		"Summarize a PDF for me — what process should you follow?", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -67,7 +67,8 @@ func main() {
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "Hello!", agents.RunOptions{
-		ModelProvider: openai.NewProvider(), // reads OPENAI_API_KEY
+		// Provider reads OPENAI_API_KEY.
+		Model: agents.ModelOptions{Provider: openai.NewProvider()},
 	})
 	if err != nil {
 		panic(err)

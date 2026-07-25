@@ -13,10 +13,10 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// DefaultMaxTurns is the turn budget applied when RunOptions.MaxTurns is zero.
+// DefaultMaxTurns is the turn budget applied when RunOptions.Exec.MaxTurns is zero.
 const DefaultMaxTurns = 10
 
-// MaxTurnsUnlimited disables the turn budget when set as RunOptions.MaxTurns —
+// MaxTurnsUnlimited disables the turn budget when set as RunOptions.Exec.MaxTurns —
 // the run loops until it produces a final output, hands off to a finishing
 // agent, or is cancelled. The counterpart of Python's max_turns=None. Use with
 // care: a model that never finishes will loop indefinitely.
@@ -36,10 +36,34 @@ type CallModelInputFilter func(ctx context.Context, rc *RunContext, agent *Agent
 // RunOptions configures a run. The zero value is valid: MaxTurns defaults to
 // DefaultMaxTurns and a fresh RunContext is created. A ModelProvider (or an
 // agent with an explicit ModelImpl) is required so the runner can obtain a Model.
+// RunOptions configures a run. The zero value is usable: agents.RunSync(ctx,
+// agent, "hi", agents.RunOptions{}) works as long as the agent can resolve a
+// model.
+//
+// Fields are grouped by what they configure rather than listed flat. The groups
+// are not cosmetic — Conversation in particular collects options that constrain
+// each other (a local Session and server-managed state are alternatives, not
+// layers), which a flat list hid.
 type RunOptions struct {
-	// MaxTurns bounds the number of model calls before the run aborts with a
-	// MaxTurnsError. Zero means DefaultMaxTurns.
-	MaxTurns int
+	// Model selects and configures the model behind every agent in the run.
+	Model ModelOptions
+
+	// Conversation decides where history lives and how it is combined with the
+	// run's new input.
+	Conversation ConversationOptions
+
+	// Exec bounds and steers the loop itself.
+	Exec ExecOptions
+
+	// Guardrails apply to the whole run, in addition to each agent's own
+	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
+	Guardrails []Guardrail
+
+	// Hooks receives run-scoped lifecycle callbacks.
+	Hooks RunHooks
+
+	// Observe configures tracing.
+	Observe ObserveOptions
 
 	// Context is arbitrary user data threaded through tools, guardrails and
 	// hooks via RunContext.Context. Ignored if RunContext is set.
@@ -49,22 +73,81 @@ type RunOptions struct {
 	// Otherwise a new one wrapping Context is created.
 	RunContext *RunContext
 
-	// ModelProvider resolves an agent's model name to a Model. Required unless
-	// every agent in the run sets ModelImpl (or Model below is set).
-	ModelProvider ModelProvider
+	// parentTrace, when set, makes the run record its spans into an existing
+	// trace instead of starting (and finishing) its own. Set internally for
+	// nested agent-as-tool runs; not user-facing.
+	parentTrace *tracing.TraceHandle
 
-	// Model overrides the model for every agent in the run, ignoring agent model
-	// names. Takes precedence over ModelProvider lookups.
-	Model Model
+	// parentSpanID, when set alongside parentTrace, parents the nested run's
+	// agent spans under the function span of the agent-as-tool call that
+	// triggered it, so trace trees show which tool call owns the nested run.
+	// Set internally; not user-facing.
+	parentSpanID string
+}
+
+// ModelOptions selects and configures the model used by every agent in a run.
+type ModelOptions struct {
+
+	// ModelProvider resolves an agent's model name to a Model. Required unless
+	// every agent in the run sets ModelImpl (or Override below is set).
+	Provider ModelProvider
+
+	// Override replaces the model for every agent in the run, ignoring agent
+	// model names. Takes precedence over Provider lookups.
+	Override Model
 
 	// ModelSettings is a run-level settings override merged over each agent's
 	// own ModelSettings.
-	ModelSettings *ModelSettings
+	Settings *ModelSettings
 
 	// CallModelInputFilter, when set, is invoked just before each model call to
 	// edit the instructions and input items sent (e.g. to trim tokens or inject
 	// context). It does not change what is saved to the session.
-	CallModelInputFilter CallModelInputFilter
+	InputFilter CallModelInputFilter
+}
+
+// ConversationOptions decides where a run's history lives: in a local Session,
+// or on the server via previous_response_id or a conversation id. The two are
+// alternatives — a run that sets both is rejected.
+type ConversationOptions struct {
+
+	// Session, when set, supplies and persists conversation history: prior items
+	// are prepended to the input, and the new input plus generated items are
+	// saved after the run completes.
+	Session Session
+
+	// SessionInputCallback customizes how stored session history is combined with
+	// the run's new input. Nil (the default) appends new input to history; a
+	// custom callback may reorder, filter or fold history. Only genuinely new
+	// items are persisted back to the session. Ignored without a Session — the
+	// counterpart of Python's RunConfig.session_input_callback.
+	InputCallback SessionInputCallback
+
+	// SessionSettings overrides how the run reads the Session (e.g. how many
+	// recent items to load). Non-zero fields take precedence over a Session-level
+	// default. Ignored without a Session — the counterpart of Python's
+	// RunConfig.session_settings.
+	Settings *SessionSettings
+
+	// UsePreviousResponseID opts into server-managed conversation state: instead
+	// of resending the full history each turn, the runner chains calls via the
+	// OpenAI Responses API's previous_response_id and sends only new items. This
+	// saves tokens but requires a model that returns response IDs and keeps
+	// responses stored (the default; do not set ModelSettings.Store=false).
+	UsePreviousResponseID bool
+
+	// ConversationID attaches the run to a server-side OpenAI conversation
+	// (the Responses API `conversation` parameter). Like UsePreviousResponseID,
+	// the server holds history, so the runner sends only new items each turn. It
+	// is server-managed state and must not be combined with a local Session.
+	ConversationID string
+}
+
+// ExecOptions bounds and steers the run loop.
+type ExecOptions struct {
+	// MaxTurns bounds the number of model calls before the run aborts with a
+	// MaxTurnsError. Zero means DefaultMaxTurns.
+	MaxTurns int
 
 	// MaxToolConcurrency bounds how many function tools run concurrently within a
 	// single turn. Zero means no limit (every tool call in the turn runs in
@@ -91,10 +174,6 @@ type RunOptions struct {
 	// history across all handoffs.
 	HandoffInputFilter func(HandoffInputData) HandoffInputData
 
-	// Guardrails apply to the whole run, in addition to each agent's own
-	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
-	Guardrails []Guardrail
-
 	// ErrorHandlers supplies per-error-kind recovery handlers that can turn a
 	// failing run — max turns exceeded, a model refusal, or an invalid
 	// structured final output — into a normal completion with a fallback final
@@ -102,33 +181,16 @@ type RunOptions struct {
 	// Python's Runner.run(..., error_handlers={...}).
 	ErrorHandlers RunErrorHandlers
 
-	// Hooks receives run-scoped lifecycle callbacks.
-	Hooks RunHooks
-
-	// Session, when set, supplies and persists conversation history: prior items
-	// are prepended to the input, and the new input plus generated items are
-	// saved after the run completes.
-	Session Session
-
-	// SessionInputCallback customizes how stored session history is combined with
-	// the run's new input. Nil (the default) appends new input to history; a
-	// custom callback may reorder, filter or fold history. Only genuinely new
-	// items are persisted back to the session. Ignored without a Session — the
-	// counterpart of Python's RunConfig.session_input_callback.
-	SessionInputCallback SessionInputCallback
-
-	// SessionSettings overrides how the run reads the Session (e.g. how many
-	// recent items to load). Non-zero fields take precedence over a Session-level
-	// default. Ignored without a Session — the counterpart of Python's
-	// RunConfig.session_settings.
-	SessionSettings *SessionSettings
-
 	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
 	// items are converted back into model input on later turns. The default
 	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It is
 	// persisted across interruptions in RunState — the counterpart of Python's
 	// RunConfig.reasoning_item_id_policy.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
+}
+
+// ObserveOptions configures tracing for a run.
+type ObserveOptions struct {
 
 	// Tracer, when set, records a trace of the run with a span per model call.
 	// Build one with tracing.NewTracer(processor).
@@ -140,7 +202,7 @@ type RunOptions struct {
 	// environment variable, where anything but "false" means true — matching
 	// the Python SDK's RunConfig.trace_include_sensitive_data default. Set to
 	// false when trace exports must not carry conversation content.
-	TraceIncludeSensitiveData *bool
+	IncludeSensitiveData *bool
 
 	// TraceGroupID links this run's trace to a group of related traces (e.g.
 	// one chat thread across several runs) — the counterpart of Python's
@@ -151,30 +213,6 @@ type RunOptions struct {
 	// counterpart of Python's RunConfig.trace_metadata. Only used when Tracer
 	// starts a new trace.
 	TraceMetadata map[string]any
-
-	// UsePreviousResponseID opts into server-managed conversation state: instead
-	// of resending the full history each turn, the runner chains calls via the
-	// OpenAI Responses API's previous_response_id and sends only new items. This
-	// saves tokens but requires a model that returns response IDs and keeps
-	// responses stored (the default; do not set ModelSettings.Store=false).
-	UsePreviousResponseID bool
-
-	// ConversationID attaches the run to a server-side OpenAI conversation
-	// (the Responses API `conversation` parameter). Like UsePreviousResponseID,
-	// the server holds history, so the runner sends only new items each turn. It
-	// is server-managed state and must not be combined with a local Session.
-	ConversationID string
-
-	// parentTrace, when set, makes the run record its spans into an existing
-	// trace instead of starting (and finishing) its own. Set internally for
-	// nested agent-as-tool runs; not user-facing.
-	parentTrace *tracing.TraceHandle
-
-	// parentSpanID, when set alongside parentTrace, parents the nested run's
-	// agent spans under the function span of the agent-as-tool call that
-	// triggered it, so trace trees show which tool call owns the nested run.
-	// Set internally; not user-facing.
-	parentSpanID string
 }
 
 // Run starts an agent run and returns it as a stream plus a control handle.
@@ -257,7 +295,7 @@ func (r *runner) finishStream(res *RunResult, err error) {
 // ResumeRun has its own entry construction (it seeds from a RunState) and
 // shares only the loop.
 func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []TResponseInputItem, func(), error) {
-	maxTurns := opts.MaxTurns
+	maxTurns := opts.Exec.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
 	}
@@ -288,19 +326,19 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		// Nested run (agent-as-tool): record spans into the parent's trace
 		// rather than starting an orphan root trace. The parent finishes it.
 		r.trace = opts.parentTrace
-	} else if opts.Tracer != nil {
+	} else if opts.Observe.Tracer != nil {
 		workflow := agent.Name
 		if workflow == "" {
 			workflow = "Agent workflow"
 		}
 		var topts []tracing.TraceOption
-		if opts.TraceGroupID != "" {
-			topts = append(topts, tracing.WithGroupID(opts.TraceGroupID))
+		if opts.Observe.TraceGroupID != "" {
+			topts = append(topts, tracing.WithGroupID(opts.Observe.TraceGroupID))
 		}
-		if opts.TraceMetadata != nil {
-			topts = append(topts, tracing.WithMetadata(opts.TraceMetadata))
+		if opts.Observe.TraceMetadata != nil {
+			topts = append(topts, tracing.WithMetadata(opts.Observe.TraceMetadata))
 		}
-		r.trace = opts.Tracer.StartTrace(workflow, topts...)
+		r.trace = opts.Observe.Tracer.StartTrace(workflow, topts...)
 		finishTrace = r.trace.Finish
 	}
 	rc.activeTrace = r.trace
@@ -309,14 +347,14 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	// SessionInputCallback may instead reorder or fold history; when it does,
 	// only the genuinely new items are persisted (r.userInput is narrowed).
 	modelInput := userInput
-	if opts.Session != nil {
-		limit := resolveSessionLimit(opts.SessionSettings, opts.Session)
-		history, herr := opts.Session.GetItems(ctx, limit)
+	if opts.Conversation.Session != nil {
+		limit := resolveSessionLimit(opts.Conversation.Settings, opts.Conversation.Session)
+		history, herr := opts.Conversation.Session.GetItems(ctx, limit)
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
-		if opts.SessionInputCallback != nil {
-			combined, cerr := opts.SessionInputCallback(history, userInput)
+		if opts.Conversation.InputCallback != nil {
+			combined, cerr := opts.Conversation.InputCallback(history, userInput)
 			if cerr != nil {
 				return nil, nil, nil, cerr
 			}
@@ -606,10 +644,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		var modelInput []TResponseInputItem
 		var prevID string
 		switch {
-		case r.opts.UsePreviousResponseID && previousResponseID != "":
+		case r.opts.Conversation.UsePreviousResponseID && previousResponseID != "":
 			modelInput, err = itemsToInputList(generatedItems[serverItemCount:])
 			prevID = previousResponseID
-		case r.opts.ConversationID != "" && serverCursorActive:
+		case r.opts.Conversation.ConversationID != "" && serverCursorActive:
 			// The conversation already holds prior items server-side.
 			modelInput, err = itemsToInputList(generatedItems[serverItemCount:])
 		default:
@@ -619,7 +657,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 		// Optionally strip reasoning-item ids before sending them to the model.
-		modelInput = applyReasoningItemIDPolicy(modelInput, r.opts.ReasoningItemIDPolicy)
+		modelInput = applyReasoningItemIDPolicy(modelInput, r.opts.Exec.ReasoningItemIDPolicy)
 		// Publish the turn's input so input guardrails, hooks and tools all see
 		// exactly what the model is being sent. CallModelInputFilter may still
 		// edit it below, in which case this is refreshed.
@@ -709,8 +747,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 			}
-			if r.opts.CallModelInputFilter != nil {
-				edited, ferr := r.opts.CallModelInputFilter(ctx, r.rc, currentAgent, ModelInputData{Instructions: systemPrompt, Input: modelInput})
+			if r.opts.Model.InputFilter != nil {
+				edited, ferr := r.opts.Model.InputFilter(ctx, r.rc, currentAgent, ModelInputData{Instructions: systemPrompt, Input: modelInput})
 				if ferr != nil {
 					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
@@ -730,7 +768,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Handoffs:           handoffs,
 				Tracing:            ModelTracingDisabled,
 				PreviousResponseID: prevID,
-				ConversationID:     r.opts.ConversationID,
+				ConversationID:     r.opts.Conversation.ConversationID,
 			}
 			span := r.startGenerationSpan(currentAgent, req)
 			switch {
@@ -793,7 +831,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		r.lastResponseID = resp.ResponseID
 		r.lastStore = r.resolveSettings(currentAgent).Store
 
-		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.ToolNotFoundBehavior)
+		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.Exec.ToolNotFoundBehavior)
 		if err != nil {
 			return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 		}
@@ -838,7 +876,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// Advance the server cursor: items the server already has are everything
 		// sent this turn plus the model's own output items; synthesized items
 		// (tool outputs) remain pending for the next call.
-		if r.opts.UsePreviousResponseID && resp.ResponseID != "" {
+		if r.opts.Conversation.UsePreviousResponseID && resp.ResponseID != "" {
 			previousResponseID = resp.ResponseID
 			if resumedTurn {
 				// The interrupted response's own items were already recorded
@@ -850,7 +888,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		}
 		// conversation_id mode: the server appends each turn's items, so advance
 		// the cursor and send only deltas from the next turn on.
-		if r.opts.ConversationID != "" {
+		if r.opts.Conversation.ConversationID != "" {
 			serverCursorActive = true
 			if resumedTurn {
 				serverItemCount = lenBeforeStep
@@ -883,7 +921,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					// so a filtered view would desync (in ConversationID mode,
 					// resending the full filtered input duplicates the server's
 					// stored items). Fail fast, matching Python's UserError.
-					if r.opts.UsePreviousResponseID || r.opts.ConversationID != "" {
+					if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
 						err := newUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
 						return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 					}
@@ -931,7 +969,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				CurrentTurn:           turn,
 				MaxTurns:              r.maxTurns,
 				ToolsUsed:             toolsUsedList(r.toolsUsedBy),
-				ReasoningItemIDPolicy: r.opts.ReasoningItemIDPolicy,
+				ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
 				// Carry the guardrail results accumulated so far so a resumed run's
 				// RunResult still reports them: first-turn input guardrails are not
 				// re-run on resume (Python parity), so this is their only source.
@@ -1023,7 +1061,7 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []TResponseInputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
 	// Handlers see the session view of the run (never reset by handoff input
 	// filters), like Python's session_items-based RunErrorData for max_turns.
-	rec, err := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
+	rec, err := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
 	if err != nil || rec == nil {
 		return nil, err
 	}
@@ -1070,10 +1108,10 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 // start. Later per-turn saves persist only generated items, so the prompt is
 // never rewritten. No-op without a session or when there is no new input.
 func (r *runner) persistUserInput(ctx context.Context) error {
-	if r.opts.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
+	if r.opts.Conversation.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
 		return nil
 	}
-	if err := r.opts.Session.AddItems(ctx, r.userInput); err != nil {
+	if err := r.opts.Conversation.Session.AddItems(ctx, r.userInput); err != nil {
 		return err
 	}
 	r.userInputSaved = true
@@ -1088,7 +1126,7 @@ func (r *runner) persistUserInput(ctx context.Context) error {
 // outputs arrive. sessionItems is the unfiltered log, so handoff input filters
 // never affect what is stored.
 func (r *runner) persistSessionItems(ctx context.Context) error {
-	if r.opts.Session == nil {
+	if r.opts.Conversation.Session == nil {
 		return nil
 	}
 	end := safePersistBoundary(r.sessionItems, r.persistedSessionItems)
@@ -1100,7 +1138,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		return err
 	}
 	if len(toSave) > 0 {
-		if err := r.opts.Session.AddItems(ctx, toSave); err != nil {
+		if err := r.opts.Conversation.Session.AddItems(ctx, toSave); err != nil {
 			return err
 		}
 	}
@@ -1165,7 +1203,7 @@ func runItemCallID(it RunItem) (callID string, isCall, isOutput bool) {
 // turning the successful run into an error. Called once, at final output — Go
 // compacts per run, not per turn (see docs/migration_from_python.md).
 func (r *runner) maybeCompact(ctx context.Context) {
-	if r.opts.Session == nil {
+	if r.opts.Conversation.Session == nil {
 		return
 	}
 	// Items produced locally AFTER the last model response — a final turn's
@@ -1178,7 +1216,7 @@ func (r *runner) maybeCompact(ctx context.Context) {
 	if endsWithLocalItem(r.sessionItems) {
 		return
 	}
-	if cs, ok := r.opts.Session.(CompactionAwareSession); ok {
+	if cs, ok := r.opts.Conversation.Session.(CompactionAwareSession); ok {
 		// The span starts lazily — only when the session actually compacts —
 		// so no-op passes don't clutter the trace.
 		var cspan *tracing.SpanHandle
@@ -1242,15 +1280,15 @@ func mergeNestedStates(carried, fresh map[string]*RunState) map[string]*RunState
 // conversation_id and previous_response_id both put history on the server, so
 // they cannot be combined with each other or with a local Session.
 func validateServerState(opts RunOptions) error {
-	if opts.ConversationID != "" {
-		if opts.UsePreviousResponseID {
+	if opts.Conversation.ConversationID != "" {
+		if opts.Conversation.UsePreviousResponseID {
 			return newUserError("ConversationID cannot be combined with UsePreviousResponseID")
 		}
-		if opts.Session != nil {
+		if opts.Conversation.Session != nil {
 			return newUserError("ConversationID cannot be combined with a local Session")
 		}
 	}
-	if opts.UsePreviousResponseID && opts.Session != nil {
+	if opts.Conversation.UsePreviousResponseID && opts.Conversation.Session != nil {
 		return newUserError("UsePreviousResponseID cannot be combined with a local Session")
 	}
 	return nil
@@ -1287,13 +1325,13 @@ func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	span.Set("total_tokens", u.TotalTokens)
 }
 
-// traceIncludeSensitiveData resolves RunOptions.TraceIncludeSensitiveData,
+// traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData,
 // falling back to the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
 // variable where anything but "false" means true — the same default as the
 // Python SDK.
 func (r *runner) traceIncludeSensitiveData() bool {
-	if r.opts.TraceIncludeSensitiveData != nil {
-		return *r.opts.TraceIncludeSensitiveData
+	if r.opts.Observe.IncludeSensitiveData != nil {
+		return *r.opts.Observe.IncludeSensitiveData
 	}
 	return !strings.EqualFold(strings.TrimSpace(os.Getenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA")), "false")
 }
@@ -1390,13 +1428,13 @@ func (r *runner) resolveModel(agent *Agent) (Model, error) {
 	if agent.ModelImpl != nil {
 		return agent.ModelImpl, nil
 	}
-	if r.opts.Model != nil {
-		return r.opts.Model, nil
+	if r.opts.Model.Override != nil {
+		return r.opts.Model.Override, nil
 	}
-	if r.opts.ModelProvider != nil {
-		return r.opts.ModelProvider.GetModel(agent.Model)
+	if r.opts.Model.Provider != nil {
+		return r.opts.Model.Provider.GetModel(agent.Model)
 	}
-	return nil, newUserError("no model available: set Agent.ModelImpl, RunOptions.Model, or RunOptions.ModelProvider")
+	return nil, newUserError("no model available: set Agent.ModelImpl, RunOptions.Model.Override, or RunOptions.Model.Provider")
 }
 
 // resolveSettings merges the run-level settings override over the agent's own.
@@ -1405,7 +1443,7 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 	if base == nil {
 		base = &ModelSettings{}
 	}
-	s := base.Resolve(r.opts.ModelSettings)
+	s := base.Resolve(r.opts.Model.Settings)
 	// Once an agent has called tools, leave tool_choice unset on its later
 	// turns so a "required"/specific-tool setting cannot force an infinite
 	// tool-call loop (the Python SDK's reset_tool_choice behavior).

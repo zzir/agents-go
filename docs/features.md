@@ -19,9 +19,9 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 | Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` |
 | Handoffs | `agents.HandoffTo(targetAgent)` |
 | Agent as tool | `agent.AsTool(agents.AgentToolConfig{...})`; typed params via `agents.AgentAsTool[Params](agent, cfg)` (validated, structured input rendering) |
-| Guardrails | One `Guardrail` type across four `Stage`s (input / output / tool input / tool output), on the run, an agent or a single tool (incl. pre-approval via `RunOptions.PreApprovalToolInputGuardrails`) |
+| Guardrails | One `Guardrail` type across four `Stage`s (input / output / tool input / tool output), on the run, an agent or a single tool (incl. pre-approval via `RunOptions.Exec.PreApprovalToolInputGuardrails`) |
 | Human-in-the-loop | `tool.NeedsApproval`, `RunState.Approve/Reject`, `agents.ResumeRun` |
-| Error recovery | `RunOptions.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
+| Error recovery | `RunOptions.Exec.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
 | SDK-only tool output metadata | `FunctionTool.CustomDataExtractor` → `ToolCallOutputItem.CustomData` (never sent to the model) |
 | Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
 | Composite hooks | `agents.CompositeRunHooks(hooks...)` |
@@ -36,7 +36,7 @@ See [Sessions](sessions.md) and [Context management](context.md).
 | Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
 | History compaction | `openai.CompactionSession` (server-side `responses.compact`), `agents.NewSlidingWindowSession` (local summarize) |
 | Session forking | `agents.ForkSession` / `ForkSessionAt` / `IndexOfItemID` |
-| Server-side state | `RunOptions.UsePreviousResponseID` / `RunOptions.ConversationID` |
+| Server-side state | `RunOptions.Conversation.UsePreviousResponseID` / `RunOptions.Conversation.ConversationID` |
 | Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` |
 
 ## Reliability & routing
@@ -56,7 +56,7 @@ See [Tracing](tracing.md), [MCP](mcp.md), [Sandbox agents](sandbox.md),
 
 | Capability | API |
 |---|---|
-| Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor`; `RunOptions.TraceGroupID/TraceMetadata` |
+| Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor`; `RunOptions.Observe.TraceGroupID/TraceMetadata` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer` (`NewSSEServer` deprecated) |
 | Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |

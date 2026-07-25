@@ -41,17 +41,15 @@ func main() {
 		Tools:        []agents.Tool{search},
 	}
 
-	res, err := agents.RunSync(ctx, researcher, "What is the airspeed velocity of an unladen swallow?", agents.RunOptions{
-		ModelProvider: provider,
-		MaxTurns:      2, // deliberately too small
-		ErrorHandlers: agents.RunErrorHandlers{
-			MaxTurns: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
-				log.Printf("max-turns handler fired after %d responses: %v", len(in.RunData.RawResponses), in.Error)
-				return &agents.RunErrorHandlerResult{
-					FinalOutput: "I ran out of research budget before reaching a confident answer — try a narrower question.",
-				}, nil
-			},
+	res, err := agents.RunSync(ctx, researcher, "What is the airspeed velocity of an unladen swallow?", agents.RunOptions{Exec: agents.ExecOptions{MaxTurns: 2, ErrorHandlers: // deliberately too small
+	agents.RunErrorHandlers{
+		MaxTurns: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
+			log.Printf("max-turns handler fired after %d responses: %v", len(in.RunData.RawResponses), in.Error)
+			return &agents.RunErrorHandlerResult{
+				FinalOutput: "I ran out of research budget before reaching a confident answer — try a narrower question.",
+			}, nil
 		},
+	}}, Model: agents.ModelOptions{Provider: provider},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -66,18 +64,16 @@ func main() {
 		OutputType:   agents.OutputType[Report](),
 	}
 
-	res, err = agents.RunSync(ctx, reporter, "Summarize: the quarterly numbers are up.", agents.RunOptions{
-		ModelProvider: provider,
-		ErrorHandlers: agents.RunErrorHandlers{
-			// Fires only if the model's final message fails Report validation
-			// (or it produced no final text at all).
-			InvalidFinalOutput: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
-				log.Printf("invalid-final-output handler fired: %v", in.Error)
-				return &agents.RunErrorHandlerResult{
-					FinalOutput: Report{Summary: "Report unavailable: the model output could not be parsed.", Fallback: true},
-				}, nil
-			},
+	res, err = agents.RunSync(ctx, reporter, "Summarize: the quarterly numbers are up.", agents.RunOptions{Exec: agents.ExecOptions{ErrorHandlers: agents.RunErrorHandlers{
+		// Fires only if the model's final message fails Report validation
+		// (or it produced no final text at all).
+		InvalidFinalOutput: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
+			log.Printf("invalid-final-output handler fired: %v", in.Error)
+			return &agents.RunErrorHandlerResult{
+				FinalOutput: Report{Summary: "Report unavailable: the model output could not be parsed.", Fallback: true},
+			}, nil
 		},
+	}}, Model: agents.ModelOptions{Provider: provider},
 	})
 	if err != nil {
 		log.Fatal(err)

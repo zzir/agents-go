@@ -4,7 +4,7 @@
 executes until the stream is ranged.
 
 ```go
-stream, ctrl := agents.Run(ctx, agent, "Tell me 5 jokes.", agents.RunOptions{ModelProvider: provider})
+stream, ctrl := agents.Run(ctx, agent, "Tell me 5 jokes.", agents.RunOptions{Model: agents.ModelOptions{Provider: provider}})
 
 var res *agents.RunResult
 for event, err := range stream {

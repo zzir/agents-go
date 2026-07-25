@@ -25,7 +25,7 @@ provider = openai.NewProvider(
 Every agent in a run resolves its model through the provider passed in `RunOptions`:
 
 ```go
-res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{ModelProvider: provider})
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{Model: agents.ModelOptions{Provider: provider}})
 ```
 
 ## Default model
@@ -57,8 +57,7 @@ A run-level override merges over each agent's own settings:
 
 ```go
 res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
-	ModelProvider: provider,
-	ModelSettings: &agents.ModelSettings{Temperature: agents.Ptr(0.0)},
+	Model: agents.ModelOptions{Provider: provider, Settings: &agents.ModelSettings{Temperature: agents.Ptr(0.0)}},
 })
 ```
 
@@ -66,7 +65,7 @@ See [Models](models.md) for the full field list.
 
 ## Tracing
 
-Tracing is opt-in: build a `*tracing.Tracer` and pass it in `RunOptions.Tracer`. Without one, tracing code paths are no-ops. See [Tracing](tracing.md).
+Tracing is opt-in: build a `*tracing.Tracer` and pass it in `RunOptions.Observe.Tracer`. Without one, tracing code paths are no-ops. See [Tracing](tracing.md).
 
 ## Debugging and logging
 

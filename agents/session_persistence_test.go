@@ -103,7 +103,7 @@ func TestSession_PersistsEachTurn(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{echoTool(nil)}, ModelImpl: model}
 
 	sess := newRecordingSession()
-	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Session: sess}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,7 +138,7 @@ func TestSession_CancelKeepsCompletedTurns(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{echoTool(nil)}, ModelImpl: model}
 
 	sess := newRecordingSession()
-	_, err := RunSync(ctx, agent, "go", RunOptions{Session: sess})
+	_, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
@@ -165,7 +165,7 @@ func TestSession_FailedFirstTurnKeepsUserInput(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	sess := newRecordingSession()
-	if _, err := RunSync(ctx, agent, "hello", RunOptions{Session: sess}); !errors.Is(err, context.Canceled) {
+	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 
@@ -183,7 +183,7 @@ func TestSession_InterruptionHoldsBackPendingCall(t *testing.T) {
 	agent := approvalAgentAndModel(t, &ran)
 	sess := newRecordingSession()
 
-	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{Session: sess})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{Conversation: ConversationOptions{Session: sess}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestSession_InterruptionHoldsBackPendingCall(t *testing.T) {
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Session: sess}); err != nil {
+	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -231,7 +231,7 @@ func TestSession_ResumeDoesNotDuplicate(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{safeTool, danger}, ModelImpl: model}
 
 	sess := newRecordingSession()
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{Session: sess})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestSession_ResumeDoesNotDuplicate(t *testing.T) {
 	}
 
 	res.State.Approve(res.Interruptions[0], false)
-	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Session: sess}); err != nil {
+	if _, err := ResumeRunSync(context.Background(), res.State, RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -263,7 +263,7 @@ func TestSession_ResumeDoesNotDuplicate(t *testing.T) {
 func TestRunState_PersistedCursorRoundTrip(t *testing.T) {
 	var ran bool
 	agent := approvalAgentAndModel(t, &ran)
-	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{Session: NewInMemorySession()})
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{Conversation: ConversationOptions{Session: NewInMemorySession()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,10 +292,7 @@ func TestSessionSettings_Limit(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "new", RunOptions{
-		Session:         session,
-		SessionSettings: &SessionSettings{Limit: 1},
-	})
+	_, err := RunSync(context.Background(), agent, "new", RunOptions{Conversation: ConversationOptions{Session: session, Settings: &SessionSettings{Limit: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,10 +319,7 @@ func TestSessionInputCallback_DiffPersistsOnlyNew(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "fresh", RunOptions{
-		Session:              session,
-		SessionInputCallback: cb,
-	})
+	_, err := RunSync(context.Background(), agent, "fresh", RunOptions{Conversation: ConversationOptions{Session: session, InputCallback: cb}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +348,7 @@ func TestInMemorySession(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	// First run.
-	if _, err := RunSync(ctx, agent, "hello", RunOptions{Session: sess}); err != nil {
+	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 	items, _ := sess.GetItems(ctx, 0)
@@ -363,7 +357,7 @@ func TestInMemorySession(t *testing.T) {
 	}
 
 	// Second run: history must be prepended to the model input.
-	if _, err := RunSync(ctx, agent, "what did I say?", RunOptions{Session: sess}); err != nil {
+	if _, err := RunSync(ctx, agent, "what did I say?", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 	// The second call's input should include the prior turn's items plus both

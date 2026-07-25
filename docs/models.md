@@ -100,7 +100,7 @@ router := agents.NewRouterProvider(map[string]agents.ModelProvider{
     "groq":   groqP,
 }).WithFallback(openaiP)
 
-agents.Run(ctx, agent, input, agents.RunOptions{ModelProvider: router})
+agents.Run(ctx, agent, input, agents.RunOptions{Model: agents.ModelOptions{Provider: router}})
 // Agent.Model "groq/llama-3.3-70b" -> groqP.GetModel("llama-3.3-70b")
 // Agent.Model "gpt-4o"             -> fallback openaiP.GetModel("gpt-4o")
 ```
@@ -134,7 +134,7 @@ agent.ModelSettings = &agents.ModelSettings{
 }
 ```
 
-`RunOptions.ModelSettings` overlays per-run values over each agent's own (`Resolve` semantics, matching Python).
+`RunOptions.Model.Settings` overlays per-run values over each agent's own (`Resolve` semantics, matching Python).
 
 Notes:
 

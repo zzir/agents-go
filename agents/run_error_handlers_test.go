@@ -52,12 +52,12 @@ func TestErrorHandlers_InvalidFinalOutput_RecoversValidatedFallback(t *testing.T
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
 	var seen RunErrorHandlerInput
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			seen = in
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
-	}}
+	}}}
 	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -96,14 +96,14 @@ func TestErrorHandlers_InvalidFinalOutput_ExcludeFromHistory(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{
 				FinalOutput:        sentiment{Label: "fallback", Score: 1},
 				ExcludeFromHistory: true,
 			}, nil
 		},
-	}}
+	}}}
 	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -120,11 +120,11 @@ func TestErrorHandlers_InvalidFinalOutput_RejectsInvalidFallback(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: map[string]any{"unexpected": "value"}}, nil
 		},
-	}}
+	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
 	var ue *UserError
 	if !errors.As(err, &ue) {
@@ -139,11 +139,11 @@ func TestErrorHandlers_InvalidFinalOutput_CanDecline(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return nil, nil
 		},
-	}}
+	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
@@ -160,12 +160,12 @@ func TestErrorHandlers_InvalidFinalOutput_IgnoresOtherModelBehaviorErrors(t *tes
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
 	handlerCalled := false
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			handlerCalled = true
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "x", Score: 0}}, nil
 		},
-	}}
+	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
@@ -214,11 +214,11 @@ func TestErrorHandlers_EmptyStructuredOutput_RecoversWithoutAnotherTurn(t *testi
 			}}
 			agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-			opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+			opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 				InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 					return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 				},
-			}}
+			}}}
 			res, err := RunSync(context.Background(), agent, "hi", opts)
 			if err != nil {
 				t.Fatal(err)
@@ -238,12 +238,12 @@ func TestErrorHandlers_ModelRefusal_Recovers(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	var seenErr error
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		ModelRefusal: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			seenErr = in.Error
 			return &RunErrorHandlerResult{FinalOutput: "safe fallback"}, nil
 		},
-	}}
+	}}}
 	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -305,12 +305,12 @@ func TestErrorHandlers_MaxTurns_Recovers(t *testing.T) {
 	var seen RunErrorHandlerInput
 	var endOutput any
 	hooks := &recordingEndHooks{onEnd: func(output any) { endOutput = output }}
-	opts := RunOptions{MaxTurns: 2, Hooks: hooks, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Hooks: hooks, Exec: ExecOptions{MaxTurns: 2, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			seen = in
 			return &RunErrorHandlerResult{FinalOutput: "ran out of turns"}, nil
 		},
-	}}
+	}}}
 	res, err := RunSync(context.Background(), agent, "go", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -346,11 +346,11 @@ func TestErrorHandlers_MaxTurns_DeclineKeepsError(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	opts := RunOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return nil, nil
 		},
-	}}
+	}}}
 	_, err := RunSync(context.Background(), agent, "go", opts)
 	if !errors.Is(err, ErrMaxTurns) {
 		t.Fatalf("error = %v, want ErrMaxTurns", err)
@@ -362,11 +362,11 @@ func TestErrorHandlers_HandlerErrorAbortsRun(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	boom := errors.New("handler exploded")
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		ModelRefusal: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return nil, boom
 		},
-	}}
+	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
 	if !errors.Is(err, boom) {
 		t.Fatalf("error = %v, want the handler's own error", err)
@@ -380,11 +380,11 @@ func TestErrorHandlers_WrappedOutputType_WrapsFallback(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[[]string](), ModelImpl: model}
 
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: []string{"a", "b"}}, nil
 		},
-	}}
+	}}}
 	res, err := RunSync(context.Background(), agent, "hi", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -404,11 +404,11 @@ func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{Session: session, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Conversation: ConversationOptions{Session: session}, Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
-	}}
+	}}}
 	if _, err := RunSync(context.Background(), agent, "hi", opts); err != nil {
 		t.Fatal(err)
 	}
@@ -438,11 +438,11 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	opts := RunOptions{MaxTurns: 1, Session: session, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Conversation: ConversationOptions{Session: session}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 		},
-	}}
+	}}}
 	if _, err := RunSync(context.Background(), agent, "go", opts); err != nil {
 		t.Fatal(err)
 	}
@@ -463,11 +463,11 @@ func TestErrorHandlers_Streamed_EmitsSynthesizedMessage(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
-	}}
+	}}}
 	stream, _ := Run(context.Background(), agent, "hi", opts)
 	var messageEvents []string
 	events, res, err := streamRun(stream)
@@ -500,11 +500,11 @@ func TestErrorHandlers_Streamed_MaxTurnsRecovery(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	opts := RunOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 		},
-	}}
+	}}}
 	stream, _ := Run(context.Background(), agent, "go", opts)
 	sawSynthesized := false
 	events, res, err := streamRun(stream)

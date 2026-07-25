@@ -30,7 +30,7 @@ func main() {
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "Say hello.",
-		agents.RunOptions{ModelProvider: openai.NewProvider()})
+		agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 	if err != nil {
 		log.Fatal(err)
 	}

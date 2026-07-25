@@ -49,7 +49,7 @@ func main() {
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "Write a haiku about Go.", agents.RunOptions{
-		ModelProvider: provider,
+		Model: agents.ModelOptions{Provider: provider},
 	})
 	if err != nil {
 		log.Fatal(err)

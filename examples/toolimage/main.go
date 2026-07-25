@@ -56,7 +56,7 @@ func main() {
 
 	res, err := agents.RunSync(context.Background(), agent,
 		"Render a blue swatch and tell me what color you see.",
-		agents.RunOptions{ModelProvider: openai.NewProvider()})
+		agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 	if err != nil {
 		log.Fatal(err)
 	}

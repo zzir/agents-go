@@ -102,7 +102,7 @@ func TestCodeSurvivesTheRunLoop(t *testing.T) {
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "loop", "c1", `{}`))},
 	}, Tools: []Tool{NewFunctionTool("loop", "loop",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })}},
-		"hi", RunOptions{MaxTurns: 1})
+		"hi", RunOptions{Exec: ExecOptions{MaxTurns: 1}})
 	if got := CodeOf(err); got != CodeMaxTurns {
 		t.Errorf("CodeOf(max turns) = %q, want %q (err: %v)", got, CodeMaxTurns, err)
 	}

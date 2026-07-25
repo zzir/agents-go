@@ -40,8 +40,8 @@ With a shared `RunContext` (`RunOptions.RunContext`), usage even accumulates acr
 
 ```go
 rc := agents.NewRunContext(myAppData)
-agents.Run(ctx, a1, in1, agents.RunOptions{RunContext: rc, ModelProvider: p})
-agents.Run(ctx, a2, in2, agents.RunOptions{RunContext: rc, ModelProvider: p})
+agents.Run(ctx, a1, in1, agents.RunOptions{RunContext: rc, Model: agents.ModelOptions{Provider: p}})
+agents.Run(ctx, a2, in2, agents.RunOptions{RunContext: rc, Model: agents.ModelOptions{Provider: p}})
 fmt.Println("combined tokens:", rc.Usage.TotalTokens)
 ```
 

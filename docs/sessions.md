@@ -5,10 +5,10 @@ A `Session` persists conversation history across runs, so multi-turn chat needs 
 ```go
 sess := agents.NewInMemorySession()
 
-res1, _ := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Session: sess, ModelProvider: p})
+res1, _ := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
 // "San Francisco"
 
-res2, _ := agents.RunSync(ctx, agent, "What state is it in?", agents.RunOptions{Session: sess, ModelProvider: p})
+res2, _ := agents.RunSync(ctx, agent, "What state is it in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
 // "California" — the agent saw the previous turn
 ```
 
@@ -110,7 +110,7 @@ sess := openai.NewConversationsSession() // reads OPENAI_API_KEY; or pass option
 // id, _ := sess.ConversationID(ctx)                   // read/create the server-side ID
 
 agents.Run(ctx, agent, "remember my name is Ada",
-	agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()})
+	agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
 
 `GetItems`/`AddItems`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
@@ -131,7 +131,7 @@ sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
 	// Mode / ShouldCompact override the defaults if needed.
 }, /* option.WithAPIKey(...) */)
 
-agents.Run(ctx, agent, "…", agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()})
+agents.Run(ctx, agent, "…", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
 
 The runner attempts compaction once, after the final output is persisted (Python compacts per turn; Go persists items per turn but compacts once per run). "Candidate" items exclude user messages and existing compaction items, matching the Python heuristic. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
@@ -163,7 +163,7 @@ The pair-safety logic is exported as `agents.SafeSplitPoint(items, split)` for c
 ```go
 last, _ := sess.PopItem(ctx) // remove the assistant answer
 last, _ = sess.PopItem(ctx)  // remove the user question
-res, _ := agents.RunSync(ctx, agent, correctedQuestion, agents.RunOptions{Session: sess, ModelProvider: p})
+res, _ := agents.RunSync(ctx, agent, correctedQuestion, agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
 ```
 
 ## Combining history with new input
@@ -181,7 +181,7 @@ By default a run loads the session's stored history and appends the new input to
   })
   ```
 
-- **`SessionSettings{Limit}`** — caps how many of the most recent items are loaded at run start (`0`, the default, loads the full history). An explicit `RunOptions.SessionSettings` wins; otherwise a `Session` may supply its own default by implementing the optional `SessionSettingsAware` capability:
+- **`SessionSettings{Limit}`** — caps how many of the most recent items are loaded at run start (`0`, the default, loads the full history). An explicit `RunOptions.Conversation.Settings` wins; otherwise a `Session` may supply its own default by implementing the optional `SessionSettingsAware` capability:
 
   ```go
   type SessionSettingsAware interface {

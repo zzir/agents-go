@@ -210,7 +210,7 @@ func TestToolNotFound_ReturnToModelText(t *testing.T) {
 	}}
 	agent.ModelImpl = model
 
-	res, err := RunSync(context.Background(), agent, "hi", RunOptions{ToolNotFoundBehavior: ToolNotFoundReturnToModel})
+	res, err := RunSync(context.Background(), agent, "hi", RunOptions{Exec: ExecOptions{ToolNotFoundBehavior: ToolNotFoundReturnToModel}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -204,7 +204,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 					// The serialized state already carries the conversation so
 					// far (Python nulls conversation_id/previous_response_id on
 					// resume).
-					resumeOpts.ConversationID = ""
+					resumeOpts.Conversation.ConversationID = ""
 					res, err = runNestedAgent(ctx, a, "", paused, resumeOpts, cfg, tc, argsJSON)
 				}
 			}
@@ -425,22 +425,22 @@ func agentToolOutput(res *RunResult) string {
 // Session and Hooks never carry over; cfg.Session / cfg.Hooks are the only way
 // to give the nested run state and lifecycle callbacks of its own.
 func nestedRunOptions(parent *RunContext, cfg AgentToolConfig) RunOptions {
-	opts := RunOptions{MaxTurns: cfg.MaxTurns}
+	opts := RunOptions{Exec: ExecOptions{MaxTurns: cfg.MaxTurns}}
 	if parent != nil && parent.inheritedOpts != nil {
-		opts.ModelProvider = parent.inheritedOpts.ModelProvider
-		opts.Model = parent.inheritedOpts.Model
-		opts.ModelSettings = parent.inheritedOpts.ModelSettings
-		opts.Tracer = parent.inheritedOpts.Tracer
-		opts.MaxToolConcurrency = parent.inheritedOpts.MaxToolConcurrency
-		opts.ToolNotFoundBehavior = parent.inheritedOpts.ToolNotFoundBehavior
-		opts.PreApprovalToolInputGuardrails = parent.inheritedOpts.PreApprovalToolInputGuardrails
+		opts.Model.Provider = parent.inheritedOpts.Model.Provider
+		opts.Model.Override = parent.inheritedOpts.Model.Override
+		opts.Model.Settings = parent.inheritedOpts.Model.Settings
+		opts.Observe.Tracer = parent.inheritedOpts.Observe.Tracer
+		opts.Exec.MaxToolConcurrency = parent.inheritedOpts.Exec.MaxToolConcurrency
+		opts.Exec.ToolNotFoundBehavior = parent.inheritedOpts.Exec.ToolNotFoundBehavior
+		opts.Exec.PreApprovalToolInputGuardrails = parent.inheritedOpts.Exec.PreApprovalToolInputGuardrails
 		// Inherit the sensitive-data gate so a parent that disabled span
 		// content cannot have it re-enabled by a nested agent-as-tool run.
-		opts.TraceIncludeSensitiveData = parent.inheritedOpts.TraceIncludeSensitiveData
+		opts.Observe.IncludeSensitiveData = parent.inheritedOpts.Observe.IncludeSensitiveData
 		// Inherit input filters so a nested run's own handoffs and model calls
 		// see the same rewriting the parent configured.
-		opts.HandoffInputFilter = parent.inheritedOpts.HandoffInputFilter
-		opts.CallModelInputFilter = parent.inheritedOpts.CallModelInputFilter
+		opts.Exec.HandoffInputFilter = parent.inheritedOpts.Exec.HandoffInputFilter
+		opts.Model.InputFilter = parent.inheritedOpts.Model.InputFilter
 		// Inherit run-level guardrails so a nested run is guarded like its parent.
 		opts.Guardrails = parent.inheritedOpts.Guardrails
 	}
@@ -455,7 +455,7 @@ func nestedRunOptions(parent *RunContext, cfg AgentToolConfig) RunOptions {
 		opts.Context = parent.Context
 	}
 	opts.Hooks = cfg.Hooks
-	opts.Session = cfg.Session
-	opts.ConversationID = cfg.ConversationID
+	opts.Conversation.Session = cfg.Session
+	opts.Conversation.ConversationID = cfg.ConversationID
 	return opts
 }

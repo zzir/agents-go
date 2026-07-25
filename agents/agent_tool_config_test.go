@@ -224,7 +224,7 @@ func TestAgentToolModifyRunOptions(t *testing.T) {
 	}}}
 	tool := sub.AsTool(AgentToolConfig{
 		Name:             "specialist",
-		ModifyRunOptions: func(o *RunOptions) { o.MaxTurns = 1 },
+		ModifyRunOptions: func(o *RunOptions) { o.Exec.MaxTurns = 1 },
 	})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
 

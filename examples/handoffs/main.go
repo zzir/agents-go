@@ -33,9 +33,7 @@ func main() {
 		Handoffs:     []agents.Handoff{agents.HandoffTo(billing), agents.HandoffTo(support)},
 	}
 
-	res, err := agents.RunSync(context.Background(), triage, "我想申请上个月订单的退款。", agents.RunOptions{
-		ModelProvider: openai.NewProvider(),
-	})
+	res, err := agents.RunSync(context.Background(), triage, "我想申请上个月订单的退款。", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -10,7 +10,7 @@ Run agents with one of three entry points:
 
 ```go
 res, err := agents.RunSync(ctx, agent, "Write a haiku about recursion.", agents.RunOptions{
-	ModelProvider: provider,
+	Model: agents.ModelOptions{Provider: provider},
 })
 ```
 
@@ -68,8 +68,8 @@ Each `Run` is one logical turn of a conversation. To carry history across runs y
 
    ```go
    sess := agents.NewInMemorySession()
-   agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Session: sess, ModelProvider: p})
-   agents.Run(ctx, agent, "What state is it in?", agents.RunOptions{Session: sess, ModelProvider: p})
+   agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
+   agents.Run(ctx, agent, "What state is it in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
    ```
 
 2. **Thread items manually** — build the next input from the previous result:
@@ -171,7 +171,7 @@ classification wins, because it knows the most about the failure.
 
 ## Error handlers
 
-`RunOptions.ErrorHandlers` — the counterpart of Python's `Runner.run(..., error_handlers={...})` — turns selected failures into a normal completion with a fallback final output instead of an error:
+`RunOptions.Exec.ErrorHandlers` — the counterpart of Python's `Runner.run(..., error_handlers={...})` — turns selected failures into a normal completion with a fallback final output instead of an error:
 
 - **`MaxTurns`** fires when the run exceeds its turn budget (`*MaxTurnsError`).
 - **`ModelRefusal`** fires when the model refuses to respond (`*ModelRefusalError`).

@@ -26,7 +26,7 @@ func main() {
 	}
 
 	agent := &agents.Agent{Name: "assistant", Model: "gpt-4o"}
-	opts := agents.RunOptions{Session: sess, ModelProvider: provider}
+	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: provider}}
 
 	prompts := []string{
 		"My favorite color is teal.",

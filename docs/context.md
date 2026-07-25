@@ -19,8 +19,8 @@ type AppContext struct {
 }
 
 res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
-	ModelProvider: provider,
-	Context:       &AppContext{UserID: "u_123", DB: db},
+	Context: &AppContext{UserID: "u_123", DB: db},
+	Model: agents.ModelOptions{Provider: provider},
 })
 ```
 

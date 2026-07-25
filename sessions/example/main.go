@@ -45,7 +45,7 @@ func run() error {
 		Instructions: agents.StaticInstructions("You are concise."),
 		Model:        "gpt-4o",
 	}
-	opts := agents.RunOptions{Session: sess, ModelProvider: openai.NewProvider()}
+	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}}
 
 	res1, err := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
 	if err != nil {

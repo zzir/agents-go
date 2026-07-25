@@ -80,7 +80,7 @@ func TestFunctionSpanRecordsInputOutput(t *testing.T) {
 		modelResp(functionCallOutput(t, "get_weather", "call_1", `{"city":"SF"}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc)}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 		t.Fatal(err)
 	}
 	fns := proc.spansOfType(tracing.SpanTypeFunction)
@@ -99,10 +99,7 @@ func TestFunctionSpanRecordsInputOutput(t *testing.T) {
 		modelResp(messageOutput(t, "done")),
 	}}
 	include := false
-	if _, err := RunSync(context.Background(), agent2, "hi", RunOptions{
-		Tracer:                    tracing.NewTracer(proc2),
-		TraceIncludeSensitiveData: &include,
-	}); err != nil {
+	if _, err := RunSync(context.Background(), agent2, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc2), IncludeSensitiveData: &include}}); err != nil {
 		t.Fatal(err)
 	}
 	fns = proc2.spansOfType(tracing.SpanTypeFunction)
@@ -123,7 +120,7 @@ func TestCompactionSpan(t *testing.T) {
 	t.Run("noop pass emits no span", func(t *testing.T) {
 		agent, proc := tracingAgent(t)
 		sess := &compactingSession{InMemorySession: NewInMemorySession(), threshold: 100}
-		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc), Session: sess}); err != nil {
+		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: sess}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 			t.Fatal(err)
 		}
 		if got := proc.spansOfType(tracing.SpanTypeCompaction); len(got) != 0 {
@@ -134,7 +131,7 @@ func TestCompactionSpan(t *testing.T) {
 	t.Run("real pass emits annotated span", func(t *testing.T) {
 		agent, proc := tracingAgent(t)
 		sess := &compactingSession{InMemorySession: NewInMemorySession(), threshold: 1}
-		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc), Session: sess}); err != nil {
+		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: sess}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 			t.Fatal(err)
 		}
 		spans := proc.spansOfType(tracing.SpanTypeCompaction)
@@ -155,7 +152,7 @@ func TestCompactionSpan(t *testing.T) {
 		// Compaction is best-effort housekeeping after the run's items are
 		// saved: its failure is recorded on the span, not returned to the
 		// caller whose run already produced a final output.
-		res, err := RunSync(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc), Session: sess})
+		res, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{Session: sess}, Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}})
 		if err != nil {
 			t.Fatalf("compaction failure must not fail the run: %v", err)
 		}
@@ -195,7 +192,7 @@ func tracingAgent(t *testing.T) (*Agent, *recordingProcessor) {
 // each call sent and got back.
 func TestGenerationSpanRecordsRequestAndOutput(t *testing.T) {
 	agent, proc := tracingAgent(t)
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc)}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 		t.Fatal(err)
 	}
 	gens := proc.generationSpans()
@@ -227,7 +224,7 @@ func TestGenerationSpanRecordsRequestAndOutput(t *testing.T) {
 // The streaming runner records the same request/output data on its spans.
 func TestGenerationSpanRecordsRequestAndOutputStreamed(t *testing.T) {
 	agent, proc := tracingAgent(t)
-	stream, _ := Run(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc)})
+	stream, _ := Run(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}})
 	for _, err := range stream {
 		if err != nil {
 			t.Fatal(err)
@@ -254,10 +251,7 @@ func TestGenerationSpanRecordsRequestAndOutputStreamed(t *testing.T) {
 func TestGenerationSpanExcludesSensitiveData(t *testing.T) {
 	agent, proc := tracingAgent(t)
 	include := false
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Tracer:                    tracing.NewTracer(proc),
-		TraceIncludeSensitiveData: &include,
-	}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc), IncludeSensitiveData: &include}}); err != nil {
 		t.Fatal(err)
 	}
 	gens := proc.generationSpans()
@@ -280,7 +274,7 @@ func TestGenerationSpanExcludesSensitiveData(t *testing.T) {
 func TestGenerationSpanEnvOptOut(t *testing.T) {
 	t.Setenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA", "false")
 	agent, proc := tracingAgent(t)
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Tracer: tracing.NewTracer(proc)}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 		t.Fatal(err)
 	}
 	if d := proc.generationSpans()[0].Data; d["input"] != nil {
@@ -304,10 +298,7 @@ func TestFunctionSpanErrorRedaction(t *testing.T) {
 		}}
 		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 		proc := &recordingProcessor{}
-		if _, err := RunSync(context.Background(), agent, "go", RunOptions{
-			Tracer:                    tracing.NewTracer(proc),
-			TraceIncludeSensitiveData: &include,
-		}); err != nil {
+		if _, err := RunSync(context.Background(), agent, "go", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc), IncludeSensitiveData: &include}}); err != nil {
 			t.Fatal(err)
 		}
 		fns := proc.spansOfType(tracing.SpanTypeFunction)

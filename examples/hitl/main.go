@@ -33,7 +33,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	opts := agents.RunOptions{ModelProvider: openai.NewProvider()}
+	opts := agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}}
 
 	res, err := agents.RunSync(ctx, agent, "请删除 /tmp/old.log 文件。", opts)
 	if err != nil {

@@ -49,9 +49,7 @@ func run() error {
 	}
 
 	res, err := agents.RunSync(context.Background(), agent,
-		"用 Python 计算 1 到 100 的素数个数,并打印结果。", agents.RunOptions{
-			ModelProvider: openai.NewProvider(),
-		})
+		"用 Python 计算 1 到 100 的素数个数,并打印结果。", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 	if err != nil {
 		return err
 	}

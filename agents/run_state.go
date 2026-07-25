@@ -40,7 +40,7 @@ type RunState struct {
 	CurrentTurn         int
 
 	// MaxTurns is the turn budget of the interrupted run. ResumeRun always
-	// continues under it (ignoring RunOptions.MaxTurns, matching Python), so a
+	// continues under it (ignoring RunOptions.Exec.MaxTurns, matching Python), so a
 	// run started with MaxTurns 20 and interrupted at turn 12 resumes under 20.
 	// Zero — e.g. states serialized before this field existed — falls back to
 	// DefaultMaxTurns; a negative value (MaxTurnsUnlimited) disables the budget.
@@ -171,8 +171,8 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// Reasoning-item id policy precedence: an explicit override in opts wins, then
 	// the interrupted run's own policy carried by the state (so a run started with
 	// Omit keeps stripping ids on resume even when the caller does not repeat it).
-	if opts.ReasoningItemIDPolicy == ReasoningItemIDPreserve {
-		opts.ReasoningItemIDPolicy = state.ReasoningItemIDPolicy
+	if opts.Exec.ReasoningItemIDPolicy == ReasoningItemIDPreserve {
+		opts.Exec.ReasoningItemIDPolicy = state.ReasoningItemIDPolicy
 	}
 	rc := opts.RunContext
 	if rc == nil {
@@ -216,12 +216,12 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// instead of opening an orphan "(resumed)" root trace (prepareRun parity).
 	if opts.parentTrace != nil {
 		r.trace = opts.parentTrace
-	} else if opts.Tracer != nil {
+	} else if opts.Observe.Tracer != nil {
 		workflow := state.CurrentAgent.Name
 		if workflow == "" {
 			workflow = "Agent workflow"
 		}
-		r.trace = opts.Tracer.StartTrace(workflow + " (resumed)")
+		r.trace = opts.Observe.Tracer.StartTrace(workflow + " (resumed)")
 		defer r.trace.Finish()
 	}
 	rc.activeTrace = r.trace

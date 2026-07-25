@@ -21,9 +21,7 @@ func main() {
 
 	// Run returns the run as a stream: nothing happens until it is ranged, and
 	// the run advances on this goroutine, one event at a time.
-	stream, _ := agents.Run(context.Background(), agent, "讲一个关于 Gopher 的短故事。", agents.RunOptions{
-		ModelProvider: openai.NewProvider(),
-	})
+	stream, _ := agents.Run(context.Background(), agent, "讲一个关于 Gopher 的短故事。", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 
 	var res *agents.RunResult
 	for event, err := range stream {

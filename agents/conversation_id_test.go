@@ -38,10 +38,7 @@ func TestConversationIDSendsIncrementalInput(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
-	_, err := RunSync(context.Background(), agent, "hello", RunOptions{
-		Model:          model,
-		ConversationID: "conv_abc",
-	})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc"}, Model: ModelOptions{Override: model}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,10 +64,7 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 	})
 	agent := &Agent{Name: "a", Model: "m", Tools: []Tool{echo}}
 
-	_, err := RunSync(context.Background(), agent, "hello", RunOptions{
-		Model:          model,
-		ConversationID: "conv_abc",
-	})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc"}, Model: ModelOptions{Override: model}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,11 +83,7 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 
 func TestConversationIDRejectsSession(t *testing.T) {
 	agent := &Agent{Name: "a", Model: "m"}
-	_, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Model:          &recordingModel{},
-		ConversationID: "conv_abc",
-		Session:        NewInMemorySession(),
-	})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc", Session: NewInMemorySession()}, Model: ModelOptions{Override: &recordingModel{}}})
 	if err == nil {
 		t.Fatal("expected error combining ConversationID with a Session")
 	}
@@ -117,7 +107,7 @@ func TestPreviousResponseID(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +157,7 @@ func TestPreviousResponseID_Streaming(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	stream, _ := Run(context.Background(), agent, "go", RunOptions{UsePreviousResponseID: true})
+	stream, _ := Run(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}})
 	_, res, err := streamRun(stream)
 	if err != nil {
 		t.Fatal(err)

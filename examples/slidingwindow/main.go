@@ -51,10 +51,7 @@ func main() {
 		"Given everything so far, where do I want to go and when?",
 	}
 	for _, q := range turns {
-		res, err := agents.RunSync(ctx, agent, q, agents.RunOptions{
-			ModelProvider: provider,
-			Session:       sess,
-		})
+		res, err := agents.RunSync(ctx, agent, q, agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: provider}})
 		if err != nil {
 			log.Fatal(err)
 		}

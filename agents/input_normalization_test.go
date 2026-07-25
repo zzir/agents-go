@@ -132,7 +132,7 @@ func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "answer"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Session: sess}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 	// The model must not have received the dangling call.

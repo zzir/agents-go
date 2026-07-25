@@ -229,7 +229,7 @@ func TestRun_TracingEmitsSpans(t *testing.T) {
 	})
 	agent := &Agent{Name: "tracer-agent", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "go", RunOptions{Tracer: tr})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Observe: ObserveOptions{Tracer: tr}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestRun_TracingGuardrailAndHandoffSpans(t *testing.T) {
 		}},
 	}
 
-	if _, err := RunSync(context.Background(), src, "go", RunOptions{Tracer: newTestTracer(col)}); err != nil {
+	if _, err := RunSync(context.Background(), src, "go", RunOptions{Observe: ObserveOptions{Tracer: newTestTracer(col)}}); err != nil {
 		t.Fatal(err)
 	}
 	if col.named("agent:") != 2 {

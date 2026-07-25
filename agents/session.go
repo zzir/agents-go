@@ -36,7 +36,7 @@ type SessionSettings struct {
 }
 
 // SessionSettingsAware is an optional Session capability: expose a default
-// SessionSettings that a run applies unless RunOptions.SessionSettings overrides
+// SessionSettings that a run applies unless RunOptions.Conversation.Settings overrides
 // it. It mirrors Python reading session.session_settings.
 type SessionSettingsAware interface {
 	DefaultSessionSettings() SessionSettings

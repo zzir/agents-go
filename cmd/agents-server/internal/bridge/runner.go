@@ -270,22 +270,17 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
 	opts := agents.RunOptions{
-		Session:               runSession,
-		ModelProvider:         provider,
-		MaxTurns:              built.MaxTurns,
-		Tracer:                tracer,
-		UsePreviousResponseID: built.UsePreviousResponseID,
-		MaxToolConcurrency:    built.MaxToolConcurrency,
-		ErrorHandlers:         built.ErrorHandlers,
-		Context:               trustSessionID(sessionID, task), // exec_command gate reads a session id here
+
+		Context:                                                                                                   trustSessionID(sessionID, task), Conversation: // exec_command gate reads a session id here
+		agents.ConversationOptions{Session: runSession, UsePreviousResponseID: built.UsePreviousResponseID}, Exec: agents.ExecOptions{MaxTurns: built.MaxTurns, MaxToolConcurrency: built.MaxToolConcurrency, ErrorHandlers: built.ErrorHandlers}, Model: agents.ModelOptions{Provider: provider}, Observe: agents.ObserveOptions{Tracer: tracer},
 	}
 	if built.HandoffInputFilter == "nest_history" {
-		opts.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
+		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
-	opts.SessionSettings = sessionSettingsFor(built.HistoryLimit)
-	opts.ReasoningItemIDPolicy = built.ReasoningItemIDPolicy
+	opts.Conversation.Settings = sessionSettingsFor(built.HistoryLimit)
+	opts.Exec.ReasoningItemIDPolicy = built.ReasoningItemIDPolicy
 	opts.Guardrails = built.RunGuardrails
-	opts.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
+	opts.Exec.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
 
 	// Name the session in parallel with the run — the title needs only the user's
 	// first message, not the answer, so it need not wait for the run to finish.
@@ -435,17 +430,10 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	// run.output — a resume that silently swallowed its middle turns is what
 	// made approved runs "jump" to their final answer.
 	stream, ctrl := agents.ResumeRun(ctx, state, agents.RunOptions{
-		Session:               resumeSession,
-		ModelProvider:         provider,
-		MaxTurns:              built.MaxTurns,
-		Tracer:                tracer,
-		UsePreviousResponseID: built.UsePreviousResponseID,
-		MaxToolConcurrency:    built.MaxToolConcurrency,
-		ErrorHandlers:         built.ErrorHandlers,
-		SessionSettings:       sessionSettingsFor(built.HistoryLimit),
-		ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
-		Guardrails:            built.RunGuardrails,
-		Context:               trustSessionID(sessionID, task), // exec_command gate reads a session id here
+
+		Guardrails:                                                                                                                                                     built.RunGuardrails,
+		Context:                                                                                                                                                        trustSessionID(sessionID, task), Conversation: // exec_command gate reads a session id here
+		agents.ConversationOptions{Session: resumeSession, UsePreviousResponseID: built.UsePreviousResponseID, Settings: sessionSettingsFor(built.HistoryLimit)}, Exec: agents.ExecOptions{MaxTurns: built.MaxTurns, MaxToolConcurrency: built.MaxToolConcurrency, ErrorHandlers: built.ErrorHandlers, ReasoningItemIDPolicy: built.ReasoningItemIDPolicy}, Model: agents.ModelOptions{Provider: provider}, Observe: agents.ObserveOptions{Tracer: tracer},
 	})
 	r.hub.setStopHook(runID, ctrl.StopAfterTurn)
 	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
@@ -539,10 +527,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 		Instructions: agents.StaticInstructions("You generate concise chat titles. Reply with ONLY the title text, nothing else. No quotes. Under 30 characters."),
 	}
 	prompt := "Generate a short title for this chat:\n\n" + userInput
-	res, err := agents.RunSync(ctx, titleAgent, prompt, agents.RunOptions{
-		ModelProvider: provider,
-		MaxTurns:      1,
-	})
+	res, err := agents.RunSync(ctx, titleAgent, prompt, agents.RunOptions{Exec: agents.ExecOptions{MaxTurns: 1}, Model: agents.ModelOptions{Provider: provider}})
 	if err != nil {
 		log.Warn().Err(err).Msg("title gen: run failed")
 		return

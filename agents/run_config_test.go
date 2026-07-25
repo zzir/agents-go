@@ -27,15 +27,13 @@ func TestCallModelInputFilter_EditsInputAndInstructions(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("original")}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	_, err := RunSync(context.Background(), agent, "hello", RunOptions{
-		Model: model,
-		CallModelInputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
-			sawInstr = d.Instructions
-			sawLen = len(d.Input)
-			d.Instructions = "edited"
-			d.Input = append(d.Input, userMsg("injected"))
-			return d, nil
-		},
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Model: ModelOptions{Override: model, InputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
+		sawInstr = d.Instructions
+		sawLen = len(d.Input)
+		d.Instructions = "edited"
+		d.Input = append(d.Input, userMsg("injected"))
+		return d, nil
+	}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +70,7 @@ func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []Tool{slow}}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "slow", 3), {ResponseID: "done"}}}
 
-	_, err := RunSync(context.Background(), agent, "go", RunOptions{Model: model, MaxToolConcurrency: 1})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxToolConcurrency: 1}, Model: ModelOptions{Override: model}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +82,7 @@ func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 func TestToolNotFound_DefaultAborts(t *testing.T) {
 	agent := &Agent{Name: "a"}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "ghost", 1)}}
-	_, err := RunSync(context.Background(), agent, "go", RunOptions{Model: model})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Model: ModelOptions{Override: model}})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want tool-not-found abort", err)
 	}
@@ -93,10 +91,7 @@ func TestToolNotFound_DefaultAborts(t *testing.T) {
 func TestToolNotFound_ReturnToModelContinues(t *testing.T) {
 	agent := &Agent{Name: "a"}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "ghost", 1), {ResponseID: "recovered"}}}
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Model:                model,
-		ToolNotFoundBehavior: ToolNotFoundReturnToModel,
-	})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{ToolNotFoundBehavior: ToolNotFoundReturnToModel}, Model: ModelOptions{Override: model}})
 	if err != nil {
 		t.Fatalf("err = %v, want recovery", err)
 	}
@@ -123,12 +118,10 @@ func TestHandoffInputFilter_RunLevelDefault(t *testing.T) {
 		{ResponseID: "final"},                 // target finishes
 	}}
 
-	_, err := RunSync(context.Background(), starter, "go", RunOptions{
-		Model: model,
-		HandoffInputFilter: func(d HandoffInputData) HandoffInputData {
-			called++
-			return d
-		},
+	_, err := RunSync(context.Background(), starter, "go", RunOptions{Exec: ExecOptions{HandoffInputFilter: func(d HandoffInputData) HandoffInputData {
+		called++
+		return d
+	}}, Model: ModelOptions{Override: model},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +179,7 @@ func TestReasoningItemIDPolicy_Omit(t *testing.T) {
 
 	// Omit: the reasoning id is stripped.
 	model, agent = build()
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{ReasoningItemIDPolicy: ReasoningItemIDOmit}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Exec: ExecOptions{ReasoningItemIDPolicy: ReasoningItemIDOmit}}); err != nil {
 		t.Fatal(err)
 	}
 	id, ok = reasoningInputID(model.lastReq.Input)

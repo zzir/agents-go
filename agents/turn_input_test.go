@@ -47,7 +47,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Session: session}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: session}}); err != nil {
 		t.Fatal(err)
 	}
 	if !itemsContain(seen, "MARKER_FROM_HISTORY") {
@@ -73,11 +73,10 @@ func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "original", RunOptions{
-		CallModelInputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
-			d.Input = InputItemsFromText("REWRITTEN_BY_FILTER")
-			return d, nil
-		},
+	_, err := RunSync(context.Background(), agent, "original", RunOptions{Model: ModelOptions{InputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
+		d.Input = InputItemsFromText("REWRITTEN_BY_FILTER")
+		return d, nil
+	}},
 	})
 	if err != nil {
 		t.Fatal(err)

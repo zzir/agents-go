@@ -30,11 +30,7 @@ func TestRun_TraceGroupIDAndMetadata(t *testing.T) {
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}},
 	}
 	proc := &traceRecordingProcessor{}
-	_, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Tracer:        tracing.NewTracer(proc),
-		TraceGroupID:  "thread-42",
-		TraceMetadata: map[string]any{"tenant": "acme"},
-	})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc), TraceGroupID: "thread-42", TraceMetadata: map[string]any{"tenant": "acme"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +63,7 @@ func TestNestedAgentToolSpanParentedUnderFunctionSpan(t *testing.T) {
 		Tools: []Tool{tool},
 	}
 	proc := &recordingProcessor{}
-	if _, err := RunSync(context.Background(), parent, "go", RunOptions{Tracer: tracing.NewTracer(proc)}); err != nil {
+	if _, err := RunSync(context.Background(), parent, "go", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -35,7 +35,7 @@ func TestLLMHooks_FireAroundModelCall(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("sys prompt")}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Model: model, Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Hooks: hooks, Model: ModelOptions{Override: model}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestLLMHooks_AgentScopedFire(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("x"), Hooks: ah}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Model: model}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Model: ModelOptions{Override: model}}); err != nil {
 		t.Fatal(err)
 	}
 	if ah.starts != 1 || ah.ends != 1 {
@@ -88,7 +88,7 @@ func TestLLMHooks_StartErrorAbortsRun(t *testing.T) {
 	agent := &Agent{Name: "a", Instructions: StaticInstructions("x")}
 	model := &fakeModel{responses: []*ModelResponse{{ResponseID: "r1"}}}
 
-	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Model: model, Hooks: hooks})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Hooks: hooks, Model: ModelOptions{Override: model}})
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want veto", err)
 	}
@@ -197,9 +197,7 @@ func TestRunResult_NewItemsUnfilteredAfterHandoffFilter(t *testing.T) {
 
 	// NestHandoffHistory folds prior history into a summary, resetting the
 	// model's generatedItems view on handoff.
-	res, err := RunSync(context.Background(), source, "go", RunOptions{
-		HandoffInputFilter: NestHandoffHistory(NestHistoryOptions{}),
-	})
+	res, err := RunSync(context.Background(), source, "go", RunOptions{Exec: ExecOptions{HandoffInputFilter: NestHandoffHistory(NestHistoryOptions{})}})
 	if err != nil {
 		t.Fatal(err)
 	}

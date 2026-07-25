@@ -57,6 +57,17 @@ from upstream.
   blocking call. Everything else — guardrail timing, persistence points, hooks,
   tracing — is identical, because there is one loop.
 
+### 2.0b Option grouping ✅
+
+`RunOptions` groups its fields by what they configure — `Model`,
+`Conversation`, `Exec`, `Observe` — rather than listing them flat. The zero
+value stays usable.
+
+The grouping is not cosmetic. `Conversation` collects options that **constrain
+each other**: a local `Session`, `UsePreviousResponseID` and `ConversationID`
+are alternatives, not layers, and a run that combines a local session with
+server-managed state is rejected. A flat list hid that.
+
 ### 2.1 The run loop ✅
 
 A run consists of **turns**. One turn = **one model call** plus every side effect

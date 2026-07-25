@@ -308,7 +308,7 @@ func (r *runner) executeToolsAndSideEffects(
 						AgentsError: AgentsError{Code: CodeModelRefusal, Message: "model refused to respond: " + refusal},
 						Refusal:     refusal,
 					}
-					rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.ModelRefusal, refErr, agent,
+					rec, herr := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.ModelRefusal, refErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {
 						return nil, herr
@@ -329,7 +329,7 @@ func (r *runner) executeToolsAndSideEffects(
 					final, err = outputSchema.ValidateJSON(text)
 					if err != nil {
 						mbErr := newModelBehaviorError("failed to parse structured output: %v", err)
-						rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
+						rec, herr := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 							originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 						if herr != nil {
 							return nil, herr
@@ -347,7 +347,7 @@ func (r *runner) executeToolsAndSideEffects(
 					// handler, or run the model again (never a hard failure —
 					// Python parity).
 					mbErr := newModelBehaviorError("model returned no final output for the structured output type")
-					rec, herr := r.resolveErrorRecovery(ctx, r.opts.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
+					rec, herr := r.resolveErrorRecovery(ctx, r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {
 						return nil, herr
@@ -498,8 +498,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	// winner by call order).
 	fatalErrs := make([]error, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
-	if r.opts.MaxToolConcurrency > 0 {
-		g.SetLimit(r.opts.MaxToolConcurrency)
+	if r.opts.Exec.MaxToolConcurrency > 0 {
+		g.SetLimit(r.opts.Exec.MaxToolConcurrency)
 	}
 	for i, run := range runs {
 		g.Go(func() (err error) {
@@ -730,7 +730,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 		// rejection resolves the call without a human round-trip. Calls that
 		// pass still re-run the same guardrails right before execution after
 		// approval, so time-sensitive checks are revalidated on resume.
-		if r.opts.PreApprovalToolInputGuardrails {
+		if r.opts.Exec.PreApprovalToolInputGuardrails {
 			preRejected, msg, gerr := r.runToolStage(ctx, agent, StageToolInput, run, nil)
 			if gerr != nil {
 				return nil, nil, nil, gerr
@@ -989,7 +989,7 @@ func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffIn
 	if h.InputFilter != nil {
 		return h.InputFilter
 	}
-	return r.opts.HandoffInputFilter
+	return r.opts.Exec.HandoffInputFilter
 }
 
 func lastMessageItem(items []RunItem) *MessageOutputItem {

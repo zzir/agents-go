@@ -62,7 +62,7 @@ func main() {
 	provider := openai.NewProvider()
 
 	res, err := agents.RunSync(context.Background(), triage, "What is the French Revolution?", agents.RunOptions{
-		ModelProvider: provider,
+		Model: agents.ModelOptions{Provider: provider},
 	})
 	if err != nil {
 		log.Fatal(err)

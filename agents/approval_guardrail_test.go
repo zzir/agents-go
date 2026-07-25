@@ -115,7 +115,7 @@ func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
 	}
 	agent := preApprovalFixture(t, g, &ran)
 
-	res, err := RunSync(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
+	res, err := RunSync(context.Background(), agent, "send", RunOptions{Exec: ExecOptions{PreApprovalToolInputGuardrails: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestPreApprovalGuardrail_PassStillInterruptsAndRerunsOnResume(t *testing.T)
 		},
 	}
 	agent := preApprovalFixture(t, g, &ran)
-	opts := RunOptions{PreApprovalToolInputGuardrails: true}
+	opts := RunOptions{Exec: ExecOptions{PreApprovalToolInputGuardrails: true}}
 
 	res, err := RunSync(context.Background(), agent, "send", opts)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestPreApprovalGuardrail_TripwireHaltsRun(t *testing.T) {
 	}
 	agent := preApprovalFixture(t, g, &ran)
 
-	_, err := RunSync(context.Background(), agent, "send", RunOptions{PreApprovalToolInputGuardrails: true})
+	_, err := RunSync(context.Background(), agent, "send", RunOptions{Exec: ExecOptions{PreApprovalToolInputGuardrails: true}})
 	var tripErr *GuardrailTripwireError
 	if !errors.As(err, &tripErr) {
 		t.Fatalf("expected *GuardrailTripwireError, got %v", err)

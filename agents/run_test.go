@@ -205,7 +205,7 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "go", RunOptions{MaxTurns: 2})
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 2}})
 	if err == nil {
 		t.Fatal("expected MaxTurnsError")
 	}
@@ -347,7 +347,7 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 	model := &fakeModel{responses: responses}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{MaxTurns: MaxTurnsUnlimited})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: MaxTurnsUnlimited}})
 	if err != nil {
 		t.Fatalf("unlimited run should not hit a turn cap: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 	}
 }
 
-// On resume the interrupted run's budget wins; a small opts.MaxTurns does
+// On resume the interrupted run's budget wins; a small opts.Exec.MaxTurns does
 // not shrink it.
 func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 	tool := NewFunctionTool("act", "acts",
@@ -370,7 +370,7 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{MaxTurns: 5})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 5}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,8 +378,8 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 		t.Fatalf("state MaxTurns = %v, want 5", res.State)
 	}
 	res.State.Approve(res.Interruptions[0], false)
-	// A tiny opts.MaxTurns must be ignored — the state's budget of 5 governs.
-	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{MaxTurns: 1})
+	// A tiny opts.Exec.MaxTurns must be ignored — the state's budget of 5 governs.
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{Exec: ExecOptions{MaxTurns: 1}})
 	if err != nil {
 		t.Fatalf("resume should run under the state's budget, not opts: %v", err)
 	}

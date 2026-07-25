@@ -47,11 +47,9 @@ func run() error {
 		Tools:        []agents.Tool{weather},
 	}
 
-	res, err := agents.RunSync(context.Background(), agent, "What's the weather in Kyoto?", agents.RunOptions{
-		ModelProvider: openai.NewProvider(), // reads OPENAI_API_KEY
-		Tracer:        tracer,
-		TraceGroupID:  "thread-42",                          // one chat thread across runs
-		TraceMetadata: map[string]any{"tenant": "examples"}, // free-form context
+	res, err := agents.RunSync(context.Background(), agent, "What's the weather in Kyoto?", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}, Observe: // reads OPENAI_API_KEY
+	agents.ObserveOptions{Tracer: tracer, TraceGroupID: "thread-42", TraceMetadata:                                                                                                // one chat thread across runs
+	map[string]any{"tenant": "examples"}},                                                                                                                                         // free-form context
 	})
 	if err != nil {
 		return err

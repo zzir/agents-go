@@ -1,6 +1,6 @@
 # Tracing
 
-The SDK can record a trace of every run: one trace per `Run`, with spans for each agent, model call, tool call, handoff and guardrail. Tracing is **opt-in**: build a tracer, pass it in `RunOptions.Tracer`, and pick where the data goes.
+The SDK can record a trace of every run: one trace per `Run`, with spans for each agent, model call, tool call, handoff and guardrail. Tracing is **opt-in**: build a tracer, pass it in `RunOptions.Observe.Tracer`, and pick where the data goes.
 
 ```go
 import "github.com/zzir/agents-go/tracing"
@@ -12,8 +12,8 @@ defer processor.Shutdown(context.Background())
 tracer := tracing.NewTracer(processor)
 
 res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
-	ModelProvider: provider,
-	Tracer:        tracer,
+	Model: agents.ModelOptions{Provider: provider},
+	Observe: agents.ObserveOptions{Tracer: tracer},
 })
 ```
 
@@ -31,7 +31,7 @@ Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a
 
 Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own, and their agent spans are parented under the `function:` span of the tool call that triggered them, so the tree shows which call owns each nested run.
 
-`RunOptions.TraceGroupID` and `RunOptions.TraceMetadata` (the counterparts of Python's `RunConfig.group_id` / `trace_metadata`) stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
+`RunOptions.Observe.TraceGroupID` and `RunOptions.Observe.TraceMetadata` (the counterparts of Python's `RunConfig.group_id` / `trace_metadata`) stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
 
 ### Sensitive data on generation spans
 
@@ -57,8 +57,10 @@ content must not go:
 ```go
 include := false
 agents.Run(ctx, agent, input, agents.RunOptions{
-	Tracer:                    tracer,
-	TraceIncludeSensitiveData: &include, // nil reads the env var below
+	Observe: agents.ObserveOptions{
+		Tracer:               tracer,
+		IncludeSensitiveData: &include, // nil reads the env var below
+	},
 })
 ```
 
