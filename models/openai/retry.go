@@ -29,6 +29,12 @@ func RetryableError(err error) bool {
 	}
 	var apiErr *oai.Error
 	if errors.As(err, &apiErr) {
+		// An explicit x-should-retry header outranks the status code: the
+		// server knows whether *this* failure is transient, and a 500 it will
+		// never recover from is as real as a 400 it would.
+		if v, ok := shouldRetryHeader(apiErr); ok {
+			return v
+		}
 		switch apiErr.StatusCode {
 		case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests:
 			return true
@@ -74,4 +80,21 @@ func RetryAfter(err error) (time.Duration, bool) {
 		}
 	}
 	return 0, false
+}
+
+// shouldRetryHeader reads the x-should-retry hint, which a provider sets to
+// override what its status code would otherwise imply. Only the two exact
+// values carry meaning; anything else is treated as absent so a malformed
+// header falls back to status classification rather than disabling retries.
+func shouldRetryHeader(apiErr *oai.Error) (bool, bool) {
+	if apiErr.Response == nil {
+		return false, false
+	}
+	switch apiErr.Response.Header.Get("X-Should-Retry") {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
 }

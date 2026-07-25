@@ -149,19 +149,57 @@ func formatResult(res *ExecResult, limit int) string {
 	return b.String()
 }
 
-// truncateWithInfo cuts s to at most max bytes, backing up to a rune boundary
-// so a multi-byte UTF-8 sequence is never split. When truncated, the total
-// byte count is reported so the model knows how much was cut.
+// truncateWithInfo cuts s to at most limit bytes, keeping the **head and the
+// tail** and eliding the middle.
+//
+// Head-only truncation loses exactly the part that matters most: a build or
+// test command prints its progress first and its failure summary last, so
+// cutting the tail hands the model the least useful half of the output. The
+// split is 60/40 in favor of the head, which keeps the command's context while
+// still reaching the verdict.
+//
+// Rune boundaries are respected on both sides so a multi-byte UTF-8 sequence is
+// never split, and the elision line reports how much was dropped.
 func truncateWithInfo(s string, limit int) string {
 	if limit <= 0 || len(s) <= limit {
 		return s
 	}
-	cut := limit
-	for back := 0; back < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(s[cut]); back++ {
-		cut--
+
+	headLimit := limit * 3 / 5
+	tailLimit := limit - headLimit
+
+	head := s[:backToRuneStart(s, headLimit)]
+	tail := s[forwardToRuneStart(s, len(s)-tailLimit):]
+
+	dropped := len(s) - len(head) - len(tail)
+	if dropped <= 0 {
+		return s
 	}
-	if cut == 0 {
+	if head == "" && tail == "" {
 		return fmt.Sprintf("…[truncated, showing 0 of %d bytes]", len(s))
 	}
-	return fmt.Sprintf("%s\n…[truncated, showing %d of %d bytes]", s[:cut], cut, len(s))
+	return fmt.Sprintf("%s\n…[%d of %d bytes elided]\n%s", head, dropped, len(s), tail)
+}
+
+// backToRuneStart moves i back to the nearest rune boundary at or before it.
+func backToRuneStart(s string, i int) int {
+	if i >= len(s) {
+		return len(s)
+	}
+	for back := 0; back < utf8.UTFMax && i > 0 && !utf8.RuneStart(s[i]); back++ {
+		i--
+	}
+	return i
+}
+
+// forwardToRuneStart moves i forward to the nearest rune boundary at or after
+// it, so the tail never begins mid-sequence.
+func forwardToRuneStart(s string, i int) int {
+	if i <= 0 {
+		return 0
+	}
+	for fwd := 0; fwd < utf8.UTFMax && i < len(s) && !utf8.RuneStart(s[i]); fwd++ {
+		i++
+	}
+	return i
 }

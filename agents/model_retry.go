@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"math"
 	"math/rand/v2"
@@ -35,8 +36,9 @@ type RetryPolicy struct {
 
 	// RetryAfter, when non-nil, extracts a server-suggested delay from an error
 	// (e.g. an HTTP Retry-After header); when it reports ok, that delay replaces
-	// the computed backoff, capped at MaxDelay so an oversized server hint
-	// cannot stall retries indefinitely. Pair with openai.RetryAfter.
+	// the computed backoff. A hint longer than MaxDelay ends the retries with
+	// that error rather than being clamped — see wait. Pair with
+	// openai.RetryAfter.
 	RetryAfter func(error) (time.Duration, bool)
 
 	// Sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
@@ -136,15 +138,21 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 }
 
 // wait sleeps for the backoff (or server-suggested) delay before the next
-// attempt. attempt is the number of the attempt that just failed. A
-// server-suggested delay is still clamped to maxDelay so the policy's cap
-// holds regardless of what the server sends.
+// attempt. attempt is the number of the attempt that just failed.
+//
+// A server-suggested delay longer than maxDelay **ends the retries** and
+// returns that attempt's error, rather than being clamped down to the cap.
+// Clamping would retry far sooner than the server said it would accept, which
+// near-certainly fails again and burns the remaining attempts before reporting
+// the same error anyway. Failing immediately says why, and says it faster. The
+// error is wrapped, so errors.As and CodeOf still reach the original.
 func (p RetryPolicy) wait(ctx context.Context, attempt int, err error) error {
 	delay := p.backoff(attempt)
 	if p.RetryAfter != nil {
 		if d, ok := p.RetryAfter(err); ok {
 			if limit := p.maxDelay(); d > limit {
-				d = limit
+				return fmt.Errorf("server asked to retry after %s, beyond the %s limit: %w",
+					d.Round(time.Millisecond), limit, err)
 			}
 			delay = d
 		}

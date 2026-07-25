@@ -142,21 +142,22 @@ func TestLocalSandbox_OutputCapped(t *testing.T) {
 
 func TestTruncateWithInfo_UTF8Safe(t *testing.T) {
 	s := strings.Repeat("界", 10)   // 3 bytes per rune = 30 bytes total
-	got := truncateWithInfo(s, 10) // 10 is not a rune boundary; 9 is
+	got := truncateWithInfo(s, 10) // 10 is not a rune boundary
 	if !utf8.ValidString(got) {
 		t.Errorf("truncate produced invalid UTF-8: %q", got)
 	}
-	if !strings.HasPrefix(got, strings.Repeat("界", 3)) {
-		t.Errorf("truncate cut too much: %q", got)
+	// head+tail: the budget splits 60/40, so both ends survive.
+	if !strings.HasPrefix(got, "界") || !strings.HasSuffix(got, "界") {
+		t.Errorf("truncate did not keep both ends: %q", got)
 	}
-	if !strings.Contains(got, "showing 9 of 30 bytes") {
+	if !strings.Contains(got, "of 30 bytes elided") {
 		t.Errorf("missing byte count info: %q", got)
 	}
 	if r := truncateWithInfo(s, 30); r != s {
 		t.Errorf("string at exactly max must not be truncated: %q", r)
 	}
 	got2 := truncateWithInfo("abcdef", 4)
-	if !strings.HasPrefix(got2, "abcd") || !strings.Contains(got2, "showing 4 of 6 bytes") {
+	if !strings.HasPrefix(got2, "ab") || !strings.HasSuffix(got2, "ef") || !strings.Contains(got2, "of 6 bytes elided") {
 		t.Errorf("ascii truncate = %q", got2)
 	}
 }
