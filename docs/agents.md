@@ -36,7 +36,6 @@ The most common fields:
 | `InputGuardrails` / `OutputGuardrails` | Validation that can stop the run ([Guardrails](guardrails.md)) |
 | `OutputType` | Structured output schema (below) |
 | `OnStart` / `OnEnd` | Callbacks around this agent's turn |
-| `ToolUseBehavior` | What happens after tools run (below) |
 
 ## Dynamic instructions
 
@@ -93,19 +92,39 @@ Notes:
 - `agents.OutputTypeNonStrict[T]()` disables strict-mode schema rewriting for types strict mode cannot express (e.g. maps with arbitrary keys).
 - Schema generation failures (recursive types, `map` roots in strict mode) fail the run with a `*UserError` before any model call.
 
-## Tool use behavior
+## Stopping after tools run
 
-`ToolUseBehavior` controls what happens after the model calls tools:
+By default a turn's tool results go back to the model for another turn. Two
+things override that, at two different levels.
+
+A **tool** can end the run on its own result:
 
 ```go
-agent.ToolUseBehavior = agents.RunLLMAgain{}          // default: feed results back to the model
-agent.ToolUseBehavior = agents.StopOnFirstTool{}      // first tool's output is the final output
-agent.ToolUseBehavior = agents.StopAtTools{Names: []string{"save_report"}} // stop if this tool ran
-agent.ToolUseBehavior = agents.ToolUseBehaviorFunc(   // custom decision
-	func(ctx context.Context, rc *agents.RunContext, results []agents.FunctionToolResult) (stop bool, output any, err error) {
-		return len(results) > 0, results[0].Output, nil
-	})
+func save(ctx context.Context, tc *agents.ToolContext, a Args) (agents.ToolResult, error) {
+	r := agents.TextResult("saved")
+	r.Terminate = true       // honored only if EVERY tool in the batch agrees
+	return r, nil
+}
 ```
+
+A **run** can end at any turn boundary, deciding from what the turn produced:
+
+```go
+opts.Exec.ShouldStopAfterTurn = func(ctx context.Context, tr *agents.TurnResult) (bool, error) {
+	return slices.Contains(tr.ToolCallNames(), "save_report"), nil
+}
+```
+
+The hook fires after the turn's items are persisted and before the next model
+call, so a run stopped here has its full history saved. It is a predicate, not
+a producer: the final output is the turn's last message, or its last tool
+output when the turn produced no message. Anything more specific is on
+`RunResult.NewItems`.
+
+This replaces the agent-level `ToolUseBehavior`. Deciding from what a turn
+actually produced covers everything naming tools up front could, and the policy
+belongs to the run rather than the agent — the same agent gets reused across
+runs that want to stop at different points.
 
 To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn — the inverse of Python's `reset_tool_choice=True` default.
 

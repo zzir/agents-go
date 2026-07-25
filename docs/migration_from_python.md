@@ -53,12 +53,13 @@ For what this SDK deliberately does not provide (and why), read
 
 **Concurrency is explicit.** Tools requested in one turn run concurrently via goroutines (Python interleaves on the event loop). Hooks and shared context values must be goroutine-safe. Streaming uses `iter.Seq2` (`for event, err := range sr.Events()`) instead of `async for`, and there is no `run_sync` because `Run` is already synchronous.
 
-**Sealed interfaces instead of unions.** `Tool`, `StreamEvent`, `RunItem` and `ToolUseBehavior` are closed interfaces you type-switch on, mirroring Python's `Union` types.
+**Sealed interfaces instead of unions.** `Tool`, `StreamEvent` and `RunItem` are closed interfaces you type-switch on, mirroring Python's `Union` types.
 
 ## Behavioral differences
 
 | Area | Python v0.18.2 | Go |
 |---|---|---|
+| `tool_use_behavior` | agent-level: `run_llm_again` / `stop_on_first_tool` / `StopAtTools` / a callable | **not ported.** `stop_on_first_tool` → the tool returns `ToolResult{Terminate: true}` (honored when the whole batch agrees, so a parallel tool's result is never discarded); everything else → `RunOptions.Exec.ShouldStopAfterTurn`, a run-level predicate over the finished `TurnResult`. The final output is derived from the turn rather than supplied by the callback, so it cannot disagree with the saved history |
 | Tool errors | `failure_error_function` default feeds the error to the model | Same default (`DefaultToolErrorFunction`); set the field to `nil` for fatal |
 | Tool timeout | `timeout_seconds` + `timeout_behavior` (`error_as_result` / `raise_exception`) | `FunctionTool.Timeout` → `*ToolTimeoutError`, fed back via `FailureErrorFunction` when set (≈ `error_as_result`), else fatal (≈ `raise_exception`). Enforced by the runner: the call returns at the deadline even if the tool ignores its context (the tool goroutine finishes in the background, its late result discarded) |
 | Tool panics | tool exceptions flow into `failure_error_function` | same: a panicking tool (or guardrail) is recovered and converted to an error instead of crashing the process |
@@ -134,4 +135,4 @@ needed yet** (open to contribution). Each entry says which it is.
 - **Simplified guardrail constructors**: `NewInputGuardrail(name, fn)` and `NewOutputGuardrail(name, fn)` accept a callback that receives only the input/output, skipping ctx/rc/agent when you don't need them
 - **Session item helpers**: `MarshalItems` / `UnmarshalItems` handle the common JSON ↔ `[]TResponseInputItem` round-trip (including nil/empty/"null" edge cases) so DB session backends don't rewrite it
 - **`NewRawFunctionTool`**: builds a `FunctionTool` from a pre-built JSON Schema `map[string]any` and a raw-JSON callback, for tools whose schema is loaded at runtime rather than reflected from a Go type
-- **Enum parse helpers**: `ParseToolNotFoundBehavior(string)` / `ToolNotFoundBehavior.String()` and `ParseToolUseBehavior(string)` convert between configuration strings and SDK enum types
+- **Enum parse helpers**: `ParseToolNotFoundBehavior(string)` / `ToolNotFoundBehavior.String()` convert between configuration strings and SDK enum types

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -218,26 +220,101 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 	}
 }
 
-func TestRun_StopOnFirstTool(t *testing.T) {
-	tool := NewFunctionTool("compute", "computes",
-		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
-			return "the-answer", nil
-		})
-	model := &fakeModel{responses: []*ModelResponse{
-		modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
-	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
+// ShouldStopAfterTurn ends a run that would otherwise take another turn. It is
+// what replaced the agent-level "stop at these tools" configuration: deciding
+// from what the turn produced covers the same case and more.
+func TestRun_ShouldStopAfterTurn(t *testing.T) {
+	newAgent := func(model *fakeModel) *Agent {
+		tool := NewFunctionTool("compute", "computes",
+			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+				return "the-answer", nil
+			})
+		return &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.FinalOutputString() != "the-answer" {
-		t.Errorf("final = %q, want the-answer", res.FinalOutputString())
-	}
-	if model.calls != 1 {
-		t.Errorf("model calls = %d, want 1 (stop on first tool)", model.calls)
-	}
+	t.Run("stops at a named tool, reporting its output", func(t *testing.T) {
+		model := &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
+			modelResp(messageOutput(t, "never reached")),
+		}}
+		res, err := RunSync(context.Background(), newAgent(model), "go", RunOptions{
+			Exec: ExecOptions{ShouldStopAfterTurn: func(_ context.Context, tr *TurnResult) (bool, error) {
+				return slices.Contains(tr.ToolCallNames(), "compute"), nil
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if model.calls != 1 {
+			t.Errorf("model calls = %d, want 1 — the hook should have stopped the run", model.calls)
+		}
+		// No message this turn, so the run reports the tool output rather than
+		// an empty final output.
+		if got := res.FinalOutputString(); got != "the-answer" {
+			t.Errorf("final = %q, want the-answer", got)
+		}
+	})
+
+	t.Run("returning false leaves the run alone", func(t *testing.T) {
+		model := &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
+			modelResp(messageOutput(t, "all done")),
+		}}
+		var turns []int
+		res, err := RunSync(context.Background(), newAgent(model), "go", RunOptions{
+			Exec: ExecOptions{ShouldStopAfterTurn: func(_ context.Context, tr *TurnResult) (bool, error) {
+				turns = append(turns, tr.Turn)
+				return false, nil
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.FinalOutputString() != "all done" {
+			t.Errorf("final = %q", res.FinalOutputString())
+		}
+		// Only the tool turn asks: the final turn ends the run on its own, and
+		// asking whether to stop a run that is already stopping is noise.
+		if !slices.Equal(turns, []int{1}) {
+			t.Errorf("hook saw turns %v, want [1]", turns)
+		}
+	})
+
+	t.Run("an error from the hook fails the run", func(t *testing.T) {
+		model := &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
+		}}
+		_, err := RunSync(context.Background(), newAgent(model), "go", RunOptions{
+			Exec: ExecOptions{ShouldStopAfterTurn: func(context.Context, *TurnResult) (bool, error) {
+				return false, errors.New("boom")
+			}},
+		})
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Errorf("err = %v, want the hook's error", err)
+		}
+	})
+
+	t.Run("stops at a handoff before control leaves the agent", func(t *testing.T) {
+		billing := &Agent{Name: "billing", ModelImpl: &fakeModel{
+			responses: []*ModelResponse{modelResp(messageOutput(t, "never reached"))},
+		}}
+		triageModel := &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "transfer_to_billing", "c1", `{}`)),
+		}}
+		triage := &Agent{Name: "triage", ModelImpl: triageModel, Handoffs: []Handoff{HandoffTo(billing)}}
+
+		res, err := RunSync(context.Background(), triage, "go", RunOptions{
+			Exec: ExecOptions{ShouldStopAfterTurn: func(context.Context, *TurnResult) (bool, error) {
+				return true, nil
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.LastAgent != triage {
+			t.Errorf("last agent = %s, want triage — the handoff should not have been taken", res.LastAgent.Name)
+		}
+	})
 }
 
 func TestRun_UnknownToolErrors(t *testing.T) {

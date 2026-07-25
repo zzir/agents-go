@@ -3,7 +3,6 @@ package agents
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // Instructions produces the system prompt for an agent. It may be static or
@@ -77,71 +76,12 @@ func WrapInstructions(inner Instructions, prefix, suffix string) Instructions {
 	return &wrappedInstructions{inner: inner, prefix: prefix, suffix: suffix}
 }
 
-// ToolUseBehavior controls what happens after the model calls one or more tools.
-// It is a sealed interface; use the predefined implementations below.
-type ToolUseBehavior interface {
-	toolUseBehavior()
-}
-
-// RunLLMAgain feeds tool results back to the model for another turn. This is the
-// default behavior.
-type RunLLMAgain struct{}
-
-func (RunLLMAgain) toolUseBehavior() {}
-
-// StopOnFirstTool stops the run and uses the first tool's output as the final
-// result, without another model call.
-type StopOnFirstTool struct{}
-
-func (StopOnFirstTool) toolUseBehavior() {}
-
-// StopAtTools stops the run if any tool whose name is in Names is called.
-type StopAtTools struct {
-	Names []string
-}
-
-func (StopAtTools) toolUseBehavior() {}
-
-// ParseToolUseBehavior converts a configuration string to a ToolUseBehavior.
-// Recognized formats: "" or "run_llm_again" → nil, "stop_on_first" →
-// StopOnFirstTool{}, "stop_at:name1,name2" → StopAtTools{Names: [...]}.
-// Unknown values return nil (RunLLMAgain default).
-func ParseToolUseBehavior(s string) ToolUseBehavior {
-	switch {
-	case s == "" || s == "run_llm_again":
-		return nil
-	case s == "stop_on_first":
-		return StopOnFirstTool{}
-	case strings.HasPrefix(s, "stop_at:"):
-		raw := strings.TrimPrefix(s, "stop_at:")
-		parts := strings.Split(raw, ",")
-		var names []string
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				names = append(names, p)
-			}
-		}
-		return StopAtTools{Names: names}
-	default:
-		return nil
-	}
-}
-
-// ToolUseBehaviorFunc decides, from the results of the tools run this turn,
-// whether to stop with a final output. Returning stop=true ends the run with the
-// given output; stop=false runs the LLM again. It mirrors the callable form of
-// Python's tool_use_behavior.
-type ToolUseBehaviorFunc func(ctx context.Context, rc *RunContext, results []FunctionToolResult) (stop bool, output any, err error)
-
-func (ToolUseBehaviorFunc) toolUseBehavior() {}
-
 // Agent is a model configured with instructions, tools, guardrails, handoffs and
 // an optional structured output type. It is the central building block of the
 // SDK and mirrors the Python SDK's Agent dataclass.
 //
 // Construct an Agent with a struct literal; only Name is required. Zero values
-// are sensible defaults (e.g. a nil ToolUseBehavior means RunLLMAgain).
+// are sensible defaults (e.g. a nil ModelSettings means the provider's).
 type Agent struct {
 	// Name identifies the agent. Required.
 	Name string
@@ -197,9 +137,6 @@ type Agent struct {
 	OnStart func(ctx context.Context, rc *RunContext) error
 	// OnEnd runs after this agent produces the run's final output.
 	OnEnd func(ctx context.Context, rc *RunContext, output any) error
-
-	// ToolUseBehavior controls post-tool-call behavior. Nil means RunLLMAgain.
-	ToolUseBehavior ToolUseBehavior
 
 	// ApproveTools lists tool names that require human approval before
 	// execution, overriding each tool's own NeedsApproval field. A single

@@ -25,10 +25,13 @@ type BehaviorGroup struct {
 	MaxTurns               int    `json:"max_turns,omitempty"`
 	HandoffDescription     string `json:"handoff_description,omitempty"`
 	DisableToolChoiceReset bool   `json:"disable_tool_choice_reset,omitempty"`
-	ToolUseBehavior        string `json:"tool_use_behavior,omitempty"`
-	HandoffInputFilter     string `json:"handoff_input_filter,omitempty"`
-	MaxToolConcurrency     int    `json:"max_tool_concurrency,omitempty"`
-	ToolNotFoundBehavior   string `json:"tool_not_found_behavior,omitempty"`
+	// StopAtTools is a comma-separated list of tool names; the run ends after a
+	// turn that called any of them, instead of feeding the results back to the
+	// model. Empty means the run continues until the model stops on its own.
+	StopAtTools          string `json:"stop_at_tools,omitempty"`
+	HandoffInputFilter   string `json:"handoff_input_filter,omitempty"`
+	MaxToolConcurrency   int    `json:"max_tool_concurrency,omitempty"`
+	ToolNotFoundBehavior string `json:"tool_not_found_behavior,omitempty"`
 	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
 	// turns) or "omit" (strip them).
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`

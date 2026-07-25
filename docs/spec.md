@@ -183,6 +183,35 @@ otherwise (plain text)
     → the message text is the final output (possibly the empty string)
 ```
 
+### 2.3b Stopping early ✅
+
+A turn that would otherwise continue can be ended from two places, and only
+two:
+
+| Level | Mechanism | Final output |
+|---|---|---|
+| tool | `ToolResult.Terminate` | the last tool's output |
+| run | `ExecOptions.ShouldStopAfterTurn` | the turn's last message, else its last tool output |
+
+- `Terminate` requires **unanimity** across the batch ([§2.7b](#27b-tool-results-)).
+- `ShouldStopAfterTurn` is consulted at the **turn boundary** — after the turn's
+  items are persisted, before the next model call — at both branches that would
+  take another turn, including a handoff. A run stopped there has its full
+  history saved and needs no unwinding, and stopping at a handoff means control
+  never leaves the agent.
+- It is **not** consulted on a turn that already ends the run: asking whether to
+  stop something that is stopping is noise.
+- It is a **predicate, not a producer**. The final output is derived from the
+  turn, so a stopped run's result cannot disagree with its saved history. A
+  caller wanting something else computes it from `RunResult.NewItems`.
+- Both survive `ResumeRun`: an approved run carries the same stop policy, or it
+  would sail past the point it was configured to stop at.
+
+There is deliberately no agent-level early-stop configuration. Naming tools up
+front cannot express anything the turn predicate cannot, and the policy belongs
+to the run — the same agent gets reused across runs that stop at different
+points.
+
 ### 2.4 Handoffs ✅
 
 - A handoff is expressed as a **function call**; to the model it is just a tool.

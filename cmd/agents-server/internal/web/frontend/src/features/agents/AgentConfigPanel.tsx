@@ -14,7 +14,7 @@ import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
   provider: ['provider_type', 'auth_mode', 'api_key', 'base_url'],
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'tool_use_behavior', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['input_guardrails', 'output_guardrails', 'output_schema'],
   session: ['use_previous_response_id', 'prompt_id', 'prompt_version', 'history_limit'],
@@ -54,7 +54,7 @@ interface AgentFormData {
   max_turns: number;
   handoff_description: string;
   disable_tool_choice_reset: boolean;
-  tool_use_behavior: string;
+  stop_at_tools: string;
   retry_enabled: boolean;
   retry_policy: string;
   fallback_models: string;
@@ -136,7 +136,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     name: '', instructions: '', model: 'gpt-5.5',
     provider_type: '', auth_mode: '', api_key: '', base_url: '',
     max_turns: 0, handoff_description: '',
-    disable_tool_choice_reset: false, tool_use_behavior: '',
+    disable_tool_choice_reset: false, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
     fallback_models: '',
     input_guardrails: '', output_guardrails: '', output_schema: '', error_handlers: '',
@@ -326,13 +326,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           <div className="form-group-title">Behavior</div>
           {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
           {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
-          {fc('Tool use behavior', <Select value={form.tool_use_behavior || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('tool_use_behavior', e.target.value)}>
-            <Select.Option value="">Run LLM Again (default)</Select.Option>
-            <Select.Option value="stop_on_first">Stop on First Tool</Select.Option>
-            <Select.Option value="stop_at:">Stop at Specific Tools</Select.Option>
-          </Select>)}
-          {form.tool_use_behavior && form.tool_use_behavior.startsWith('stop_at') &&
-            fc('Stop at tool names', <TextInput value={(form.tool_use_behavior || '').replace('stop_at:', '')} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('tool_use_behavior', 'stop_at:' + e.target.value)} placeholder="tool1, tool2" block />)}
+          {fc('Stop at tools', <TextInput value={form.stop_at_tools || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('stop_at_tools', e.target.value)} placeholder="tool1, tool2" block />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
           {fc('Tool not found behavior', <Select value={form.tool_not_found_behavior || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('tool_not_found_behavior', e.target.value)}>
             <Select.Option value="">Error (default)</Select.Option>
             <Select.Option value="return_to_model">Return to Model</Select.Option>

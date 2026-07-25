@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -86,9 +87,9 @@ func TestToolPipeline_InputGuardrailRejectSkipsTheTool(t *testing.T) {
 	}
 }
 
-// StopOnFirstTool with a struct-returning tool on a plain-text agent
-// yields a STRING final output (Python str()), not a raw Go value.
-func TestToolPipeline_StopOnFirstToolStringifiesForPlainText(t *testing.T) {
+// A struct-returning tool on a plain-text agent yields a STRING final output,
+// not a raw Go value, when a turn hook stops the run on its result.
+func TestToolPipeline_StoppedTurnStringifiesForPlainText(t *testing.T) {
 	type payload struct {
 		N int `json:"n"`
 	}
@@ -99,9 +100,11 @@ func TestToolPipeline_StopOnFirstToolStringifiesForPlainText(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{
+		Exec: ExecOptions{ShouldStopAfterTurn: stopAlways},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +113,10 @@ func TestToolPipeline_StopOnFirstToolStringifiesForPlainText(t *testing.T) {
 	}
 }
 
-// A rejected tool call participates in StopOnFirstTool and keeps call
-// order — the rejection message becomes the final output.
-func TestToolPipeline_RejectedCallParticipatesInToolUseBehavior(t *testing.T) {
+// A rejected tool call still produces an output item and keeps call order, so a
+// turn hook that stops the run reports the rejection message as the final
+// output rather than an empty one.
+func TestToolPipeline_RejectedCallParticipatesInTurnResult(t *testing.T) {
 	tool := NewFunctionTool("act", "acts",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "executed", nil
@@ -121,24 +125,25 @@ func TestToolPipeline_RejectedCallParticipatesInToolUseBehavior(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
+	opts := RunOptions{Exec: ExecOptions{ShouldStopAfterTurn: stopAlways}}
+	res, err := RunSync(context.Background(), agent, "go", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Interruptions) != 1 {
 		t.Fatalf("expected 1 interruption, got %d", len(res.Interruptions))
 	}
-	// Reject, then resume: the rejected call is the only tool, StopOnFirstTool
-	// makes its rejection message the final output.
+	// Reject, then resume: the rejected call is the only tool, so its rejection
+	// message is what the stopped turn produced.
 	res.State.Reject(res.Interruptions[0], false, "not allowed")
-	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
+	res2, err := ResumeRunSync(context.Background(), res.State, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res2.FinalOutputString() != "not allowed" {
-		t.Errorf("final = %q, want the rejection message (rejected call feeds ToolUseBehavior)", res2.FinalOutputString())
+		t.Errorf("final = %q, want the rejection message (a rejected call is still a turn result)", res2.FinalOutputString())
 	}
 }
 
@@ -279,34 +284,35 @@ func TestToolError_FatalWhenNil(t *testing.T) {
 	}
 }
 
-// The tool_use_behavior callback can stop with a custom final output.
-func TestToolUseBehaviorFunc(t *testing.T) {
+// stopAlways is the turn hook for tests that only care about what a stopped run
+// reports, not about when it stops.
+func stopAlways(context.Context, *TurnResult) (bool, error) { return true, nil }
+
+// ShouldStopAfterTurn replaces the agent-level tool-use-behavior callback. It
+// is a predicate rather than a producer: the run reports what the turn actually
+// produced, so a stopped run's final output cannot disagree with its history.
+func TestShouldStopAfterTurn_StopsOnToolResult(t *testing.T) {
 	tool := NewFunctionTool("calc", "", func(ctx context.Context, tc *ToolContext, a struct{}) (int, error) {
 		return 42, nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "calc", "c1", `{}`)),
+		modelResp(messageOutput(t, "never reached")),
 	}}
-	agent := &Agent{
-		Name:      "a",
-		Tools:     []Tool{tool},
-		ModelImpl: model,
-		ToolUseBehavior: ToolUseBehaviorFunc(func(ctx context.Context, rc *RunContext, results []FunctionToolResult) (bool, any, error) {
-			if len(results) == 1 && results[0].ToolName == "calc" {
-				return true, "computed:42", nil
-			}
-			return false, nil, nil
-		}),
-	}
+	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{
+		Exec: ExecOptions{ShouldStopAfterTurn: func(_ context.Context, tr *TurnResult) (bool, error) {
+			return slices.Contains(tr.ToolCallNames(), "calc"), nil
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.FinalOutputString() != "computed:42" {
-		t.Errorf("final = %q", res.FinalOutputString())
+	if res.FinalOutputString() != "42" {
+		t.Errorf("final = %q, want the tool output", res.FinalOutputString())
 	}
 	if model.calls != 1 {
-		t.Errorf("model calls = %d, want 1 (behavior func stopped the run)", model.calls)
+		t.Errorf("model calls = %d, want 1 (the hook stopped the run)", model.calls)
 	}
 }

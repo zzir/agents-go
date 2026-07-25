@@ -270,9 +270,19 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
 	opts := agents.RunOptions{
-
-		Context:                                                                                                   trustSessionID(sessionID, task), Conversation: // exec_command gate reads a session id here
-		agents.ConversationOptions{Session: runSession, UsePreviousResponseID: built.UsePreviousResponseID}, Exec: agents.ExecOptions{MaxTurns: built.MaxTurns, MaxToolConcurrency: built.MaxToolConcurrency, ErrorHandlers: built.ErrorHandlers}, Model: agents.ModelOptions{Provider: provider}, Observe: agents.ObserveOptions{Tracer: tracer},
+		// exec_command's approval gate reads a session id from here.
+		Context: trustSessionID(sessionID, task),
+		Conversation: agents.ConversationOptions{
+			Session:               runSession,
+			UsePreviousResponseID: built.UsePreviousResponseID,
+		},
+		Exec: agents.ExecOptions{
+			MaxTurns:           built.MaxTurns,
+			MaxToolConcurrency: built.MaxToolConcurrency,
+			ErrorHandlers:      built.ErrorHandlers,
+		},
+		Model:   agents.ModelOptions{Provider: provider},
+		Observe: agents.ObserveOptions{Tracer: tracer},
 	}
 	if built.HandoffInputFilter == "nest_history" {
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
@@ -281,6 +291,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	opts.Exec.ReasoningItemIDPolicy = built.ReasoningItemIDPolicy
 	opts.Guardrails = built.RunGuardrails
 	opts.Exec.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
+	opts.Exec.ShouldStopAfterTurn = stopAtTools(built.StopAtTools)
 
 	// Name the session in parallel with the run — the title needs only the user's
 	// first message, not the answer, so it need not wait for the run to finish.
@@ -430,10 +441,26 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	// run.output — a resume that silently swallowed its middle turns is what
 	// made approved runs "jump" to their final answer.
 	stream, ctrl := agents.ResumeRun(ctx, state, agents.RunOptions{
-
-		Guardrails:                                                                                                                                                     built.RunGuardrails,
-		Context:                                                                                                                                                        trustSessionID(sessionID, task), Conversation: // exec_command gate reads a session id here
-		agents.ConversationOptions{Session: resumeSession, UsePreviousResponseID: built.UsePreviousResponseID, Settings: sessionSettingsFor(built.HistoryLimit)}, Exec: agents.ExecOptions{MaxTurns: built.MaxTurns, MaxToolConcurrency: built.MaxToolConcurrency, ErrorHandlers: built.ErrorHandlers, ReasoningItemIDPolicy: built.ReasoningItemIDPolicy}, Model: agents.ModelOptions{Provider: provider}, Observe: agents.ObserveOptions{Tracer: tracer},
+		Guardrails: built.RunGuardrails,
+		// exec_command's approval gate reads a session id from here.
+		Context: trustSessionID(sessionID, task),
+		Conversation: agents.ConversationOptions{
+			Session:               resumeSession,
+			UsePreviousResponseID: built.UsePreviousResponseID,
+			Settings:              sessionSettingsFor(built.HistoryLimit),
+		},
+		Exec: agents.ExecOptions{
+			MaxTurns:           built.MaxTurns,
+			MaxToolConcurrency: built.MaxToolConcurrency,
+			ErrorHandlers:      built.ErrorHandlers,
+			// A resume continues the same run, so it carries the same stop
+			// policy: without it an approved run would sail past the tool it
+			// was configured to stop at.
+			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
+			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
+		},
+		Model:   agents.ModelOptions{Provider: provider},
+		Observe: agents.ObserveOptions{Tracer: tracer},
 	})
 	r.hub.setStopHook(runID, ctrl.StopAfterTurn)
 	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
@@ -822,5 +849,26 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			RunID:     runID,
 			AgentName: e.NewAgent.Name,
 		})
+	}
+}
+
+// stopAtTools builds the turn hook for the agent config's stop_at_tools list:
+// the run ends after a turn that called any of the named tools. It returns nil
+// for an empty list so an unconfigured agent pays nothing.
+func stopAtTools(names []string) func(context.Context, *agents.TurnResult) (bool, error) {
+	if len(names) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	return func(_ context.Context, tr *agents.TurnResult) (bool, error) {
+		for _, called := range tr.ToolCallNames() {
+			if want[called] {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
 }

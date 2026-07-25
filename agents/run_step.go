@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"slices"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -223,7 +222,7 @@ func (r *runner) executeToolsAndSideEffects(
 
 	// Run the approved/no-approval-needed function tools in parallel, then merge
 	// with the rejected results in original call order so item order and
-	// ToolUseBehavior see every call (Python parity: results built in tool_runs
+	// the turn-boundary hooks see every call (results built in tool_runs
 	// order).
 	executed, err := r.runFunctionTools(ctx, agent, toRun)
 	if err != nil {
@@ -295,19 +294,6 @@ func (r *runner) executeToolsAndSideEffects(
 			NewStepItems: newStepItems,
 			NextStep:     stepFinalOutput,
 			FinalOutput:  coerceToolFinalOutput(agent, functionResults[len(functionResults)-1].output),
-		}, nil
-	}
-
-	// tool_use_behavior: stop using a tool's output as the final result.
-	stop, output, err := r.checkToolUseBehavior(ctx, agent, functionResults)
-	if err != nil {
-		return nil, err
-	}
-	if stop {
-		return &singleStepResult{
-			NewStepItems: newStepItems,
-			NextStep:     stepFinalOutput,
-			FinalOutput:  output,
 		}, nil
 	}
 
@@ -395,7 +381,7 @@ func (r *runner) executeToolsAndSideEffects(
 }
 
 // orderToolResults merges the executed and rejected tool results back into the
-// original call order given by calls, so run items and ToolUseBehavior observe
+// original call order given by calls, so run items and the turn hooks observe
 // every call in the sequence the model emitted (Python builds its
 // FunctionToolResults in tool_runs order). Results are matched by call id; any
 // unmatched executed/rejected results are appended defensively.
@@ -706,7 +692,7 @@ const redactedToolErrorMessage = "Tool execution failed. Error details are redac
 // awaiting human approval (interruptions), and rejected calls. It consults the
 // run context's ApprovalStore. Rejected calls come back as functionToolResults
 // (output = rejection message) so they keep their place in call order and take
-// part in ToolUseBehavior, matching Python.
+// part in the turn's tool results.
 func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []toolRunFunction) (toRun []toolRunFunction, interruptions []*ToolApprovalItem, rejected []functionToolResult, err error) {
 	rejectResult := func(run toolRunFunction, msg string) functionToolResult {
 		return functionToolResult{
@@ -963,46 +949,11 @@ func allTerminate(results []functionToolResult) bool {
 	return true
 }
 
-// checkToolUseBehavior applies an agent's ToolUseBehavior to the function tool
-// results. It returns (stop, finalOutput, err); stop indicates the run should end
-// with finalOutput.
-func (r *runner) checkToolUseBehavior(ctx context.Context, agent *Agent, results []functionToolResult) (bool, any, error) {
-	if len(results) == 0 {
-		return false, nil, nil
-	}
-	switch b := agent.ToolUseBehavior.(type) {
-	case nil, RunLLMAgain:
-		return false, nil, nil
-	case StopOnFirstTool:
-		return true, coerceToolFinalOutput(agent, results[0].output), nil
-	case StopAtTools:
-		for _, res := range results {
-			if slices.Contains(b.Names, res.tool.ToolName()) {
-				return true, coerceToolFinalOutput(agent, res.output), nil
-			}
-		}
-		return false, nil, nil
-	case ToolUseBehaviorFunc:
-		public := make([]FunctionToolResult, len(results))
-		for i, res := range results {
-			var custom map[string]any
-			if res.outputItem != nil {
-				custom = res.outputItem.Extra
-			}
-			public[i] = FunctionToolResult{ToolName: res.tool.ToolName(), Output: res.output, CustomData: custom}
-		}
-		stop, output, err := b(ctx, r.rc, public)
-		return stop, output, err
-	default:
-		return false, nil, nil
-	}
-}
-
 // coerceToolFinalOutput renders a tool's output as the run's final output when
-// ToolUseBehavior stops the run. For a plain-text agent (no output type) the
-// value is coerced to a string so the final output is a string, not a raw Go
-// value — matching Python's `str(final_output)` for str/plain-text agents.
-// Agents with an output type keep the raw value for the caller to decode.
+// a tool asks to terminate, or a turn hook stops the run. For a plain-text
+// agent (no output type) the value is coerced to a string so the final output
+// is a string rather than a raw Go value. Agents with an output type keep the
+// raw value for the caller to decode.
 func coerceToolFinalOutput(agent *Agent, output any) any {
 	if agent.OutputType != nil {
 		return output

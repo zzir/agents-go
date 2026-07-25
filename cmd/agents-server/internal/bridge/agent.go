@@ -71,6 +71,10 @@ type BuildResult struct {
 	// turns (default preserve).
 	ReasoningItemIDPolicy agents.ReasoningItemIDPolicy
 
+	// StopAtTools ends the run after a turn that called any of these tools.
+	// Empty means the run continues until the model stops on its own.
+	StopAtTools []string
+
 	// HandoffToolNames is the set of every transfer_to_* tool name across the
 	// whole built agent graph (root + all reachable handoff targets). The stream
 	// bridge uses it to drop the tool_called event the SDK now emits for a
@@ -216,8 +220,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	agent.ModelSettings = spec.ModelSettings
 	result.ErrorHandlers = spec.ErrorHandlers.BuildErrorHandlers()
 
-	// ToolUseBehavior
-	agent.ToolUseBehavior = agents.ParseToolUseBehavior(ac.Behavior.ToolUseBehavior)
+	result.StopAtTools = splitList(ac.Behavior.StopAtTools)
 
 	// Guardrails — a configured guardrail that can't be resolved fails the
 	// build rather than running unprotected (security config must not silently
@@ -608,4 +611,17 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 		router.WithFallback(fallback)
 	}
 	return router
+}
+
+// splitList parses a comma-separated config value into trimmed, non-empty
+// entries. Operators type these by hand, so stray spaces and trailing commas
+// are normalized rather than turned into tool names that match nothing.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

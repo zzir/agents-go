@@ -229,7 +229,7 @@ than silently vanishing.
 Agent config fields:
 
 - **Core**: `name`, `instructions`, `model`, `provider_type`, `auth_mode`, `api_key`, `base_url`
-- **Model settings**: `model_settings` (JSON), `tool_use_behavior`, `disable_tool_choice_reset`, `max_turns`
+- **Model settings**: `model_settings` (JSON), `stop_at_tools`, `disable_tool_choice_reset`, `max_turns`
 - **Resilience**: `retry_enabled`, `retry_policy`, `fallback_models`
 - **Error recovery**: `error_handlers` (JSON keyed by `max_turns` / `model_refusal` / `invalid_final_output`; each entry is `{"final_output": <JSON value>, "exclude_from_history": bool}` — the run completes with the static fallback instead of failing; `final_output` must be a string for plain-text agents or match `output_schema`)
 - **Structured output**: `output_schema` (JSON Schema)

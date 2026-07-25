@@ -61,21 +61,22 @@ func TestRunnerInvokesCompactionWithoutResponseID(t *testing.T) {
 }
 
 // A run whose last item was produced locally — a tool output kept as the final
-// output (StopOnFirstTool) or a synthesized error-handler message — must skip
-// compaction: those items postdate the last model response, so compacting from
-// its response id would erase them from the stored history (Python parity:
-// has_local_tool_outputs deferral).
+// output (ToolResult.Terminate) or a synthesized error-handler message — must
+// skip compaction: those items postdate the last model response, so compacting
+// from its response id would erase them from the stored history.
 func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
-	t.Run("stop on first tool", func(t *testing.T) {
+	t.Run("tool terminates the run", func(t *testing.T) {
 		sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 		tool := NewFunctionTool("compute", "computes",
-			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
-				return "the-answer", nil
+			func(ctx context.Context, tc *ToolContext, args struct{}) (ToolResult, error) {
+				r := TextResult("the-answer")
+				r.Terminate = true
+				return r, nil
 			})
 		model := &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
 		}}
-		agent := &Agent{Name: "a", Tools: []Tool{tool}, ToolUseBehavior: StopOnFirstTool{}, ModelImpl: model}
+		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
 
 		res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
 		if err != nil {

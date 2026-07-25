@@ -200,6 +200,21 @@ type ExecOptions struct {
 	// persisted across interruptions in RunState — the counterpart of Python's
 	// RunConfig.reasoning_item_id_policy.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
+
+	// ShouldStopAfterTurn ends the run after a turn that would otherwise
+	// continue, instead of calling the model again.
+	//
+	// It is consulted at the turn boundary — after the turn's items are
+	// persisted, before the next model call — so a run stopped here has its
+	// full history saved. It is a predicate, not a producer: the final output
+	// is the turn's last message text, or the last tool output when the turn
+	// produced no message. Anything richer is available on the RunResult.
+	//
+	// It replaces the agent-level tool-use behavior it grew out of. Deciding
+	// from what a turn produced is strictly more expressive than naming tools
+	// up front, and it belongs to the run rather than the agent: the same agent
+	// is reused across runs that want to stop at different points.
+	ShouldStopAfterTurn func(ctx context.Context, tr *TurnResult) (bool, error)
 }
 
 // ObserveOptions configures tracing for a run.
@@ -954,6 +969,21 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err := r.persistSessionItems(ctx); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
+			// A handoff is a turn boundary too: control is about to leave this
+			// agent, which is exactly the moment a caller may want to stop.
+			// Asked before the input filter runs, so the hook sees the turn as
+			// it happened.
+			stop, out, serr := r.stopAfterTurn(ctx, currentAgent, turn, resp, step.NewStepItems)
+			if serr != nil {
+				return nil, r.fail(serr, originalInput, generatedItems, rawResponses, currentAgent)
+			}
+			if stop {
+				res, ferr := r.finishRun(ctx, currentAgent, originalInput, rawResponses, out)
+				if ferr != nil {
+					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
+				}
+				return res, nil
+			}
 			if step.Handoff != nil {
 				if filter := r.handoffInputFilter(step.Handoff); filter != nil {
 					// A handoff input filter cannot coexist with server-managed
@@ -1037,6 +1067,17 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// before looping, so a later cancel keeps this turn's work.
 			if err := r.persistSessionItems(ctx); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+			}
+			stop, out, serr := r.stopAfterTurn(ctx, currentAgent, turn, resp, step.NewStepItems)
+			if serr != nil {
+				return nil, r.fail(serr, originalInput, generatedItems, rawResponses, currentAgent)
+			}
+			if stop {
+				res, ferr := r.finishRun(ctx, currentAgent, originalInput, rawResponses, out)
+				if ferr != nil {
+					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
+				}
+				return res, nil
 			}
 			continue
 		}
