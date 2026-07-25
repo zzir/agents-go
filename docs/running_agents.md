@@ -97,6 +97,37 @@ res, err := agents.RunSync(ctx, agent, input, opts)
 
 Per-tool timeouts are a [tool-level setting](tools.md#timeouts).
 
+## Steering a run in flight
+
+`Run` returns a `RunControl` next to the stream. Besides `StopAfterTurn` and the
+progress accessors, it has three ways to put input into a run that is already
+going:
+
+```go
+stream, ctrl := agents.Run(ctx, agent, "research this", opts)
+
+ctrl.Steer("actually, focus on the pricing")   // change course NOW
+ctrl.NextTurn("mention the source when you cite it")  // ride along with the next turn
+ctrl.FollowUp("now summarize it for a customer")      // and then do this
+```
+
+| | When it lands | Extends a run that was finishing |
+|---|---|---|
+| `Steer` | the next model call, whatever the run is doing | **yes** |
+| `NextTurn` | the next turn boundary, if there is one | no |
+| `FollowUp` | after the final output, in the **same** run | **yes** |
+
+`FollowUp` continues the same run rather than starting a new one, so the trace,
+the usage total and the session stay one thing.
+
+Injected input is recorded as the user's, so a reopened session shows what was
+actually said rather than an answer to a question nobody asked. Whatever a run
+did not consume — a `NextTurn` that arrived as the run was ending — is reported
+by `ctrl.Pending()` instead of vanishing.
+
+Input queued before a run pauses for [approval](human_in_the_loop.md) rides
+along in `RunState.PendingInput` and is delivered on resume.
+
 ## Turn hooks
 
 A turn is resolved into a `TurnSnapshot` — agent, model, settings, instructions,

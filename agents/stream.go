@@ -3,8 +3,6 @@ package agents
 import (
 	"errors"
 	"iter"
-	"sync"
-	"sync/atomic"
 )
 
 // StreamEvent is the sealed interface for events emitted during a run.
@@ -90,118 +88,6 @@ func (s RunStream) Collect() (*RunResult, error) {
 		return nil, errors.New("agents: the run stream ended without a result; it was stopped before completing")
 	}
 	return res, nil
-}
-
-// RunPhase says what a run is doing right now. It is advisory — useful for a
-// progress indicator during a long silence — and a run moves between phases
-// many times per turn.
-type RunPhase int32
-
-const (
-	// PhaseIdle is before the first turn and after the last.
-	PhaseIdle RunPhase = iota
-	// PhaseGuardrails is running input or output guardrails.
-	PhaseGuardrails
-	// PhaseModelCall is waiting on the model.
-	PhaseModelCall
-	// PhaseToolExecution is running tools.
-	PhaseToolExecution
-	// PhasePersisting is writing the turn to the session.
-	PhasePersisting
-	// PhaseCompaction is compacting session history.
-	PhaseCompaction
-)
-
-func (p RunPhase) String() string {
-	switch p {
-	case PhaseIdle:
-		return "idle"
-	case PhaseGuardrails:
-		return "guardrails"
-	case PhaseModelCall:
-		return "model"
-	case PhaseToolExecution:
-		return "tools"
-	case PhasePersisting:
-		return "persisting"
-	case PhaseCompaction:
-		return "compaction"
-	}
-	return "unknown"
-}
-
-// RunControl influences a run while it is in flight. Run returns one alongside
-// the stream; it is safe to use from another goroutine, including before
-// ranging has begun.
-type RunControl interface {
-	// StopAfterTurn asks the run to stop once the in-flight turn finishes —
-	// tools and session save included — ending cleanly with no error before the
-	// next turn begins.
-	//
-	// This is not the same as abandoning the stream. Breaking out of the range
-	// loop stops the run where it stands, mid-turn, with that turn's work
-	// unfinished; cancelling the context does the same, harder. StopAfterTurn
-	// is the one that leaves the session consistent.
-	StopAfterTurn()
-
-	// Phase reports what the run is doing right now.
-	Phase() RunPhase
-
-	// CurrentAgent returns the agent handling the turn in progress, or nil
-	// before the first turn starts.
-	CurrentAgent() *Agent
-
-	// CurrentTurn returns the 1-based number of the turn in progress, or 0
-	// before the first turn starts.
-	CurrentTurn() int
-}
-
-// runControl is the concrete RunControl. It is created before the run starts —
-// the caller holds it from the moment Run returns and may read it before
-// ranging — so every field is written by the run loop and read concurrently.
-type runControl struct {
-	stopAfterTurn atomic.Bool
-	phase         atomic.Int32
-
-	mu           sync.Mutex
-	currentAgent *Agent
-	currentTurn  int
-}
-
-func newRunControl() *runControl { return &runControl{} }
-
-func (c *runControl) StopAfterTurn() { c.stopAfterTurn.Store(true) }
-
-func (c *runControl) stopRequested() bool { return c != nil && c.stopAfterTurn.Load() }
-
-func (c *runControl) Phase() RunPhase { return RunPhase(c.phase.Load()) }
-
-func (c *runControl) setPhase(p RunPhase) {
-	if c != nil {
-		c.phase.Store(int32(p))
-	}
-}
-
-func (c *runControl) CurrentAgent() *Agent {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.currentAgent
-}
-
-func (c *runControl) CurrentTurn() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.currentTurn
-}
-
-func (c *runControl) setCurrent(agent *Agent, turn int) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.currentAgent = agent
-	c.currentTurn = turn
-	c.mu.Unlock()
 }
 
 // errConsumerStopped unwinds the run loop when the consumer stops ranging the

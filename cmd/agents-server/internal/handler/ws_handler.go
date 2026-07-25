@@ -157,6 +157,14 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				h.runner.CancelRun(msg.RunID)
 			}
 
+		case protocol.EventRunSteer, protocol.EventRunNextTurn, protocol.EventRunFollowUp:
+			var msg protocol.RunInject
+			if err := json.Unmarshal(env.Payload, &msg); err != nil {
+				log.Error().Err(err).Str("type", env.Type).Msg("unmarshal run injection")
+				continue
+			}
+			h.inject(conn, env.Type, msg)
+
 		default:
 			log.Warn().Str("type", env.Type).Msg("unknown ws message type")
 		}
@@ -229,4 +237,24 @@ func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// inject delivers client input to a live run through one of the three queues.
+//
+// A run that has already finished is reported rather than ignored: the user
+// typed something and it went nowhere, which they need to know — the client
+// turns it into a new run or shows it as undelivered.
+func (h *WSHandler) inject(conn *server.WSConn, queue string, msg protocol.RunInject) {
+	delivered, err := h.runner.Hub().Inject(msg.RunID, queue, msg.Input)
+	if err != nil {
+		zerolog.Ctx(conn.Context()).Error().Err(err).Str("type", queue).Msg("run injection")
+	}
+	if delivered && err == nil {
+		return
+	}
+	_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+		RunID:   msg.RunID,
+		Code:    protocol.CodeRunNotFound,
+		Message: "the run is no longer accepting input",
+	})})
 }

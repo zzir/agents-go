@@ -70,6 +70,12 @@ type RunState struct {
 	// response is re-processed, so only cross-agent hand-back loses the reset.
 	ToolsUsed []string
 
+	// PendingInput carries input queued through RunControl that the run had not
+	// consumed when it paused. Without it, a steer sent while the caller was
+	// deciding on an approval would be lost at exactly the moment it mattered
+	// most — the human is looking at the run and saying something about it.
+	PendingInput PendingInput `json:"pending_input,omitzero"`
+
 	// ReasoningItemIDPolicy carries the interrupted run's reasoning-item id
 	// policy so a resumed run keeps stripping (or preserving) reasoning ids even
 	// when the caller does not repeat the option. Absent in states serialized
@@ -174,6 +180,9 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	if opts.Exec.ReasoningItemIDPolicy == ReasoningItemIDPreserve {
 		opts.Exec.ReasoningItemIDPolicy = state.ReasoningItemIDPolicy
 	}
+	// Input queued before the pause is delivered by this resume.
+	ctrl.restore(state.PendingInput)
+
 	rc := opts.RunContext
 	if rc == nil {
 		rc = NewRunContext(opts.Context)

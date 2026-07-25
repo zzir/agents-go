@@ -91,7 +91,7 @@ func TestResumeClearsStaleStopHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := 0
-	h.setStopHook("run1", func() { stale++ })
+	h.setControl("run1", &fakeControl{onStop: func() { stale++ }})
 	h.finish("run1", true)
 
 	if _, _, err := h.resume("run1", "sess1", "", "", nil); err != nil {
@@ -99,16 +99,16 @@ func TestResumeClearsStaleStopHook(t *testing.T) {
 	}
 	// The stale hook must be gone: no hook installed on the fresh segment yet.
 	if h.StopAfterTurn("run1") {
-		t.Fatal("resume did not clear the stale stop hook ")
+		t.Fatal("resume did not clear the stale control ")
 	}
 	if stale != 0 {
 		t.Fatalf("stale hook fired %d times after resume; must be dropped", stale)
 	}
 	// The new segment installs its own hook, which then works.
 	fresh := 0
-	h.setStopHook("run1", func() { fresh++ })
+	h.setControl("run1", &fakeControl{onStop: func() { fresh++ }})
 	if !h.StopAfterTurn("run1") || fresh != 1 {
-		t.Fatalf("fresh stop hook not honored: called=%d", fresh)
+		t.Fatalf("fresh control not honored: called=%d", fresh)
 	}
 }
 

@@ -20,8 +20,15 @@ const (
 	EventRunCreate    = "run.create"
 	EventRunCancel    = "run.cancel"
 	EventRunSubscribe = "run.subscribe"
-	EventToolApprove  = "tool.approve"
-	EventToolReject   = "tool.reject"
+	// The three injection queues. They are distinct semantics, not one
+	// endpoint with a mode flag: steer changes course inside the run that is
+	// going, next-turn rides along with a turn it was taking anyway, and
+	// follow-up starts the next exchange once this one lands.
+	EventRunSteer    = "run.steer"
+	EventRunNextTurn = "run.next_turn"
+	EventRunFollowUp = "run.follow_up"
+	EventToolApprove = "tool.approve"
+	EventToolReject  = "tool.reject"
 
 	// Server → client
 	EventAuthOK              = "auth.ok"
@@ -101,6 +108,13 @@ type RunCancel struct {
 	// "graceful" lets the current turn finish (tools + session save) and stops
 	// cleanly before the next one.
 	Mode string `json:"mode,omitempty"`
+}
+
+// RunInject is the client request to deliver input to a live run. The envelope
+// type selects the queue: run.steer, run.next_turn or run.follow_up.
+type RunInject struct {
+	RunID string `json:"run_id"`
+	Input string `json:"input"`
 }
 
 // RunSubscribe is the client request to (re)attach to a run's event stream,

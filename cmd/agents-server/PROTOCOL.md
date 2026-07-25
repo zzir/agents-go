@@ -186,6 +186,15 @@ distinct semantics, not one endpoint with a mode flag.
 All three: `{run_id, input}`. `run.cancel` keeps its existing
 `mode: ""|"abort"|"graceful"`.
 
+**Implemented** (step 24). The SDK side is `RunControl.Steer` / `NextTurn` /
+`FollowUp`; the hub routes by envelope type rather than a mode field, because
+these are three intentions and the client says which one it means.
+
+Delivery is confirmed by silence: a run that is no longer accepting input
+answers `run.error` with `run_not_found`. Input the run never consumed is
+reported by `RunControl.Pending()` rather than dropped — the user typed
+something and it must not vanish.
+
 ---
 
 ## F6 · Runs report a phase

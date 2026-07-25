@@ -1,6 +1,10 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"strings"
+)
 
 // TurnSnapshot is everything a turn was resolved to, captured before the model
 // is called.
@@ -169,6 +173,8 @@ type savePointResult struct {
 	// NextSnapshot, when non-nil, is used for the next turn instead of
 	// resolving one from the agent.
 	NextSnapshot *TurnSnapshot
+	// Injected is caller-supplied input to add before the next model call.
+	Injected []RunItem
 }
 
 // savePoint is the turn boundary: the point at which the turn's assistant
@@ -181,7 +187,8 @@ type savePointResult struct {
 //  1. flush the turn to the session
 //  2. ask whether the run should stop
 //  3. compact, rebuilding the context from the log
-//  4. let a hook prepare the next turn
+//  4. drain the steer and next-turn queues
+//  5. let a hook prepare the next turn
 //
 // Persisting first is what makes the rest safe: a run that stops at step 2, or
 // whose context is rewritten at step 3, has its history already written.
@@ -215,6 +222,10 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	}
 	out.Recompacted, out.Input = did, compacted
 
+	// Injected input is drained after compaction so it is never folded away by
+	// the pass that ran before it arrived.
+	out.Injected = injectedInput(in.Agent, r.ctrl.takeTurnInput())
+
 	if prepare := r.opts.Exec.PrepareNextTurn; prepare != nil {
 		next, perr := prepare(ctx, tr)
 		if perr != nil {
@@ -223,4 +234,53 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 		out.NextSnapshot = next
 	}
 	return out, nil
+}
+
+// injectedInput turns caller-supplied input into run items, so everything
+// downstream — the next turn's model input, the server-side delta cursor, the
+// session write — treats it exactly like the input the run started with.
+//
+// The alternative, carrying a separate "pending input" list the loop splices in
+// at call time, would need every one of those paths taught about it.
+func injectedInput(agent *Agent, items []TResponseInputItem) []RunItem {
+	out := make([]RunItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, &rawInputRunItem{
+			Agent:    agent,
+			RawInput: item,
+			Kind:     "injected_input",
+			Src:      Source{Type: SourceUser},
+			Disp:     ItemDisplay{Kind: DisplayMessage, Text: inputItemText(item)},
+		})
+	}
+	return out
+}
+
+// inputItemText pulls the readable text out of an input item for its display.
+func inputItemText(item TResponseInputItem) string {
+	raw, err := MarshalInputItem(item)
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &probe) != nil || len(probe.Content) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(probe.Content, &s) == nil {
+		return s
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(probe.Content, &parts) != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		b.WriteString(p.Text)
+	}
+	return b.String()
 }

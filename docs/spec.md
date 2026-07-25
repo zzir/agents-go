@@ -664,6 +664,36 @@ hiccup into a visible failure).
 
 ---
 
+### 2.11b Run control ✅
+
+`Run` returns a `RunControl` alongside the stream. It is safe to use from
+another goroutine, including before ranging begins.
+
+Beyond `StopAfterTurn`, `Phase`, `CurrentAgent` and `CurrentTurn`, it has three
+**injection queues**. They are separate queues rather than one with a mode tag
+because they are consumed at different points and only two of them may extend a
+run that was ending:
+
+| | Consumed at | Extends a finishing run |
+|---|---|---|
+| `Steer` | the save point, or the final output | yes — it is "change course" |
+| `NextTurn` | the save point only | no — it rides along with a turn the run was taking anyway |
+| `FollowUp` | the final output | yes — the exchange lands, then the next one starts |
+
+- **A follow-up continues the same run**, rather than starting a new one, so
+  the trace, the usage total and the session stay one thing.
+- **Injected input becomes a run item** with `Source{Type: SourceUser}`. That
+  is what makes every downstream path — the next turn's model input, the
+  server-side delta cursor, the session write — treat it exactly like the input
+  the run started with, instead of each one having to learn about a separate
+  pending-input list.
+- **Nothing is silently dropped.** `Pending()` reports what a run did not
+  consume, which is how a caller learns a `NextTurn` arrived too late.
+- **Queued input survives an interruption**: `RunState.PendingInput` carries
+  it, so a steer sent while a human was deciding on an approval is delivered on
+  resume. That is precisely when someone is looking at the run and saying
+  something about it.
+
 ### 2.12 Middleware ✅
 
 `RunOptions.Middlewares` wraps a run, **outermost first** — the order they are

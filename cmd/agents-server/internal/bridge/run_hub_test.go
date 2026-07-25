@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -298,7 +299,7 @@ func TestRunHubStopAfterTurn(t *testing.T) {
 		t.Error("StopAfterTurn should report false before a hook is installed")
 	}
 	called := 0
-	h.setStopHook("run1", func() { called++ })
+	h.setControl("run1", &fakeControl{onStop: func() { called++ }})
 	if !h.StopAfterTurn("run1") {
 		t.Error("StopAfterTurn should report true once a hook is installed")
 	}
@@ -321,10 +322,10 @@ func TestStopAfterTurnSetsGracefulMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	var markerAtHook bool
-	h.setStopHook("r1", func() {
+	h.setControl("r1", &fakeControl{onStop: func() {
 		info, _ := h.Info("r1")
 		markerAtHook = info.GracefulStop
-	})
+	}})
 	if !h.StopAfterTurn("r1") {
 		t.Fatal("StopAfterTurn found no hook")
 	}
@@ -424,4 +425,98 @@ func (a *asyncSink) gotSeqs() []int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]int(nil), a.seqs...)
+}
+
+// fakeControl is a stand-in RunControl for hub tests: it records what was asked
+// of it without needing a real run behind it.
+type fakeControl struct {
+	stops     int
+	steer     []any
+	nextTurn  []any
+	followUp  []any
+	onStop    func()
+	failQueue bool
+}
+
+func (c *fakeControl) StopAfterTurn() {
+	c.stops++
+	if c.onStop != nil {
+		c.onStop()
+	}
+}
+func (c *fakeControl) Phase() agents.RunPhase       { return agents.PhaseIdle }
+func (c *fakeControl) CurrentAgent() *agents.Agent  { return nil }
+func (c *fakeControl) CurrentTurn() int             { return 0 }
+func (c *fakeControl) Pending() agents.PendingInput { return agents.PendingInput{} }
+
+func (c *fakeControl) Steer(in any) error { c.steer = append(c.steer, in); return c.queueErr() }
+func (c *fakeControl) NextTurn(in any) error {
+	c.nextTurn = append(c.nextTurn, in)
+	return c.queueErr()
+}
+func (c *fakeControl) FollowUp(in any) error {
+	c.followUp = append(c.followUp, in)
+	return c.queueErr()
+}
+
+func (c *fakeControl) queueErr() error {
+	if c.failQueue {
+		return errors.New("queue rejected")
+	}
+	return nil
+}
+
+// The three queues are distinct semantics, so the hub routes by message type
+// rather than collapsing them into one endpoint with a mode.
+func TestInjectRoutesToTheRightQueue(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("r1", "s1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := &fakeControl{}
+	h.setControl("r1", ctrl)
+
+	for _, tc := range []struct {
+		queue string
+		got   *[]any
+	}{
+		{protocol.EventRunSteer, &ctrl.steer},
+		{protocol.EventRunNextTurn, &ctrl.nextTurn},
+		{protocol.EventRunFollowUp, &ctrl.followUp},
+	} {
+		delivered, err := h.Inject("r1", tc.queue, "hello")
+		if err != nil || !delivered {
+			t.Fatalf("%s: delivered=%v err=%v", tc.queue, delivered, err)
+		}
+		if len(*tc.got) != 1 {
+			t.Errorf("%s went to the wrong queue", tc.queue)
+		}
+	}
+}
+
+// A run that has finished cannot receive input, and the caller is told so —
+// the user typed something and it must not vanish.
+func TestInjectReportsNoLiveRun(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if delivered, err := h.Inject("nope", protocol.EventRunSteer, "hi"); delivered || err != nil {
+		t.Errorf("delivered=%v err=%v, want (false, nil) for an unknown run", delivered, err)
+	}
+	if _, _, err := h.register("r1", "s1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	// Registered but no control installed yet.
+	if delivered, _ := h.Inject("r1", protocol.EventRunSteer, "hi"); delivered {
+		t.Error("delivered to a run that has not started")
+	}
+}
+
+func TestInjectRejectsAnUnknownQueue(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("r1", "s1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	h.setControl("r1", &fakeControl{})
+	if _, err := h.Inject("r1", "run.whatever", "hi"); err == nil {
+		t.Error("an unknown queue was accepted")
+	}
 }

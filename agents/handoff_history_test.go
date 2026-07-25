@@ -16,15 +16,6 @@ func asstMsg(text string) TResponseInputItem {
 	return responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleAssistant)
 }
 
-// inputItemText returns the plain-text content of an easy (role) input message,
-// or "" for any other item shape.
-func inputItemText(item TResponseInputItem) string {
-	if m := item.OfMessage; m != nil {
-		return m.Content.OfString.Or("")
-	}
-	return ""
-}
-
 func TestNestHandoffHistory_FoldsToSingleMessage(t *testing.T) {
 	hist := []TResponseInputItem{userMsg("what is my balance?"), asstMsg("let me check")}
 	filter := NestHandoffHistory(NestHistoryOptions{})

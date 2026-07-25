@@ -177,10 +177,11 @@ type runRecord struct {
 	// with the new segment's gate; the old goroutine still closes its own
 	// captured gate, never this one.
 	done chan struct{}
-	// stopAfterTurn, when set by the run goroutine, requests a graceful stop:
-	// the in-flight turn finishes (tools + session save) and the run ends cleanly
-	// before the next turn. Distinct from cancel (a hard context abort).
-	stopAfterTurn func()
+	// ctrl is the live run's RunControl, set by the run goroutine once the run
+	// exists. It is how an uplink message reaches a run that is already going:
+	// a graceful stop, or input injected into one of the three queues.
+	// Distinct from cancel, which is a hard context abort.
+	ctrl agents.RunControl
 
 	// fanout owns everything about delivery: sequence assignment, the replay
 	// ring, per-subscriber buffering, and the slow-subscriber policy. The hub
@@ -371,10 +372,10 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
 	rec.info.GracefulStop = false
-	// Drop the previous segment's graceful-stop hook: it closed over the old
-	// StreamedResult and would stop the wrong stream. The new segment
-	// installs its own via setStopHook once its StreamedResult exists.
-	rec.stopAfterTurn = nil
+	// Drop the previous segment's control: it belongs to the old run and would
+	// steer or stop the wrong one. The new segment installs its own via
+	// setControl once its run exists.
+	rec.ctrl = nil
 	// A fresh segment gets a fresh done gate; the previous segment's goroutine
 	// still owns and closes its own (see runSegment), so this swap is safe.
 	rec.done = seg.done
@@ -564,14 +565,48 @@ func (h *RunHub) Cancel(runID string) bool {
 	return true
 }
 
-// setStopHook records the graceful-stop callback for a live run (the run
-// goroutine calls this once its StreamedResult exists).
-func (h *RunHub) setStopHook(runID string, stop func()) {
+// setControl records a live run's control handle (the run goroutine calls this
+// once its run exists).
+func (h *RunHub) setControl(runID string, ctrl agents.RunControl) {
 	h.mu.Lock()
 	if rec := h.runs[runID]; rec != nil {
-		rec.stopAfterTurn = stop
+		rec.ctrl = ctrl
 	}
 	h.mu.Unlock()
+}
+
+// control returns a live run's control handle, or nil.
+func (h *RunHub) control(runID string) agents.RunControl {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if rec := h.runs[runID]; rec != nil {
+		return rec.ctrl
+	}
+	return nil
+}
+
+// Inject delivers input to a live run through one of RunControl's three
+// queues. Reports whether a live run was there to receive it.
+//
+// The queue is chosen by the caller, not inferred: steer changes course now,
+// next-turn rides along with a turn the run was taking anyway, and follow-up
+// starts the next exchange. They are different intentions and the client says
+// which one it means.
+func (h *RunHub) Inject(runID, queue string, input any) (bool, error) {
+	ctrl := h.control(runID)
+	if ctrl == nil {
+		return false, nil
+	}
+	switch queue {
+	case protocol.EventRunSteer:
+		return true, ctrl.Steer(input)
+	case protocol.EventRunNextTurn:
+		return true, ctrl.NextTurn(input)
+	case protocol.EventRunFollowUp:
+		return true, ctrl.FollowUp(input)
+	default:
+		return false, fmt.Errorf("unknown injection queue %q", queue)
+	}
 }
 
 // StopAfterTurn requests a graceful stop of a live run: the current turn
@@ -580,22 +615,22 @@ func (h *RunHub) setStopHook(runID string, stop func()) {
 // that has not yet installed its hook.
 func (h *RunHub) StopAfterTurn(runID string) bool {
 	h.mu.Lock()
-	var stop func()
+	var ctrl agents.RunControl
 	if rec := h.runs[runID]; rec != nil {
 		rec.mu.Lock()
-		if rec.stopAfterTurn != nil {
+		if rec.ctrl != nil {
 			// Mark before signalling: the run goroutine's postRun must never
 			// observe a clean finish without the graceful-stop marker.
 			rec.info.GracefulStop = true
-			stop = rec.stopAfterTurn
+			ctrl = rec.ctrl
 		}
 		rec.mu.Unlock()
 	}
 	h.mu.Unlock()
-	if stop == nil {
+	if ctrl == nil {
 		return false
 	}
-	stop()
+	ctrl.StopAfterTurn()
 	return true
 }
 

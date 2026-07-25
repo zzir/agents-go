@@ -301,7 +301,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	}
 
 	stream, ctrl := agents.Run(ctx, agent, input, opts)
-	r.hub.setStopHook(runID, ctrl.StopAfterTurn)
+	r.hub.setControl(runID, ctrl)
 	// The stream carries both halves of the outcome: the run's result as its
 	// terminal event, or a terminal error. There is no second place to consult
 	// — the old API kept the error on the side of the event channel, where a
@@ -462,7 +462,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		Model:   agents.ModelOptions{Provider: provider},
 		Observe: agents.ObserveOptions{Tracer: tracer},
 	})
-	r.hub.setStopHook(runID, ctrl.StopAfterTurn)
+	r.hub.setControl(runID, ctrl)
 	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
 	if err != nil {
 		return failTurn(built.Agent.Model, "resume_error", err, streamedReasoning, streamedText)

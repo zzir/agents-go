@@ -973,6 +973,25 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 		switch step.NextStep {
 		case stepFinalOutput:
+			// A steer that arrived too late for the save point, or a queued
+			// follow-up, continues the run instead of ending it. The exchange
+			// finished on its own terms; the next one starts from it, in the
+			// same run, so the trace, the usage total and the session stay one
+			// thing rather than three loosely related ones.
+			if extra := r.ctrl.takeContinuation(); len(extra) > 0 {
+				if err := r.persistSessionItems(ctx); err != nil {
+					return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+				}
+				injected := injectedInput(currentAgent, extra)
+				generatedItems = append(generatedItems, injected...)
+				r.sessionItems = append(r.sessionItems, injected...)
+				for _, it := range injected {
+					if !r.emitItem(it) {
+						return nil, errConsumerStopped
+					}
+				}
+				continue
+			}
 			res, ferr := r.finishRun(ctx, currentAgent, originalInput, rawResponses, step.FinalOutput)
 			if ferr != nil {
 				return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
@@ -1057,6 +1076,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				CurrentTurn:           turn,
 				MaxTurns:              r.maxTurns,
 				ToolsUsed:             toolsUsedList(r.toolsUsedBy),
+				PendingInput:          r.ctrl.Pending(),
 				ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
 				// Carry the guardrail results accumulated so far so a resumed run's
 				// RunResult still reports them: first-turn input guardrails are not
@@ -1104,6 +1124,15 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// input filter makes above.
 				originalInput = sp.Input
 				generatedItems = nil
+			}
+			if len(sp.Injected) > 0 {
+				generatedItems = append(generatedItems, sp.Injected...)
+				r.sessionItems = append(r.sessionItems, sp.Injected...)
+				for _, it := range sp.Injected {
+					if !r.emitItem(it) {
+						return nil, errConsumerStopped
+					}
+				}
 			}
 			pending = sp.NextSnapshot
 			continue
