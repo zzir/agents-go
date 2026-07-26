@@ -39,6 +39,25 @@ type ModelResponse struct {
 	// headers (e.g. OpenAI's x-request-id), useful for support/debugging. Empty
 	// when the backend does not supply one.
 	RequestID string
+	// Status is the provider's own verdict on the response — "completed",
+	// "incomplete", … — and IncompleteReason says why when it is not complete.
+	//
+	// They matter because "incomplete" is not "failed": a response cut off at
+	// the output-token limit still arrives, with output items in it, and some
+	// of those items may be tool calls whose arguments stop mid-JSON. The
+	// runner has to be able to tell that apart from a response the model
+	// finished. See Truncated.
+	Status           string
+	IncompleteReason string
+}
+
+// Truncated reports whether the response was cut off at the output-token limit.
+//
+// A truncated response is the dangerous one: it looks ordinary — items present,
+// no error — but anything at its tail may be half-formed, including a tool
+// call's arguments. Executing those is how an agent deletes the wrong path.
+func (m *ModelResponse) Truncated() bool {
+	return m != nil && m.Status == "incomplete" && m.IncompleteReason == "max_output_tokens"
 }
 
 // ToInputItems converts the model output items into input items suitable for the

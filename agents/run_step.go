@@ -224,11 +224,24 @@ func (r *runner) executeToolsAndSideEffects(
 	// with the rejected results in original call order so item order and
 	// the turn-boundary hooks see every call (results built in tool_runs
 	// order).
-	executed, err := r.runFunctionTools(ctx, agent, toRun)
-	if err != nil {
-		return nil, err
+	var executed []functionToolResult
+	if resp.Truncated() {
+		// The response was cut off at the output-token limit, so a call's
+		// arguments may stop mid-JSON. None of them run.
+		executed = truncatedCallResults(agent, toRun)
+	} else {
+		executed, err = r.runFunctionTools(ctx, agent, toRun)
+		if err != nil {
+			return nil, err
+		}
 	}
 	functionResults := orderToolResults(functions, executed, rejected)
+
+	// A model stuck calling a broken tool would otherwise burn the whole turn
+	// budget rediscovering that it is broken, and bill for it.
+	if err := r.noteToolTurn(functionResults); err != nil {
+		return nil, err
+	}
 
 	var nestedInterruptions []*ToolApprovalItem
 	var nestedStates map[string]*RunState
@@ -512,8 +525,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	// winner by call order).
 	fatalErrs := make([]error, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
-	if r.opts.Exec.MaxToolConcurrency > 0 {
-		g.SetLimit(r.opts.Exec.MaxToolConcurrency)
+	if limit := r.toolConcurrency(runs); limit > 0 {
+		g.SetLimit(limit)
 	}
 	for i, run := range runs {
 		g.Go(func() (err error) {

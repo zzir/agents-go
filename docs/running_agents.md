@@ -97,6 +97,43 @@ res, err := agents.RunSync(ctx, agent, input, opts)
 
 Per-tool timeouts are a [tool-level setting](tools.md#timeouts).
 
+## Tool-loop safety valves
+
+`ExecOptions.ToolLoop` bounds the ways a run can keep going without getting
+anywhere:
+
+```go
+opts.Exec.ToolLoop = agents.ToolLoopPolicy{
+	MaxConsecutiveErrorTurns: 3,    // default; -1 disables
+	FinalTurnWithoutTools:    true, // off by default
+}
+```
+
+`MaxConsecutiveErrorTurns` aborts with a `*ToolLoopError` after N turns in which
+*every* tool call failed. Any success clears the counter, and a turn with no
+tool calls is neither counted nor cleared. Without it, a model calling a broken
+tool spends the whole turn budget rediscovering that it is broken.
+
+`FinalTurnWithoutTools` gives an exhausted turn budget one more model call **with
+no tools and no handoffs**, so the model closes out in prose rather than the run
+failing with `*MaxTurnsError`. Tool-free is the point — offered a tool it would
+call one. It is opt-in because a turn budget is sometimes a cost ceiling, and
+this spends a call it said not to spend.
+
+A tool marked with `agents.WithSequential` makes its **whole batch** run one call
+at a time; see [Tools](tools.md#decorators-adding-a-capability-to-a-tool-you-did-not-build).
+
+### Truncated responses
+
+A model response cut off at the output-token limit
+(`status="incomplete"`, reason `max_output_tokens`) has **none of its tool calls
+executed**. Each is answered with an explanation so the model resends.
+
+This is correctness, not policy: a truncated response looks ordinary — items
+present, no error — but its tail may be half-formed, and a tool call's arguments
+are exactly the kind of tail that gets cut. Truncation is fed back to the model
+rather than failing the run; every other incomplete reason still fails.
+
 ## Steering a run in flight
 
 `Run` returns a `RunControl` next to the stream. Besides `StopAfterTurn` and the

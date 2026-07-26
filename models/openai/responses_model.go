@@ -168,6 +168,11 @@ func (m *ResponsesModel) GetResponse(ctx context.Context, req agents.ModelReques
 		Usage:      usageFromResponse(usage),
 		ResponseID: resp.ID,
 		RequestID:  requestID,
+		// The blocking path used to drop these while the streaming path read
+		// them, so the same truncated response was a hard failure when streamed
+		// and a silent partial answer when not.
+		Status:           string(resp.Status),
+		IncompleteReason: resp.IncompleteDetails.Reason,
 	}, nil
 }
 
@@ -202,6 +207,14 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 				return
 			case "response.incomplete":
 				r := event.AsResponseIncomplete().Response
+				if r.IncompleteDetails.Reason == "max_output_tokens" {
+					// Not a failure: the response arrived, it is just cut off.
+					// The runner refuses to execute its tool calls and tells
+					// the model to resend, which is recoverable — failing the
+					// run here would throw away a turn's work over a length
+					// limit. Every other incomplete reason still fails.
+					return
+				}
 				yield(nil, responseTerminalFailure(event.Type, string(r.Status), "", "", r.IncompleteDetails.Reason))
 				return
 			}

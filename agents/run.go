@@ -198,6 +198,10 @@ type ExecOptions struct {
 	// Python's Runner.run(..., error_handlers={...}).
 	ErrorHandlers RunErrorHandlers
 
+	// ToolLoop bounds the tool loop: consecutive all-failed turns, and what
+	// happens when the turn budget runs out. The zero value is sensible.
+	ToolLoop ToolLoopPolicy
+
 	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
 	// items are converted back into model input on later turns. The default
 	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It is
@@ -524,6 +528,11 @@ type runner struct {
 	// so a per-turn save never rewrites it.
 	userInputSaved bool
 
+	// consecutiveErrorTurns counts turns in a row where every tool call failed.
+	// A turn with any success clears it; ToolLoopPolicy decides when enough is
+	// enough.
+	consecutiveErrorTurns int
+
 	// toolsUsedBy tracks which agents have called tools this run, driving the
 	// tool_choice reset (Agent.DisableToolChoiceReset). Keyed by agent name so
 	// it can be carried across an interrupt/resume in RunState (Python
@@ -640,6 +649,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	// point, to be used instead of resolving the next turn from the agent.
 	var pending *TurnSnapshot
 
+	// finalTurn marks the extra tool-free turn granted when the budget ran out,
+	// so it is granted once rather than every turn from then on.
+	var finalTurn bool
+
 	// Persist the new user input up front (original run only; a resume's input
 	// was saved before it paused). Mirrors Python persisting input before the
 	// Runs defer the one-time user-input save to just before the first model
@@ -668,15 +681,24 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}, nil
 		}
 		if r.maxTurns > 0 && turn > r.maxTurns {
-			maxErr := newMaxTurnsError(r.maxTurns)
-			res, rerr := r.recoverMaxTurns(ctx, maxErr, originalInput, rawResponses, currentAgent)
-			if rerr != nil {
-				return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
+			// One last call with no tools lets the model close out in prose
+			// instead of the run ending on an error. It spends a call the
+			// budget said not to spend, so it is opt-in — and it is granted by
+			// running THIS turn tool-free, not by skipping to the next one.
+			// Once granted, the next overrun is the real end.
+			if r.opts.Exec.ToolLoop.FinalTurnWithoutTools && !finalTurn {
+				finalTurn = true
+			} else {
+				maxErr := newMaxTurnsError(r.maxTurns)
+				res, rerr := r.recoverMaxTurns(ctx, maxErr, originalInput, rawResponses, currentAgent)
+				if rerr != nil {
+					return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
+				}
+				if res != nil {
+					return res, nil
+				}
+				return nil, r.fail(maxErr, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			if res != nil {
-				return res, nil
-			}
-			return nil, r.fail(maxErr, originalInput, generatedItems, rawResponses, currentAgent)
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -737,6 +759,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		model, systemPrompt, prompt := snapshot.Model, snapshot.Instructions, snapshot.Prompt
 		outputSchema, handoffs, tools := snapshot.OutputSchema, snapshot.Handoffs, snapshot.Tools
 		modelInput := snapshot.Input
+		if finalTurn {
+			// The point of the extra turn is that the model CANNOT call
+			// anything: offered a tool it would call one, and the budget would
+			// be exhausted again with nothing said.
+			tools, handoffs = nil, nil
+		}
 
 		// Publish the turn's input so input guardrails, hooks and tools all see
 		// exactly what the model is being sent. CallModelInputFilter may still

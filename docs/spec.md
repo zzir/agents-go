@@ -578,6 +578,47 @@ absence of a failure handler, and a wrapper cannot express an absence —
 `ToolAs` would walk straight past it to the inner tool's handler. Set
 `FailureErrorFunction = nil` on the tool itself.
 
+### 2.7d Tool-loop safety valves ✅
+
+The loop's own failure modes — not the model's ordinary mistakes, but the ones
+where an agent keeps going and gets nowhere:
+
+- **Consecutive all-failed turns abort the run.** `ToolLoop.MaxConsecutiveErrorTurns`
+  (default 3) counts TURNS in which *every* tool call failed; any success
+  clears it, and a turn with no tool calls is neither counted nor cleared —
+  the run is talking, not looping. A negative value disables it. Without this,
+  a model calling a broken tool spends the whole turn budget rediscovering that
+  it is broken, and the caller is billed for it.
+- **`ToolLoop.FinalTurnWithoutTools` is opt-in.** With it, an exhausted turn
+  budget buys one more model call **with no tools and no handoffs**, so the
+  model closes out in prose instead of the run failing. Tool-free is the point:
+  offered a tool it would call one, and the budget would be spent again with
+  nothing said. It is opt-in because the budget may be a cost ceiling rather
+  than a loop guard, and this spends a call it said not to spend.
+- **One `Sequential` tool serializes the whole batch.** Per-tool serialization
+  would be finer, but a tool that refuses to run beside anything usually means
+  it for a resource — a shell session, a working directory — the others touch
+  too.
+
+### 2.7e Truncated responses ✅
+
+A response the provider marks `status="incomplete"` with reason
+`max_output_tokens` was cut off at the output-token limit.
+
+- **None of its tool calls execute.** Each is answered with an explanation that
+  the response was truncated and the call was not run, so the model resends.
+- This is a **correctness** rule, not a policy. A truncated response looks
+  ordinary — items present, no error — but its tail may be half-formed, and a
+  tool call's arguments are exactly the kind of tail that gets cut. Executing
+  `{"path": "/ho` as if it were complete is how an agent acts on something
+  nobody asked for.
+- **Truncation is not failure.** It is fed back to the model rather than
+  failing the run, which would throw a turn's work away over a length limit.
+  Every other incomplete reason still fails.
+- Both model paths report it. The blocking path used to drop `Status` while the
+  streaming path read it, so the same response was a hard failure when streamed
+  and a silent partial answer when not.
+
 ### 2.8 Nested agent-as-tool attribution ✅
 
 | Aspect | Attribution |

@@ -56,12 +56,27 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 			return nil, errConsumerStopped
 		}
 		acc.processEvent(event)
-		if event.Type == "response.completed" {
+		switch event.Type {
+		case "response.completed":
 			completed := event.AsResponseCompleted()
 			final = &ModelResponse{
 				Output:     completed.Response.Output,
 				Usage:      usageFromStreamResponse(&completed.Response),
 				ResponseID: completed.Response.ID,
+				Status:     string(completed.Response.Status),
+			}
+		case "response.incomplete":
+			// A response cut off at the output-token limit still arrived. It is
+			// assembled like any other so the runner can see it is truncated
+			// and refuse to run its tool calls; treating it as "no response"
+			// would throw the turn away over a length limit.
+			inc := event.AsResponseIncomplete()
+			final = &ModelResponse{
+				Output:           inc.Response.Output,
+				Usage:            usageFromStreamResponse(&inc.Response),
+				ResponseID:       inc.Response.ID,
+				Status:           string(inc.Response.Status),
+				IncompleteReason: inc.Response.IncompleteDetails.Reason,
 			}
 		}
 	}

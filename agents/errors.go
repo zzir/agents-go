@@ -41,6 +41,7 @@ const (
 	CodeModelRefusal      ErrorCode = "model_refusal"
 	CodeUserError         ErrorCode = "user_error"
 	CodeToolTimeout       ErrorCode = "tool_timeout"
+	CodeToolLoop          ErrorCode = "tool_loop"
 	CodeToolPanic         ErrorCode = "tool_panic"
 	CodeGuardrailTripwire ErrorCode = "guardrail_tripwire"
 	CodeSandboxExec       ErrorCode = "sandbox_exec"
@@ -76,6 +77,8 @@ func CodeOf(err error) ErrorCode {
 		return CodeModelBehavior
 	case isType[*ToolTimeoutError](err):
 		return CodeToolTimeout
+	case isType[*ToolLoopError](err):
+		return CodeToolLoop
 	case isType[*UserError](err):
 		return CodeUserError
 	}
