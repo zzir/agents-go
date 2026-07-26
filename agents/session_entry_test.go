@@ -234,3 +234,58 @@ func TestCompactionCheckpointProjection(t *testing.T) {
 		t.Errorf("the retained tail was lost: %s", raw)
 	}
 }
+
+// An amender that knows the tool call but not the entry can still amend it —
+// which is the case for anything reporting on a call afterwards, since the
+// entry id is assigned by storage at a moment the amender may not have reached.
+func TestUpdateEntry_TargetsACallID(t *testing.T) {
+	call, err := EntryFromRunItem(&ToolCallItem{
+		Raw: functionCallOutput(t, "spawn_task", "call-9", `{}`),
+	}, "resp_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call.ID = "e2"
+
+	upd, err := NewCallUpdateEntry("call-9", ItemDisplay{
+		Extra: map[string]any{"task_status": "completed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The update is stored BEFORE its target — the case the retry loop used to
+	// exist for — and folding still associates them.
+	folded := FoldUpdates([]SessionEntry{upd, call})
+	if len(folded) != 1 {
+		t.Fatalf("folded to %d entries, want the update merged away", len(folded))
+	}
+	got := folded[0].Display
+	if got == nil || got.Extra["task_status"] != "completed" {
+		t.Errorf("display = %+v, want the update applied", got)
+	}
+	// The call's own fields survive the merge.
+	if got.ToolName != "spawn_task" || got.CallID != "call-9" {
+		t.Errorf("display lost the call's own fields: %+v", got)
+	}
+}
+
+// An update naming a call nothing holds amends nothing, rather than attaching
+// itself to whatever happened to be nearby.
+func TestUpdateEntry_UnknownCallIDIsIgnored(t *testing.T) {
+	call, err := EntryFromRunItem(&ToolCallItem{
+		Raw: functionCallOutput(t, "probe", "call-1", `{}`),
+	}, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call.ID = "e1"
+	upd, err := NewCallUpdateEntry("call-does-not-exist", ItemDisplay{Text: "ghost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	folded := FoldUpdates([]SessionEntry{call, upd})
+	if len(folded) != 1 || (folded[0].Display != nil && folded[0].Display.Text == "ghost") {
+		t.Errorf("an unmatched update was applied: %+v", folded)
+	}
+}

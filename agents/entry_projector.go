@@ -169,6 +169,7 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 func FoldUpdates(entries []SessionEntry) []SessionEntry {
 	// Index targets first so an update that precedes its target still applies.
 	index := make(map[string]int, len(entries))
+	byCall := make(map[string]int)
 	out := make([]SessionEntry, 0, len(entries))
 	for _, e := range entries {
 		if e.Kind == EntryKindUpdate {
@@ -176,6 +177,11 @@ func FoldUpdates(entries []SessionEntry) []SessionEntry {
 		}
 		if e.ID != "" {
 			index[e.ID] = len(out)
+		}
+		// A tool call is also addressable by its call id, for an amender that
+		// knows the call and not the entry.
+		if e.Display != nil && e.Display.CallID != "" && e.Display.Kind == DisplayToolCall {
+			byCall[e.Display.CallID] = len(out)
 		}
 		out = append(out, e)
 	}
@@ -189,6 +195,9 @@ func FoldUpdates(entries []SessionEntry) []SessionEntry {
 			continue // an undecodable update amends nothing
 		}
 		i, ok := index[p.TargetID]
+		if !ok && p.TargetCallID != "" {
+			i, ok = byCall[p.TargetCallID]
+		}
 		if !ok {
 			continue
 		}

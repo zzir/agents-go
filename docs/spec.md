@@ -322,6 +322,10 @@ a reader's view. A display settled after its turn ended is expressed as an
 - **An update may be stored before its target.** Association is by id, so the
   "the task finished before the parent turn was persisted" race does not need
   handling — it cannot occur.
+- **A tool call is also addressable by its call id** (`TargetCallID`), for an
+  amender that knows the call and not the entry. The entry id is assigned by
+  storage at a moment the amender may not have reached yet; requiring it would
+  put the look-it-up-and-retry race back that this mechanism exists to remove.
 - **An update whose target is missing is ignored, not an error.** The target may
   have been folded away by compaction, and failing an entire read over a stale
   pointer would make history unloadable.

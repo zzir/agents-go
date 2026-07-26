@@ -69,6 +69,11 @@ const (
 	DisplayReasoning  = "reasoning"
 	DisplayHandoff    = "handoff"
 	DisplayUnknown    = "unknown"
+	// DisplayError and DisplayCancelled are what an annotation entry renders
+	// as. They are display kinds rather than item kinds because nothing was
+	// said: they report on the run, and the model never reads them.
+	DisplayError     = "error"
+	DisplayCancelled = "cancelled"
 )
 
 // MessageOutputItem is an assistant message produced by the model.

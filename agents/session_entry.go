@@ -119,7 +119,16 @@ type SessionEntry struct {
 // the parent turn was saved" has nothing left to do.
 type UpdatePayload struct {
 	// TargetID is the entry being amended.
-	TargetID string `json:"target_id"`
+	TargetID string `json:"target_id,omitzero"`
+	// TargetCallID amends the entry whose display carries this tool call id,
+	// for an amender that knows the call but not the entry.
+	//
+	// That is the ordinary case for anything reporting on a tool call
+	// afterwards: a background task finishing knows which call started it, and
+	// the entry id is assigned by storage at a moment the amender may not have
+	// reached yet. Requiring the entry id would put the race back — look it up,
+	// find nothing, retry — which is what this mechanism exists to remove.
+	TargetCallID string `json:"target_call_id,omitzero"`
 	// Display is merged over the target's display. Only non-zero fields apply.
 	Display ItemDisplay `json:"display"`
 }
@@ -211,7 +220,20 @@ func (e SessionEntry) LeafPayload() (LeafPayload, error) {
 
 // NewUpdateEntry builds an entry amending an earlier entry's display.
 func NewUpdateEntry(targetID string, display ItemDisplay) (SessionEntry, error) {
-	raw, err := json.Marshal(UpdatePayload{TargetID: targetID, Display: display})
+	return newUpdate(UpdatePayload{TargetID: targetID, Display: display})
+}
+
+// NewCallUpdateEntry builds an entry amending the display of whichever entry
+// holds the given tool call.
+//
+// It is what a long-running thing reports through: the caller knows the call it
+// was started by, and the entry id belongs to storage.
+func NewCallUpdateEntry(callID string, display ItemDisplay) (SessionEntry, error) {
+	return newUpdate(UpdatePayload{TargetCallID: callID, Display: display})
+}
+
+func newUpdate(p UpdatePayload) (SessionEntry, error) {
+	raw, err := json.Marshal(p)
 	if err != nil {
 		return SessionEntry{}, fmt.Errorf("encoding update payload: %w", err)
 	}
