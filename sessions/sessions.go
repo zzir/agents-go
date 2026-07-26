@@ -81,8 +81,37 @@ func NewSQLite(dsn, sessionID string) (*Session, *bun.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	tuneSQLite(sqldb)
 	db := bun.NewDB(sqldb, sqlitedialect.New())
 	return New(db, sessionID), db, nil
+}
+
+// tuneSQLite makes concurrent writers work at all.
+//
+// SQLite allows one writer, and with the default busy timeout of zero a second
+// one fails IMMEDIATELY with SQLITE_BUSY rather than waiting. That turns every
+// ordinary race — two runs finishing at once, a stop meeting a completion —
+// into an error, and a conditional UPDATE used as a compare-and-set then cannot
+// tell "somebody else won" from "the database was busy", which is the
+// difference between correct and silently broken.
+//
+// Capping the pool at one connection is the portable fix. A busy_timeout pragma
+// would be finer, but it applies PER CONNECTION and database/sql hands out
+// connections from a pool, so a pragma executed once lands on whichever one it
+// happened to get — and the DSN syntax for setting it differs between the
+// drivers sqliteshim may resolve to. Serializing in Go costs a little
+// throughput on a database that has one writer regardless.
+//
+// The pragmas that follow are best-effort: an in-memory or read-only database
+// rejects them, which is not a reason to fail to open.
+func tuneSQLite(sqldb *sql.DB) {
+	sqldb.SetMaxOpenConns(1)
+	for _, pragma := range []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		_, _ = sqldb.Exec(pragma)
+	}
 }
 
 // NewPostgres wraps an existing PostgreSQL *sql.DB as a Session, returning the
