@@ -71,6 +71,12 @@ type RunState struct {
 	// response is re-processed, so only cross-agent hand-back loses the reset.
 	ToolsUsed []string
 
+	// DisclosedTools names the deferred tools opened up before the pause, so a
+	// resumed run does not re-hide a tool the model has already been told
+	// about — which would look, from the model's side, like the tool was taken
+	// away mid-conversation.
+	DisclosedTools []string `json:"disclosed_tools,omitzero"`
+
 	// PendingInput carries input queued through RunControl that the run had not
 	// consumed when it paused. Without it, a steer sent while the caller was
 	// deciding on an approval would be lost at exactly the moment it mattered
@@ -215,6 +221,12 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	}
 	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agentName), slog.Bool("resumed", true))
 	r.diagnostics = &DiagnosticSink{}
+	for _, name := range state.DisclosedTools {
+		if r.disclosed == nil {
+			r.disclosed = map[string]bool{}
+		}
+		r.disclosed[name] = true
+	}
 	// Seed the guardrail-result accumulators from the state so the resumed run's
 	// RunResult still reports the pre-pause results. First-turn input guardrails
 	// are not re-run on resume, so this is the only way they survive (Python

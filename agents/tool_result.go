@@ -38,6 +38,14 @@ type ToolResult struct {
 	// lands in the run total with nothing to attribute it to.
 	Usage *Usage
 
+	// AddedTools names tools this result discloses to the model.
+	//
+	// It is how a tool opens a door: an authentication tool announcing the
+	// account tools, a planner announcing the executors. Naming a tool that is
+	// not marked deferred, or does not exist, is ignored — a tool should not be
+	// able to fail a run by mentioning something.
+	AddedTools []string
+
 	// Terminate asks the run to stop after this batch of tools finishes.
 	//
 	// It takes effect only when EVERY tool in the batch asks for it. One tool

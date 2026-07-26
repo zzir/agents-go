@@ -92,6 +92,7 @@ tool = agents.WithGuardrails(tool, myGuardrail)   // appends to the tool's own
 tool = agents.WithEnabled(tool, onlyForAdmins)
 tool = agents.WithSequential(tool)
 tool = agents.WithFailureHandler(tool, agents.DefaultToolErrorFunction)
+tool = agents.WithDeferred(tool)                  // hidden until disclosed
 ```
 
 Wrappers stack in any order and compose with the tool's own settings.
@@ -117,6 +118,38 @@ resolved through one accessor instead of methods on `Tool`.
 A wrapper you write yourself only has to embed the unexported shell's contract:
 forward `ToolName`, implement `Unwrap() Tool`, and add the one interface it
 provides.
+
+### Progressive disclosure
+
+`agents.WithDeferred` withholds a tool from the model until another tool's
+result names it:
+
+```go
+agent.Tools = []agents.Tool{
+	authenticate,                       // always available
+	agents.WithDeferred(readAccount),   // hidden until disclosed
+}
+
+// inside authenticate:
+r := agents.TextResult("signed in")
+r.AddedTools = []string{"read_account"}
+return r, nil
+```
+
+An agent offered forty tools chooses worse than one offered four, and most of
+those forty only matter after something else has happened. A tool announcing
+what it unlocks says that directly, where a static list cannot.
+
+Marking the *tool* is the opt-in rather than a run-level switch, because the
+interesting question is which tools wait — a run where everything is deferred
+has no way to disclose anything.
+
+Disclosure is **cumulative** for the rest of the run (withdrawing a tool after
+one use would surprise a model that had just been told it existed) and survives
+an [approval pause](human_in_the_loop.md), so a resumed run does not re-hide it.
+It does not override `IsEnabled`: disclosure opens a door, it does not force
+one. Naming a tool that does not exist is ignored — a tool should not be able to
+fail a run by mentioning something.
 
 ### Streaming partial results
 

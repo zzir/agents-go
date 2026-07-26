@@ -2,6 +2,7 @@ package agents
 
 import (
 	"fmt"
+	"sort"
 )
 
 // ToolLoopPolicy bounds the tool loop.
@@ -130,4 +131,37 @@ func (r *runner) toolConcurrency(runs []toolRunFunction) int {
 		return 1
 	}
 	return r.opts.Exec.MaxToolConcurrency
+}
+
+// discloseTools records the deferred tools this batch's results opened up.
+//
+// Disclosure is cumulative for the rest of the run: a tool told about once
+// stays available. Withdrawing it after a single use would surprise a model
+// that had just been told it existed.
+func (r *runner) discloseTools(results []functionToolResult) {
+	for _, res := range results {
+		for _, name := range res.addedTools {
+			if name == "" {
+				continue
+			}
+			if r.disclosed == nil {
+				r.disclosed = map[string]bool{}
+			}
+			r.disclosed[name] = true
+		}
+	}
+}
+
+// sortedKeys returns a set's members in a stable order, so serialized state
+// does not churn between otherwise identical runs.
+func sortedKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

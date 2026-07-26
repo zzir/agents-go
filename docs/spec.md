@@ -668,6 +668,23 @@ Schema, not a root-level `required` check.
 - `EnsureStrictJSONSchema` is unaffected: it is the OpenAI strict-mode
   *transformer*, a different job from validation.
 
+### 2.7i Progressive tool disclosure ✅
+
+A tool marked `WithDeferred` is withheld from the model until some
+`ToolResult.AddedTools` names it.
+
+- **Marking the tool is the opt-in**, not a run-level flag: the interesting
+  question is which tools wait, and a run where everything is deferred could
+  never disclose anything.
+- **Disclosure is cumulative** for the rest of the run. Withdrawing a tool after
+  one use would surprise a model that had just been told it existed.
+- **It survives a resume** (`RunState.DisclosedTools`). Re-hiding would look,
+  from the model's side, like a tool taken away mid-conversation.
+- **It does not override `IsEnabled`.** Disclosure opens a door; it does not
+  force one.
+- **Naming an unknown tool is ignored.** A tool should not be able to fail a run
+  by mentioning something.
+
 ### 2.7g Tool progress ✅
 
 `ToolContext.Emit` pushes a partial result to a streamed run's consumer as a

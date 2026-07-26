@@ -252,6 +252,7 @@ func (r *runner) executeToolsAndSideEffects(
 	if err := r.noteToolTurn(functionResults); err != nil {
 		return nil, err
 	}
+	r.discloseTools(functionResults)
 
 	var nestedInterruptions []*ToolApprovalItem
 	var nestedStates map[string]*RunState
@@ -492,6 +493,8 @@ type functionToolResult struct {
 	// terminate is the tool asking the run to stop after this batch. It only
 	// takes effect when every tool in the batch asks.
 	terminate bool
+	// addedTools are deferred tools this result discloses.
+	addedTools []string
 }
 
 // toolPanicError is what a panic recovered from user tool code (the tool
@@ -720,6 +723,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				output:     out,
 				usage:      result.Usage,
 				terminate:  result.Terminate,
+				addedTools: result.AddedTools,
 			}
 			return nil
 		})

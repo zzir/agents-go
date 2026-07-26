@@ -563,6 +563,11 @@ type runner struct {
 	// twice.
 	usagePending bool
 
+	// disclosed names the deferred tools a ToolResult has opened up. It is
+	// carried on RunState so a resumed run does not re-hide a tool the model
+	// has already been told about.
+	disclosed map[string]bool
+
 	// consecutiveErrorTurns counts turns in a row where every tool call failed.
 	// A turn with any success clears it; ToolLoopPolicy decides when enough is
 	// enough.
@@ -1170,6 +1175,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				MaxTurns:              r.maxTurns,
 				ToolsUsed:             toolsUsedList(r.toolsUsedBy),
 				PendingInput:          r.ctrl.Pending(),
+				DisclosedTools:        sortedKeys(r.disclosed),
 				ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
 				// Carry the guardrail results accumulated so far so a resumed run's
 				// RunResult still reports them: first-turn input guardrails are not
@@ -1724,6 +1730,12 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 			if !enabled {
 				continue
 			}
+		}
+		// A deferred tool waits until something discloses it. It is checked
+		// after IsEnabled so a disclosed tool that is also disabled stays
+		// hidden — disclosure opens a door, it does not force one.
+		if d, ok := ToolAs[DeferredTool](t); ok && d.IsDeferred() && !r.disclosed[t.ToolName()] {
+			continue
 		}
 		out = append(out, t)
 	}

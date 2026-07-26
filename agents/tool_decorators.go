@@ -53,6 +53,11 @@ type (
 	SequentialTool interface {
 		RunsSequentially() bool
 	}
+
+	// DeferredTool is withheld from the model until something discloses it.
+	DeferredTool interface {
+		IsDeferred() bool
+	}
 	// EnableableTool decides per run whether the model sees it.
 	EnableableTool interface {
 		IsToolEnabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
@@ -138,6 +143,26 @@ func WithGuardrails(t Tool, g ...Guardrail) Tool {
 type sequentialTool struct{ deco }
 
 func (sequentialTool) RunsSequentially() bool { return true }
+
+type deferredTool struct{ deco }
+
+func (deferredTool) IsDeferred() bool { return true }
+
+// WithDeferred withholds a tool from the model until a ToolResult names it in
+// AddedTools.
+//
+// It is progressive disclosure: an agent offered forty tools chooses worse than
+// one offered four, and most of those forty are only relevant after something
+// else has happened. A tool announcing the tools it unlocks says that directly,
+// where a static list cannot.
+//
+// Marking the tool is the opt-in, rather than a run-level switch, because the
+// interesting question is WHICH tools wait — a run where everything is deferred
+// has no way to disclose anything.
+//
+// Once disclosed a tool stays available for the rest of the run; withdrawing it
+// after one use would surprise a model that had just been told it existed.
+func WithDeferred(t Tool) Tool { return deferredTool{deco{t}} }
 
 // WithSequential marks a tool that must not run concurrently with others in the
 // same turn.

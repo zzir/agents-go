@@ -22,11 +22,18 @@ type fakeModel struct {
 	idx       int
 	lastReq   ModelRequest
 	calls     int
+	// onRequest, when set, is called with each request as it arrives — for
+	// tests that care about what the model was offered on a given turn, not
+	// just on the last one.
+	onRequest func(ModelRequest)
 }
 
 func (m *fakeModel) GetResponse(_ context.Context, req ModelRequest) (*ModelResponse, error) {
 	m.lastReq = req
 	m.calls++
+	if m.onRequest != nil {
+		m.onRequest(req)
+	}
 	if m.idx >= len(m.responses) {
 		return &ModelResponse{Output: nil, Usage: NewUsage()}, nil
 	}
@@ -42,6 +49,9 @@ func (m *fakeModel) StreamResponse(ctx context.Context, req ModelRequest) iter.S
 	return func(yield func(*TResponseStreamEvent, error) bool) {
 		m.lastReq = req
 		m.calls++
+		if m.onRequest != nil {
+			m.onRequest(req)
+		}
 		var resp *ModelResponse
 		if m.idx < len(m.responses) {
 			resp = m.responses[m.idx]
