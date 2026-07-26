@@ -474,6 +474,33 @@ cannot otherwise survive.
   off.
 - A recovered overflow is recorded as a `context_overflow` diagnostic.
 
+### 2.5h Crash recovery ✅
+
+`RecoverSession` repairs a session a killed process left inconsistent.
+
+- The damage is specific: a run killed between issuing a tool call and recording
+  its output leaves a `function_call` with no `function_call_output`. The
+  Responses API rejects that history outright, so the session is not untidy —
+  it is **unloadable**, and every later attempt to continue fails the same way.
+- **The repair appends**, like everything else: a synthesized error output is
+  added and nothing is rewritten, so the record of what actually happened
+  survives.
+- The synthesized output **says what happened** and warns against assuming the
+  tool succeeded. A blank result would read to the model as "the tool returned
+  nothing".
+- **An unfinished call is never retried by default.** A process killed between
+  the call and its output leaves no way to tell whether the tool ran — the
+  email may already have been sent. Only a tool declaring `WithRetrySafe` is
+  left dangling for the next run to redo.
+- `RecoveryPolicy.RetrySafe` is supplied by the **caller**, because the stored
+  history holds a tool NAME and only the caller knows the agent.
+  `RetrySafeNames(tools)` builds it.
+- It is the counterpart of `RunState`, not a replacement: `RunState` handles a
+  run that paused on purpose and knows where it was; this handles a process
+  that died and left only what had been written. `safePersistBoundary` keeps a
+  dangling call out on every ordinary exit and cannot help when the process is
+  killed.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in

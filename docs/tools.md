@@ -93,6 +93,7 @@ tool = agents.WithEnabled(tool, onlyForAdmins)
 tool = agents.WithSequential(tool)
 tool = agents.WithFailureHandler(tool, agents.DefaultToolErrorFunction)
 tool = agents.WithDeferred(tool)                  // hidden until disclosed
+tool = agents.WithRetrySafe(tool)                 // safe to repeat after a crash
 ```
 
 Wrappers stack in any order and compose with the tool's own settings.

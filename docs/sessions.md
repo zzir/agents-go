@@ -351,6 +351,44 @@ Compaction is best-effort housekeeping: by the time it runs, the run's items are
 
 For the provider-agnostic, append-only alternative see [Run-level compaction](#run-level-compaction) above.
 
+## Recovering from a crash
+
+A process killed between issuing a tool call and recording its output leaves a
+`function_call` with no `function_call_output`. The Responses API rejects that
+history outright, so the session is not merely untidy — it cannot be loaded at
+all, and every later attempt to continue the conversation fails the same way.
+
+```go
+report, err := agents.RecoverSession(ctx, sess, agents.RecoveryPolicy{
+	RetrySafe: agents.RetrySafeNames(agent.Tools),
+})
+if report.NeedsRecovery() {
+	log.Printf("repaired %d interrupted call(s)", len(report.Repaired))
+}
+```
+
+The repair **appends** a synthesized error output — nothing is rewritten, so the
+record of what actually happened survives. The message says the run was
+interrupted and warns against assuming the tool succeeded, since a blank result
+would read to the model as "the tool returned nothing".
+
+**An unfinished call is never retried by default.** There is no way to tell
+whether the tool ran: the email may already have been sent. A tool that is safe
+to repeat says so, and is then left dangling for the next run to redo:
+
+```go
+agent.Tools = []agents.Tool{agents.WithRetrySafe(readFile), sendEmail}
+```
+
+`RetrySafe` is supplied by the caller because the stored history holds a tool
+*name*, and only the caller knows the agent.
+
+This is the counterpart of [`RunState`](human_in_the_loop.md), not a
+replacement: `RunState` handles a run that paused on purpose and knows exactly
+where it was, while this handles a process that died and left only what had been
+written. `safePersistBoundary` already keeps a dangling call out of a session on
+every ordinary exit; it cannot help when the process is killed.
+
 ## Session semantics
 
 - History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (matching Python's per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run.

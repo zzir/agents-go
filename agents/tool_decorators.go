@@ -58,6 +58,11 @@ type (
 	DeferredTool interface {
 		IsDeferred() bool
 	}
+
+	// RetrySafeTool can be run again after a crash interrupted it.
+	RetrySafeTool interface {
+		IsRetrySafe() bool
+	}
 	// EnableableTool decides per run whether the model sees it.
 	EnableableTool interface {
 		IsToolEnabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
@@ -163,6 +168,36 @@ func (deferredTool) IsDeferred() bool { return true }
 // Once disclosed a tool stays available for the rest of the run; withdrawing it
 // after one use would surprise a model that had just been told it existed.
 func WithDeferred(t Tool) Tool { return deferredTool{deco{t}} }
+
+type retrySafeTool struct{ deco }
+
+func (retrySafeTool) IsRetrySafe() bool { return true }
+
+// WithRetrySafe declares a tool safe to run again after a crash interrupted it
+// mid-execution.
+//
+// The default is unsafe, and deliberately so. A process killed between issuing
+// a call and recording its output leaves no way to tell whether the tool ran:
+// the email may already have been sent. Repeating it is a choice only the tool's
+// author can make, and the SDK assuming otherwise would make crash recovery a
+// source of duplicate side effects.
+//
+// A reader is a good candidate; anything that writes, charges or notifies is
+// not, unless it is idempotent by construction.
+func WithRetrySafe(t Tool) Tool { return retrySafeTool{deco{t}} }
+
+// RetrySafeNames returns a predicate for RecoveryPolicy.RetrySafe from a set of
+// tools, so a caller repairing a session does not have to restate which of its
+// tools are safe to repeat.
+func RetrySafeNames(tools []Tool) func(string) bool {
+	safe := map[string]bool{}
+	for _, t := range tools {
+		if rs, ok := ToolAs[RetrySafeTool](t); ok && rs.IsRetrySafe() {
+			safe[t.ToolName()] = true
+		}
+	}
+	return func(name string) bool { return safe[name] }
+}
 
 // WithSequential marks a tool that must not run concurrently with others in the
 // same turn.
