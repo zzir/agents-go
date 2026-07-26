@@ -5,7 +5,7 @@ import type { TaskStatus } from '@/lib/protocol';
 import { buildTimeline } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendToolProgress, appendHandoffPart,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
 import { toast } from '@/lib/toast';
@@ -702,6 +702,27 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       updateSS(sid, s => {
         const msgs = appendToolCall(s.messages, tc, flushed);
         return msgs ? { ...s, messages: msgs, streaming: '' } : s;
+      });
+    });
+
+    // Live output from a tool that is still running. It is not the answer —
+    // run.tool_result is — so it accumulates on the card and is replaced when
+    // the result lands.
+    ws.on(EV.runToolProgress, (p: { run_id: string; call_id: string; delta: string; renderer?: string }) => {
+      if (taskRunsRef.current[p.run_id]) {
+        if (isWatchedRun(p.run_id)) {
+          updateTaskView(p.run_id, v => {
+            const msgs = appendToolProgress(v.messages, p.call_id, p.delta, p.renderer);
+            return msgs ? { ...v, messages: msgs } : v;
+          });
+        }
+        return;
+      }
+      const sid = runMapRef.current[p.run_id];
+      if (!sid) return;
+      updateSS(sid, s => {
+        const msgs = appendToolProgress(s.messages, p.call_id, p.delta, p.renderer);
+        return msgs ? { ...s, messages: msgs } : s;
       });
     });
 

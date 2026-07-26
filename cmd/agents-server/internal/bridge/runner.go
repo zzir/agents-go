@@ -866,6 +866,18 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			}
 		}
 
+	case *agents.ToolProgressEvent:
+		// A tool that runs for two minutes leaves the UI with nothing but a
+		// spinner otherwise. This is not the tool's answer — that arrives as
+		// run.tool_result — so the client renders it as live output.
+		send(protocol.EventRunToolProgress, protocol.RunToolProgress{
+			RunID:    runID,
+			CallID:   e.CallID,
+			ToolName: e.ToolName,
+			Delta:    e.Result.Text(),
+			Renderer: e.Result.Display,
+		})
+
 	case *agents.AgentUpdatedStreamEvent:
 		send(protocol.EventRunAgentStart, protocol.RunAgentStart{
 			RunID:     runID,

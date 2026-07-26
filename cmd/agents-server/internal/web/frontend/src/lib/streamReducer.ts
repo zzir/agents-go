@@ -12,7 +12,7 @@
 // their existing state object in that case.
 
 import { patchToolCall, findToolCall } from '@/lib/timeline';
-import type { TimelineEntry, TurnEntry, TurnPart, ToolCall, ErrorPart, UserEntry } from '@/lib/timeline';
+import type { TimelineEntry, TurnEntry, TurnPart, ToolCall, ToolCallPatch, ErrorPart, UserEntry } from '@/lib/timeline';
 
 // Loose message shape: live state mixes TimelineEntry rows with optimistic
 // entries, so transforms only assume `role` and (for turns) `parts`.
@@ -201,7 +201,33 @@ export function appendToolCall(msgs: Msgs, tc: ToolCall, flushed: string): Msgs 
 export function applyToolResult(msgs: Msgs, toolCallId: string, output: string): Msgs | null {
   const cur = findToolCall(msgs, toolCallId);
   const status = cur?.status === 'rejected' ? 'rejected' : 'completed';
-  return patchToolCall(msgs, toolCallId, { output, status });
+  // The result REPLACES any live progress: progress was how the tool got here,
+  // and leaving both would show the same work twice.
+  //
+  // Only when there IS progress, though. Patching the key unconditionally would
+  // add it to every streamed call and none of the replayed ones, and the two
+  // paths must produce identical timelines — the isomorphism test is what says
+  // so, and it caught exactly this.
+  const patch: ToolCallPatch = { output, status };
+  if (cur?.progress) patch.progress = '';
+  return patchToolCall(msgs, toolCallId, patch);
+}
+
+// appendToolProgress accumulates the live output a running tool pushed.
+//
+// It appends rather than replaces because the wire carries deltas: a command
+// producing output over two minutes sends many, and each is the next piece, not
+// the whole picture.
+export function appendToolProgress(msgs: Msgs, toolCallId: string, delta: string, renderer?: string): Msgs | null {
+  if (!delta) return null;
+  const cur = findToolCall(msgs, toolCallId);
+  // A call that already has its result is finished; a late delta from a
+  // goroutine the tool left behind must not reopen it.
+  if (!cur || cur.output !== null) return null;
+  return patchToolCall(msgs, toolCallId, {
+    progress: (cur.progress || '') + delta,
+    renderer: renderer || cur.renderer,
+  });
 }
 
 // appendHandoffPart records a completed agent switch inside the live turn.

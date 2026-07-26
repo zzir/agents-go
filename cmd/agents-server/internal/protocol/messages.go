@@ -35,14 +35,19 @@ const (
 	EventToolReject  = "tool.reject"
 
 	// Server → client
-	EventAuthOK              = "auth.ok"
-	EventRunStarted          = "run.started"
-	EventRunAgentStart       = "run.agent_start"
-	EventRunStep             = "run.step"
-	EventRunReasoning        = "run.reasoning"
-	EventRunMessage          = "run.message"
-	EventRunReasoningItem    = "run.reasoning_item"
-	EventRunToolCall         = "run.tool_call"
+	EventAuthOK           = "auth.ok"
+	EventRunStarted       = "run.started"
+	EventRunAgentStart    = "run.agent_start"
+	EventRunStep          = "run.step"
+	EventRunReasoning     = "run.reasoning"
+	EventRunMessage       = "run.message"
+	EventRunReasoningItem = "run.reasoning_item"
+	EventRunToolCall      = "run.tool_call"
+	// EventRunToolProgress carries a partial result a tool pushed while still
+	// running. It is NOT the tool's answer — that arrives as run.tool_result —
+	// so a client renders it as live output and replaces it when the result
+	// lands, never treating it as final.
+	EventRunToolProgress     = "run.tool_progress"
 	EventRunToolResult       = "run.tool_result"
 	EventRunHandoff          = "run.handoff"
 	EventRunOutput           = "run.output"
@@ -214,6 +219,22 @@ const (
 // messages, so a second definition here could only ever drift from the one that
 // actually produces them.
 const TaskNotificationPrefix = tasks.NotificationPrefix
+
+// RunToolProgress is a partial result from a tool that is still running: a
+// command's output as it appears, a sub-agent thinking out loud.
+//
+// Keyed by CallID because several tools stream at once, and a client that keyed
+// on the tool name would interleave two calls to the same tool.
+type RunToolProgress struct {
+	RunID    string `json:"run_id"`
+	CallID   string `json:"call_id"`
+	ToolName string `json:"tool_name"`
+	// Delta is the partial output. It is appended to whatever the client has
+	// for this call, not a replacement.
+	Delta string `json:"delta"`
+	// Renderer is the tool's display hint (e.g. "terminal").
+	Renderer string `json:"renderer,omitempty"`
+}
 
 // RunAgentStart notifies the client that a (possibly handed-off-to) agent has started its turn.
 type RunAgentStart struct {

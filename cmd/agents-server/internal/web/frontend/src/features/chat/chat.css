@@ -792,3 +792,23 @@
   display: inline-flex; align-items: center;
 }
 .ToolCallCard-inspect:hover { color: var(--fgColor-accent); }
+
+/* Live tool output, replaced by the result when it lands. Dimmed and
+   monospaced so it reads as work in progress rather than an answer. */
+.ToolCallCard-output--live pre {
+  opacity: 0.75;
+}
+.ToolCallCard-output--live .ToolCallCard-output-label::after {
+  content: '';
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-left: 0.4em;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ToolCallCard-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ToolCallCard-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
+}

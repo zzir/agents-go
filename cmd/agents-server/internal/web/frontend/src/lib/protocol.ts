@@ -29,6 +29,9 @@ export const EV = {
   runReasoningItem: 'run.reasoning_item',
   runToolCall: 'run.tool_call',
   runToolResult: 'run.tool_result',
+  // A partial result from a tool that is still running. NOT its answer —
+  // run.tool_result is — so it renders as live output and is replaced.
+  runToolProgress: 'run.tool_progress',
   runHandoff: 'run.handoff',
   runOutput: 'run.output',
   runError: 'run.error',

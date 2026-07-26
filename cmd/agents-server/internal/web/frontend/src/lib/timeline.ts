@@ -50,6 +50,13 @@ interface ToolCall {
   needs_approval?: boolean;
   // Terminal task outcome for a spawn_task call, from the display projection.
   task?: { id?: string; label?: string; status?: string; summary?: string };
+  // progress is live output the tool pushed while still running — a command's
+  // stdout as it appears, a sub-agent thinking out loud. It is NOT the result:
+  // `output` is, and it replaces this when it lands. Live-only, so a reload
+  // shows the result rather than a replay of how it got there.
+  progress?: string;
+  // renderer is the tool's display hint for progress (e.g. "terminal").
+  renderer?: string;
 }
 
 interface ToolsPart {
@@ -135,6 +142,8 @@ interface ToolCallPatch {
   tool_name?: string;
   arguments?: string;
   needs_approval?: boolean;
+  progress?: string;
+  renderer?: string;
 }
 
 export type { Message, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };

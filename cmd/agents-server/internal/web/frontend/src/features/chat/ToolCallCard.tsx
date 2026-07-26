@@ -121,7 +121,7 @@ function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
 }
 
 export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
-  const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task } = toolCall;
+  const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task, progress } = toolCall;
 
   // A spawn_task card is the task's anchor in the timeline: the terminal
   // display projection carries the id; while live, it's in the tool output.
@@ -173,6 +173,8 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
 
   const pendingApproval = !!needs_approval && !status;
   const isRunning = !!live && !pendingApproval && !output && status !== 'completed' && status !== 'rejected';
+  // A card with live output opens itself: a spinner the user has to click to
+  // see through defeats the point of streaming it.
 
   const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning;
   const statusLabel = status === 'approved' ? 'approved'
@@ -218,7 +220,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       icon={ToolsIcon}
       variant="done"
       label={headerLabel}
-      forceOpen={pendingApproval || undefined}
+      forceOpen={pendingApproval || (!output && !!progress) || undefined}
       className="ToolCallCard"
     >
       {body.kind === 'patch' ? (
@@ -230,6 +232,15 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
         <div className="ToolCallCard-output">
           <div className="ToolCallCard-output-label">Task result:</div>
           <pre>{task.summary}</pre>
+        </div>
+      )}
+      {/* Live output while the tool runs. It disappears when `output` lands —
+          the result replaces it rather than sitting beside it, so the same work
+          is never shown twice. */}
+      {!output && progress && (
+        <div className="ToolCallCard-output ToolCallCard-output--live">
+          <div className="ToolCallCard-output-label">Running…</div>
+          <pre>{progress}</pre>
         </div>
       )}
       {output && (

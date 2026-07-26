@@ -77,6 +77,13 @@ func (r ToolResult) WithDisplay(renderer string) ToolResult {
 	return r
 }
 
+// Text renders the result as the string the model would see.
+//
+// It exists so a consumer that has to put a result on a wire — a UI event, a
+// log line — does not have to reimplement the string/JSON split, and get it
+// subtly different from what the model was actually sent.
+func (r ToolResult) Text() string { return stringifyToolOutput(r.ModelOutput()) }
+
 // ModelOutput renders the result's content into the value the runner sends to
 // the model: a single text part collapses to its string (the overwhelmingly
 // common case, and what a tool returning a plain value produced before), while
