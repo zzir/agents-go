@@ -121,3 +121,36 @@ r, _ := server.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file:///README
 - `Close()` shuts the session down; it is safe to call once finished with the server.
 
 Not modeled: provider-hosted MCP (OpenAI's server-side MCP tool), per the SDK's no-hosted-tools stance.
+
+## Serving your tools over MCP
+
+The same package works in the other direction: `mcp.Server` connects an agent to
+somebody else's tools, and these hand yours to somebody else — an editor, a
+desktop client, another agent.
+
+```go
+srv, err := mcp.NewToolServer(agent.Tools, mcp.ServeOptions{Name: "my-tools"})
+if err != nil { log.Fatal(err) }
+log.Fatal(mcp.ServeStdio(context.Background(), srv))
+```
+
+The tools are the same values an `Agent` runs, so a capability written once is
+available in both places rather than reimplemented for each. Their schemas
+travel with them, so a client can validate before calling.
+
+To expose a whole agent instead, as one question-shaped tool:
+
+```go
+srv, _ := mcp.NewAgentServer(agent, runOpts, mcp.ServeOptions{})
+```
+
+It takes a string and returns the agent's final output, which is what a caller
+asking a question wants — it is not driving a turn loop. The agent's own tools
+stay inside: they are how it answers, not what it offers.
+
+**A tool or run failure comes back as a result, not a protocol error.** The
+caller is a model, and it can act on "that path does not exist" while a
+transport error only tells it the connection is fine.
+
+Agent names are sanitized into tool names (`Research Bot` → `ask_research_bot`):
+clients key on the name, and one with spaces is one some of them will not call.
