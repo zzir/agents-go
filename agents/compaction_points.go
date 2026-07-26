@@ -113,6 +113,7 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 		}
 		r.log.component("compaction").Warn(ctx, "compaction pass failed; continuing uncompacted",
 			slog.String("point", point.String()), slog.String("error", err.Error()))
+		RecordDiagnostic(ctx, DiagCompactionFailed, err, map[string]any{"point": point.String()})
 		return entries
 	}
 	if span != nil {

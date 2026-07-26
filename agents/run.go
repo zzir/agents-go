@@ -343,6 +343,9 @@ func runStream(ctx context.Context, agent *Agent, input any, opts RunOptions, ct
 	r.ctrl = ctrl
 	r.rawEvents = rawEvents
 
+	// The sink rides on the context so code far from the loop — a model
+	// decorator, a custom tool — can report trouble it recovered from.
+	ctx = WithDiagnostics(ctx, r.diagnostics)
 	res, err := r.loop(ctx, agent, modelInput)
 	r.finishStream(res, err)
 }
@@ -396,6 +399,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
 	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agent.Name))
+	r.diagnostics = &DiagnosticSink{}
 
 	finishTrace := func() {}
 	if opts.parentTrace != nil {
@@ -532,6 +536,13 @@ type runner struct {
 	// userInputSaved guards the one-time persistence of userInput at loop start
 	// so a per-turn save never rewrites it.
 	userInputSaved bool
+
+	// diagnostics collects trouble the run survived. Never nil.
+	diagnostics *DiagnosticSink
+	// diagnosticsSaved is how many diagnostics have already been attached to
+	// entries, so each is recorded on the turn it happened in rather than on
+	// every turn from then on.
+	diagnosticsSaved int
 
 	// log is the run's logger, already tagged with the run's identity. Never
 	// nil — a disabled logger is a no-op rather than a check at every site.
@@ -702,6 +713,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				LastAgent:        currentAgent,
 				Usage:            r.rc.Usage,
 				GuardrailResults: r.snapshotGuardrailResults(),
+				Diagnostics:      r.diagnostics.All(),
 			}, nil
 		}
 		if r.maxTurns > 0 && turn > r.maxTurns {
@@ -1170,6 +1182,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				LastAgent:        currentAgent,
 				Usage:            r.rc.Usage,
 				GuardrailResults: r.snapshotGuardrailResults(),
+				Diagnostics:      r.diagnostics.All(),
 				Interruptions:    step.Interruptions,
 				State:            state,
 			}, nil
@@ -1260,6 +1273,7 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 		LastAgent:        agent,
 		Usage:            r.rc.Usage,
 		GuardrailResults: r.snapshotGuardrailResults(),
+		Diagnostics:      r.diagnostics.All(),
 	}, nil
 }
 
@@ -1307,6 +1321,7 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 		LastAgent:        last,
 		Usage:            r.rc.Usage,
 		GuardrailResults: r.snapshotGuardrailResults(),
+		Diagnostics:      r.diagnostics.All(),
 	}
 	var ae *AgentsError
 	if asAgentsError(err, &ae) {
@@ -1356,6 +1371,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		toSave = append(toSave, e)
 	}
 	r.attributeUsage(toSave)
+	r.attributeDiagnostics(toSave)
 	if len(toSave) > 0 {
 		if err := r.opts.Conversation.Session.Append(ctx, toSave...); err != nil {
 			return err

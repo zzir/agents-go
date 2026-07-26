@@ -83,6 +83,15 @@ type SessionEntry struct {
 	// on THIS conversation. Exactly one entry per response carries it, so
 	// summing over entries counts each request once.
 	Usage *RequestUsage `json:"usage,omitzero"`
+	// Diagnostics records trouble the run went through while producing this
+	// entry — retries, a fallback model, a compaction pass that gave up.
+	//
+	// It is on the entry rather than only in a log because these are the
+	// failures that do NOT fail the run: they never reach an error return, so
+	// without this the session cannot answer "why was that answer bad" once the
+	// log has rotated.
+	Diagnostics []Diagnostic `json:"diagnostics,omitzero"`
+
 	// NestedUsage is what a nested run started by this entry's tool spent.
 	//
 	// Separate from Usage because they answer different questions. Usage

@@ -70,3 +70,47 @@ separately. A trace reconstructs one run's structure — spans, timings, parenta
 many runs. `Observe.IncludeSensitiveData` and `Log.SensitiveData` are likewise
 separate: exporting spans to a tracing backend and writing lines to a log file
 are different exposures.
+
+## Diagnostics: trouble a run survived
+
+Logs answer "what happened, across everything". Diagnostics answer "what went
+wrong *in this run*", and they are attached to the run and its session rather
+than written to a stream:
+
+```go
+res, _ := agents.RunSync(ctx, agent, input, opts)
+for _, d := range res.Diagnostics {
+	fmt.Printf("%s: %s %v\n", d.Type, d.Message, d.Details)
+}
+// model_retry: upstream unavailable map[attempt:1 max_attempts:4 streaming:false]
+// model_fallback: … map[used_index:1 models:2 streaming:false]
+```
+
+The point is the failures that **do not fail the run**: three retries, a
+fallback to a slower model, a compaction pass that gave up, a recovered tool
+panic. None of them reach an error return, so a run that answered after a bad
+time looks identical to one that answered first time.
+
+| Type | Recorded when |
+|---|---|
+| `model_retry` | A model call failed and was retried |
+| `model_fallback` | A backup model or provider answered |
+| `stream_error` | A stream broke after emitting, so it could not be retried |
+| `tool_panic` | A tool panicked and was recovered |
+| `tool_timeout` | A tool hit its deadline |
+| `compaction_failed` | A compaction pass failed; the run continued uncompacted |
+| `response_truncated` | A response was cut off and its tool calls refused |
+
+With a [Session](sessions.md), each diagnostic is stored on the entry for the
+turn it happened in, so the session explains itself long after any log has
+rotated. A failed run reports them too, on `RunErrorDetails.Diagnostics` — the
+error is the last straw, the diagnostics are what led to it.
+
+Report your own from a tool or a custom `Model` decorator:
+
+```go
+agents.RecordDiagnostic(ctx, "cache_miss", err, map[string]any{"key": k})
+```
+
+It is a no-op when there is no run behind the context, so a decorator used
+standalone still works.

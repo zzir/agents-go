@@ -50,9 +50,16 @@ func (m *FallbackModel) WithShouldFallback(f func(error) bool) *FallbackModel {
 // succeeds or the classifier stops the chain; all errors are joined.
 func (m *FallbackModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
 	var errs []error
-	for _, inner := range m.models {
+	for i, inner := range m.models {
 		resp, err := inner.GetResponse(ctx, req)
 		if err == nil {
+			if i > 0 {
+				// The run succeeded, on the backup. Without this the only trace
+				// of a primary outage is that answers got slower.
+				RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
+					"used_index": i, "models": len(m.models), "streaming": false,
+				})
+			}
 			return resp, nil
 		}
 		errs = append(errs, err)
@@ -82,6 +89,11 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 				}
 			}
 			if streamErr == nil {
+				if i > 0 {
+					RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
+						"used_index": i, "models": len(m.models), "streaming": true,
+					})
+				}
 				return
 			}
 			errs = append(errs, streamErr)

@@ -203,6 +203,12 @@ func (m *retryModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelR
 		if attempt == maxAttempts || !retryIf(err) {
 			break
 		}
+		// A run that answered after three retries looks identical to one that
+		// answered first time. Record the difference, or nobody can explain the
+		// latency afterwards.
+		RecordDiagnostic(ctx, DiagModelRetry, err, map[string]any{
+			"attempt": attempt, "max_attempts": maxAttempts, "streaming": false,
+		})
 		if werr := m.policy.wait(ctx, attempt, err); werr != nil {
 			return nil, werr
 		}
@@ -234,9 +240,18 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 				return
 			}
 			if producedAny || attempt == maxAttempts || !retryIf(streamErr) {
+				if producedAny {
+					// A stream that broke after emitting cannot be retried —
+					// the tokens are already out. Record it so a truncated
+					// answer is explainable rather than merely odd.
+					RecordDiagnostic(ctx, DiagStreamError, streamErr, map[string]any{"attempt": attempt})
+				}
 				yield(nil, streamErr)
 				return
 			}
+			RecordDiagnostic(ctx, DiagModelRetry, streamErr, map[string]any{
+				"attempt": attempt, "max_attempts": maxAttempts, "streaming": true,
+			})
 			if werr := m.policy.wait(ctx, attempt, streamErr); werr != nil {
 				yield(nil, werr)
 				return

@@ -34,6 +34,11 @@ type RunResult struct {
 	// approvals. Approve/reject items on it and resume with ResumeRun. It is nil
 	// for runs that complete normally.
 	State *RunState
+	// Diagnostics records trouble the run went through and survived: retries, a
+	// fallback model, a compaction pass that gave up. A run that succeeded can
+	// still have had a bad time, and this is where that shows.
+	Diagnostics []Diagnostic
+
 	// AgentToolInvocation identifies the parent tool call when this result was
 	// produced by a nested agent-as-tool run (visible to a
 	// CustomOutputExtractor); nil for top-level runs. The counterpart of

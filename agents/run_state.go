@@ -214,6 +214,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		agentName = state.CurrentAgent.Name
 	}
 	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agentName), slog.Bool("resumed", true))
+	r.diagnostics = &DiagnosticSink{}
 	// Seed the guardrail-result accumulators from the state so the resumed run's
 	// RunResult still reports the pre-pause results. First-turn input guardrails
 	// are not re-run on resume, so this is the only way they survive (Python
@@ -240,6 +241,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		defer r.trace.Finish()
 	}
 	rc.activeTrace = r.trace
+	ctx = WithDiagnostics(ctx, r.diagnostics)
 	res, err := r.loop(ctx, state.CurrentAgent, state.OriginalInput)
 	if err == nil && res != nil && res.State != nil {
 		// The resumed run interrupted again: carry the effective budget on the

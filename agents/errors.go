@@ -16,6 +16,10 @@ type RunErrorDetails struct {
 	// GuardrailResults holds every guardrail result accumulated before the
 	// failure, across all stages. Filter by GuardrailResult.Stage.
 	GuardrailResults []GuardrailResult
+	// Diagnostics is the trouble the run survived before failing. A run that
+	// retried three times and then died explains itself here; the error alone
+	// only reports the last straw.
+	Diagnostics []Diagnostic
 }
 
 // ErrorCode is the stable, machine-readable classification of an SDK error.
@@ -77,6 +81,11 @@ func CodeOf(err error) ErrorCode {
 		return CodeModelBehavior
 	case isType[*ToolTimeoutError](err):
 		return CodeToolTimeout
+	case isType[*toolPanicError](err):
+		// A recovered panic never reaches fatalError, which is where the code
+		// used to be attached, so without this a panic the run survived
+		// classifies as unknown — exactly the case a diagnostic reports.
+		return CodeToolPanic
 	case isType[*ToolLoopError](err):
 		return CodeToolLoop
 	case isType[*UserError](err):

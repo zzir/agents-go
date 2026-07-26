@@ -760,6 +760,28 @@ run that was ending:
   resume. That is precisely when someone is looking at the run and saying
   something about it.
 
+### 2.11d Diagnostics ✅
+
+A `Diagnostic` records trouble a run went through **and survived**.
+
+- The failures worth recording are the ones that do *not* fail the run: three
+  retries, a fallback to a slower model, a compaction pass that gave up, a
+  recovered tool panic. None of them reach an error return, so without this
+  they live only in a log nobody kept, and "why was that answer bad" becomes
+  unanswerable after the fact.
+- They land on `RunResult.Diagnostics`, on `RunErrorDetails.Diagnostics` when
+  the run does fail (the error is the last straw; the diagnostics are what led
+  to it), and on `SessionEntry.Diagnostics`.
+- **Each is attached to the turn it happened in**, on that batch's last entry,
+  not repeated on every turn after.
+- **The sink travels on the `context.Context`**, because a `Model` receives one
+  and nothing else that belongs to the run. A sink passed by field would need
+  every decorator in the chain to forward it, and the one that forgot would
+  swallow silently. `RecordDiagnostic` is a no-op without a sink, so a
+  decorator used outside a run still works.
+- `DiagnosticType` is an **open vocabulary**: an unknown type is displayed
+  generically, never rejected.
+
 ### 2.11c Logging ✅
 
 - **Off by default.** `LogConfig.Logger` is nil unless a caller sets it; the SDK

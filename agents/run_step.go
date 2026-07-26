@@ -233,6 +233,9 @@ func (r *runner) executeToolsAndSideEffects(
 		// arguments may stop mid-JSON. None of them run.
 		r.log.component("tool").Warn(ctx, "response truncated; refusing to run its tool calls",
 			slog.Int("calls", len(toRun)))
+		RecordDiagnostic(ctx, DiagResponseTruncated, nil, map[string]any{
+			"calls": len(toRun), "response_id": resp.ResponseID,
+		})
 		executed = truncatedCallResults(agent, toRun)
 	} else {
 		executed, err = r.runFunctionTools(ctx, agent, toRun)
@@ -576,6 +579,9 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 					return
 				}
 				perr := &toolPanicError{toolName: run.Call.Name, value: p, stack: debug.Stack()}
+				RecordDiagnostic(ctx, DiagToolPanic, perr, map[string]any{
+					"tool": run.Call.Name, "call_id": run.Call.CallID,
+				})
 				if !toolHandlesFailure(run.Tool) {
 					err = perr.fatalError()
 					return
