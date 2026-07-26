@@ -88,17 +88,41 @@ export interface TaskNotificationItem {
   label: string;
   taskId: string;
   status: string;
+  /** The truncated result, or '' when the task reported none. */
+  summary: string;
+  /** True when the full result is longer than the summary shown here. */
+  truncated: boolean;
 }
+
+// The wire format is produced by the SDK's tasks.DefaultNotifyFormatter, and
+// this mirrors its tasks.ParseNotification. Keep the two in step: a change to
+// the wording there is a change here.
+//
+// The label is Go-quoted (%q), so it may contain escaped quotes and the naive
+// `"([^"]+)"` would stop at the first one. The id is opaque — the host mints
+// it — so it is not assumed to be hex.
+const TASK_LINE = /^Task "((?:[^"\\]|\\.)*)" \(([^)]+)\) (\w+)\.(?: Result: (.*))?$/;
+const TRUNCATION = / \[truncated — call task_status\([^)]+\) for the full result\]$/;
 
 export function parseTaskNotification(content: string | undefined | null): null | { text: string; label: string | null; taskId: string | null; items: TaskNotificationItem[] } {
   if (!content || !content.startsWith(TASK_NOTIFICATION_PREFIX)) return null;
   const text = content.slice(TASK_NOTIFICATION_PREFIX.length);
-  // One line per finished task: `Task "label" (id) status.[ Result: ...]` —
-  // the server may batch several tasks into one wake-up.
+  // One line per finished task — one wake-up carries every task that owes the
+  // parent a notification.
   const items: TaskNotificationItem[] = [];
   for (const line of text.split('\n')) {
-    const m = line.match(/^Task "([^"]+)" \(([0-9a-f]+)\) (\w+)\./);
-    if (m) items.push({ label: m[1], taskId: m[2], status: m[3] });
+    const m = line.trim().match(TASK_LINE);
+    if (!m) continue;
+    let summary = m[4] ?? '';
+    const truncated = TRUNCATION.test(summary);
+    if (truncated) summary = summary.replace(TRUNCATION, '').trim();
+    items.push({
+      label: m[1].replace(/\\(.)/g, '$1'),
+      taskId: m[2],
+      status: m[3],
+      summary,
+      truncated,
+    });
   }
   const first = items[0];
   return { text, label: first ? first.label : null, taskId: first ? first.taskId : null, items };

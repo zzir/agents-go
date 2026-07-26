@@ -12,9 +12,17 @@ import (
 type Session struct {
 	bun.BaseModel `bun:"table:sessions,alias:s"`
 
-	ID            string    `bun:"id,pk"               json:"id"`
-	Name          string    `bun:"name,notnull"         json:"name"`
-	Pinned        bool      `bun:"pinned"               json:"pinned"`
+	ID     string `bun:"id,pk"               json:"id"`
+	Name   string `bun:"name,notnull"         json:"name"`
+	Pinned bool   `bun:"pinned"               json:"pinned"`
+	// Hidden marks a session that exists to serve another one — a background
+	// task's transcript. Listings leave it out by default.
+	//
+	// It is a column rather than a subquery over the tasks table because
+	// "hidden" belongs to the session: the list query had to know what a task
+	// was in order to exclude one, and anything else worth hiding would have
+	// had to teach it a second special case.
+	Hidden        bool      `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string    `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
 	CreatedAt     time.Time `bun:"created_at,notnull"   json:"created_at"`
 	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`

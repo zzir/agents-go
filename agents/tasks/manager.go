@@ -578,8 +578,17 @@ func (m *Manager) notifyUpdate(ctx context.Context, t *Task) {
 	}
 }
 
+// statusPollInterval backstops the wake-up signal. See awaitFinish.
+const statusPollInterval = 250 * time.Millisecond
+
 // awaitFinish blocks until the task finishes, the timeout elapses or ctx ends.
-// It reports whether the task finished.
+// It reports whether the caller should look again.
+//
+// The signal makes it prompt; the poll makes it correct. This Manager is not
+// the only writer a task row has — another process finalizes its own tasks, a
+// startup sweep fails orphans, an operator resolves one by hand — and a waiter
+// that only listened for its OWN transitions would sit out the full timeout
+// while the answer sat in the store.
 func (m *Manager) awaitFinish(ctx context.Context, taskID string, timeout time.Duration) bool {
 	ch := make(chan struct{})
 	m.mu.Lock()
@@ -587,13 +596,18 @@ func (m *Manager) awaitFinish(ctx context.Context, taskID string, timeout time.D
 	m.mu.Unlock()
 	defer m.dropWaiter(taskID, ch)
 
-	timer := time.NewTimer(timeout)
+	poll := statusPollInterval
+	if timeout < poll {
+		poll = timeout
+	}
+	timer := time.NewTimer(poll)
 	defer timer.Stop()
 	select {
 	case <-ch:
 		return true
 	case <-timer.C:
-		return false
+		// Not necessarily finished — the caller re-reads and decides.
+		return true
 	case <-ctx.Done():
 		return false
 	}

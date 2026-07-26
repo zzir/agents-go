@@ -138,7 +138,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	if _, _, err := runner.hub.register("busy-run", parent.ID, ac.ID, "", nil); err != nil {
 		t.Fatal(err)
 	}
-	runner.drainTaskNotifications(parent.ID)
+	runner.tasks.DrainPending(ctx, parent.ID)
 	row, err := tasks.Get(ctx, task.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	// no API key, so the run fails at the provider stage — but that failure
 	// path persists the prompt, which is exactly the observable we need.
 	runner.hub.finish("busy-run", false)
-	runner.drainTaskNotifications(parent.ID)
+	runner.tasks.DrainPending(ctx, parent.ID)
 
 	// The notification run executes on a background goroutine; poll for its
 	// persisted prompt (the keyless test config fails at the provider stage,

@@ -1,7 +1,11 @@
 // Package protocol defines the WebSocket envelope and the client→server / server→client message payloads exchanged between agents-server and its web UI.
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/zzir/agents-go/agents/tasks"
+)
 
 // Envelope is the tagged wrapper for every WebSocket message: a type discriminator plus a JSON payload.
 type Envelope struct {
@@ -201,11 +205,15 @@ const (
 	TaskCancelled     = "cancelled"
 )
 
-// TaskNotificationPrefix marks a user-input message injected by the server
-// when a background task finishes (the parent run "wakes" on it). The client
-// renders such messages as task notifications rather than user bubbles; the
-// model sees the prefixed text verbatim.
-const TaskNotificationPrefix = "[task-notification] "
+// TaskNotificationPrefix marks a user-input message injected when a background
+// task finishes (the parent run "wakes" on it). The client renders such
+// messages as task notifications rather than user bubbles; the model sees the
+// prefixed text verbatim.
+//
+// It is an alias for the SDK's constant, not a copy: the SDK formats these
+// messages, so a second definition here could only ever drift from the one that
+// actually produces them.
+const TaskNotificationPrefix = tasks.NotificationPrefix
 
 // RunAgentStart notifies the client that a (possibly handed-off-to) agent has started its turn.
 type RunAgentStart struct {

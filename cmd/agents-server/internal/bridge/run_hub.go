@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -226,7 +227,7 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 	}
 	h := &RunHub{
 		rootCtx:   rootCtx,
-		maxTasks:  defaultMaxConcurrentTasks,
+		maxTasks:  tasks.DefaultMaxConcurrentPerParent,
 		runs:      make(map[string]*runRecord),
 		bySession: make(map[string]string),
 		deleting:  make(map[string]bool),

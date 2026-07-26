@@ -37,7 +37,7 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 	var sessions []Session
 	if err := s.db.NewSelect().Model(&sessions).
-		Where("s.id NOT IN (SELECT child_session_id FROM tasks)").
+		Where("hidden = ?", false).
 		OrderExpr("created_at DESC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/zzir/agents-go/agents/tasks"
 )
@@ -28,8 +27,14 @@ func NewTaskAdapter(s *TaskStore) *TaskAdapter { return &TaskAdapter{store: s} }
 // Inherit is the configuration snapshot the SDK carries opaquely and hands back
 // when it launches a run — this server's agent config and sandbox.
 type Inherit struct {
+	// AgentConfigID and SandboxID are the SPAWNING run's setup, replayed when
+	// the parent is woken so the notification reaches the agent that asked for
+	// the task.
 	AgentConfigID string `json:"agent_config_id,omitempty"`
 	SandboxID     string `json:"sandbox_id,omitempty"`
+	// TaskAgentID is the agent the task itself runs as, which is usually a
+	// different one.
+	TaskAgentID string `json:"task_agent_id,omitempty"`
 }
 
 // DecodeInherit reads an Inherit payload, returning the zero value for an empty
@@ -94,10 +99,10 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		ParentRunID:     t.ParentRunID,
 		ToolCallID:      t.ToolCallID,
 		ChildSessionID:  t.ChildSessionID,
-		// ParentAgentConfigID is the snapshot the wake-up run uses. The task's
-		// own agent is written separately by SetTaskAgentConfig: it is this
-		// server's notion, not the SDK's, and it does not belong in a shared
-		// type.
+		// AgentConfigID is the task's own agent; ParentAgentConfigID is the
+		// snapshot the wake-up run uses. They differ whenever a task runs as a
+		// different agent than the one that spawned it, which is the usual case.
+		AgentConfigID:       inherit.TaskAgentID,
 		ParentAgentConfigID: inherit.AgentConfigID,
 		ParentSandboxID:     inherit.SandboxID,
 		Status:              string(t.Status),
@@ -206,21 +211,6 @@ func mapNotFound(err error) error {
 	if errors.Is(err, ErrNotFound) {
 		return tasks.ErrNotFound
 	}
-	return err
-}
-
-// SetTaskAgentConfig records the task's own agent config after creation. The
-// SDK's model has no field for it — it is this server's notion — so it rides in
-// through a follow-up write rather than distorting the shared type.
-func (a *TaskAdapter) SetTaskAgentConfig(ctx context.Context, id, agentConfigID string) error {
-	if agentConfigID == "" {
-		return nil
-	}
-	_, err := a.store.db.NewUpdate().Model((*Task)(nil)).
-		Set("agent_config_id = ?", agentConfigID).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Exec(ctx)
 	return err
 }
 

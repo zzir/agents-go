@@ -320,7 +320,7 @@ components:
         result:
           description: |-
             Result carries the task's full final output (task_status only — the
-            wake notification and UI stay on the truncated Summary).
+            wake notification and the UI card stay on the truncated Summary).
           type: string
         status:
           type: string
@@ -908,6 +908,16 @@ components:
           type: string
         created_at:
           type: string
+        hidden:
+          description: |-
+            Hidden marks a session that exists to serve another one — a background
+            task's transcript. Listings leave it out by default.
+
+            It is a column rather than a subquery over the tasks table because
+            "hidden" belongs to the session: the list query had to know what a task
+            was in order to exclude one, and anything else worth hiding would have
+            had to teach it a second special case.
+          type: boolean
         id:
           type: string
         name:

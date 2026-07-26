@@ -95,11 +95,6 @@ func run(_ *cobra.Command, _ []string) error {
 	guardrailStore := store.NewGuardrailStore(db)
 	pendingApprovalStore := store.NewPendingApprovalStore(db)
 	taskStore := store.NewTaskStore(db)
-	if n, err := taskStore.FailOrphans(ctx); err != nil {
-		log.Warn().Err(err).Msg("task orphan reconciliation")
-	} else if n > 0 {
-		log.Info().Int64("count", n).Msg("marked orphaned tasks failed (restart)")
-	}
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
 	mcpManager := bridge.NewMcpManager(ctx, settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
@@ -133,6 +128,9 @@ func run(_ *cobra.Command, _ []string) error {
 	runner := bridge.NewRunner(ctx, db, deps)
 	// Deliver wake-ups owed from before the restart (including tasks the
 	// orphan reconciliation above just marked failed).
+	// One sweep does both halves of the restart reconciliation: tasks the
+	// process interrupted are failed — which owes their parents a wake-up —
+	// and every owed parent is then drained.
 	go runner.DrainPendingTaskNotifications(ctx)
 
 	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore, agentConfigStore).WithRunStopper(runner)

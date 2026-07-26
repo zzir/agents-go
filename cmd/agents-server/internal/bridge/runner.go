@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -28,6 +29,9 @@ type Runner struct {
 	Deps     *AgentDeps
 	hub      *RunHub
 	messages *store.MessageStore
+	// tasks owns the background-task lifecycle. Nil when the server runs
+	// without a task store.
+	tasks *tasks.Manager
 
 	// Task completion wake-ups have no in-memory state: the notification debt
 	// lives on the tasks row (notify_state), written atomically with the
@@ -101,10 +105,28 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	if deps.MaxTasks > 0 {
 		r.hub.maxTasks = deps.MaxTasks
 	}
-	// The runner is the task spawner; agent building only sees the interface.
-	deps.TaskSpawner = r
+	if deps.Tasks != nil {
+		r.tasks = tasks.New(tasks.Config{
+			Store: store.NewTaskAdapter(deps.Tasks),
+			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(sessionID string) agents.SessionStorage {
+				return store.NewSessionAdapter(db, sessionID)
+			}),
+			Resolver:               taskResolver{r},
+			Launcher:               taskLauncher{r},
+			Stopper:                taskStopper{r},
+			Guard:                  taskWakeGuard{r},
+			MaxConcurrentPerParent: r.hub.maxTasks,
+			OnTaskUpdate:           r.onTaskUpdate,
+			NewID:                  store.NewID,
+		})
+	}
+	// Agent building reaches the task tools through the manager, not the runner.
+	deps.TaskManager = r.tasks
 	return r
 }
+
+// Tasks exposes the task manager so handlers and the startup path can reach it.
+func (r *Runner) Tasks() *tasks.Manager { return r.tasks }
 
 // Hub exposes the run hub so handlers can subscribe to run events, query
 // status, and cancel runs.

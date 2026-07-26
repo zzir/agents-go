@@ -764,3 +764,33 @@ func TestStop_WorkingTaskCancelsTheRunFirst(t *testing.T) {
 		t.Errorf("status = %q, want cancelled", got)
 	}
 }
+
+// This Manager is not the only writer a task row has: another process
+// finalizes its own tasks, a startup sweep fails orphans. A waiter that only
+// listened for its OWN transitions would sit out the full timeout with the
+// answer already in the store.
+func TestStatus_WaitNoticesAFinalizeItDidNotMake(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		// Straight to the store, as another process would.
+		if _, err := h.store.Finalize(ctx, info.TaskID, StatusCompleted, "done", "full"); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	start := time.Now()
+	got, err := h.m.Status(ctx, info.TaskID, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCompleted {
+		t.Errorf("status = %q, want completed", got.Status)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("waited %v for a finalize this Manager did not make", elapsed)
+	}
+}

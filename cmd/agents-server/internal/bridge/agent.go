@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	openaiProvider "github.com/zzir/agents-go/models/openai"
 	"github.com/zzir/agents-go/skills"
@@ -41,9 +42,10 @@ type AgentDeps struct {
 	// MaxTasks overrides the per-session live background-task cap when > 0
 	// (--max-tasks; 0 keeps the built-in default).
 	MaxTasks int
-	// TaskSpawner is set by NewRunner; when non-nil, chat agents get the
-	// spawn_task / task_status / task_stop tools.
-	TaskSpawner TaskSpawner
+	// TaskManager is set by NewRunner; when non-nil, chat agents get the
+	// spawn_task / task_status / task_stop tools. A TASK's own run never gets
+	// them — that is what bounds recursion — so the caller passes taskRun.
+	TaskManager *tasks.Manager
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -108,8 +110,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		cache: make(map[string]*BuildResult),
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
-	if err == nil && !taskRun && deps.TaskSpawner != nil {
-		result.Agent.Tools = append(result.Agent.Tools, TaskTools(deps.TaskSpawner)...)
+	if err == nil && !taskRun && deps.TaskManager != nil {
+		// The session id reaches the tools through the run context, not the
+		// model: otherwise one conversation could spawn tasks onto another.
+		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.Tools(nil)...)
 	}
 	if err != nil {
 		return nil, err
