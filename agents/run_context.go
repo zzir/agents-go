@@ -2,6 +2,7 @@ package agents
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -279,4 +280,41 @@ type ToolContext struct {
 	// nested agent-as-tool run parent its agent spans under the function span
 	// instead of floating at the trace root.
 	functionSpanID string
+
+	// emit pushes a partial result. Nil outside a streamed run.
+	emit func(ToolResult)
+	// done marks the call as finished, after which Emit is ignored.
+	done atomic.Bool
+}
+
+// Emit pushes a partial result to a streamed run's consumer.
+//
+// It is how a long tool call stays watchable — a command producing output for
+// two minutes, a patch applying file by file — instead of showing a spinner
+// until it is over.
+//
+// Scope is THIS call. After the tool returns, Emit is ignored: a goroutine the
+// tool left running would otherwise keep pushing progress for a call that is
+// already answered, and a consumer would have no way to tell that from a call
+// still working.
+//
+// It is a no-op on a non-streamed run and safe to call from any goroutine, so
+// a tool never needs to ask which kind of run it is in.
+func (tc *ToolContext) Emit(partial ToolResult) {
+	if tc == nil || tc.emit == nil || tc.done.Load() {
+		return
+	}
+	tc.emit(partial)
+}
+
+// streaming reports whether anyone is watching this call's progress.
+func (tc *ToolContext) streaming() bool {
+	return tc != nil && tc.emit != nil
+}
+
+// finish stops Emit from delivering anything further.
+func (tc *ToolContext) finish() {
+	if tc != nil {
+		tc.done.Store(true)
+	}
 }

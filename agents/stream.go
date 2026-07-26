@@ -50,6 +50,29 @@ type RunCompletedEvent struct {
 
 func (*RunCompletedEvent) streamEvent() {}
 
+// ToolProgressEvent is a partial result pushed by a running tool.
+//
+// It is what makes a long tool call watchable: a command producing output for
+// two minutes, a patch applying file by file, a nested agent thinking out loud.
+// Without it the only honest thing a UI can show is a spinner.
+//
+// A progress result is NOT the tool's return value and never reaches the model.
+// The tool's actual result is the one it returns; treating progress as an
+// answer would let a half-finished thought become the conversation.
+type ToolProgressEvent struct {
+	// ToolName and CallID identify the call this belongs to. The call id is
+	// what a consumer keys on: several tools stream at once.
+	ToolName string
+	CallID   string
+	// Agent is the agent whose tool is running.
+	Agent *Agent
+	// Result is the partial result. Its Content is what to show; Details and
+	// Display carry whatever the tool wants a renderer to know.
+	Result ToolResult
+}
+
+func (*ToolProgressEvent) streamEvent() {}
+
 // RunStream is a run in progress. Ranging over it executes the run: events are
 // produced as the loop reaches them, and the loop advances only as they are
 // consumed.
@@ -102,6 +125,18 @@ var errConsumerStopped = errors.New("agents: stream consumer stopped")
 func (r *runner) emit(event StreamEvent) bool {
 	if r.yield == nil {
 		return true
+	}
+	// A tool emitting progress runs on its own goroutine while the loop waits
+	// on the batch, and several tools emit at once. An iterator's yield is not
+	// safe for concurrent calls, so the mutex is what makes ToolContext.Emit
+	// possible at all — without it, progress from two parallel tools would
+	// corrupt the consumer's range loop.
+	r.emitMu.Lock()
+	defer r.emitMu.Unlock()
+	if r.consumerStopped {
+		// Another goroutine already saw the consumer leave; calling yield again
+		// after it returned false is undefined.
+		return false
 	}
 	if !r.yield(event, nil) {
 		r.consumerStopped = true

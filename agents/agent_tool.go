@@ -278,7 +278,10 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 // handler it collects; with one, it forwards each event to the handler as it
 // arrives.
 func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunState, opts RunOptions, cfg AgentToolConfig, tc *ToolContext, argsJSON string) (*RunResult, error) {
-	if cfg.OnStream == nil {
+	// Stream the nested run when anyone is watching: a configured OnStream
+	// handler, or a streamed parent whose consumer should see the sub-agent
+	// working rather than a tool call that hangs for a minute.
+	if cfg.OnStream == nil && !tc.streaming() {
 		if paused != nil {
 			return ResumeRunSync(ctx, paused, opts)
 		}
@@ -330,11 +333,26 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 			// The completion is the loop's own bookkeeping, not something a
 			// handler watching the nested agent should see.
 			continue
+		case *RunItemStreamEvent:
+			// Forward the nested agent's messages to the PARENT run's stream as
+			// tool progress, so a UI watching the parent sees the sub-agent
+			// working without the caller wiring OnStream. Messages only: the
+			// raw deltas belong to the nested run, and relaying them would
+			// bury the parent's own stream.
+			if m, ok := e.Item.(*MessageOutputItem); ok {
+				tc.Emit(TextResult(m.Text()).WithDetails(map[string]any{
+					"nested_agent": current.Name, "partial": true,
+				}))
+			}
 		}
 		if ctx.Err() != nil {
 			// Parent canceled: keep draining so the run can finish and record
 			// its result, but stop dispatching to the handler.
 			canceled.Store(true)
+			continue
+		}
+		if cfg.OnStream == nil {
+			// Streaming only to forward progress; there is no handler to feed.
 			continue
 		}
 		payload := AgentToolStreamEvent{

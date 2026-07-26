@@ -79,6 +79,25 @@ called a tool, and that tool was a handoff.
 `*AgentUpdatedStreamEvent` fires once for the starting agent, then on each
 handoff.
 
+### Tool progress events
+
+`*ToolProgressEvent` is a partial result pushed by a running tool via
+[`ToolContext.Emit`](tools.md#streaming-partial-results). It carries the tool
+name, the call id and a partial `ToolResult`:
+
+```go
+if p, ok := event.(*agents.ToolProgressEvent); ok {
+	render(p.CallID, p.Result)   // key on CallID: several tools stream at once
+}
+```
+
+Progress **never reaches the model** — the tool's return value does — and it
+stops the moment the tool returns, so a card can switch from "running" to the
+final result without guessing.
+
+`sandbox.CodeTool` streams stdout this way, and an agent-as-tool forwards its
+nested agent's messages.
+
 ### The completion event
 
 `*RunCompletedEvent` is terminal and carries the finished `*RunResult`. It is
@@ -100,6 +119,9 @@ ranging.
   progress indicator during a long silence.
 - `ctrl.CurrentAgent()` / `ctrl.CurrentTurn()` report who is handling the turn
   in progress and which turn it is (nil / 0 before the first turn).
+- `ctrl.Steer(...)` / `ctrl.NextTurn(...)` / `ctrl.FollowUp(...)` put input into
+  a run that is already going — see
+  [Steering a run in flight](running_agents.md#steering-a-run-in-flight).
 
 ```go
 for event, err := range stream {

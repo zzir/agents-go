@@ -644,6 +644,28 @@ A response the provider marks `status="incomplete"` with reason
 - `RunResult.UsageByResponse()` and `RunResult.NestedUsage()` read it back:
   where the tokens went, and how many were spent off this conversation.
 
+### 2.7g Tool progress ✅
+
+`ToolContext.Emit` pushes a partial result to a streamed run's consumer as a
+`ToolProgressEvent`.
+
+- **Progress is not the answer.** It never reaches the model; the tool's return
+  value does. Treating a partial as a result would let a half-finished thought
+  become the conversation.
+- **Scope is the call.** After the tool returns, `Emit` is ignored. A goroutine
+  the tool left running would otherwise keep reporting on a call that is
+  already answered, which a consumer cannot distinguish from one still working.
+- **No-op on a blocking run.** Nobody is watching, and buffering for a consumer
+  that will never read would grow without bound.
+- **`emit` serializes with the run loop's own yields.** Several tools stream at
+  once while the loop waits on the batch, and an iterator's `yield` is not safe
+  for concurrent calls — the mutex is what makes `Emit` possible at all.
+- A **nested agent-as-tool run is streamed whenever the parent is**, so its work
+  shows up as progress without the caller wiring `OnStream`. Only its messages
+  are forwarded: relaying the nested raw deltas would bury the parent's stream.
+- The sandbox exec tool streams stdout through it, capturing in parallel —
+  streaming must not cost the model its output.
+
 ### 2.8 Nested agent-as-tool attribution ✅
 
 | Aspect | Attribution |

@@ -118,6 +118,42 @@ A wrapper you write yourself only has to embed the unexported shell's contract:
 forward `ToolName`, implement `Unwrap() Tool`, and add the one interface it
 provides.
 
+### Streaming partial results
+
+A tool that runs for a while can push progress to a streamed run's consumer:
+
+```go
+tool := agents.NewFunctionTool("build", "Build the project.",
+	func(ctx context.Context, tc *agents.ToolContext, a buildArgs) (string, error) {
+		for _, step := range steps {
+			tc.Emit(agents.TextResult(step.Name).WithDisplay("terminal"))
+			…
+		}
+		return summary, nil
+	})
+```
+
+The consumer receives a `*agents.ToolProgressEvent` carrying the tool name, call
+id and the partial `ToolResult`:
+
+```go
+for ev, err := range stream {
+	if p, ok := ev.(*agents.ToolProgressEvent); ok {
+		fmt.Printf("[%s] %s\n", p.ToolName, p.Result.ModelOutput())
+	}
+}
+```
+
+**Progress is not the answer.** It never reaches the model — the tool's return
+value does. `Emit` is a no-op on a blocking run and after the tool returns, so
+a tool never has to ask which kind of run it is in, and a goroutine it left
+behind cannot keep reporting on a finished call. It is safe from any goroutine.
+
+Two built-ins already use it: `sandbox.CodeTool` streams stdout as the command
+runs (on backends implementing `ExecStreamer`), and an
+[agent-as-tool](multi_agent.md) forwards the nested agent's messages, so a
+sub-agent's work is visible without wiring `OnStream`.
+
 ### Structured / multimodal output
 
 By default a tool's return value goes back to the model as text (JSON for non-string values). To hand the model **native image or file input** instead, return a `ToolOutputContent` — or a `[]ToolOutputContent` for several parts — which becomes a `function_call_output` content list:

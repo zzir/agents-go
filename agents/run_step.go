@@ -556,6 +556,21 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				Agent:         agent,
 				ToolCall:      run.Call.Raw,
 			}
+			// Progress is delivered only on a streamed run; on a blocking run
+			// there is nobody watching, and buffering it would grow without
+			// bound for a consumer that will never read it.
+			if r.rawEvents {
+				tc.emit = func(partial ToolResult) {
+					r.emit(&ToolProgressEvent{
+						ToolName: run.Call.Name,
+						CallID:   run.Call.CallID,
+						Agent:    agent,
+						Result:   partial,
+					})
+				}
+			}
+			defer tc.finish()
+
 			tlog := r.log.component("tool").with(
 				slog.String("tool", run.Call.Name), slog.String("call_id", run.Call.CallID))
 			tlog.Debug(ctx, "tool started", Sensitive("arguments", run.Call.Arguments))

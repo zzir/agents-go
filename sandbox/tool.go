@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -89,7 +91,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 		ParamsJSONSchema:  schema,
 		Strict:            true,
 		NeedsApprovalFunc: cfg.NeedsApprovalFunc,
-		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
+		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 				return agents.ToolResult{}, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err))
@@ -115,10 +117,29 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 				map[string]any{"tool": cfg.Name, "timeout_ms": timeout.Milliseconds()})
 			defer span.Finish()
 
-			res, err := sb.Exec(ctx, ExecRequest{
-				Cmd:     []string{"bash", "-c", cmd},
-				Timeout: timeout,
-			})
+			req := ExecRequest{Cmd: []string{"bash", "-c", cmd}, Timeout: timeout}
+			var res *ExecResult
+			var err error
+			if streamer, ok := sb.(ExecStreamer); ok && tc != nil {
+				// A command producing output for two minutes is unwatchable
+				// otherwise; the model still gets only the final result.
+				//
+				// ExecStream hands output to the writers instead of capturing
+				// it, so the capped buffers below are what the result is built
+				// from — streaming must not cost the model its output.
+				maxOut := req.EffectiveMaxOutputBytes()
+				outBuf := &CappedBuffer{Max: maxOut}
+				errBuf := &CappedBuffer{Max: maxOut}
+				w := &progressWriter{tc: tc, cmd: cmd}
+				res, err = streamer.ExecStream(ctx,
+					req, io.MultiWriter(outBuf, w), io.MultiWriter(errBuf, w))
+				w.flush()
+				if res != nil {
+					res.Stdout, res.Stderr = outBuf.String(), errBuf.String()
+				}
+			} else {
+				res, err = sb.Exec(ctx, req)
+			}
 			if err != nil {
 				span.SetError(err.Error(), nil)
 				return agents.ToolResult{}, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("code tool %q: %w", cfg.Name, err))
@@ -221,4 +242,40 @@ func forwardToRuneStart(s string, i int) int {
 		i++
 	}
 	return i
+}
+
+// progressWriter turns a sandbox's output stream into tool-progress events.
+//
+// It batches: a command emitting a line at a time would otherwise produce an
+// event per line, and a consumer redrawing per event would spend more time
+// rendering than the command spends running. Output is coalesced until a write
+// completes a line, which is the granularity a terminal view wants anyway.
+type progressWriter struct {
+	tc  *agents.ToolContext
+	cmd string
+	buf []byte
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if i := bytes.LastIndexByte(w.buf, '\n'); i >= 0 {
+		w.send(string(w.buf[:i+1]))
+		w.buf = w.buf[i+1:]
+	}
+	return len(p), nil
+}
+
+// flush emits whatever did not end in a newline — the last line of output,
+// or a prompt a command left hanging.
+func (w *progressWriter) flush() {
+	if len(w.buf) > 0 {
+		w.send(string(w.buf))
+		w.buf = nil
+	}
+}
+
+func (w *progressWriter) send(text string) {
+	w.tc.Emit(agents.TextResult(text).
+		WithDisplay("terminal").
+		WithDetails(map[string]any{"command": w.cmd, "partial": true}))
 }

@@ -537,6 +537,11 @@ type runner struct {
 	// so a per-turn save never rewrites it.
 	userInputSaved bool
 
+	// emitMu serializes yields. The run loop is not the only emitter: a tool
+	// pushing progress does it from its own goroutine, and several tools run at
+	// once.
+	emitMu sync.Mutex
+
 	// diagnostics collects trouble the run survived. Never nil.
 	diagnostics *DiagnosticSink
 	// diagnosticsSaved is how many diagnostics have already been attached to
