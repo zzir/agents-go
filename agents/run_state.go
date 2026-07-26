@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -208,6 +209,11 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// normalize_resumed_input.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
+	agentName := ""
+	if state.CurrentAgent != nil {
+		agentName = state.CurrentAgent.Name
+	}
+	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agentName), slog.Bool("resumed", true))
 	// Seed the guardrail-result accumulators from the state so the resumed run's
 	// RunResult still reports the pre-pause results. First-turn input guardrails
 	// are not re-run on resume, so this is the only way they survive (Python

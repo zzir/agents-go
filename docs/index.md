@@ -73,7 +73,7 @@ func main() {
 | State | [Sessions](sessions.md) · [Context management](context.md) · [Usage](usage.md) |
 | Streaming | [Streaming](streaming.md) |
 | Models | [Models](models.md) |
-| Observability | [Tracing](tracing.md) |
+| Observability | [Tracing](tracing.md) · [Logging](logging.md) |
 | Examples | [Examples](examples.md) |
 | API index | [Feature reference](features.md) — every capability mapped to its API |
 | Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |

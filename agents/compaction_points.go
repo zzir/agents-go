@@ -1,6 +1,9 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"log/slog"
+)
 
 // Compactor decides what a session's history should look like as model context.
 //
@@ -108,6 +111,8 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 			span.SetError(err.Error(), nil)
 			span.Finish()
 		}
+		r.log.component("compaction").Warn(ctx, "compaction pass failed; continuing uncompacted",
+			slog.String("point", point.String()), slog.String("error", err.Error()))
 		return entries
 	}
 	if span != nil {
@@ -115,6 +120,12 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 		span.Set("entries_before", before)
 		span.Set("entries_after", len(out))
 		span.Finish()
+	}
+	if len(out) != before {
+		r.log.component("compaction").Info(ctx, "context compacted",
+			slog.String("point", point.String()),
+			slog.Int("entries_before", before),
+			slog.Int("entries_after", len(out)))
 	}
 	return out
 }

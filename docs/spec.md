@@ -760,6 +760,24 @@ run that was ending:
   resume. That is precisely when someone is looking at the run and saying
   something about it.
 
+### 2.11c Logging ✅
+
+- **Off by default.** `LogConfig.Logger` is nil unless a caller sets it; the SDK
+  never writes to `slog.Default()` on its own. A library that logs the moment it
+  is imported appears uninvited in somebody's production output.
+- **Sensitive data is a second, separate opt-in.** Attributes carrying
+  conversation content are marked and dropped unless `SensitiveData` is set;
+  the record still appears without them. "Log what the SDK is doing" and "log
+  what the user said" are different decisions, and only one of them puts a
+  conversation into a log aggregator.
+- **Every record carries `component`**, so SDK chatter is filterable by origin
+  without each call site repeating the attribute.
+- `Level` overrides the minimum level **for SDK records only**. Most of what the
+  SDK says is `Debug`, and a caller usually wants it without enabling `Debug`
+  application-wide.
+- Logging and tracing are configured separately, as are their sensitive-data
+  switches: exporting spans and writing log lines are different exposures.
+
 ### 2.12 Middleware ✅
 
 `RunOptions.Middlewares` wraps a run, **outermost first** — the order they are

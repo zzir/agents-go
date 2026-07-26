@@ -156,6 +156,8 @@ with `agents.RunStateFromJSON(data, registry)` for cross-process approvals.
 - [Skills](docs/skills.md) — load `SKILL.md` Agent Skills
 - [Tracing](docs/tracing.md) — spans for every model call, tool call, handoff,
   and guardrail
+- [Logging](docs/logging.md) — structured `slog` records, off by default, with
+  conversation content behind a second opt-in
 
 The full capability → API map is in the
 [feature reference](docs/features.md).

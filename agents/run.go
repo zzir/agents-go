@@ -71,6 +71,10 @@ type RunOptions struct {
 	// Observe configures tracing.
 	Observe ObserveOptions
 
+	// Log configures the SDK's own structured logging. The zero value is
+	// silent.
+	Log LogConfig
+
 	// Context is arbitrary user data threaded through tools, guardrails and
 	// hooks via RunContext.Context. Ignored if RunContext is set.
 	Context any
@@ -391,6 +395,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	}
 
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
+	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agent.Name))
 
 	finishTrace := func() {}
 	if opts.parentTrace != nil {
@@ -527,6 +532,10 @@ type runner struct {
 	// userInputSaved guards the one-time persistence of userInput at loop start
 	// so a per-turn save never rewrites it.
 	userInputSaved bool
+
+	// log is the run's logger, already tagged with the run's identity. Never
+	// nil — a disabled logger is a no-op rather than a check at every site.
+	log *runLogger
 
 	// lastUsage is the most recent model response's usage, held so the entries
 	// that response produced can carry it.
@@ -669,6 +678,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	// call (see below), so a failure ahead of that — a blocking input-guardrail
 	// tripwire, a bad model config — leaves no orphan user message behind.
 
+	r.log.Info(ctx, "run started",
+		slog.Int("max_turns", r.maxTurns),
+		slog.Int("tools", len(currentAgent.Tools)),
+		slog.Bool("session", r.opts.Conversation.Session != nil))
+
 	// Announce the starting agent before the first turn, for both fresh and
 	// resumed runs.
 	r.ctrl.setCurrent(currentAgent, startTurn)
@@ -697,8 +711,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// running THIS turn tool-free, not by skipping to the next one.
 			// Once granted, the next overrun is the real end.
 			if r.opts.Exec.ToolLoop.FinalTurnWithoutTools && !finalTurn {
+				r.log.Info(ctx, "turn budget exhausted; one final turn without tools",
+					slog.Int("max_turns", r.maxTurns))
 				finalTurn = true
 			} else {
+				r.log.Warn(ctx, "turn budget exhausted", slog.Int("max_turns", r.maxTurns))
 				maxErr := newMaxTurnsError(r.maxTurns)
 				res, rerr := r.recoverMaxTurns(ctx, maxErr, originalInput, rawResponses, currentAgent)
 				if rerr != nil {
@@ -716,6 +733,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// Publish the live turn/agent for RunControl (guarded by a mutex; the
 		// run loop and the caller race).
 		r.ctrl.setCurrent(currentAgent, turn)
+		r.log.Debug(ctx, "turn started", slog.Int("turn", turn), slog.String("agent", currentAgent.Name))
 
 		if shouldRunStartHooks {
 			if currentAgent.OnStart != nil {
@@ -885,6 +903,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				PreviousResponseID: prevID,
 				ConversationID:     r.opts.Conversation.ConversationID,
 			}
+			r.ctrl.setPhase(PhaseModelCall)
+			r.log.Debug(ctx, "calling model",
+				slog.Int("turn", turn),
+				slog.Int("input_items", len(modelInput)),
+				slog.Int("tools", len(tools)),
+				Sensitive("instructions", systemPrompt))
 			span := r.startGenerationSpan(currentAgent, req)
 			switch {
 			case guardCh != nil:
@@ -940,6 +964,13 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			r.rc.Usage.Add(resp.Usage)
 			rawResponses = append(rawResponses, resp)
 		}
+		r.log.Debug(ctx, "model responded",
+			slog.Int("turn", turn),
+			slog.String("response_id", resp.ResponseID),
+			slog.Int("output_items", len(resp.Output)),
+			slog.String("status", resp.Status),
+			slog.Int64("input_tokens", usageOr(resp.Usage).InputTokens),
+			slog.Int64("output_tokens", usageOr(resp.Usage).OutputTokens))
 		r.lastResponseID = resp.ResponseID
 		r.lastUsage = resp.Usage
 		r.usagePending = true
@@ -1080,6 +1111,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					generatedItems = nil
 				}
 			}
+			r.log.Info(ctx, "handoff",
+				slog.String("from", currentAgent.Name), slog.String("to", step.NewAgent.Name))
 			currentAgent = step.NewAgent
 			shouldRunStartHooks = true
 			if !r.emit(&AgentUpdatedStreamEvent{NewAgent: currentAgent}) {
@@ -1327,6 +1360,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		if err := r.opts.Conversation.Session.Append(ctx, toSave...); err != nil {
 			return err
 		}
+		r.log.Debug(ctx, "turn persisted", slog.Int("entries", len(toSave)))
 	}
 	r.persistedSessionItems = end
 	return nil

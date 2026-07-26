@@ -187,3 +187,12 @@ func (r *runner) lastRequestUsage() *RequestUsage {
 	}
 	return &u
 }
+
+// usageOr returns u or an empty aggregate, so a log site can read a field off a
+// possibly-nil usage without a branch.
+func usageOr(u *Usage) RequestUsage {
+	if u == nil {
+		return RequestUsage{}
+	}
+	return u.Request()
+}

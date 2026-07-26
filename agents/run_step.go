@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
 	"time"
 
@@ -213,6 +214,8 @@ func (r *runner) executeToolsAndSideEffects(
 	// If any tool call awaits approval, pause the run before executing anything
 	// so that nothing runs twice when the run resumes.
 	if len(interruptions) > 0 {
+		r.log.component("tool").Info(ctx, "waiting for approval",
+			slog.Int("pending", len(interruptions)))
 		return &singleStepResult{
 			NewStepItems:  newStepItems,
 			NextStep:      stepInterruption,
@@ -228,6 +231,8 @@ func (r *runner) executeToolsAndSideEffects(
 	if resp.Truncated() {
 		// The response was cut off at the output-token limit, so a call's
 		// arguments may stop mid-JSON. None of them run.
+		r.log.component("tool").Warn(ctx, "response truncated; refusing to run its tool calls",
+			slog.Int("calls", len(toRun)))
 		executed = truncatedCallResults(agent, toRun)
 	} else {
 		executed, err = r.runFunctionTools(ctx, agent, toRun)
@@ -546,6 +551,19 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				Agent:         agent,
 				ToolCall:      run.Call.Raw,
 			}
+			tlog := r.log.component("tool").with(
+				slog.String("tool", run.Call.Name), slog.String("call_id", run.Call.CallID))
+			tlog.Debug(ctx, "tool started", Sensitive("arguments", run.Call.Arguments))
+			started := time.Now()
+			defer func() {
+				if err != nil {
+					tlog.Error(ctx, "tool failed",
+						slog.Duration("elapsed", time.Since(started)),
+						slog.String("error", err.Error()))
+					return
+				}
+				tlog.Debug(ctx, "tool finished", slog.Duration("elapsed", time.Since(started)))
+			}()
 			// This goroutine runs user code (the tool itself, its guardrails,
 			// hook callbacks) and errgroup does not recover panics, so an
 			// unrecovered panic here would kill the whole process. Convert a
