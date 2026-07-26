@@ -699,3 +699,68 @@ func TestStop_GracefulDefersToTheRun(t *testing.T) {
 		t.Errorf("%d stops issued, want 1", stopped)
 	}
 }
+
+// A paused task has no running goroutine, so finalizing IS the exclusive claim
+// against a concurrent approval. Claiming after telling the host would let an
+// approve slip in and resume a task already reported as cancelled.
+func TestStop_PausedTaskIsClaimedBeforeTheHostIsTold(t *testing.T) {
+	ctx := context.Background()
+	var order []string
+	var mu sync.Mutex
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusInputRequired})
+
+	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) error {
+		// By the time the host is told, the row must already be cancelled —
+		// otherwise a racing approve could still reclaim it.
+		task, err := h.store.Get(ctx, info.TaskID)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		order = append(order, string(task.Status))
+		mu.Unlock()
+		return nil
+	})
+
+	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 1 || order[0] != string(StatusCancelled) {
+		t.Errorf("host saw status %v when told to stop, want cancelled — the claim came too late", order)
+	}
+	// And a concurrent approve loses.
+	if ok, _ := h.store.ReclaimWorking(ctx, info.TaskID); ok {
+		t.Error("an approval reclaimed a task that was already cancelled")
+	}
+}
+
+// A working task is the other way round: cancel the run first, or its own
+// completion wins the CAS and records a success for something the user stopped.
+func TestStop_WorkingTaskCancelsTheRunFirst(t *testing.T) {
+	ctx := context.Background()
+	var sawStatus string
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) error {
+		task, err := h.store.Get(ctx, info.TaskID)
+		if err != nil {
+			return err
+		}
+		sawStatus = string(task.Status)
+		return nil
+	})
+
+	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
+		t.Fatal(err)
+	}
+	if sawStatus != string(StatusWorking) {
+		t.Errorf("host saw %q when told to stop, want working — the row was claimed too early", sawStatus)
+	}
+	if got := h.get(t, info.TaskID).Status; got != StatusCancelled {
+		t.Errorf("status = %q, want cancelled", got)
+	}
+}

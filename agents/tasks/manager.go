@@ -321,24 +321,46 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 		return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
 	}
 
-	// Cancel the run first, then finalize. The other order would let the run's
-	// own completion win the CAS and record a success for something the user
-	// asked to stop.
-	if m.cfg.Stopper != nil {
+	// A paused task has no running goroutine, so finalizing IS the exclusive
+	// claim: a concurrent approval's ReclaimWorking (input_required → working)
+	// and this Finalize (non-terminal → cancelled) cannot both win. Claim it
+	// before telling the Stopper, or an approve slipping in between would
+	// resume a task this call has already reported as cancelled.
+	//
+	// A working task is the other way round: cancel the run first, because
+	// otherwise its own completion wins the CAS and records a success for
+	// something the user asked to stop.
+	paused := t.Status == StatusInputRequired
+	stopRun := func() {
+		if m.cfg.Stopper == nil {
+			return
+		}
 		if err := m.cfg.Stopper.Stop(ctx, t.RunID, graceful); err != nil {
 			m.log.WarnContext(ctx, "stopping task run",
 				slog.String("task_id", taskID), slog.String("error", err.Error()))
 		}
 	}
-	if graceful {
-		// The run finishes its turn and reports through OnRunFinished, which
-		// records the cancellation. Finalizing here would race it.
-		return infoFrom(t, ""), nil
+	if !paused {
+		stopRun()
+		if graceful {
+			// The run finishes its turn and reports through OnRunFinished,
+			// which records the cancellation. Finalizing here would race it.
+			return infoFrom(t, ""), nil
+		}
 	}
 
-	won, err := m.cfg.Store.Finalize(ctx, taskID, StatusCancelled, "stopped", "")
+	reason := "stopped"
+	if paused {
+		reason = "stopped while awaiting approval"
+	}
+	won, err := m.cfg.Store.Finalize(ctx, taskID, StatusCancelled, reason, "")
 	if err != nil {
 		return nil, err
+	}
+	if paused {
+		// Told after the claim, so the host discards the approval only once
+		// this call owns the transition.
+		stopRun()
 	}
 	if won {
 		// A cancellation never wakes the parent: the user initiated it, the UI
