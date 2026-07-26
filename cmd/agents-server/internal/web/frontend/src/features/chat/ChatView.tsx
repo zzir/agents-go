@@ -882,6 +882,11 @@ interface ChatViewProps {
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onFork?: (id: string) => void;
+  // Backwards pagination over the persisted history: hasMore says older
+  // entries exist, onLoadEarlier fetches the previous page.
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadEarlier?: () => void;
   onRegenerate?: (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => void;
   settingsReloadKey?: number;
   panel: InspectorPanel;
@@ -897,7 +902,7 @@ export function ChatView({
   sessionId, messages, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
-  onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
+  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onRegenerate, settingsReloadKey,
   panel, onPanelChange, onTerminalOpen,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -1300,6 +1305,13 @@ export function ChatView({
       <div className="chat-content">
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
+          {hasMore && (
+            <div className="load-earlier">
+              <Button size="small" variant="invisible" onClick={onLoadEarlier} disabled={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load earlier messages'}
+              </Button>
+            </div>
+          )}
           {messages.map((m, i) => {
             if (m.role === 'turn') {
               const isLive = running && i === messages.length - 1;

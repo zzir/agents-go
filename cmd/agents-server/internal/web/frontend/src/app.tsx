@@ -287,7 +287,7 @@ export default function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, loadSession, deleteSession, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  const { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -406,6 +406,10 @@ export default function App() {
       return next;
     });
   }, [deleteSession]);
+
+  const handleLoadEarlier = useCallback(() => {
+    if (activeSession) loadEarlier(activeSession);
+  }, [activeSession, loadEarlier]);
 
   const handleFork = useCallback(async (messageId: string | number) => {
     if (!activeSession) return;
@@ -538,6 +542,9 @@ export default function App() {
       onApprove={handleApprove}
       onReject={handleReject}
       onFork={handleFork}
+      hasMore={currentSS.hasMore}
+      loadingMore={currentSS.loadingMore}
+      onLoadEarlier={handleLoadEarlier}
       onRegenerate={handleRegenerate}
       settingsReloadKey={settingsReloadKey}
       panel={activePanel}

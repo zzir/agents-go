@@ -135,7 +135,10 @@ keeps its name for compatibility.
 `?before_id=`. Without `limit` the full list is returned (oldest-first),
 backward-compatible with older clients. With `limit`, the newest `limit` items
 are returned; page backwards by passing the smallest id you received as
-`before_id` (an exclusive upper bound).
+`before_id` (an exclusive upper bound). For `messages` the limit counts the
+ENTRIES a client receives, not table rows — update entries are folded into
+their targets first, so a page is never short of what was asked for. The web UI
+loads the newest 200 and offers "Load earlier messages".
 
 ### Runs — `/api/v1/runs`
 

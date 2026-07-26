@@ -245,6 +245,66 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	}
 }
 
+// Paging must count what the CLIENT receives, not raw rows. Folding an update
+// into its target removes a row from the page, so a cursor over raw ids returns
+// short pages — and a client that stops when a page is short stops early.
+func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewEntryStore(db, "s1")
+	s.SetRunID("r1")
+
+	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`)
+	call.Display = &agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1", ToolName: "f"}
+	seed(t, s, userEntry(t, "one"), call, userEntry(t, "two"), userEntry(t, "three"))
+	// Two update entries: rows in the table, never entries in a page.
+	if err := s.AppendCallDisplayUpdate(ctx, "s1", "c1", agents.ItemDisplay{Output: "done"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := s.AppendCallDisplayUpdate(ctx, "s1", "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
+		t.Fatalf("update 2: %v", err)
+	}
+
+	all, err := s.GetEntries(ctx, "s1", 0, 0)
+	if err != nil {
+		t.Fatalf("get all: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("want 4 entries (2 updates folded away), got %d", len(all))
+	}
+	// The fold happened: the call carries what the updates said.
+	if all[1].Display == nil || all[1].Display.Output != "done" || all[1].Display.Text != "finished" {
+		t.Fatalf("updates not folded into the call: %+v", all[1].Display)
+	}
+
+	// A limit is a count of ENTRIES. Asking for 2 must give the newest 2.
+	page, err := s.GetEntries(ctx, "s1", 0, 2)
+	if err != nil {
+		t.Fatalf("get page: %v", err)
+	}
+	if len(page) != 2 || page[0].ID != all[2].ID || page[1].ID != all[3].ID {
+		t.Fatalf("newest page wrong: got %d entries, ids %v", len(page), idsOf(page))
+	}
+
+	// Paging backwards from it reaches the beginning without skipping the call
+	// the updates were folded into.
+	older, err := s.GetEntries(ctx, "s1", page[0].ID, 2)
+	if err != nil {
+		t.Fatalf("get older: %v", err)
+	}
+	if len(older) != 2 || older[0].ID != all[0].ID || older[1].ID != all[1].ID {
+		t.Fatalf("cursor page wrong: got %v, want the first two", idsOf(older))
+	}
+}
+
+func idsOf(views []EntryView) []int64 {
+	out := make([]int64, len(views))
+	for i, v := range views {
+		out[i] = v.ID
+	}
+	return out
+}
+
 func mustItem(t *testing.T, raw string) agents.TResponseInputItem {
 	t.Helper()
 	item, err := agents.UnmarshalInputItem([]byte(raw))
