@@ -121,3 +121,69 @@ func (u *Usage) Add(other *Usage) {
 		})
 	}
 }
+
+// Request flattens the aggregate into a single RequestUsage.
+//
+// It is what a nested run's total looks like from the outside: the caller of an
+// agent-as-tool does not care that it took four calls, only what the call cost.
+func (u *Usage) Request() RequestUsage {
+	if u == nil {
+		return RequestUsage{}
+	}
+	s := u.Snapshot()
+	return RequestUsage{
+		InputTokens:         s.InputTokens,
+		OutputTokens:        s.OutputTokens,
+		TotalTokens:         s.TotalTokens,
+		InputTokensDetails:  s.InputTokensDetails,
+		OutputTokensDetails: s.OutputTokensDetails,
+	}
+}
+
+// attributeUsage puts each response's usage on exactly ONE of the entries it
+// produced, so summing entry usage counts every request once.
+//
+// The last entry of the batch gets it. That is what makes an estimate of "how
+// large is this conversation now" exact: a reader walks back to the most recent
+// entry carrying usage, takes its input+output tokens as measured fact, and
+// estimates only what follows. Usage on the FIRST entry of a response would
+// make the rest of that response get estimated on top of a number that already
+// counts it.
+//
+// A turn split across two batches — what an approval pause creates — attributes
+// on the first batch and clears the flag, since a request counted twice is
+// worse than one attributed a few entries early.
+func (r *runner) attributeUsage(entries []SessionEntry) {
+	if !r.usagePending || len(entries) == 0 {
+		return
+	}
+	u := r.lastRequestUsage()
+	if u == nil {
+		r.usagePending = false
+		return
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		// Match the response when the provider named one; a backend that
+		// returns no id still gets its usage recorded, on the batch's last
+		// entry, rather than silently losing it.
+		if r.lastResponseID != "" && entries[i].ResponseID != r.lastResponseID {
+			continue
+		}
+		entries[i].Usage = u
+		r.usagePending = false
+		return
+	}
+}
+
+// lastRequestUsage returns the usage of the run's most recent model call, or
+// nil when it reported none.
+func (r *runner) lastRequestUsage() *RequestUsage {
+	if r.lastUsage == nil {
+		return nil
+	}
+	u := r.lastUsage.Request()
+	if u.TotalTokens == 0 && u.InputTokens == 0 && u.OutputTokens == 0 {
+		return nil
+	}
+	return &u
+}

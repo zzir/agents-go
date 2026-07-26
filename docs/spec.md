@@ -619,6 +619,31 @@ A response the provider marks `status="incomplete"` with reason
   streaming path read it, so the same response was a hard failure when streamed
   and a silent partial answer when not.
 
+### 2.7f Usage attribution ✅
+
+- **Exactly one entry per response carries that response's `Usage`.** Several
+  entries share a response; if each carried it, summing over a session's
+  entries would multiply the bill by the number of items a turn produced.
+- **It lands on the LAST entry of the response.** That is what makes "how large
+  is this conversation now" exact: a reader takes the most recent measured
+  input+output as fact and estimates only what follows. On the first entry, the
+  rest of that response would be estimated on top of a number that already
+  counts it.
+- A turn persisted in two batches (an approval pause) attributes on the first
+  and clears the flag: a request counted twice is worse than one attributed a
+  few entries early.
+- A backend that returns **no response id** still has its usage recorded, on
+  the batch's last entry.
+- **Nested usage is separate.** `SessionEntry.NestedUsage` and
+  `ToolCallOutputItem.NestedUsage` hold what a tool spent on model calls of its
+  own. It is not merged into `Usage`, because the two answer different
+  questions: a nested run's tokens were spent on a different conversation, and
+  counting them as context would make this one look larger than anything ever
+  sent. It IS part of the run total, since the nested run shares the parent's
+  usage.
+- `RunResult.UsageByResponse()` and `RunResult.NestedUsage()` read it back:
+  where the tokens went, and how many were spent off this conversation.
+
 ### 2.8 Nested agent-as-tool attribution ✅
 
 | Aspect | Attribution |

@@ -79,8 +79,18 @@ type SessionEntry struct {
 
 	// Display is the entry's UI projection, when it has one.
 	Display *ItemDisplay `json:"display,omitzero"`
-	// Usage is the token usage of the model call this entry belongs to.
+	// Usage is the token usage of the model call this entry belongs to — a call
+	// on THIS conversation. Exactly one entry per response carries it, so
+	// summing over entries counts each request once.
 	Usage *RequestUsage `json:"usage,omitzero"`
+	// NestedUsage is what a nested run started by this entry's tool spent.
+	//
+	// Separate from Usage because they answer different questions. Usage
+	// measures this conversation, and a reader estimating how large it has
+	// grown reads the most recent one; a nested run's tokens were spent on a
+	// different conversation, and counting them as context would make it look
+	// larger than anything ever sent.
+	NestedUsage *RequestUsage `json:"nested_usage,omitzero"`
 
 	// CreatedAt is when the entry was produced. Storage sets it when zero.
 	CreatedAt time.Time `json:"created_at"`
@@ -144,6 +154,10 @@ func EntryFromRunItem(it RunItem, responseID string) (SessionEntry, error) {
 	d := it.Display()
 	e.Display = &d
 	e.ResponseID = responseID
+	if out, ok := it.(*ToolCallOutputItem); ok && out.NestedUsage != nil {
+		u := out.NestedUsage.Request()
+		e.NestedUsage = &u
+	}
 	return e, nil
 }
 

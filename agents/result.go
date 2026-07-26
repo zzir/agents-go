@@ -83,3 +83,57 @@ type ToolApprovalItem struct {
 func (r *RunResult) ToInputList() ([]TResponseInputItem, error) {
 	return buildModelInput(r.Input, r.NewItems)
 }
+
+// UsageByResponse breaks the run's usage down per model call, keyed by response
+// id.
+//
+// RunResult.Usage is a total, which answers "what did this cost" and nothing
+// else. This answers "where did it go" — which turn ran away with the context,
+// which response was the expensive one — without the caller re-deriving it from
+// RawResponses and getting the nil-usage cases wrong.
+func (r *RunResult) UsageByResponse() map[string]RequestUsage {
+	out := make(map[string]RequestUsage, len(r.RawResponses))
+	for _, resp := range r.RawResponses {
+		if resp == nil || resp.Usage == nil || resp.ResponseID == "" {
+			continue
+		}
+		u := resp.Usage.Request()
+		// A retried or resumed run can see the same response id twice; sum
+		// rather than overwrite, so a repeat is visible in the total instead of
+		// silently replacing what came before.
+		if prev, ok := out[resp.ResponseID]; ok {
+			u.InputTokens += prev.InputTokens
+			u.OutputTokens += prev.OutputTokens
+			u.TotalTokens += prev.TotalTokens
+			u.InputTokensDetails.CachedTokens += prev.InputTokensDetails.CachedTokens
+			u.InputTokensDetails.CacheWriteTokens += prev.InputTokensDetails.CacheWriteTokens
+			u.OutputTokensDetails.ReasoningTokens += prev.OutputTokensDetails.ReasoningTokens
+		}
+		out[resp.ResponseID] = u
+	}
+	return out
+}
+
+// NestedUsage totals what the run's tools spent on model calls of their own —
+// agent-as-tool sub-runs, summarization steps.
+//
+// It is already part of RunResult.Usage; this says how much of the total was
+// spent somewhere other than the run's own conversation, which is the number
+// that explains a bill nobody can account for from the turn count.
+func (r *RunResult) NestedUsage() RequestUsage {
+	var total RequestUsage
+	for _, it := range r.NewItems {
+		out, ok := it.(*ToolCallOutputItem)
+		if !ok || out.NestedUsage == nil {
+			continue
+		}
+		u := out.NestedUsage.Request()
+		total.InputTokens += u.InputTokens
+		total.OutputTokens += u.OutputTokens
+		total.TotalTokens += u.TotalTokens
+		total.InputTokensDetails.CachedTokens += u.InputTokensDetails.CachedTokens
+		total.InputTokensDetails.CacheWriteTokens += u.InputTokensDetails.CacheWriteTokens
+		total.OutputTokensDetails.ReasoningTokens += u.OutputTokensDetails.ReasoningTokens
+	}
+	return total
+}

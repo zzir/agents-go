@@ -668,6 +668,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			outputItem.Extra = details
 			outputItem.Renderer = result.Display
 			outputItem.IsError = result.IsError
+			outputItem.NestedUsage = result.Usage
 			results[i] = functionToolResult{
 				callID:     run.Call.CallID,
 				tool:       run.Tool,

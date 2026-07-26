@@ -157,6 +157,16 @@ type ToolCallOutputItem struct {
 	Renderer string
 	// IsError marks a result that reports a tool failure.
 	IsError bool
+	// NestedUsage is what the tool spent on model calls of its own — an
+	// agent-as-tool's nested run, a summarization step. Nil when it called no
+	// model.
+	//
+	// It is kept apart from the turn's own usage rather than added to it,
+	// because the two answer different questions. "How big is this
+	// conversation" is the parent's InputTokens; a nested run's tokens were
+	// spent on a different conversation entirely, and folding them in would
+	// make the context look larger than anything ever sent.
+	NestedUsage *Usage
 }
 
 // AgentRef implements RunItem.

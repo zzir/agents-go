@@ -528,6 +528,16 @@ type runner struct {
 	// so a per-turn save never rewrites it.
 	userInputSaved bool
 
+	// lastUsage is the most recent model response's usage, held so the entries
+	// that response produced can carry it.
+	lastUsage *Usage
+
+	// usagePending marks a model response whose usage has not yet landed on an
+	// entry. It is cleared on attribution, so a turn persisted in two batches —
+	// the split an approval pause creates — cannot count the same request
+	// twice.
+	usagePending bool
+
 	// consecutiveErrorTurns counts turns in a row where every tool call failed.
 	// A turn with any success clears it; ToolLoopPolicy decides when enough is
 	// enough.
@@ -931,6 +941,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			rawResponses = append(rawResponses, resp)
 		}
 		r.lastResponseID = resp.ResponseID
+		r.lastUsage = resp.Usage
+		r.usagePending = true
 		r.lastStore = r.resolveSettings(currentAgent).Store
 
 		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.Exec.ToolNotFoundBehavior)
@@ -1310,6 +1322,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		}
 		toSave = append(toSave, e)
 	}
+	r.attributeUsage(toSave)
 	if len(toSave) > 0 {
 		if err := r.opts.Conversation.Session.Append(ctx, toSave...); err != nil {
 			return err

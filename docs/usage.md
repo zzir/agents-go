@@ -20,7 +20,38 @@ fmt.Printf("requests=%d input=%d output=%d total=%d cached=%d reasoning=%d\n",
 | `OutputTokensDetails.ReasoningTokens` | Reasoning tokens (reasoning models) |
 | `RequestUsageEntries` | Per-request usage breakdown, in order |
 
-Usage accumulates across every turn of the run, including after handoffs. Nested agent-as-tool runs track their own usage (it is **not** added to the parent's), same as Python.
+Usage accumulates across every turn of the run, including after handoffs, and a
+nested [agent-as-tool](multi_agent.md) run's usage is folded into the parent's —
+so `res.Usage` is what the whole run cost, with nothing spent off to the side.
+
+## Where the tokens went
+
+A total answers "what did this cost" and nothing else. Two views answer "where
+did it go":
+
+```go
+for responseID, u := range res.UsageByResponse() {
+	fmt.Printf("%s: %d in / %d out\n", responseID, u.InputTokens, u.OutputTokens)
+}
+nested := res.NestedUsage()   // spent by tools on model calls of their own
+```
+
+`NestedUsage` is already part of `res.Usage`; it says how much of the total went
+somewhere other than this run's own conversation, which is the number that
+explains a bill the turn count cannot.
+
+## Usage on stored history
+
+With a [Session](sessions.md), **exactly one entry per response carries that
+response's usage** — the last one it produced. Summing `SessionEntry.Usage` over
+a session therefore reproduces its true cost, and a reader estimating how large
+the conversation has grown can take the most recent one as measured fact and
+estimate only what follows.
+
+`SessionEntry.NestedUsage` is kept separate from `Usage` for the same reason as
+above: a nested run's tokens were spent on a different conversation, and
+counting them as context would make this one look larger than anything ever
+sent.
 
 ## Mid-run access
 
@@ -45,4 +76,5 @@ agents.Run(ctx, a2, in2, agents.RunOptions{RunContext: rc, Model: agents.ModelOp
 fmt.Println("combined tokens:", rc.Usage.TotalTokens)
 ```
 
-For per-call analysis, `RunResult.RawResponses` carries each `ModelResponse` with its own `Usage`.
+For raw per-call data, `RunResult.RawResponses` carries each `ModelResponse`
+with its own `Usage`, `Status` and `IncompleteReason`.
