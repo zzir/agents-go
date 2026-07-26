@@ -1009,19 +1009,17 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // the new page's timeline to the old one: buildTimeline folds turns across
   // entries, so assembling the two halves separately splits whichever turn
   // straddles the page boundary into two turns that then render as two.
-  const loadEarlier = useCallback((sid: string): void => {
-    if (!sid || loadingMoreRef.current.has(sid)) return;
-    // The cursor is read through an updater because that is the only place the
-    // CURRENT state is available — the caller sits above the early returns that
-    // compute it, and a stale copy would re-fetch a page already shown.
-    let oldest: number | undefined;
-    updateSS(sid, s => {
-      if (!s.hasMore || s.loadingMore || s.entries.length === 0) return s;
-      oldest = s.entries[0]?.id;
-      return oldest ? { ...s, loadingMore: true } : s;
-    });
-    if (!oldest) return;
+  //
+  // beforeId is passed IN rather than read from state here. A state updater
+  // runs when React processes the update, not at the call — reading the cursor
+  // inside one left it undefined every time, so the fetch never started and the
+  // button stayed on "Loading…" forever. The caller holds the state and knows
+  // the cursor already.
+  const loadEarlier = useCallback((sid: string, beforeId: number): void => {
+    if (!sid || !beforeId || loadingMoreRef.current.has(sid)) return;
+    const oldest = beforeId;
     loadingMoreRef.current.add(sid);
+    updateSS(sid, s => ({ ...s, loadingMore: true }));
     (api.sessions.messages(sid, { limit: HISTORY_PAGE, beforeId: oldest }) as Promise<EntryView[]>)
       .then(older => {
         updateSS(sid, s => {

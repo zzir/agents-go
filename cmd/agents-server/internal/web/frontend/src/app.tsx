@@ -408,8 +408,12 @@ export default function App() {
   }, [deleteSession]);
 
   const handleLoadEarlier = useCallback(() => {
-    if (activeSession) loadEarlier(activeSession);
-  }, [activeSession, loadEarlier]);
+    if (!activeSession) return;
+    const s = ss[activeSession];
+    if (!s?.hasMore || s.loadingMore || s.entries.length === 0) return;
+    const oldest = s.entries[0]?.id;
+    if (oldest) loadEarlier(activeSession, oldest);
+  }, [activeSession, ss, loadEarlier]);
 
   const handleFork = useCallback(async (messageId: string | number) => {
     if (!activeSession) return;
