@@ -396,10 +396,18 @@ func roleOf(e agents.SessionEntry) string {
 }
 
 // contentOf returns the entry's readable text: the display's if the runner
-// produced one, otherwise the item's own.
+// produced one, otherwise the entry's own.
 func contentOf(e agents.SessionEntry) string {
 	if e.Display != nil && e.Display.Text != "" {
 		return e.Display.Text
+	}
+	// A checkpoint written by a compactor that set no display still has
+	// something to show — the summary standing in for what it folded.
+	if e.Kind == agents.EntryKindCompaction {
+		if p, err := e.CompactionPayload(); err == nil {
+			return p.Summary
+		}
+		return ""
 	}
 	if e.Kind != agents.EntryKindItem || len(e.Item) == 0 {
 		return ""
