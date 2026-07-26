@@ -11,6 +11,51 @@ agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
 
 The Docker and SSH backends are each a **separate Go module** (`sandbox/docker`, `sandbox/ssh`) so the core module stays dependency-light.
 
+## Restricting what may run
+
+`CodeToolConfig.Policy` filters commands **before** they reach a human or the
+sandbox:
+
+```go
+sandbox.CodeTool(sb, sandbox.CodeToolConfig{
+	Policy: sandbox.Policy{
+		Allow: []string{`^git `, `^go (build|test)\b`},
+		Deny:  []string{`git push`, `rm -rf`},
+	},
+})
+```
+
+Before approval, deliberately: a person asked to judge forty commands an hour
+stops reading them, so what was never going to be allowed should not reach the
+prompt. `Deny` is checked after `Allow`, so a deny always wins — "allow `git .*`,
+deny `git push`" means what it looks like.
+
+A refusal reaches the model as a **result**, naming the rule, not as an error.
+Told only "not allowed" a model tries variations; told which rule stopped it, it
+can ask for something else or explain why it cannot proceed.
+
+The zero value allows everything, and a policy whose patterns do not compile
+refuses everything — falling open would turn a configuration typo into no
+protection at all, silently.
+
+## Telling the agent what it is working with
+
+```go
+agent.Instructions = sandbox.EnvironmentInstructions(ctx, sb, agent.Instructions)
+```
+
+One probe reports the OS, shell, working directory and which common tools are
+present, appended to the agent's own instructions. Without it a model opens with
+`uname -a`, then `which go`, then discovers halfway through that the tool it
+planned around is missing — each of those a turn.
+
+It is **one** command rather than one per fact (a round trip into a container or
+over SSH costs far more than the shell does), probed **once** at construction
+(the environment does not change between turns), and rendered in a fixed order
+so identical environments produce identical prompts — a prompt that reorders
+between runs defeats prompt caching for nothing. A probe that fails contributes
+nothing rather than failing the agent.
+
 ## Quickstart
 
 ```go

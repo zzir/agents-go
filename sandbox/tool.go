@@ -32,6 +32,11 @@ type CodeToolConfig struct {
 	// a tool result carries at most about twice this many output bytes).
 	// Defaults to 8192. The cut never splits a multi-byte UTF-8 sequence.
 	MaxOutputBytes int
+	// Policy filters commands before they reach a human or the sandbox. It runs
+	// BEFORE the approval gate: a person asked to judge forty commands an hour
+	// stops reading them, so what was never going to be allowed should not
+	// reach the prompt.
+	Policy Policy
 	// NeedsApprovalFunc, when set, is forwarded to the tool as its per-call
 	// approval gate: given the command in argsJSON and the model-assigned callID
 	// it decides whether this execution must be approved first. nil = never gate.
@@ -104,6 +109,14 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 					requested = cfg.MaxTimeout
 				}
 				timeout = requested
+			}
+
+			// Refused as TEXT, not an error: the model can pick a different
+			// command, and the reason names the rule so it is not left
+			// guessing at variations.
+			if err := cfg.Policy.Check(args.Cmd); err != nil {
+				return agents.TextResult(err.Error()).WithDisplay("terminal").
+					WithDetails(map[string]any{"command": args.Cmd, "refused": true}), nil
 			}
 
 			cmd := args.Cmd

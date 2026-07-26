@@ -760,6 +760,21 @@ A tool marked `WithDeferred` is withheld from the model until some
 - The sandbox exec tool streams stdout through it, capturing in parallel —
   streaming must not cost the model its output.
 
+### 2.7j Sandbox command policy ✅
+
+`CodeToolConfig.Policy` filters commands **before** the approval gate.
+
+- Before, not after: a person asked to judge forty commands an hour stops
+  reading them, so what was never going to be allowed should not reach the
+  prompt — and filtering after approval would ask, get a yes, then refuse.
+- `Deny` is checked after `Allow`, so **a deny always wins**.
+- A refusal is a tool **result** naming the rule, not an error. Told only "not
+  allowed" a model tries variations; told which rule stopped it, it can ask for
+  something else.
+- The zero value allows everything. **A policy whose patterns do not compile
+  refuses everything** — falling open would turn a configuration typo into no
+  protection at all, silently, while looking like protection.
+
 ### 2.8 Nested agent-as-tool attribution ✅
 
 | Aspect | Attribution |
