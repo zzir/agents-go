@@ -34,6 +34,7 @@ type dynamicOutputSchema struct {
 	schema    map[string]any
 	strict    bool
 	schemaErr error // deferred strict-normalization failure, surfaced by the runner
+	validator *schemaValidator
 }
 
 // NewDynamicOutputSchema returns an OutputSchema backed by the given JSON Schema
@@ -55,6 +56,7 @@ func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) Out
 			s.schema = normalized
 		}
 	}
+	s.validator = newSchemaValidator(s.schema)
 	return s
 }
 
@@ -68,6 +70,12 @@ func (s *dynamicOutputSchema) IsStrictJSONSchema() bool   { return s.strict }
 func (s *dynamicOutputSchema) ValidateJSON(raw string) (any, error) {
 	if s.schemaErr != nil {
 		return nil, s.schemaErr
+	}
+	// A runtime-loaded schema used to be checked for nothing beyond "is this
+	// JSON" — the schema was sent to the provider and then never consulted, so
+	// output that ignored it came back as an untyped map and looked fine.
+	if err := s.validator.Validate([]byte(raw)); err != nil {
+		return nil, fmt.Errorf("dynamic output schema %q: %w", s.name, err)
 	}
 	var v any
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {

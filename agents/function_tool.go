@@ -61,6 +61,11 @@ func NewFunctionTool[A any, R any](
 	if nerr != nil {
 		nonStrictSchema = strictSchema
 	}
+	// Compiled once per tool, not per call: a schema does not change between
+	// turns, and resolving it on every model call would redo the same work for
+	// the length of the run.
+	strictValidator := newSchemaValidator(strictSchema)
+	nonStrictValidator := newSchemaValidator(nonStrictSchema)
 
 	t := &FunctionTool{
 		Name:                 name,
@@ -75,12 +80,17 @@ func NewFunctionTool[A any, R any](
 		// keys are required. In strict mode honor t.ParamsJSONSchema (defaults to
 		// the strict schema, but respects a caller who replaced it); in
 		// non-strict mode use the relaxed schema so omitted optional fields pass.
-		validationSchema := t.ParamsJSONSchema
-		if !t.Strict {
-			validationSchema = nonStrictSchema
+		validator := strictValidator
+		switch {
+		case !t.Strict:
+			validator = nonStrictValidator
+		case !sameSchema(t.ParamsJSONSchema, strictSchema):
+			// A caller replaced the schema after construction; honor it rather
+			// than validating against one the tool no longer advertises.
+			validator = newSchemaValidator(t.ParamsJSONSchema)
 		}
 		var args A
-		if err := decodeToolArgs(name, validationSchema, argsJSON, &args); err != nil {
+		if err := decodeToolArgs(name, validator, argsJSON, &args); err != nil {
 			return ToolResult{}, err
 		}
 		out, err := fn(ctx, tc, args)
@@ -143,14 +153,13 @@ func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
 // - undecodable JSON (syntax) — wrapped in toolArgumentsJSONError for the
 // dedicated error wording,
 // - a non-object payload,
-// - a missing root-level required key (nested required fields are not
-// enforced; see docs/migration_from_python.md),
+// - anything the schema rejects, nested included,
 // - a type mismatch while decoding into dst.
 //
 // An empty or whitespace-only string is treated as "{}" so tools taking a
 // struct with all-optional fields still work (Python parity: input_json or
 // "{}").
-func decodeToolArgs(toolName string, schema map[string]any, argsJSON string, dst any) error {
+func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst any) error {
 	trimmed := strings.TrimSpace(argsJSON)
 	if trimmed == "" {
 		trimmed = "{}"
@@ -162,19 +171,21 @@ func decodeToolArgs(toolName string, schema map[string]any, argsJSON string, dst
 			cause: err,
 		}
 	}
-	obj, ok := parsed.(map[string]any)
-	if !ok {
+	if _, ok := parsed.(map[string]any); !ok {
 		return newModelBehaviorError("Invalid JSON input for tool %s: expected a JSON object", toolName)
 	}
-	if required, rok := schema["required"].([]any); rok {
-		for _, k := range required {
-			key, _ := k.(string)
-			if _, present := obj[key]; !present {
-				return newModelBehaviorError("Invalid JSON input for tool %s: missing required key %q", toolName, key)
-			}
-		}
+	// Fill in what the schema documents as a default before validating, so a
+	// schema that advertises one and a tool that receives a zero value stop
+	// telling two different stories.
+	filled := v.ApplyDefaults([]byte(trimmed))
+	// Validate the WHOLE schema. The hand-rolled check looked at root-level
+	// required keys only, so a nested object missing a required field, or one
+	// holding a string where the schema said integer, reached the tool as a
+	// zero value it had no way to notice.
+	if err := v.Validate(filled); err != nil {
+		return newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
 	}
-	if err := json.Unmarshal([]byte(trimmed), dst); err != nil {
+	if err := json.Unmarshal(filled, dst); err != nil {
 		return newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
 	}
 	return nil

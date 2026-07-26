@@ -644,6 +644,30 @@ A response the provider marks `status="incomplete"` with reason
 - `RunResult.UsageByResponse()` and `RunResult.NestedUsage()` read it back:
   where the tokens went, and how many were spent off this conversation.
 
+### 2.7h Schema validation ✅
+
+Tool arguments and structured outputs are validated against the **whole** JSON
+Schema, not a root-level `required` check.
+
+- Nested `required`, nested type mismatches, enums and bounds are enforced.
+  The old check meant `{"config":{"host":"x"}}` satisfied a schema requiring
+  `config.port`, and the tool received a zero value it had no way to notice.
+- Errors carry a **JSON-pointer path**, which is what a model needs to correct
+  its own output.
+- Schema `default` values are applied before decoding. A schema that advertises
+  a default and a tool that receives a zero value are telling two different
+  stories.
+- **`additionalProperties: false` is sent to the provider but not enforced
+  locally.** An unexpected key is dropped by Go decoding and the tool cannot
+  see it, so rejecting the call would turn a harmless extra into a failed turn.
+  A misspelled key is still caught, by `required`, which is where it belongs.
+- **A schema this SDK cannot compile skips validation** rather than failing.
+  It may still be one the provider understands, and refusing to run would turn
+  a missing local check into a broken feature.
+- Schemas are compiled **once per tool**, not per call.
+- `EnsureStrictJSONSchema` is unaffected: it is the OpenAI strict-mode
+  *transformer*, a different job from validation.
+
 ### 2.7g Tool progress ✅
 
 `ToolContext.Emit` pushes a partial result to a streamed run's consumer as a

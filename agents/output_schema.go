@@ -18,6 +18,7 @@ type typedOutputSchema[T any] struct {
 	strict    bool
 	typeName  string
 	schemaErr error // deferred schema-generation failure, surfaced by the runner
+	validator *schemaValidator
 }
 
 // OutputType returns an OutputSchema requesting structured output of type T.
@@ -61,10 +62,11 @@ func newOutputType[T any](strict bool) OutputSchema {
 	}
 
 	s := &typedOutputSchema[T]{
-		schema:   schema,
-		wrapped:  wrapped,
-		strict:   strict,
-		typeName: t.String(),
+		schema:    schema,
+		wrapped:   wrapped,
+		strict:    strict,
+		typeName:  t.String(),
+		validator: newSchemaValidator(schema),
 	}
 	if err != nil {
 		// Defer surfacing the error: this keeps OutputType usable in a struct
@@ -128,20 +130,17 @@ func (s *typedOutputSchema[T]) ValidateJSON(jsonStr string) (any, error) {
 		}
 		return v, nil
 	}
-	// encoding/json leaves missing keys at their zero value, so check the
-	// root-level required keys explicitly before decoding; otherwise a model
-	// that ignores the schema yields a silent zero value instead of an error.
-	if required, ok := s.schema["required"].([]any); ok && len(required) > 0 {
-		var probe map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(jsonStr), &probe); err != nil {
-			return nil, fmt.Errorf("decoding output as %s: %w", s.typeName, err)
-		}
-		for _, k := range required {
-			key, _ := k.(string)
-			if _, present := probe[key]; !present {
-				return nil, fmt.Errorf("decoding output as %s: missing required key %q", s.typeName, key)
-			}
-		}
+	// encoding/json leaves a missing key at its zero value, so a model that
+	// ignores the schema would otherwise decode into a silent zero rather than
+	// an error the model can be asked to fix.
+	//
+	// This used to check root-level `required` by hand, which missed everything
+	// nested: {"config":{"host":"x"}} passed a schema requiring config.port.
+	// The validator checks the whole schema, and its messages carry a
+	// JSON-pointer path — which is exactly what the model needs to correct
+	// itself.
+	if err := s.validator.Validate([]byte(jsonStr)); err != nil {
+		return nil, fmt.Errorf("decoding output as %s: %w", s.typeName, err)
 	}
 	var v T
 	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
