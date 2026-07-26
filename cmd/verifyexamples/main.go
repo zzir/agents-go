@@ -7,8 +7,8 @@
 // Why it exists: `go build ./...` already proves the examples compile, which is
 // the cheap half. It does not catch an example that compiles and then panics on
 // a nil provider, loops forever, or silently prints nothing — and the examples
-// are exactly what a reader copies first. Every API change in the roadmap
-// rewrites all 16 of them; this is the net under that.
+// are exactly what a reader copies first. A broad API change rewrites all 16
+// of them; this is the net under that.
 //
 // It is deliberately NOT an assertion of model behavior. The fake answers with
 // the shortest plausible response, so the only claims made here are "the

@@ -9,7 +9,7 @@ and add the invariant here **in the same change**.
 Status markers used below:
 
 - ✅ implemented and stable
-- 🚧 will change — the plan responsible is named in parentheses
+- 🚧 specified but not implemented yet
 - ❓ open — see [§6](#6-open-questions)
 
 ---
@@ -79,7 +79,7 @@ it triggers (tool execution, handoff).
 
 ```
 for turn := 1; ; turn++ {
-    check budget (turns / tokens / deadline)        🚧 tokens+deadline: plan8 L5
+    check budget (turns; 🚧 tokens / deadline)
     check ctx cancellation
     resolve model / instructions / prompt / tools / handoffs / output schema
     build model input
@@ -96,8 +96,9 @@ for turn := 1; ; turn++ {
 **Termination conditions**, highest precedence first:
 
 1. `ctx` cancelled → return `ctx.Err()` immediately.
-2. Budget exhausted → 🚧 (plan3) call the model once more **without tools** so it
-   can close out in prose. With that option disabled, return `*MaxTurnsError`.
+2. Budget exhausted → with `ToolLoop.FinalTurnWithoutTools`, call the model
+   once more **without tools** so it can close out in prose. Otherwise return
+   `*MaxTurnsError`. ✅
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
 4. The model produced a final output → see [§2.3](#23-deciding-the-final-output-).
 
@@ -158,7 +159,7 @@ reordered.
 - A panicking tool is recovered and routed through that tool's error path. ✅
 - When several tools fail, the error surfaced to the run is the one with the
   **lowest call index** — never whichever goroutine finished first. ✅
-- 🚧 (plan4) a tool declaring `SequentialTool` forces the whole batch to run serially.
+- A tool declaring `SequentialTool` forces the whole batch to run serially. ✅
 
 ### 2.3 Deciding the final output ✅
 
@@ -283,10 +284,10 @@ contains a function call without its output. When a run pauses for approval, the
 pending `function_call` items are **withheld** and written together with their
 outputs after resume.
 
-🚧 (plan5) this guarantee does not survive an abnormal process exit; a
-`RecoveryPolicy` repairs dangling state when the session is reopened.
+This guarantee does not survive an abnormal process exit; a `RecoveryPolicy`
+repairs dangling state when the session is reopened. ✅
 
-**Entries are append-only.** 🚧 (plan1 §4.7) An entry's display may need
+**Entries are append-only.** ✅ An entry's display may need
 updating long after the turn that produced it has ended — a background task
 card, a late diagnostic. That is expressed as a **new update entry** naming its
 target, folded in at projection time; entries are never rewritten in place.
@@ -544,9 +545,8 @@ that tool only.
 - `tool_input` — the tool does not execute; `Message` becomes its result.
 - `tool_output` — replaces the content returned to the model.
 
-🚧 (plan3) streaming currently runs input guardrails synchronously rather than
-concurrently. Unifying the streaming and blocking APIs removes this difference;
-the target is one behavior — concurrent, with cancellation.
+Streaming and blocking share one run loop, so they share one guardrail
+behavior: concurrent with the model call, with cancellation. ✅
 
 ### 2.7 Tools
 
@@ -573,8 +573,8 @@ An empty result with no error is a **success with no output**, not a failure.
 - A tool panic follows the same path, with the stack attached.
 - Malformed argument JSON gets dedicated wording that prompts the model to resend
   valid JSON.
-- 🚧 (plan3) N consecutive turns in which every tool failed trips a circuit
-  breaker and aborts the run.
+- `ToolLoopPolicy.MaxConsecutiveFailures` trips a circuit breaker when that
+  many turns in a row have every tool fail, and aborts the run. ✅
 
 #### Approval ✅
 
@@ -820,7 +820,8 @@ not interact.
 
 ### 2.9 Budgets 🚧
 
-🚧 (plan8 L5). The three dimensions are **OR**-ed: whichever trips first stops
+🚧 Only the turn dimension ships today; tokens and deadline are not
+implemented. The three dimensions are **OR**-ed: whichever trips first stops
 the run.
 
 | Dimension | How it is counted |
@@ -829,7 +830,7 @@ the run.
 | `MaxTokens` | Cumulative `Usage.TotalTokens`. Nested agent-as-tool usage **counts**, because it folds into the parent `Usage`. |
 | `Deadline` | A `time.Duration` measured from the start of the run. |
 
-🚧 (plan2) LLM calls made by compaction itself **count toward `MaxTokens`** but
+🚧 LLM calls made by compaction itself **count toward `MaxTokens`** but
 **not toward `MaxTurns`**.
 
 When a budget trips mid-turn, the current tool batch is allowed to finish before
@@ -1135,7 +1136,7 @@ stays closed.
 
 Zero conversion, zero information loss — reasoning ids, `encrypted_content` and
 strict schemas all survive round-trips. The cost is that non-LLM entries need a
-🚧 (plan1) `SessionEntry` wrapper to have somewhere to live.
+`SessionEntry` wrapper to have somewhere to live.
 
 ### 5.6 Background work runs in-process, not in isolated processes
 

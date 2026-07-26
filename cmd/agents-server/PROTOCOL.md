@@ -1,17 +1,16 @@
-# Wire protocol — target shape (frozen)
+# Wire protocol — target shape
 
-> **Status: frozen 2026-07-25.** This is the shape the WebSocket protocol is
-> being moved *to* across the SDK rework. It is not what ships today.
+> This is the shape the WebSocket protocol is being moved *to*. Most of it
+> ships today; the exceptions are marked 🚧 below.
 >
-> Why freeze it before the work: the frontend and the backend both change
-> under plan1–plan9, and without an agreed target they would renegotiate the
+> It was agreed up front rather than discovered along the way: the frontend and
+> the backend change together, and without a stated target they renegotiate the
 > payload shape three or four times. Changing a decision here is allowed — but
 > it is a decision, made once, not a drift.
 >
 > The live protocol is defined by
 > [`internal/protocol/messages.go`](internal/protocol/messages.go), mirrored in
-> `web/src/lib/protocol.ts`. Both move toward this document; neither may
-> diverge from the other at any point in between.
+> `web/src/lib/protocol.ts`. Neither may diverge from the other at any point.
 
 ---
 
@@ -69,7 +68,7 @@ Today six events carry items, each with its own payload shape:
 `run.handoff`, `run.compaction`. Each addition means a new event type, a new
 reducer branch, and a new persisted-vs-live shape to reconcile.
 
-plan1's `SessionEntry` makes them one thing.
+The SDK's `SessionEntry` makes them one thing.
 
 **Frozen:**
 
@@ -81,7 +80,7 @@ plan1's `SessionEntry` makes them one thing.
     "id":       "msg_abc",
     "seq":      41,               // storage-assigned, monotonic per session
     "kind":     "item",           // item | annotation | compaction | terminal | custom
-    "parent_id": "msg_aba",       // tree model (plan5); empty at a root
+    "parent_id": "msg_aba",       // tree model; empty at a root
     "source":   { "type": "model" },   // model | user | tool | handoff | error_handler | compaction
     "display":  { /* F4 */ },
     "usage":    { "input_tokens": 0, "output_tokens": 0 },
@@ -111,7 +110,7 @@ while the compaction checkpoint itself arrives as a `run.entry` with
 ## F3 · `run.error.code` mirrors the SDK `ErrorCode`
 
 Today six codes are hand-written in `protocol` and hand-mapped in
-`bridge/runner.go`. After plan6 P1 the SDK owns the vocabulary and the bridge
+`bridge/runner.go`. The SDK now owns the vocabulary and the bridge
 calls `agents.CodeOf(err)`.
 
 **Frozen split:**
@@ -134,7 +133,7 @@ four `GuardrailStage` values (`input` / `output` / `tool_input` /
 ## F4 · `display` is a structured projection, not a string
 
 Today `run.tool_result` is `{output: string}` and the frontend parses text to
-decide how to render. plan1's `ItemDisplay` + plan4's `ToolResult.Display`
+decide how to render. The SDK's `ItemDisplay` + `ToolResult.Display`
 replace that with a projection the producer chooses.
 
 **Frozen:**
@@ -153,7 +152,7 @@ replace that with a projection the producer chooses.
 entirely must still produce a correct, readable timeline from `payload` alone.
 This keeps `display` free to evolve without a lockstep frontend release.
 
-Streaming partial tool results (plan4 P3 `ToolContext.Emit`) reuse F1: a
+Streaming partial tool results (`ToolContext.Emit`) reuse F1: a
 `run.delta` with `field: "display.detail"` and the tool call's `entry_id`.
 
 ---
@@ -172,7 +171,7 @@ know — the timeline was quietly incomplete.
 
 ## F5 · Uplink gains the three queue semantics
 
-plan3's `RunControl` has three ways to inject into a live run. They are
+`RunControl` has three ways to inject into a live run. They are
 distinct semantics, not one endpoint with a mode flag.
 
 **Frozen:**
@@ -203,7 +202,7 @@ something and it must not vanish.
 `model` | `tools` | `guardrails` | `compaction` | `waiting_approval`.
 
 The UI shows what a run is *doing* during a long silence. Purely advisory;
-a client may ignore it. It is also a tracing span attribute (plan6).
+a client may ignore it. It is also a tracing span attribute.
 
 ---
 
@@ -213,7 +212,7 @@ a client may ignore it. It is also a tracing span attribute (plan6).
 `GET /api/v1/sessions/{id}/entries?after=<seq>&limit=N`, returning
 `{entries: [...], next_cursor: "<seq>"}`.
 
-`seq` is storage-assigned and monotonic per session (plan5 C8), so a cursor
+`seq` is storage-assigned and monotonic per session, so a cursor
 stays valid across concurrent appends. Offset pagination cannot promise that.
 
 ---
@@ -222,29 +221,36 @@ stays valid across concurrent appends. Offset pagination cannot promise that.
 
 **Frozen:** an entry carries `parent_id`; a session carries a `leaf_id`.
 Switching branches is `PATCH /api/v1/sessions/{id} {leaf_id}` — a **persistent**
-operation, not a client-side view state (plan5 §2.3).
+operation, not a client-side view state.
 
 `GET .../entries` returns the path from the current leaf to the root, in order.
 Forking returns a new session id whose entries share ancestry.
 
 ---
 
-## Migration order
+## Status
 
-Each row lands in the ROADMAP step that owns it. No row may land in the Go
-protocol without the matching `protocol.ts` change in the same commit.
+| | Shipped |
+|---|---|
+| F3 error codes | ✅ |
+| F4 structured display | ✅ |
+| F4a `run.gap` | ✅ |
+| F5 uplink queues | ✅ |
+| F7 cursor pagination | ✅ |
+| F8 session trees | ✅ |
+| F1 delta entry ids | 🚧 |
+| F2 `run.entry` | 🚧 |
+| F6 phase | 🚧 |
 
-| Freeze | Lands in step | Blocked on |
-|---|---|---|
-| F3 error codes | 2 | — |
-| F6 phase | 6 | plan3 P1 |
-| F5 uplink queues | 24 | plan3 P5 |
-| F1 delta entry ids | 8 | plan1 P1 |
-| F2 `run.entry` | 10 | plan1 P2 |
-| F4 display | 10 (shape) / 18 (tools) | plan1 P2, plan4 P2 |
-| F7 cursor pagination | 15 | plan5 P3 |
-| F8 tree | 15 | plan5 P2 |
-| frontend consumes all of it | 37 | plan9 S3–S6 |
+F1, F2 and F6 travel together: they replace per-delta text with per-entry
+snapshots, which is a protocol change whose payoff is on the client — roughly
+half of the streaming reducer's transforms become a replace-by-id. The half
+that would NOT go away is the reconciliation between a REST history fetch and
+the live events that arrived while it was in flight, which is a client-side
+ordering problem the payload shape does not touch. Weigh that before starting.
+
+No row may land in the Go protocol without the matching `protocol.ts` change in
+the same commit.
 
 ---
 

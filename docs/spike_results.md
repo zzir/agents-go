@@ -1,23 +1,29 @@
-# Spike Results
+# Design spikes
 
-Pre-implementation verification for the plan1–9 refactor. Each spike gates at
-least one design decision. Run date: 2026-07-25.
+Things measured before they were decided. Each entry states the question, what
+was run, what came back, and what the design does about it.
 
-Spike sources: `scratchpad/spikes/` (throwaway module, not part of the repo).
+[spec.md §5](spec.md#5-recorded-design-decisions) records the decisions
+themselves; this records the evidence under them — the numbers a one-line
+rationale cannot carry. Two of these came back against the intended design and
+changed it (S2, S6), which is the reason for measuring first.
+
+Run date: 2026-07-25. Sources: `scratchpad/spikes/` (throwaway module, not part
+of the repo).
 
 ---
 
 ## Summary
 
-| # | Spike | Gates | Result |
-|---|---|---|---|
-| S1 | `param.Override` through the real request path | plan1 §4.3 | ✅ **PASS** |
-| S2 | `RunStream` pull-model backpressure | plan3 P1 | ⚠️ **PASS with correction** — today's design is *also* coupled |
-| S3 | JSON Schema validation dependency | plan4 P4 | ✅ **PASS, zero new dependency** |
-| S4 | OTel parent/child reconstruction | plan6 §4.1 | ✅ **PASS with a required technique** |
-| S5 | Tree `PathToRoot` cost | plan5 A1 | ✅ **PASS** |
-| S6 | Decorator capability lookup | plan4 §4.2 | ❌ **FAIL as designed** — design corrected |
-| S7 | Unknown output item today | plan1 §4.3 | ✅ **Confirmed silent drop**; detection is simpler than planned |
+| # | Question | Result |
+|---|---|---|
+| S1 | `param.Override` through the real request path | ✅ **PASS** |
+| S2 | `RunStream` pull-model backpressure | ⚠️ **PASS with correction** — the existing design is *also* coupled |
+| S3 | JSON Schema validation dependency | ✅ **PASS, zero new dependency** |
+| S4 | OTel parent/child reconstruction | ✅ **PASS with a required technique** |
+| S5 | Tree `PathToRoot` cost | ✅ **PASS** |
+| S6 | Decorator capability lookup | ❌ **FAIL as designed** — design corrected |
+| S7 | Unknown output item handling | ✅ **Confirmed silent drop**; detection is simpler than expected |
 
 **Two design changes fall out of this:** S6 (decorators need an `Unwrap` chain)
 and S2 (fan-out is required regardless of which stream model we pick).
@@ -26,7 +32,7 @@ and S2 (fan-out is required regardless of which stream model we pick).
 
 ## S1 — `param.Override` through the real request path ✅
 
-**Question:** plan1 relies on `param.Override[ResponseInputItemUnionParam](json.RawMessage)`
+**Question:** preserving an unknown item relies on `param.Override[ResponseInputItemUnionParam](json.RawMessage)`
 to round-trip unknown items. Earlier verification only checked `json.Marshal`,
 not a real openai-go request.
 
@@ -43,14 +49,14 @@ items sent: 2
 PASS — unknown item round-tripped byte-for-byte through the real request path
 ```
 
-**Conclusion:** plan1 §4.3 stands as written. Unknown items can be preserved
+**Conclusion:** the approach stands. Unknown items can be preserved
 losslessly, not just logged.
 
 ---
 
 ## S2 — Pull-model backpressure ⚠️
 
-**Question:** plan3 replaces the `chan(64)` + goroutine bridge with
+**Question:** replacing the `chan(64)` + goroutine bridge with
 `iter.Seq2`. Does a slow consumer stall the run loop?
 
 **Method:** 500 events, 200 µs of producer work per event (ideal wall clock
@@ -72,10 +78,10 @@ not a regression.
 
 **Conclusion:**
 
-1. plan3 P1 may proceed; the pull model does not make backpressure worse.
+1. The pull model may proceed; it does not make backpressure worse.
 2. A buffered fan-out with an explicit slow-subscriber policy is required
    **either way**. This is the `Fanout` decorator proposed in
-   [plan9 §4.2](../plan9.md) — promoted from "nice to have" to **prerequisite**.
+   a fan-out broadcaster — promoted from "nice to have" to **prerequisite**.
 3. The drop-vs-disconnect policy needs a decision (37 % drop at buffer 256 in
    this synthetic worst case is unacceptable for a chat UI). Absolute numbers
    here are synthetic; the structural finding is what matters.
@@ -84,7 +90,7 @@ not a regression.
 
 ## S3 — JSON Schema validation dependency ✅
 
-**Question:** plan4 P4 wants full JSON Schema validation (nested `required`,
+**Question:** full JSON Schema validation (nested `required`,
 default application). Is `google/jsonschema-go` an acceptable new dependency?
 
 **Finding:** it is **not a new dependency**. `github.com/google/jsonschema-go
@@ -104,7 +110,7 @@ valid                    → accepted
 ApplyDefaults({"b":7})   → {"a":"dflt","b":7}
 ```
 
-**Conclusion:** plan4 P4 is much cheaper than estimated — no dependency
+**Conclusion:** much cheaper than estimated — no dependency
 decision, no fallback plan needed. The known gap "nested required not
 validated" is fixable with `Resolve()` + `Validate()`, and default application
 comes free. Error messages already carry JSON-pointer paths, suitable for
@@ -144,7 +150,7 @@ children exported before their already-finished parent.
   Either narrow `NewSpanID` to `randHex(8)` or truncate in the exporter.
   Narrowing at the source is cleaner and costs nothing.
 
-**Conclusion:** plan6 §4.1 stands; the core stays vendor-neutral and
+**Conclusion:** the approach stands; the core stays vendor-neutral and
 `tracing/otel` is a viable separate module. Add the two constraints above to the
 implementation notes.
 
@@ -152,7 +158,7 @@ implementation notes.
 
 ## S5 — Tree `PathToRoot` cost ✅
 
-**Question:** plan5 moves sessions from a linear list to a tree. Is walking from
+**Question:** moving sessions from a linear list to a tree. Is walking from
 leaf to root affordable on a JSONL backend?
 
 **Method:** synthetic sessions with a mostly-linear chain plus an abandoned
@@ -170,13 +176,13 @@ JSONL backend must keep an in-memory index loaded once per open rather than
 re-reading per turn — which it must do anyway to answer `getEntry(id)`.
 
 Branching adds nothing measurable. **The performance objection to the tree model
-does not hold**; plan5 A1 ("do the tree now") is unblocked.
+does not hold**; the tree can be done now.
 
 ---
 
 ## S6 — Decorator capability lookup ❌ → design corrected
 
-**Question:** plan4 §4.2 replaces `FunctionTool`'s 15 fields with side
+**Question:** replacing `FunctionTool`'s 15 fields with side
 interfaces (`ApprovalRequiredTool`, `TimeoutTool`, …) queried by type assertion,
 plus `WithXxx` decorators that embed the `Tool` interface. Does the assertion
 pass through stacked decorators?
@@ -188,7 +194,7 @@ set. The outer type does not expose the inner decorator's methods:
 WithTimeout(WithApproval(base)).(ApprovalRequiredTool) → false   ← BROKEN
 ```
 
-Every stacking order loses every capability except the outermost one. **plan4
+Every stacking order loses every capability except the outermost one. **The
 §4.2 as written does not work.**
 
 **Corrected design** — an `errors.As`-style unwrap chain:
@@ -219,7 +225,7 @@ WithApproval(WithTimeout(base))                 approval=true  timeout=true  seq
 WithSequential(WithTimeout(WithApproval(base))) approval=true  timeout=true  sequential=true  ✓
 ```
 
-**Required change to plan4:** capability lookup goes through `ToolAs[T]`,
+**Required change:** capability lookup goes through `ToolAs[T]`,
 **never a bare type assertion**. This must be stated as an invariant — a bare
 assertion compiles and silently returns false.
 
@@ -227,7 +233,7 @@ assertion compiles and silently returns false.
 
 ## S7 — Unknown output items today ✅
 
-**Question:** plan1 claims unknown model output items are silently dropped.
+**Question:** are unknown model output items silently dropped today?
 Confirm, and settle how to detect "no union variant matched".
 
 **Result — `OutputToInput` round-trip:**
@@ -243,12 +249,12 @@ Confirm, and settle how to detect "no union variant matched".
 
 1. **`compaction` items are not dropped.** They enter the session through
    `OutputToInput` from `responses.compact`, never through
-   `processModelResponse`. The concern raised in plan1/plan2 P0 is a non-issue.
+   `processModelResponse`. The concern is a non-issue.
 2. **Unknown items are dropped by the classifier**, before `OutputToInput` ever
    sees them — `run_step.go`'s `default:` branch discards the item, so the
    conversion error above is never reached in practice.
 
-**Detection is simpler than planned.** plan1 §4.3 proposed a type whitelist to
+**Detection is simpler than expected.** A type whitelist was proposed to
 recognize "no variant matched". Two cheaper signals exist:
 
 - `OutputToInput` already returns a clear, specific error.
@@ -264,7 +270,7 @@ fall back to `param.Override`". No whitelist to maintain.
 
 | Item | Why | Plan |
 |---|---|---|
-| Token estimation calibration | Needs a real API key and real sessions | plan2 P0 — do during implementation |
-| Responses 400 overflow error shape | Needs a real API key | plan2 P0 — same |
-| `Collect()` vs tracing span lifetime | Design question, not empirical: the trace must finish when the terminal event is yielded, not when `Collect` returns, so a consumer that abandons the stream still closes the trace | plan3 P1 |
-| `Emit` interaction with `RunStream` | Resolved by S2: tool progress goes into the same buffered fan-out; no separate mechanism | plan4 P3 |
+| Token estimation calibration | Needs a real API key and real sessions | Do during implementation |
+| Responses 400 overflow error shape | Needs a real API key | Same |
+| `Collect()` vs tracing span lifetime | Design question, not empirical: the trace must finish when the terminal event is yielded, not when `Collect` returns, so a consumer that abandons the stream still closes the trace | Settled in §2.0 |
+| `Emit` interaction with `RunStream` | Resolved by S2: tool progress goes into the same buffered fan-out; no separate mechanism | — |
