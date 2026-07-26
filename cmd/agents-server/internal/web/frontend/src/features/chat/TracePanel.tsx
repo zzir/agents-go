@@ -525,6 +525,8 @@ interface TraceRunProps {
   runId: string;
   segments: TraceRunSegment[];
   label: string;
+  // stale marks a run on a branch the session has moved away from.
+  stale?: boolean;
   isLive: boolean;
   isExpanded: boolean;
   onToggle: () => void;
@@ -533,7 +535,7 @@ interface TraceRunProps {
   onJump?: () => void;
 }
 
-export function TraceRun({ segments, label, isLive, isExpanded, onToggle, onJump }: TraceRunProps) {
+export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump }: TraceRunProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   const { parts, tokens, spanCount } = useMemo(() => {
@@ -565,6 +567,7 @@ export function TraceRun({ segments, label, isLive, isExpanded, onToggle, onJump
   const headerLabel = (
     <>
       <span className="trace-run-label">{label}</span>
+      {stale && <span className="trace-run-stale" title="This answer was regenerated; the session is on another attempt">replaced</span>}
       {isLive && <span className="trace-tab-live" />}
       {onJump && (
         <span
@@ -612,6 +615,10 @@ interface TraceDrawerProps {
   liveRunId: string | null;
   activeRunId: string | null;
   runLabels: Record<string, string>;
+  // Runs belonging to an abandoned branch — the answer was regenerated and the
+  // session moved on. Listed, but marked: their work is real history, it is
+  // just not the conversation as it currently stands.
+  staleRuns?: Set<string>;
   // runParents maps a wake-up run (auto-started by a task result) to the run
   // whose spawn_task originated it; the chain renders as ONE card.
   runParents?: Record<string, string>;
@@ -622,7 +629,7 @@ interface TraceDrawerProps {
   messageRunIds?: Set<string>;
 }
 
-export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
+export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // One card per conversation exchange: a run plus the wake-up runs its tasks
   // triggered, in chronological (insertion) order. rootOf routes expand/live
@@ -689,6 +696,7 @@ export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, runP
           runId={rootId}
           segments={segments}
           label={(runLabels && runLabels[rootId]) || rootId.slice(0, 8)}
+          stale={staleRuns?.has(rootId)}
           isLive={segments.some(s => s.runId === liveRunId)}
           isExpanded={!!expanded[rootId]}
           onToggle={() => toggle(rootId)}

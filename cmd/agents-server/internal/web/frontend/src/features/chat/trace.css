@@ -440,3 +440,16 @@
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* A run on a branch the session has moved away from — its answer was
+   regenerated. Listed because the work happened, muted because it is not the
+   conversation as it currently stands. */
+.trace-run-stale {
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  border: 1px solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-full);
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
+}

@@ -541,6 +541,7 @@ export default function App() {
     <MemoizedChatView
       sessionId={activeSession}
       messages={currentSS.messages}
+      entries={currentSS.entries}
       loaded={currentSS.loaded}
       streaming={currentSS.streaming}
       reasoning={currentSS.reasoning}

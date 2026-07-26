@@ -6,7 +6,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type TimelineEntry, type Branches } from '@/lib/timeline';
+import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type TimelineEntry, type Branches, type EntryView } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
 import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
@@ -884,6 +884,10 @@ function Greeting() {
 interface ChatViewProps {
   sessionId: string | null;
   messages: ChatMessage[];
+  // The session's raw entries, including the ones no longer on the active
+  // branch. The rendered timeline drops those; the trace panel still lists
+  // their runs, so it needs a source that has them.
+  entries?: EntryView[];
   loaded: boolean;
   streaming: string | null;
   reasoning: string | null;
@@ -931,7 +935,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, messages, loaded, streaming, reasoning, running, compacting, diagnostics,
+  sessionId, messages, entries, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onRegenerate, settingsReloadKey,
@@ -1038,7 +1042,7 @@ export function ChatView({
     return 'task result: ' + which;
   };
 
-  const { turnRunMap, userRunMap, runLabels } = useMemo(() => {
+  const { turnRunMap, userRunMap, runLabels, staleRuns } = useMemo(() => {
     const tMap: Record<number, string> = {};
     const uMap: Record<number, string> = {};
     const labels: Record<string, string> = {};
@@ -1071,8 +1075,23 @@ export function ChatView({
         turnIdx++;
       }
     }
-    return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels };
-  }, [messages, traceRuns]);
+    // Runs whose turn is NOT in the rendered timeline: a regenerated answer
+    // the session has since branched away from. Their traces are still listed
+    // — the work happened — but the timeline has no turn to label them from,
+    // so they fell back to a raw run id. Label them from the entries instead,
+    // and mark them, so "5 traces, 3 exchanges" reads as what it is rather
+    // than as a mismatch.
+    const stale = new Set<string>();
+    let lastUser: string | null = null;
+    for (const e of entries || []) {
+      if (e.role === 'user' && e.content) lastUser = e.content;
+      const rid = e.run_id;
+      if (!rid || !traceRuns[rid]) continue;
+      if (e.on_path === false) stale.add(rid);
+      if (!labels[rid] && lastUser) labels[rid] = runLabelFor(lastUser);
+    }
+    return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels, staleRuns: stale };
+  }, [messages, entries, traceRuns]);
 
   // Wake-up run → the run whose spawn_task started the chain. A wake run's
   // first item is the task notification; its task ids resolve to parentRunId
@@ -1433,6 +1452,7 @@ export function ChatView({
           liveRunId={liveRunId}
           activeRunId={traceActiveRun}
           runLabels={runLabels}
+          staleRuns={staleRuns}
           runParents={traceRunParents}
           onClose={() => onPanelChange(null)}
           onJumpToRun={jumpToRun}
