@@ -53,6 +53,12 @@ step "Examples run (fake Responses API)"
 # infinite loop) is invisible to the compiler.
 go run ./cmd/verifyexamples
 
+step "Docs name things that exist"
+# The docs are the API's other surface and nothing compiled them: sessions.md
+# kept calling GetItems and PopItem after both were renamed. Snippets are
+# fragments, so this checks names rather than compiling.
+go run ./cmd/verifydocs
+
 step "govulncheck"
 if command -v govulncheck >/dev/null; then
   govulncheck ./...

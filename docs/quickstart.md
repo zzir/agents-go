@@ -73,23 +73,30 @@ func main() {
 
 ## Add a guardrail
 
-Guardrails run alongside the first model call and can stop a run before it wastes tokens.
+Guardrails run alongside the first model call and can stop a run before it
+wastes tokens. One guardrail declares the stages it inspects, so a single value
+can cover the input, the tool arguments and the final output.
 
 {% raw %}
 ```go
-triage.InputGuardrails = []agents.InputGuardrail{{
-	Name: "homework_only",
-	Run: func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, input []agents.TResponseInputItem) (agents.GuardrailFunctionOutput, error) {
-		// Inspect the input (or call a cheap classifier model here).
+triage.Guardrails = []agents.Guardrail{{
+	Name:   "homework_only",
+	Stages: []agents.GuardrailStage{agents.StageInput},
+	Run: func(ctx context.Context, rc *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
+		// Inspect p.Input (or call a cheap classifier model here).
 		offTopic := false
-		return agents.GuardrailFunctionOutput{TripwireTriggered: offTopic}, nil
+		if offTopic {
+			return agents.Trip("not a homework question"), nil
+		}
+		return agents.Allow(nil), nil
 	},
 }}
 ```
 {% endraw %}
 
-When a tripwire fires, `Run` returns an `*agents.GuardrailTripwireError`;
-`tw.Stage()` says which stage fired.
+When a guardrail trips, `Run` returns an `*agents.GuardrailTripwireError`;
+`tw.Stage()` says which stage fired. See [Guardrails](guardrails.md) for the
+other stages and for substitution.
 
 ## Add a function tool
 

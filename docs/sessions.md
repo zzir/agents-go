@@ -167,7 +167,15 @@ is an **update entry**: a new entry naming the one it amends, folded in by
 
 ```go
 upd, _ := agents.NewUpdateEntry(targetEntryID, agents.ItemDisplay{Text: "done"})
-sess.AddEntries(ctx, []agents.SessionEntry{upd})
+sess.Append(ctx, upd)
+```
+
+An amender that knows a tool **call id** but not the entry id — the ordinary
+case for anything reporting on a tool call afterwards — names the call instead:
+
+```go
+upd, _ := agents.NewCallUpdateEntry(callID, agents.ItemDisplay{Text: "done"})
+sess.Append(ctx, upd)
 ```
 
 Two rules make this more than a workaround:
@@ -427,31 +435,82 @@ By default a run loads the session's stored history and appends the new input to
 
 Both are ignored when no `Session` is set.
 
+## Branching
+
+A session is a **tree**, not a list. Answering the same question twice does not
+overwrite the first answer: it appends a second one under the same parent, and
+the session records which branch is active.
+
+```go
+// Go back to the user's message and answer it again.
+sess.Branch(ctx, userEntryID)
+res, _ := agents.RunSync(ctx, agent, []agents.TResponseInputItem{}, agents.RunOptions{
+    Conversation: agents.ConversationOptions{Session: sess},
+    Model:        agents.ModelOptions{Provider: provider},
+})
+```
+
+An **empty item list** is what makes that a regeneration rather than a repeat:
+there is nothing to add, and the run answers the history the branch now points
+at. Note that this is `[]agents.TResponseInputItem{}` and not `""` — an empty
+string is a string input, and it appends an empty user message.
+
+Switching is itself an append — a **leaf entry** naming the new tip — so the
+abandoned attempt stays in the log and switching back is just another `Branch`.
+Nothing is deleted, which is what makes "show me the other answer" possible at
+all.
+
+```go
+leaf, _ := sess.Leaf(ctx)               // the active tip
+path, _ := sess.PathEntries(ctx)        // root → leaf, the active branch only
+all, _ := sess.Entries(ctx, agents.Cursor{}) // everything, abandoned attempts included
+```
+
+`PathEntries` walks parent links from the leaf and is what the model reads;
+`Entries` returns the whole log, which is what a UI needs to offer the other
+attempts. The difference between them is exactly the set of abandoned entries.
+
+Two rules worth knowing:
+
+- **The walk stops at a compaction checkpoint**, which already stands in for
+  everything before it. A checkpoint is a branch boundary as well as a context
+  boundary.
+- **A missing parent ends the walk rather than failing.** An ancestor may have
+  been folded away; a corrupt link makes the session shorter, never unreadable.
+
 ## Forking sessions
 
-`ForkSession` clones an entire conversation; `ForkSessionAt` copies only the first _n_ items, creating a branch point. Both operate on the `Session` interface, so any combination of source and destination backends works (e.g. fork a SQLite session into an in-memory one):
+A fork copies history into a **separate session**; a branch keeps both attempts
+in the *same* one. Reach for a fork when the two conversations should be listed
+and managed separately, and for [branching](#branching) when they are two
+answers to the same question.
+
+`ForkSession` clones an entire conversation; `ForkSessionAt` copies the history
+up to and including one entry. Both take `*Session`, so any combination of
+source and destination backends works — fork a SQLite session into an in-memory
+one, for instance:
 
 ```go
 // Full clone — dst becomes an exact copy of src.
 dst := agents.NewInMemorySession()
 agents.ForkSession(ctx, src, dst)
 
-// Branch at item 5 — dst gets items [0..4], the two sessions diverge from there.
+// Branch point — branch gets everything up to and including that entry.
 branch := agents.NewInMemorySession()
-agents.ForkSessionAt(ctx, src, branch, 5)
+agents.ForkSessionAt(ctx, src, branch, "sess-1-e5")
 ```
 
-When the fork point is known by a server-assigned item ID rather than a positional index, use `IndexOfItemID` to resolve it:
+The fork point is an **entry id**, not a position. Positions shift when
+compaction folds entries away or a branch switch appends a leaf; an id names
+the same entry for the life of the session. Entry ids are assigned by storage
+on append and reported by `Entries`:
 
 ```go
-items, _ := src.GetItems(ctx, 0)
-idx, ok := agents.IndexOfItemID(items, "msg_abc123")
-if ok {
-    agents.ForkSessionAt(ctx, src, branch, idx+1) // include the matched item
+entries, _ := src.Entries(ctx, agents.Cursor{})
+for _, e := range entries {
+    fmt.Println(e.ID, e.Kind, e.Source.Type)
 }
 ```
-
-Only items the model produced carry IDs (output messages, function calls, reasoning items, etc.). User-created "easy" messages have no server-assigned ID and are never matched by `IndexOfItemID` — address those by position.
 
 ## Multiple sessions
 
