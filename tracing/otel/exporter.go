@@ -268,6 +268,36 @@ func describe(s *tracing.Span, provider string) (string, []attribute.KeyValue) {
 			attrs = append(attrs, attribute.Int64(attrCompactionAfter, v))
 		}
 		return "compact", attrs
+
+	case tracing.SpanTypeModelRetry:
+		// Not gen_ai.*: the conventions have no notion of a retried call, and
+		// naming it as though they did would imply a portability that is not
+		// there.
+		if v, ok := intData(s, "attempt"); ok {
+			attrs = append(attrs, attribute.Int64(attrRetryAttempt, v))
+		}
+		if v, ok := intData(s, "max_attempts"); ok {
+			attrs = append(attrs, attribute.Int64(attrRetryMaxAttempts, v))
+		}
+		return "model_retry", attrs
+
+	case tracing.SpanTypeMCP:
+		// An MCP tool call IS a tool execution, so it carries the GenAI
+		// operation and tool name; the server is ours.
+		str(attrMCPServer, "server")
+		if name := firstString(s, "tool"); name != "" {
+			attrs = append(attrs,
+				attribute.String(attrOperationName, OpExecuteTool),
+				attribute.String(attrToolName, name))
+			return spanName(OpExecuteTool, name), attrs
+		}
+		return s.Name, attrs
+
+	case tracing.SpanTypeSandbox:
+		if v, ok := intData(s, "exit_code"); ok {
+			attrs = append(attrs, attribute.Int64(attrSandboxExitCode, v))
+		}
+		return s.Name, attrs
 	}
 
 	// An untyped span (tracing.StartSpan) carries whatever the caller put in

@@ -922,6 +922,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				slog.Int("tools", len(tools)),
 				Sensitive("instructions", systemPrompt))
 			span := r.startGenerationSpan(currentAgent, req)
+			// Retries happen inside the model call, where the runner cannot
+			// reach; the span rides on the context so they nest under it.
+			callCtx := tracing.WithSpan(ctx, span)
 			switch {
 			case guardCh != nil:
 				// Blocking run with first-turn parallel input guardrails: race the
@@ -929,7 +932,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// A tripped guardrail aborts the turn WITHOUT billing usage or
 				// firing OnLLMEnd — the model task is discarded (Python parity:
 				// should_cancel_parallel_model_task_on_input_guardrail_trip).
-				modelCtx, modelCancel := context.WithCancel(ctx)
+				modelCtx, modelCancel := context.WithCancel(callCtx)
 				ch := make(chan modelCallOutcome, 1)
 				go func() {
 					rr, ee := model.GetResponse(modelCtx, req)
@@ -961,9 +964,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					return nil, r.fail(tripwire, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 			case r.rawEvents:
-				resp, err = r.streamOneModelCall(ctx, span, model, req)
+				resp, err = r.streamOneModelCall(callCtx, span, model, req)
 			default:
-				resp, err = model.GetResponse(ctx, req)
+				resp, err = model.GetResponse(callCtx, req)
 			}
 			if err != nil {
 				span.SetError(err.Error(), nil)

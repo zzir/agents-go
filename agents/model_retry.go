@@ -9,6 +9,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"time"
+
+	"github.com/zzir/agents-go/tracing"
 )
 
 // RetryPolicy configures a RetryModel. The zero value is valid and uses the
@@ -209,6 +211,7 @@ func (m *retryModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelR
 		RecordDiagnostic(ctx, DiagModelRetry, err, map[string]any{
 			"attempt": attempt, "max_attempts": maxAttempts, "streaming": false,
 		})
+		retrySpan(ctx, attempt, maxAttempts, false, err)
 		if werr := m.policy.wait(ctx, attempt, err); werr != nil {
 			return nil, werr
 		}
@@ -252,6 +255,7 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 			RecordDiagnostic(ctx, DiagModelRetry, streamErr, map[string]any{
 				"attempt": attempt, "max_attempts": maxAttempts, "streaming": true,
 			})
+			retrySpan(ctx, attempt, maxAttempts, true, streamErr)
 			if werr := m.policy.wait(ctx, attempt, streamErr); werr != nil {
 				yield(nil, werr)
 				return
@@ -283,4 +287,20 @@ func (p *retryProvider) GetModel(name string) (Model, error) {
 		return nil, err
 	}
 	return NewRetryModel(m, p.policy), nil
+}
+
+// retrySpan records one failed attempt as a span under the generation span it
+// belongs to.
+//
+// It is opened and finished together rather than wrapping the attempt, because
+// the attempt has already happened by the time we know it failed — and a
+// zero-duration marker showing THAT a retry occurred is the point. A generation
+// span that took eight seconds because it was tried three times is otherwise
+// indistinguishable from one that was simply slow.
+func retrySpan(ctx context.Context, attempt, maxAttempts int, streaming bool, err error) {
+	sp, _ := tracing.StartSpanFrom(ctx, "model_retry", tracing.SpanTypeModelRetry, map[string]any{
+		"attempt": attempt, "max_attempts": maxAttempts, "streaming": streaming,
+	})
+	sp.SetError(err.Error(), nil)
+	sp.Finish()
 }

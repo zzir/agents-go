@@ -35,6 +35,16 @@ const (
 	SpanTypeHandoff    = "handoff"
 	SpanTypeGuardrail  = "guardrail"
 	SpanTypeCompaction = "compaction"
+	// SpanTypeModelRetry is one retried model call, nested under the
+	// generation span it belongs to. A generation span that took eight seconds
+	// because it was tried three times is otherwise indistinguishable from one
+	// that was simply slow.
+	SpanTypeModelRetry = "model_retry"
+	// SpanTypeMCP is an MCP server round trip: listing tools, or calling one.
+	SpanTypeMCP = "mcp"
+	// SpanTypeSandbox is a sandbox operation: running a command, applying a
+	// patch, reading or writing a file.
+	SpanTypeSandbox = "sandbox"
 )
 
 // Span is a single unit of work within a trace (an agent turn, a model

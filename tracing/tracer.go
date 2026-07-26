@@ -178,3 +178,28 @@ func (h *SpanHandle) Finish() {
 	h.Span.EndedAt = Now()
 	h.tracer.proc.OnSpanEnd(h.Span)
 }
+
+// StartTypedSpan begins a typed span nested under this one.
+//
+// It exists so a subsystem far from the runner — an MCP client, a sandbox
+// backend — can contribute a span of its own kind without the tracing package
+// growing a constructor per caller.
+func (h *SpanHandle) StartTypedSpan(name, spanType string, data map[string]any) *SpanHandle {
+	if h == nil || h.tracer == nil || h.Span == nil {
+		return &SpanHandle{}
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	sp := &Span{
+		TraceID:   h.Span.TraceID,
+		SpanID:    NewSpanID(),
+		ParentID:  h.Span.SpanID,
+		Name:      name,
+		Type:      spanType,
+		StartedAt: Now(),
+		Data:      data,
+	}
+	h.tracer.proc.OnSpanStart(sp)
+	return &SpanHandle{Span: sp, tracer: h.tracer}
+}

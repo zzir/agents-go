@@ -24,6 +24,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/tracing"
 )
 
 // Options configures a Server.
@@ -244,10 +245,16 @@ func (s *Server) allow(toolName string) bool {
 // Static (AllowedTools/BlockedTools) and dynamic (ToolFilter) filters run here on
 // every call, so caching never hides a context-dependent filter decision.
 func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]agents.Tool, error) {
+	span, ctx := tracing.StartSpanFrom(ctx, "mcp.list_tools", tracing.SpanTypeMCP,
+		map[string]any{"server": s.name})
+	defer span.Finish()
+
 	all, err := s.toolList(ctx)
 	if err != nil {
+		span.SetError(err.Error(), nil)
 		return nil, err
 	}
+	span.Set("tools", len(all))
 	var tools []agents.Tool
 	for _, ct := range all {
 		if !s.allow(ct.originalName) {
@@ -438,6 +445,11 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			if meta != nil {
 				params.Meta = meta
 			}
+			span, ctx := tracing.StartSpanFrom(ctx, "mcp.call_tool", tracing.SpanTypeMCP, map[string]any{
+				"server": s.name, "tool": originalName,
+			})
+			defer span.Finish()
+
 			var result *mcpsdk.CallToolResult
 			if err := s.runWithRetries(ctx, func() error {
 				var e error
@@ -447,10 +459,12 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 				result, e = s.session.CallTool(ctx, params)
 				return e
 			}); err != nil {
+				span.SetError(err.Error(), nil)
 				// A transport/protocol failure is fed back to the model via the
 				// FailureErrorFunction (SDK-wide default) so it can recover.
 				return agents.ToolResult{}, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))
 			}
+			span.Set("is_error", result.IsError)
 			// An isError result is NOT a Go error: its content (usually the
 			// error message) passes to the model verbatim so it can recover.
 			// It IS marked as an error on the result, so a UI can render it as

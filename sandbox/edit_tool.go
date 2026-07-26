@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agents "github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/tracing"
 )
 
 type applyPatchArgs struct {
@@ -55,10 +56,14 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 			case <-ctx.Done():
 				return "apply_patch failed: " + ctx.Err().Error(), nil
 			}
+			span, ctx := tracing.StartSpanFrom(ctx, "sandbox.apply_patch", tracing.SpanTypeSandbox, nil)
+			defer span.Finish()
+
 			// A bad patch (parse / locate / missing file) is returned as text so
 			// the model can correct itself, matching read_file / write_file.
 			out, err := applyPatch(ctx, sb, args.Patch)
 			if err != nil {
+				span.SetError(err.Error(), nil)
 				return "apply_patch failed: " + err.Error(), nil
 			}
 			return out, nil

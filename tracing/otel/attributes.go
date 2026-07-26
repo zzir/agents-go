@@ -42,6 +42,11 @@ const (
 	attrCompactionBefore = "agents.compaction.before_items"
 	attrCompactionAfter  = "agents.compaction.after_items"
 
+	attrRetryAttempt     = "agents.model.retry.attempt"
+	attrRetryMaxAttempts = "agents.model.retry.max_attempts"
+	attrMCPServer        = "agents.mcp.server"
+	attrSandboxExitCode  = "agents.sandbox.exit_code"
+
 	// Trace-level, stamped on the root span of each trace.
 	attrWorkflowName = "agents.workflow.name"
 	attrTraceGroupID = "agents.trace.group_id"

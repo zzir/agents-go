@@ -26,6 +26,15 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 | `function:<tool>` | `SpanTypeFunction` | One function tool invocation (errors recorded) |
 | `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution |
 | `guardrail:input` / `guardrail:output` | `SpanTypeGuardrail` | Guardrail batches (tripwires recorded as errors) |
+| `compaction` | `SpanTypeCompaction` | A compaction pass (entries before/after) |
+| `model_retry` | `SpanTypeModelRetry` | One retried model call, nested under the generation span it belongs to |
+| `mcp.list_tools` / `mcp.call_tool` | `SpanTypeMCP` | An MCP server round trip |
+| `sandbox.exec` / `sandbox.apply_patch` | `SpanTypeSandbox` | A sandbox operation (exit code, timeout) |
+
+A retry span is a zero-duration marker rather than a wrapper: by the time an
+attempt is known to have failed it has already happened, and the point is that
+it happened at all. A generation span that took eight seconds because it was
+tried three times is otherwise indistinguishable from one that was simply slow.
 
 Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner creates these via the typed constructors (`StartAgentSpan`, `StartGenerationSpan`, `StartFunctionSpan`, `StartHandoffSpan`, `StartGuardrailSpan`); the untyped `StartSpan` remains for custom spans and leaves `Type` empty. This is the idiomatic-Go stand-in for Python's typed `SpanData` subclasses — a `Type` tag plus a `Data` map rather than a sealed union.
 
@@ -171,3 +180,31 @@ low-cardinality value, which is what the convention asks for.
 
 The workflow name and trace group id land on the trace's **root span only**;
 repeating them on every child would multiply a constant across the trace.
+
+## Instrumenting your own code
+
+A subsystem the runner does not own — a custom `Model` decorator, a tool that
+calls a service — nests its work under the run by reading the current span off
+the context:
+
+```go
+func (m *myModel) GetResponse(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+	span, ctx := tracing.StartSpanFrom(ctx, "cache.lookup", "cache", nil)
+	defer span.Finish()
+	…
+}
+```
+
+The context is the channel because those receive one and nothing else belonging
+to the run; threading a span handle through every signature would mean each
+implementation had to forward it, and the one that forgot would silently orphan
+its spans at the root.
+
+`StartSpanFrom` returns a usable no-op handle when there is no trace, so an
+instrumented call site never needs a branch — and the subsystem behaves exactly
+as it did before it was instrumented when used outside a run.
+
+The runner installs the right parent at each point: the **generation** span for
+the model call (so retries nest under it) and the **function** span for a tool
+invocation (so an MCP round trip or a sandbox exec shows up under the call that
+caused it).

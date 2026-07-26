@@ -760,6 +760,33 @@ run that was ending:
   resume. That is precisely when someone is looking at the run and saying
   something about it.
 
+### 2.11e Span coverage ✅
+
+- Typed spans cover: agent, generation, function, handoff, guardrail,
+  compaction, model retry, MCP, sandbox.
+- **A retry span is a zero-duration marker**, not a wrapper. By the time an
+  attempt is known to have failed it has already happened; recording *that* it
+  happened is the point, since a generation span slow from three retries and one
+  slow from a slow model look identical otherwise.
+- **The current parent span travels on the `context.Context`.** A `Model`
+  decorator, an MCP client and a sandbox backend receive a context and nothing
+  else belonging to the run, so it is the only channel; a handle threaded
+  through signatures would be forwarded by every implementation except the one
+  that forgot.
+- `StartSpanFrom` returns a **usable no-op handle** without a trace, so an
+  instrumented call site never branches and an uninstrumented-context caller
+  behaves exactly as before.
+- The runner installs the generation span as parent for the model call (retries
+  nest under it) and the function span for a tool invocation (MCP and sandbox
+  work nests under the call that caused it).
+- Sandbox is instrumented at the **tool** layer, the one place every backend
+  (local, Docker, SSH) is reached through, rather than per backend.
+- OTel semantic conventions are **pinned** (`SemConvVersion`); the GenAI
+  conventions are experimental upstream and have renamed keys between releases,
+  so a change there is a deliberate edit rather than a dependency-bump side
+  effect. Spans with no GenAI equivalent use an `agents.` prefix — naming them
+  `gen_ai.*` would imply a portability that is not there.
+
 ### 2.11d Diagnostics ✅
 
 A `Diagnostic` records trouble a run went through **and survived**.

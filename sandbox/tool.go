@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	agents "github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/tracing"
 )
 
 // CodeToolConfig configures CodeTool.
@@ -108,13 +109,22 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 				cmd = "cd " + shellQuote(args.Workdir) + " && " + cmd
 			}
 
+			// Instrumented here rather than in each backend: this is the one
+			// place every sandbox — local, Docker, SSH — is reached through.
+			span, ctx := tracing.StartSpanFrom(ctx, "sandbox.exec", tracing.SpanTypeSandbox,
+				map[string]any{"tool": cfg.Name, "timeout_ms": timeout.Milliseconds()})
+			defer span.Finish()
+
 			res, err := sb.Exec(ctx, ExecRequest{
 				Cmd:     []string{"bash", "-c", cmd},
 				Timeout: timeout,
 			})
 			if err != nil {
+				span.SetError(err.Error(), nil)
 				return agents.ToolResult{}, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("code tool %q: %w", cfg.Name, err))
 			}
+			span.Set("exit_code", res.ExitCode)
+			span.Set("timed_out", res.TimedOut)
 			// The exit code and streams belong in Details, not only folded into
 			// the text the model reads: a UI showing a command should not have
 			// to parse "exit_code: 1" back out of a formatted blob.

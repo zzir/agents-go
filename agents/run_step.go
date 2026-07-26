@@ -8,6 +8,8 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/zzir/agents-go/tracing"
+
 	"golang.org/x/sync/errgroup"
 )
 
@@ -622,7 +624,10 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			if logToolData {
 				span.Set("input", run.Call.Arguments)
 			}
-			result, err := invokeTool(gctx, run.Tool, tc, run.Call.Arguments)
+			// The function span becomes the parent for anything the tool does:
+			// an MCP round trip, a sandbox exec. Those receive a context and
+			// nothing else belonging to the run.
+			result, err := invokeTool(tracing.WithSpan(gctx, span), run.Tool, tc, run.Call.Arguments)
 			out := result.ModelOutput()
 			if err != nil {
 				// An agent-as-tool whose nested run paused for approval is not a
