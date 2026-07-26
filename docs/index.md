@@ -1,6 +1,10 @@
 # OpenAI Agents SDK for Go
 
-`agents-go` is a Go port of the [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/) (tracking v0.18.2). It lets you build agentic AI apps with a small set of primitives and very few abstractions:
+`agents-go` builds agentic AI apps on the OpenAI **Responses API** from a small
+set of primitives and very few abstractions. It started as a port of the
+[OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/)
+and shares its core concepts, but it now evolves on its own: behavior is
+[specified](spec.md), not inherited.
 
 - **Agents**: LLMs configured with instructions, tools, guardrails and handoffs
 - **Handoffs**: let an agent delegate the conversation to another agent
@@ -10,7 +14,14 @@
 - **Tracing**: built-in spans for every model call, tool call, handoff and guardrail
 - **Sandboxes**: run model-generated code in locked-down Docker containers
 
-The SDK follows the Python design closely — same run loop, same item model, same defaults — while staying idiomatic Go: generics instead of runtime reflection magic, `context.Context` for cancellation, errors instead of exceptions. See [Differences from the Python SDK](migration_from_python.md) for the complete comparison.
+The shape is idiomatic Go: generics instead of runtime reflection magic,
+`context.Context` for cancellation, errors instead of exceptions, and
+`iter.Seq2` for streaming — a run executes on the consumer's goroutine, so
+abandoning a stream stops the run rather than leaking one. Where behavior
+diverges from the Python SDK it is a decision with a reason; see
+[Differences from the Python SDK](migration_from_python.md) for the comparison
+and [upstream watch](upstream_watch.md) for what has been reviewed and
+declined.
 
 ## Installation
 
@@ -77,4 +88,6 @@ func main() {
 | Examples | [Examples](examples.md) |
 | API index | [Feature reference](features.md) — every capability mapped to its API |
 | Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |
-| Behavior spec | [Design spec](spec.md) — the invariants, and why each one is what it is |
+| Architecture | [Architecture](architecture.md) — how the pieces compose, and where the extension points are |
+| Behavior spec | [Design spec](spec.md) — the invariants, and why each one is what it is · [Design spikes](spike_results.md) — the measurements under them |
+| Upstream | [Upstream watch](upstream_watch.md) — what was reviewed from the Python SDK, ported or declined |

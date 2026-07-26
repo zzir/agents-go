@@ -15,6 +15,7 @@ on its own — behavior is [specified](docs/spec.md), not inherited.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [Documentation](https://zzir.github.io/agents-go/) ·
+[Architecture](docs/architecture.md) ·
 [Feature reference](docs/features.md) ·
 [Examples](docs/examples.md) ·
 [Coming from Python?](docs/migration_from_python.md)

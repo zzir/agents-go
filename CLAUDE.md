@@ -27,7 +27,7 @@ golangci-lint run                     # CI uses golangci-lint v2.12
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with six modules. **A submodule exists only
+Go workspace (`go.work`, gitignored) with seven modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:
@@ -36,6 +36,7 @@ root via `replace => ..`:
 - **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) loader
+- **`tracing/otel`** — OpenTelemetry exporter (the core stays vendor-neutral)
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix can
