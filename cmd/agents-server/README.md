@@ -831,8 +831,11 @@ mechanism.
   approval-gated call without a human round-trip. Per-TOOL binding — "only this
   tool's arguments go through this guardrail" — is a separate thing the SDK
   does not model; it would need a `Stages`-like selector keyed by tool name.
-- **Render tool-output custom data.** The SDK's
-  `FunctionTool.CustomDataExtractor` attaches SDK-only metadata (renderer
-  hints, record IDs) to `ToolCallOutputItem.CustomData` without sending it to
-  the model. The chat UI's tool-call cards could consume it for rich rendering
-  (tables, charts) once any built-in or server-defined tool starts producing it.
+- **Renderer hints on tool-call cards.** A tool declares how its result should
+  be shown via `ToolResult.Display.Renderer` ("terminal", "diff", "table"), and
+  the server already carries it through to the client as `display.renderer`.
+  The card ignores it: live progress renders as a `<pre>` regardless, and a
+  finished result as plain text. Consuming it — a terminal view for shell
+  output, a diff view for a patch — is the remaining half of the streaming
+  partial-results work. `ToolResult.CustomData` (SDK-only metadata that never
+  reaches the model) is likewise carried and unused.
