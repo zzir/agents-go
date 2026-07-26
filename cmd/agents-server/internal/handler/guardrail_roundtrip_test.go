@@ -27,13 +27,13 @@ func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	engine.PUT("/guardrails/:id", h.Update)
 
 	// Stringified config (the old frontend shape) must be rejected, not stored.
-	bad := `{"name":"g","type":"input","mode":"regex","config":"{\"pattern\":\"x\"}"}`
+	bad := `{"name":"g","stages":["input"],"mode":"regex","config":"{\"pattern\":\"x\"}"}`
 	if w := doJSON(t, engine, http.MethodPost, "/guardrails", bad); w.Code != http.StatusBadRequest {
 		t.Fatalf("stringified config: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
 
 	// Object config is accepted.
-	good := `{"name":"g","type":"input","mode":"regex","config":{"pattern":"secret"},"blocking":true}`
+	good := `{"name":"g","stages":["input"],"mode":"regex","config":{"pattern":"secret"},"blocking":true}`
 	w := doJSON(t, engine, http.MethodPost, "/guardrails", good)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: got %d (body %s)", w.Code, w.Body.String())
@@ -67,7 +67,7 @@ func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	}
 
 	// Editing from the list item round-trips without losing the config.
-	upd := `{"name":"g","type":"input","mode":"regex","config":{"pattern":"updated"},"blocking":false}`
+	upd := `{"name":"g","stages":["input"],"mode":"regex","config":{"pattern":"updated"},"blocking":false}`
 	w = doJSON(t, engine, http.MethodPut, "/guardrails/"+stored.ID, upd)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: got %d (body %s)", w.Code, w.Body.String())

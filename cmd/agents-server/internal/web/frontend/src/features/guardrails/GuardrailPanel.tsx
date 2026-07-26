@@ -16,7 +16,10 @@ interface Guardrail {
   id: string;
   name: string;
   description: string;
-  type: string;
+  // stages are the run stages this guardrail inspects. One definition covering
+  // several is the SDK's model — a content scanner that should see the input,
+  // the tool arguments and the final output is one guardrail, not three.
+  stages: string[];
   mode: string;
   config?: GuardrailConfig;
   blocking?: boolean;
@@ -25,7 +28,7 @@ interface Guardrail {
 interface GuardrailFormData {
   name: string;
   description: string;
-  type: string;
+  stages: string[];
   mode: string;
   config?: GuardrailConfig;
   blocking?: boolean;
@@ -38,17 +41,26 @@ interface GuardrailFormProps {
   onDelete?: (() => void) | null;
 }
 
-const TYPES = ['input', 'output'] as const;
+// Mirrors agents/guardrail.go — keep in sync.
+const STAGES = ['input', 'output', 'tool_input', 'tool_output'] as const;
+const STAGE_LABELS: Record<string, string> = {
+  input: 'Run input',
+  output: 'Final output',
+  tool_input: 'Tool arguments',
+  tool_output: 'Tool result',
+};
 const MODES = ['regex', 'max_length'] as const;
 const MODE_LABELS: Record<string, string> = { regex: 'Regex Pattern', max_length: 'Max Length' };
 
 function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormProps) {
   const [form, setForm] = useState<GuardrailFormData>(initial || {
-    name: '', description: '', type: 'input', mode: 'regex', blocking: false,
+    name: '', description: '', stages: ['input'], mode: 'regex', blocking: false,
   });
   const [pattern, setPattern] = useState<string>(initial?.config?.pattern || '');
   const [maxLength, setMaxLength] = useState<string | number>(initial?.config?.max_length || 0);
-  const set = (k: keyof GuardrailFormData, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }));
+  const set = (k: keyof GuardrailFormData, v: string | boolean | string[]) => setForm(prev => ({ ...prev, [k]: v }));
+  const stages = form.stages || [];
+  const toggleStage = (st: string) => set('stages', stages.includes(st) ? stages.filter(s => s !== st) : [...stages, st]);
 
   const handleSave = () => {
     const config: GuardrailConfig = form.mode === 'regex'
@@ -73,19 +85,16 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
           placeholder="What this guardrail does"
         />,
       )}
-      {fc('Type',
-        <SegmentedControl aria-label="Guardrail type" size="small">
-          {TYPES.map(v => (
-            <SegmentedControl.Button
-              key={v}
-              selected={form.type === v}
-              onClick={() => set('type', v)}
-            >
-              {v.charAt(0).toUpperCase() + v.slice(1)}
-            </SegmentedControl.Button>
+      {fc('Stages',
+        <Stack gap="condensed">
+          {STAGES.map(v => (
+            <FormControl key={v}>
+              <Checkbox checked={stages.includes(v)} onChange={() => toggleStage(v)} />
+              <FormControl.Label>{STAGE_LABELS[v]}</FormControl.Label>
+            </FormControl>
           ))}
-        </SegmentedControl>,
-        'Applied on user input or model output',
+        </Stack>,
+        'Where this guardrail runs. One guardrail can cover several stages — a content scanner that should see the input, the tool arguments and the final output is one definition, not three.',
       )}
       {fc('Mode',
         <SegmentedControl aria-label="Guardrail mode" size="small">
@@ -120,11 +129,11 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
         />,
         'Maximum character count',
       )}
-      {form.type === 'input' && (
+      {stages.includes('input') && (
         <FormControl>
           <Checkbox checked={!!form.blocking} onChange={(e: ChangeEvent<HTMLInputElement>) => set('blocking', e.target.checked)} />
           <FormControl.Label>Blocking</FormControl.Label>
-          <FormControl.Caption>Run before the model call (a gate) instead of racing it — a tripwire then prevents the call and any token spend</FormControl.Caption>
+          <FormControl.Caption>At the input stage, run before the model call (a gate) instead of racing it — a tripwire then prevents the call and any token spend</FormControl.Caption>
         </FormControl>
       )}
       <div className="form-actions">
@@ -163,7 +172,7 @@ export function GuardrailPanel() {
                 {isBuiltin(g) && <Label>built-in</Label>}
               </div>
               <div className="resource-row-sub">
-                {[g.type, g.mode].filter(Boolean).join(' · ')}
+                {[(g.stages || []).map(st => STAGE_LABELS[st] || st).join(', '), g.mode].filter(Boolean).join(' · ')}
                 {g.description && (' — ' + g.description)}
               </div>
             </div>

@@ -35,10 +35,10 @@ func (h *GuardrailHandler) List(c *gin.Context) {
 }
 
 func validateGuardrail(g *store.Guardrail) string {
-	if g.Name == "" || g.Type == "" || g.Mode == "" {
-		return "name, type, and mode are required"
+	if g.Name == "" || len(g.Stages) == 0 || g.Mode == "" {
+		return "name, stages, and mode are required"
 	}
-	// Enforce the type/mode enums and the mode's config (regex compiles, etc.)
+	// Enforce the stage/mode enums and the mode's config (regex compiles, etc.)
 	// at save time so a definition can't be stored in a state that only fails
 	// when an agent references it.
 	if err := bridge.ValidateGuardrailDef(g); err != nil {

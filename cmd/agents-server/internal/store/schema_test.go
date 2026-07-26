@@ -21,7 +21,7 @@ func TestSchemaIndexes(t *testing.T) {
 		// Business-identity unique keys.
 		{"idx_agent_configs_name", true, "name"},
 		{"idx_mcp_servers_name", true, "name"},
-		{"idx_guardrails_type_name", true, "type,name"},
+		{"idx_guardrails_name", true, "name"},
 		{"idx_provider_routes_prefix", true, "prefix"},
 		// Query indexes for the history tables and hot lookups.
 		{"idx_entries_session_id", false, "session_id,id"},
@@ -65,7 +65,7 @@ func tableForIndex(index string) string {
 		return "agent_configs"
 	case "idx_mcp_servers_name":
 		return "mcp_servers"
-	case "idx_guardrails_type_name":
+	case "idx_guardrails_name":
 		return "guardrails"
 	case "idx_provider_routes_prefix":
 		return "provider_routes"

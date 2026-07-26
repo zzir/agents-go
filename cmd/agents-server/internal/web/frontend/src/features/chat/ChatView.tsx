@@ -272,15 +272,22 @@ function MermaidBlock({ source }: { source: string }) {
   );
 }
 
+// STAGE_NOTES says what a trip at each stage actually stopped. A guardrail runs
+// at four of them, and telling someone "the request was blocked before the
+// model ran" when a tool result tripped it describes the wrong event.
+const STAGE_NOTES: Record<string, string> = {
+  input: 'The request was blocked before the model ran.',
+  output: 'The response above was blocked before delivery.',
+  tool_input: 'A tool call was blocked before the tool ran.',
+  tool_output: "A tool's result was blocked before the model could read it.",
+};
+
 function ErrorCard({ message, guardrail, stage }: { message: string; guardrail?: string; stage?: string }) {
   // A guardrail block is not a system failure — render it as a distinct
-  // "blocked" state. An output-stage trip means the answer already streamed and
-  // was retracted, so say so.
+  // "blocked" state.
   if (guardrail) {
     const label = `Blocked by guardrail “${guardrail}”`;
-    const note = stage === 'output'
-      ? 'The response above was blocked before delivery.'
-      : 'The request was blocked before the model ran.';
+    const note = STAGE_NOTES[stage || ''] || 'The run was blocked by a guardrail.';
     return (
       <Disclosure icon={ShieldIcon} label={label} variant="attention" className="error-card">
         <pre className="error-card-body">{note + '\n\n' + message}</pre>

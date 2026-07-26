@@ -229,19 +229,12 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	// Guardrails — a configured guardrail that can't be resolved fails the
 	// build rather than running unprotected (security config must not silently
 	// no-op).
-	if ac.Guardrails.InputGuardrails != "" && deps.Guardrails != nil {
-		ig, gerr := deps.Guardrails.BuildInputGuardrails(ctx, ac.Guardrails.InputGuardrails)
+	if ac.Guardrails.Guardrails != "" && deps.Guardrails != nil {
+		gs, gerr := deps.Guardrails.BuildGuardrails(ctx, ac.Guardrails.Guardrails)
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
-		agent.Guardrails = append(agent.Guardrails, ig...)
-	}
-	if ac.Guardrails.OutputGuardrails != "" && deps.Guardrails != nil {
-		og, gerr := deps.Guardrails.BuildOutputGuardrails(ctx, ac.Guardrails.OutputGuardrails)
-		if gerr != nil {
-			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
-		}
-		agent.Guardrails = append(agent.Guardrails, og...)
+		agent.Guardrails = append(agent.Guardrails, gs...)
 	}
 
 	// HITL tool approval and structured-output schema — decoded in spec.

@@ -55,26 +55,23 @@ func TestAgentConfigNameUniqueIndex(t *testing.T) {
 	}
 }
 
-// Guardrails are unique per (type, name): the same name under different types is
-// fine, but a duplicate (type, name) is rejected by the DB.
+// A guardrail's name is its identity: an agent config references it by name and
+// nothing else, so two definitions sharing one are ambiguous. Stages no longer
+// disambiguate them — one definition carries all the stages it inspects.
 func TestGuardrailNameUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewGuardrailStore(db)
-	if err := s.Create(ctx, &Guardrail{ID: NewID(), Name: "g", Type: "input", Mode: "max_length"}); err != nil {
+	if err := s.Create(ctx, &Guardrail{ID: NewID(), Name: "g", Stages: []string{"input"}, Mode: "max_length"}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	// Same name, different type: allowed.
-	if err := s.Create(ctx, &Guardrail{ID: NewID(), Name: "g", Type: "output", Mode: "max_length"}); err != nil {
-		t.Fatalf("same name different type should be allowed: %v", err)
-	}
-	// Duplicate (type, name): rejected, and classified for a 409.
-	err := s.Create(ctx, &Guardrail{ID: NewID(), Name: "g", Type: "input", Mode: "regex"})
+	// Differing stages do not make it a different guardrail.
+	err := s.Create(ctx, &Guardrail{ID: NewID(), Name: "g", Stages: []string{"output"}, Mode: "max_length"})
 	if err == nil {
-		t.Fatal("duplicate (type, name) must violate the unique index")
+		t.Fatal("duplicate name must violate the unique index")
 	}
 	if _, ok := UniqueViolation(err); !ok {
-		t.Errorf("UniqueViolation should classify the composite dup, got %v", err)
+		t.Errorf("UniqueViolation should classify the dup, got %v", err)
 	}
 }
 

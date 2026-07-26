@@ -306,15 +306,19 @@ type SSHConfig struct {
 type Guardrail struct {
 	bun.BaseModel `bun:"table:guardrails,alias:gr"`
 
-	ID          string          `bun:"id,pk"              json:"id"`
-	Name        string          `bun:"name,notnull"       json:"name"`
-	Description string          `bun:"description"        json:"description"`
-	Type        string          `bun:"type,notnull"       json:"type"` // input | output
-	Mode        string          `bun:"mode,notnull"       json:"mode"` // regex | max_length
-	Config      json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
-	// Blocking, for an input guardrail, runs it to completion BEFORE the first
-	// model call (a gate) instead of racing it — a tripwire then prevents the
-	// call and any token spend. No effect on output guardrails.
+	ID          string `bun:"id,pk"              json:"id"`
+	Name        string `bun:"name,notnull"       json:"name"`
+	Description string `bun:"description"        json:"description"`
+	// Stages are the run stages this guardrail inspects: input, output,
+	// tool_input, tool_output. One definition covering several is the SDK's
+	// model — a content scanner that should see the input, the tool arguments
+	// and the final output is one guardrail, not three near-identical copies.
+	Stages []string        `bun:"stages,type:text"   json:"stages"`
+	Mode   string          `bun:"mode,notnull"       json:"mode"` // regex | max_length
+	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
+	// Blocking, at the input stage, runs the guardrail to completion BEFORE the
+	// first model call (a gate) instead of racing it — a tripwire then prevents
+	// the call and any token spend. No effect at the other stages.
 	Blocking  bool      `bun:"blocking" json:"blocking"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`

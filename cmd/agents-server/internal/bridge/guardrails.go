@@ -23,44 +23,23 @@ func NewGuardrailResolver(s *store.GuardrailStore) *GuardrailResolver {
 	return &GuardrailResolver{store: s}
 }
 
-// BuildInputGuardrails resolves a JSON array of guardrail names into input
-// guardrails. A malformed list or an unknown name is a config error rather than
-// a silent drop: a guardrail that appears enabled but never runs is a security
-// hole, so the caller fails the build instead.
-func (r *GuardrailResolver) BuildInputGuardrails(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
+// BuildGuardrails resolves a JSON array of guardrail names into SDK guardrails.
+// A malformed list or an unknown name is a config error rather than a silent
+// drop: a guardrail that appears enabled but never runs is a security hole, so
+// the caller fails the build instead.
+func (r *GuardrailResolver) BuildGuardrails(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
 	var names []string
 	if namesJSON == "" {
 		return nil, nil
 	}
 	if err := json.Unmarshal([]byte(namesJSON), &names); err != nil {
-		return nil, fmt.Errorf("input_guardrails is not valid JSON: %w", err)
+		return nil, fmt.Errorf("guardrails is not valid JSON: %w", err)
 	}
 	var out []agents.Guardrail
 	for _, name := range names {
-		g := r.resolveInput(ctx, name)
+		g := r.resolve(ctx, name)
 		if g == nil {
-			return nil, fmt.Errorf("input guardrail %q not found", name)
-		}
-		out = append(out, *g)
-	}
-	return out, nil
-}
-
-// BuildOutputGuardrails resolves a JSON array of guardrail names into output
-// guardrails, with the same fail-loud contract as BuildInputGuardrails.
-func (r *GuardrailResolver) BuildOutputGuardrails(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
-	var names []string
-	if namesJSON == "" {
-		return nil, nil
-	}
-	if err := json.Unmarshal([]byte(namesJSON), &names); err != nil {
-		return nil, fmt.Errorf("output_guardrails is not valid JSON: %w", err)
-	}
-	var out []agents.Guardrail
-	for _, name := range names {
-		g := r.resolveOutput(ctx, name)
-		if g == nil {
-			return nil, fmt.Errorf("output guardrail %q not found", name)
+			return nil, fmt.Errorf("guardrail %q not found", name)
 		}
 		out = append(out, *g)
 	}
@@ -68,14 +47,17 @@ func (r *GuardrailResolver) BuildOutputGuardrails(ctx context.Context, namesJSON
 }
 
 // ValidateGuardrailDef checks a guardrail definition at save time so a config
-// that would silently no-op (empty/invalid regex, unknown mode/type) is
+// that would silently no-op (empty/invalid regex, unknown mode, no stages) is
 // rejected up front instead of failing — or resolving to "not found" — only
 // when an agent later references it.
 func ValidateGuardrailDef(g *store.Guardrail) error {
-	switch g.Type {
-	case "input", "output":
-	default:
-		return fmt.Errorf("type must be input or output, got %q", g.Type)
+	if len(g.Stages) == 0 {
+		return fmt.Errorf("at least one stage is required")
+	}
+	for _, st := range g.Stages {
+		if !validStage(st) {
+			return fmt.Errorf("unknown stage %q (want input, output, tool_input or tool_output)", st)
+		}
 	}
 	var cfg store.GuardrailConfig
 	if len(g.Config) > 0 {
@@ -101,14 +83,19 @@ func ValidateGuardrailDef(g *store.Guardrail) error {
 	return nil
 }
 
-// ValidateNames reports the first input/output guardrail name that is malformed
-// or unresolvable, for save-time rejection of a config that would otherwise run
-// unprotected.
-func (r *GuardrailResolver) ValidateNames(ctx context.Context, inputJSON, outputJSON string) error {
-	if _, err := r.BuildInputGuardrails(ctx, inputJSON); err != nil {
-		return err
+func validStage(s string) bool {
+	switch agents.GuardrailStage(s) {
+	case agents.StageInput, agents.StageOutput, agents.StageToolInput, agents.StageToolOutput:
+		return true
 	}
-	_, err := r.BuildOutputGuardrails(ctx, outputJSON)
+	return false
+}
+
+// ValidateNames reports the first guardrail name that is malformed or
+// unresolvable, for save-time rejection of a config that would otherwise run
+// unprotected.
+func (r *GuardrailResolver) ValidateNames(ctx context.Context, namesJSON string) error {
+	_, err := r.BuildGuardrails(ctx, namesJSON)
 	return err
 }
 
@@ -122,7 +109,7 @@ func (r *GuardrailResolver) ListGuardrails(ctx context.Context) []GuardrailDef {
 				ID:          g.ID,
 				Name:        g.Name,
 				Description: g.Description,
-				Type:        g.Type,
+				Stages:      g.Stages,
 				Mode:        g.Mode,
 				Config:      g.Config,
 				Blocking:    g.Blocking,
@@ -133,91 +120,66 @@ func (r *GuardrailResolver) ListGuardrails(ctx context.Context) []GuardrailDef {
 	return all
 }
 
-func (r *GuardrailResolver) resolveInput(ctx context.Context, name string) *agents.Guardrail {
+func (r *GuardrailResolver) resolve(ctx context.Context, name string) *agents.Guardrail {
 	if r.store != nil {
-		if g := r.findByName(ctx, name, "input"); g != nil {
-			return buildInputFromDef(g)
+		if g := r.findByName(ctx, name); g != nil {
+			return buildFromDef(g)
 		}
 	}
-	return builtinInput(name)
+	return builtin(name)
 }
 
-func (r *GuardrailResolver) resolveOutput(ctx context.Context, name string) *agents.Guardrail {
-	if r.store != nil {
-		if g := r.findByName(ctx, name, "output"); g != nil {
-			return buildOutputFromDef(g)
-		}
-	}
-	return builtinOutput(name)
-}
-
-func (r *GuardrailResolver) findByName(ctx context.Context, name, typ string) *store.Guardrail {
+func (r *GuardrailResolver) findByName(ctx context.Context, name string) *store.Guardrail {
 	all, err := r.store.List(ctx)
 	if err != nil {
 		return nil
 	}
 	for i := range all {
-		if all[i].Name == name && all[i].Type == typ {
+		if all[i].Name == name {
 			return &all[i]
 		}
 	}
 	return nil
 }
 
-func buildInputFromDef(g *store.Guardrail) *agents.Guardrail {
-	var cfg store.GuardrailConfig
-	_ = json.Unmarshal(g.Config, &cfg)
-
-	switch g.Mode {
-	case "regex":
-		if cfg.Pattern == "" {
-			return nil
-		}
-		re, err := regexp.Compile(cfg.Pattern)
-		if err != nil {
-			return nil
-		}
-		return &agents.Guardrail{
-			Stages:   []agents.GuardrailStage{agents.StageInput},
-			Name:     g.Name,
-			Blocking: g.Blocking,
-			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				input := p.Input
-				for _, item := range input {
-					raw, _ := json.Marshal(item)
-					if re.Match(raw) {
-						return agents.Trip(fmt.Sprintf("%s: blocked by pattern", g.Name)), nil
-					}
-				}
-				return agents.Allow(nil), nil
-			},
-		}
-	case "max_length":
-		limit := cfg.MaxLength
-		if limit <= 0 {
-			limit = 50000
-		}
-		return &agents.Guardrail{
-			Stages:   []agents.GuardrailStage{agents.StageInput},
-			Name:     g.Name,
-			Blocking: g.Blocking,
-			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				input := p.Input
-				raw, _ := json.Marshal(input)
-				if len(raw) > limit {
-					return agents.Trip(fmt.Sprintf("Input too long: %d chars (max %d)", len(raw), limit)), nil
-				}
-				return agents.Allow(nil), nil
-			},
-		}
-	default:
-		return nil
+// inspected returns the text a guardrail examines at the stage it was invoked
+// at. One definition covering several stages is the SDK's model — a content
+// scanner that should see the input, the tool arguments and the final output is
+// one guardrail with three stages, not three near-identical copies, which is
+// what this server had.
+func inspected(p agents.GuardrailPayload) string {
+	switch p.Stage {
+	case agents.StageInput:
+		raw, _ := json.Marshal(p.Input)
+		return string(raw)
+	case agents.StageToolInput:
+		return p.Arguments
+	default: // StageOutput, StageToolOutput
+		return fmt.Sprintf("%v", p.Output)
 	}
 }
 
-func buildOutputFromDef(g *store.Guardrail) *agents.Guardrail {
+// stagesOf converts stored stage names to the SDK's, dropping any this build
+// does not know rather than failing — the definition was validated on save, so
+// an unknown one here means a newer server wrote it.
+func stagesOf(names []string) []agents.GuardrailStage {
+	out := make([]agents.GuardrailStage, 0, len(names))
+	for _, n := range names {
+		if validStage(n) {
+			out = append(out, agents.GuardrailStage(n))
+		}
+	}
+	return out
+}
+
+func buildFromDef(g *store.Guardrail) *agents.Guardrail {
 	var cfg store.GuardrailConfig
 	_ = json.Unmarshal(g.Config, &cfg)
+
+	stages := stagesOf(g.Stages)
+	if len(stages) == 0 {
+		return nil
+	}
 
 	switch g.Mode {
 	case "regex":
@@ -229,12 +191,11 @@ func buildOutputFromDef(g *store.Guardrail) *agents.Guardrail {
 			return nil
 		}
 		return &agents.Guardrail{
-			Stages: []agents.GuardrailStage{agents.StageOutput},
-			Name:   g.Name,
+			Stages:   stages,
+			Name:     g.Name,
+			Blocking: g.Blocking,
 			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				output := p.Output
-				s := fmt.Sprintf("%v", output)
-				if re.MatchString(s) {
+				if re.MatchString(inspected(p)) {
 					return agents.Trip(fmt.Sprintf("%s: blocked by pattern", g.Name)), nil
 				}
 				return agents.Allow(nil), nil
@@ -246,13 +207,12 @@ func buildOutputFromDef(g *store.Guardrail) *agents.Guardrail {
 			limit = 50000
 		}
 		return &agents.Guardrail{
-			Stages: []agents.GuardrailStage{agents.StageOutput},
-			Name:   g.Name,
+			Stages:   stages,
+			Name:     g.Name,
+			Blocking: g.Blocking,
 			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				output := p.Output
-				s := fmt.Sprintf("%v", output)
-				if len(s) > limit {
-					return agents.Trip(fmt.Sprintf("Output too long: %d chars (max %d)", len(s), limit)), nil
+				if n := len(inspected(p)); n > limit {
+					return agents.Trip(fmt.Sprintf("%s: %d chars exceeds the %d limit at stage %s", g.Name, n, limit, p.Stage)), nil
 				}
 				return agents.Allow(nil), nil
 			},
@@ -270,32 +230,31 @@ type GuardrailDef struct {
 	ID          string          `json:"id,omitempty"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
-	Type        string          `json:"type"`
+	Stages      []string        `json:"stages"`
 	Mode        string          `json:"mode,omitempty"`
 	Config      json.RawMessage `json:"config,omitempty"`
 	Blocking    bool            `json:"blocking,omitempty"`
 }
 
 var builtinDefs = []GuardrailDef{
-	{Name: "content_filter", Description: "Block input containing forbidden keywords/patterns", Type: "input", Mode: "regex"},
-	{Name: "max_input_length", Description: "Reject input exceeding character limit (default 50000)", Type: "input", Mode: "max_length"},
-	{Name: "max_output_length", Description: "Trip if output exceeds character limit (default 50000)", Type: "output", Mode: "max_length"},
+	{Name: "content_filter", Description: "Block prompt-injection phrasing in input and tool arguments", Stages: []string{"input", "tool_input"}, Mode: "regex"},
+	{Name: "max_input_length", Description: "Reject input exceeding character limit (default 50000)", Stages: []string{"input"}, Mode: "max_length"},
+	{Name: "max_output_length", Description: "Trip if output exceeds character limit (default 50000)", Stages: []string{"output"}, Mode: "max_length"},
 }
 
-func builtinInput(name string) *agents.Guardrail {
+func builtin(name string) *agents.Guardrail {
 	switch name {
 	case "content_filter":
+		// Also at the tool-input stage: the phrasing this looks for is just as
+		// dangerous arriving in a tool's arguments, and the SDK models one
+		// guardrail covering both rather than two copies of it.
 		return &agents.Guardrail{
-			Stages: []agents.GuardrailStage{agents.StageInput},
+			Stages: []agents.GuardrailStage{agents.StageInput, agents.StageToolInput},
 			Name:   "content_filter",
 			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				input := p.Input
 				forbidden := regexp.MustCompile(`(?i)(ignore previous instructions|system prompt|jailbreak)`)
-				for _, item := range input {
-					raw, _ := json.Marshal(item)
-					if forbidden.Match(raw) {
-						return agents.Trip("Content filter: potentially harmful input detected"), nil
-					}
+				if forbidden.MatchString(inspected(p)) {
+					return agents.Trip("Content filter: potentially harmful input detected"), nil
 				}
 				return agents.Allow(nil), nil
 			},
@@ -305,30 +264,19 @@ func builtinInput(name string) *agents.Guardrail {
 			Stages: []agents.GuardrailStage{agents.StageInput},
 			Name:   "max_input_length",
 			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				input := p.Input
-				raw, _ := json.Marshal(input)
-				if len(raw) > 50000 {
-					return agents.Trip(fmt.Sprintf("Input too long: %d chars (max 50000)", len(raw))), nil
+				if n := len(inspected(p)); n > 50000 {
+					return agents.Trip(fmt.Sprintf("Input too long: %d chars (max 50000)", n)), nil
 				}
 				return agents.Allow(nil), nil
 			},
 		}
-	default:
-		return nil
-	}
-}
-
-func builtinOutput(name string) *agents.Guardrail {
-	switch name {
 	case "max_output_length":
 		return &agents.Guardrail{
 			Stages: []agents.GuardrailStage{agents.StageOutput},
 			Name:   "max_output_length",
 			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				output := p.Output
-				s := fmt.Sprintf("%v", output)
-				if len(s) > 50000 {
-					return agents.Trip(fmt.Sprintf("Output too long: %d chars (max 50000)", len(s))), nil
+				if n := len(inspected(p)); n > 50000 {
+					return agents.Trip(fmt.Sprintf("Output too long: %d chars (max 50000)", n)), nil
 				}
 				return agents.Allow(nil), nil
 			},

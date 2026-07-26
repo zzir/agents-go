@@ -46,9 +46,11 @@ type ResilienceGroup struct {
 
 // GuardrailGroup holds guardrail names and the output schema.
 type GuardrailGroup struct {
-	InputGuardrails  string `json:"input_guardrails,omitempty"`
-	OutputGuardrails string `json:"output_guardrails,omitempty"`
-	OutputSchema     string `json:"output_schema,omitempty"`
+	// Guardrails is a JSON array of guardrail names. One list, not one per
+	// stage: a guardrail carries the stages it inspects, so naming it twice
+	// would be naming the same value twice.
+	Guardrails   string `json:"guardrails,omitempty"`
+	OutputSchema string `json:"output_schema,omitempty"`
 }
 
 // SessionGroup holds session/prompt-chaining settings.

@@ -242,7 +242,7 @@ Agent config fields:
 - **Resilience**: `retry_enabled`, `retry_policy`, `fallback_models`
 - **Error recovery**: `error_handlers` (JSON keyed by `max_turns` / `model_refusal` / `invalid_final_output`; each entry is `{"final_output": <JSON value>, "exclude_from_history": bool}` — the run completes with the static fallback instead of failing; `final_output` must be a string for plain-text agents or match `output_schema`)
 - **Structured output**: `output_schema` (JSON Schema)
-- **Guardrails**: `input_guardrails`, `output_guardrails`
+- **Guardrails**: `guardrails` (JSON array of names — one list, since a guardrail carries the stages it inspects)
 - **Tools / Handoffs**: `tools` (JSON), `handoffs` (JSON), `handoff_description`, `handoff_input_filter`
 - **Prompt**: `prompt_id`, `prompt_version` (OpenAI stored prompt)
 - **Other**: `use_previous_response_id`, `max_tool_concurrency`, `tool_not_found_behavior`
@@ -377,16 +377,26 @@ The `api_key` field is masked on read — see [Secret handling](#secret-handling
 | PUT    | `/guardrails/:id` | Update guardrail                        |
 | DELETE | `/guardrails/:id` | Delete guardrail                        |
 
-Types: `input` (pre-model) and `output` (post-model). Modes: `regex` (pattern
-match triggers tripwire) and `max_length` (character limit).
+A guardrail carries `stages` — where it runs — and one definition can cover
+several: `input` (the run input, pre-model), `output` (the final output),
+`tool_input` (a tool call's arguments, before the tool runs) and `tool_output`
+(a tool's result, before the model reads it). A content scanner that should see
+the input, the tool arguments and the final output is ONE guardrail with three
+stages, which is the SDK's model — naming it three times would be three
+near-identical definitions to keep in sync.
 
-Built-in: `content_filter` (input/regex — jailbreak keywords),
-`max_input_length` (input/max_length — 50k chars),
-`max_output_length` (output/max_length — 50k chars).
+Modes: `regex` (pattern match triggers tripwire) and `max_length` (character
+limit). Both inspect whatever the stage puts under them.
 
-Guardrails attach at the **run level** (the agent's `input_guardrails` /
-`output_guardrails` fields). Per-tool guardrails exist in the SDK but are not
-yet configurable here — see [Roadmap](#roadmap).
+`blocking` applies at the input stage only: it runs the guardrail to completion
+before the first model call (a gate) instead of racing it, so a tripwire
+prevents the call and any token spend.
+
+A guardrail's **name is its identity** — an agent config references it by name
+and nothing else, so names are unique across all definitions.
+
+Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
+`max_input_length` (input, 50k chars), `max_output_length` (output, 50k chars).
 
 ### Sandboxes — `/api/v1/sandboxes`
 
@@ -800,13 +810,13 @@ mechanism.
 
 ## Roadmap
 
-- **Tool-level guardrail config.** The SDK supports per-tool guardrails
-  (`FunctionTool.InputGuardrails` / `OutputGuardrails`), but the server only
-  wires run-level ones today. Plan: let the agent config attach guardrails to
-  individual tools (by tool name), with matching UI in the agent panel. Once
-  that lands, also expose `RunOptions.PreApprovalToolInputGuardrails` as an
-  agent config field, so a guardrail rejection can resolve an approval-gated
-  call without a human round-trip.
+- **Guardrail ordering at the approval gate.** The tool stages are configurable
+  now (a guardrail's `stages` cover `tool_input` / `tool_output` for every tool
+  call), but `RunOptions.PreApprovalToolInputGuardrails` is not exposed as an
+  agent config field. With it on, a guardrail rejection resolves an
+  approval-gated call without a human round-trip. Per-TOOL binding — "only this
+  tool's arguments go through this guardrail" — is a separate thing the SDK
+  does not model; it would need a `Stages`-like selector keyed by tool name.
 - **Render tool-output custom data.** The SDK's
   `FunctionTool.CustomDataExtractor` attaches SDK-only metadata (renderer
   hints, record IDs) to `ToolCallOutputItem.CustomData` without sending it to

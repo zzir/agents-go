@@ -38,8 +38,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 		wantSub string
 	}{
 		{"bad output_schema", func(a *store.AgentConfig) { a.Guardrails.OutputSchema = "{not json" }, "output_schema"},
-		{"unknown input guardrail", func(a *store.AgentConfig) { a.Guardrails.InputGuardrails = `["no_such_guardrail"]` }, "not found"},
-		{"unknown output guardrail", func(a *store.AgentConfig) { a.Guardrails.OutputGuardrails = `["nope"]` }, "not found"},
+		{"unknown guardrail", func(a *store.AgentConfig) { a.Guardrails.Guardrails = `["no_such_guardrail"]` }, "not found"},
 		{"bad approve_tools", func(a *store.AgentConfig) { a.Approval.ApproveTools = "[not json" }, "approve_tools"},
 		{"wrong-typed model_settings", func(a *store.AgentConfig) { a.ModelSettings = `{"temperature":"hot"}` }, "model_settings"},
 		{"malformed skills selection", func(a *store.AgentConfig) { a.SkillsJSON = "[not json" }, "skills"},
@@ -70,7 +69,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	}
 
 	// A built-in guardrail name resolves and builds fine.
-	ok := &store.AgentConfig{Name: "ok", Model: "gpt-test", Guardrails: store.GuardrailGroup{InputGuardrails: `["content_filter"]`}}
+	ok := &store.AgentConfig{Name: "ok", Model: "gpt-test", Guardrails: store.GuardrailGroup{Guardrails: `["content_filter"]`}}
 	if err := s.Create(ctx, ok); err != nil {
 		t.Fatalf("create ok: %v", err)
 	}
@@ -96,8 +95,7 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 		Name:  "guarded",
 		Model: "gpt-test",
 		Guardrails: store.GuardrailGroup{
-			InputGuardrails:  `["content_filter"]`,
-			OutputGuardrails: `["max_output_length"]`,
+			Guardrails: `["content_filter", "max_output_length"]`,
 		},
 	}
 	if err := s.Create(ctx, ac); err != nil {

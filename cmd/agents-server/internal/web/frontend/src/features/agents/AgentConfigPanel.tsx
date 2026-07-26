@@ -16,7 +16,7 @@ const CONFIG_GROUPS: Record<string, string[]> = {
   provider: ['provider_type', 'auth_mode', 'api_key', 'base_url'],
   behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
-  guardrails: ['input_guardrails', 'output_guardrails', 'output_schema'],
+  guardrails: ['guardrails', 'output_schema'],
   session: ['use_previous_response_id', 'prompt_id', 'prompt_version', 'history_limit'],
   approval: ['approve_tools'],
   compaction: ['compaction_enabled', 'compaction_threshold', 'compaction_window', 'compaction_model', 'compaction_prompt'],
@@ -58,8 +58,7 @@ interface AgentFormData {
   retry_enabled: boolean;
   retry_policy: string;
   fallback_models: string;
-  input_guardrails: string;
-  output_guardrails: string;
+  guardrails: string;
   output_schema: string;
   error_handlers: string;
   use_previous_response_id: boolean;
@@ -139,7 +138,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     disable_tool_choice_reset: false, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
     fallback_models: '',
-    input_guardrails: '', output_guardrails: '', output_schema: '', error_handlers: '',
+    guardrails: '', output_schema: '', error_handlers: '',
     use_previous_response_id: false,
     prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
@@ -380,8 +379,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
 
         <div className="form-group">
           <div className="form-group-title">Guardrails &amp; output</div>
-          <JsonField label="Input guardrails (JSON)" value={form.input_guardrails || ''} onChange={v => set('input_guardrails', v)} placeholder='["content_filter","max_input_length"]' caption="JSON array of guardrail names" />
-          <JsonField label="Output guardrails (JSON)" value={form.output_guardrails || ''} onChange={v => set('output_guardrails', v)} placeholder='["max_output_length"]' caption="JSON array of guardrail names" />
+          <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
           <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
           <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
         </div>

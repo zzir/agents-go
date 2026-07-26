@@ -123,12 +123,12 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	// makes an agent's reference order-dependent. Enforce uniqueness at the DB.
 	if _, err := db.NewCreateIndex().
 		Model((*Guardrail)(nil)).
-		Index("idx_guardrails_type_name").
+		Index("idx_guardrails_name").
 		Unique().
-		Column("type", "name").
+		Column("name").
 		IfNotExists().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("creating guardrails unique type/name index: %w", err)
+		return fmt.Errorf("creating guardrails unique name index: %w", err)
 	}
 	// An MCP server's name is its tool-prefix namespace ("<name>__<tool>"), so
 	// two servers sharing a name are ambiguous. The name is thus an identity —

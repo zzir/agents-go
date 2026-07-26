@@ -380,8 +380,11 @@ components:
           type: string
         name:
           type: string
-        type:
-          type: string
+        stages:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
       type: object
     bridge.RunInfo:
       properties:
@@ -913,9 +916,9 @@ components:
       properties:
         blocking:
           description: |-
-            Blocking, for an input guardrail, runs it to completion BEFORE the first
-            model call (a gate) instead of racing it — a tripwire then prevents the
-            call and any token spend. No effect on output guardrails.
+            Blocking, at the input stage, runs the guardrail to completion BEFORE the
+            first model call (a gate) instead of racing it — a tripwire then prevents
+            the call and any token spend. No effect at the other stages.
           type: boolean
         config:
           items:
@@ -933,17 +936,26 @@ components:
           type: string
         name:
           type: string
-        type:
-          description: input | output
-          type: string
+        stages:
+          description: |-
+            Stages are the run stages this guardrail inspects: input, output,
+            tool_input, tool_output. One definition covering several is the SDK's
+            model — a content scanner that should see the input, the tool arguments
+            and the final output is one guardrail, not three near-identical copies.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
         updated_at:
           type: string
       type: object
     store.GuardrailGroup:
       properties:
-        input_guardrails:
-          type: string
-        output_guardrails:
+        guardrails:
+          description: |-
+            Guardrails is a JSON array of guardrail names. One list, not one per
+            stage: a guardrail carries the stages it inspects, so naming it twice
+            would be naming the same value twice.
           type: string
         output_schema:
           type: string

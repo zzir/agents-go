@@ -74,7 +74,7 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		return false
 	}
 	if h.guardrails != nil {
-		if err := h.guardrails.ValidateNames(c.Request.Context(), ac.Guardrails.InputGuardrails, ac.Guardrails.OutputGuardrails); err != nil {
+		if err := h.guardrails.ValidateNames(c.Request.Context(), ac.Guardrails.Guardrails); err != nil {
 			badRequest(c, err.Error())
 			return false
 		}
