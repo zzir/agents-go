@@ -32,6 +32,13 @@ type CodeToolConfig struct {
 	// a tool result carries at most about twice this many output bytes).
 	// Defaults to 8192. The cut never splits a multi-byte UTF-8 sequence.
 	MaxOutputBytes int
+	// Sessions enables the session_id argument: a named shell held open between
+	// calls, so `cd`, exported variables and an activated virtualenv survive.
+	//
+	// Off by default because a held-open shell is a resource with a lifetime,
+	// and a caller that never closes one leaks it. Requires a backend that
+	// supports interactive terminals.
+	Sessions bool
 	// Policy filters commands before they reach a human or the sandbox. It runs
 	// BEFORE the approval gate: a person asked to judge forty commands an hour
 	// stops reading them, so what was never going to be allowed should not
@@ -70,6 +77,7 @@ type codeToolArgs struct {
 	Cmd            string `json:"cmd"             jsonschema:"the shell command to execute (passed to bash -c)"`
 	TimeoutSeconds int    `json:"timeout_seconds" jsonschema:"execution timeout in seconds; 0 uses the default"`
 	Workdir        string `json:"workdir"         jsonschema:"working directory for the command; empty uses the sandbox default"`
+	SessionID      string `json:"session_id"      jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
 }
 
 // CodeTool wraps a Sandbox as a function tool. The model supplies a shell
@@ -78,6 +86,7 @@ type codeToolArgs struct {
 // to the model as output so it can correct itself.
 func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 	cfg = cfg.withDefaults()
+	sessions := newSessionPool()
 	schema, schemaErr := agents.SchemaFor[codeToolArgs](true)
 	if schemaErr != nil {
 		return &agents.FunctionTool{
@@ -129,6 +138,27 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 			span, ctx := tracing.StartSpanFrom(ctx, "sandbox.exec", tracing.SpanTypeSandbox,
 				map[string]any{"tool": cfg.Name, "timeout_ms": timeout.Milliseconds()})
 			defer span.Finish()
+
+			// A named session runs in a shell held open from the last call, so
+			// `cd build` then `make` does what it reads as. A fresh Exec per
+			// call is stateless, which a model experiences as its `cd` being
+			// ignored — and the workaround it reaches for, chaining everything
+			// into one enormous `&&` line, is worse to read and worse to fail.
+			if cfg.Sessions && args.SessionID != "" {
+				out, code, err := sessions.run(ctx, sb, args.SessionID, cmd, timeout)
+				if err != nil {
+					return agents.TextResult(fmt.Sprintf("session %q: %v", args.SessionID, err)).
+						WithDisplay("terminal").
+						WithDetails(map[string]any{"command": cmd, "session_id": args.SessionID}), nil
+				}
+				return agents.TextResult(formatSessionResult(out, code, cfg.MaxOutputBytes)).
+					WithDisplay("terminal").
+					WithDetails(map[string]any{
+						"command":    cmd,
+						"exit_code":  code,
+						"session_id": args.SessionID,
+					}), nil
+			}
 
 			req := ExecRequest{Cmd: []string{"bash", "-c", cmd}, Timeout: timeout}
 			var res *ExecResult

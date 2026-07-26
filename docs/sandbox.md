@@ -38,6 +38,44 @@ The zero value allows everything, and a policy whose patterns do not compile
 refuses everything — falling open would turn a configuration typo into no
 protection at all, silently.
 
+## Persistent shells
+
+By default each command runs in a fresh shell, which a model experiences as its
+`cd` being ignored: it runs `cd build`, then `make`, and make runs in the wrong
+place. The workaround it reaches for on its own — chaining everything into one
+enormous `&&` line — is worse to read, worse to fail, and loses the output
+boundaries.
+
+```go
+sandbox.CodeTool(sb, sandbox.CodeToolConfig{Sessions: true})
+```
+
+The model then passes a `session_id`, and that named shell is held open between
+calls, so `cd`, exported variables, an activated virtualenv and a started
+background process all survive.
+
+Completion is detected with a **sentinel**: after each command the session
+prints a random per-session token and the exit status, and output is read until
+the token appears. There is no other reliable signal on a PTY — a prompt is
+configurable, silence means nothing, and a command that prints nothing looks
+exactly like one still running.
+
+The token is random (a fixed one is one a command could print — `echo __DONE__`
+would end the read early and hand back a truncated result) and is written to the
+shell **in two halves**, as separate `printf` arguments. A PTY echoes its input,
+so a command line carrying the whole token would come back in the output and be
+indistinguishable from the real thing; the read would then stop one command
+early, forever after. Only the output ever contains the halves joined.
+
+A session that times out is **closed**, not reused: the command may still be
+running, and its output arriving in the middle of the next one is worse than a
+shell startup.
+
+Requires a backend with interactive terminal support (Docker, SSH).
+
+Off by default, because a held-open shell is a resource with a lifetime and a
+caller that never closes one leaks it.
+
 ## Telling the agent what it is working with
 
 ```go

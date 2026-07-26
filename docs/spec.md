@@ -775,6 +775,30 @@ A tool marked `WithDeferred` is withheld from the model until some
   refuses everything** — falling open would turn a configuration typo into no
   protection at all, silently, while looking like protection.
 
+### 2.7k Persistent shells ✅
+
+`exec_command` optionally reuses a named shell, so `cd`, exported variables and
+an activated environment survive between calls.
+
+- **Completion is detected with a sentinel.** There is no other reliable signal
+  on a PTY: a prompt is configurable, silence means nothing, and a command that
+  prints nothing is indistinguishable from one still running.
+- **The token is random and per session.** A fixed one is a token a command can
+  print, and `echo __DONE__` would end the read early with a truncated result
+  and a garbage exit status.
+- **The command line carries the token in two halves.** A PTY echoes its input,
+  so a line containing the whole token comes back in the output and cannot be
+  told from the real one — the read would stop one command early from then on.
+  Only the output ever joins them.
+- **The echo is stripped as an exact prefix** of what was written, not by
+  pattern: a heuristic would also eat a command that printed its own text back.
+- **A timed-out session is closed, not reused.** The command may still be
+  running, and its output arriving inside the next one is worse than a shell
+  startup.
+- Reading happens on a background goroutine, because `Terminal` has no read
+  deadline and a blocked `Read` on the calling goroutine cannot be interrupted
+  by any timer.
+
 ### 2.8 Nested agent-as-tool attribution ✅
 
 | Aspect | Attribution |
