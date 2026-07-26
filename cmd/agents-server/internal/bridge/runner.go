@@ -735,6 +735,18 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, handoffNames
 			// The stream's terminal event carries the finished run; it is the
 			// loop's own bookkeeping and not something the client renders.
 			res = done.Result
+			// Except the diagnostics: a run that answered after three retries
+			// or on a fallback model looks identical to one that answered
+			// first time, and the difference is what explains the latency.
+			for _, d := range res.Diagnostics {
+				send(protocol.EventRunDiagnostic, protocol.RunDiagnostic{
+					RunID:   runID,
+					Type:    string(d.Type),
+					Code:    string(d.Code),
+					Message: d.Message,
+					Details: d.Details,
+				})
+			}
 			continue
 		}
 		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {

@@ -9,7 +9,7 @@ import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
-import { parseTaskNotification, type TaskStatus } from '@/lib/protocol';
+import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
 import type { TaskState, TaskViewState } from '@/lib/useAgentSocket';
 import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
 import { MessageBubble } from '@/features/chat/MessageBubble';
@@ -371,6 +371,8 @@ interface ProcessTimelineProps {
   // phase is done even while the run is still live.
   textStreaming?: boolean;
   compacting?: boolean;
+  // Trouble this run survived, shown as a badge on the group header.
+  diagnostics?: RunDiagnostic[];
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
@@ -382,7 +384,7 @@ interface ProcessTimelineProps {
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
-function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, onApprove, onReject, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
+function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, diagnostics, onApprove, onReject, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
 
@@ -437,6 +439,7 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, on
         <ChevronRightIcon size={16} className="process-icon" />
         <span>{label}</span>
         {pendingCount > 0 && <Label variant="accent" className="process-status">{pendingCount + ' pending'}</Label>}
+        <DiagnosticBadge diagnostics={diagnostics} />
       </div>
       {shouldShow && (
         <div className="process-timeline">
@@ -467,6 +470,29 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, on
   );
 }
 
+// DiagnosticBadge reports trouble the run survived.
+//
+// It sits on the process group rather than in the transcript because that is
+// what it describes: not something the agent said, but how the turn went. A run
+// that answered after three retries or on a fallback model looks identical to
+// one that answered first time, and this is the difference — the thing that
+// explains why the answer took forty seconds, or why it is worse than usual.
+function DiagnosticBadge({ diagnostics }: { diagnostics?: RunDiagnostic[] }) {
+  if (!diagnostics || diagnostics.length === 0) return null;
+  // Counted by kind: three retries is one fact, not three.
+  const counts = new Map<string, number>();
+  for (const d of diagnostics) counts.set(d.type, (counts.get(d.type) || 0) + 1);
+  const summary = [...counts.entries()]
+    .map(([type, n]) => (DIAGNOSTIC_LABELS[type] || type) + (n > 1 ? ' ×' + n : ''))
+    .join(', ');
+  const detail = diagnostics
+    .map(d => (DIAGNOSTIC_LABELS[d.type] || d.type) + (d.message ? ': ' + d.message : ''))
+    .join('\n');
+  return (
+    <Label variant="attention" className="process-status" title={detail}>{summary}</Label>
+  );
+}
+
 function LiveTimer({ startedAt }: { startedAt: number }) {
   const [elapsed, setElapsed] = useState(() => Date.now() - startedAt);
   useEffect(() => {
@@ -489,6 +515,7 @@ interface TurnBlockProps {
   onRegenerate?: (messageId: string, content: string) => void;
   running: boolean;
   compacting?: boolean;
+  diagnostics?: RunDiagnostic[];
   duration?: string;
   liveStartedAt?: number | null;
   messageId?: string | number;
@@ -499,7 +526,7 @@ interface TurnBlockProps {
   taskLabelById?: Record<string, string>;
 }
 
-const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, duration, liveStartedAt, messageId, onFork, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, onFork, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
@@ -544,6 +571,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
               reasoning={i === activeIdx ? reasoning : null}
               textStreaming={i === activeIdx && !!streaming}
               compacting={i === activeIdx ? compacting : false}
+              diagnostics={i === activeIdx ? diagnostics : undefined}
               onApprove={onApprove}
               onReject={onReject}
             />
@@ -559,6 +587,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           reasoning={reasoning}
           textStreaming={!!streaming}
           compacting={compacting}
+          diagnostics={diagnostics}
           onApprove={onApprove}
           onReject={onReject}
         />
@@ -752,6 +781,8 @@ interface ChatViewProps {
   reasoning: string | null;
   running: boolean;
   compacting: boolean;
+  // Trouble the live run survived, badged on the process group.
+  diagnostics?: RunDiagnostic[];
   traceRuns: Record<string, TraceEventData[]>;
   liveRunId: string | null;
   liveStartedAt: number | null;
@@ -785,7 +816,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, messages, loaded, streaming, reasoning, running, compacting,
+  sessionId, messages, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, onRegenerate, settingsReloadKey,
@@ -1223,6 +1254,7 @@ export function ChatView({
                   onRegenerate={onRegenerate ? handleRegen : undefined}
                   running={running}
                   compacting={isLive ? compacting : false}
+                  diagnostics={isLive ? diagnostics : undefined}
                   duration={turnDuration}
                   liveStartedAt={isLive ? liveStartedAt : undefined}
                   messageId={m.messageId}

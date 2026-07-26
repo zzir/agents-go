@@ -38,6 +38,9 @@ export const EV = {
   runInterrupted: 'run.interrupted',
   runCancelled: 'run.cancelled',
   runCompaction: 'run.compaction',
+  // Trouble a run went through and SURVIVED: retries, a fallback model, a
+  // compaction pass that gave up. None of these reach run.error.
+  runDiagnostic: 'run.diagnostic',
   runGap: 'run.gap',
   sessionTitleUpdated: 'session.title_updated',
   traceSpan: 'trace.span',
@@ -133,3 +136,26 @@ export function parseTaskNotification(content: string | undefined | null): null 
 
 // MCP-Tasks-aligned task statuses (mirror of the Go protocol.Task* consts).
 export type TaskStatus = 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled';
+
+// RunDiagnostic mirrors protocol.RunDiagnostic. `type` is an open vocabulary:
+// an unrecognized one is shown generically rather than dropped, which is what
+// lets the server report a new kind without a coordinated release.
+export interface RunDiagnostic {
+  type: string;
+  code?: string;
+  message?: string;
+  details?: Record<string, unknown>;
+}
+
+// DIAGNOSTIC_LABELS gives the known kinds a readable name. Anything absent
+// falls back to the raw type.
+export const DIAGNOSTIC_LABELS: Record<string, string> = {
+  model_retry: 'retried',
+  model_fallback: 'fallback model',
+  stream_error: 'stream interrupted',
+  tool_panic: 'tool crashed',
+  tool_timeout: 'tool timed out',
+  compaction_failed: 'compaction failed',
+  response_truncated: 'response truncated',
+  context_overflow: 'context overflowed',
+};

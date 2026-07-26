@@ -47,14 +47,19 @@ const (
 	// running. It is NOT the tool's answer — that arrives as run.tool_result —
 	// so a client renders it as live output and replaces it when the result
 	// lands, never treating it as final.
-	EventRunToolProgress     = "run.tool_progress"
-	EventRunToolResult       = "run.tool_result"
-	EventRunHandoff          = "run.handoff"
-	EventRunOutput           = "run.output"
-	EventRunError            = "run.error"
-	EventRunInterrupted      = "run.interrupted"
-	EventRunCancelled        = "run.cancelled"
-	EventRunCompaction       = "run.compaction"
+	EventRunToolProgress = "run.tool_progress"
+	EventRunToolResult   = "run.tool_result"
+	EventRunHandoff      = "run.handoff"
+	EventRunOutput       = "run.output"
+	EventRunError        = "run.error"
+	EventRunInterrupted  = "run.interrupted"
+	EventRunCancelled    = "run.cancelled"
+	EventRunCompaction   = "run.compaction"
+	// EventRunDiagnostic reports trouble a run went through and SURVIVED —
+	// retries, a fallback model, a compaction pass that gave up. None of these
+	// reach run.error, so without this a run that answered after a bad time
+	// looks exactly like one that answered first time.
+	EventRunDiagnostic       = "run.diagnostic"
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
 	EventTraceSpan           = "trace.span"
@@ -234,6 +239,21 @@ type RunToolProgress struct {
 	Delta string `json:"delta"`
 	// Renderer is the tool's display hint (e.g. "terminal").
 	Renderer string `json:"renderer,omitempty"`
+}
+
+// RunDiagnostic reports one piece of trouble a run survived.
+type RunDiagnostic struct {
+	RunID string `json:"run_id"`
+	// Type is the diagnostic kind (model_retry, model_fallback, tool_panic, …).
+	// It is an open vocabulary: a client that does not recognize one shows it
+	// generically rather than dropping it.
+	Type string `json:"type"`
+	// Code is the classified error, when there was one.
+	Code string `json:"code,omitempty"`
+	// Message is a one-line summary.
+	Message string `json:"message,omitempty"`
+	// Details carries type-specific fields (attempt number, model, …).
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // RunAgentStart notifies the client that a (possibly handed-off-to) agent has started its turn.

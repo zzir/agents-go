@@ -522,6 +522,7 @@ export default function App() {
       reasoning={currentSS.reasoning}
       running={currentSS.running}
       compacting={currentSS.compacting}
+      diagnostics={currentSS.diagnostics}
       traceRuns={currentSS.traceRuns}
       liveRunId={currentSS.liveRunId}
       liveStartedAt={currentSS.liveStartedAt}

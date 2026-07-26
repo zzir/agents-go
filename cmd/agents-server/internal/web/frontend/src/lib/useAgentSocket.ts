@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { WSClient } from '@/lib/ws';
-import { EV, ERR } from '@/lib/protocol';
+import { EV, ERR, type RunDiagnostic } from '@/lib/protocol';
 import type { TaskStatus } from '@/lib/protocol';
 import { buildTimeline } from '@/lib/timeline';
 import {
@@ -58,6 +58,11 @@ export interface SessionState {
   reasoning: string;
   running: boolean;
   compacting: boolean;
+  // Trouble the current run survived — retries, a fallback model, a compaction
+  // pass that gave up. None of these fail the run, so without recording them a
+  // run that answered after a bad time looks exactly like one that answered
+  // first time. Cleared when a new run starts.
+  diagnostics: RunDiagnostic[];
   traceRuns: Record<string, TraceEvent[]>;
   liveRunId: string | null;
   liveStartedAt: number | null;
@@ -72,7 +77,7 @@ type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionState) => v
 
 export function defaultSS(): SessionState {
   return {
-    messages: [], streaming: '', reasoning: '', running: false, compacting: false,
+    messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
     traceRuns: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, loaded: false,
     tasks: {}, taskView: null,
   };
@@ -348,7 +353,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         // reducer returns null instead of growing a second live turn.
         const appended = ensureLiveTurn(s.messages, p.run_id, p.input);
         return {
-          ...s, running: true, compacting: false, liveRunId: p.run_id,
+          ...s, running: true, compacting: false, diagnostics: [], liveRunId: p.run_id,
           liveStartedAt: appended ? Date.now() : (s.liveStartedAt ?? Date.now()),
           liveAgentName: null, loaded: true,
           messages: appended || s.messages,
@@ -787,6 +792,14 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       if (!sid) return;
       console.warn(`dropped ${p.dropped} event(s) after seq ${p.last_good}; refetching`);
       reloadMessages(sid);
+    });
+
+    // Trouble the run survived. It arrives with the terminal event, so it is
+    // recorded rather than animated: the point is the record afterwards.
+    ws.on(EV.runDiagnostic, (p: RunDiagnostic & { run_id: string }) => {
+      const sid = runMapRef.current[p.run_id];
+      if (!sid) return;
+      updateSS(sid, s => ({ ...s, diagnostics: [...s.diagnostics, p] }));
     });
 
     ws.on(EV.runCompaction, (p: { run_id: string; phase: string }) => {
