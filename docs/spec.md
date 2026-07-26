@@ -985,6 +985,46 @@ middleware and every one outside it.
 
 ---
 
+### 2.13 Background tasks ✅
+
+A task is a sub-agent that outlives the turn that started it. The invariants
+below are behavior, not implementation detail — see [tasks.md](tasks.md).
+
+- **Identity and execution are separate.** `Task.ID` is the durable entity,
+  `Task.RunID` one attempt at it. Collapsing them makes a retry inexpressible
+  without inventing a second task.
+- **Finalization is a compare-and-set**: status, result and the wake-up debt in
+  one atomic transition, only while the task is non-terminal. This is why a
+  task store must be transactional, and why no file-backed one is offered — a
+  read-modify-write cannot arbitrate between two finalizers.
+- **Four reasons not to wake a parent**, all of which must be clear: it is
+  being deleted, it has a live run, it is paused on a human decision, or the
+  guard could not tell. **A guard that cannot answer must refuse** — "cannot
+  prove it is safe" is not permission. A refused wake KEEPS the debt.
+- **A cancellation never wakes**, nor does a result the model already pulled
+  with `task_status`. Both would burn a turn restating what is already known.
+- **A wake-up runs under the configuration snapshotted at spawn**, not resolved
+  fresh: the parent may be configured differently by then.
+- **A restart fails what it interrupted** and owes each parent a wake-up, so
+  the news is delivered rather than lost. `input_required` is left alone: its
+  approval persists.
+- **`input_required` is not terminal.** A task waiting on a human is in flight;
+  a notification for it would announce something that has not happened.
+- **A paused task is claimed before the host is told to stop it** (the finalize
+  is the exclusive claim against a concurrent approval); a working one has its
+  run cancelled first, or the run's own completion records a success for
+  something the user stopped.
+- **Rollback of a half-finished spawn uses a detached context.** `Spawn` runs
+  inside the parent run, so a parent cancellation racing it would kill the
+  cleanup halfway.
+- Defaults: depth 1 (a task cannot spawn tasks), 6 concurrent tasks per parent,
+  300-rune summaries, a 120s bound on `task_status`'s wait.
+- **A notification is a user-role entry** the model reads verbatim; a UI renders
+  it as a card. Formatting and parsing ship together, so the format is defined
+  once.
+
+---
+
 ## 3. Capabilities deliberately not provided
 
 Beyond the non-goals in [§1.2](#12-non-goals):

@@ -74,6 +74,7 @@ func main() {
 | Streaming | [Streaming](streaming.md) |
 | Models | [Models](models.md) |
 | Observability | [Tracing](tracing.md) · [Logging](logging.md) |
+| Orchestration | [Background tasks](tasks.md) |
 | Examples | [Examples](examples.md) |
 | API index | [Feature reference](features.md) — every capability mapped to its API |
 | Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |
