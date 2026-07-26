@@ -1,5 +1,14 @@
 # Configuring the SDK
 
+Everything the SDK reads is passed in. There is no global registry, no init
+hook and no ambient default — a run is configured by the `RunOptions` you hand
+it and the agent it is given, which is what makes two differently-configured
+runs safe to execute concurrently in one process.
+
+This page covers the knobs that are not about a single capability: API keys and
+clients, logging, and the environment variables that exist. For a capability's
+own options see its page.
+
 ## API keys and clients
 
 The SDK never reads global state behind your back: model access is configured per run via a `ModelProvider` (or per agent via `ModelImpl`).

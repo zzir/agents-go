@@ -1,12 +1,22 @@
 # Tools
 
-Tools let agents take actions. The Go SDK currently supports three kinds of tools:
+Tools let agents take actions. They come from three places:
 
 - **Function tools**: any typed Go function, with the JSON schema reflected from its argument struct
 - **Agents as tools**: a whole agent exposed as a callable tool ([Agent orchestration](multi_agent.md))
 - **MCP tools**: tools served by a Model Context Protocol server ([MCP](mcp.md))
 
-Hosted OpenAI tools (web search, file search, code interpreter, computer use) are **not supported yet** — see [Differences from Python](migration_from_python.md).
+All three end up as the same thing — a locally executed `FunctionTool`. The
+`Tool` interface is **sealed**, so there is exactly one execution path to reason
+about, and a tool cannot quietly mean "the provider runs this".
+
+That is also why hosted OpenAI tools (web search, file search, code
+interpreter, computer use) are **not modeled, and will not be** — a hosted tool
+binds the agent to one backend. Where the capability matters, the SDK gives you
+a local equivalent you own: `apply_patch` and shell access run through the
+[Sandbox](sandbox.md) abstraction rather than a provider's. See
+[spec.md §1.2](spec.md#12-non-goals) for the decision and
+[Differences from Python](migration_from_python.md) for the full list.
 
 ## Function tools
 
