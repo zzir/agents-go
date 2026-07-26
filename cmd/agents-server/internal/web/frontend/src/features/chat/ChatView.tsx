@@ -6,7 +6,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart } from '@/lib/timeline';
+import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type TimelineEntry } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
 import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
@@ -31,6 +31,11 @@ interface ChatMessage {
   content?: string;
   messageId?: string;
   parts?: TurnPart[];
+  // Present on a compaction checkpoint: the entries it folded away, and the
+  // context size on either side of the pass.
+  folded?: TimelineEntry[];
+  tokensBefore?: number;
+  tokensAfter?: number;
 }
 
 // Stable React key for a rendered message: prefer the durable store id, then
@@ -650,10 +655,64 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
   );
 });
 
-const CompactionCard = memo(function CompactionCard({ content }: { content: string }) {
+// compactTokens renders an estimate the way an estimate should read: two
+// significant figures and a k, never a precise-looking count. CharEstimator is
+// a character ratio, not a tokenizer.
+function compactTokens(n: number): string {
+  return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
+}
+
+// FoldedHistory renders what a checkpoint stands in for: the real entries,
+// read-only. No approve, regenerate or fork — this is the archive of a turn
+// the model no longer reads, and offering to act on it would be offering to
+// act on something that is no longer in the conversation.
+const FoldedHistory = memo(function FoldedHistory({ entries }: { entries: TimelineEntry[] }) {
+  return (
+    <div className="compaction-folded">
+      {entries.map((m, i) => {
+        if (m.role === 'turn') {
+          return <FoldedTurn key={entryKey(m, i, 'folded-turn')} parts={m.parts || []} />;
+        }
+        if (m.role === 'compaction') {
+          // An earlier checkpoint that a later pass folded in turn.
+          return <CompactionCard key={entryKey(m, i, 'folded-compaction')} {...m} />;
+        }
+        return <MessageBubble key={entryKey(m, i, 'folded-msg')} role={m.role} content={m.content || ''} />;
+      })}
+    </div>
+  );
+});
+
+const FoldedTurn = memo(function FoldedTurn({ parts }: { parts: TurnPart[] }) {
+  const text = parts.filter(p => p.type === 'text').map(p => (p as { content: string }).content).join('\n\n');
+  const html = useAsyncMarkdown(text);
+  const tools = parts.flatMap(p => (p.type === 'tools' ? (p as { toolCalls: Array<{ tool_call_id: string; tool_name: string }> }).toolCalls : []));
+  return (
+    <div className="compaction-folded-turn">
+      {tools.length > 0 && (
+        <div className="compaction-folded-tools">
+          {tools.map(tc => <Label key={tc.tool_call_id} variant="secondary">{tc.tool_name}</Label>)}
+        </div>
+      )}
+      {text && <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />}
+    </div>
+  );
+});
+
+interface CompactionCardProps {
+  content?: string;
+  folded?: TimelineEntry[];
+  tokensBefore?: number;
+  tokensAfter?: number;
+}
+
+const CompactionCard = memo(function CompactionCard(
+  { content, folded = [], tokensBefore, tokensAfter }: CompactionCardProps,
+) {
   const [expanded, setExpanded] = useState(false);
-  const summaryText = content.replace(/^\[Conversation Summary\]\s*/, '');
+  const summaryText = (content || '').replace(/^\[Conversation Summary\]\s*/, '');
   const summaryHtml = useAsyncMarkdown(expanded ? summaryText : '');
+  const shrank = tokensBefore && tokensAfter && tokensBefore > tokensAfter;
 
   return (
     <div className="compaction-card">
@@ -663,10 +722,22 @@ const CompactionCard = memo(function CompactionCard({ content }: { content: stri
       >
         <ChevronRightIcon size={16} className="process-icon" />
         <span>Compaction</span>
-        <Label variant="attention" className="process-status">summarized</Label>
+        {folded.length > 0 && (
+          <Label variant="attention" className="process-status">
+            {folded.length} folded
+          </Label>
+        )}
+        {shrank && (
+          <span className="compaction-card-savings">
+            ~{compactTokens(tokensBefore)} → ~{compactTokens(tokensAfter)} tokens
+          </span>
+        )}
       </div>
       {expanded && (
-        <div className="compaction-card-body markdown-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
+        <div className="compaction-card-body">
+          {summaryText && <div className="markdown-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />}
+          {folded.length > 0 && <FoldedHistory entries={folded} />}
+        </div>
       )}
     </div>
   );
@@ -1278,7 +1349,7 @@ export function ChatView({
               );
             }
             if (m.role === 'compaction') {
-              return <CompactionCard key={entryKey(m, i, 'compaction')} content={m.content || ''} />;
+              return <CompactionCard key={entryKey(m, i, 'compaction')} {...m} />;
             }
             return <MessageBubble key={entryKey(m, i, 'msg')} role={m.role} content={m.content || ''} />;
           })}

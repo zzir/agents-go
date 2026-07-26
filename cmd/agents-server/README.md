@@ -766,7 +766,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     UI can still show what was folded, and appends a compaction CHECKPOINT
     whose payload carries the retained tail — which is why the model sees
     `[summary, kept…]` by construction rather than because the reader hoists a
-    row to the front.
+    row to the front. The checkpoint also names what it folded
+    (`compaction.excluded_ids`), and the timeline moves those entries INSIDE
+    it: a reader scrolling back sees one "~12k → ~3k tokens" marker, not the
+    folded turns rendered as though the model still reads them. They stay real
+    and one expand away — an entry marked compacted that no checkpoint names
+    renders in place, because history is not what compaction deletes.
 23. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided

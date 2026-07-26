@@ -304,7 +304,22 @@ type EntryView struct {
 	Usage       *agents.RequestUsage `json:"usage,omitempty"`
 	Diagnostics []agents.Diagnostic  `json:"diagnostics,omitempty"`
 	Compacted   bool                 `json:"compacted,omitempty"`
-	CreatedAt   time.Time            `json:"created_at"`
+	// Compaction is present on a checkpoint: what the pass folded away, so a
+	// reader can collapse those entries under it and offer them back.
+	Compaction *CompactionInfo `json:"compaction,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+// CompactionInfo is a checkpoint's payload minus the retained tail, which is
+// already in the session as ordinary entries — shipping it twice would double
+// every kept turn in the client's timeline.
+type CompactionInfo struct {
+	// ExcludedIDs are the entries this checkpoint folded away. They are still
+	// in the session, marked compacted; this is what lets a reader collapse
+	// them under the checkpoint instead of leaving them loose in the history.
+	ExcludedIDs  []string `json:"excluded_ids,omitempty"`
+	TokensBefore int      `json:"tokens_before,omitempty"`
+	TokensAfter  int      `json:"tokens_after,omitempty"`
 }
 
 // GetEntries returns a page of a session's entries, oldest first.
@@ -353,6 +368,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, sessionID string, beforeID 
 			Usage:       e.Usage,
 			Diagnostics: e.Diagnostics,
 			Compacted:   row.Compacted,
+			Compaction:  compactionInfoOf(e),
 			CreatedAt:   e.CreatedAt,
 		})
 	}
@@ -413,6 +429,25 @@ func contentOf(e agents.SessionEntry) string {
 		return ""
 	}
 	return itemTextJSON(e.Item)
+}
+
+// compactionInfoOf reports what a checkpoint folded away, or nil for any other
+// entry. The retained tail is deliberately not carried over: those entries are
+// already in the session, and shipping them inside the checkpoint too would
+// show every kept turn twice.
+func compactionInfoOf(e agents.SessionEntry) *CompactionInfo {
+	if e.Kind != agents.EntryKindCompaction {
+		return nil
+	}
+	p, err := e.CompactionPayload()
+	if err != nil {
+		return nil
+	}
+	return &CompactionInfo{
+		ExcludedIDs:  p.ExcludedIDs,
+		TokensBefore: p.TokensBefore,
+		TokensAfter:  p.TokensAfter,
+	}
 }
 
 // AppendCallDisplayUpdate records an amendment to the display of whichever

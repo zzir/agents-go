@@ -50,6 +50,14 @@ interface EntryView {
   content?: string;
   display?: ItemDisplay;
   compacted?: boolean;
+  compaction?: CompactionInfo;
+}
+
+// CompactionInfo is present on a checkpoint entry: what the pass folded away.
+interface CompactionInfo {
+  excluded_ids?: string[];
+  tokens_before?: number;
+  tokens_after?: number;
 }
 
 export function formatDuration(ms: number): string {
@@ -150,6 +158,13 @@ interface CompactionEntry {
   role: 'compaction';
   content: string;
   messageId: number | undefined;
+  // folded are the entries this checkpoint stands in for, rendered inside it
+  // rather than loose in the history. They are still the real entries — a
+  // compaction soft-deletes from the MODEL's context, not from what happened —
+  // so collapsing them is a display choice the reader can undo.
+  folded?: TimelineEntry[];
+  tokensBefore?: number;
+  tokensAfter?: number;
 }
 
 type TimelineEntry = UserEntry | SystemEntry | TurnEntry | CompactionEntry;
@@ -172,7 +187,7 @@ interface ToolCallPatch {
   renderer?: string;
 }
 
-export type { EntryView, ItemDisplay, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
+export type { EntryView, ItemDisplay, CompactionInfo, CompactionEntry, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
 export { DISPLAY };
 
 // buildTimeline folds a session's entries into the rendered timeline.
@@ -181,8 +196,38 @@ export { DISPLAY };
 // role string the server invented per row. That is the whole point of the entry
 // model: the runner knew this was a tool call when it made one, and the reader
 // should not be re-deducing it from a projection.
+//
+// Entries a compaction checkpoint folded away are moved INSIDE that checkpoint
+// rather than left loose in the history: a reader scrolling back should see
+// "12k tokens became 3k here" as one marker, not the folded turns rendered as
+// though the model still reads them. They stay real and expandable — compaction
+// soft-deletes from the model's context, never from what happened.
 export function buildTimeline(entries: EntryView[] | null | undefined): TimelineEntry[] {
   if (!entries) return [];
+
+  // Which checkpoint folded each entry. A checkpoint is appended AFTER what it
+  // folds, so this needs its own pass. A later checkpoint wins when two name
+  // the same entry, which is what puts a re-compacted range under the newest
+  // marker (and the older checkpoint itself under it too).
+  const foldedBy = new Map<string, string>();
+  for (const e of entries) {
+    if (e.kind !== 'compaction' || !e.entry_id) continue;
+    for (const id of e.compaction?.excluded_ids || []) foldedBy.set(id, e.entry_id);
+  }
+  if (foldedBy.size === 0) return assemble(entries, null);
+
+  const buckets = new Map<string, EntryView[]>();
+  const main: EntryView[] = [];
+  for (const e of entries) {
+    const owner = e.entry_id ? foldedBy.get(e.entry_id) : undefined;
+    if (!owner) { main.push(e); continue; }
+    const bucket = buckets.get(owner);
+    if (bucket) bucket.push(e); else buckets.set(owner, [e]);
+  }
+  return assemble(main, buckets);
+}
+
+function assemble(entries: EntryView[], buckets: Map<string, EntryView[]> | null): TimelineEntry[] {
   const timeline: TimelineEntry[] = [];
   const pendingTC: Record<string, ToolCall> = {};
   let turn: TurnEntry | null = null;
@@ -202,12 +247,20 @@ export function buildTimeline(entries: EntryView[] | null | undefined): Timeline
     // A compaction checkpoint: what the pass folded away, standing in for it.
     if (e.kind === 'compaction') {
       finishTurn();
-      timeline.push({ role: 'compaction', content: e.content || '', messageId: e.id });
+      const inner = (buckets && e.entry_id) ? buckets.get(e.entry_id) : undefined;
+      timeline.push({
+        role: 'compaction',
+        content: e.content || '',
+        messageId: e.id,
+        folded: inner ? assemble(inner, buckets) : undefined,
+        tokensBefore: e.compaction?.tokens_before,
+        tokensAfter: e.compaction?.tokens_after,
+      });
       continue;
     }
-    // Compacted entries render exactly like live ones: compaction soft-deletes
-    // only the model's replay context, never the visible history. Dropping them
-    // here made whole runs vanish after a compaction.
+    // An entry marked compacted but named by no checkpoint still renders in
+    // place: it is history, and the model no longer reading it is not a reason
+    // to hide it. Dropping these outright made whole runs vanish.
     if (e.role === 'user') {
       finishTurn();
       if (e.content) timeline.push({ role: 'user', content: e.content, messageId: e.id, runId: e.run_id });

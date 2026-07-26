@@ -200,6 +200,51 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	}
 }
 
+// A checkpoint has to say what it folded, or the UI cannot offer it back — the
+// entries are still in the session, and nothing else names them.
+func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewEntryStore(db, "s1")
+
+	seed(t, s, userEntry(t, "old question"))
+	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+		Summary:      "summary",
+		ExcludedIDs:  []string{"s1-e1"},
+		TokensBefore: 12400,
+		TokensAfter:  3100,
+	}, nil)
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	seed(t, s, cp)
+
+	views, err := s.GetEntries(ctx, "s1", 0, 0)
+	if err != nil {
+		t.Fatalf("get entries: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(views))
+	}
+	if views[0].Compaction != nil {
+		t.Errorf("a plain item reported compaction info: %+v", views[0].Compaction)
+	}
+	got := views[1].Compaction
+	if got == nil {
+		t.Fatal("checkpoint reported no compaction info")
+	}
+	if len(got.ExcludedIDs) != 1 || got.ExcludedIDs[0] != "s1-e1" {
+		t.Errorf("excluded ids = %v, want [s1-e1]", got.ExcludedIDs)
+	}
+	if got.TokensBefore != 12400 || got.TokensAfter != 3100 {
+		t.Errorf("token estimates = %d → %d, want 12400 → 3100", got.TokensBefore, got.TokensAfter)
+	}
+	// The summary is readable without decoding the payload a second time.
+	if views[1].Content != "summary" {
+		t.Errorf("checkpoint content = %q, want the summary", views[1].Content)
+	}
+}
+
 func mustItem(t *testing.T, raw string) agents.TResponseInputItem {
 	t.Helper()
 	item, err := agents.UnmarshalInputItem([]byte(raw))

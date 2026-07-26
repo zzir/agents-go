@@ -853,10 +853,31 @@ components:
         compaction_window:
           type: integer
       type: object
+    store.CompactionInfo:
+      description: |-
+        Compaction is present on a checkpoint: what the pass folded away, so a
+        reader can collapse those entries under it and offer them back.
+      properties:
+        excluded_ids:
+          description: |-
+            ExcludedIDs are the entries this checkpoint folded away. They are still
+            in the session, marked compacted; this is what lets a reader collapse
+            them under the checkpoint instead of leaving them loose in the history.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        tokens_after:
+          type: integer
+        tokens_before:
+          type: integer
+      type: object
     store.EntryView:
       properties:
         compacted:
           type: boolean
+        compaction:
+          $ref: '#/components/schemas/store.CompactionInfo'
         content:
           description: Content is the readable text, for a renderer that wants one
             string.

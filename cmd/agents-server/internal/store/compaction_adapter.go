@@ -193,9 +193,12 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	if err != nil {
 		return fmt.Errorf("compaction adapter: encoding retained tail: %w", err)
 	}
+	before, after := estimateFold(active, toCompact, summaryText)
 	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{
-		Summary:     agents.SummaryMarker + "\n\n" + summaryText,
-		ExcludedIDs: excluded,
+		Summary:      agents.SummaryMarker + "\n\n" + summaryText,
+		ExcludedIDs:  excluded,
+		TokensBefore: before,
+		TokensAfter:  after,
 	}, retained)
 	if err != nil {
 		return fmt.Errorf("compaction adapter: encoding summary: %w", err)
@@ -220,6 +223,32 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		ca.notify.OnDone(beforeCount, afterCount)
 	}
 	return nil
+}
+
+// estimateFold sizes the context on either side of the pass, so the checkpoint
+// can report what compaction bought without the reader recomputing it.
+//
+// Estimates by construction — CharEstimator is a character ratio, not a
+// tokenizer. The point is to say "12k became 3k", not to predict a bill.
+func estimateFold(active, folded []entryRow, summaryText string) (before, after int) {
+	est := compaction.CharEstimator{}
+	sizeOf := func(row entryRow) int {
+		var e agents.SessionEntry
+		if json.Unmarshal([]byte(row.Entry), &e) != nil {
+			return 0
+		}
+		return est.Estimate(e)
+	}
+	for i := range active {
+		before += sizeOf(active[i])
+	}
+	after = before
+	for i := range folded {
+		after -= sizeOf(folded[i])
+	}
+	// The summary replaces what it folded, so it counts toward the new size.
+	after += len(summaryText) / 4
+	return before, after
 }
 
 // retainedItems projects the entries kept after the split into the items the
