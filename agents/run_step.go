@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -774,9 +775,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 			if decision, decided := store.decisionFor(run.Call.Name, run.Call.CallID); decided {
 				if !decision.approved {
 					msg := decision.message
-					if msg == "" {
-						msg = DefaultRejectionMessage
-					}
+					msg = cmp.Or(msg, DefaultRejectionMessage)
 					rejected = append(rejected, rejectResult(run, msg))
 				} else {
 					toRun = append(toRun, run)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -86,9 +87,7 @@ func (f *fakeResponses) response(req responsesRequest, callTool bool, turn int) 
 		})
 	}
 	model := req.Model
-	if model == "" {
-		model = "gpt-4o"
-	}
+	model = cmp.Or(model, "gpt-4o")
 	return map[string]any{
 		"id":         fmt.Sprintf("resp_%d", turn),
 		"object":     "response",

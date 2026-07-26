@@ -16,6 +16,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -63,9 +64,7 @@ func main() {
 
 		// "What is this agent called?"
 		Resolver: tasks.AgentResolverFunc(func(_ context.Context, _, name string) (tasks.Spec, error) {
-			if name == "" {
-				name = "researcher"
-			}
+			name = cmp.Or(name, "researcher")
 			if _, ok := catalog[name]; !ok {
 				return tasks.Spec{}, fmt.Errorf("no agent named %q", name)
 			}

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"strconv"
 	"strings"
 
@@ -58,13 +59,9 @@ type NestHistoryOptions struct {
 // alter what is saved to the session.
 func NestHandoffHistory(opts NestHistoryOptions) func(HandoffInputData) HandoffInputData {
 	start := opts.StartMarker
-	if start == "" {
-		start = defaultHistoryStartMarker
-	}
+	start = cmp.Or(start, defaultHistoryStartMarker)
 	end := opts.EndMarker
-	if end == "" {
-		end = defaultHistoryEndMarker
-	}
+	end = cmp.Or(end, defaultHistoryEndMarker)
 	mapper := opts.Mapper
 	if mapper == nil {
 		mapper = func(transcript []TResponseInputItem) []TResponseInputItem {

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -136,9 +137,7 @@ func RecoverSession(ctx context.Context, sess *Session, policy RecoveryPolicy) (
 // blank result, which it would otherwise read as "the tool returned nothing".
 func defaultRecoveryMessage(toolName, _ string) string {
 	name := toolName
-	if name == "" {
-		name = "the tool"
-	}
+	name = cmp.Or(name, "the tool")
 	return fmt.Sprintf("The run was interrupted while %s was executing, so its result was never "+
 		"recorded. It may or may not have completed. Do not assume it succeeded; check or retry "+
 		"if the outcome matters.", name)

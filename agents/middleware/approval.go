@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -111,9 +112,7 @@ func (a Approval) decide(ctx context.Context, res *agents.RunResult) bool {
 		case Allow:
 			res.State.Approve(item, false)
 		case Deny:
-			if msg == "" {
-				msg = "This tool call was rejected by policy."
-			}
+			msg = cmp.Or(msg, "This tool call was rejected by policy.")
 			res.State.Reject(item, false, msg)
 		default:
 			settled = false

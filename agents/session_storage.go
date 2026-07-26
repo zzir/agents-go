@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sync"
@@ -237,9 +238,7 @@ func PrepareAppend(entries []SessionEntry, prevLeaf string, nextSeq int64, idFor
 		if e.CreatedAt.IsZero() {
 			e.CreatedAt = time.Now().UTC()
 		}
-		if e.Kind == "" {
-			e.Kind = EntryKindItem
-		}
+		e.Kind = cmp.Or(e.Kind, EntryKindItem)
 		if e.Kind == EntryKindLeaf {
 			// A leaf move is a marker, not a node: it has no parent, and it
 			// moves the tip to its target rather than extending the branch.
@@ -249,9 +248,7 @@ func PrepareAppend(entries []SessionEntry, prevLeaf string, nextSeq int64, idFor
 			out = append(out, e)
 			continue
 		}
-		if e.ParentID == "" {
-			e.ParentID = parent
-		}
+		e.ParentID = cmp.Or(e.ParentID, parent)
 		parent = e.ID
 		out = append(out, e)
 	}

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -92,9 +93,7 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 		return
 	}
 	modelName := req.Model
-	if modelName == "" {
-		modelName = built.Agent.Model
-	}
+	modelName = cmp.Or(modelName, built.Agent.Model)
 	model, err := built.Provider.GetModel(modelName)
 	if err != nil || model == nil {
 		badRequest(c, "resolving model: "+errString(err))

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -136,9 +137,7 @@ func ListFilesTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
 			defer cancel()
 			dir := args.Path
-			if dir == "" {
-				dir = "."
-			}
+			dir = cmp.Or(dir, ".")
 			entries, err := sb.ListDir(ctx, dir)
 			if err != nil {
 				return fileToolError("list", dir, err), nil

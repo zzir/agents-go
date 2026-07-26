@@ -14,6 +14,7 @@ package docker
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -647,9 +648,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 //   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
 func exclusiveCreateScripts(cleanPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
 	dir := path.Dir(cleanPath)
-	if dir == "" {
-		dir = "."
-	}
+	dir = cmp.Or(dir, ".")
 	target := shellQuote("./" + cleanPath)
 	dirQ := shellQuote("./" + dir)
 	tmpQ := shellQuote("./" + tmpPath)
@@ -701,9 +700,7 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		}
 		b64 := base64.StdEncoding.EncodeToString(content)
 		dir := path.Dir(cleanPath)
-		if dir == "" {
-			dir = "."
-		}
+		dir = cmp.Or(dir, ".")
 		buf := make([]byte, 8)
 		if _, err := rand.Read(buf); err != nil {
 			return err

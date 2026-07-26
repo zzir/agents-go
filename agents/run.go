@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -412,9 +413,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		r.trace = opts.parentTrace
 	} else if opts.Observe.Tracer != nil {
 		workflow := agent.Name
-		if workflow == "" {
-			workflow = "Agent workflow"
-		}
+		workflow = cmp.Or(workflow, "Agent workflow")
 		var topts []tracing.TraceOption
 		if opts.Observe.TraceGroupID != "" {
 			topts = append(topts, tracing.WithGroupID(opts.Observe.TraceGroupID))

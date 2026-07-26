@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -52,9 +53,7 @@ func NewCompactionAdapter(
 	if windowSize <= 0 {
 		windowSize = 10
 	}
-	if summaryPrompt == "" {
-		summaryPrompt = agents.DefaultSummaryPrompt
-	}
+	summaryPrompt = cmp.Or(summaryPrompt, agents.DefaultSummaryPrompt)
 	return &CompactionAdapter{
 		SessionAdapter: sa,
 		summaryModel:   summaryModel,

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -289,9 +290,7 @@ type StaleApprovalStateError struct {
 
 func (e *StaleApprovalStateError) Error() string {
 	have := e.HaveVersion
-	if have == "" {
-		have = "unknown"
-	}
+	have = cmp.Or(have, "unknown")
 	return fmt.Sprintf("paused run %s predates the current server version (state schema %s, want %s) and cannot be resumed — re-initiate the run",
 		e.RunID, have, e.WantVersion)
 }

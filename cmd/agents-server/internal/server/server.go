@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"crypto/subtle"
 	"io"
@@ -87,9 +88,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 			return
 		}
 		p := c.Request.URL.Path[1:]
-		if p == "" {
-			p = "index.html"
-		}
+		p = cmp.Or(p, "index.html")
 		if serveAsset(c, staticFS, httpFS, p) {
 			return
 		}
@@ -110,9 +109,7 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 	}
 	if data, err := fs.ReadFile(sfs, p+".gz"); err == nil {
 		ct := mime.TypeByExtension(path.Ext(p))
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
+		ct = cmp.Or(ct, "application/octet-stream")
 		if strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
 			c.Header("Content-Encoding", "gzip")
 			c.Header("Vary", "Accept-Encoding")

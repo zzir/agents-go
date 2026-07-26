@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,12 +22,8 @@ type ServeOptions struct {
 }
 
 func (o ServeOptions) withDefaults() ServeOptions {
-	if o.Name == "" {
-		o.Name = "agents-go"
-	}
-	if o.Version == "" {
-		o.Version = "0.1.0"
-	}
+	o.Name = cmp.Or(o.Name, "agents-go")
+	o.Version = cmp.Or(o.Version, "0.1.0")
 	return o
 }
 

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -79,9 +80,7 @@ func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agent
 		return agents.NewSession(sa)
 	}
 	modelName := built.CompactionModel
-	if modelName == "" {
-		modelName = built.Agent.Model
-	}
+	modelName = cmp.Or(modelName, built.Agent.Model)
 	summaryModel, err := provider.GetModel(modelName)
 	if err != nil || summaryModel == nil {
 		return agents.NewSession(sa)

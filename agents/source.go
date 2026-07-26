@@ -1,5 +1,7 @@
 package agents
 
+import "cmp"
+
 // SourceType says who produced an item. The zero value is the model, which is
 // where most items come from.
 //
@@ -46,9 +48,7 @@ func (s Source) IsExternal() bool {
 // String renders the source for logs and traces.
 func (s Source) String() string {
 	t := string(s.Type)
-	if t == "" {
-		t = "model"
-	}
+	t = cmp.Or(t, "model")
 	if s.ID == "" {
 		return t
 	}

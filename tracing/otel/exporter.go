@@ -29,6 +29,7 @@
 package otel
 
 import (
+	"cmp"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -99,12 +100,8 @@ func NewExporter(opts Options) (*Exporter, error) {
 	if opts.IDGenerator == nil {
 		return nil, errors.New("otel: Options.IDGenerator is required and must be the one given to TracerProvider")
 	}
-	if opts.ProviderName == "" {
-		opts.ProviderName = "openai"
-	}
-	if opts.ScopeName == "" {
-		opts.ScopeName = defaultScopeName
-	}
+	opts.ProviderName = cmp.Or(opts.ProviderName, "openai")
+	opts.ScopeName = cmp.Or(opts.ScopeName, defaultScopeName)
 	return &Exporter{
 		tp:       opts.TracerProvider,
 		idGen:    opts.IDGenerator,
@@ -308,9 +305,7 @@ func describe(s *tracing.Span, provider string) (string, []attribute.KeyValue) {
 		}
 	}
 	name := s.Name
-	if name == "" {
-		name = "span"
-	}
+	name = cmp.Or(name, "span")
 	return name, attrs
 }
 

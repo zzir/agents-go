@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -161,9 +162,7 @@ func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
 // "{}").
 func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst any) error {
 	trimmed := strings.TrimSpace(argsJSON)
-	if trimmed == "" {
-		trimmed = "{}"
-	}
+	trimmed = cmp.Or(trimmed, "{}")
 	var parsed any
 	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
 		return &toolArgumentsJSONError{

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -55,9 +56,7 @@ type CodeToolConfig struct {
 const defaultMaxTimeout = 10 * time.Minute
 
 func (c CodeToolConfig) withDefaults() CodeToolConfig {
-	if c.Name == "" {
-		c.Name = "exec_command"
-	}
+	c.Name = cmp.Or(c.Name, "exec_command")
 	if c.Description == "" {
 		c.Description = "Execute a shell command in a sandboxed environment and return its stdout, stderr and exit code. " +
 			"The command is run via bash -c. " +

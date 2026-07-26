@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -459,9 +460,7 @@ func refreshToken(ctx context.Context, client *http.Client, refresh string) (*ch
 		IDToken:      result.IDToken,
 		RefreshToken: result.RefreshToken,
 	}
-	if tok.RefreshToken == "" {
-		tok.RefreshToken = refresh
-	}
+	tok.RefreshToken = cmp.Or(tok.RefreshToken, refresh)
 	if result.ExpiresIn > 0 {
 		tok.ExpiresAt = time.Now().Unix() + result.ExpiresIn
 	}

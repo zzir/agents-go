@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -246,9 +247,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		r.trace = opts.parentTrace
 	} else if opts.Observe.Tracer != nil {
 		workflow := state.CurrentAgent.Name
-		if workflow == "" {
-			workflow = "Agent workflow"
-		}
+		workflow = cmp.Or(workflow, "Agent workflow")
 		r.trace = opts.Observe.Tracer.StartTrace(workflow + " (resumed)")
 		defer r.trace.Finish()
 	}

@@ -8,6 +8,7 @@
 package bravesearch
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,9 +74,7 @@ func New(opts Options) (*agents.FunctionTool, error) {
 	}
 
 	endpoint := opts.Endpoint
-	if endpoint == "" {
-		endpoint = defaultEndpoint
-	}
+	endpoint = cmp.Or(endpoint, defaultEndpoint)
 
 	client := opts.HTTPClient
 	if client == nil {

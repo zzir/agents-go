@@ -147,13 +147,9 @@ func newServer(name string, opts Options) *Server {
 
 func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
 	name := s.opts.ClientName
-	if name == "" {
-		name = "agents-go"
-	}
+	name = cmp.Or(name, "agents-go")
 	version := s.opts.ClientVersion
-	if version == "" {
-		version = "0.1.0"
-	}
+	version = cmp.Or(version, "0.1.0")
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, &mcpsdk.ClientOptions{
 		// Drop the cached tool list when the server announces a change
 		// (notifications/tools/list_changed), so CacheToolsList can never serve
@@ -695,9 +691,7 @@ func shortenToolName(base, seed string, forceHash bool) string {
 		stem = stem[:stemLen]
 	}
 	stem = strings.TrimRight(stem, "_-")
-	if stem == "" {
-		stem = "mcp"
-	}
+	stem = cmp.Or(stem, "mcp")
 	return stem + suffix
 }
 

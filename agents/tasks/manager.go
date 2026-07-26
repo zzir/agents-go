@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -418,9 +419,7 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	// a completion would tell the user their stop did nothing.
 	if status == StatusCompleted && out.GracefulStop {
 		status = StatusCancelled
-		if summary == "" {
-			summary = "stopped after the current turn"
-		}
+		summary = cmp.Or(summary, "stopped after the current turn")
 	}
 
 	if status == StatusInputRequired {

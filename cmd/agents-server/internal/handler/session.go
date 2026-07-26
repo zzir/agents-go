@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -84,9 +85,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if req.Name == "" {
-		req.Name = "New Chat"
-	}
+	req.Name = cmp.Or(req.Name, "New Chat")
 	ctx := c.Request.Context()
 	if req.AgentConfigID != "" {
 		if _, err := h.agents.Get(ctx, req.AgentConfigID); err != nil {
@@ -236,9 +235,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	}
 
 	label := req.Label
-	if label == "" {
-		label = "fork"
-	}
+	label = cmp.Or(label, "fork")
 	var upTo int64
 	if req.MessageID != nil {
 		upTo = *req.MessageID
