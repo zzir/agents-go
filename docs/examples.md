@@ -19,6 +19,11 @@ go run ./examples/hello
 | [`examples/tracing`](../examples/tracing/main.go) | The tracing pipeline: tracer → batch processor → console exporter, plus `TraceGroupID`/`TraceMetadata` |
 | [`examples/fallback`](../examples/fallback/main.go) | Retry + fallback model decorators, with `WithShouldFallback` classification |
 | [`examples/compaction`](../examples/compaction/main.go) | `openai.CompactionSession`: server-side history compaction via `responses.compact` |
+| [`examples/toolstream`](../examples/toolstream/main.go) | `ToolContext.Emit`: a running tool's progress on the stream, and why it is not the answer |
+| [`examples/steering`](../examples/steering/main.go) | `RunControl`'s three queues: steer, next-turn, follow-up |
+| [`examples/branching`](../examples/branching/main.go) | A session is a tree: branch from an earlier point without deleting the attempt |
+| [`examples/projector`](../examples/projector/main.go) | `EntryProjector`: deciding what the model gets to read |
+| [`examples/mcpserver`](../examples/mcpserver/main.go) | Serving SDK tools over MCP to an editor or another agent |
 | [`examples/tasks`](../examples/tasks/main.go) | Background sub-agents: spawn, the wake-up debt, and the parent woken with the result |
 | [`examples/middleware`](../examples/middleware/main.go) | Run middleware: `Retry` + `Approval` policy + evaluator-driven `Loop`, stacked |
 | [`examples/runcompaction`](../examples/runcompaction/main.go) | Run-level compaction: a `compaction.Strategy` folding tool results mid-run, at the turn boundary |

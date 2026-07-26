@@ -185,6 +185,25 @@ func InputItemsFromText(text string) []TResponseInputItem {
 	}
 }
 
+// InputItemsFromAssistantText builds a single assistant message.
+//
+// It is for seeding history the SDK did not produce — importing a conversation
+// from elsewhere, or reconstructing one for a test. A run's own assistant turns
+// come from the model and arrive as items already.
+func InputItemsFromAssistantText(text string) []TResponseInputItem {
+	return []TResponseInputItem{
+		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleAssistant),
+	}
+}
+
+// ItemText returns an input item's readable text, or "" for an item that has
+// none (a tool call, a reasoning block).
+//
+// It exists because the Responses API accepts content as either a bare string
+// or an array of parts, and a consumer rendering history would otherwise have
+// to know that — and handle only the shape it happened to meet first.
+func ItemText(item TResponseInputItem) string { return inputItemText(item) }
+
 // InputItemsFromSystemText builds a single system message.
 //
 // It is what the runtime uses to say something itself — a compaction summary,
