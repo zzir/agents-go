@@ -20,7 +20,7 @@ const defaultApprovalTTLMinutes = 24 * 60
 // past the TTL. On expiry it drops the record and writes a session annotation
 // so the timeout is visible instead of silently vanishing. It runs at startup
 // and hourly until ctx ends — run it in a goroutine.
-func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, messages *store.MessageStore, tasks *store.TaskStore) {
+func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore) {
 	log := zerolog.Ctx(ctx)
 	reap := func() {
 		ttl := defaultApprovalTTLMinutes
@@ -39,7 +39,7 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 			return
 		}
 		for _, p := range expired {
-			_ = messages.AddAnnotation(ctx, p.SessionID, p.RunID, "error",
+			_ = entries.AppendAnnotation(ctx, p.SessionID, p.RunID,
 				"Tool approval timed out after "+strconv.Itoa(ttl)+" minutes; the run was terminated.")
 			// A background task's approval expiring must finalize the task row
 			// too — otherwise it is a zombie stuck at input_required that no

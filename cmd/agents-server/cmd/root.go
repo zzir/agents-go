@@ -84,7 +84,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	sessionStore := store.NewSessionStore(db)
-	messageStore := store.NewMessageStore(db)
+	entryStore := store.NewEntryStore(db, "")
 	traceStore := store.NewTraceStore(db)
 	agentConfigStore := store.NewAgentConfigStore(db)
 	mcpServerStore := store.NewMcpServerStore(db)
@@ -103,7 +103,7 @@ func run(_ *cobra.Command, _ []string) error {
 	defer mcpManager.CloseAll()
 	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
 	go bridge.RunTraceRetention(ctx, settingStore, traceStore)
-	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, messageStore, taskStore)
+	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, entryStore, taskStore)
 	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
@@ -133,7 +133,7 @@ func run(_ *cobra.Command, _ []string) error {
 	// and every owed parent is then drained.
 	go runner.DrainPendingTaskNotifications(ctx)
 
-	sessionHandler := handler.NewSessionHandler(sessionStore, messageStore, traceStore, agentConfigStore).WithRunStopper(runner)
+	sessionHandler := handler.NewSessionHandler(sessionStore, entryStore, traceStore, agentConfigStore).WithRunStopper(runner)
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver)
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)

@@ -24,15 +24,22 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 	return runner, db
 }
 
-func countRows(t *testing.T, db *bun.DB, sid, kind, role string) int {
+// countDisplays counts a session's entries of one kind whose display kind
+// matches — the entry-model equivalent of the old (kind, role) row count.
+func countDisplays(t *testing.T, db *bun.DB, sid string, kind agents.EntryKind, display string) int {
 	t.Helper()
-	n, err := db.NewSelect().Model((*store.Message)(nil)).
-		Where("session_id = ?", sid).
-		Where("kind = ?", kind).
-		Where("role = ?", role).
-		Count(context.Background())
+	entries, err := store.NewEntryStore(db, sid).AllEntries(context.Background())
 	if err != nil {
-		t.Fatalf("count rows: %v", err)
+		t.Fatalf("load entries: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Kind != kind {
+			continue
+		}
+		if display == "" || (e.Display != nil && e.Display.Kind == display) {
+			n++
+		}
 	}
 	return n
 }
@@ -44,22 +51,25 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 	sid, rid := store.NewID(), store.NewID()
 
 	// Simulate the SDK having persisted the user input for this run.
-	sa := store.NewSessionAdapter(db, sid)
-	sa.SetRunID(rid)
-	sa.SetModel("m")
-	userItem := store.NewItemMessageRaw(sid, rid, "m", []byte(`{"role":"user","content":"hello"}`))
-	if _, err := db.NewInsert().Model(&userItem).Exec(context.Background()); err != nil {
+	es := store.NewEntryStore(db, sid)
+	es.SetRunID(rid)
+	es.SetModel("m")
+	userItem, err := agents.NewItemEntry(agents.InputItemsFromText("hello")[0], agents.Source{Type: agents.SourceUser})
+	if err != nil {
+		t.Fatalf("build user item: %v", err)
+	}
+	if err := es.Append(context.Background(), userItem); err != nil {
 		t.Fatalf("seed user item: %v", err)
 	}
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
-	if got := countRows(t, db, sid, store.MessageKindAnnotation, "cancelled"); got != 1 {
+	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
-	// The prompt must not be re-inserted — still exactly one user item row.
-	if got := countRows(t, db, sid, store.MessageKindItem, "user"); got != 1 {
-		t.Errorf("user item rows = %d, want 1 (no duplicate)", got)
+	// The prompt must not be re-inserted — still exactly one user item entry.
+	if got := countDisplays(t, db, sid, agents.EntryKindItem, ""); got != 1 {
+		t.Errorf("user item entries = %d, want 1 (no duplicate)", got)
 	}
 }
 
@@ -72,17 +82,17 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "let me think about primes", "here is my parti", "", "")
 
-	if got := countRows(t, db, sid, store.MessageKindAnnotation, "reasoning"); got != 1 {
+	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayReasoning); got != 1 {
 		t.Errorf("reasoning annotations = %d, want 1", got)
 	}
-	if got := countRows(t, db, sid, store.MessageKindAnnotation, "assistant"); got != 1 {
+	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayMessage); got != 1 {
 		t.Errorf("partial-text annotations = %d, want 1", got)
 	}
-	if got := countRows(t, db, sid, store.MessageKindAnnotation, "cancelled"); got != 1 {
+	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 	// Display-only: none of these annotations may be replayed to the model.
-	items, err := agents.NewSession(store.NewSessionAdapter(db, sid)).ContextItems(context.Background(), agents.Cursor{})
+	items, err := agents.NewSession(store.NewEntryStore(db, sid)).ContextItems(context.Background(), agents.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -101,10 +111,10 @@ func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
-	if got := countRows(t, db, sid, store.MessageKindItem, "user"); got != 1 {
-		t.Errorf("user fallback rows = %d, want 1", got)
+	if got := countDisplays(t, db, sid, agents.EntryKindItem, ""); got != 1 {
+		t.Errorf("user fallback entries = %d, want 1", got)
 	}
-	if got := countRows(t, db, sid, store.MessageKindAnnotation, "cancelled"); got != 1 {
+	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 }

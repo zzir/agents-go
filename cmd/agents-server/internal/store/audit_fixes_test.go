@@ -2,206 +2,42 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
-	"sync"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/uptrace/bun"
+	"github.com/zzir/agents-go/agents"
 )
 
-// displayOf returns the decoded display projection of the tool_call row with
-// call_id "c1" (the call id used throughout these tests).
-func displayOf(t *testing.T, db *bun.DB, sessionID string) map[string]any {
-	t.Helper()
-	var rows []Message
-	if err := db.NewSelect().Model(&rows).
-		Where("session_id = ?", sessionID).
-		Where("role = ?", "tool_call").
-		OrderExpr("id DESC").
-		Scan(context.Background()); err != nil {
-		t.Fatalf("scan tool_call rows: %v", err)
-	}
-	for _, r := range rows {
-		var d map[string]any
-		if len(r.Display) == 0 || json.Unmarshal(r.Display, &d) != nil {
-			continue
-		}
-		if d["call_id"] == "c1" {
-			return d
-		}
-	}
-	t.Fatalf("no tool_call row with call_id %q", "c1")
-	return nil
-}
-
-// a late/reordered patch carrying a non-terminal status must never roll a
-// terminal card back.
-func TestPatchToolCallDisplayTerminalNotReverted(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	ms := NewMessageStore(db)
-	sid := NewID()
-
-	row := NewItemMessageRaw(sid, "r1", "m", []byte(`{"type":"function_call","call_id":"c1","name":"spawn_task","arguments":"{}"}`))
-	if _, err := db.NewInsert().Model(&row).Exec(ctx); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	if err := ms.PatchToolCallDisplay(ctx, sid, "c1", map[string]any{"task_id": "t1", "task_status": "completed", "task_summary": "done"}); err != nil {
-		t.Fatalf("terminal patch: %v", err)
-	}
-	// A stale patch describing the earlier input_required state arrives late.
-	if err := ms.PatchToolCallDisplay(ctx, sid, "c1", map[string]any{"task_status": "input_required"}); err != nil {
-		t.Fatalf("late patch: %v", err)
-	}
-	d := displayOf(t, db, sid)
-	if d["task_status"] != "completed" {
-		t.Fatalf("terminal card reverted: task_status = %v, want completed", d["task_status"])
-	}
-	if d["task_summary"] != "done" {
-		t.Fatalf("terminal summary lost: %v", d["task_summary"])
-	}
-
-	// A competing terminal (failed) must not override the first terminal either.
-	if err := ms.PatchToolCallDisplay(ctx, sid, "c1", map[string]any{"task_status": "failed"}); err != nil {
-		t.Fatalf("competing terminal patch: %v", err)
-	}
-	if got := displayOf(t, db, sid)["task_status"]; got != "completed" {
-		t.Fatalf("first terminal not sticky: %v", got)
-	}
-}
-
-// forward transitions (non-terminal → non-terminal → terminal) all apply.
-func TestPatchToolCallDisplayForwardTransitions(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	ms := NewMessageStore(db)
-	sid := NewID()
-
-	row := NewItemMessageRaw(sid, "r1", "m", []byte(`{"type":"function_call","call_id":"c1","name":"spawn_task","arguments":"{}"}`))
-	if _, err := db.NewInsert().Model(&row).Exec(ctx); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	for _, st := range []string{"working", "input_required", "completed"} {
-		if err := ms.PatchToolCallDisplay(ctx, sid, "c1", map[string]any{"task_status": st}); err != nil {
-			t.Fatalf("patch %s: %v", st, err)
-		}
-		if got := displayOf(t, db, sid)["task_status"]; got != st {
-			t.Fatalf("after patch %s, status = %v", st, got)
-		}
-	}
-}
-
-// under concurrent patches the terminal status wins regardless of
-// scheduling (and the read-merge-write races cleanly under -race).
-func TestPatchToolCallDisplayConcurrentTerminalWins(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	ms := NewMessageStore(db)
-	sid := NewID()
-
-	row := NewItemMessageRaw(sid, "r1", "m", []byte(`{"type":"function_call","call_id":"c1","name":"spawn_task","arguments":"{}"}`))
-	if _, err := db.NewInsert().Model(&row).Exec(ctx); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	statuses := []string{"working", "input_required", "working", "completed", "input_required", "working"}
-	var wg sync.WaitGroup
-	for _, st := range statuses {
-		wg.Add(1)
-		go func(status string) {
-			defer wg.Done()
-			if err := ms.PatchToolCallDisplay(ctx, sid, "c1", map[string]any{"task_status": status}); err != nil {
-				t.Errorf("patch %s: %v", status, err)
-			}
-		}(st)
-	}
-	wg.Wait()
-
-	if got := displayOf(t, db, sid)["task_status"]; got != "completed" {
-		t.Fatalf("concurrent patches did not converge on terminal: %v", got)
-	}
-}
-
-// a row whose item can't be deserialized must survive: the delete only
+// a row whose entry JSON can't be deserialized must survive: the delete only
 // commits after a successful decode, so a decode failure rolls back.
-func TestPopItemRollsBackOnUndecodableRow(t *testing.T) {
+func TestPopEntryRollsBackOnUndecodableRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	a := NewSessionAdapter(db, sid)
+	s := NewEntryStore(db, sid)
 
-	good := NewItemMessageRaw(sid, "r", "m", []byte(`{"role":"user","content":"keep me"}`))
-	// A newer row with non-empty but undecodable item JSON.
-	bad := Message{SessionID: sid, RunID: "r", Kind: MessageKindItem, Role: "user", Content: "x", Item: `{"type":`, CreatedAt: time.Now().UTC()}
-	if _, err := db.NewInsert().Model(&good).Exec(ctx); err != nil {
-		t.Fatalf("insert good: %v", err)
+	seed(t, s, userEntry(t, "keep me"))
+	// A newer row with non-empty but undecodable entry JSON.
+	bad := entryRow{
+		SessionID: sid, RunID: "r", EntryID: sid + "-e2",
+		Kind: string(agents.EntryKindItem), Entry: `{"kind":`, CreatedAt: time.Now().UTC(),
 	}
 	if _, err := db.NewInsert().Model(&bad).Exec(ctx); err != nil {
 		t.Fatalf("insert bad: %v", err)
 	}
 
-	if _, err := a.PopEntry(ctx); err == nil {
+	if _, err := s.PopEntry(ctx); err == nil {
 		t.Fatal("expected an error popping an undecodable row")
 	}
 	// Neither row was deleted — no silent data loss.
-	var remaining []Message
+	var remaining []entryRow
 	if err := db.NewSelect().Model(&remaining).Where("session_id = ?", sid).Scan(ctx); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	if len(remaining) != 2 {
 		t.Fatalf("rows = %d, want 2 (nothing lost on decode failure)", len(remaining))
-	}
-}
-
-// the filter matches GetItems: placeholder items ({} / null) are skipped,
-// never popped, so PopItem returns the real replayable item beneath them.
-func TestPopItemSkipsPlaceholderItems(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	sid := NewID()
-	a := NewSessionAdapter(db, sid)
-
-	good := NewItemMessageRaw(sid, "r", "m", []byte(`{"role":"user","content":"real"}`))
-	empty := Message{SessionID: sid, RunID: "r", Kind: MessageKindItem, Role: "user", Content: "", Item: `{}`, CreatedAt: time.Now().UTC()}
-	null := Message{SessionID: sid, RunID: "r", Kind: MessageKindItem, Role: "user", Content: "", Item: `null`, CreatedAt: time.Now().UTC()}
-	if _, err := db.NewInsert().Model(&good).Exec(ctx); err != nil {
-		t.Fatalf("insert good: %v", err)
-	}
-	// Newer placeholder rows that GetItems would skip.
-	if _, err := db.NewInsert().Model(&[]Message{empty, null}).Exec(ctx); err != nil {
-		t.Fatalf("insert placeholders: %v", err)
-	}
-
-	got, err := a.PopEntry(ctx)
-	if err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected the real item, got nil")
-	}
-	raw, err := json.Marshal(got.Item)
-	if err != nil {
-		t.Fatalf("marshal popped: %v", err)
-	}
-	if !strings.Contains(string(raw), "real") {
-		t.Fatalf("popped the wrong row: %s", raw)
-	}
-	// The placeholder rows are untouched; the real item is the only one removed.
-	var remaining []Message
-	if err := db.NewSelect().Model(&remaining).Where("session_id = ?", sid).Scan(ctx); err != nil {
-		t.Fatalf("scan: %v", err)
-	}
-	if len(remaining) != 2 {
-		t.Fatalf("remaining = %d, want 2 (both placeholders kept)", len(remaining))
-	}
-	for _, m := range remaining {
-		if m.Item != "{}" && m.Item != "null" {
-			t.Fatalf("PopItem deleted a placeholder instead of the real item: %+v", m)
-		}
 	}
 }
 
@@ -287,139 +123,139 @@ func TestAgentConfigDeleteNotFoundAndOtherEntities(t *testing.T) {
 	}
 }
 
-// persistCompaction must not insert an orphan summary when the messages it
-// planned to compact were deleted out from under it.
-func TestPersistCompactionSkipsWhenMessagesGone(t *testing.T) {
+// persistCompaction must not insert an orphan checkpoint when the entries it
+// planned to fold were deleted out from under it.
+func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessionID := NewID()
-	insertItemRows(t, db, sessionID, []string{userItemJSON, assistantItemJSON})
-	msgs := loadMessages(t, db, sessionID)
-	ids := []int64{msgs[0].ID, msgs[1].ID}
+	sa := NewEntryStore(db, sessionID)
+	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
+	rows := loadRows(t, db, sessionID)
+	ids := []int64{rows[0].ID, rows[1].ID}
 
-	summary, err := NewItemMessage(sessionID, "r1", "m", responsesSummaryItem(t, "sum"))
+	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum"}, nil)
 	if err != nil {
-		t.Fatalf("summary item: %v", err)
+		t.Fatalf("checkpoint: %v", err)
 	}
-	summary.Role = "compaction"
-	ca := NewCompactionAdapter(NewSessionAdapter(db, sessionID), &summaryFakeModel{}, 1, 1, "", CompactionNotifier{})
+	ca := NewCompactionAdapter(sa, &summaryFakeModel{}, 1, 1, "", CompactionNotifier{})
 
-	// Simulate a concurrent session delete: the target messages are gone.
-	if _, err := db.NewDelete().Model((*Message)(nil)).Where("session_id = ?", sessionID).Exec(ctx); err != nil {
-		t.Fatalf("delete messages: %v", err)
+	// Simulate a concurrent session delete: the target entries are gone.
+	if _, err := db.NewDelete().Model((*entryRow)(nil)).Where("session_id = ?", sessionID).Exec(ctx); err != nil {
+		t.Fatalf("delete entries: %v", err)
 	}
 
-	applied, err := ca.persistCompaction(ctx, ids, &summary)
+	applied, err := ca.persistCompaction(ctx, ids, summary)
 	if err != nil {
 		t.Fatalf("persistCompaction: %v", err)
 	}
 	if applied {
 		t.Fatal("compaction must not apply when target rows are gone")
 	}
-	if n := len(loadMessages(t, db, sessionID)); n != 0 {
-		t.Fatalf("orphan summary inserted into a vanished session: %d rows", n)
+	if n := len(loadRows(t, db, sessionID)); n != 0 {
+		t.Fatalf("orphan checkpoint inserted into a vanished session: %d rows", n)
 	}
 
-	// Positive control: with the rows present it applies and inserts the summary.
-	insertItemRows(t, db, sessionID, []string{userItemJSON, assistantItemJSON})
-	got := loadMessages(t, db, sessionID)
+	// Positive control: with the rows present it applies and appends the checkpoint.
+	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
+	got := loadRows(t, db, sessionID)
 	ids2 := []int64{got[0].ID, got[1].ID}
-	summary2, err := NewItemMessage(sessionID, "r1", "m", responsesSummaryItem(t, "sum2"))
+	summary2, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum2"}, nil)
 	if err != nil {
-		t.Fatalf("summary2 item: %v", err)
+		t.Fatalf("checkpoint 2: %v", err)
 	}
-	summary2.Role = "compaction"
-	applied, err = ca.persistCompaction(ctx, ids2, &summary2)
+	applied, err = ca.persistCompaction(ctx, ids2, summary2)
 	if err != nil {
 		t.Fatalf("persistCompaction (positive): %v", err)
 	}
 	if !applied {
 		t.Fatal("compaction should apply when target rows exist")
 	}
-	after := loadMessages(t, db, sessionID)
-	if len(after) != 3 {
-		t.Fatalf("want 3 rows (2 compacted + summary), got %d", len(after))
+	if after := loadRows(t, db, sessionID); len(after) != 3 {
+		t.Fatalf("want 3 rows (2 compacted + checkpoint), got %d", len(after))
 	}
 }
 
-// ForkMessages copies the source snapshot atomically, dedupes run ids, and
+// ForkSession copies the source snapshot atomically, dedupes run ids, and
 // leaves the source untouched.
-func TestForkMessagesCopiesSnapshot(t *testing.T) {
+func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	ms := NewMessageStore(db)
-
-	rows := []Message{
-		NewItemMessageRaw("src", "runA", "m", []byte(`{"role":"user","content":"1"}`)),
-		NewItemMessageRaw("src", "runA", "m", []byte(`{"role":"user","content":"2"}`)),
-		NewItemMessageRaw("src", "runB", "m", []byte(`{"role":"user","content":"3"}`)),
+	sessions := NewSessionStore(db)
+	src := &Session{ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create src: %v", err)
 	}
-	if _, err := db.NewInsert().Model(&rows).Exec(ctx); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
+	s := NewEntryStore(db, src.ID)
+	s.SetRunID("runA")
+	seed(t, s, userEntry(t, "1"), userEntry(t, "2"))
+	s.SetRunID("runB")
+	seed(t, s, userEntry(t, "3"))
 
-	runIDs, err := ms.ForkMessages(ctx, "src", "dst", 0, false)
+	dst := &Session{ID: NewID(), Name: "dst"}
+	runIDs, err := s.ForkSession(ctx, dst, src.ID, 0, false)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 	if len(runIDs) != 2 {
 		t.Fatalf("run ids = %v, want 2 deduped", runIDs)
 	}
-	dst, err := ms.GetMessages(ctx, "dst", 0, 0)
+	copied, err := s.GetEntries(ctx, dst.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("get dst: %v", err)
 	}
-	if len(dst) != 3 {
-		t.Fatalf("dst copied %d rows, want 3", len(dst))
+	if len(copied) != 3 {
+		t.Fatalf("dst copied %d rows, want 3", len(copied))
 	}
-	src, err := ms.GetMessages(ctx, "src", 0, 0)
-	if err != nil {
-		t.Fatalf("get src: %v", err)
+	// Ids are rewritten into the destination's namespace, and parent links with
+	// them — a fork pointing back at another session's entries is not a tree.
+	for i, e := range copied {
+		if e.EntryID != fmt.Sprintf("%s-e%d", dst.ID, i+1) {
+			t.Fatalf("entry %d kept a foreign id: %q", i, e.EntryID)
+		}
+		if i > 0 && e.ParentID != copied[i-1].EntryID {
+			t.Fatalf("entry %d parent = %q, want %q", i, e.ParentID, copied[i-1].EntryID)
+		}
 	}
-	if len(src) != 3 {
-		t.Fatalf("src changed by fork: %d rows", len(src))
-	}
-
-	// Empty source forks to nothing, no error.
-	ids, err := ms.ForkMessages(ctx, "nonexistent", "dst2", 0, false)
-	if err != nil || ids != nil {
-		t.Fatalf("empty fork: ids=%v err=%v, want nil,nil", ids, err)
+	if orig, err := s.GetEntries(ctx, src.ID, 0, 0); err != nil || len(orig) != 3 {
+		t.Fatalf("src changed by fork: %d rows (%v)", len(orig), err)
 	}
 }
 
-// the upToMessageID boundary is honored (inclusive vs exclusive).
-func TestForkMessagesUpToBoundary(t *testing.T) {
+// the upToID boundary is honored (inclusive vs exclusive).
+func TestForkEntriesUpToBoundary(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	ms := NewMessageStore(db)
+	sessions := NewSessionStore(db)
+	src := &Session{ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create src: %v", err)
+	}
+	s := NewEntryStore(db, src.ID)
+	s.SetRunID("r")
+	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
 
-	rows := []Message{
-		NewItemMessageRaw("src", "r", "m", []byte(`{"role":"user","content":"1"}`)),
-		NewItemMessageRaw("src", "r", "m", []byte(`{"role":"user","content":"2"}`)),
-		NewItemMessageRaw("src", "r", "m", []byte(`{"role":"user","content":"3"}`)),
-	}
-	if _, err := db.NewInsert().Model(&rows).Exec(ctx); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	all, err := ms.GetMessages(ctx, "src", 0, 0)
+	all, err := s.GetEntries(ctx, src.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("get src: %v", err)
 	}
 	cut := all[1].ID
 
-	if _, err := ms.ForkMessages(ctx, "src", "inc", cut, false); err != nil {
+	inc := &Session{ID: NewID(), Name: "inc"}
+	if _, err := s.ForkSession(ctx, inc, src.ID, cut, false); err != nil {
 		t.Fatalf("inclusive fork: %v", err)
 	}
-	inc, _ := ms.GetMessages(ctx, "inc", 0, 0)
-	if len(inc) != 2 {
-		t.Fatalf("inclusive up-to copied %d, want 2", len(inc))
+	got, _ := s.GetEntries(ctx, inc.ID, 0, 0)
+	if len(got) != 2 {
+		t.Fatalf("inclusive up-to copied %d, want 2", len(got))
 	}
 
-	if _, err := ms.ForkMessages(ctx, "src", "exc", cut, true); err != nil {
+	exc := &Session{ID: NewID(), Name: "exc"}
+	if _, err := s.ForkSession(ctx, exc, src.ID, cut, true); err != nil {
 		t.Fatalf("exclusive fork: %v", err)
 	}
-	exc, _ := ms.GetMessages(ctx, "exc", 0, 0)
-	if len(exc) != 1 {
-		t.Fatalf("exclusive up-to copied %d, want 1", len(exc))
+	got, _ = s.GetEntries(ctx, exc.ID, 0, 0)
+	if len(got) != 1 {
+		t.Fatalf("exclusive up-to copied %d, want 1", len(got))
 	}
 }

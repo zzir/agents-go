@@ -21,10 +21,10 @@ type RunStopper interface {
 	StopSessionTree(sessionID string)
 }
 
-// SessionHandler serves CRUD endpoints for chat sessions and their messages.
+// SessionHandler serves CRUD endpoints for chat sessions and their entries.
 type SessionHandler struct {
 	sessions *store.SessionStore
-	messages *store.MessageStore
+	entries  *store.EntryStore
 	traces   *store.TraceStore
 	agents   *store.AgentConfigStore
 	stopper  RunStopper
@@ -32,8 +32,8 @@ type SessionHandler struct {
 
 // NewSessionHandler returns a handler backed by the session, message, trace,
 // and agent-config stores.
-func NewSessionHandler(sessions *store.SessionStore, messages *store.MessageStore, traces *store.TraceStore, agents *store.AgentConfigStore) *SessionHandler {
-	return &SessionHandler{sessions: sessions, messages: messages, traces: traces, agents: agents}
+func NewSessionHandler(sessions *store.SessionStore, entries *store.EntryStore, traces *store.TraceStore, agents *store.AgentConfigStore) *SessionHandler {
+	return &SessionHandler{sessions: sessions, entries: entries, traces: traces, agents: agents}
 }
 
 // WithRunStopper wires the runner so deletes stop the session tree first.
@@ -172,7 +172,7 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 }
 
 // Delete removes the session identified by the id path parameter together
-// with its messages and traces (one transaction in the store).
+// with its entries and traces (one transaction in the store).
 //
 //	@Summary	Delete session
 //	@Tags		sessions
@@ -184,7 +184,7 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Router		/sessions/{id} [delete]
 func (h *SessionHandler) Delete(c *gin.Context) {
 	// Stop the session's live run and all its background tasks (bounded wait)
-	// BEFORE the cascade: a task still executing would keep writing messages
+	// BEFORE the cascade: a task still executing would keep writing entries
 	// and traces into rows this delete is about to remove.
 	if h.stopper != nil {
 		h.stopper.StopSessionTree(c.Param("id"))
@@ -196,12 +196,12 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// Fork creates a new session by copying messages from the source session up
-// to (and including) a given message ID. When message_id is omitted (or 0),
-// all messages are copied.
+// Fork creates a new session by copying entries from the source session up
+// to (and including) a given entry row ID. When message_id is omitted (or 0),
+// all entries are copied.
 //
 //	@Summary		Fork session
-//	@Description	Copies messages (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary message itself.
+//	@Description	Copies entries (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary entry itself.
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		json
@@ -246,9 +246,9 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
 	}
-	// One transaction creates the session and copies its messages, so a failure
+	// One transaction creates the session and copies its entries, so a failure
 	// (or a cancelled request) can't leave an orphaned empty session behind.
-	runIDs, err := h.messages.ForkSession(ctx, dst, srcID, upTo, req.Exclusive)
+	runIDs, err := h.entries.ForkSession(ctx, dst, srcID, upTo, req.Exclusive)
 	if err != nil {
 		// A source deleted out from under the fork (ErrNotFound) is a 404, not a
 		// 500; storeError maps it.
@@ -256,7 +256,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		return
 	}
 	if h.traces != nil {
-		// Traces are a best-effort copy: the fork's messages already landed, so a
+		// Traces are a best-effort copy: the fork's entries already landed, so a
 		// trace-copy failure must not fail the request or orphan the new session.
 		// It is logged, not swallowed, so the missing traces are diagnosable.
 		if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
@@ -269,27 +269,27 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	c.JSON(http.StatusCreated, dst)
 }
 
-// Messages responds with the messages for the session identified by the id path parameter.
+// Messages responds with the session entries for the id path parameter.
 //
-//	@Summary		List session messages
-//	@Description	Without limit, returns all messages oldest-first. With limit, returns the newest `limit` messages (still oldest-first); page backwards by passing the smallest received id as before_id.
+//	@Summary		List session entries
+//	@Description	Without limit, returns all entries oldest-first. With limit, returns the newest `limit` entries (still oldest-first); page backwards by passing the smallest received id as before_id. Update entries are folded into their targets server-side.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			id			path		string	true	"Session ID"
-//	@Param			limit		query		int		false	"Max messages to return; 0 or absent returns all"
-//	@Param			before_id	query		int		false	"Only messages with id < before_id (backwards cursor)"
-//	@Success		200			{array}		store.Message
+//	@Param			limit		query		int		false	"Max entries to return; 0 or absent returns all"
+//	@Param			before_id	query		int		false	"Only entries with id < before_id (backwards cursor)"
+//	@Success		200			{array}		store.EntryView
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/messages [get]
 func (h *SessionHandler) Messages(c *gin.Context) {
 	beforeID, limit := pageParams(c)
-	msgs, err := h.messages.GetMessages(c.Request.Context(), c.Param("id"), beforeID, limit)
+	entries, err := h.entries.GetEntries(c.Request.Context(), c.Param("id"), beforeID, limit)
 	if err != nil {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, msgs)
+	c.JSON(http.StatusOK, entries)
 }
 
 var branchSuffixRe = regexp.MustCompile(`\s*\((fork|regen)(?:\s+(\d+))?\)$`)

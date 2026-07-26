@@ -3,7 +3,6 @@ package bridge
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -26,10 +25,10 @@ type EventSink func(env *protocol.Envelope)
 // buffering, and fan-out are delegated to the hub, so a run outlives the
 // connection that started it.
 type Runner struct {
-	db       *bun.DB
-	Deps     *AgentDeps
-	hub      *RunHub
-	messages *store.MessageStore
+	db      *bun.DB
+	Deps    *AgentDeps
+	hub     *RunHub
+	entries *store.EntryStore
 	// tasks owns the background-task lifecycle. Nil when the server runs
 	// without a task store.
 	tasks *tasks.Manager
@@ -75,7 +74,7 @@ func sessionSettingsFor(limit int) *agents.SessionSettings {
 // wrapCompaction wraps sa with the compaction adapter when the agent config
 // enables it. An empty summary model falls back to the agent's own model, so
 // leaving the field blank does not silently disable compaction.
-func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *agents.Session {
+func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *agents.Session {
 	if !built.CompactionEnabled || provider == nil {
 		return agents.NewSession(sa)
 	}
@@ -96,10 +95,10 @@ func wrapCompaction(sa *store.SessionAdapter, built *BuildResult, provider agent
 // it stops all in-flight runs.
 func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	r := &Runner{
-		db:       db,
-		Deps:     deps,
-		hub:      NewRunHub(rootCtx),
-		messages: store.NewMessageStore(db),
+		db:      db,
+		Deps:    deps,
+		hub:     NewRunHub(rootCtx),
+		entries: store.NewEntryStore(db, ""),
 	}
 	if deps.MaxTasks > 0 {
 		r.hub.maxTasks = deps.MaxTasks
@@ -108,7 +107,7 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 		r.tasks = tasks.New(tasks.Config{
 			Store: store.NewTaskAdapter(deps.Tasks),
 			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(sessionID string) agents.SessionStorage {
-				return store.NewSessionAdapter(db, sessionID)
+				return store.NewEntryStore(db, sessionID)
 			}),
 			Resolver:               taskResolver{r},
 			Launcher:               taskLauncher{r},
@@ -283,7 +282,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 	sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
 
-	sa := store.NewSessionAdapter(r.db, sessionID)
+	sa := store.NewEntryStore(r.db, sessionID)
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
@@ -449,7 +448,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
 
-	resumeSA := store.NewSessionAdapter(r.db, sessionID)
+	resumeSA := store.NewEntryStore(r.db, sessionID)
 	resumeSA.SetRunID(runID)
 	resumeSA.SetModel(built.Agent.Model)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
@@ -618,43 +617,59 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	msgs := make([]store.Message, 0, 4)
+	entries := make([]agents.SessionEntry, 0, 4)
 
 	if userInput != "" && !r.runHasPersistedItems(ctx, sessionID, runID) {
-		userItemJSON, _ := json.Marshal(map[string]any{
-			"role":    "user",
-			"content": userInput,
-		})
-		msgs = append(msgs, store.NewItemMessageRaw(sessionID, runID, model, userItemJSON))
+		for _, item := range agents.InputItemsFromText(userInput) {
+			e, err := agents.NewItemEntry(item, agents.Source{Type: agents.SourceUser})
+			if err != nil {
+				continue
+			}
+			entries = append(entries, e)
+		}
 	}
 
-	// The in-flight turn's thinking and narration — display-only (a fabricated
-	// reasoning item would be rejected on replay, and an abandoned turn should
-	// not enter the model's history).
+	// The in-flight turn's thinking and narration — annotations, because a
+	// fabricated reasoning item would be rejected on replay and an abandoned
+	// turn should not enter the model's history.
 	if partialReasoning != "" {
-		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "reasoning", partialReasoning))
+		entries = append(entries, agents.NewAnnotationEntry(
+			agents.ItemDisplay{Kind: agents.DisplayReasoning, Text: partialReasoning},
+			agents.Source{Type: agents.SourceModel}))
 	}
 	if partialText != "" {
-		msgs = append(msgs, store.NewAnnotationMessage(sessionID, runID, "assistant", partialText))
+		entries = append(entries, agents.NewAnnotationEntry(
+			agents.ItemDisplay{Kind: agents.DisplayMessage, Text: partialText},
+			agents.Source{Type: agents.SourceModel}))
 	}
 
 	if annRole != "" {
-		m := store.NewAnnotationMessage(sessionID, runID, annRole, annMsg)
-		// A guardrail block carries its name + stage so a reload rebuilds the
+		d := agents.ItemDisplay{Kind: agents.DisplayError, Text: annMsg}
+		if annRole == "cancelled" {
+			d.Kind = agents.DisplayCancelled
+		}
+		// A guardrail block carries its name and stage so a reload rebuilds the
 		// typed "Blocked by guardrail X" card instead of a generic error.
 		if guardrail != "" {
-			m.Display, _ = json.Marshal(map[string]string{"guardrail": guardrail, "stage": stage})
+			d.Extra = map[string]any{"guardrail": guardrail, "stage": stage}
 		}
-		msgs = append(msgs, m)
+		src := agents.Source{Type: agents.SourceErrorHandler}
+		if guardrail != "" {
+			src = agents.Source{Type: agents.SourceGuardrail}
+		}
+		entries = append(entries, agents.NewAnnotationEntry(d, src))
 	}
 
-	if len(msgs) == 0 {
+	if len(entries) == 0 {
 		return
 	}
-	if _, err := r.db.NewInsert().Model(&msgs).Exec(ctx); err != nil {
-		// The partial-turn save is the only durable record of a cancelled/failed
-		// turn's prompt and in-flight thinking; a lost write means a reload shows
-		// nothing. Best-effort, but never silent.
+	es := store.NewEntryStore(r.db, sessionID)
+	es.SetRunID(runID)
+	es.SetModel(model)
+	if err := es.Append(ctx, entries...); err != nil {
+		// The partial-turn save is the only durable record of a cancelled or
+		// failed turn's prompt and in-flight thinking; a lost write means a
+		// reload shows nothing. Best-effort, but never silent.
 		zerolog.Ctx(r.hub.rootCtx).Warn().Err(err).Str("run_id", runID).Str("session_id", sessionID).
 			Msg("persisting partial turn")
 	}
@@ -671,10 +686,10 @@ func isCancellation(ctx context.Context, err error) bool {
 // row (user input or a completed turn's items) for this run id. Used to avoid
 // duplicating the prompt the SDK's per-turn persistence normally saves.
 func (r *Runner) runHasPersistedItems(ctx context.Context, sessionID, runID string) bool {
-	exists, err := r.db.NewSelect().Model((*store.Message)(nil)).
+	exists, err := r.db.NewSelect().Table("entries").
 		Where("session_id = ?", sessionID).
 		Where("run_id = ?", runID).
-		Where("kind = ?", store.MessageKindItem).
+		Where("kind = ?", string(agents.EntryKindItem)).
 		Exists(ctx)
 	if err != nil {
 		// On a query error, assume something was saved: skipping a possibly

@@ -11,7 +11,7 @@ import (
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	models := []any{
 		(*Session)(nil),
-		(*Message)(nil),
+		(*entryRow)(nil),
 		(*AgentConfig)(nil),
 		(*McpServerConfig)(nil),
 		(*Memory)(nil),
@@ -28,13 +28,25 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 			return fmt.Errorf("creating table for %T: %w", model, err)
 		}
 	}
+	// Every read of a transcript is "this session's entries in append order",
+	// so index (session_id, id) — it serves the ORDER BY directly.
 	if _, err := db.NewCreateIndex().
-		Model((*Message)(nil)).
-		Index("idx_messages_session_id").
+		Model((*entryRow)(nil)).
+		Index("idx_entries_session_id").
 		Column("session_id", "id").
 		IfNotExists().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("creating messages index: %w", err)
+		return fmt.Errorf("creating entries index: %w", err)
+	}
+	// Point lookups by entry id: resolving one entry would otherwise read the
+	// whole session.
+	if _, err := db.NewCreateIndex().
+		Model((*entryRow)(nil)).
+		Index("idx_entries_entry_id").
+		Column("session_id", "entry_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating entries entry_id index: %w", err)
 	}
 	// Trace events are read as "all spans of a session, ordered by id" (the trace
 	// panel groups by run_id client-side) — so index (session_id, id), not

@@ -2,39 +2,37 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
 
-func TestGetMessagesPagination(t *testing.T) {
+func TestGetEntriesPagination(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	ms := NewMessageStore(db)
+	s := NewEntryStore(db, "s1")
+	s.SetRunID("r1")
 
-	// Insert 5 item messages in order.
 	for i := range 5 {
-		m := NewItemMessageRaw("s1", "r1", "gpt", []byte(`{"role":"user","content":"m"}`))
-		if _, err := db.NewInsert().Model(&m).Exec(ctx); err != nil {
-			t.Fatalf("insert %d: %v", i, err)
-		}
+		seed(t, s, userEntry(t, fmt.Sprint(i)))
 	}
 
 	// No limit: all 5, oldest-first.
-	all, err := ms.GetMessages(ctx, "s1", 0, 0)
+	all, err := s.GetEntries(ctx, "s1", 0, 0)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
 	if len(all) != 5 {
-		t.Fatalf("want 5 messages, got %d", len(all))
+		t.Fatalf("want 5 entries, got %d", len(all))
 	}
 	for i := 1; i < len(all); i++ {
 		if all[i].ID <= all[i-1].ID {
-			t.Fatalf("messages not oldest-first at %d", i)
+			t.Fatalf("entries not oldest-first at %d", i)
 		}
 	}
 
 	// limit=2 returns the newest two, still ascending.
-	page, err := ms.GetMessages(ctx, "s1", 0, 2)
+	page, err := s.GetEntries(ctx, "s1", 0, 2)
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -43,7 +41,7 @@ func TestGetMessagesPagination(t *testing.T) {
 	}
 
 	// before_id cursor: everything older than the page's first id, newest 2.
-	older, err := ms.GetMessages(ctx, "s1", page[0].ID, 2)
+	older, err := s.GetEntries(ctx, "s1", page[0].ID, 2)
 	if err != nil {
 		t.Fatalf("get older: %v", err)
 	}

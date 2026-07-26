@@ -156,11 +156,11 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	// The notification run executes on a background goroutine; poll for its
 	// persisted prompt (the keyless test config fails at the provider stage,
 	// and that failure path saves the prompt).
-	msgs := store.NewMessageStore(runner.db)
+	entries := store.NewEntryStore(runner.db, parent.ID)
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := msgs.GetMessages(ctx, parent.ID, 0, 50)
+		rows, err := entries.GetEntries(ctx, parent.ID, 0, 50)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -215,11 +215,11 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 	}
 	runner.DrainPendingTaskNotifications(ctx)
 
-	msgs := store.NewMessageStore(runner.db)
+	entries := store.NewEntryStore(runner.db, parent.ID)
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := msgs.GetMessages(ctx, parent.ID, 0, 50)
+		rows, err := entries.GetEntries(ctx, parent.ID, 0, 50)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -41,33 +41,34 @@ func mustQuote(s string) string {
 	return string(b)
 }
 
-// insertItemRows persists one Message per raw item JSON (empty string =
-// annotation-style row without an Item), in id order.
-func insertItemRows(t *testing.T, db *bun.DB, sessionID string, rawItems []string) {
+// insertItemRows appends one entry per raw item JSON (empty string = an
+// annotation, which carries no item), in order.
+func insertItemRows(t *testing.T, s *EntryStore, rawItems []string) {
 	t.Helper()
-	msgs := make([]Message, 0, len(rawItems))
+	s.SetRunID("r1")
+	s.SetModel("m1")
+	entries := make([]agents.SessionEntry, 0, len(rawItems))
 	for _, raw := range rawItems {
-		var m Message
 		if raw == "" {
-			m = NewAnnotationMessage(sessionID, "r1", "error", "boom")
-		} else {
-			m = NewItemMessageRaw(sessionID, "r1", "m1", []byte(raw))
+			entries = append(entries, agents.NewAnnotationEntry(
+				agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
+				agents.Source{Type: agents.SourceErrorHandler},
+			))
+			continue
 		}
-		msgs = append(msgs, m)
+		entries = append(entries, rawEntry(t, raw))
 	}
-	if _, err := db.NewInsert().Model(&msgs).Exec(context.Background()); err != nil {
-		t.Fatalf("insert messages: %v", err)
-	}
+	seed(t, s, entries...)
 }
 
-func loadMessages(t *testing.T, db *bun.DB, sessionID string) []Message {
+func loadRows(t *testing.T, db *bun.DB, sessionID string) []entryRow {
 	t.Helper()
-	var out []Message
+	var out []entryRow
 	if err := db.NewSelect().Model(&out).
 		Where("session_id = ?", sessionID).
 		OrderExpr("id ASC").
 		Scan(context.Background()); err != nil {
-		t.Fatalf("load messages: %v", err)
+		t.Fatalf("load entries: %v", err)
 	}
 	return out
 }
@@ -86,7 +87,8 @@ const (
 func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	insertItemRows(t, db, sessionID, []string{
+	sa := NewEntryStore(db, sessionID)
+	insertItemRows(t, sa, []string{
 		userItemJSON,      // 0 — only this one may be compacted
 		callItemJSON,      // 1 ┐ pair straddling the count-based split (msgSplit=2)
 		outputItemJSON,    // 2 ┘
@@ -96,7 +98,6 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 	})
 
 	model := &summaryFakeModel{summary: "earlier the user asked a question"}
-	sa := NewSessionAdapter(db, sessionID)
 	ca := NewCompactionAdapter(sa, model, 1, 4, "", CompactionNotifier{})
 
 	spanStarted := false
@@ -117,21 +118,21 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 		t.Error("StartSpan was not called before summarizing")
 	}
 
-	msgs := loadMessages(t, db, sessionID)
-	if len(msgs) != 7 {
-		t.Fatalf("rows = %d, want 7 (6 originals + summary)", len(msgs))
+	rows := loadRows(t, db, sessionID)
+	if len(rows) != 7 {
+		t.Fatalf("rows = %d, want 7 (6 originals + checkpoint)", len(rows))
 	}
-	if !msgs[0].Compacted {
+	if !rows[0].Compacted {
 		t.Error("leading user message should be compacted")
 	}
 	for i := 1; i < 6; i++ {
-		if msgs[i].Compacted {
-			t.Errorf("message %d should not be compacted (safe split must keep the call/output pair intact)", i)
+		if rows[i].Compacted {
+			t.Errorf("entry %d should not be compacted (safe split must keep the call/output pair intact)", i)
 		}
 	}
-	summary := msgs[6]
-	if summary.Role != "compaction" || summary.Compacted {
-		t.Errorf("summary row wrong: role=%q compacted=%v", summary.Role, summary.Compacted)
+	summary := rows[6]
+	if summary.Kind != string(agents.EntryKindCompaction) || summary.Compacted {
+		t.Errorf("checkpoint row wrong: kind=%q compacted=%v", summary.Kind, summary.Compacted)
 	}
 
 	// The surviving history must still be replayable as a self-consistent
@@ -161,7 +162,8 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	insertItemRows(t, db, sessionID, []string{
+	sa := NewEntryStore(db, sessionID)
+	insertItemRows(t, sa, []string{
 		userItemJSON,      // 0 — compacted
 		"",                // 1 — annotation, follows row 0 onto the compact side
 		callItemJSON,      // 2 ┐ pair pulled whole into the keep side
@@ -172,18 +174,18 @@ func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 	})
 
 	model := &summaryFakeModel{summary: "summary"}
-	ca := NewCompactionAdapter(NewSessionAdapter(db, sessionID), model, 1, 4, "", CompactionNotifier{})
+	ca := NewCompactionAdapter(sa, model, 1, 4, "", CompactionNotifier{})
 
 	// Count-based msgSplit = 3: it would strand output (row 3) from call (row 2).
 	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 
-	msgs := loadMessages(t, db, sessionID)
+	rows := loadRows(t, db, sessionID)
 	wantCompacted := map[int]bool{0: true, 1: true}
 	for i := range 7 {
-		if msgs[i].Compacted != wantCompacted[i] {
-			t.Errorf("message %d compacted = %v, want %v", i, msgs[i].Compacted, wantCompacted[i])
+		if rows[i].Compacted != wantCompacted[i] {
+			t.Errorf("entry %d compacted = %v, want %v", i, rows[i].Compacted, wantCompacted[i])
 		}
 	}
 	if got := len(model.inputs[0]); got != 1 {
@@ -196,7 +198,8 @@ func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	insertItemRows(t, db, sessionID, []string{
+	sa := NewEntryStore(db, sessionID)
+	insertItemRows(t, sa, []string{
 		callItemJSON,   // 0 ┐ splitting anywhere inside is unsafe,
 		outputItemJSON, // 1 ┘ and an empty prefix means nothing to summarize
 		userItemJSON,   // 2
@@ -204,7 +207,7 @@ func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 	})
 
 	model := &summaryFakeModel{summary: "should never be called"}
-	ca := NewCompactionAdapter(NewSessionAdapter(db, sessionID), model, 1, 3, "", CompactionNotifier{})
+	ca := NewCompactionAdapter(sa, model, 1, 3, "", CompactionNotifier{})
 
 	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{Force: true}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
@@ -212,13 +215,13 @@ func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 	if model.calls != 0 {
 		t.Fatalf("summary model calls = %d, want 0", model.calls)
 	}
-	msgs := loadMessages(t, db, sessionID)
-	if len(msgs) != 4 {
-		t.Fatalf("rows = %d, want 4 (no summary row)", len(msgs))
+	rows := loadRows(t, db, sessionID)
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4 (no checkpoint)", len(rows))
 	}
-	for i, m := range msgs {
-		if m.Compacted {
-			t.Errorf("message %d compacted after a skipped pass", i)
+	for i, r := range rows {
+		if r.Compacted {
+			t.Errorf("entry %d compacted after a skipped pass", i)
 		}
 	}
 }
@@ -228,14 +231,15 @@ func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	insertItemRows(t, db, sessionID, []string{
+	sa := NewEntryStore(db, sessionID)
+	insertItemRows(t, sa, []string{
 		userItemJSON, assistantItemJSON, userItemJSON, // 0..2 — compacted
 		assistantItemJSON, userItemJSON, // 3..4 — kept window
 	})
 
 	model := &summaryFakeModel{summary: "sum"}
 	var started, doneBefore, doneAfter int
-	ca := NewCompactionAdapter(NewSessionAdapter(db, sessionID), model, 1, 2, "", CompactionNotifier{
+	ca := NewCompactionAdapter(sa, model, 1, 2, "", CompactionNotifier{
 		OnStart: func() { started++ },
 		OnDone:  func(before, after int) { doneBefore, doneAfter = before, after },
 	})
@@ -246,15 +250,15 @@ func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 	if model.calls != 1 || len(model.inputs[0]) != 3 {
 		t.Fatalf("summary call wrong: calls=%d inputs=%d, want 1 call with 3 items", model.calls, len(model.inputs[0]))
 	}
-	msgs := loadMessages(t, db, sessionID)
+	rows := loadRows(t, db, sessionID)
 	for i := range 3 {
-		if !msgs[i].Compacted {
-			t.Errorf("message %d should be compacted", i)
+		if !rows[i].Compacted {
+			t.Errorf("entry %d should be compacted", i)
 		}
 	}
 	for i := 3; i < 5; i++ {
-		if msgs[i].Compacted {
-			t.Errorf("message %d should be kept", i)
+		if rows[i].Compacted {
+			t.Errorf("entry %d should be kept", i)
 		}
 	}
 	if started != 1 || doneBefore != 5 || doneAfter != 3 {

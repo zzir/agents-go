@@ -86,11 +86,18 @@ func userInputText(items []agents.TResponseInputItem) string {
 	}
 	var parts []string
 	for _, it := range arr {
-		m := store.NewItemMessageRaw("", "", "", it)
-		if m.Role == "user" {
-			if txt := strings.TrimSpace(m.Content); txt != "" {
-				parts = append(parts, txt)
-			}
+		var probe struct {
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(it, &probe) != nil || probe.Role != "user" {
+			continue
+		}
+		item, err := agents.UnmarshalInputItem(it)
+		if err != nil {
+			continue
+		}
+		if txt := strings.TrimSpace(agents.ItemText(item)); txt != "" {
+			parts = append(parts, txt)
 		}
 	}
 	return strings.Join(parts, "\n")

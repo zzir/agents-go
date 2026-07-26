@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -135,21 +136,42 @@ func (t taskWakeGuard) CanWake(ctx context.Context, parentSessionID string) bool
 	return len(approvals) == 0
 }
 
-// onTaskUpdate patches the spawn card's display whenever a task's state changes
-// — which is long after the turn that spawned it ended.
+// onTaskUpdate records a task's changed state against the spawn call's card —
+// which happens long after the turn that spawned it ended.
+//
+// It appends an update entry rather than rewriting the card. That is what
+// removed the retry loop: a fast task can finish before the parent turn is
+// persisted, so the old rewrite had to hunt for a row that did not exist yet
+// and try again for thirty seconds. An update may be stored first; projection
+// associates it by call id.
 func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	if t.ToolCallID == "" {
 		return
 	}
-	patch := map[string]any{
+	// Updates fold in append order, so a non-terminal one that lands after a
+	// terminal one would roll the card back to "waiting for input" on a task
+	// that already finished. Every notify path reads the task then reports it,
+	// and those two steps can interleave across a concurrent finalizer — so
+	// check the store, which the CAS in Finalize makes the arbiter, before
+	// recording a status that would move the card backwards.
+	if !isTerminalTaskStatus(string(t.Status)) && r.Deps.Tasks != nil {
+		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && isTerminalTaskStatus(cur.Status) {
+			return
+		}
+	}
+	extra := map[string]any{
 		"task_id":     t.ID,
 		"task_label":  t.Label,
 		"task_status": string(t.Status),
 	}
 	if t.Summary != "" {
-		patch["task_summary"] = t.Summary
+		extra["task_summary"] = t.Summary
 	}
-	go r.patchDisplayWithRetry(ctx, t.ParentSessionID, t.ToolCallID, t.ID, patch)
+	entries := store.NewEntryStore(r.db, t.ParentSessionID)
+	if err := entries.AppendCallDisplayUpdate(ctx, t.ParentSessionID, t.ToolCallID,
+		agents.ItemDisplay{Extra: extra}); err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", t.ID).Msg("recording task display update")
+	}
 }
 
 // taskInfoFrom converts the SDK's task view to this server's API shape.

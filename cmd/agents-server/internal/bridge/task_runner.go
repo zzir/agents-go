@@ -115,27 +115,6 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) *TaskMeta {
 	}
 }
 
-// patchDisplayWithRetry patches the spawn card's display, retrying while the
-// row hasn't been persisted yet (the parent turn saves at its boundary, which
-// can be after a fast task ends). Gives up quietly after ~30s.
-func (r *Runner) patchDisplayWithRetry(ctx context.Context, sessionID, callID, taskID string, patch map[string]any) {
-	var err error
-	for range 10 {
-		if err = r.messages.PatchToolCallDisplay(ctx, sessionID, callID, patch); err == nil {
-			return
-		}
-		if !errors.Is(err, store.ErrNotFound) {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(3 * time.Second):
-		}
-	}
-	zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", taskID).Msg("task display patch")
-}
-
 // taskToolCallIDFrom pulls the spawning tool call id out of the tool context.
 // SpawnTask is invoked from a FunctionTool, whose ctx carries no call id — the
 // ToolContext does; the tool passes it via context because the TaskSpawner

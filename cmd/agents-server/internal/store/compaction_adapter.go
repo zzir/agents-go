@@ -3,9 +3,9 @@ package store
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/openai/openai-go/v3/responses"
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
@@ -22,11 +22,11 @@ type CompactionNotifier struct {
 	OnDone  func(before, after int)
 }
 
-// CompactionAdapter wraps a SessionAdapter with provider-agnostic compaction
-// that soft-deletes old messages (marks them compacted=true) rather than
-// removing them, so the agents-server UI can still display them.
+// CompactionAdapter wraps an EntryStore with provider-agnostic compaction that
+// soft-deletes folded entries (marks them compacted=true) rather than removing
+// them, so the agents-server UI can still show what was folded away.
 type CompactionAdapter struct {
-	*SessionAdapter
+	*EntryStore
 	summaryModel  agents.Model
 	threshold     int
 	windowSize    int
@@ -39,9 +39,9 @@ var (
 	_ agents.CompactionAware = (*CompactionAdapter)(nil)
 )
 
-// NewCompactionAdapter wraps sa with soft-delete compaction.
+// NewCompactionAdapter wraps store with soft-delete compaction.
 func NewCompactionAdapter(
-	sa *SessionAdapter,
+	store *EntryStore,
 	summaryModel agents.Model,
 	threshold, windowSize int,
 	summaryPrompt string,
@@ -55,26 +55,26 @@ func NewCompactionAdapter(
 	}
 	summaryPrompt = cmp.Or(summaryPrompt, agents.DefaultSummaryPrompt)
 	return &CompactionAdapter{
-		SessionAdapter: sa,
-		summaryModel:   summaryModel,
-		threshold:      threshold,
-		windowSize:     windowSize,
-		summaryPrompt:  summaryPrompt,
-		notify:         notify,
+		EntryStore:    store,
+		summaryModel:  summaryModel,
+		threshold:     threshold,
+		windowSize:    windowSize,
+		summaryPrompt: summaryPrompt,
+		notify:        notify,
 	}
 }
 
-// RunCompaction implements agents.CompactionAwareSession. It marks older
-// messages as compacted and inserts a summary message, keeping the most
-// recent windowSize non-compacted messages intact.
+// RunCompaction implements agents.CompactionAware. It marks older entries
+// compacted and appends a compaction checkpoint, keeping the most recent
+// windowSize non-compacted entries intact.
 func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.CompactionArgs) error {
-	var active []Message
+	var active []entryRow
 	if err := ca.db.NewSelect().Model(&active).
 		Where("session_id = ?", ca.sessionID).
 		Where("compacted = ?", false).
 		OrderExpr("id ASC").
 		Scan(ctx); err != nil {
-		return fmt.Errorf("compaction adapter: loading active messages: %w", err)
+		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
 	}
 
 	if !args.Force && len(active)-ca.windowSize < ca.threshold {
@@ -85,23 +85,26 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return nil
 	}
 
-	// Convert every active message to its replayable item, remembering which
-	// message each item came from. Rows that don't convert (annotations,
-	// reasoning items dropped for foreign replay, malformed JSON) carry no
-	// pairing constraints; the message-split mapping below leaves them on the
-	// same side as their preceding convertible neighbor.
+	// Convert every active entry to its replayable item, remembering which row
+	// each item came from. Rows that don't convert (annotations, reasoning items
+	// dropped for foreign replay, malformed JSON) carry no pairing constraints;
+	// the row-split mapping below leaves them on the same side as their
+	// preceding convertible neighbor.
 	items := make([]agents.TResponseInputItem, 0, len(active))
 	entries := make([]agents.SessionEntry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
-		m := &active[i]
-		if m.Item == "" || m.Item == "{}" || m.Item == "null" {
+		var e agents.SessionEntry
+		if json.Unmarshal([]byte(active[i].Entry), &e) != nil {
+			continue
+		}
+		if e.Kind != agents.EntryKindItem || len(e.Item) == 0 {
 			continue
 		}
 		// The summary model is generally not the model that produced these
 		// items, so always adapt them for foreign replay (drop reasoning
 		// items, strip provider-assigned ids) before summarizing.
-		raw := adaptForeignItemJSON([]byte(m.Item))
+		raw := adaptForeignItemJSON(e.Item)
 		if raw == nil {
 			continue
 		}
@@ -117,7 +120,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		itemMsgIdx = append(itemMsgIdx, i)
 	}
 
-	// The count-based split in message space, translated to item space.
+	// The count-based split in row space, translated to item space.
 	msgSplit := len(active) - ca.windowSize
 	itemSplit := 0
 	for itemSplit < len(items) && itemMsgIdx[itemSplit] < msgSplit {
@@ -143,10 +146,10 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return nil
 	}
 
-	// Map the safe item split back to message space: when the split moved,
-	// everything before the first kept item's message — including interleaved
+	// Map the safe item split back to row space: when the split moved,
+	// everything before the first kept item's row — including interleaved
 	// unconvertible rows, which follow their preceding item — is compacted.
-	// An unmoved split keeps the original count-based message boundary.
+	// An unmoved split keeps the original count-based row boundary.
 	if itemSplit < len(itemMsgIdx) && itemMsgIdx[itemSplit] < msgSplit {
 		msgSplit = itemMsgIdx[itemSplit]
 	}
@@ -175,26 +178,33 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return nil
 	}
 
-	summaryItem := responses.ResponseInputItemParamOfMessage(
-		agents.SummaryMarker+"\n\n"+summaryText,
-		responses.EasyInputMessageRoleSystem,
-	)
-	summaryMsg, err := NewItemMessage(ca.sessionID, ca.runID, ca.model, summaryItem)
-	if err != nil {
-		return fmt.Errorf("compaction adapter: marshaling summary: %w", err)
+	// A checkpoint, not a system message appended at the end. The distinction is
+	// what removed the front-loading hack this replaced: a checkpoint carries
+	// the retained tail inside it and truncates the path walk, so the model sees
+	// [summary, kept…] by construction rather than because the reader was taught
+	// to hoist one row to the front.
+	excluded := make([]string, 0, len(toCompact))
+	compactIDs := make([]int64, len(toCompact))
+	for i, row := range toCompact {
+		compactIDs[i] = row.ID
+		excluded = append(excluded, row.EntryID)
 	}
-	// Override the derived projection: the UI renders this row as a
-	// compaction marker, not a system message.
-	summaryMsg.Role = "compaction"
-	summaryMsg.Content = summaryText
+	retained, err := ca.retainedItems(active[msgSplit:])
+	if err != nil {
+		return fmt.Errorf("compaction adapter: encoding retained tail: %w", err)
+	}
+	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{
+		Summary:     agents.SummaryMarker + "\n\n" + summaryText,
+		ExcludedIDs: excluded,
+	}, retained)
+	if err != nil {
+		return fmt.Errorf("compaction adapter: encoding summary: %w", err)
+	}
+	summary.Display = &agents.ItemDisplay{Kind: agents.DisplayMessage, Text: summaryText}
 
 	beforeCount := len(active)
 
-	compactIDs := make([]int64, len(toCompact))
-	for i, m := range toCompact {
-		compactIDs[i] = m.ID
-	}
-	applied, err := ca.persistCompaction(ctx, compactIDs, &summaryMsg)
+	applied, err := ca.persistCompaction(ctx, compactIDs, summary)
 	if err != nil {
 		return fmt.Errorf("compaction adapter: persisting: %w", err)
 	}
@@ -212,28 +222,45 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	return nil
 }
 
-// persistCompaction marks the planned messages compacted and inserts the
-// summary in one transaction, reporting whether it applied. It guards against a
-// concurrent session delete: if the UPDATE touches no rows the target messages
-// are gone (the session was deleted between loading the history and this
-// write), so it skips the summary INSERT rather than orphan a summary row in a
-// session that no longer exists.
-func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []int64, summaryMsg *Message) (bool, error) {
+// retainedItems projects the entries kept after the split into the items the
+// checkpoint carries verbatim.
+func (ca *CompactionAdapter) retainedItems(kept []entryRow) ([]agents.TResponseInputItem, error) {
+	entries := make([]agents.SessionEntry, 0, len(kept))
+	for i := range kept {
+		var e agents.SessionEntry
+		if json.Unmarshal([]byte(kept[i].Entry), &e) != nil {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	return agents.ProjectEntries(entries, nil)
+}
+
+// persistCompaction marks the folded entries compacted and appends the
+// checkpoint in one transaction, reporting whether it applied. It guards
+// against a concurrent session delete: if the UPDATE touches no rows the target
+// entries are gone (the session was deleted between loading the history and
+// this write), so it skips the checkpoint rather than orphan one in a session
+// that no longer exists.
+func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []int64, summary agents.SessionEntry) (bool, error) {
 	applied := false
 	err := ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		res, err := tx.NewUpdate().Model((*Message)(nil)).
+		res, err := tx.NewUpdate().Model((*entryRow)(nil)).
 			Set("compacted = ?", true).
 			Where("id IN (?)", bun.List(compactIDs)).
 			Exec(ctx)
 		if err != nil {
 			return err
 		}
-		// Only skip when the driver positively reports zero rows; if it can't
-		// report (err != nil), fall through and insert as before.
+		// Only skip when the driver positively reports zero rows; if it cannot
+		// report (err != nil), fall through and append as before.
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			return nil
 		}
-		if _, err := tx.NewInsert().Model(summaryMsg).Exec(ctx); err != nil {
+		// The checkpoint's parent is the branch tip AFTER the fold, which is why
+		// this runs inside the same transaction: appending against the pre-fold
+		// tip would parent it at an entry it just folded away.
+		if err := ca.appendTo(ctx, tx, summary); err != nil {
 			return err
 		}
 		applied = true

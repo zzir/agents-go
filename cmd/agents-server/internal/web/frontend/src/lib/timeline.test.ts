@@ -2,9 +2,9 @@
 //
 //   streaming — useAgentSocket applies run events via the streamReducer
 //               transforms as they arrive;
-//   replay    — buildTimeline rebuilds the same turn from the rows the
-//               backend persisted (message_store.deriveDisplay projections
-//               and runner.savePartialTurn annotations).
+//   replay    — buildTimeline rebuilds the same turn from the ENTRIES the
+//               backend persisted (the displays the runner recorded, plus
+//               runner.savePartialTurn's annotations).
 //
 // What the user watched stream in must equal what a reload shows. These tests
 // drive BOTH paths for the same logical turn and assert the resulting
@@ -19,7 +19,7 @@
 //      'completed' — per-call status is not persisted; the rejection notice
 //      survives in the call's output text.
 import { describe, it, expect } from 'vitest';
-import { buildTimeline, type Message, type TurnEntry } from '@/lib/timeline';
+import { buildTimeline, type EntryView, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendHandoffPart,
@@ -54,13 +54,13 @@ describe('stream/replay isomorphism', () => {
     live = finalizeTurn(live, 'the answer', '') ?? live;
 
     // --- replay path: the rows the backend persists for that same turn.
-    const rows: Message[] = [
-      { id: 1, run_id: RUN, role: 'user', content: 'q' },
-      { id: 2, run_id: RUN, role: 'reasoning', content: 'pondering' },
-      { id: 3, run_id: RUN, role: 'tool_call', content: 'search({"q":"x"})', display: { call_id: 'c1', name: 'search', arguments: '{"q":"x"}' } },
-      { id: 4, run_id: RUN, role: 'tool_output', content: 'found it', display: { call_id: 'c1', output: 'found it' } },
-      { id: 5, run_id: RUN, role: 'assistant', content: 'let me check' },
-      { id: 6, run_id: RUN, role: 'assistant', content: 'the answer' },
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'q' },
+      { id: 2, run_id: RUN, kind: 'item', role: 'assistant', content: 'pondering', display: { kind: 'reasoning', text: 'pondering' } },
+      { id: 3, run_id: RUN, kind: 'item', role: 'assistant', content: 'search({"q":"x"})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'search', arguments: '{"q":"x"}' } },
+      { id: 4, run_id: RUN, kind: 'item', role: 'tool', content: 'found it', display: { kind: 'tool_output', call_id: 'c1', output: 'found it' } },
+      { id: 5, run_id: RUN, kind: 'item', role: 'assistant', content: 'let me check', display: { kind: 'message', text: 'let me check' } },
+      { id: 6, run_id: RUN, kind: 'item', role: 'assistant', content: 'the answer', display: { kind: 'message', text: 'the answer' } },
     ];
     const replayed = buildTimeline(rows);
 
@@ -80,9 +80,9 @@ describe('stream/replay isomorphism', () => {
     // run.error flushes the reasoning buffer into a part, then the typed card.
     live = appendErrorPart(live, { type: 'error', content: 'blocked', guardrail: 'no_secrets', stage: 'input' }, 'was thinking', '');
 
-    const rows: Message[] = [
-      { id: 1, run_id: RUN, role: 'reasoning', content: 'was thinking' },
-      { id: 2, run_id: RUN, role: 'error', content: 'blocked', display: { guardrail: 'no_secrets', stage: 'input' } },
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'annotation', role: 'assistant', content: 'was thinking', display: { kind: 'reasoning', text: 'was thinking' } },
+      { id: 2, run_id: RUN, kind: 'annotation', role: 'system', content: 'blocked', display: { kind: 'error', text: 'blocked', extra: { guardrail: 'no_secrets', stage: 'input' } } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -97,9 +97,9 @@ describe('stream/replay isomorphism', () => {
     let live = ensureLiveTurn([], RUN)!;
     live = appendCancelledPart(live, '', 'partial answer')!;
 
-    const rows: Message[] = [
-      { id: 1, run_id: RUN, role: 'assistant', content: 'partial answer' },
-      { id: 2, run_id: RUN, role: 'cancelled', content: '' },
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'annotation', role: 'assistant', content: 'partial answer', display: { kind: 'message', text: 'partial answer' } },
+      { id: 2, run_id: RUN, kind: 'annotation', role: 'system', content: '', display: { kind: 'cancelled' } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -118,9 +118,9 @@ describe('stream/replay isomorphism', () => {
 
     // The backend persists no handoff row — the transfer_to_* tool call is the
     // durable record. A replay therefore has no handoff part, by design.
-    const rows: Message[] = [
-      { id: 1, run_id: RUN, role: 'tool_call', content: 'transfer_to_coder({})', display: { call_id: 'h1', name: 'transfer_to_coder', arguments: '{}' } },
-      { id: 2, run_id: RUN, role: 'tool_output', content: 'ok', display: { call_id: 'h1', output: 'ok' } },
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'transfer_to_coder({})', display: { kind: 'tool_call', call_id: 'h1', tool_name: 'transfer_to_coder', arguments: '{}' } },
+      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'ok', display: { kind: 'tool_output', call_id: 'h1', output: 'ok' } },
     ];
     const replayParts = partsOf(buildTimeline(rows));
     expect(replayParts.some(p => p.type === 'handoff')).toBe(false);
@@ -150,9 +150,9 @@ describe('stream/replay isomorphism', () => {
 
     // Replay: per-call status is not persisted, so the same call reads
     // 'completed' — the rejection is only visible in the output text.
-    const rows: Message[] = [
-      { id: 1, run_id: RUN, role: 'tool_call', content: 'rm({})', display: { call_id: 'c1', name: 'rm', arguments: '{}' } },
-      { id: 2, run_id: RUN, role: 'tool_output', content: 'rejected by user', display: { call_id: 'c1', output: 'rejected by user' } },
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'rm({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'rm', arguments: '{}' } },
+      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'rejected by user', display: { kind: 'tool_output', call_id: 'c1', output: 'rejected by user' } },
     ];
     const replayCall = (partsOf(buildTimeline(rows))[0] as { toolCalls: Array<{ status: string | null }> }).toolCalls[0];
     expect(replayCall.status).toBe('completed');
@@ -175,8 +175,8 @@ describe('stream/replay isomorphism', () => {
     // then the history fetch resolves. The live tail (no messageId) must be
     // re-appended after the persisted rows.
     const persisted = buildTimeline([
-      { id: 1, run_id: 'old', role: 'user', content: 'earlier q' },
-      { id: 2, run_id: 'old', role: 'assistant', content: 'earlier a' },
+      { id: 1, run_id: 'old', kind: 'item', role: 'user', content: 'earlier q' },
+      { id: 2, run_id: 'old', kind: 'item', role: 'assistant', content: 'earlier a', display: { kind: 'message', text: 'earlier a' } },
     ]);
     let live = ensureLiveTurn([], RUN, 'new q')!;
     live = appendMessageItem(live, 'streaming…', false)!;
@@ -187,7 +187,7 @@ describe('stream/replay isomorphism', () => {
     // Entries the store already covers are deduped: the run's user prompt
     // persisted while the fetch was in flight must not double up.
     const persistedWithPrompt = buildTimeline([
-      { id: 1, run_id: RUN, role: 'user', content: 'new q' },
+      { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'new q' },
     ]);
     const merged2 = mergeLiveTail(persistedWithPrompt, live);
     expect(merged2.filter(m => m.role === 'user')).toHaveLength(1);
@@ -200,7 +200,7 @@ describe('stream/replay isomorphism', () => {
     // one-to-one: one bubble consumes the persisted copy, the second must NOT
     // also collapse onto it — that used to drop the genuine second send.
     const persisted = buildTimeline([
-      { id: 1, run_id: 'r0', role: 'user', content: 'x' },
+      { id: 1, run_id: 'r0', kind: 'item', role: 'user', content: 'x' },
     ]);
     const live = [
       { role: 'user', content: 'x', clientMsgId: 'c1' },
@@ -226,14 +226,15 @@ describe('stream/replay isomorphism', () => {
   });
 
   it('task display projection: a patched spawn_task call rebuilds its task card', () => {
-    // postRun patches task_* onto the spawn call's display row when the task
-    // ends. This is deliberately replay-only (no streamed counterpart): while
+    // onTaskUpdate appends an update entry carrying task_* for the spawn
+    // call; the server folds it into the call's display before the client
+    // sees it. This is deliberately replay-only (no streamed counterpart): while
     // the task is live the chips row carries its status, so the isomorphism
     // contract does not extend to these fields.
     const timeline = buildTimeline([
-      { id: 1, run_id: RUN, role: 'user', content: 'spawn something' },
-      { id: 2, run_id: RUN, role: 'tool_call', display: { call_id: 'c1', name: 'spawn_task', arguments: '{}', task_id: 't1', task_label: 'audit', task_status: 'completed', task_summary: 'all green' } },
-      { id: 3, run_id: RUN, role: 'tool_output', display: { call_id: 'c1', output: '{"task_id":"t1"}' } },
+      { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'spawn something' },
+      { id: 2, run_id: RUN, kind: 'item', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', extra: { task_id: 't1', task_label: 'audit', task_status: 'completed', task_summary: 'all green' } } },
+      { id: 3, run_id: RUN, kind: 'item', role: 'tool', display: { kind: 'tool_output', call_id: 'c1', output: '{"task_id":"t1"}' } },
     ]);
     const turn = timeline[1] as TurnEntry;
     const tools = turn.parts.find(p => p.type === 'tools') as { toolCalls: Array<{ task?: { id?: string; status?: string; summary?: string } }> };

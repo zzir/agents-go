@@ -69,38 +69,6 @@ type Task struct {
 	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// Message kinds. "item" rows are replayable conversation history holding wire
-// JSON in Item; "annotation" rows are UI-only records (errors, partial
-// reasoning from a cancelled run) that never reach the model.
-const (
-	MessageKindItem       = "item"
-	MessageKindAnnotation = "annotation"
-)
-
-// Message is one persisted conversation record belonging to a session. For
-// kind="item" rows, Item holds the canonical (write-normalized) wire JSON and
-// is the replay source of truth; Role/Content/Display are denormalized
-// projections of it for the UI, which never parses wire JSON itself.
-type Message struct {
-	bun.BaseModel `bun:"table:messages,alias:m"`
-
-	ID        int64  `bun:"id,pk,autoincrement"  json:"id"`
-	SessionID string `bun:"session_id,notnull"   json:"session_id"`
-	RunID     string `bun:"run_id"               json:"run_id,omitempty"`
-	Kind      string `bun:"kind"                 json:"kind,omitempty"`
-	Role      string `bun:"role,notnull"         json:"role"`
-	Content   string `bun:"content,notnull"      json:"content"`
-	// Display carries the structured fields the UI renders for non-text rows
-	// (tool call name/arguments/output), derived from Item at write time.
-	Display json.RawMessage `bun:"display,type:text,nullzero" json:"display,omitempty"`
-	Item    string          `bun:"item,notnull"               json:"-"`
-	// SourceModel records which model produced this item, so replay can adapt
-	// or drop items when the session is later run against a different model.
-	SourceModel string    `bun:"source_model"       json:"-"`
-	Compacted   bool      `bun:"compacted"          json:"compacted"`
-	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
-}
-
 // AgentConfig is the persisted definition of an agent: model, instructions,
 // tools, handoffs, guardrails, and the various run-level behavior settings.
 type AgentConfig struct {

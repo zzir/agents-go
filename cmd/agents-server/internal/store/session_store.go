@@ -104,7 +104,7 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			return fmt.Errorf("listing task sessions for %s: %w", id, err)
 		}
 		for _, child := range childIDs {
-			for _, model := range []any{(*Message)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil)} {
+			for _, model := range []any{(*entryRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil)} {
 				if _, err := tx.NewDelete().Model(model).
 					Where("session_id = ?", child).
 					Exec(ctx); err != nil {
@@ -130,10 +130,10 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting owning task for session %s: %w", id, err)
 		}
-		if _, err := tx.NewDelete().Model((*Message)(nil)).
+		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting messages for session %s: %w", id, err)
+			return fmt.Errorf("deleting entries for session %s: %w", id, err)
 		}
 		if _, err := tx.NewDelete().Model((*TraceEvent)(nil)).
 			Where("session_id = ?", id).

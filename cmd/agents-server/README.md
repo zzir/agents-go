@@ -103,8 +103,8 @@ detail.
 | POST   | `/sessions`               | Create session (`{name?, agent_config_id?}`)                         |
 | GET    | `/sessions/:id`           | Get session                                                          |
 | PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session     |
-| DELETE | `/sessions/:id`           | Delete session and its messages and traces                           |
-| GET    | `/sessions/:id/messages`  | List conversation messages (paginated)                               |
+| DELETE | `/sessions/:id`           | Delete session and its entries and traces                            |
+| GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
 | POST   | `/sessions/:id/fork`      | Fork session                                                         |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
@@ -116,11 +116,20 @@ agent at creation (it must reference an existing agent). Rename and pin are a
 single `PATCH /sessions/:id` accepting a partial `{name?, pinned?}` body; both
 the separate `PUT` rename and `PATCH /sessions/:id/pin` endpoints are gone.
 
-`fork` copies the source session's messages (and their traces) into a new
+`fork` copies the source session's entries (and their traces) into a new
 session. Its body is optional: `{message_id?, exclusive?, label?}`. Omit
 `message_id` to fork everything; supply it to bound the copy up to and including
-that message (`exclusive: true` excludes the boundary message itself). The
+that entry (`exclusive: true` excludes the boundary entry itself). Entry ids and
+their parent links are rewritten into the fork's namespace, so the copy is a
+self-consistent tree rather than one pointing back at another session. The
 session inherits the source's `agent_config_id`.
+
+`/sessions/:id/messages` returns **session entries** — the SDK's
+`agents.SessionEntry` as the runner wrote it, plus the row id the cursor pages
+on. Each carries its `kind` (`item` / `annotation` / `compaction` / …), its
+recorded `display`, and its `usage` / `diagnostics`. Update entries are folded
+into their targets server-side, so a client never applies them itself. The path
+keeps its name for compatibility.
 
 **Pagination** — `messages` and `traces` accept optional `?limit=` and
 `?before_id=`. Without `limit` the full list is returned (oldest-first),
@@ -672,8 +681,8 @@ When a change genuinely doesn't fit, update this list in the same PR.
     event means updating both files.
 15. **A streamed turn must equal its reload.** The streaming path
     (`src/lib/streamReducer.ts` pure transforms, applied by `useAgentSocket`)
-    and the replay path (`buildTimeline` over persisted rows) must produce the
-    same `turn.parts`; `src/lib/timeline.test.ts` pins this isomorphism — run
+    and the replay path (`buildTimeline` over persisted ENTRIES) must produce
+    the same `turn.parts`; `src/lib/timeline.test.ts` pins this isomorphism — run
     it via `npm test`. Intentional differences are documented and asserted
     there (currently: handoff parts are live-only; a rejected call's status
     replays as completed). A new part type or field lands on BOTH paths plus
@@ -707,12 +716,18 @@ When a change genuinely doesn't fit, update this list in the same PR.
     the same broadcast bus, replay cursors, approval persistence, and
     retention as chat runs — a task-specific transport is how the two
     lifecycles would drift.
-19. **The spawn card's durable truth is its display projection.** The hub's
-    RunInfo is GC'd minutes after a run ends; when a task reaches a final
-    state the server patches `{task_id, task_label, task_status, task_summary}`
-    onto the spawning `tool_call` row's `display`, and a reload rebuilds the
-    task card from that row. Live status comes from run events; durable status
-    comes from the row — never from the hub after the fact. Completion wakes
+19. **The spawn card's durable truth is an appended update entry.** The hub's
+    RunInfo is GC'd minutes after a run ends; when a task changes state the
+    server APPENDS an update entry carrying
+    `{task_id, task_label, task_status, task_summary}` addressed to the spawn
+    call's id, and the read folds it into that call's display. Appending is
+    what removed the retry loop: a fast task can finish before the turn that
+    spawned it is persisted, and the old rewrite hunted for a row that did not
+    exist yet. An update may be stored BEFORE its target; folding associates
+    them by call id afterwards. A non-terminal update is dropped when the task
+    row is already terminal, so a reordered notify cannot roll a finished card
+    back. Live status comes from run events; durable status comes from the
+    folded entry — never from the hub after the fact. Completion wakes
     the parent at its next run boundary via a `[task-notification] ` input;
     the debt is the row's `notify_state` (pending → consumed by an in-turn
     `task_status` read, or → delivered by the wake-up run), written in the
@@ -740,7 +755,19 @@ When a change genuinely doesn't fit, update this list in the same PR.
     completed / failed are the states worth waking the parent for). Deleting a
     session stops its run tree first (cancel + bounded wait on the done gate)
     so no write can land after the cascade.
-22. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
+22. **One entry in, the same entry out.** The `entries` table stores whole
+    `agents.SessionEntry` JSON, with only the columns the queries need lifted
+    out. The server does not re-derive a display, a role, or provenance at read
+    time — the runner already decided all three, and a reader that recomputes
+    them can only produce a worse version that drifts. The messages table this
+    replaced had a column per field the UI wanted, so `Source`, `Usage`,
+    `Diagnostics`, `NestedUsage` and the parent link had nowhere to go and were
+    dropped on the way in. Compaction soft-deletes (`compacted = true`) so the
+    UI can still show what was folded, and appends a compaction CHECKPOINT
+    whose payload carries the retained tail — which is why the model sees
+    `[summary, kept…]` by construction rather than because the reader hoists a
+    row to the front.
+23. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided
     deliberately). Never add ALTER TABLE migration machinery here.
@@ -752,7 +779,7 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | Table               | Description                                                                         |
 |---------------------|-------------------------------------------------------------------------------------|
 | `sessions`          | Chat sessions                                                                       |
-| `messages`          | Conversation message history                                                        |
+| `entries`           | Session entries (the conversation, annotations and compaction checkpoints)          |
 | `agent_configs`     | Agent configurations                                                                |
 | `mcp_servers`       | MCP server configurations                                                           |
 | `memories`          | Agent memories                                                                      |

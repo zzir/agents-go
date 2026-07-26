@@ -24,7 +24,8 @@ func TestSchemaIndexes(t *testing.T) {
 		{"idx_guardrails_type_name", true, "type,name"},
 		{"idx_provider_routes_prefix", true, "prefix"},
 		// Query indexes for the history tables and hot lookups.
-		{"idx_messages_session_id", false, "session_id,id"},
+		{"idx_entries_session_id", false, "session_id,id"},
+		{"idx_entries_entry_id", false, "session_id,entry_id"},
 		{"idx_trace_events_session_id", false, "session_id,id"},
 		{"idx_trace_events_created_at", false, "created_at"},
 		{"idx_memories_agent_config_id", false, "agent_config_id"},
@@ -68,8 +69,8 @@ func tableForIndex(index string) string {
 		return "guardrails"
 	case "idx_provider_routes_prefix":
 		return "provider_routes"
-	case "idx_messages_session_id":
-		return "messages"
+	case "idx_entries_session_id", "idx_entries_entry_id":
+		return "entries"
 	case "idx_trace_events_session_id", "idx_trace_events_created_at":
 		return "trace_events"
 	case "idx_memories_agent_config_id":

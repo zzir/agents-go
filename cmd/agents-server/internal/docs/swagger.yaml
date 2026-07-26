@@ -17,6 +17,70 @@ components:
       type: string
       x-enum-varnames:
       - ContextManagementCompaction
+    agents.Diagnostic:
+      properties:
+        code:
+          $ref: '#/components/schemas/agents.ErrorCode'
+        details:
+          additionalProperties: {}
+          description: Details carries type-specific fields (attempt number, model
+            name, …).
+          type: object
+        message:
+          description: Message is a one-line human-facing summary.
+          type: string
+        timestamp:
+          type: string
+        type:
+          $ref: '#/components/schemas/agents.DiagnosticType'
+      type: object
+    agents.DiagnosticType:
+      enum:
+      - model_retry
+      - model_fallback
+      - stream_error
+      - tool_panic
+      - tool_timeout
+      - compaction_failed
+      - response_truncated
+      - context_overflow
+      type: string
+      x-enum-varnames:
+      - DiagModelRetry
+      - DiagModelFallback
+      - DiagStreamError
+      - DiagToolPanic
+      - DiagToolTimeout
+      - DiagCompactionFailed
+      - DiagResponseTruncated
+      - DiagContextOverflow
+    agents.ErrorCode:
+      description: Code classifies the underlying error, when there was one.
+      enum:
+      - unknown
+      - max_turns_exceeded
+      - model_behavior
+      - model_refusal
+      - user_error
+      - tool_timeout
+      - tool_loop
+      - tool_panic
+      - guardrail_tripwire
+      - sandbox_exec
+      - mcp
+      type: string
+      x-enum-varnames:
+      - CodeUnknown
+      - CodeMaxTurns
+      - CodeModelBehavior
+      - CodeModelRefusal
+      - CodeUserError
+      - CodeToolTimeout
+      - CodeToolLoop
+      - CodeToolPanic
+      - CodeGuardrailTripwire
+      - CodeSandboxExec
+      - CodeMCP
     agents.InputTokensDetails:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
@@ -28,6 +92,45 @@ components:
           type: integer
         cached_tokens:
           type: integer
+      type: object
+    agents.ItemDisplay:
+      properties:
+        arguments:
+          description: Arguments is the raw JSON the model passed to the tool.
+          type: string
+        call_id:
+          description: CallID ties a tool call to its output.
+          type: string
+        extra:
+          additionalProperties: {}
+          description: |-
+            Extra carries whatever a tool's CustomDataExtractor produced. It is
+            SDK-side only and never reaches the model.
+          type: object
+        is_error:
+          description: IsError marks a tool result that reports a failure.
+          type: boolean
+        kind:
+          description: |-
+            Kind is the item kind: message, tool_call, tool_output, reasoning,
+            handoff, unknown. An unrecognized kind must fall back, not fail.
+          type: string
+        output:
+          description: Output is a tool result rendered as text.
+          type: string
+        renderer:
+          description: |-
+            Renderer is a tool's requested renderer ("diff", "terminal", "table", …),
+            from ToolResult.Display. A consumer that does not know the name falls
+            back to plain text rather than failing.
+          type: string
+        text:
+          description: 'Text is the human-readable body: a message''s text, a reasoning
+            summary.'
+          type: string
+        tool_name:
+          description: ToolName is the tool being called, or the handoff tool.
+          type: string
       type: object
     agents.ModelSettings:
       description: |-
@@ -750,6 +853,41 @@ components:
         compaction_window:
           type: integer
       type: object
+    store.EntryView:
+      properties:
+        compacted:
+          type: boolean
+        content:
+          description: Content is the readable text, for a renderer that wants one
+            string.
+          type: string
+        created_at:
+          type: string
+        diagnostics:
+          items:
+            $ref: '#/components/schemas/agents.Diagnostic'
+          type: array
+          uniqueItems: false
+        display:
+          $ref: '#/components/schemas/agents.ItemDisplay'
+        entry_id:
+          type: string
+        id:
+          type: integer
+        kind:
+          type: string
+        parent_id:
+          type: string
+        role:
+          description: |-
+            Role is who produced the entry, from its recorded provenance rather than
+            re-parsed from the item. Provenance is not something to guess at.
+          type: string
+        run_id:
+          type: string
+        usage:
+          $ref: '#/components/schemas/agents.RequestUsage'
+      type: object
     store.Guardrail:
       properties:
         blocking:
@@ -804,33 +942,6 @@ components:
         metadata:
           type: string
         updated_at:
-          type: string
-      type: object
-    store.Message:
-      properties:
-        compacted:
-          type: boolean
-        content:
-          type: string
-        created_at:
-          type: string
-        display:
-          description: |-
-            Display carries the structured fields the UI renders for non-text rows
-            (tool call name/arguments/output), derived from Item at write time.
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
-        id:
-          type: integer
-        kind:
-          type: string
-        role:
-          type: string
-        run_id:
-          type: string
-        session_id:
           type: string
       type: object
     store.ProviderGroup:
@@ -2753,9 +2864,9 @@ paths:
       - approvals
   /sessions/{id}/fork:
     post:
-      description: Copies messages (and their traces) into a new session. message_id
+      description: Copies entries (and their traces) into a new session. message_id
         bounds the copy; omit it to copy everything. exclusive=true excludes the boundary
-        message itself.
+        entry itself.
       parameters:
       - description: Source session ID
         in: path
@@ -2805,9 +2916,10 @@ paths:
       - sessions
   /sessions/{id}/messages:
     get:
-      description: Without limit, returns all messages oldest-first. With limit, returns
-        the newest `limit` messages (still oldest-first); page backwards by passing
-        the smallest received id as before_id.
+      description: Without limit, returns all entries oldest-first. With limit, returns
+        the newest `limit` entries (still oldest-first); page backwards by passing
+        the smallest received id as before_id. Update entries are folded into their
+        targets server-side.
       parameters:
       - description: Session ID
         in: path
@@ -2815,12 +2927,12 @@ paths:
         required: true
         schema:
           type: string
-      - description: Max messages to return; 0 or absent returns all
+      - description: Max entries to return; 0 or absent returns all
         in: query
         name: limit
         schema:
           type: integer
-      - description: Only messages with id < before_id (backwards cursor)
+      - description: Only entries with id < before_id (backwards cursor)
         in: query
         name: before_id
         schema:
@@ -2831,7 +2943,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/store.Message'
+                  $ref: '#/components/schemas/store.EntryView'
                 type: array
           description: OK
         "500":
@@ -2842,7 +2954,7 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: List session messages
+      summary: List session entries
       tags:
       - sessions
   /sessions/{id}/runs:

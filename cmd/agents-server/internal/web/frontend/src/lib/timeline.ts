@@ -1,28 +1,54 @@
-// Structured display data the server derives from tool-call items, so the
-// frontend never parses wire-format item JSON.
-interface ToolCallDisplay {
+// ItemDisplay mirrors the SDK's agents.ItemDisplay: what the RUNNER decided an
+// entry looks like, recorded when it happened. The frontend never parses
+// wire-format item JSON, and the server no longer re-derives this at read time —
+// it only ever produced a worse version of what the SDK already knew.
+interface ItemDisplay {
+  kind: string;
+  renderer?: string;
+  text?: string;
   call_id?: string;
-  name?: string;
+  tool_name?: string;
   arguments?: string;
   output?: string;
-  // Set on an error annotation that was a guardrail block (reuses the display
-  // column) so a reloaded turn rebuilds the typed "Blocked by guardrail" card.
-  guardrail?: string;
-  stage?: string;
-  // Patched onto a spawn_task call when its background task ends — the durable
-  // truth the task card is rebuilt from on reload (the hub run is GC'd).
-  task_id?: string;
-  task_label?: string;
-  task_status?: string;
-  task_summary?: string;
+  is_error?: boolean;
+  // extra is whatever a tool's custom-data extractor produced, plus the fields
+  // the server amends onto a card afterwards: a guardrail block's name/stage, a
+  // spawned task's terminal outcome (the durable truth the task card is rebuilt
+  // from on reload, since the hub run is GC'd).
+  extra?: {
+    guardrail?: string;
+    stage?: string;
+    task_id?: string;
+    task_label?: string;
+    task_status?: string;
+    task_summary?: string;
+    [k: string]: unknown;
+  };
 }
 
-interface Message {
+// Display kinds. Mirrors agents/run_items.go — keep in sync.
+const DISPLAY = {
+  message: 'message',
+  toolCall: 'tool_call',
+  toolOutput: 'tool_output',
+  reasoning: 'reasoning',
+  handoff: 'handoff',
+  error: 'error',
+  cancelled: 'cancelled',
+} as const;
+
+// EntryView is one row of GET /sessions/:id/messages — a stored session entry
+// plus the row id the cursor pages on. Update entries are already folded into
+// their targets server-side, so nothing here needs to apply them.
+interface EntryView {
   id?: number;
+  entry_id?: string;
+  parent_id?: string;
+  kind: string;
   run_id?: string;
   role: string;
   content?: string;
-  display?: ToolCallDisplay;
+  display?: ItemDisplay;
   compacted?: boolean;
 }
 
@@ -146,10 +172,17 @@ interface ToolCallPatch {
   renderer?: string;
 }
 
-export type { Message, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
+export type { EntryView, ItemDisplay, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
+export { DISPLAY };
 
-export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry[] {
-  if (!msgs) return [];
+// buildTimeline folds a session's entries into the rendered timeline.
+//
+// It dispatches on the entry's KIND and its recorded display kind, not on a
+// role string the server invented per row. That is the whole point of the entry
+// model: the runner knew this was a tool call when it made one, and the reader
+// should not be re-deducing it from a projection.
+export function buildTimeline(entries: EntryView[] | null | undefined): TimelineEntry[] {
+  if (!entries) return [];
   const timeline: TimelineEntry[] = [];
   const pendingTC: Record<string, ToolCall> = {};
   let turn: TurnEntry | null = null;
@@ -157,66 +190,81 @@ export function buildTimeline(msgs: Message[] | null | undefined): TimelineEntry
     if (!turn) { turn = { role: 'turn', parts: [], messageId: 0 }; timeline.push(turn); }
   };
   const finishTurn = (): void => { turn = null; };
-  for (const m of msgs) {
-    if (m.role === 'compaction') {
+  // anchor pins the turn to the row it last absorbed, so a fork or a scroll
+  // restore has a durable id to aim at.
+  const anchor = (e: EntryView): void => {
+    if (e.id) turn!.messageId = e.id;
+    if (e.run_id) turn!.runId = e.run_id;
+  };
+
+  for (const e of entries) {
+    const d = e.display;
+    // A compaction checkpoint: what the pass folded away, standing in for it.
+    if (e.kind === 'compaction') {
       finishTurn();
-      timeline.push({ role: 'compaction', content: m.content || '', messageId: m.id });
+      timeline.push({ role: 'compaction', content: e.content || '', messageId: e.id });
       continue;
     }
-    // Compacted rows render exactly like live ones: compaction soft-deletes
-    // only the model's replay context (GetItems), never the visible history.
-    // Dropping them here made whole runs vanish after a compaction.
-    if (m.role === 'user') {
+    // Compacted entries render exactly like live ones: compaction soft-deletes
+    // only the model's replay context, never the visible history. Dropping them
+    // here made whole runs vanish after a compaction.
+    if (e.role === 'user') {
       finishTurn();
-      if (m.content) timeline.push({ role: 'user', content: m.content, messageId: m.id, runId: m.run_id });
-    } else if (m.role === 'tool_call') {
-      const d = m.display;
-      if (d?.call_id) {
+      if (e.content) timeline.push({ role: 'user', content: e.content, messageId: e.id, runId: e.run_id });
+      continue;
+    }
+    switch (d?.kind) {
+      case DISPLAY.toolCall: {
+        if (!d.call_id) break;
         ensureTurn();
-        if (m.id) turn!.messageId = m.id;
-        if (m.run_id) turn!.runId = m.run_id;
-        const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.name || '', arguments: d.arguments || '', output: null, status: null };
-        if (d.task_id || d.task_status) tc.task = { id: d.task_id, label: d.task_label, status: d.task_status, summary: d.task_summary };
+        anchor(e);
+        const x = d.extra;
+        const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.tool_name || '', arguments: d.arguments || '', output: null, status: null };
+        if (x?.task_id || x?.task_status) tc.task = { id: x.task_id, label: x.task_label, status: x.task_status, summary: x.task_summary };
         pendingTC[d.call_id] = tc;
         const last = turn!.parts[turn!.parts.length - 1];
         if (last && last.type === 'tools') { (last as ToolsPart).toolCalls.push(tc); }
         else { turn!.parts.push({ type: 'tools', toolCalls: [tc] }); }
+        continue;
       }
-    } else if (m.role === 'tool_output') {
-      const d = m.display;
-      if (turn && m.id) (turn as TurnEntry).messageId = m.id;
-      if (d?.call_id && pendingTC[d.call_id]) {
-        pendingTC[d.call_id].output = d.output || m.content || '';
-        pendingTC[d.call_id].status = 'completed';
+      case DISPLAY.toolOutput: {
+        if (turn && e.id) (turn as TurnEntry).messageId = e.id;
+        if (d.call_id && pendingTC[d.call_id]) {
+          pendingTC[d.call_id].output = d.output || e.content || '';
+          pendingTC[d.call_id].status = 'completed';
+        }
+        continue;
       }
-    } else if (m.role === 'error' && m.content) {
-      ensureTurn();
-      if (m.id) turn!.messageId = m.id;
-      if (m.run_id) turn!.runId = m.run_id;
-      const d = m.display;
-      turn!.parts.push({ type: 'error', content: m.content, guardrail: d?.guardrail, stage: d?.stage });
-    } else if (m.role === 'cancelled') {
-      // A run stopped by the user (or a deadline). Content is optional — the
-      // card renders a fixed label — so this branch does not gate on it.
-      ensureTurn();
-      if (m.id) turn!.messageId = m.id;
-      if (m.run_id) turn!.runId = m.run_id;
-      turn!.parts.push({ type: 'cancelled', content: m.content || '' });
-    } else if (m.role === 'reasoning') {
-      if (m.content) {
+      case DISPLAY.error: {
+        if (!e.content) continue;
         ensureTurn();
-        if (m.id) turn!.messageId = m.id;
-        if (m.run_id) turn!.runId = m.run_id;
-        turn!.parts.push({ type: 'thinking', content: m.content });
+        anchor(e);
+        turn!.parts.push({ type: 'error', content: e.content, guardrail: d.extra?.guardrail, stage: d.extra?.stage });
+        continue;
       }
-    } else if (m.role === 'system' && m.content) {
+      case DISPLAY.cancelled: {
+        // A run stopped by the user (or a deadline). Content is optional — the
+        // card renders a fixed label — so this branch does not gate on it.
+        ensureTurn();
+        anchor(e);
+        turn!.parts.push({ type: 'cancelled', content: e.content || '' });
+        continue;
+      }
+      case DISPLAY.reasoning: {
+        if (!e.content) continue;
+        ensureTurn();
+        anchor(e);
+        turn!.parts.push({ type: 'thinking', content: e.content });
+        continue;
+      }
+    }
+    if (e.role === 'system' && e.content) {
       finishTurn();
-      timeline.push({ role: 'system', content: m.content, messageId: m.id });
-    } else if (m.content) {
+      timeline.push({ role: 'system', content: e.content, messageId: e.id });
+    } else if (e.content) {
       ensureTurn();
-      if (m.id) turn!.messageId = m.id;
-      if (m.run_id) turn!.runId = m.run_id;
-      turn!.parts.push({ type: 'text', content: m.content });
+      anchor(e);
+      turn!.parts.push({ type: 'text', content: e.content });
     }
   }
   finishTurn();
