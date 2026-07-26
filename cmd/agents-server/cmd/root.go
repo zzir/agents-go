@@ -166,6 +166,7 @@ func run(_ *cobra.Command, _ []string) error {
 		SessionDelete:   sessionHandler.Delete,
 		SessionMessages: sessionHandler.Messages,
 		SessionFork:     sessionHandler.Fork,
+		SessionBranch:   sessionHandler.Branch,
 		WSHandler:       wsHandler.Handle,
 
 		TerminalWSHandler: terminalHandler.Handle,

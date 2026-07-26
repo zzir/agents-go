@@ -292,6 +292,44 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
+type branchReq struct {
+	EntryID string `json:"entry_id"`
+}
+
+// Branch moves the session's active branch to an entry.
+//
+//	@Summary		Switch active branch
+//	@Description	Moves the session's active branch to entry_id, so the next run continues from there. Appends a leaf entry rather than deleting anything — the abandoned attempt stays recorded and can be switched back to.
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string		true	"Session ID"
+//	@Param			branch	body		branchReq	true	"{entry_id}"
+//	@Success		200		{object}	map[string]string
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/branch [post]
+func (h *SessionHandler) Branch(c *gin.Context) {
+	var req branchReq
+	if err := c.ShouldBindJSON(&req); err != nil || req.EntryID == "" {
+		badRequest(c, "entry_id is required")
+		return
+	}
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if err := h.entries.Branch(ctx, id, req.EntryID); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	leaf, err := h.entries.Leaf(ctx, id)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"leaf": leaf})
+}
+
 var branchSuffixRe = regexp.MustCompile(`\s*\((fork|regen)(?:\s+(\d+))?\)$`)
 
 func branchName(name, label string) string {

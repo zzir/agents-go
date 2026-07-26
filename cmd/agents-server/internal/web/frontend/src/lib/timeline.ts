@@ -50,7 +50,22 @@ interface EntryView {
   content?: string;
   display?: ItemDisplay;
   compacted?: boolean;
+  // on_path is false for an abandoned attempt: still recorded, still
+  // switchable-to, but not part of the conversation as it currently stands.
+  on_path?: boolean;
   compaction?: CompactionInfo;
+}
+
+// Branches describes one fork point: the sibling attempts that hang off a
+// shared parent, and which of them the session is currently on.
+interface Branches {
+  // parentId is the entry they all continue from.
+  parentId: string;
+  // tips are one entry id per attempt, in the order they were made. Switching
+  // to one means branching to its tip.
+  tips: string[];
+  // active indexes tips — which attempt is on the current path.
+  active: number;
 }
 
 // CompactionInfo is present on a checkpoint entry: what the pass folded away.
@@ -136,6 +151,9 @@ interface UserEntry {
   // Absent on entries not yet persisted: the sender's optimistic bubble and
   // the bubble a watching browser builds from run.started's input.
   messageId?: number;
+  // entryId is the durable entry id, which is what a branch switch aims at —
+  // messageId is a row id, and branching is expressed in entry ids.
+  entryId?: string;
   runId?: string;
 }
 
@@ -152,6 +170,9 @@ interface TurnEntry {
   // stream events has none until the post-run reload swaps it in.
   messageId?: number;
   runId?: string;
+  // Set when this turn is one of several attempts at the same point, so the
+  // renderer can offer "2 / 3 ‹ ›" instead of silently showing one of them.
+  branches?: Branches;
 }
 
 interface CompactionEntry {
@@ -187,7 +208,7 @@ interface ToolCallPatch {
   renderer?: string;
 }
 
-export type { EntryView, ItemDisplay, CompactionInfo, CompactionEntry, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
+export type { EntryView, ItemDisplay, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
 export { DISPLAY };
 
 // buildTimeline folds a session's entries into the rendered timeline.
@@ -205,6 +226,15 @@ export { DISPLAY };
 export function buildTimeline(entries: EntryView[] | null | undefined): TimelineEntry[] {
   if (!entries) return [];
 
+  // Off-path entries are abandoned attempts. They are dropped from the rendered
+  // conversation — showing both answers to the same question inline would be
+  // showing a conversation that never happened — and surfaced instead as the
+  // "2 / 3" switcher on the attempt that IS current.
+  const forks = findForks(entries);
+  if (forks.size > 0) {
+    entries = entries.filter(e => e.on_path !== false);
+  }
+
   // Which checkpoint folded each entry. A checkpoint is appended AFTER what it
   // folds, so this needs its own pass. A later checkpoint wins when two name
   // the same entry, which is what puts a re-compacted range under the newest
@@ -214,7 +244,7 @@ export function buildTimeline(entries: EntryView[] | null | undefined): Timeline
     if (e.kind !== 'compaction' || !e.entry_id) continue;
     for (const id of e.compaction?.excluded_ids || []) foldedBy.set(id, e.entry_id);
   }
-  if (foldedBy.size === 0) return assemble(entries, null);
+  if (foldedBy.size === 0) return assemble(entries, null, forks);
 
   const buckets = new Map<string, EntryView[]>();
   const main: EntryView[] = [];
@@ -224,10 +254,56 @@ export function buildTimeline(entries: EntryView[] | null | undefined): Timeline
     const bucket = buckets.get(owner);
     if (bucket) bucket.push(e); else buckets.set(owner, [e]);
   }
-  return assemble(main, buckets);
+  return assemble(main, buckets, forks);
 }
 
-function assemble(entries: EntryView[], buckets: Map<string, EntryView[]> | null): TimelineEntry[] {
+// findForks locates every point where the conversation was answered more than
+// once, keyed by the id of the child that continues each attempt.
+//
+// Leaf and update entries are excluded from the parent index on purpose: they
+// are metadata appended at whatever the tip happened to be, so counting them as
+// children would invent a fork at every branch switch.
+function findForks(entries: EntryView[]): Map<string, Branches> {
+  const children = new Map<string, string[]>();
+  const byId = new Map<string, EntryView>();
+  for (const e of entries) {
+    if (!e.entry_id || e.kind === 'leaf' || e.kind === 'update') continue;
+    byId.set(e.entry_id, e);
+    const p = e.parent_id || '';
+    const kids = children.get(p);
+    if (kids) kids.push(e.entry_id); else children.set(p, [e.entry_id]);
+  }
+
+  // tipOf walks an attempt to its last entry — where a switch has to branch to,
+  // since branching to the middle of an attempt would truncate it.
+  const tipOf = (id: string): string => {
+    const seen = new Set<string>();
+    for (;;) {
+      if (seen.has(id)) return id; // a cycle nothing should produce
+      seen.add(id);
+      const kids = children.get(id);
+      if (!kids || kids.length === 0) return id;
+      id = kids[kids.length - 1];
+    }
+  };
+
+  const out = new Map<string, Branches>();
+  for (const [parentId, kids] of children) {
+    if (kids.length < 2) continue;
+    const active = kids.findIndex(k => byId.get(k)?.on_path !== false);
+    const branches: Branches = { parentId, tips: kids.map(tipOf), active: active < 0 ? 0 : active };
+    // Keyed by the ACTIVE child: that is the one still in the timeline, and the
+    // switcher rides on the turn it starts.
+    out.set(kids[branches.active], branches);
+  }
+  return out;
+}
+
+function assemble(
+  entries: EntryView[],
+  buckets: Map<string, EntryView[]> | null,
+  forks: Map<string, Branches>,
+): TimelineEntry[] {
   const timeline: TimelineEntry[] = [];
   const pendingTC: Record<string, ToolCall> = {};
   let turn: TurnEntry | null = null;
@@ -240,6 +316,10 @@ function assemble(entries: EntryView[], buckets: Map<string, EntryView[]> | null
   const anchor = (e: EntryView): void => {
     if (e.id) turn!.messageId = e.id;
     if (e.run_id) turn!.runId = e.run_id;
+    // A turn that STARTS an attempt carries its switcher. Only the first entry
+    // of the turn can, which is what `!turn.branches` guards.
+    const b = e.entry_id ? forks.get(e.entry_id) : undefined;
+    if (b && !turn!.branches) turn!.branches = b;
   };
 
   for (const e of entries) {
@@ -252,7 +332,7 @@ function assemble(entries: EntryView[], buckets: Map<string, EntryView[]> | null
         role: 'compaction',
         content: e.content || '',
         messageId: e.id,
-        folded: inner ? assemble(inner, buckets) : undefined,
+        folded: inner ? assemble(inner, buckets, forks) : undefined,
         tokensBefore: e.compaction?.tokens_before,
         tokensAfter: e.compaction?.tokens_after,
       });
@@ -263,7 +343,7 @@ function assemble(entries: EntryView[], buckets: Map<string, EntryView[]> | null
     // to hide it. Dropping these outright made whole runs vanish.
     if (e.role === 'user') {
       finishTurn();
-      if (e.content) timeline.push({ role: 'user', content: e.content, messageId: e.id, runId: e.run_id });
+      if (e.content) timeline.push({ role: 'user', content: e.content, messageId: e.id, entryId: e.entry_id, runId: e.run_id });
       continue;
     }
     switch (d?.kind) {

@@ -507,6 +507,11 @@ components:
         scope:
           type: string
       type: object
+    handler.branchReq:
+      properties:
+        entry_id:
+          type: string
+      type: object
     handler.chatgptStatusResp:
       properties:
         logged_in:
@@ -900,6 +905,12 @@ components:
           type: integer
         kind:
           type: string
+        on_path:
+          description: |-
+            OnPath reports whether this entry is on the session's ACTIVE branch. An
+            off-path entry is an abandoned attempt — still recorded, still offerable,
+            but not part of the conversation as it currently stands.
+          type: boolean
         parent_id:
           type: string
         role:
@@ -2895,6 +2906,55 @@ paths:
       summary: List pending approvals
       tags:
       - approvals
+  /sessions/{id}/branch:
+    post:
+      description: Moves the session's active branch to entry_id, so the next run
+        continues from there. Appends a leaf entry rather than deleting anything —
+        the abandoned attempt stays recorded and can be switched back to.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.branchReq'
+                description: '{entry_id}'
+                summary: branch
+        description: '{entry_id}'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Switch active branch
+      tags:
+      - sessions
   /sessions/{id}/fork:
     post:
       description: Copies entries (and their traces) into a new session. message_id

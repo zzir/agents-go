@@ -106,7 +106,8 @@ detail.
 | DELETE | `/sessions/:id`           | Delete session and its entries and traces                            |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
-| POST   | `/sessions/:id/fork`      | Fork session                                                         |
+| POST   | `/sessions/:id/fork`      | Fork session into a new one                                          |
+| POST   | `/sessions/:id/branch`    | Switch the active branch (`{entry_id}`)                              |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
 | GET    | `/sessions/:id/approvals` | List pending approvals (see [Approvals](#approvals--apiv1approvals)) |
 | GET    | `/sessions/:id/tasks`     | List background tasks spawned from the session (see below)          |
@@ -123,6 +124,16 @@ that entry (`exclusive: true` excludes the boundary entry itself). Entry ids and
 their parent links are rewritten into the fork's namespace, so the copy is a
 self-consistent tree rather than one pointing back at another session. The
 session inherits the source's `agent_config_id`.
+
+`branch` moves the session's active branch to an entry, so the next run
+continues from there. It APPENDS a leaf entry rather than deleting anything:
+the abandoned attempt stays recorded, which is what makes "regenerate" show a
+"2 / 3 ‹ ›" switcher instead of filling the session list with `(regen 2)`,
+`(regen 3)` copies. Each entry reports `on_path` — false means an abandoned
+attempt, still stored and still switchable-to.
+
+Regenerating is `branch` back to the user's message followed by a run with an
+EMPTY input: nothing to add, history to answer.
 
 `/sessions/:id/messages` returns **session entries** — the SDK's
 `agents.SessionEntry` as the runner wrote it, plus the row id the cursor pages

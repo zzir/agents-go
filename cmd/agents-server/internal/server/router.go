@@ -14,6 +14,7 @@ type Routes struct {
 	SessionDelete   gin.HandlerFunc
 	SessionMessages gin.HandlerFunc
 	SessionFork     gin.HandlerFunc
+	SessionBranch   gin.HandlerFunc
 	WSHandler       WSHandlerFunc
 	// TerminalWSHandler serves one interactive sandbox terminal per
 	// connection on /ws/terminal.
@@ -127,6 +128,7 @@ func registerAPIRoutes(api *gin.RouterGroup, r Routes) {
 		sessions.DELETE("/:id", r.SessionDelete)
 		sessions.GET("/:id/messages", r.SessionMessages)
 		sessions.POST("/:id/fork", r.SessionFork)
+		sessions.POST("/:id/branch", r.SessionBranch)
 		sessions.GET("/:id/traces", r.TraceListBySession)
 		sessions.POST("/:id/runs", r.RunCreate)
 		sessions.GET("/:id/approvals", r.ApprovalListBySession)

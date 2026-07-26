@@ -94,6 +94,9 @@ export const api = {
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
     approvals: (id: string | number) => request(`/sessions/${id}/approvals`),
+    // Moves the session's active branch to an entry. Append-only: the
+    // abandoned attempt stays recorded and can be switched back to.
+    branch: (id: string | number, entryId: string) => request(`/sessions/${id}/branch`, { method: 'POST', body: JSON.stringify({ entry_id: entryId }) }),
     fork: (id: string | number, messageId?: number, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
     pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },

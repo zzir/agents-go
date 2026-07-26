@@ -849,3 +849,18 @@
   justify-content: center;
   padding: var(--base-size-8) 0;
 }
+
+/* Attempt switcher — "2 / 3 ‹ ›" on a turn that was regenerated. */
+.branch-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.branch-count {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  min-width: 2.5em;
+  text-align: center;
+}

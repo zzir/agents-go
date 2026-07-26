@@ -297,6 +297,69 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	}
 }
 
+// Branching keeps both attempts and marks which one is current. Deleting the
+// abandoned one is what a fork-a-new-session regenerate did instead, and it is
+// why "show me the other answer" was not offerable.
+func TestBranchMarksTheActiveAttempt(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewEntryStore(db, "s1")
+
+	seed(t, s, userEntry(t, "question"))
+	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first"}]}`, agents.Source{}))
+
+	// Go back to the question and answer it differently.
+	if err := s.Branch(ctx, "s1", "s1-e1"); err != nil {
+		t.Fatalf("branch: %v", err)
+	}
+	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}`, agents.Source{}))
+
+	views, err := s.GetEntries(ctx, "s1", 0, 0)
+	if err != nil {
+		t.Fatalf("get entries: %v", err)
+	}
+	onPath := map[string]bool{}
+	for _, v := range views {
+		if v.Content != "" {
+			onPath[v.Content] = v.OnPath
+		}
+	}
+	if !onPath["question"] || onPath["first"] || !onPath["second"] {
+		t.Fatalf("wrong active branch: %v", onPath)
+	}
+	// Nothing was deleted — the abandoned attempt is still offerable.
+	if len(views) < 4 {
+		t.Fatalf("branching lost entries: %d remain", len(views))
+	}
+
+	// The model reads only the active branch.
+	items, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	if err != nil {
+		t.Fatalf("context items: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("want 2 items (question + second answer), got %d", len(items))
+	}
+	last, _ := agents.MarshalInputItem(items[1])
+	if !strings.Contains(string(last), "second") {
+		t.Fatalf("the abandoned answer is still in context: %s", last)
+	}
+
+	// Switching back makes the first attempt current again.
+	if err := s.Branch(ctx, "s1", "s1-e2"); err != nil {
+		t.Fatalf("branch back: %v", err)
+	}
+	views, _ = s.GetEntries(ctx, "s1", 0, 0)
+	for _, v := range views {
+		if v.Content == "first" && !v.OnPath {
+			t.Error("switching back did not restore the first attempt")
+		}
+		if v.Content == "second" && v.OnPath {
+			t.Error("the second attempt is still on the path after switching back")
+		}
+	}
+}
+
 func idsOf(views []EntryView) []int64 {
 	out := make([]int64, len(views))
 	for i, v := range views {

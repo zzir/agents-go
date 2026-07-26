@@ -267,6 +267,35 @@ describe('stream/replay isomorphism', () => {
     expect(timeline.map(m => (m as { content?: string }).content)).toEqual(['orphaned', 'current']);
   });
 
+  it('branching: the abandoned attempt leaves the timeline but stays offerable', () => {
+    // One question, answered twice. e2 was abandoned; e4 is current.
+    const timeline = buildTimeline([
+      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'question', on_path: true },
+      { id: 2, entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'first', display: { kind: 'message', text: 'first' }, on_path: false },
+      { id: 3, entry_id: 'e3', parent_id: 'e2', kind: 'leaf', role: 'assistant', on_path: false },
+      { id: 4, entry_id: 'e4', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'second', display: { kind: 'message', text: 'second' }, on_path: true },
+    ]);
+    // Both answers inline would be a conversation that never happened.
+    expect(timeline.map(m => m.role)).toEqual(['user', 'turn']);
+    const turn = timeline[1] as TurnEntry;
+    expect(turn.parts).toEqual([{ type: 'text', content: 'second' }]);
+    // …but the switcher knows about both, and where to switch to.
+    // The tip is the attempt's last CONTENT entry — e2, not the leaf marker
+    // e3 that the switch away from it appended.
+    expect(turn.branches).toEqual({ parentId: 'e1', tips: ['e2', 'e4'], active: 1 });
+  });
+
+  it('branching: a leaf entry is not an attempt', () => {
+    // Every branch switch appends a leaf entry at whatever the tip was.
+    // Counting those as children invents a fork at each switch.
+    const timeline = buildTimeline([
+      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'q', on_path: true },
+      { id: 2, entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'a', display: { kind: 'message', text: 'a' }, on_path: true },
+      { id: 3, entry_id: 'e3', parent_id: 'e2', kind: 'leaf', role: 'assistant', on_path: true },
+    ]);
+    expect((timeline[1] as TurnEntry).branches).toBeUndefined();
+  });
+
   it('task display projection: a patched spawn_task call rebuilds its task card', () => {
     // onTaskUpdate appends an update entry carrying task_* for the spawn
     // call; the server folds it into the call's display before the client

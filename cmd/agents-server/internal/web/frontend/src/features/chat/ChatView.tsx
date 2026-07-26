@@ -6,7 +6,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type TimelineEntry } from '@/lib/timeline';
+import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type TimelineEntry, type Branches } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
 import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
@@ -18,7 +18,7 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, StackIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon, TerminalIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, StackIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon, TerminalIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -30,7 +30,11 @@ interface ChatMessage {
   role: string;
   content?: string;
   messageId?: string;
+  // The durable entry id — what a branch switch and a regenerate aim at.
+  entryId?: string;
   parts?: TurnPart[];
+  // Present on a turn that is one of several attempts at the same point.
+  branches?: Branches;
   // Present on a compaction checkpoint: the entries it folded away, and the
   // context size on either side of the pass.
   folded?: TimelineEntry[];
@@ -522,6 +526,8 @@ interface TurnBlockProps {
   liveAgentName?: string | null;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
+  // The entry id of the user message this turn answers — regenerating branches
+  // back to it and runs again, which is why it is an ENTRY id and not a row id.
   regenMessageId?: string | null;
   regenContent?: string | null;
   onRegenerate?: (messageId: string, content: string) => void;
@@ -531,6 +537,9 @@ interface TurnBlockProps {
   duration?: string;
   liveStartedAt?: number | null;
   messageId?: string | number;
+  // Sibling attempts at this point, and a switch to one of them.
+  branches?: Branches;
+  onSwitchBranch?: (tipEntryId: string) => void;
   onFork?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
   liveTaskStatusByCallId?: Record<string, string>;
@@ -538,7 +547,7 @@ interface TurnBlockProps {
   taskLabelById?: Record<string, string>;
 }
 
-const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, onFork, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, branches, onSwitchBranch, onFork, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
@@ -629,6 +638,27 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
       {isLive && liveStartedAt && <LiveTimer startedAt={liveStartedAt} />}
       {!isLive && turnText && (
         <div className="turn-actions">
+          {branches && branches.tips.length > 1 && onSwitchBranch && (
+            <span className="branch-switcher">
+              <IconButton
+                icon={ChevronLeftIcon}
+                variant="invisible"
+                size="small"
+                aria-label="Previous attempt"
+                disabled={branches.active === 0}
+                onClick={() => onSwitchBranch(branches.tips[branches.active - 1])}
+              />
+              <span className="branch-count">{branches.active + 1} / {branches.tips.length}</span>
+              <IconButton
+                icon={ChevronRightIcon}
+                variant="invisible"
+                size="small"
+                aria-label="Next attempt"
+                disabled={branches.active >= branches.tips.length - 1}
+                onClick={() => onSwitchBranch(branches.tips[branches.active + 1])}
+              />
+            </span>
+          )}
           <IconButton
             icon={copied ? CheckIcon : CopyIcon}
             variant="invisible"
@@ -887,7 +917,9 @@ interface ChatViewProps {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadEarlier?: () => void;
-  onRegenerate?: (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => void;
+  // Switches the session's active branch to another attempt.
+  onSwitchBranch?: (tipEntryId: string) => void;
+  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string) => void;
   settingsReloadKey?: number;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
@@ -902,7 +934,7 @@ export function ChatView({
   sessionId, messages, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
-  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onRegenerate, settingsReloadKey,
+  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onRegenerate, settingsReloadKey,
   panel, onPanelChange, onTerminalOpen,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -1316,11 +1348,11 @@ export function ChatView({
             if (m.role === 'turn') {
               const isLive = running && i === messages.length - 1;
               let prevUserContent: string | null = null;
-              let prevUserMessageId: string | undefined;
+              let prevUserEntryId: string | undefined;
               for (let j = i - 1; j >= 0; j--) {
                 if (messages[j].role === 'user') {
                   prevUserContent = messages[j].content ?? null;
-                  prevUserMessageId = messages[j].messageId;
+                  prevUserEntryId = messages[j].entryId;
                   break;
                 }
               }
@@ -1339,7 +1371,7 @@ export function ChatView({
                   liveAgentName={isLive ? liveAgentName : null}
                   onApprove={onApprove}
                   onReject={onReject}
-                  regenMessageId={prevUserMessageId ? String(prevUserMessageId) : null}
+                  regenMessageId={prevUserEntryId || null}
                   regenContent={prevUserContent}
                   onRegenerate={onRegenerate ? handleRegen : undefined}
                   running={running}
@@ -1348,6 +1380,8 @@ export function ChatView({
                   duration={turnDuration}
                   liveStartedAt={isLive ? liveStartedAt : undefined}
                   messageId={m.messageId}
+                  branches={m.branches}
+                  onSwitchBranch={onSwitchBranch}
                   onFork={onFork}
                   liveTaskStatusByCallId={liveTaskStatusByCallId}
                   liveTaskLabelByCallId={liveTaskLabelByCallId}

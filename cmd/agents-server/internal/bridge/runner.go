@@ -320,7 +320,15 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, input, provider, sendEvent)
 	}
 
-	stream, ctrl := agents.Run(ctx, agent, input, opts)
+	// An empty input means "continue from where the session's branch now
+	// points" — what regenerating does after switching back to the user's
+	// message. Passing "" through would append an empty user turn, so the run
+	// gets an empty ITEM LIST instead: nothing to add, history to answer.
+	var runInput any = input
+	if input == "" {
+		runInput = []agents.TResponseInputItem{}
+	}
+	stream, ctrl := agents.Run(ctx, agent, runInput, opts)
 	r.hub.setControl(runID, ctrl)
 	// The stream carries both halves of the outcome: the run's result as its
 	// terminal event, or a terminal error. There is no second place to consult

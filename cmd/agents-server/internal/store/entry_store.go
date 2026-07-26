@@ -304,6 +304,10 @@ type EntryView struct {
 	Usage       *agents.RequestUsage `json:"usage,omitempty"`
 	Diagnostics []agents.Diagnostic  `json:"diagnostics,omitempty"`
 	Compacted   bool                 `json:"compacted,omitempty"`
+	// OnPath reports whether this entry is on the session's ACTIVE branch. An
+	// off-path entry is an abandoned attempt — still recorded, still offerable,
+	// but not part of the conversation as it currently stands.
+	OnPath bool `json:"on_path"`
 	// Compaction is present on a checkpoint: what the pass folded away, so a
 	// reader can collapse those entries under it and offer them back.
 	Compaction *CompactionInfo `json:"compaction,omitempty"`
@@ -352,6 +356,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, sessionID string, beforeID 
 		entries = append(entries, e)
 	}
 
+	onPath := activeBranch(entries)
 	folded := agents.FoldUpdates(entries)
 	views := make([]EntryView, 0, len(folded))
 	for _, e := range folded {
@@ -368,6 +373,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, sessionID string, beforeID 
 			Usage:       e.Usage,
 			Diagnostics: e.Diagnostics,
 			Compacted:   row.Compacted,
+			OnPath:      onPath[e.ID],
 			Compaction:  compactionInfoOf(e),
 			CreatedAt:   e.CreatedAt,
 		})
@@ -448,6 +454,48 @@ func compactionInfoOf(e agents.SessionEntry) *CompactionInfo {
 		TokensBefore: p.TokensBefore,
 		TokensAfter:  p.TokensAfter,
 	}
+}
+
+// Branch moves the session's active branch to entryID, so the next run
+// continues from there.
+//
+// It appends a leaf entry rather than deleting anything: the abandoned attempt
+// stays recorded, which is what makes "try that again differently" reversible
+// and what lets the UI offer both versions.
+func (s *EntryStore) Branch(ctx context.Context, sessionID, entryID string) error {
+	store := &EntryStore{db: s.db, sessionID: sessionID, runID: s.runID}
+	return agents.NewSession(store).Branch(ctx, entryID)
+}
+
+// Leaf returns the session's active branch tip.
+func (s *EntryStore) Leaf(ctx context.Context, sessionID string) (string, error) {
+	return (&EntryStore{db: s.db, sessionID: sessionID}).leafIn(ctx, s.db)
+}
+
+// activeBranch returns the ids on the current branch: the walk from the leaf up
+// through parent links to the root.
+//
+// It deliberately does NOT use PathToLeaf, which stops at a compaction
+// checkpoint. That stop is about what the MODEL reads; this is about which
+// entries a person is currently looking at, and an entry folded by compaction
+// is still on the branch they are on.
+func activeBranch(entries []agents.SessionEntry) map[string]bool {
+	byID := make(map[string]agents.SessionEntry, len(entries))
+	for _, e := range entries {
+		if e.ID != "" {
+			byID[e.ID] = e
+		}
+	}
+	on := make(map[string]bool, len(entries))
+	for id := agents.LeafOf(entries); id != ""; {
+		e, ok := byID[id]
+		if !ok || on[id] {
+			break // a missing parent ends the walk; a repeat means a cycle
+		}
+		on[id] = true
+		id = e.ParentID
+	}
+	return on
 }
 
 // AppendCallDisplayUpdate records an amendment to the display of whichever

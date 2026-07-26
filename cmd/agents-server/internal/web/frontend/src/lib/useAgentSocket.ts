@@ -1044,5 +1044,14 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       .finally(() => loadingMoreRef.current.delete(sid));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, watchTask, unwatchTask };
+  // forgetLoaded drops the "already fetched" mark so the next loadSession
+  // re-reads from the server. A branch switch is the case that needs it: the
+  // conversation changed shape server-side, and no local patch can express
+  // "this is now a different branch".
+  const forgetLoaded = useCallback((sid: string) => {
+    loadedRef.current.delete(sid);
+    updateSS(sid, s => ({ ...s, loaded: false, entries: [], hasMore: false }));
+  }, [updateSS]);
+
+  return { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
 }

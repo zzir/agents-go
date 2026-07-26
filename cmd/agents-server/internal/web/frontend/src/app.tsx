@@ -287,7 +287,7 @@ export default function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  const { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -423,24 +423,40 @@ export default function App() {
     }
   }, [activeSession]);
 
-  const handleRegenerate = useCallback(async (userMessageId: string | number, userContent: string, agentConfigId: string, sandboxId: string) => {
+  // reloadTimeline re-reads a session's persisted history after a branch move.
+  // The switch is a server-side append, so the client's assembled timeline is
+  // stale in a way no local patch can fix — a different branch is a different
+  // conversation.
+  const reloadTimeline = useCallback(async (sid: string) => {
+    forgetLoaded(sid);
+    await loadSession(sid).catch(() => toast.error('Could not reload conversation'));
+  }, [forgetLoaded, loadSession]);
+
+  const handleSwitchBranch = useCallback(async (tipEntryId: string) => {
+    if (!activeSession) return;
+    try {
+      await api.sessions.branch(activeSession, tipEntryId);
+      await reloadTimeline(activeSession);
+    } catch (e: any) {
+      toast.error(e.message || 'Could not switch attempt');
+    }
+  }, [activeSession, reloadTimeline]);
+
+  // Regenerating branches back to the user's message and runs again IN PLACE.
+  // It used to fork a whole new session per attempt, which is why a chat list
+  // filled up with "(regen 2)", "(regen 3)" and no way to compare them — the
+  // attempts now live in one session, switchable.
+  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string) => {
     if (!activeSession || !wsRef.current) return;
     try {
-      const forked = await api.sessions.fork(activeSession, Number(userMessageId), { exclusive: true, label: 'regen' });
-      setSessionReloadKey(k => k + 1);
-      setActiveSession(forked.id);
+      await api.sessions.branch(activeSession, userEntryId);
+      await reloadTimeline(activeSession);
       setActivePanel(null);
-      // A load hiccup on the freshly-forked (empty) session must not abort the
-      // regenerate — swallow it so the run still starts below.
-      await loadSession(forked.id).catch(() => undefined);
-      const clientMsgId = nextClientMsgId();
-      updateSS(forked.id, s => ({ ...s, messages: [...s.messages, { role: 'user', content: userContent, clientMsgId }] }));
-      const payload: Record<string, any> = { session_id: forked.id, input: userContent, agent_config_id: agentConfigId };
+      // Empty input: the run answers the branch we just switched to rather
+      // than adding a new user message. The server maps it to an empty item list.
+      const payload: Record<string, any> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
       if (sandboxId) payload.sandbox_id = sandboxId;
       if (!wsRef.current.send(EV.runCreate, payload)) {
-        // Socket dropped after the fork: roll back the optimistic bubble so the
-        // regenerated turn isn't stranded with no run (matches handleSend).
-        updateSS(forked.id, s => ({ ...s, messages: s.messages.filter((m: { clientMsgId?: string }) => m.clientMsgId !== clientMsgId) }));
         toast.error('WebSocket disconnected — message not sent');
       }
     } catch (e: any) {
@@ -545,6 +561,7 @@ export default function App() {
       hasMore={currentSS.hasMore}
       loadingMore={currentSS.loadingMore}
       onLoadEarlier={handleLoadEarlier}
+      onSwitchBranch={handleSwitchBranch}
       onRegenerate={handleRegenerate}
       settingsReloadKey={settingsReloadKey}
       panel={activePanel}
