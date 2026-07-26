@@ -1060,15 +1060,22 @@ export function ChatView({
       } else if (entry.role === 'turn') {
         if (rid && traceRuns[rid]) {
           tMap[i] = rid;
-          if (!labels[rid]) {
-            let userContent: string | null = null;
-            for (let j = i - 1; j >= 0; j--) {
-              if (messages[j].role === 'user') {
-                userContent = messages[j].content ?? null;
-                if (uMap[j] === undefined) uMap[j] = rid;
-                break;
-              }
+          let userContent: string | null = null;
+          for (let j = i - 1; j >= 0; j--) {
+            if (messages[j].role === 'user') {
+              userContent = messages[j].content ?? null;
+              // The turn's run OVERWRITES the one the user message carries.
+              // A message's own run_id is whichever run first produced it —
+              // after a regenerate that is an attempt the session has since
+              // branched away from, and it would claim the jump target for a
+              // run no longer in the timeline while the current attempt got
+              // none. On the active branch a message is followed by exactly
+              // one turn, so there is nothing to contend over.
+              if (!parseTaskNotification(messages[j].content)) uMap[j] = rid;
+              break;
             }
+          }
+          if (!labels[rid]) {
             labels[rid] = userContent ? runLabelFor(userContent) : 'Turn ' + (turnIdx + 1);
           }
         }
@@ -1145,7 +1152,15 @@ export function ChatView({
 
   // Runs that have a user message in this conversation — gates the trace
   // panel's jump-to-message control.
-  const messageRunIds = useMemo(() => new Set(Object.values(userRunMap)), [userRunMap]);
+  // Runs the trace panel can offer a "jump to message" for: those with
+  // something in the RENDERED timeline to jump to. A run whose attempt was
+  // regenerated away has no anchor — the jump would scroll to nothing — so it
+  // gets no button, which is also what distinguishes it from the attempt that
+  // replaced it.
+  const messageRunIds = useMemo(
+    () => new Set([...Object.values(userRunMap), ...Object.values(turnRunMap)]),
+    [userRunMap, turnRunMap],
+  );
 
   // Reverse navigation: scroll the chat to the run's user message and flash
   // it, mirroring the message → trace direction of openTrace.
