@@ -888,6 +888,13 @@ Rejected alternatives, both worse: dropping silently (corrupts the consumer's
 view undetectably) and disconnecting the slow subscriber (turns a recoverable
 hiccup into a visible failure).
 
+Fan-out is a **requirement, not an optimization**, and that was measured rather
+than assumed. A slow consumer couples to the producer under `iter.Seq2`
+(13.1× the ideal wall clock) — but it also couples under a buffered channel,
+just later: with `chan(64)` the producer still finished at 992 ms against a
+100 ms ideal, once the buffer filled. Neither stream shape isolates a slow
+consumer on its own, so per-subscriber buffering is needed either way.
+
 ---
 
 ### 2.11b Run control ✅

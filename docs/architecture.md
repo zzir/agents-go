@@ -123,7 +123,9 @@ assertion only ever sees the outermost one — a timeout wrapper around an
 approval wrapper loses the approval. `ToolAs[T]` walks an `Unwrap()` chain the
 way `errors.As` does, so a capability is found wherever it sits in the stack.
 This was measured before it was designed: every stacking order lost every
-capability except the outermost. See [Design spikes](spike_results.md#s6--decorator-capability-lookup---design-corrected).
+capability except the outermost. See
+[spec.md §2.7c](spec.md#27c-tool-capabilities-are-side-interfaces-), which
+states the rule that follows from it — a bare type assertion is a bug.
 
 ---
 
@@ -157,7 +159,5 @@ capability most do not enable.
 - **[spec.md](spec.md)** — the invariants, each with the reason it is what it
   is. When something is not covered there, the rule is: decide, implement, and
   add the invariant in the same change.
-- **[spike_results.md](spike_results.md)** — the measurements under the
-  decisions that needed evidence rather than argument.
 - **[upstream_watch.md](upstream_watch.md)** — what has been reviewed from the
   Python SDK, and what was declined. There is no obligation to match it.

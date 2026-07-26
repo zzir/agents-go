@@ -89,5 +89,5 @@ func main() {
 | API index | [Feature reference](features.md) — every capability mapped to its API |
 | Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |
 | Architecture | [Architecture](architecture.md) — how the pieces compose, and where the extension points are |
-| Behavior spec | [Design spec](spec.md) — the invariants, and why each one is what it is · [Design spikes](spike_results.md) — the measurements under them |
+| Behavior spec | [Design spec](spec.md) — the invariants, and why each one is what it is |
 | Upstream | [Upstream watch](upstream_watch.md) — what was reviewed from the Python SDK, ported or declined |
