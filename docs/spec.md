@@ -448,6 +448,32 @@ durable to say.
 The one path that still rewrites is `openai.CompactionSession`, because the
 server's compact API returns a replacement rather than a decision.
 
+### 2.5g Context overflow ✅
+
+Compaction predicts; overflow recovery reacts. A prediction is an estimate — a
+token count the SDK guessed, against a window the provider never states exactly
+— so it will sometimes be wrong, and the failure it misses is one the run
+cannot otherwise survive.
+
+- `ExecOptions.Overflow.MaxRetries` enables "compact, then try this turn
+  again". **Zero by default**: an overflow is reported rather than silently
+  shrinking the conversation.
+- **The retry does not spend the turn budget.** The budget counts model calls
+  the model made, and an overflow is one it never got.
+- **A no-op compaction buys no retry.** Retrying an identical request would fail
+  identically, and spending the budget on that is worse than reporting the
+  overflow.
+- Retries are counted **across the run**, not per turn: a run that overflows
+  every turn is not recovering, it is looping.
+- Detection matches the provider's message, because that is all a context
+  overflow arrives as — a 400 with prose in it. Treating every 400 as an
+  overflow would compact and retry after a malformed request, hiding a bug
+  behind a shrinking conversation.
+- **A truncated response is NOT an overflow** ([§2.7e](#27e-truncated-responses-)).
+  Its input fit; compacting the input does not raise the output cap that cut it
+  off.
+- A recovered overflow is recorded as a `context_overflow` diagnostic.
+
 ### 2.6 Guardrails ✅
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in

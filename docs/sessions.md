@@ -309,6 +309,21 @@ A compaction failure never fails the run: the context it was shrinking is still
 valid, so the error is recorded on the `compaction` trace span and the run
 continues with what it had.
 
+### When the estimate is wrong
+
+Compaction predicts. `ExecOptions.Overflow` reacts:
+
+```go
+opts.Exec.Overflow = agents.OverflowPolicy{MaxRetries: 2}
+```
+
+A model call that fails because the context did not fit triggers a compaction
+pass and one more attempt at the same turn. It is off by default — an overflow
+is worth reporting rather than silently shrinking the conversation — and the
+retry does not spend the turn budget, since the budget counts calls the model
+made and an overflow is one it never got. A pass that drops nothing buys no
+retry: an identical request would fail identically.
+
 Local compaction and server-managed history are mutually exclusive by
 construction — `UsePreviousResponseID` and `ConversationID` already refuse to
 combine with a local `Session`.

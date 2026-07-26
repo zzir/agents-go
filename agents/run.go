@@ -206,6 +206,10 @@ type ExecOptions struct {
 	// happens when the turn budget runs out. The zero value is sensible.
 	ToolLoop ToolLoopPolicy
 
+	// Overflow decides what happens when a model call fails because the
+	// context did not fit. The zero value returns the error unchanged.
+	Overflow OverflowPolicy
+
 	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
 	// items are converted back into model input on later turns. The default
 	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It is
@@ -693,6 +697,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	// so it is granted once rather than every turn from then on.
 	var finalTurn bool
 
+	// overflowRetries counts "compact and try this turn again" attempts across
+	// the whole run, not per turn: a run that overflows on every turn is not
+	// recovering, it is looping.
+	var overflowRetries int
+
 	// Persist the new user input up front (original run only; a resume's input
 	// was saved before it paused). Mirrors Python persisting input before the
 	// Runs defer the one-time user-input save to just before the first model
@@ -981,6 +990,20 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err != nil {
 				span.SetError(err.Error(), nil)
 				span.Finish()
+				// The context did not fit. Compaction predicts; this reacts,
+				// because the prediction is an estimate against a window the
+				// provider never states exactly.
+				if r.opts.Exec.Overflow.isOverflow(err, resp) && overflowRetries < r.opts.Exec.Overflow.MaxRetries {
+					if compacted, ok := r.recoverOverflow(ctx, err); ok {
+						overflowRetries++
+						originalInput = compacted
+						generatedItems = nil
+						// Retry THIS turn: the budget counts model calls the
+						// model made, and an overflow is one it never got.
+						turn--
+						continue
+					}
+				}
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
 			r.finishGenerationSpan(span, resp)

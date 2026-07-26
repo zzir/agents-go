@@ -30,6 +30,9 @@ const (
 	// DiagResponseTruncated is a model response cut off at the output-token
 	// limit, whose tool calls were refused.
 	DiagResponseTruncated DiagnosticType = "response_truncated"
+	// DiagContextOverflow is a model call that failed because the context did
+	// not fit, after which the run compacted and tried again.
+	DiagContextOverflow DiagnosticType = "context_overflow"
 )
 
 // Diagnostic records trouble a run went through and survived.
