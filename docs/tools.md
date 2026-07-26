@@ -28,7 +28,7 @@ agent.Tools = []agents.Tool{runQuery}
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
 - The `ctx` is the run's context (cancellation propagates into tools).
-- `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). The same `*ToolContext` is passed to the `OnToolStart` / `OnToolEnd` [lifecycle hooks](running_agents.md#run-scoped-hooks), so a hook sees exactly which call it is bracketing.
+- `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). The same `*ToolContext` is passed to the `OnToolStart` / `OnToolEnd` [lifecycle hooks](running_agents.md#turn-hooks), so a hook sees exactly which call it is bracketing.
 - Tools requested in the same model turn run **concurrently**; share state through the context value only if it is goroutine-safe.
 
 This replaces Python's `@function_tool` decorator: compile-time generics instead of signature inspection, struct tags instead of docstrings.
@@ -77,7 +77,7 @@ t.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Age
 
 ### Tool guardrails
 
-Tools can carry their own input/output guardrails — see [Guardrails](guardrails.md#tool-guardrails).
+Tools can carry their own input/output guardrails — see [Guardrails](guardrails.md#placement-decides-scope).
 
 ### Decorators: adding a capability to a tool you did not build
 

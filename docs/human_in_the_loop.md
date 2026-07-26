@@ -57,7 +57,7 @@ fmt.Println(res.FinalOutputString())
 
 ## Pre-approval guardrails
 
-By default a tool's [input guardrails](guardrails.md#tool-guardrails) run only after approval, right before execution. `RunOptions.Exec.PreApprovalToolInputGuardrails` also runs them **before** the approval interruption is surfaced:
+By default a tool's [input guardrails](guardrails.md#placement-decides-scope) run only after approval, right before execution. `RunOptions.Exec.PreApprovalToolInputGuardrails` also runs them **before** the approval interruption is surfaced:
 
 ```go
 res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{

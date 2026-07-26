@@ -179,7 +179,7 @@ Two rules make this more than a workaround:
   have been folded away by compaction, and failing an entire read over a stale
   pointer would make history unloadable.
 
-History rewriters (compaction, summarization) go through `agents.ReplaceSessionItems`, which uses `ReplaceItems` when available and only falls back to the non-atomic `Clear`+`AddItems` otherwise — implementing it removes the failure window where a crash between the two calls leaves the session empty. All built-in backends (`InMemorySession`, `FileSession`, SQLite/PostgreSQL) implement it.
+Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction) and the entries it folds stay exactly as they were. The one path that does rewrite is `openai.CompactionSession`, because the server-side compact API returns a replacement rather than a decision; it goes through `agents.ReplaceStorageEntries`, which uses a backend's `AtomicReplacer` when it has one and only falls back to the non-atomic `Clear`+`Append` otherwise. All built-in backends implement it, which removes the window where a crash between the two calls leaves the session empty.
 
 ## Choosing an implementation
 

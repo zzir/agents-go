@@ -309,10 +309,12 @@ case agents.CodeUnknown:           // not an SDK error, or unclassified
 | `model_refusal` | `*ModelRefusalError` |
 | `user_error` | `*UserError` |
 | `tool_timeout` | `*ToolTimeoutError` |
-| `tool_panic` | A tool panic on the fatal path (`FailureErrorFunction == nil`) |
+| `tool_panic` | A tool panic, whether it aborted the run or was recovered |
+| `tool_loop` | `*ToolLoopError` — every tool failed on N consecutive turns |
 | `guardrail_tripwire` | `*GuardrailTripwireError` |
 | `sandbox_exec` | A sandbox command that failed to run |
 | `mcp` | An MCP server connection or tool call |
+| `context_overflow` | Reported as a diagnostic when a run compacted and retried after the context did not fit |
 | `unknown` | Anything else, including a plain error from your own code |
 
 **The set is open.** Handle an unrecognized code generically — the SDK adds

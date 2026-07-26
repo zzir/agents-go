@@ -68,13 +68,13 @@ func main() {
 | Configuration | [Configuration](config.md) |
 | Core concepts | [Agents](agents.md) · [Running agents](running_agents.md) · [Results](results.md) |
 | Tools | [Tools](tools.md) · [Model context protocol (MCP)](mcp.md) · [Sandbox agents](sandbox.md) · [Skills](skills.md) |
-| Orchestration | [Agent orchestration](multi_agent.md) · [Handoffs](handoffs.md) |
+| Orchestration | [Agent orchestration](multi_agent.md) · [Handoffs](handoffs.md) · [Background tasks](tasks.md) |
 | Safety | [Guardrails](guardrails.md) · [Human-in-the-loop](human_in_the_loop.md) |
 | State | [Sessions](sessions.md) · [Context management](context.md) · [Usage](usage.md) |
 | Streaming | [Streaming](streaming.md) |
 | Models | [Models](models.md) |
-| Observability | [Tracing](tracing.md) · [Logging](logging.md) |
-| Orchestration | [Background tasks](tasks.md) |
+| Observability | [Tracing](tracing.md) · [Logging and diagnostics](logging.md) |
 | Examples | [Examples](examples.md) |
 | API index | [Feature reference](features.md) — every capability mapped to its API |
 | Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |
+| Behavior spec | [Design spec](spec.md) — the invariants, and why each one is what it is |
