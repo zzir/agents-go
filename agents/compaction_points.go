@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 )
@@ -83,21 +84,21 @@ func (c CompactionOptions) active(point CompactionPoint) bool {
 // Server-managed conversation state needs no thought here: UsePreviousResponseID
 // and ConversationID already refuse to combine with a local Session, so a run
 // whose history the server holds has no entries for a compactor to look at.
-func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entries []SessionEntry) []SessionEntry {
+func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entries []SessionEntry) ([]SessionEntry, bool) {
 	if !r.opts.Compaction.active(point) {
-		return entries
+		return entries, false
 	}
 	if r.opts.Conversation.Session == nil {
 		// Without a session there is no history to shrink: the caller's input
 		// is all the context there is, and dropping part of what they just
 		// asked for is not compaction.
-		return entries
+		return entries, false
 	}
 	if _, ok := r.opts.Conversation.Session.Storage().(CompactionAware); ok {
 		// The storage compacts itself (a server-side compact API, say).
 		// Running both would compact a history that is already shrinking under
 		// a different policy.
-		return entries
+		return entries, false
 	}
 
 	// The span opens only when a pass actually runs, so no-op turns — the vast
@@ -114,7 +115,7 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 		r.log.component("compaction").Warn(ctx, "compaction pass failed; continuing uncompacted",
 			slog.String("point", point.String()), slog.String("error", err.Error()))
 		RecordDiagnostic(ctx, DiagCompactionFailed, err, map[string]any{"point": point.String()})
-		return entries
+		return entries, false
 	}
 	if span != nil {
 		span.Set("point", point.String())
@@ -122,13 +123,31 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 		span.Set("entries_after", len(out))
 		span.Finish()
 	}
-	if len(out) != before {
+	// Length is not the test. A compactor may return the same COUNT with
+	// different content — one summary standing in for one entry is a legal
+	// pass — and treating that as a no-op would silently discard it.
+	changed := changedEntries(entries, out)
+	if changed {
 		r.log.component("compaction").Info(ctx, "context compacted",
 			slog.String("point", point.String()),
 			slog.Int("entries_before", before),
 			slog.Int("entries_after", len(out)))
 	}
-	return out
+	return out, changed
+}
+
+// changedEntries reports whether a compaction pass altered the context, by
+// identity rather than by size.
+func changedEntries(before, after []SessionEntry) bool {
+	if len(before) != len(after) {
+		return true
+	}
+	for i := range before {
+		if before[i].ID != after[i].ID || !bytes.Equal(before[i].Item, after[i].Item) {
+			return true
+		}
+	}
+	return false
 }
 
 // String names the point, for traces and logs.
@@ -171,10 +190,10 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []TResponseInp
 	if err != nil {
 		return nil, false, err
 	}
-	compacted := r.compactContext(ctx, CompactAtSavePoint, entries)
-	if len(compacted) == len(entries) {
-		// Nothing was dropped, so rebuilding would produce the context the run
-		// already has. Skipping keeps the common no-op turn free.
+	compacted, changed := r.compactContext(ctx, CompactAtSavePoint, entries)
+	if !changed {
+		// The pass altered nothing, so rebuilding would produce the context
+		// the run already has. Skipping keeps the common no-op turn free.
 		return nil, false, nil
 	}
 
@@ -223,7 +242,7 @@ func (r *runner) checkpointAfterRun(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	if compacted := r.compactContext(ctx, CompactAfterRun, entries); len(compacted) == len(entries) {
+	if _, changed := r.compactContext(ctx, CompactAfterRun, entries); !changed {
 		return false
 	}
 

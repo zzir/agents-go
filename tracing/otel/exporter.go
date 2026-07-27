@@ -87,7 +87,15 @@ type Exporter struct {
 	// Batches deliver the Trace record first (OnTraceStart enqueues it), but a
 	// span whose trace was never seen still exports — with the workflow
 	// attributes missing rather than dropped.
+	//
+	// An entry is released when the trace's root span is exported, which is
+	// the only span that reads it. A long-lived server would otherwise
+	// accumulate one record per run for its whole life.
 	traces map[string]*tracing.Trace
+	// traceOrder is insertion order, for evicting the oldest when a trace's
+	// root never arrives — a run abandoned mid-flight, or one whose root was
+	// dropped. Without it those entries are immortal.
+	traceOrder []string
 }
 
 // NewExporter builds an Exporter. It returns an error rather than panicking on
@@ -124,6 +132,40 @@ func NewTracerProvider(sdkOpts ...sdktrace.TracerProviderOption) (*sdktrace.Trac
 	return tp, exp, nil
 }
 
+// maxPendingTraces bounds the metadata held for traces whose root span has not
+// arrived. A run that is abandoned, or whose root is dropped by a full batch
+// queue, never releases its record on its own; without a ceiling those
+// accumulate for the life of the process.
+//
+// Sized so an ordinary burst of concurrent runs never evicts: only a leak
+// reaches it, and reaching it costs the workflow name on a stale trace, not
+// the span.
+const maxPendingTraces = 4096
+
+// forgetTrace releases a trace's metadata. The caller holds e.mu.
+func (e *Exporter) forgetTrace(traceID string) {
+	if _, ok := e.traces[traceID]; !ok {
+		return
+	}
+	delete(e.traces, traceID)
+	for i, id := range e.traceOrder {
+		if id == traceID {
+			e.traceOrder = append(e.traceOrder[:i], e.traceOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+// evictOldestTraces drops the oldest records once the map exceeds its ceiling.
+// The caller holds e.mu.
+func (e *Exporter) evictOldestTraces() {
+	for len(e.traceOrder) > maxPendingTraces {
+		oldest := e.traceOrder[0]
+		e.traceOrder = e.traceOrder[1:]
+		delete(e.traces, oldest)
+	}
+}
+
 // Export translates a batch of items into OTel spans.
 func (e *Exporter) Export(items []tracing.Item) {
 	e.mu.Lock()
@@ -133,7 +175,11 @@ func (e *Exporter) Export(items []tracing.Item) {
 	// together stamps the workflow attributes correctly regardless of order.
 	for _, item := range items {
 		if tr, ok := item.(*tracing.Trace); ok {
+			if _, dup := e.traces[tr.TraceID]; !dup {
+				e.traceOrder = append(e.traceOrder, tr.TraceID)
+			}
 			e.traces[tr.TraceID] = tr
+			e.evictOldestTraces()
 		}
 	}
 	for _, item := range items {
@@ -177,6 +223,9 @@ func (e *Exporter) emit(s *tracing.Span) {
 		if tr.GroupID != "" {
 			attrs = append(attrs, attribute.String(attrTraceGroupID, tr.GroupID))
 		}
+		// The root is the only span that reads this, so the record has done
+		// its job. Holding it would make the map grow with every run.
+		e.forgetTrace(s.TraceID)
 	}
 
 	_, otelSpan := e.tracer.Start(ctx, name,

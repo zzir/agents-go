@@ -96,3 +96,85 @@ func runRepoContract(ctx context.Context, t *testing.T, repo agents.SessionRepo)
 		t.Errorf("deleting an absent session should be a no-op, got %v", err)
 	}
 }
+
+// A repeat Create must not hand back a session that already holds a previous
+// one's entries: the .jsonl beside the sidecar is keyed on the same filename,
+// so overwriting the sidecar adopts that history rather than starting fresh.
+func TestRepoCreateRefusesADuplicateID(t *testing.T) {
+	ctx := context.Background()
+	repo, err := memory.NewRepo(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := repo.Create(ctx, agents.CreateOptions{ID: "dup", Title: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Append(ctx, userEntry(t, "PRIOR")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "dup"}); err == nil {
+		t.Fatal("creating an existing session id succeeded; it would inherit the old history")
+	}
+}
+
+// sanitizeSessionID folds anything outside [A-Za-z0-9._-] to "_", so distinct
+// ids can land on one file. Sharing it would let one session read and delete
+// another's history.
+func TestRepoRejectsSanitizationCollisions(t *testing.T) {
+	ctx := context.Background()
+	repo, err := memory.NewRepo(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := repo.Create(ctx, agents.CreateOptions{ID: "team a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Append(ctx, userEntry(t, "BELONGS-TO-A")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "team+a"}); err == nil {
+		t.Fatal(`"team+a" was created alongside "team a"; they share one file`)
+	}
+	// Nor may the colliding name reach the existing session by another route.
+	if _, err := repo.Open(ctx, "team+a"); err == nil {
+		t.Fatal(`Open("team+a") returned the session belonging to "team a"`)
+	}
+	if err := repo.Delete(ctx, "team+a"); err == nil {
+		t.Fatal(`Delete("team+a") would have destroyed "team a"`)
+	}
+	if _, err := repo.Open(ctx, "team a"); err != nil {
+		t.Fatalf("the real session became unreachable: %v", err)
+	}
+}
+
+// An id with no usable filename form would collide with every other such id.
+func TestRepoRejectsIDWithNoFilenameForm(t *testing.T) {
+	repo, err := memory.NewRepo(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"...", "   ", ".."} {
+		if _, err := repo.Create(context.Background(), agents.CreateOptions{ID: id}); err == nil {
+			t.Errorf("Create(%q) succeeded; it has no filename to live under", id)
+		}
+	}
+}
+
+func userEntry(t *testing.T, text string) agents.SessionEntry {
+	t.Helper()
+	it, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := agents.NewItemEntry(it, agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}

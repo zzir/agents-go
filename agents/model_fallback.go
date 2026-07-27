@@ -113,6 +113,18 @@ type FallbackProvider struct {
 	primary        ModelProvider
 	fallbacks      []ModelProvider
 	shouldFallback func(error) bool
+	log            *slog.Logger
+}
+
+// WithLogger reports fallback providers that failed to resolve a model.
+//
+// It is opt-in and silent by default, like every other log this SDK writes:
+// GetModel has no context to carry a run's logger, and writing to
+// slog.Default() would put the SDK in somebody's production output uninvited
+// (see spec §2.11c).
+func (p *FallbackProvider) WithLogger(l *slog.Logger) *FallbackProvider {
+	p.log = l
+	return p
 }
 
 // NewFallbackProvider wraps primary so that every Model it produces automatically
@@ -167,11 +179,11 @@ func (p *FallbackProvider) GetModel(name string) (Model, error) {
 		}
 		return m, nil
 	}
-	if len(errs) > 0 {
+	if len(errs) > 0 && p.log != nil {
 		// At least one fallback still resolved, so keep the (shorter) chain, but
 		// surface the partial failure — a silently shrunk fallback set otherwise
 		// looks healthy until the moment it is needed.
-		slog.Warn("fallback provider: some fallback providers failed to resolve model; continuing with the rest",
+		p.log.Warn("fallback provider: some fallback providers failed to resolve model; continuing with the rest",
 			"model", name, "failed", len(errs), "resolved", len(fbs), "error", errors.Join(errs...))
 	}
 	return NewFallbackModel(m, fbs...).WithShouldFallback(p.shouldFallback), nil

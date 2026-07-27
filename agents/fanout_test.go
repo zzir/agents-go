@@ -16,6 +16,9 @@ func drainFanout(stream func(func(Seq[int], error) bool)) ([]int, []*GapError) {
 		var gap *GapError
 		if errors.As(err, &gap) {
 			gaps = append(gaps, gap)
+			if gap.AtEnd() {
+				continue // no item accompanies a gap that runs to the end
+			}
 		}
 		got = append(got, item.Value)
 	}
@@ -64,8 +67,14 @@ func TestFanoutReportsGaps(t *testing.T) {
 	if len(got) != 2 || got[0] != 1 || got[1] != 2 {
 		t.Fatalf("delivered %v, want the two that fit", got)
 	}
-	if len(gaps) != 0 {
-		t.Fatalf("no gap can be reported yet — nothing got through after the drops; got %v", gaps)
+	// Nothing got through after the drops, so there is no later delivery to
+	// carry the gap — it is reported as the stream ends instead. Silence here
+	// would leave the consumer unable to tell loss from a stream that ended.
+	if len(gaps) != 1 || !gaps[0].AtEnd() {
+		t.Fatalf("want one terminal gap, got %v", gaps)
+	}
+	if gaps[0].Dropped != 8 {
+		t.Errorf("dropped = %d, want 8 (3..10)", gaps[0].Dropped)
 	}
 
 	// The gap surfaces on the next successful delivery, so verify that path
@@ -417,5 +426,67 @@ func TestFanoutReplayOrdersAgainstConcurrentPublish(t *testing.T) {
 			last = item.Seq
 		}
 		cancel()
+	}
+}
+
+// A gap that runs to the end of the stream still has to be reported. The
+// producer finishing while a subscriber is behind leaves those drops with no
+// later delivery to ride out on, and silence there is indistinguishable from
+// a stream that simply ended — which is the case §2.11 says must not exist.
+func TestFanoutReportsAGapThatRunsToTheEnd(t *testing.T) {
+	f := NewFanout[int](FanoutOptions{Subscriber: 2, Replay: 0})
+	stream, cancel := f.Subscribe(0)
+	defer cancel()
+
+	for i := 1; i <= 10; i++ {
+		f.Publish(i)
+	}
+	f.Close()
+
+	var delivered []int
+	var gap *GapError
+	for item, err := range stream {
+		if err != nil {
+			if !errors.As(err, &gap) {
+				t.Fatalf("non-gap error: %v", err)
+			}
+			continue
+		}
+		delivered = append(delivered, item.Value)
+	}
+
+	if len(delivered) == 10 {
+		t.Skip("nothing was dropped; this test needs a subscriber that fell behind")
+	}
+	if gap == nil {
+		t.Fatalf("delivered %v of 10 and reported no gap", delivered)
+	}
+	if !gap.AtEnd() {
+		t.Errorf("gap.Next = %d, want 0 — there is no item after a terminal gap", gap.Next)
+	}
+	if want := 10 - len(delivered); gap.Dropped != want {
+		t.Errorf("gap.Dropped = %d, want %d", gap.Dropped, want)
+	}
+	if last := delivered[len(delivered)-1]; gap.LastGood != last {
+		t.Errorf("gap.LastGood = %d, want %d — resuming from it must not skip anything", gap.LastGood, last)
+	}
+}
+
+// Cancelling is the consumer's own decision, so it gets no gap: it knows it
+// stopped reading.
+func TestFanoutCancelReportsNoGap(t *testing.T) {
+	f := NewFanout[int](FanoutOptions{Subscriber: 2, Replay: 0})
+	stream, cancel := f.Subscribe(0)
+
+	for i := 1; i <= 10; i++ {
+		f.Publish(i)
+	}
+	cancel()
+
+	for _, err := range stream {
+		var g *GapError
+		if errors.As(err, &g) && g.AtEnd() {
+			t.Fatal("a cancelled subscriber was told about a terminal gap")
+		}
 	}
 }

@@ -41,6 +41,12 @@ type Options struct {
 	ClientName    string
 	ClientVersion string
 
+	// Logger reports what this client did to a server's tools — a name
+	// truncated or disambiguated to fit the SDK's limits, which changes what
+	// the model is told the tool is called. Nil is silent: the SDK does not
+	// write to slog.Default() on its own (spec §2.11c).
+	Logger *slog.Logger
+
 	// CacheToolsList caches the server's tool list after the first fetch so a
 	// multi-turn run does not re-issue list_tools every turn. The cache is
 	// invalidated automatically when the server sends a tools/list_changed
@@ -639,10 +645,12 @@ func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
 		names[c.index] = public
 	}
 
-	for i, mt := range tools {
-		if names[i] != baseNames[i] {
-			slog.Default().Info("mcp: tool name truncated or disambiguated",
-				"server", s.name, "tool", mt.Name, "exposed_name", names[i])
+	if s.opts.Logger != nil {
+		for i, mt := range tools {
+			if names[i] != baseNames[i] {
+				s.opts.Logger.Info("mcp: tool name truncated or disambiguated",
+					"server", s.name, "tool", mt.Name, "exposed_name", names[i])
+			}
 		}
 	}
 	return names

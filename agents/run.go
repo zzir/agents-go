@@ -443,7 +443,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		// Compact before projecting: the compactor reasons about entries —
 		// their kinds, their turns, their usage — and projection is what turns
 		// whatever survives into model input.
-		entries = r.compactContext(ctx, CompactBeforeRun, entries)
+		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
 		history, herr := ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
@@ -1764,8 +1764,8 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 	for _, server := range agent.MCPServers {
 		mcpTools, err := server.ListTools(ctx, r.rc, agent)
 		if err != nil {
-			slog.WarnContext(ctx, "MCP ListTools failed, skipping server",
-				"agent", agent.Name, "error", err)
+			r.log.component("mcp").Warn(ctx, "MCP ListTools failed, skipping server",
+				slog.String("agent", agent.Name), slog.String("error", err.Error()))
 			continue
 		}
 		out = append(out, mcpTools...)

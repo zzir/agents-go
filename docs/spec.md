@@ -876,6 +876,12 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   stream is preceded by a `*GapError` naming the range it lost. Silent loss is
   not an option the API offers: a consumer cannot distinguish a timeline missing
   content from one that never had it.
+- **Including when there is no next delivery.** A producer that finishes while a
+  subscriber is still behind leaves drops with nothing to ride out on. Those are
+  reported as the stream ends, with `GapError.AtEnd` true, `Next` zero and a
+  zero-value item — the one case where the item beside a gap carries nothing.
+  A consumer resyncs from `LastGood`. Cancelling gets no such gap: the consumer
+  chose to stop reading and knows it.
 - **Sequence numbers are monotonic and assigned atomically with delivery**, so a
   subscriber never observes a higher number before a lower one — including when
   several goroutines publish concurrently.

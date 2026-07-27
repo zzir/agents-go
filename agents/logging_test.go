@@ -3,7 +3,11 @@ package agents
 import (
 	"bytes"
 	"context"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -128,5 +132,43 @@ func TestLogging_NilLoggerIsANoOp(t *testing.T) {
 	}
 	if c := l.component("x").with(slog.String("a", "b")); c == nil {
 		t.Error("component/with on a disabled logger returned nil")
+	}
+}
+
+// spec §2.11c: "the SDK never writes to slog.Default() on its own." A package
+// -level slog call does exactly that, so it must not reappear — the failure is
+// silent for whoever writes it and loud for whoever imports the library.
+func TestNoPackageLevelSlogCalls(t *testing.T) {
+	root := ".."
+	bad := regexp.MustCompile(`slog\.(Default\(\)|Info|Warn|Error|Debug|InfoContext|WarnContext|ErrorContext|DebugContext)\(`)
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "examples", "cmd", "agentstest", "dist":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if bad.MatchString(line) {
+				t.Errorf("%s:%d writes through the package-level slog: %s",
+					path, i+1, strings.TrimSpace(line))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -66,6 +66,12 @@ type Config struct {
 	// that cannot tell whether waking is safe must not guess.
 	Guard WakeGuard
 
+	// MaxConcurrentPerParent caps a parent session's live tasks. One Manager
+	// enforces it exactly: Spawn holds a per-parent lock across counting and
+	// creating. Several Managers over one Store (separate processes) can each
+	// admit up to the cap, because the Store has no conditional insert to
+	// arbitrate between them — run one Manager per parent, or enforce the
+	// ceiling above them.
 	MaxConcurrentPerParent int
 	SummaryLimit           int
 	MaxStatusWait          time.Duration
@@ -94,6 +100,28 @@ type Manager struct {
 	// one blocked goroutine rather than a polling loop.
 	mu      sync.Mutex
 	waiters map[string][]chan struct{}
+
+	// spawning serializes Spawn per parent session. Counting live tasks and
+	// creating the next one is a read-then-write, and the calls that race it
+	// are the ordinary case: several spawn_task calls in one model response
+	// execute concurrently, so without this they all see room and all create.
+	spawnMu  sync.Mutex
+	spawning map[string]*sync.Mutex
+}
+
+// parentLock returns the per-parent spawn lock, creating it on first use.
+func (m *Manager) parentLock(parentSessionID string) *sync.Mutex {
+	m.spawnMu.Lock()
+	defer m.spawnMu.Unlock()
+	if m.spawning == nil {
+		m.spawning = map[string]*sync.Mutex{}
+	}
+	l, ok := m.spawning[parentSessionID]
+	if !ok {
+		l = &sync.Mutex{}
+		m.spawning[parentSessionID] = l
+	}
+	return l
 }
 
 // New returns a Manager. It panics on a configuration that cannot work, since
@@ -176,6 +204,13 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 			return nil, ErrDepthLimit{Limit: meta.Depth}
 		}
 	}
+
+	// Hold the parent's spawn lock across the count and the create: they are
+	// one decision, and the concurrent spawns this has to survive are the
+	// normal case rather than an edge one.
+	lock := m.parentLock(req.ParentSessionID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// Check the cap BEFORE creating anything, so an over-cap spawn fails clean
 	// rather than being rolled back.
@@ -332,22 +367,31 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 	// otherwise its own completion wins the CAS and records a success for
 	// something the user asked to stop.
 	paused := t.Status == StatusInputRequired
-	stopRun := func() {
+
+	// stopRun reports whether the run actually took the stop. Only then can
+	// this call leave the terminal state to the run: with no Stopper, or one
+	// that failed, nothing is going to finish the task, and returning success
+	// would leave it working forever.
+	stopRun := func() bool {
 		if m.cfg.Stopper == nil {
-			return
+			return false
 		}
 		if err := m.cfg.Stopper.Stop(ctx, t.RunID, graceful); err != nil {
 			m.log.WarnContext(ctx, "stopping task run",
 				slog.String("task_id", taskID), slog.String("error", err.Error()))
+			return false
 		}
+		return true
 	}
 	if !paused {
-		stopRun()
-		if graceful {
+		accepted := stopRun()
+		if graceful && accepted {
 			// The run finishes its turn and reports through OnRunFinished,
 			// which records the cancellation. Finalizing here would race it.
 			return infoFrom(t, ""), nil
 		}
+		// Not accepted: fall through and finalize here, which is what
+		// Config.Stopper promises when there is no Stopper to interrupt with.
 	}
 
 	reason := "stopped"

@@ -29,14 +29,26 @@ type GapError struct {
 	// LastGood is the sequence number of the last item that was delivered
 	// before the gap; Resume from it.
 	LastGood int
-	// Next is the sequence number of the item delivered right after the gap.
+	// Next is the sequence number of the item delivered right after the gap,
+	// or 0 when the gap runs to the end of the stream — the producer finished
+	// while this subscriber was still behind, so there is no "after". The item
+	// yielded alongside such a gap is the zero value and carries nothing.
 	Next int
 }
 
 func (e *GapError) Error() string {
+	if e.Next == 0 {
+		return fmt.Sprintf("fanout: dropped %d item(s) after seq %d and the stream ended (subscriber too slow)",
+			e.Dropped, e.LastGood)
+	}
 	return fmt.Sprintf("fanout: dropped %d item(s) between seq %d and %d (subscriber too slow)",
 		e.Dropped, e.LastGood, e.Next)
 }
+
+// AtEnd reports whether the gap runs to the end of the stream, meaning nothing
+// further will arrive to close it. A consumer that resyncs on a gap has no
+// "next" item to anchor on here and must resume from LastGood.
+func (e *GapError) AtEnd() bool { return e.Next == 0 }
 
 // FanoutOptions configures a Fanout. The zero value is usable.
 type FanoutOptions struct {
@@ -217,8 +229,13 @@ func (s *subscriber[T]) deliver(item Seq[T], onDrop func(int, int)) {
 
 // Subscribe attaches a new subscriber and returns its stream plus a function
 // that detaches it. The stream yields each item in sequence order; a non-nil
-// error is always a *GapError and the item alongside it is still valid — it is
-// the first one after the gap.
+// error is always a *GapError.
+//
+// The item alongside a gap is the first one after it and is still valid —
+// EXCEPT for a gap that runs to the end of the stream (GapError.AtEnd), which
+// has no "after". There the item is the zero value: the producer finished
+// while this subscriber was behind, so the loss is reported as the stream
+// closes rather than never.
 //
 // fromSeq replays retained items with a higher sequence number before live
 // delivery begins, so a reconnecting consumer resumes without a hole. Pass 0
@@ -273,6 +290,20 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 		})
 	}
 
+	// emitFinalGap reports drops that never got a later delivery to ride out
+	// on. Without it the last stretch of loss is silent, and a consumer cannot
+	// tell a timeline missing its tail from one that ended there — which is
+	// the whole reason drops are reported at all.
+	emitFinalGap := func(yield func(Seq[T], error) bool, s *subscriber[T]) {
+		s.mu.Lock()
+		n, last := s.dropped, s.lastGood
+		s.dropped = 0
+		s.mu.Unlock()
+		if n > 0 {
+			yield(Seq[T]{}, &GapError{Dropped: n, LastGood: last})
+		}
+	}
+
 	emit := func(yield func(Seq[T], error) bool, d delivery[T]) bool {
 		if d.gap != nil {
 			return yield(d.item, d.gap)
@@ -292,7 +323,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 			case <-s.finished:
 				// The producer is done. Deliver what is already buffered —
 				// Close means "no more will be published", not "discard what
-				// you have" — then end the stream.
+				// you have" — then report anything still dropped and end.
 				for {
 					select {
 					case d := <-s.ch:
@@ -300,6 +331,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 							return
 						}
 					default:
+						emitFinalGap(yield, s)
 						return
 					}
 				}

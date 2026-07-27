@@ -794,3 +794,89 @@ func TestStatus_WaitNoticesAFinalizeItDidNotMake(t *testing.T) {
 		t.Errorf("waited %v for a finalize this Manager did not make", elapsed)
 	}
 }
+
+// MaxConcurrentPerParent is a public guarantee, and the calls that test it are
+// the ordinary case: several spawn_task calls in one model response run
+// concurrently, so a read-then-create check would let them all through.
+func TestSpawnCapHoldsUnderConcurrentSpawns(t *testing.T) {
+	const limit = 2
+	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = limit })
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "p", Input: "go"})
+		}()
+	}
+	wg.Wait()
+
+	live, err := h.store.ListNonTerminal(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) > limit {
+		t.Fatalf("%d live tasks for a parent capped at %d", len(live), limit)
+	}
+}
+
+// Config.Stopper says: "Without one, Stop still finalizes the row but cannot
+// interrupt the run." Deferring the terminal state to a run that was never told
+// to stop leaves the task working forever.
+func TestGracefulStopFinalizesWhenNothingTookTheStop(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		tune func(*Config)
+	}{
+		{"no stopper", func(c *Config) { c.Stopper = nil }},
+		{"stopper fails", func(c *Config) {
+			c.Stopper = StopperFunc(func(context.Context, string, bool) error {
+				return errors.New("run already gone")
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tc.tune)
+			info, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "p", Input: "work"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.m.Stop(ctx, info.TaskID, true); err != nil {
+				t.Fatalf("stop: %v", err)
+			}
+			got, err := h.store.Get(ctx, info.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Status.Terminal() {
+				t.Fatalf("status is %q after a successful graceful Stop — the row was never finalized", got.Status)
+			}
+		})
+	}
+}
+
+// The counterpart: when a Stopper does take a graceful stop, the terminal
+// state stays with the run, which reports it through OnRunFinished.
+func TestGracefulStopLeavesTheOutcomeToTheRun(t *testing.T) {
+	h := newHarness(t) // harness Stopper succeeds
+	ctx := context.Background()
+
+	info, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "p", Input: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.m.Stop(ctx, info.TaskID, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.store.Get(ctx, info.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Terminal() {
+		t.Fatal("the row was finalized here, racing the run that was told to finish its turn")
+	}
+}

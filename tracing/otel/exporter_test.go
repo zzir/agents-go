@@ -430,3 +430,48 @@ func assertInt(t *testing.T, s sdktrace.ReadOnlySpan, key string, want int64) {
 		t.Errorf("%s = %d, want %d", key, v.AsInt64(), want)
 	}
 }
+
+// A trace's metadata exists to stamp its root span. Holding it afterwards
+// makes the map grow with every run a long-lived server executes.
+func TestExporterReleasesTraceMetadataAtTheRoot(t *testing.T) {
+	tp, exp, err := NewTracerProvider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	tr := &tracing.Trace{TraceID: tracing.NewTraceID(), WorkflowName: "w"}
+	root := &tracing.Span{
+		TraceID: tr.TraceID, SpanID: tracing.NewSpanID(),
+		Type: "agent", StartedAt: time.Now(), EndedAt: time.Now(),
+	}
+	exp.Export([]tracing.Item{tr, root})
+
+	exp.mu.Lock()
+	held := len(exp.traces)
+	exp.mu.Unlock()
+	if held != 0 {
+		t.Fatalf("%d trace record(s) still held after the root span exported", held)
+	}
+}
+
+// A trace whose root never arrives — an abandoned run, or a root dropped by a
+// full queue — would otherwise be immortal.
+func TestExporterBoundsTracesWithNoRoot(t *testing.T) {
+	tp, exp, err := NewTracerProvider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	for i := 0; i < maxPendingTraces+100; i++ {
+		exp.Export([]tracing.Item{&tracing.Trace{TraceID: tracing.NewTraceID(), WorkflowName: "w"}})
+	}
+
+	exp.mu.Lock()
+	held := len(exp.traces)
+	exp.mu.Unlock()
+	if held > maxPendingTraces {
+		t.Fatalf("holding %d trace records, ceiling is %d", held, maxPendingTraces)
+	}
+}

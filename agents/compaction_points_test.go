@@ -272,3 +272,40 @@ func TestCompaction_AfterRunWritesACheckpoint(t *testing.T) {
 		t.Errorf("context starts with %v, want the checkpoint", ctxEntries)
 	}
 }
+
+// A compactor that replaces N entries with N different ones has compacted
+// something. Deciding "no change" from the count alone discards that pass
+// silently — the save point would rebuild nothing and the after-run
+// checkpoint would never be written.
+func TestCompactionDetectsSameLengthRewrite(t *testing.T) {
+	before := []SessionEntry{
+		{ID: "e1", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"the long original"}`)},
+		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	}
+
+	same := []SessionEntry{
+		{ID: "e1", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"the long original"}`)},
+		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	}
+	if changedEntries(before, same) {
+		t.Error("identical entries reported as changed; every turn would rebuild")
+	}
+
+	// Same count, different content: a summary standing in for an entry.
+	rewritten := []SessionEntry{
+		{ID: "c1", Kind: EntryKindItem, Item: []byte(`{"role":"system","content":"[summary] the long original"}`)},
+		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	}
+	if !changedEntries(before, rewritten) {
+		t.Error("a same-length rewrite was reported as no change; the pass would be discarded")
+	}
+
+	// Same ids, different content — the case an id-only check would miss.
+	edited := []SessionEntry{
+		{ID: "e1", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"shortened"}`)},
+		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	}
+	if !changedEntries(before, edited) {
+		t.Error("an in-place edit was reported as no change")
+	}
+}

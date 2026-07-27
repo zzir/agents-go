@@ -68,24 +68,72 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 		// An id is a filename here, so a separator would escape the directory.
 		return nil, fmt.Errorf("session id %q must not contain a path separator", id)
 	}
+	if sanitizeSessionID(id) == "" {
+		// Everything in the id was stripped, so it has no filename to live
+		// under and would collide with every other such id.
+		return nil, fmt.Errorf("session id %q has no usable filename form", id)
+	}
 	meta := sidecar{ID: id, Title: opts.Title, Hidden: opts.Hidden, CreatedAt: time.Now().UTC()}
 	raw, err := json.Marshal(meta)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(r.sidecarPath(id), raw, 0o644); err != nil {
+	// O_EXCL, not WriteFile: creating over an existing sidecar would hand back
+	// a "new" session already holding the previous one's entries, since the
+	// .jsonl beside it is keyed on the same name.
+	f, err := os.OpenFile(r.sidecarPath(id), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			// Either the same id twice, or two ids that sanitize to one
+			// filename ("team a" and "team+a" both become team_a). Both are
+			// collisions; say which.
+			if prev, rerr := r.readSidecar(id); rerr == nil && prev.ID != id {
+				return nil, fmt.Errorf("session id %q collides with existing session %q (both map to %q)",
+					id, prev.ID, sanitizeSessionID(id))
+			}
+			return nil, fmt.Errorf("session %q already exists", id)
+		}
+		return nil, fmt.Errorf("create session %q: %w", id, err)
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("create session %q: %w", id, err)
+	}
+	if err := f.Close(); err != nil {
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
 	return r.session(id)
 }
 
+// readSidecar returns the metadata stored under id's filename. The ID it
+// carries is the ORIGINAL one, which is what makes a sanitization collision
+// detectable: two different ids share a file, but only one wrote its own id.
+func (r *Repo) readSidecar(id string) (sidecar, error) {
+	raw, err := os.ReadFile(r.sidecarPath(id))
+	if err != nil {
+		return sidecar{}, err
+	}
+	var meta sidecar
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return sidecar{}, err
+	}
+	return meta, nil
+}
+
 // Open returns an existing session, or an error when there is none.
 func (r *Repo) Open(_ context.Context, id string) (*agents.Session, error) {
-	if _, err := os.Stat(r.sidecarPath(id)); err != nil {
+	meta, err := r.readSidecar(id)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("open session %q: %w", id, agents.ErrSessionNotFound)
 		}
 		return nil, err
+	}
+	// The file exists, but it may belong to a different id that sanitizes to
+	// the same name. Opening it would silently serve somebody else's history.
+	if meta.ID != id {
+		return nil, fmt.Errorf("open session %q: %w (the name maps to session %q)",
+			id, agents.ErrSessionNotFound, meta.ID)
 	}
 	return r.session(id)
 }
@@ -128,6 +176,11 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 
 // Delete removes a session's entries and its metadata.
 func (r *Repo) Delete(_ context.Context, id string) error {
+	// Refuse to delete through a colliding name: the file on disk belongs to
+	// another session, and removing it would destroy that one's history.
+	if meta, err := r.readSidecar(id); err == nil && meta.ID != id {
+		return fmt.Errorf("delete session %q: the name maps to session %q", id, meta.ID)
+	}
 	// The sidecar goes first: a session with entries but no sidecar is
 	// invisible to List and Open, whereas the reverse would leave a session
 	// that lists but cannot be read.

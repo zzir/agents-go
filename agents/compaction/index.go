@@ -1,6 +1,8 @@
 package compaction
 
 import (
+	"hash/fnv"
+
 	"github.com/zzir/agents-go/agents"
 )
 
@@ -15,10 +17,29 @@ type Index struct {
 	Groups    []*Group
 	Estimator TokenEstimator
 
-	// lastEntryID is where the previous Update stopped, so the next one can
-	// resume rather than rebuild.
-	lastEntryID string
-	turn        int
+	// indexed fingerprints every entry already grouped, in order. Update
+	// resumes only when what it is handed still starts with exactly these.
+	//
+	// An id alone is not enough to decide that. Entry ids are unique within a
+	// SESSION, not globally — FileSession numbers them e1, e2 with no session
+	// prefix at all — so a Compactor reused across sessions would see a
+	// matching id, treat the second conversation as a continuation of the
+	// first, and return one session's history to the other.
+	indexed []uint64
+	turn    int
+}
+
+// fingerprint identifies an entry by what it holds, not just by its id.
+func fingerprint(e agents.SessionEntry) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(e.ID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(e.Kind))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(e.Item)
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(e.Payload)
+	return h.Sum64()
 }
 
 // NewIndex groups entries. A nil estimator uses CharEstimator.
@@ -34,31 +55,38 @@ func NewIndex(entries []agents.SessionEntry, est TokenEstimator) *Index {
 // Update folds newly-arrived entries into the index.
 //
 // When the entries it already grouped are no longer a prefix of what it is
-// given — a branch switch, a compaction, a fork — it rebuilds from scratch
-// rather than trying to reconcile. Reconciling a rewritten history is where
-// incremental indexes go wrong, and rebuilding is cheap next to a model call.
+// given — a branch switch, a compaction, a fork, or an entirely different
+// session — it rebuilds from scratch rather than trying to reconcile.
+// Reconciling a rewritten history is where incremental indexes go wrong, and
+// both rebuilding and the prefix check are cheap next to a model call.
 func (idx *Index) Update(entries []agents.SessionEntry) {
-	start := 0
-	if idx.lastEntryID != "" {
-		found := -1
-		for i := range entries {
-			if entries[i].ID == idx.lastEntryID {
-				found = i
-				break
-			}
-		}
-		if found < 0 {
-			idx.Groups = nil
-			idx.turn = 0
-		} else {
-			start = found + 1
-		}
+	start := len(idx.indexed)
+	if start > len(entries) || !idx.prefixMatches(entries) {
+		// Not a continuation of what we hold: a different session, a branch
+		// switch, a compaction, a fork. Rebuild rather than reconcile.
+		idx.Groups = nil
+		idx.turn = 0
+		idx.indexed = nil
+		start = 0
 	}
 	if start >= len(entries) {
 		return
 	}
+	for _, e := range entries[start:] {
+		idx.indexed = append(idx.indexed, fingerprint(e))
+	}
 	idx.group(entries[start:])
-	idx.lastEntryID = entries[len(entries)-1].ID
+}
+
+// prefixMatches reports whether entries still begins with exactly what the
+// index already grouped.
+func (idx *Index) prefixMatches(entries []agents.SessionEntry) bool {
+	for i, want := range idx.indexed {
+		if fingerprint(entries[i]) != want {
+			return false
+		}
+	}
+	return true
 }
 
 // group folds entries into groups, appending to whatever the index already has.
