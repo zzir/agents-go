@@ -1,8 +1,12 @@
 package agents
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"reflect"
+	"slices"
 	"time"
 )
 
@@ -294,4 +298,69 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 			d.Extra[k] = v
 		}
 	}
+}
+
+// Equal reports whether two entries are the same entry, field for field.
+//
+// It exists because "did this change?" is asked in two places that must not
+// guess — a compaction pass deciding whether it altered the context, and an
+// incremental index deciding whether what it is handed still continues what it
+// grouped. Comparing a subset of the fields makes both fail open: a compactor
+// that rewrites only a payload looks like a no-op, and an index resumes onto a
+// history that is not its own.
+//
+// Neither == nor reflect.DeepEqual can stand in for it. SessionEntry holds
+// maps, so it is not comparable; and DeepEqual on a time.Time distinguishes
+// readings of the same instant by their monotonic clock, so an entry that has
+// round-tripped through storage would never equal the one still in memory.
+func (e SessionEntry) Equal(other SessionEntry) bool {
+	switch {
+	case e.ID != other.ID,
+		e.Seq != other.Seq,
+		e.ParentID != other.ParentID,
+		e.Kind != other.Kind,
+		e.CustomType != other.CustomType,
+		e.Source != other.Source,
+		e.AgentName != other.AgentName,
+		e.ResponseID != other.ResponseID:
+		return false
+	case !bytes.Equal(e.Item, other.Item), !bytes.Equal(e.Payload, other.Payload):
+		return false
+	case !equalDisplay(e.Display, other.Display):
+		return false
+	case !equalUsage(e.Usage, other.Usage), !equalUsage(e.NestedUsage, other.NestedUsage):
+		return false
+	case !equalDiagnostics(e.Diagnostics, other.Diagnostics):
+		return false
+	case !e.CreatedAt.Equal(other.CreatedAt):
+		return false
+	}
+	return true
+}
+
+func equalUsage(a, b *RequestUsage) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func equalDisplay(a, b *ItemDisplay) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	// Extra holds arbitrary values, so it is the one field that cannot be
+	// compared structurally here.
+	return a.Kind == b.Kind && a.Renderer == b.Renderer && a.Text == b.Text &&
+		a.CallID == b.CallID && a.ToolName == b.ToolName && a.Arguments == b.Arguments &&
+		a.Output == b.Output && a.IsError == b.IsError &&
+		maps.EqualFunc(a.Extra, b.Extra, reflect.DeepEqual)
+}
+
+func equalDiagnostics(a, b []Diagnostic) bool {
+	return slices.EqualFunc(a, b, func(x, y Diagnostic) bool {
+		return x.Type == y.Type && x.Code == y.Code && x.Message == y.Message &&
+			x.Timestamp.Equal(y.Timestamp) &&
+			maps.EqualFunc(x.Details, y.Details, reflect.DeepEqual)
+	})
 }

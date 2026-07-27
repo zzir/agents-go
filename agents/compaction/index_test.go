@@ -47,6 +47,12 @@ func reasoning(t *testing.T) agents.SessionEntry {
 	t.Helper()
 	return item(t, `{"type":"reasoning","id":"r1","summary":[]}`)
 }
+func userWithID(t *testing.T, id, text string) agents.SessionEntry {
+	t.Helper()
+	e := user(t, text)
+	e.ID = id
+	return e
+}
 func quote(s string) string { return `"` + s + `"` }
 
 func kinds(idx *Index) []GroupKind {

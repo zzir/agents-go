@@ -21,11 +21,7 @@ func TestCompactorReusedAcrossSessionsKeepsThemApart(t *testing.T) {
 	c := New(keepEverything{}, nil)
 	ctx := context.Background()
 
-	withID := func(id, text string) agents.SessionEntry {
-		e := user(t, text)
-		e.ID = id
-		return e
-	}
+	withID := func(id, text string) agents.SessionEntry { return userWithID(t, id, text) }
 
 	sessionA := []agents.SessionEntry{withID("e1", "a-one"), withID("e2", "a-two")}
 	if _, err := c.Compact(ctx, sessionA); err != nil {
@@ -58,7 +54,54 @@ func TestCompactorResumesOnATrueContinuation(t *testing.T) {
 	if len(idx.Groups) <= before {
 		t.Fatalf("groups went from %d to %d — the third entry was not appended", before, len(idx.Groups))
 	}
-	if got := len(idx.indexed); got != 3 {
+	if got := len(idx.grouped()); got != 3 {
 		t.Fatalf("indexed %d entries, want 3", got)
+	}
+}
+
+// Update resumes by comparing against the entries the groups already hold, so
+// grouping must keep every entry, in order. If a group ever dropped or
+// reordered one, the prefix check would compare the wrong pairs and rebuild the
+// whole index on every turn — the exact cost it exists to avoid.
+func TestGroupingKeepsEveryEntryInOrder(t *testing.T) {
+	entries := withIDs([]agents.SessionEntry{
+		user(t, "weather?"),
+		reasoning(t),
+		call(t, "c1", "get_weather"),
+		output(t, "c1", "sunny"),
+		assistant(t, "sunny"),
+		user(t, "and tomorrow?"),
+	})
+	idx := NewIndex(entries, nil)
+
+	got := idx.grouped()
+	if len(got) != len(entries) {
+		t.Fatalf("grouped %d entries, want %d", len(got), len(entries))
+	}
+	for i := range entries {
+		if !got[i].Equal(entries[i]) {
+			t.Fatalf("entry %d is %s, want %s", i, got[i].Item, entries[i].Item)
+		}
+	}
+}
+
+// Two sessions whose entries hold the same text but different token usage must
+// not share an index: ContextTokens reads Usage, so resuming onto the other's
+// would compact against a budget that was never measured on this conversation.
+func TestUpdateRebuildsWhenOnlyUsageDiffers(t *testing.T) {
+	withUsage := func(e agents.SessionEntry, in int64) agents.SessionEntry {
+		e.Usage = &agents.RequestUsage{InputTokens: in, TotalTokens: in}
+		return e
+	}
+	first := []agents.SessionEntry{withUsage(userWithID(t, "e1", "hello"), 100)}
+	idx := NewIndex(first, nil)
+	if got := idx.ContextTokens(); got != 100 {
+		t.Fatalf("first session context = %d, want 100", got)
+	}
+
+	second := []agents.SessionEntry{withUsage(userWithID(t, "e1", "hello"), 9000)}
+	idx.Update(second)
+	if got := idx.ContextTokens(); got != 9000 {
+		t.Fatalf("context = %d, want the second session's 9000 — the index resumed onto a foreign history", got)
 	}
 }

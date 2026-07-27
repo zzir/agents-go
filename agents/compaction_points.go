@@ -1,9 +1,9 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
+	"slices"
 )
 
 // Compactor decides what a session's history should look like as model context.
@@ -138,16 +138,15 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 
 // changedEntries reports whether a compaction pass altered the context, by
 // identity rather than by size.
+//
+// Every field takes part, not just the id and the item. A strategy that keeps
+// the ids and rewrites a payload — a compaction checkpoint's own body is the
+// obvious case — has changed the context, and calling that a no-op means the
+// save point never rebuilds it and the after-run point never writes the
+// checkpoint. A custom projector may read any field, so none of them can be
+// assumed not to matter.
 func changedEntries(before, after []SessionEntry) bool {
-	if len(before) != len(after) {
-		return true
-	}
-	for i := range before {
-		if before[i].ID != after[i].ID || !bytes.Equal(before[i].Item, after[i].Item) {
-			return true
-		}
-	}
-	return false
+	return !slices.EqualFunc(before, after, SessionEntry.Equal)
 }
 
 // String names the point, for traces and logs.
