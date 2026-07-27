@@ -45,11 +45,11 @@ type entry struct {
 	// not the same number: an id is unique per TABLE and assigned on insert,
 	// while Seq is the session-local position a Cursor pages on and has to
 	// survive a fork or an export that carries entries between stores.
-	Seq int64 `bun:"seq,notnull"`
-	EntryID   string `bun:"entry_id,notnull"`
-	ParentID  string `bun:"parent_id"`
-	Kind      string `bun:"kind,notnull"`
-	Entry     string `bun:"entry,notnull"` // JSON of agents.SessionEntry
+	Seq      int64  `bun:"seq,notnull"`
+	EntryID  string `bun:"entry_id,notnull"`
+	ParentID string `bun:"parent_id"`
+	Kind     string `bun:"kind,notnull"`
+	Entry    string `bun:"entry,notnull"` // JSON of agents.SessionEntry
 }
 
 // sessionRow records a session's existence and metadata, so a repo can list
@@ -212,48 +212,101 @@ func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) er
 	return err
 }
 
-// PopEntry implements agents.Session, removing and returning the most recent
-// entry (or nil if the session is empty).
-//
-// Concurrency: a plain transaction with SELECT max(id) then DELETE does not
-// stop two concurrent pops from reading the same row under PostgreSQL READ
-// COMMITTED (both see the same max, both "delete" it, both return it).
-// Instead each attempt selects a candidate row and then issues DELETE ...
-// WHERE id = ?, which is atomic at the row level on both SQLite and
-// PostgreSQL: exactly one deleter observes RowsAffected == 1. A loser
-// (RowsAffected == 0) retries with the next candidate. Every retry means some
-// other pop succeeded, so the loop is lock-free and terminates when the
-// session runs empty.
+// PopEntry implements agents.EntryPopper.
 func (s *Session) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+	return s.pop(ctx, agents.PopLast)
+}
+
+// PopItem implements agents.ItemPopper.
+func (s *Session) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+	return s.pop(ctx, agents.PopLastItem)
+}
+
+// pop removes what PlanPop chose and applies its relinks in the same
+// transaction, so the session is never readable with a child hanging off an id
+// that is gone — a walk meeting a missing parent stops there, which would lose
+// everything BEFORE the entry that was removed rather than just it.
+//
+// The delete is also what arbitrates between two concurrent pops: a caller
+// whose delete affects nothing lost the race, and retries against whatever the
+// session holds now.
+func (s *Session) pop(ctx context.Context, mode agents.PopMode) (*agents.SessionEntry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var row entry
-		err := s.db.NewSelect().Model(&row).
-			Where("session_id = ?", s.sessionID).
-			Order("id DESC").Limit(1).Scan(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
+		entries, err := s.Entries(ctx, agents.Cursor{})
+		if err != nil {
+			return nil, err
+		}
+		plan, ok := agents.PlanPop(entries, mode)
+		if !ok {
 			return nil, nil
 		}
+		won, err := s.applyRemoval(ctx, plan)
 		if err != nil {
 			return nil, err
 		}
-		res, err := s.db.NewDelete().Model((*entry)(nil)).Where("id = ?", row.ID).Exec(ctx)
-		if err != nil {
-			return nil, err
+		if won {
+			return &plan.Entry, nil
 		}
-		if n, err := res.RowsAffected(); err == nil && n == 0 {
-			// A concurrent pop claimed this row between our select and
-			// delete; try again with whatever is now the most recent entry.
-			continue
-		}
-		e, err := decodeEntry(row)
-		if err != nil {
-			return nil, err
-		}
-		return &e, nil
 	}
+}
+
+// applyRemoval carries out one Removal, reporting whether this caller was the
+// one that removed it.
+func (s *Session) applyRemoval(ctx context.Context, plan agents.Removal) (bool, error) {
+	byID := map[string]agents.SessionEntry{}
+	if len(plan.Relink) > 0 {
+		entries, err := s.Entries(ctx, agents.Cursor{})
+		if err != nil {
+			return false, err
+		}
+		for _, e := range entries {
+			byID[e.ID] = e
+		}
+	}
+	won := false
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, derr := tx.NewDelete().Model((*entry)(nil)).
+			Where("session_id = ?", s.sessionID).
+			Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
+		if derr != nil {
+			return derr
+		}
+		if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+			return nil
+		}
+		won = true
+		for id, parent := range plan.Relink {
+			e, ok := byID[id]
+			if !ok {
+				continue
+			}
+			if e.Kind == agents.EntryKindLeaf {
+				updated, lerr := e.WithLeafTarget(parent)
+				if lerr != nil {
+					continue
+				}
+				e = updated
+			} else {
+				e.ParentID = parent
+			}
+			raw, merr := json.Marshal(e)
+			if merr != nil {
+				return fmt.Errorf("encoding relinked entry %q: %w", id, merr)
+			}
+			if _, uerr := tx.NewUpdate().Model((*entry)(nil)).
+				Set("parent_id = ?", e.ParentID).
+				Set("entry = ?", string(raw)).
+				Where("session_id = ?", s.sessionID).
+				Where("entry_id = ?", id).Exec(ctx); uerr != nil {
+				return uerr
+			}
+		}
+		return nil
+	})
+	return won, err
 }
 
 // Clear implements agents.Session, removing every entry for this session ID.
@@ -354,6 +407,7 @@ var (
 	_ agents.SessionStorage = (*Session)(nil)
 	_ agents.AtomicReplacer = (*Session)(nil)
 	_ agents.EntryPopper    = (*Session)(nil)
+	_ agents.ItemPopper     = (*Session)(nil)
 )
 
 // Metadata implements agents.SessionStorage. It counts rather than loading, and

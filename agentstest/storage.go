@@ -35,6 +35,8 @@ var storageChecks = []struct {
 	{"SeqDoesNotMoveOnRead", checkSeqStableOnRead},
 	{"EntryIDsAreUniqueAndNotReused", checkEntryIDsUnique},
 	{"CursorReturnsWhatItHasNotShown", checkCursorCompleteness},
+	{"PopTakesTheMostRecentEntry", checkPopTakesNewest},
+	{"AnItemPopLeavesTheTreeWhole", checkItemPopKeepsTheTree},
 }
 
 func storageWrite(t *testing.T, st agents.SessionStorage, texts ...string) {
@@ -224,5 +226,87 @@ func checkCursorCompleteness(t *testing.T, st agents.SessionStorage) {
 			t.Fatalf("resuming from Seq %d returned an entry at %d, which it had already been shown",
 				cursor, e.Seq)
 		}
+	}
+}
+
+// EntryPopper takes the most recent ENTRY. A store that skips past what it
+// finds uninteresting removes something else while reporting it popped the last
+// thing — and leaves what it skipped pointing at what is now gone.
+func checkPopTakesNewest(t *testing.T, st agents.SessionStorage) {
+	t.Helper()
+	ctx := context.Background()
+	popper, ok := st.(agents.EntryPopper)
+	if !ok {
+		t.Skip("this store does not pop")
+	}
+	storageWrite(t, st, "one")
+	// An entry that is not a conversation item, and is the most recent.
+	if err := st.Append(ctx, agents.NewAnnotationEntry(
+		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
+		agents.Source{Type: agents.SourceErrorHandler},
+	)); err != nil {
+		t.Fatalf("append annotation: %v", err)
+	}
+	stored := storageEntries(t, st)
+	newest := stored[len(stored)-1]
+
+	popped, err := popper.PopEntry(ctx)
+	if err != nil {
+		t.Fatalf("pop: %v", err)
+	}
+	if popped == nil {
+		t.Fatal("nothing popped from a session with two entries")
+	}
+	if popped.ID != newest.ID {
+		t.Fatalf("popped %q (kind %q), want the most recent entry %q (kind %q)",
+			popped.ID, popped.Kind, newest.ID, newest.Kind)
+	}
+}
+
+// Removing an entry from the middle of a branch — which is what an item pop
+// does whenever something non-item sits above it — must not leave the
+// survivors hanging off an id that is gone. A walk that meets a missing parent
+// stops there, so the session would read short: losing everything BEFORE the
+// entry that was removed, rather than just it.
+func checkItemPopKeepsTheTree(t *testing.T, st agents.SessionStorage) {
+	t.Helper()
+	ctx := context.Background()
+	popper, ok := st.(agents.ItemPopper)
+	if !ok {
+		t.Skip("this store does not pop items")
+	}
+	storageWrite(t, st, "one", "two")
+	if err := st.Append(ctx, agents.NewAnnotationEntry(
+		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
+		agents.Source{Type: agents.SourceErrorHandler},
+	)); err != nil {
+		t.Fatalf("append annotation: %v", err)
+	}
+
+	popped, err := popper.PopItem(ctx)
+	if err != nil {
+		t.Fatalf("pop item: %v", err)
+	}
+	if popped == nil || popped.Kind != agents.EntryKindItem {
+		t.Fatalf("popped %+v, want the most recent item", popped)
+	}
+
+	kept := storageEntries(t, st)
+	if len(kept) != 2 {
+		t.Fatalf("session holds %d entries, want the first item and the annotation", len(kept))
+	}
+	byID := map[string]bool{}
+	for _, e := range kept {
+		byID[e.ID] = true
+	}
+	for _, e := range kept {
+		if e.ParentID != "" && !byID[e.ParentID] {
+			t.Fatalf("entry %q points at %q, which the pop removed", e.ID, e.ParentID)
+		}
+	}
+	// The walk reaches every survivor: a walk that stops early is how a removal
+	// in the middle of a branch loses everything BEFORE it.
+	if n := len(agents.PathToLeaf(kept, agents.LeafOf(kept))); n != len(kept) {
+		t.Fatalf("the active branch walks %d of %d surviving entries — the removal truncated it", n, len(kept))
 	}
 }

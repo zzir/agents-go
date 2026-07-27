@@ -394,17 +394,18 @@ func mustItem(t *testing.T, raw string) agents.TResponseInputItem {
 	return item
 }
 
-// PopEntry must honor the Session contract: (nil, nil) on an empty session, and
-// it must only ever pop a replayable entry — never a UI-only annotation or a
-// compacted (soft-deleted) row.
-func TestEntryStorePopEntry(t *testing.T) {
+// PopItem is "undo the last thing the model said": (nil, nil) on an empty
+// session, and never a UI-only annotation or a compacted (soft-deleted) row.
+// PopEntry, which takes the most recent entry whatever it is, is held to its
+// own contract by agentstest.StorageConformance.
+func TestEntryStorePopItem(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
 	s := NewEntryStore(db, sid)
 
 	// Empty session -> (nil, nil), not an error.
-	got, err := s.PopEntry(ctx)
+	got, err := s.PopItem(ctx)
 	if err != nil || got != nil {
 		t.Fatalf("empty session: got=%v err=%v, want nil,nil", got, err)
 	}
@@ -429,7 +430,7 @@ func TestEntryStorePopEntry(t *testing.T) {
 
 	// The newest row is the annotation and the one before is compacted, but
 	// PopEntry must skip both and return the real item.
-	got, err = s.PopEntry(ctx)
+	got, err = s.PopItem(ctx)
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
@@ -452,7 +453,7 @@ func TestEntryStorePopEntry(t *testing.T) {
 	}
 
 	// No replayable items left -> (nil, nil) again even though rows exist.
-	got, err = s.PopEntry(ctx)
+	got, err = s.PopItem(ctx)
 	if err != nil || got != nil {
 		t.Fatalf("no replayable items: got=%v err=%v, want nil,nil", got, err)
 	}
@@ -536,7 +537,7 @@ func TestPopEntryRollsBackOnUndecodableRow(t *testing.T) {
 	seed(t, s, userEntry(t, "keep me"))
 	// A newer row with non-empty but undecodable entry JSON.
 	bad := entryRow{
-		SessionID: sid, RunID: "r", EntryID: sid + "-e2",
+		SessionID: sid, RunID: "r", EntryID: "corrupt",
 		Kind: string(agents.EntryKindItem), Entry: `{"kind":`, CreatedAt: time.Now().UTC(),
 	}
 	if _, err := db.NewInsert().Model(&bad).Exec(ctx); err != nil {

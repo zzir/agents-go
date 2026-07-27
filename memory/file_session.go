@@ -268,23 +268,41 @@ func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.Sessio
 // empty. The file is rewritten atomically. The entry is decoded before the file
 // is touched, so a corrupt last line is reported without destroying it.
 func (s *FileSession) PopEntry(_ context.Context) (*agents.SessionEntry, error) {
+	return s.pop(agents.PopLast)
+}
+
+// PopItem implements agents.ItemPopper.
+func (s *FileSession) PopItem(_ context.Context) (*agents.SessionEntry, error) {
+	return s.pop(agents.PopLastItem)
+}
+
+// pop rewrites the file without the entry PlanPop chose, applying the relinks
+// in the same rewrite — the delete and the repair are one atomic replacement,
+// so the file is never on disk with a child hanging off an id that is gone.
+func (s *FileSession) pop(mode agents.PopMode) (*agents.SessionEntry, error) {
 	release := acquire(s.lockKey)
 	defer release()
-	lines, err := s.readLines()
+	entries, err := s.readEntries()
 	if err != nil {
 		return nil, err
 	}
-	if len(lines) == 0 {
+	plan, ok := agents.PlanPop(entries, mode)
+	if !ok {
 		return nil, nil
 	}
-	var e agents.SessionEntry
-	if err := json.Unmarshal(lines[len(lines)-1], &e); err != nil {
+	kept := agents.ApplyRemoval(entries, plan)
+	lines := make([][]byte, 0, len(kept))
+	for i := range kept {
+		data, merr := json.Marshal(kept[i])
+		if merr != nil {
+			return nil, fmt.Errorf("marshaling session entry: %w", merr)
+		}
+		lines = append(lines, data)
+	}
+	if err := s.writeLines(lines); err != nil {
 		return nil, err
 	}
-	if err := s.writeLines(lines[:len(lines)-1]); err != nil {
-		return nil, err
-	}
-	return &e, nil
+	return &plan.Entry, nil
 }
 
 // Clear removes all entries in the session.
@@ -390,4 +408,5 @@ var (
 	_ agents.SessionStorage = (*FileSession)(nil)
 	_ agents.AtomicReplacer = (*FileSession)(nil)
 	_ agents.EntryPopper    = (*FileSession)(nil)
+	_ agents.ItemPopper     = (*FileSession)(nil)
 )

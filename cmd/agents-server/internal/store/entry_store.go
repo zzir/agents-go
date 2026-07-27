@@ -120,7 +120,7 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents
 // folded-away entry still consumed its position, and a number this session has
 // handed out is never handed out again.
 func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (agents.AppendPoint, error) {
-	entries, err := s.loadIn(ctx, db, false)
+	entries, err := s.loadIn(ctx, db, false, false)
 	if err != nil {
 		return agents.AppendPoint{}, err
 	}
@@ -137,10 +137,10 @@ func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (agents.Appe
 // the read the RUN uses; including them is what the UI uses to show what was
 // folded away.
 func (s *EntryStore) load(ctx context.Context, includeCompacted bool) ([]agents.SessionEntry, error) {
-	return s.loadIn(ctx, s.db, includeCompacted)
+	return s.loadIn(ctx, s.db, includeCompacted, false)
 }
 
-func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted bool) ([]agents.SessionEntry, error) {
+func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, strict bool) ([]agents.SessionEntry, error) {
 	var rows []entryRow
 	q := db.NewSelect().Model(&rows).
 		Where("session_id = ?", s.sessionID).
@@ -170,6 +170,13 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted bo
 	for i := range rows {
 		var e agents.SessionEntry
 		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
+			if strict {
+				// A REMOVAL cannot be decided on a view with a hole in it: the
+				// entry it would take is chosen by recency, and skipping the
+				// newest row silently takes an older one instead. Reading is
+				// different — see below — but nothing is deleted by a read.
+				return nil, fmt.Errorf("entry %q cannot be decoded: %w", rows[i].EntryID, err)
+			}
 			// One unreadable row must not make the whole session unloadable:
 			// the rest of the conversation is still valid, and refusing to open
 			// it would lose everything to one bad record.
@@ -245,26 +252,96 @@ func (s *EntryStore) Clear(ctx context.Context) error {
 // and popping one would leave the turn it belongs to still in the history.
 // Those rows stay where they are.
 func (s *EntryStore) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
-	row := new(entryRow)
-	if err := s.db.NewSelect().Model(row).
-		Where("session_id = ?", s.sessionID).
-		Where("compacted = ?", false).
-		Where("kind = ?", string(agents.EntryKindItem)).
-		OrderExpr("id DESC").Limit(1).Scan(ctx); err != nil {
-		return nil, nil //nolint:nilerr // an empty session pops nothing
+	return s.pop(ctx, agents.PopLast)
+}
+
+// PopItem implements agents.ItemPopper: the most recent entry the model would
+// have seen. An error banner or a folded-away row is not something a person
+// means to undo.
+func (s *EntryStore) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+	return s.pop(ctx, agents.PopLastItem)
+}
+
+// pop removes what PlanPop chose and applies its relinks in the same
+// transaction. The two are one step: a walk that meets a missing parent stops
+// there, so deleting a row without re-pointing its children reads the session
+// short — losing everything BEFORE the entry that was removed rather than it.
+//
+// The delete also arbitrates between concurrent pops: zero rows affected means
+// another caller took it, and this one retries against what the session holds
+// now.
+func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.SessionEntry, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Compacted rows are folded away, not present: they are not something a
+		// pop of either kind reaches. Strict, because a removal chosen from a
+		// view missing its newest row takes the wrong entry.
+		entries, err := s.loadIn(ctx, s.db, false, true)
+		if err != nil {
+			return nil, err
+		}
+		plan, ok := agents.PlanPop(entries, mode)
+		if !ok {
+			return nil, nil
+		}
+		byID := map[string]agents.SessionEntry{}
+		for _, e := range entries {
+			byID[e.ID] = e
+		}
+		won := false
+		if err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			res, derr := tx.NewDelete().Model((*entryRow)(nil)).
+				Where("session_id = ?", s.sessionID).
+				Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
+			if derr != nil {
+				return derr
+			}
+			if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+				return nil
+			}
+			won = true
+			return relinkIn(ctx, tx, s.sessionID, plan, byID)
+		}); err != nil {
+			return nil, err
+		}
+		if won {
+			return &plan.Entry, nil
+		}
 	}
-	// Decode BEFORE deleting: a row that cannot be decoded is still the only
-	// copy of what it holds, and reporting the failure after removing it would
-	// lose it for good.
-	var e agents.SessionEntry
-	if err := json.Unmarshal([]byte(row.Entry), &e); err != nil {
-		return nil, fmt.Errorf("decoding entry %q: %w", row.EntryID, err)
+}
+
+// relinkIn re-points the entries a removal orphaned, on the transaction that
+// carried the delete.
+func relinkIn(ctx context.Context, tx bun.Tx, sessionID string, plan agents.Removal, byID map[string]agents.SessionEntry) error {
+	for id, parent := range plan.Relink {
+		e, ok := byID[id]
+		if !ok {
+			continue
+		}
+		if e.Kind == agents.EntryKindLeaf {
+			updated, lerr := e.WithLeafTarget(parent)
+			if lerr != nil {
+				continue
+			}
+			e = updated
+		} else {
+			e.ParentID = parent
+		}
+		raw, merr := json.Marshal(e)
+		if merr != nil {
+			return fmt.Errorf("encoding relinked entry %q: %w", id, merr)
+		}
+		if _, uerr := tx.NewUpdate().Model((*entryRow)(nil)).
+			Set("parent_id = ?", e.ParentID).
+			Set("entry = ?", string(raw)).
+			Where("session_id = ?", sessionID).
+			Where("entry_id = ?", id).Exec(ctx); uerr != nil {
+			return uerr
+		}
 	}
-	if _, err := s.db.NewDelete().Model((*entryRow)(nil)).
-		Where("id = ?", row.ID).Exec(ctx); err != nil {
-		return nil, err
-	}
-	return &e, nil
+	return nil
 }
 
 // AllEntries returns the session's entries INCLUDING compacted ones, for a UI
@@ -276,6 +353,7 @@ func (s *EntryStore) AllEntries(ctx context.Context) ([]agents.SessionEntry, err
 var (
 	_ agents.SessionStorage = (*EntryStore)(nil)
 	_ agents.EntryPopper    = (*EntryStore)(nil)
+	_ agents.ItemPopper     = (*EntryStore)(nil)
 )
 
 // EntryView is the REST shape of one entry.

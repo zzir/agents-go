@@ -210,6 +210,21 @@ func NewLeafEntry(targetID string) (SessionEntry, error) {
 	return SessionEntry{Kind: EntryKindLeaf, Payload: raw}, nil
 }
 
+// WithLeafTarget returns the leaf entry re-pointed at targetID, keeping its own
+// identity. It is how a removal moves a branch pointer off an entry that is
+// going, rather than leaving it aimed at something that will not be there.
+func (e SessionEntry) WithLeafTarget(targetID string) (SessionEntry, error) {
+	if e.Kind != EntryKindLeaf {
+		return e, fmt.Errorf("entry %q is a %s entry, not a leaf move", e.ID, e.Kind)
+	}
+	raw, err := json.Marshal(LeafPayload{TargetID: targetID})
+	if err != nil {
+		return e, fmt.Errorf("encoding leaf payload: %w", err)
+	}
+	e.Payload = raw
+	return e, nil
+}
+
 // LeafPayload decodes a leaf entry's payload.
 func (e SessionEntry) LeafPayload() (LeafPayload, error) {
 	if e.Kind != EntryKindLeaf {
