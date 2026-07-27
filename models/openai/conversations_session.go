@@ -341,6 +341,17 @@ func (s *ConversationsSession) PopEntry(ctx context.Context) (*agents.SessionEnt
 	return &entry, nil
 }
 
+// PopItem implements agents.ItemPopper. Every entry in a Conversations session
+// IS a conversation item — the server holds Responses items and nothing else,
+// so there are no banners, leaf moves or checkpoints to skip past and the two
+// pops answer the same question here. A backend that can remove an entry
+// offers both (spec §2.5e2): the flat, server-held store satisfies that with
+// the trivial selection rather than the shared tree-aware one, which has no
+// tree to consult.
+func (s *ConversationsSession) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+	return s.PopEntry(ctx)
+}
+
 // Clear implements agents.Session by deleting the server-side conversation. A
 // fresh conversation is created on the next use.
 func (s *ConversationsSession) Clear(ctx context.Context) error {
