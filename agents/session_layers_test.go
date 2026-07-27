@@ -74,15 +74,25 @@ func TestCursor_NegativeLimitTakesTheTail(t *testing.T) {
 	}
 }
 
-// A compaction checkpoint stands in for everything before it, so the model's
-// view starts there. Re-sending the folded history would undo the compaction.
-func TestContextEntries_StartsAtTheLastCheckpoint(t *testing.T) {
+// A compaction checkpoint reshapes the model's view: what it folded is dropped
+// wherever it sits, what was kept stays as ordinary entries, and the summary
+// renders up front. Re-sending the folded history would undo the compaction —
+// and the kept history comes from the session itself, never from a copy inside
+// the checkpoint.
+func TestContextEntries_DropFoldedHistory(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()
 	if err := sess.AppendItems(ctx, InputItemsFromText("ancient"), Source{}); err != nil {
 		t.Fatal(err)
 	}
-	cp, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY"}, InputItemsFromText("kept"))
+	if err := sess.AppendItems(ctx, InputItemsFromText("kept"), Source{}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := sess.Entries(ctx, Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY", ExcludedIDs: []string{all[0].ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,18 +107,26 @@ func TestContextEntries_StartsAtTheLastCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 || entries[0].Kind != EntryKindCompaction {
-		t.Fatalf("context entries = %d starting with %q, want the checkpoint and what followed",
-			len(entries), entries[0].Kind)
+	// kept + checkpoint + recent; the folded entry is out of the view.
+	if len(entries) != 3 || entries[1].Kind != EntryKindCompaction {
+		t.Fatalf("context entries = %d, want the kept entry, the checkpoint and what followed", len(entries))
+	}
+	for _, e := range entries {
+		if e.ID == all[0].ID {
+			t.Error("the folded entry is still in the context view")
+		}
 	}
 
 	items, err := sess.ContextItems(ctx, Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// summary + retained tail + the entry after the checkpoint.
+	// summary first, then the kept and recent entries in order.
 	if len(items) != 3 {
 		t.Fatalf("context items = %d, want 3", len(items))
+	}
+	if raw, _ := MarshalInputItem(items[0]); !contains(raw, "SUMMARY") {
+		t.Errorf("the summary does not render first: %s", raw)
 	}
 	for _, item := range items {
 		raw, _ := MarshalInputItem(item)

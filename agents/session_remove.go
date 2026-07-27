@@ -74,8 +74,14 @@ func popTarget(entries []SessionEntry, mode PopMode) (SessionEntry, bool) {
 	if len(path) == 0 {
 		path = entries
 	}
+	// An entry a checkpoint folded away is skipped like a banner: it is not
+	// part of the conversation as the model sees it, so it is not "my last
+	// message" either. The items a pass KEPT remain reachable — they are on
+	// the path and in the model's view, and a person undoing their last
+	// message means one of those.
+	folded := FoldedEntryIDs(path)
 	for i := len(path) - 1; i >= 0; i-- {
-		if path[i].Kind == EntryKindItem {
+		if path[i].Kind == EntryKindItem && !folded[path[i].ID] {
 			return path[i], true
 		}
 	}

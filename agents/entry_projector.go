@@ -17,15 +17,20 @@ type EntryProjector func(SessionEntry) ([]TResponseInputItem, error)
 
 // defaultProjectors is the projection every run starts from.
 //
-// Only items and compaction checkpoints reach the model. Annotations, terminal
-// output and custom entries are recorded for people, and sending them would put
-// words in the conversation that nobody said. A caller who wants them in
-// context says so explicitly through RunOptions.Conversation.Projectors — for
-// example projecting terminal output as a user message so the model can see
-// what was run by hand.
+// Only items reach the model this way. Annotations, terminal output and custom
+// entries are recorded for people, and sending them would put words in the
+// conversation that nobody said. A caller who wants them in context says so
+// explicitly through RunOptions.Conversation.Projectors — for example
+// projecting terminal output as a user message so the model can see what was
+// run by hand.
+//
+// Compaction checkpoints are absent deliberately: a checkpoint is not one
+// entry's worth of items, it is a rule about the whole view — drop what it
+// folded, render its summary and stand-ins where the folded content was —
+// and ProjectEntries applies that rule structurally. An override for
+// EntryKindCompaction disables the structural handling and takes over.
 var defaultProjectors = map[EntryKind]EntryProjector{
-	EntryKindItem:       projectItem,
-	EntryKindCompaction: projectCompaction,
+	EntryKindItem: projectItem,
 }
 
 func projectItem(e SessionEntry) ([]TResponseInputItem, error) {
@@ -57,23 +62,43 @@ Be concise but complete. Do not add commentary. Do not invent information.
 Output only the summary text.
 `)
 
-// CompactionPayload is the body of a compaction checkpoint: a summary of what
-// was folded away, plus the entries kept verbatim after it.
+// CompactionFold is one folded group's stand-in: content that renders in place
+// of a run of folded entries — "[Tool calls, results elided]", say.
 //
-// The retained tail lives inside the checkpoint rather than being left loose in
-// the session, so the checkpoint is self-contained: reading it gives the whole
-// context that replaced the history it summarizes, with no separate range to
-// track.
+// The stand-in is ORIGINAL content, existing nowhere else in the log, which is
+// why it may live inside the checkpoint. Entries that are still in the session
+// are only ever NAMED (Replaces, ExcludedIDs), never copied: a copy has to be
+// kept in step with the entry it duplicates, and the one that got out of step
+// is what this shape replaced.
+type CompactionFold struct {
+	// Replaces names the folded entries this stand-in renders instead of.
+	Replaces []string `json:"replaces,omitzero"`
+	// Before anchors the stand-in: it renders immediately before this entry.
+	// Empty, or an id absent from the view, renders it up front instead.
+	Before string `json:"before,omitzero"`
+	// Items are the stand-in's input items, in order.
+	Items []json.RawMessage `json:"items,omitzero"`
+}
+
+// CompactionPayload is the body of a compaction checkpoint: what a pass folded
+// away (by name) and what stands in for it (summary text, per-group folds).
+//
+// A checkpoint carries no copy of any entry that is still in the session. It
+// used to — a Retained field held the kept tail verbatim — and that copy could
+// only ever drift from the tree it duplicated: popping a kept entry left the
+// checkpoint still replaying it. The tree is the truth; ProjectEntries applies
+// a checkpoint's exclusions when the model's view is built.
 //
 // A checkpoint is APPENDED, never a rewrite. The entries it folds stay in the
 // session exactly as they were — ExcludedIDs names them, so a UI can offer to
-// expand what was compacted, and a fork from before the checkpoint still finds
-// its full history.
+// expand what was compacted, a fork from before the checkpoint still finds its
+// full history, and popping the checkpoint itself undoes the fold.
 type CompactionPayload struct {
-	// Summary is the text that stands in for the folded history.
+	// Summary is the text that stands in for the folded history. It renders at
+	// the front of the projection, before everything the pass kept.
 	Summary string `json:"summary"`
-	// Retained are the items kept verbatim after the summary.
-	Retained []json.RawMessage `json:"retained,omitzero"`
+	// Folds are per-group stand-ins, anchored where the folded group was.
+	Folds []CompactionFold `json:"folds,omitzero"`
 	// PrevSummary is the summary this one supersedes, when a checkpoint
 	// updates an earlier one rather than starting fresh.
 	PrevSummary string `json:"prev_summary,omitzero"`
@@ -99,25 +124,33 @@ func (e SessionEntry) CompactionPayload() (CompactionPayload, error) {
 	return p, nil
 }
 
-func projectCompaction(e SessionEntry) ([]TResponseInputItem, error) {
-	p, err := e.CompactionPayload()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TResponseInputItem, 0, len(p.Retained)+1)
-	if p.Summary != "" {
-		// A system message, not a user one: nobody said this. It is context the
-		// runtime supplies in place of history it folded away.
-		out = append(out, InputItemsFromSystemText(p.Summary)...)
-	}
-	for i, raw := range p.Retained {
-		item, err := UnmarshalInputItem(raw)
-		if err != nil {
-			return nil, fmt.Errorf("decoding retained item %d of entry %q: %w", i, e.ID, err)
+// FoldedEntryIDs collects every entry id the given entries' compaction
+// checkpoints have folded away — the union over ALL checkpoints present, not
+// just the newest. Exclusion is forever: a checkpoint that is itself later
+// folded still keeps what IT folded out of view, or every second-generation
+// pass would resurrect the first one's work.
+//
+// An undecodable checkpoint contributes nothing rather than failing the call:
+// the callers that build views report the decode error themselves, and the
+// callers that select a removal must not be blocked by one corrupt record.
+func FoldedEntryIDs(entries []SessionEntry) map[string]bool {
+	var folded map[string]bool
+	for _, e := range entries {
+		if e.Kind != EntryKindCompaction {
+			continue
 		}
-		out = append(out, item)
+		p, err := e.CompactionPayload()
+		if err != nil {
+			continue
+		}
+		for _, id := range p.ExcludedIDs {
+			if folded == nil {
+				folded = make(map[string]bool)
+			}
+			folded[id] = true
+		}
 	}
-	return out, nil
+	return folded
 }
 
 // projectorFor resolves the projector for a kind, letting a caller's overrides
@@ -134,10 +167,84 @@ func projectorFor(overrides map[EntryKind]EntryProjector, kind EntryKind) (Entry
 //
 // Update entries are folded into their targets rather than projected: an update
 // amends a display, and displays are not part of what the model reads.
+//
+// Compaction is applied HERE, and only here. A checkpoint entry contributes no
+// items of its own; instead it reshapes the view: every entry it folded
+// (ExcludedIDs) is dropped wherever it appears, its Summary renders up front —
+// it stands in for the oldest history — and each fold's stand-in renders where
+// the folded group was. The entries a pass kept are projected from the list
+// itself, never from a copy inside the checkpoint, so an entry popped after the
+// pass is simply gone. An override for EntryKindCompaction disables all of this
+// and is called per checkpoint like any other projector; the exclusions still
+// apply, because they are facts about the view rather than a way of rendering
+// it.
+//
+// Every checkpoint IN THE LIST is taken at its word. Callers pass a single
+// branch's view (ContextEntries does); handing over append order across
+// branches would let an abandoned attempt's checkpoint fold entries the
+// active branch still reads.
 func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProjector) ([]TResponseInputItem, error) {
-	out := make([]TResponseInputItem, 0, len(entries))
+	folded := FoldedEntryIDs(entries)
+	_, checkpointOverridden := overrides[EntryKindCompaction]
+
+	// The render plan: summaries (and anchorless stand-ins) up front, anchored
+	// stand-ins keyed by the entry they render before. Only live checkpoints
+	// render — one that was itself folded is out of the view like anything
+	// else, its exclusions already counted by FoldedEntryIDs.
+	var front []TResponseInputItem
+	var inserts map[string][]TResponseInputItem
+	if !checkpointOverridden {
+		present := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			present[e.ID] = true
+		}
+		for _, e := range entries {
+			if e.Kind != EntryKindCompaction || folded[e.ID] {
+				continue
+			}
+			p, err := e.CompactionPayload()
+			if err != nil {
+				return nil, err
+			}
+			if p.Summary != "" {
+				// A system message, not a user one: nobody said this. It is
+				// context the runtime supplies in place of folded history.
+				front = append(front, InputItemsFromSystemText(p.Summary)...)
+			}
+			for fi, f := range p.Folds {
+				items := make([]TResponseInputItem, 0, len(f.Items))
+				for i, raw := range f.Items {
+					item, uerr := UnmarshalInputItem(raw)
+					if uerr != nil {
+						return nil, fmt.Errorf("decoding fold %d item %d of entry %q: %w", fi, i, e.ID, uerr)
+					}
+					items = append(items, item)
+				}
+				if f.Before != "" && present[f.Before] {
+					if inserts == nil {
+						inserts = make(map[string][]TResponseInputItem)
+					}
+					inserts[f.Before] = append(inserts[f.Before], items...)
+				} else {
+					// The anchor is not in this view — a filtered read, or the
+					// anchor entry was itself removed. Fronting the stand-in
+					// keeps its content over losing its position.
+					front = append(front, items...)
+				}
+			}
+		}
+	}
+
+	out := make([]TResponseInputItem, 0, len(front)+len(entries))
+	out = append(out, front...)
 	for _, e := range entries {
-		if e.Kind == EntryKindUpdate {
+		if ins, ok := inserts[e.ID]; ok {
+			out = append(out, ins...)
+		}
+		if folded[e.ID] || e.Kind == EntryKindUpdate {
+			continue
+		}
+		if e.Kind == EntryKindCompaction && !checkpointOverridden {
 			continue
 		}
 		project, ok := projectorFor(overrides, e.Kind)
@@ -211,17 +318,11 @@ func FoldUpdates(entries []SessionEntry) []SessionEntry {
 	return out
 }
 
-// NewCompactionEntry builds a compaction checkpoint. retained are the items
-// kept verbatim after the summary; the rest of the payload describes what the
-// pass folded away.
-func NewCompactionEntry(p CompactionPayload, retained []TResponseInputItem) (SessionEntry, error) {
-	for i, item := range retained {
-		raw, err := MarshalInputItem(item)
-		if err != nil {
-			return SessionEntry{}, fmt.Errorf("encoding retained item %d: %w", i, err)
-		}
-		p.Retained = append(p.Retained, raw)
-	}
+// NewCompactionEntry builds a compaction checkpoint from what a pass folded
+// away. The entries the pass KEPT are not part of it: they stay in the session
+// and the projection reads them from there, so the checkpoint holds nothing it
+// would have to keep in step with the tree.
+func NewCompactionEntry(p CompactionPayload) (SessionEntry, error) {
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return SessionEntry{}, fmt.Errorf("encoding compaction payload: %w", err)

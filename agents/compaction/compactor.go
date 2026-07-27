@@ -64,16 +64,20 @@ func (c *Compactor) Index() *Index {
 var _ agents.Compactor = (*Compactor)(nil)
 
 // Checkpoint builds an append-only compaction checkpoint from the compactor's
-// current index: what the pass folded away, and the context that stands in its
-// place.
+// current index: what the pass folded away, and the stand-ins that render in
+// its place.
 //
 // It reports ok=false when there is nothing to record — no pass has excluded
 // anything, so a checkpoint would claim a compaction that did not happen.
 //
-// The checkpoint is a new entry, never a rewrite. The entries it names in
-// ExcludedIDs stay in the session exactly as they were, which is what lets a
-// reader offer to expand them and a fork from before the checkpoint still find
-// its full history.
+// The checkpoint is a new entry, never a rewrite, and it copies nothing. The
+// entries it names in ExcludedIDs stay in the session exactly as they were —
+// a reader can offer to expand them, a fork from before the checkpoint still
+// finds its full history — and the entries the pass KEPT are not in it at all:
+// the projection reads them from the session, so there is no second copy to
+// fall out of step when one of them is later removed. Only a group's
+// Replacement travels in the checkpoint (as a CompactionFold), because that
+// stand-in exists nowhere else.
 func (c *Compactor) Checkpoint() (agents.SessionEntry, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -82,9 +86,10 @@ func (c *Compactor) Checkpoint() (agents.SessionEntry, bool, error) {
 	}
 
 	var excluded []string
+	var folds []agents.CompactionFold
 	var prevSummary string
 	before := 0
-	for _, g := range c.idx.Groups {
+	for i, g := range c.idx.Groups {
 		before += g.Tokens
 		if !g.Excluded {
 			if g.Kind == GroupSummary {
@@ -96,30 +101,63 @@ func (c *Compactor) Checkpoint() (agents.SessionEntry, bool, error) {
 			}
 			continue
 		}
+		var replaces []string
 		for _, e := range g.Entries {
 			if e.ID != "" {
 				excluded = append(excluded, e.ID)
+				replaces = append(replaces, e.ID)
 			}
+		}
+		if f, ok := foldFor(c.idx.Groups, i, replaces); ok {
+			folds = append(folds, f)
 		}
 	}
 	if len(excluded) == 0 {
 		return agents.SessionEntry{}, false, nil
 	}
 
-	retained, err := agents.ProjectEntries(c.idx.IncludedEntries(), nil)
-	if err != nil {
-		return agents.SessionEntry{}, false, err
-	}
 	e, err := agents.NewCompactionEntry(agents.CompactionPayload{
 		PrevSummary:  prevSummary,
+		Folds:        folds,
 		ExcludedIDs:  excluded,
 		TokensBefore: before,
 		TokensAfter:  c.idx.ContextTokens(),
-	}, retained)
+	})
 	if err != nil {
 		return agents.SessionEntry{}, false, err
 	}
 	return e, true, nil
+}
+
+// foldFor turns group i's Replacement into the checkpoint fold that renders in
+// its place, anchored before the first surviving entry after it so the
+// projection puts the stand-in where the folded group was.
+func foldFor(groups []*Group, i int, replaces []string) (agents.CompactionFold, bool) {
+	g := groups[i]
+	f := agents.CompactionFold{Replaces: replaces}
+	for _, re := range g.Replacement {
+		if len(re.Item) > 0 {
+			f.Items = append(f.Items, re.Item)
+		}
+	}
+	if len(f.Items) == 0 {
+		return agents.CompactionFold{}, false
+	}
+	for _, ng := range groups[i+1:] {
+		if ng.Excluded {
+			continue
+		}
+		for _, e := range ng.Entries {
+			if e.ID != "" {
+				f.Before = e.ID
+				break
+			}
+		}
+		if f.Before != "" {
+			break
+		}
+	}
+	return f, true
 }
 
 // summaryOf reads the summary text out of a checkpoint group.

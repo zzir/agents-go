@@ -431,10 +431,10 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	// only the genuinely new items are persisted (r.userInput is narrowed).
 	modelInput := userInput
 	if opts.Conversation.Session != nil {
-		// Read from the most recent compaction checkpoint onward, then project:
-		// a checkpoint already represents everything before it, and projection
-		// decides what the model reads. An annotation or terminal entry is
-		// recorded but not sent unless Conversation.Projectors says otherwise.
+		// Read the active branch minus what compaction folded, then project:
+		// the projection renders each checkpoint's summary in the folded
+		// history's place. An annotation or terminal entry is recorded but not
+		// sent unless Conversation.Projectors says otherwise.
 		cur := Cursor{Limit: -resolveSessionLimit(opts.Conversation.Settings)}
 		entries, herr := opts.Conversation.Session.ContextEntries(ctx, cur)
 		if herr != nil {

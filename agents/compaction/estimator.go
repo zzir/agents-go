@@ -36,8 +36,9 @@ func (CharEstimator) Estimate(e agents.SessionEntry) int {
 	switch e.Kind {
 	case agents.EntryKindItem:
 	case agents.EntryKindCompaction:
-		// A checkpoint's payload holds its summary and retained tail, all of
-		// which is sent.
+		// A checkpoint's payload holds its summary and fold stand-ins, which
+		// is what it contributes to the context. (The entries it kept are
+		// estimated as themselves; they are in the session, not in here.)
 		return len(e.Payload) / charsPerToken
 	default:
 		// Annotations, terminal records and the like are not sent to the model,

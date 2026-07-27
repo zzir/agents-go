@@ -210,7 +210,7 @@ func (c *checkpointingCompactor) Checkpoint() (SessionEntry, bool, error) {
 	e, err := NewCompactionEntry(CompactionPayload{
 		Summary:     "earlier discussion",
 		ExcludedIDs: c.dropped,
-	}, InputItemsFromText("the kept tail"))
+	})
 	return e, err == nil, err
 }
 
@@ -262,14 +262,26 @@ func TestCompaction_AfterRunWritesACheckpoint(t *testing.T) {
 		}
 	}
 
-	// The next run starts at the checkpoint, so it reads the summary and the
-	// retained tail rather than the folded history.
+	// The next run's view drops what the checkpoint folded and keeps the
+	// checkpoint, whose summary the projection renders in the folded
+	// history's place.
 	ctxEntries, err := sess.ContextEntries(ctx, Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ctxEntries) == 0 || ctxEntries[0].Kind != EntryKindCompaction {
-		t.Errorf("context starts with %v, want the checkpoint", ctxEntries)
+	sawCheckpoint := false
+	for _, e := range ctxEntries {
+		if e.Kind == EntryKindCompaction {
+			sawCheckpoint = true
+		}
+		for _, id := range p.ExcludedIDs {
+			if e.ID == id {
+				t.Errorf("folded entry %q is still in the context view", id)
+			}
+		}
+	}
+	if !sawCheckpoint {
+		t.Error("the checkpoint is not part of the context view")
 	}
 }
 

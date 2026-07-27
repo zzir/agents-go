@@ -209,29 +209,46 @@ func TestRunPersistsEntriesWithProvenanceAndDisplay(t *testing.T) {
 	}
 }
 
-// A compaction checkpoint is self-contained: reading it gives the summary and
-// the tail it kept, with no separate range to track.
+// A compaction checkpoint copies nothing: it names what it folded, its summary
+// renders up front, and the kept history projects from the entries themselves.
 func TestCompactionCheckpointProjection(t *testing.T) {
-	kept := InputItemsFromText("the most recent question")
-	e, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY: earlier discussion"}, kept)
+	folded, err := NewItemEntry(InputItemsFromText("earlier discussion detail")[0], Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := ProjectEntries([]SessionEntry{e}, nil)
+	folded.ID = "e1"
+	kept, err := NewItemEntry(InputItemsFromText("the most recent question")[0], Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept.ID = "e2"
+	cp, err := NewCompactionEntry(CompactionPayload{
+		Summary:     "SUMMARY: earlier discussion",
+		ExcludedIDs: []string{folded.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp.ID = "e3"
+
+	got, err := ProjectEntries([]SessionEntry{folded, kept, cp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("projected %d items, want the summary plus the retained tail", len(got))
+		t.Fatalf("projected %d items, want the summary plus the kept entry", len(got))
 	}
 	raw, _ := MarshalInputItem(got[0])
 	// A system message: nobody said this, it is context the runtime supplied.
-	if !strings.Contains(string(raw), `"system"`) {
-		t.Errorf("the summary is not a system message: %s", raw)
+	if !strings.Contains(string(raw), `"system"`) || !strings.Contains(string(raw), "SUMMARY") {
+		t.Errorf("the summary is not a system message rendered first: %s", raw)
+	}
+	if strings.Contains(string(raw), "earlier discussion detail") {
+		t.Errorf("folded history was re-sent: %s", raw)
 	}
 	raw, _ = MarshalInputItem(got[1])
 	if !strings.Contains(string(raw), "most recent question") {
-		t.Errorf("the retained tail was lost: %s", raw)
+		t.Errorf("the kept entry was lost: %s", raw)
 	}
 }
 

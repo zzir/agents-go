@@ -53,12 +53,14 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]SessionEntry, erro
 	return s.storage.Entries(ctx, cur)
 }
 
-// ContextEntries returns the entries that make up the model's view, from the
-// most recent compaction checkpoint onward.
+// ContextEntries returns the entries that make up the model's view: the active
+// branch with everything compaction folded away left out. The checkpoints
+// themselves stay in — each carries the summary and stand-ins ProjectEntries
+// renders in the folded content's place.
 //
-// A checkpoint is self-contained — it carries the summary and the tail it kept
-// — so everything before it is already represented and re-sending it would
-// duplicate the history compaction just folded away.
+// Filtering the folded entries HERE, not just at projection, is deliberate: a
+// cursor limit counts entries the model will actually see, and a Compactor fed
+// this view cannot re-include what an earlier pass already folded.
 func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
 	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
@@ -66,20 +68,21 @@ func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntr
 	}
 	// Walk the active branch, not the append order: an abandoned attempt is
 	// still recorded, and sending it would show the model a conversation that
-	// contradicts itself. PathToLeaf stops at a compaction checkpoint, which
-	// already stands in for everything before it.
+	// contradicts itself.
 	path := PathToLeaf(all, LeafOf(all))
 	if len(path) == 0 {
 		// No parent links yet (a session written before branching, or one
-		// whose entries carry none): fall back to append order, trimmed at the
-		// last checkpoint.
+		// whose entries carry none): fall back to append order.
 		path = all
-		for i := len(path) - 1; i >= 0; i-- {
-			if path[i].Kind == EntryKindCompaction {
-				path = path[i:]
-				break
+	}
+	if folded := FoldedEntryIDs(path); len(folded) > 0 {
+		kept := make([]SessionEntry, 0, len(path))
+		for _, e := range path {
+			if !folded[e.ID] {
+				kept = append(kept, e)
 			}
 		}
+		path = kept
 	}
 	return PageEntries(path, Cursor{AfterSeq: cur.AfterSeq, Limit: cur.Limit}), nil
 }

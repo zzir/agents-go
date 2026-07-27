@@ -26,8 +26,12 @@ func LeafOf(entries []SessionEntry) string {
 // — the single branch that leaf belongs to, with every abandoned sibling left
 // out.
 //
-// A compaction checkpoint ends the walk: it stands in for everything before it,
-// so nothing older is part of the context any more.
+// A compaction checkpoint does NOT end the walk. The walk answers "which
+// entries are on this branch", and an entry folded by compaction is still on
+// the branch it was written to — what the MODEL sees is a separate question,
+// answered by ProjectEntries applying the checkpoint's exclusions. Ending the
+// walk here is what once made everything behind a checkpoint unreachable to a
+// pop, while the model could still see it.
 func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 	byID := make(map[string]SessionEntry, len(entries))
 	for _, e := range entries {
@@ -50,9 +54,6 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 		}
 		seen[id] = true
 		reversed = append(reversed, e)
-		if e.Kind == EntryKindCompaction {
-			break
-		}
 		id = e.ParentID
 	}
 

@@ -132,13 +132,16 @@ func TestTree_BranchRejectsUnknownEntry(t *testing.T) {
 	}
 }
 
-// A compaction checkpoint ends the walk: it already stands in for everything
-// before it.
-func TestTree_PathStopsAtCompaction(t *testing.T) {
+// A compaction checkpoint does NOT end the walk: an entry it folded is still
+// on the branch it was written to. What the MODEL sees is the projection's
+// question — it drops what the checkpoint's exclusions name — and conflating
+// the two is what once made everything behind a checkpoint unreachable to a
+// pop while the model could still see it.
+func TestTree_PathContinuesPastCompaction(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()
-	appendText(t, sess, "ancient")
-	cp, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY"}, nil)
+	entries := appendText(t, sess, "ancient")
+	cp, err := NewCompactionEntry(CompactionPayload{Summary: "SUMMARY", ExcludedIDs: []string{entries[0].ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,9 +154,8 @@ func TestTree_PathStopsAtCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(path) != 2 || path[0].Kind != EntryKindCompaction {
-		t.Fatalf("path = %d entries starting with %q, want the checkpoint and what followed",
-			len(path), path[0].Kind)
+	if len(path) != 3 || path[1].Kind != EntryKindCompaction {
+		t.Fatalf("path = %d entries, want the folded entry, the checkpoint and what followed", len(path))
 	}
 	for _, item := range contextTexts(t, sess) {
 		if strings.Contains(item, "ancient") {

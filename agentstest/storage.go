@@ -37,6 +37,111 @@ var storageChecks = []struct {
 	{"CursorReturnsWhatItHasNotShown", checkCursorCompleteness},
 	{"PopTakesTheMostRecentEntry", checkPopTakesNewest},
 	{"AnItemPopLeavesTheTreeWhole", checkItemPopKeepsTheTree},
+	{"AnItemPopSkipsFoldedAndReachesKept", checkItemPopSkipsFoldedReachesKept},
+	{"PoppingACheckpointUndoesItsFold", checkPopEntryTakesCheckpointAndUnfolds},
+}
+
+// A checkpoint reshapes what a pop can reach exactly as it reshapes the
+// model's view: an entry it folded is skipped — it is no more "my last
+// message" than a banner is — while the entries it KEPT stay reachable.
+// Stopping the search at the checkpoint once made the kept entries unpoppable
+// while the model could still see them.
+func checkItemPopSkipsFoldedReachesKept(t *testing.T, st agents.SessionStorage) {
+	t.Helper()
+	ctx := context.Background()
+	popper, ok := st.(agents.ItemPopper)
+	if !ok {
+		t.Skip("this store does not pop items")
+	}
+	storageWrite(t, st, "folded away", "kept in the window")
+	stored := storageEntries(t, st)
+	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+		Summary:     "summary of the folded part",
+		ExcludedIDs: []string{stored[0].ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Append(ctx, cp); err != nil {
+		t.Fatalf("append checkpoint: %v", err)
+	}
+
+	popped, err := popper.PopItem(ctx)
+	if err != nil {
+		t.Fatalf("pop item: %v", err)
+	}
+	if popped == nil || popped.ID != stored[1].ID {
+		t.Fatalf("popped %+v, want the kept item %q — the checkpoint must not wall it off", popped, stored[1].ID)
+	}
+
+	// The only item left is the folded one, which is not poppable: it is not
+	// part of the conversation as anyone sees it.
+	again, err := popper.PopItem(ctx)
+	if err != nil {
+		t.Fatalf("second pop item: %v", err)
+	}
+	if again != nil {
+		t.Fatalf("popped folded entry %+v; folded history is not \"my last message\"", again)
+	}
+}
+
+// PopEntry takes the most recent entry whatever it is — and when that is a
+// compaction checkpoint, removing it undoes the fold: the exclusions leave
+// with the checkpoint, so the folded history is part of the view again. The
+// checkpoint and any store-side bookkeeping of the fold are two records of one
+// fact, and a store that keeps such bookkeeping reverses it in the same step.
+func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st agents.SessionStorage) {
+	t.Helper()
+	ctx := context.Background()
+	popper, ok := st.(agents.EntryPopper)
+	if !ok {
+		t.Skip("this store does not pop")
+	}
+	storageWrite(t, st, "the folded question")
+	stored := storageEntries(t, st)
+	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+		Summary:     "summary standing in for it",
+		ExcludedIDs: []string{stored[0].ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Append(ctx, cp); err != nil {
+		t.Fatalf("append checkpoint: %v", err)
+	}
+
+	sess := agents.NewSession(st)
+	before, err := sess.ContextEntries(ctx, agents.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range before {
+		if e.ID == stored[0].ID {
+			t.Fatalf("folded entry %q still in the context view before the pop", e.ID)
+		}
+	}
+
+	popped, err := popper.PopEntry(ctx)
+	if err != nil {
+		t.Fatalf("pop: %v", err)
+	}
+	if popped == nil || popped.Kind != agents.EntryKindCompaction {
+		t.Fatalf("popped %+v, want the checkpoint — it is the most recent entry", popped)
+	}
+
+	after, err := sess.ContextEntries(ctx, agents.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := false
+	for _, e := range after {
+		if e.ID == stored[0].ID {
+			restored = true
+		}
+	}
+	if !restored {
+		t.Fatalf("the folded entry did not return when its checkpoint was popped; view = %+v", after)
+	}
 }
 
 func storageWrite(t *testing.T, st agents.SessionStorage, texts ...string) {
