@@ -85,6 +85,7 @@ func main() {
 | Streaming | [Streaming](streaming.md) |
 | Models | [Models](models.md) |
 | Observability | [Tracing](tracing.md) · [Logging and diagnostics](logging.md) |
+| Testing | [Testing your agents](testing.md) — scripted models, no API key |
 | Examples | [Examples](examples.md) |
 | API index | [Feature reference](features.md) — every capability mapped to its API |
 | Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |

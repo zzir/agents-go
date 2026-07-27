@@ -33,6 +33,8 @@ on its own — behavior is [specified](docs/spec.md), not inherited.
   to JSON, resume it later — even in another process.
 - **Production plumbing built in** — retry, fallback, and multi-provider
   routing as composable model decorators; tracing spans for every step.
+- **Testable without a key** — `agentstest` scripts the model, so your agent's
+  tools and decisions are covered by fast offline tests.
 - **Dependency-light core** — one small module. Docker/SSH sandboxes, SQL
   sessions, and skills are opt-in submodules.
 - **Batteries included** — MCP client, code-execution sandboxes, web search,

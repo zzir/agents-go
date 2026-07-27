@@ -10,6 +10,7 @@ go run ./examples/hello
 | Example | Shows |
 |---|---|
 | [`examples/hello`](../examples/hello/main.go) | The minimal agent: provider, instructions, one `Run` |
+| [`examples/testing`](../examples/testing/agent_test.go) | Testing an agent with `agentstest`: scripted model, no API key ([Testing](testing.md)) |
 | [`examples/tools`](../examples/tools/main.go) | Typed function tools via `NewFunctionTool` |
 | [`examples/toolimage`](../examples/toolimage/main.go) | A tool returning image content (`ToolOutputImage`) |
 | [`examples/handoffs`](../examples/handoffs/main.go) | A triage agent delegating to specialists with `HandoffTo` |
