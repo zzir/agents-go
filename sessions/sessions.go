@@ -39,6 +39,13 @@ type entry struct {
 
 	ID        int64  `bun:"id,pk,autoincrement"`
 	SessionID string `bun:"session_id,notnull"`
+	// Seq is the entry's cursor position, allocated by agents.PrepareAppend.
+	//
+	// It is a column rather than the row's autoincrement id because the two are
+	// not the same number: an id is unique per TABLE and assigned on insert,
+	// while Seq is the session-local position a Cursor pages on and has to
+	// survive a fork or an export that carries entries between stores.
+	Seq int64 `bun:"seq,notnull"`
 	EntryID   string `bun:"entry_id,notnull"`
 	ParentID  string `bun:"parent_id"`
 	Kind      string `bun:"kind,notnull"`
@@ -136,7 +143,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_session").
-		Column("session_id", "id").
+		Column("session_id", "seq").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return err
@@ -157,16 +164,16 @@ func (s *Session) Entries(ctx context.Context, cur agents.Cursor) ([]agents.Sess
 	var rows []entry
 	q := s.db.NewSelect().Model(&rows).Where("session_id = ?", s.sessionID)
 	if cur.AfterSeq > 0 {
-		q = q.Where("id > ?", cur.AfterSeq)
+		q = q.Where("seq > ?", cur.AfterSeq)
 	}
 	// A negative limit means "the most recent N", which the database answers by
 	// reading in reverse and flipping below — far cheaper than reading the
 	// whole session to slice its tail.
 	limit := cur.Limit
 	if limit < 0 {
-		q = q.Order("id DESC").Limit(-limit)
+		q = q.Order("seq DESC").Limit(-limit)
 	} else {
-		q = q.Order("id ASC")
+		q = q.Order("seq ASC")
 		if limit > 0 {
 			q = q.Limit(limit)
 		}
@@ -193,11 +200,11 @@ func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) er
 	if len(entries) == 0 {
 		return nil
 	}
-	prevLeaf, err := s.leaf(ctx)
+	at, err := s.appendPoint(ctx)
 	if err != nil {
 		return err
 	}
-	rows, err := s.encodeEntries(ctx, entries, prevLeaf)
+	rows, err := s.encodeEntries(ctx, entries, at)
 	if err != nil {
 		return err
 	}
@@ -260,7 +267,14 @@ func (s *Session) Clear(ctx context.Context) error {
 // failure mid-rewrite rolls back to the previous history instead of leaving the
 // session empty. Only this session ID's rows are touched.
 func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
-	rows, err := s.encodeEntries(ctx, entries, "")
+	// A replace does not restart the numbering — a cursor outlives the entries
+	// it pointed at — so the high-water mark is carried over while the branch
+	// starts fresh.
+	at, err := s.appendPoint(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := s.encodeEntries(ctx, entries, agents.AppendPoint{LastSeq: at.LastSeq})
 	if err != nil {
 		return err
 	}
@@ -279,26 +293,17 @@ func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionE
 // encodeEntries prepares entries for insertion, filling in the fields the store
 // owns. A caller-supplied id is kept, so an entry re-added by a fork or a
 // replace keeps the identity an update entry points at.
-func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEntry, prevLeaf string) ([]entry, error) {
-	// The row's autoincrement id is not known before the insert, so entry ids
-	// are minted here. They only have to be unique within the session, which is
-	// all an update entry needs to point at one.
-	stamp := time.Now().UnixNano()
-	idFor := func(seq int64) string {
-		return fmt.Sprintf("%s-%d-%d", s.sessionID, stamp, seq)
-	}
-	prepared := agents.PrepareAppend(entries, prevLeaf, 0, idFor)
+func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEntry, at agents.AppendPoint) ([]entry, error) {
+	prepared := agents.PrepareAppend(entries, at)
 	rows := make([]entry, 0, len(prepared))
 	for _, e := range prepared {
-		// Seq belongs to the database's autoincrement, not this counter;
-		// decodeEntry fills it from the row id on the way back out.
-		e.Seq = 0
 		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("encoding session entry: %w", err)
 		}
 		rows = append(rows, entry{
 			SessionID: s.sessionID,
+			Seq:       e.Seq,
 			EntryID:   e.ID,
 			ParentID:  e.ParentID,
 			Kind:      string(e.Kind),
@@ -313,22 +318,28 @@ func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEnt
 // Only the last row is read: the tip is either that entry, or — when it is a
 // leaf move — the entry it points at. Folding the whole session to learn the
 // same thing would make every append cost a full read.
-func (s *Session) leaf(ctx context.Context) (string, error) {
+func (s *Session) appendPoint(ctx context.Context) (agents.AppendPoint, error) {
 	var row entry
 	err := s.db.NewSelect().Model(&row).
 		Where("session_id = ?", s.sessionID).
-		Order("id DESC").Limit(1).Scan(ctx)
+		Order("seq DESC").Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return agents.AppendPoint{}, nil
 	}
 	if err != nil {
-		return "", err
+		return agents.AppendPoint{}, err
 	}
 	e, derr := decodeEntry(row)
 	if derr != nil {
-		return "", derr
+		return agents.AppendPoint{}, derr
 	}
-	return agents.LeafOf([]agents.SessionEntry{e}), nil
+	// The newest row answers both questions: it carries the highest sequence
+	// number this session has issued, and the tip is either it or — when it is
+	// a leaf move — the entry it points at.
+	return agents.AppendPoint{
+		Leaf:    agents.LeafOf([]agents.SessionEntry{e}),
+		LastSeq: row.Seq,
+	}, nil
 }
 
 func decodeEntry(r entry) (agents.SessionEntry, error) {
@@ -336,9 +347,6 @@ func decodeEntry(r entry) (agents.SessionEntry, error) {
 	if err := json.Unmarshal([]byte(r.Entry), &e); err != nil {
 		return agents.SessionEntry{}, fmt.Errorf("decoding session entry %d: %w", r.ID, err)
 	}
-	// The row's autoincrement id IS the sequence number: it is what a cursor
-	// pages on, and it is assigned by the database rather than guessed here.
-	e.Seq = r.ID
 	return e, nil
 }
 

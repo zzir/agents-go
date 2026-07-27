@@ -23,10 +23,14 @@ type entryRow struct {
 
 	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
 	SessionID string `bun:"session_id,notnull"  json:"session_id"`
-	EntryID   string `bun:"entry_id,notnull"    json:"entry_id"`
-	ParentID  string `bun:"parent_id"           json:"parent_id,omitempty"`
-	Kind      string `bun:"kind,notnull"        json:"kind"`
-	RunID     string `bun:"run_id"              json:"run_id,omitempty"`
+	// Seq is the entry's cursor position, allocated by agents.PrepareAppend.
+	// Not the row id: that one is unique per table and assigned on insert,
+	// while Seq is the session-local position a Cursor pages on.
+	Seq      int64  `bun:"seq,notnull" json:"-"`
+	EntryID  string `bun:"entry_id,notnull"    json:"entry_id"`
+	ParentID string `bun:"parent_id"           json:"parent_id,omitempty"`
+	Kind     string `bun:"kind,notnull"        json:"kind"`
+	RunID    string `bun:"run_id"              json:"run_id,omitempty"`
 	// Entry is the JSON of an agents.SessionEntry.
 	Entry string `bun:"entry,type:text,notnull" json:"-"`
 	// SourceModel records which model produced the entry, so replaying the
@@ -79,15 +83,11 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents
 	if len(entries) == 0 {
 		return nil
 	}
-	leaf, err := s.leafIn(ctx, db)
+	at, err := s.appendPointIn(ctx, db)
 	if err != nil {
 		return err
 	}
-	seq, err := s.maxSeqIn(ctx, db)
-	if err != nil {
-		return err
-	}
-	prepared := agents.PrepareAppend(entries, leaf, seq, s.entryID)
+	prepared := agents.PrepareAppend(entries, at)
 
 	rows := make([]entryRow, 0, len(prepared))
 	for i := range prepared {
@@ -97,6 +97,7 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents
 		}
 		rows = append(rows, entryRow{
 			SessionID:   s.sessionID,
+			Seq:         prepared[i].Seq,
 			SourceModel: s.model,
 			EntryID:     prepared[i].ID,
 			ParentID:    prepared[i].ParentID,
@@ -112,28 +113,24 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents
 	return nil
 }
 
-func (s *EntryStore) entryID(seq int64) string {
-	return fmt.Sprintf("%s-e%d", s.sessionID, seq)
-}
-
-// maxSeqIn returns the highest sequence number stored, which is the row count:
-// rows are append-only and never renumbered.
-func (s *EntryStore) maxSeqIn(ctx context.Context, db bun.IDB) (int64, error) {
-	n, err := db.NewSelect().Model((*entryRow)(nil)).
-		Where("session_id = ?", s.sessionID).Count(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("counting entries: %w", err)
-	}
-	return int64(n), nil
-}
-
-// leafIn returns the branch tip: the last non-compacted entry's id.
-func (s *EntryStore) leafIn(ctx context.Context, db bun.IDB) (string, error) {
+// appendPointIn reads where the session stands: the branch tip, and the highest
+// sequence number it has issued.
+//
+// The high-water mark is a MAX over every row, compacted ones included — a
+// folded-away entry still consumed its position, and a number this session has
+// handed out is never handed out again.
+func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (agents.AppendPoint, error) {
 	entries, err := s.loadIn(ctx, db, false)
 	if err != nil {
-		return "", err
+		return agents.AppendPoint{}, err
 	}
-	return agents.LeafOf(entries), nil
+	var lastSeq int64
+	if err := db.NewSelect().Model((*entryRow)(nil)).
+		ColumnExpr("COALESCE(MAX(seq), 0)").
+		Where("session_id = ?", s.sessionID).Scan(ctx, &lastSeq); err != nil {
+		return agents.AppendPoint{}, fmt.Errorf("reading the last sequence number: %w", err)
+	}
+	return agents.AppendPoint{Leaf: agents.LeafOf(entries), LastSeq: lastSeq}, nil
 }
 
 // load reads the session's entries in append order. Excluding compacted rows is
@@ -192,7 +189,6 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted bo
 			e.Item = adapted
 		}
 		e.ParentID = resolve(e.ParentID)
-		e.Seq = int64(len(out) + 1)
 		out = append(out, e)
 	}
 	return out, nil
@@ -469,7 +465,11 @@ func (s *EntryStore) Branch(ctx context.Context, sessionID, entryID string) erro
 
 // Leaf returns the session's active branch tip.
 func (s *EntryStore) Leaf(ctx context.Context, sessionID string) (string, error) {
-	return (&EntryStore{db: s.db, sessionID: sessionID}).leafIn(ctx, s.db)
+	at, err := (&EntryStore{db: s.db, sessionID: sessionID}).appendPointIn(ctx, s.db)
+	if err != nil {
+		return "", err
+	}
+	return at.Leaf, nil
 }
 
 // activeBranch returns the ids on the current branch: the walk from the leaf up
@@ -556,6 +556,9 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, srcSessionID, dstSessionID st
 	seen := map[string]bool{}
 	remap := make(map[string]string, len(rows))
 	now := time.Now().UTC()
+	// The fork's own numbering, from the shared allocator: the destination is a
+	// new session, so its positions start where any new session's would.
+	seq := agents.SeqFor(agents.AppendPoint{})
 	for i := range rows {
 		if rid := rows[i].RunID; rid != "" && !seen[rid] {
 			seen[rid] = true
@@ -570,13 +573,15 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, srcSessionID, dstSessionID st
 		}
 		e.ID = newID
 		e.ParentID = remap[e.ParentID] // "" for a root maps to "" — the zero value
-		e.Seq = int64(i + 1)
+		e.Seq = seq
+		seq++
 		raw, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("fork entries encode: %w", err)
 		}
 		rows[i].ID = 0
 		rows[i].SessionID = dstSessionID
+		rows[i].Seq = e.Seq
 		rows[i].EntryID = newID
 		rows[i].ParentID = e.ParentID
 		rows[i].Entry = string(raw)

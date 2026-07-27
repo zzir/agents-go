@@ -55,6 +55,10 @@ func TestCursor_NegativeLimitTakesTheTail(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	all, err := sess.Entries(ctx, Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := sess.Entries(ctx, Cursor{Limit: -2})
 	if err != nil {
 		t.Fatal(err)
@@ -62,8 +66,11 @@ func TestCursor_NegativeLimitTakesTheTail(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d entries, want the last 2", len(got))
 	}
-	if got[0].Seq != 3 || got[1].Seq != 4 {
-		t.Errorf("got seqs %d,%d, want 3,4 — still oldest-first", got[0].Seq, got[1].Seq)
+	// By identity, not by number: a sequence number is a cursor position, not
+	// a count, so a test that spells one out is testing the allocator.
+	if got[0].ID != all[2].ID || got[1].ID != all[3].ID {
+		t.Errorf("got %s,%s, want the last two (%s,%s) — still oldest-first",
+			got[0].ID, got[1].ID, all[2].ID, all[3].ID)
 	}
 }
 

@@ -210,11 +210,7 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 	if err != nil {
 		return err
 	}
-	var seq int64
-	if n := len(existing); n > 0 {
-		seq = existing[n-1].Seq
-	}
-	prepared := agents.PrepareAppend(entries, agents.LeafOf(existing), seq, s.entryID)
+	prepared := agents.PrepareAppend(entries, agents.AppendPointOf(existing))
 	var buf bytes.Buffer
 	for i := range prepared {
 		data, err := json.Marshal(prepared[i])
@@ -246,7 +242,15 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
 func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.SessionEntry) error {
-	prepared := agents.PrepareAppend(entries, "", 0, s.entryID)
+	// A replace does not restart the numbering: a cursor outlives the entries
+	// it pointed at, and a history renumbered from the beginning would land
+	// entirely before one and be skipped in full. What is on disk now is read
+	// for its high-water mark alone.
+	existing, err := s.readEntries()
+	if err != nil {
+		return err
+	}
+	prepared := agents.PrepareAppend(entries, agents.AppendPoint{LastSeq: agents.AppendPointOf(existing).LastSeq})
 	lines := make([][]byte, 0, len(prepared))
 	for i := range prepared {
 		data, err := json.Marshal(prepared[i])
@@ -308,8 +312,6 @@ func (s *FileSession) readEntries() ([]agents.SessionEntry, error) {
 	}
 	return out, nil
 }
-
-func (s *FileSession) entryID(seq int64) string { return fmt.Sprintf("e%d", seq) }
 
 // readLines returns the non-empty lines of the session file, or nil if it does
 // not exist yet. Callers must hold the per-path lock.

@@ -1,9 +1,7 @@
 package agents
 
 import (
-	"cmp"
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -105,17 +103,13 @@ func (s *InMemoryStorage) Metadata(context.Context) (SessionMetadata, error) {
 func (s *InMemoryStorage) Append(_ context.Context, entries ...SessionEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prepared := PrepareAppend(entries, LeafOf(s.entries), s.seq, s.entryID)
+	prepared := PrepareAppend(entries, AppendPoint{Leaf: LeafOf(s.entries), LastSeq: s.seq})
 	s.entries = append(s.entries, prepared...)
 	if n := len(prepared); n > 0 {
 		s.seq = prepared[n-1].Seq
 	}
 	s.updatedAt = time.Now().UTC()
 	return nil
-}
-
-func (s *InMemoryStorage) entryID(seq int64) string {
-	return fmt.Sprintf("%s-e%d", s.id, seq)
 }
 
 // Entry implements SessionStorage.
@@ -164,7 +158,7 @@ func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...SessionEn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries = nil
-	prepared := PrepareAppend(entries, "", s.seq, s.entryID)
+	prepared := PrepareAppend(entries, AppendPoint{LastSeq: s.seq})
 	s.entries = prepared
 	if n := len(prepared); n > 0 {
 		s.seq = prepared[n-1].Seq
@@ -213,46 +207,6 @@ func PageEntries(entries []SessionEntry, cur Cursor) []SessionEntry {
 		out = out[len(out)+cur.Limit:]
 	}
 	return append([]SessionEntry(nil), out...)
-}
-
-// PrepareAppend fills in the fields a store owns — id, sequence number,
-// creation time — and links each entry to the branch it extends.
-//
-// Backends call it so every store links identically. Parent linking cannot be
-// done by the caller: the id of the entry before is assigned here, so only the
-// store can chain a batch. Getting it wrong produces a session that reads back
-// as a set of disconnected roots, which is not a failure any test of a single
-// append would catch.
-//
-// prevLeaf is the branch tip before this batch; idFor mints an id for the
-// entry at the given sequence number.
-func PrepareAppend(entries []SessionEntry, prevLeaf string, nextSeq int64, idFor func(seq int64) string) []SessionEntry {
-	out := make([]SessionEntry, 0, len(entries))
-	parent := prevLeaf
-	for _, e := range entries {
-		nextSeq++
-		if e.ID == "" {
-			e.ID = idFor(nextSeq)
-		}
-		e.Seq = nextSeq
-		if e.CreatedAt.IsZero() {
-			e.CreatedAt = time.Now().UTC()
-		}
-		e.Kind = cmp.Or(e.Kind, EntryKindItem)
-		if e.Kind == EntryKindLeaf {
-			// A leaf move is a marker, not a node: it has no parent, and it
-			// moves the tip to its target rather than extending the branch.
-			if p, err := e.LeafPayload(); err == nil {
-				parent = p.TargetID
-			}
-			out = append(out, e)
-			continue
-		}
-		e.ParentID = cmp.Or(e.ParentID, parent)
-		parent = e.ID
-		out = append(out, e)
-	}
-	return out
 }
 
 // ReplaceStorageEntries swaps a store's whole history. It is Clear followed by Append

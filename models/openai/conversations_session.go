@@ -91,6 +91,12 @@ func (s *ConversationsSession) Entries(ctx context.Context, cur agents.Cursor) (
 	if err != nil {
 		return nil, err
 	}
+	// Position in what the server returned, which is the only number available
+	// here: the conversation lives on the server, so there is no local store to
+	// have allocated one. It therefore does NOT satisfy the "never moves"
+	// guarantee an entry from a local store does — if the server ever stops
+	// returning an item, everything after it shifts. Reading the most recent N
+	// (a negative limit) is unaffected; resuming from AfterSeq is best-effort.
 	for i := range entries {
 		entries[i].Seq = int64(i + 1)
 	}

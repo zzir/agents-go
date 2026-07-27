@@ -33,7 +33,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateIndex().
 		Model((*entryRow)(nil)).
 		Index("idx_entries_session_id").
-		Column("session_id", "id").
+		Column("session_id", "seq").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating entries index: %w", err)

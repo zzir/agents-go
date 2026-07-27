@@ -46,14 +46,10 @@ func writeFork(ctx context.Context, dst *Session, path []SessionEntry) error {
 	if len(path) == 0 {
 		return nil
 	}
-	// Seq is the destination store's to assign; ids and parent links are the
-	// conversation's and travel with it.
-	forked := make([]SessionEntry, len(path))
-	for i, e := range path {
-		e.Seq = 0
-		forked[i] = e
-	}
-	if err := dst.Append(ctx, forked...); err != nil {
+	// Ids and parent links are the conversation's and travel with it; the
+	// destination allocates the sequence numbers, since a cursor position
+	// belongs to the session it pages.
+	if err := dst.Append(ctx, path...); err != nil {
 		return fmt.Errorf("fork: writing to destination session: %w", err)
 	}
 	return nil

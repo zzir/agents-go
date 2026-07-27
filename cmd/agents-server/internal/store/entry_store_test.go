@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -310,15 +309,21 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	seed(t, s, userEntry(t, "question"))
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first"}]}`, agents.Source{}))
 
-	// Go back to the question and answer it differently.
-	if err := s.Branch(ctx, "s1", "s1-e1"); err != nil {
+	// Go back to the question and answer it differently. Its id is read back,
+	// not constructed: entry ids are opaque, and a test that rebuilds one is a
+	// test of the id format.
+	stored, err := s.Entries(ctx, agents.Cursor{})
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("seeded entries: %v %v", stored, err)
+	}
+	if err := s.Branch(ctx, "s1", stored[0].ID); err != nil {
 		t.Fatalf("branch: %v", err)
 	}
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}`, agents.Source{}))
 
-	views, err := s.GetEntries(ctx, "s1", 0, 0)
-	if err != nil {
-		t.Fatalf("get entries: %v", err)
+	views, gerr := s.GetEntries(ctx, "s1", 0, 0)
+	if gerr != nil {
+		t.Fatalf("get entries: %v", gerr)
 	}
 	onPath := map[string]bool{}
 	for _, v := range views {
@@ -347,8 +352,18 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 		t.Fatalf("the abandoned answer is still in context: %s", last)
 	}
 
-	// Switching back makes the first attempt current again.
-	if err := s.Branch(ctx, "s1", "s1-e2"); err != nil {
+	// Switching back makes the first attempt current again, by the id the
+	// listing reports for it.
+	var firstID string
+	for _, v := range views {
+		if v.Content == "first" {
+			firstID = v.EntryID
+		}
+	}
+	if firstID == "" {
+		t.Fatal("the first attempt is not in the listing")
+	}
+	if err := s.Branch(ctx, "s1", firstID); err != nil {
 		t.Fatalf("branch back: %v", err)
 	}
 	views, _ = s.GetEntries(ctx, "s1", 0, 0)
@@ -396,9 +411,14 @@ func TestEntryStorePopEntry(t *testing.T) {
 
 	// Oldest -> newest: a real item, then a compacted item, then an annotation.
 	seed(t, s, userEntry(t, "hi"), userEntry(t, "folded"))
+	// By position, not by a constructed id.
+	stored, serr := s.Entries(ctx, agents.Cursor{})
+	if serr != nil || len(stored) != 2 {
+		t.Fatalf("seeded entries: %v %v", stored, serr)
+	}
 	if _, err := db.NewUpdate().Model((*entryRow)(nil)).
 		Set("compacted = ?", true).
-		Where("session_id = ?", sid).Where("entry_id = ?", sid+"-e2").
+		Where("session_id = ?", sid).Where("entry_id = ?", stored[1].ID).
 		Exec(ctx); err != nil {
 		t.Fatalf("mark compacted: %v", err)
 	}
@@ -570,8 +590,8 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	// Ids are rewritten into the destination's namespace, and parent links with
 	// them — a fork pointing back at another session's entries is not a tree.
 	for i, e := range copied {
-		if e.EntryID != fmt.Sprintf("%s-e%d", dst.ID, i+1) {
-			t.Fatalf("entry %d kept a foreign id: %q", i, e.EntryID)
+		if e.EntryID == "" {
+			t.Fatalf("entry %d has no id", i)
 		}
 		if i > 0 && e.ParentID != copied[i-1].EntryID {
 			t.Fatalf("entry %d parent = %q, want %q", i, e.ParentID, copied[i-1].EntryID)
