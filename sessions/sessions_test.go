@@ -116,6 +116,67 @@ func TestSQLite(t *testing.T) {
 	runSessionContract(t, s)
 }
 
+// Two writers on one session must not fork it: reading the append point and
+// writing against it are one step, so every entry (bar the first) has exactly
+// one child following it and the sequence numbers never collide. The unique
+// (session, gen, seq) index is the backstop that would turn a regression here
+// into a failed write rather than a silently forked branch.
+func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
+	ctx := context.Background()
+	dsn := "file:" + filepath.Join(t.TempDir(), "agents.db")
+	s, db, err := sessions.NewSQLite(dsn, "contested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := sessions.CreateSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+
+	const writers, perWriter = 4, 8
+	errc := make(chan error, writers)
+	for range writers {
+		go func() {
+			for range perWriter {
+				e, err := agents.NewItemEntry(item("x"), agents.Source{})
+				if err != nil {
+					errc <- err
+					return
+				}
+				if err := s.Append(ctx, e); err != nil {
+					errc <- err
+					return
+				}
+			}
+			errc <- nil
+		}()
+	}
+	for range writers {
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := s.Entries(ctx, agents.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != writers*perWriter {
+		t.Fatalf("stored %d entries, want %d", len(entries), writers*perWriter)
+	}
+	seqs := map[int64]bool{}
+	for _, e := range entries {
+		if seqs[e.Seq] {
+			t.Fatalf("sequence number %d handed out twice", e.Seq)
+		}
+		seqs[e.Seq] = true
+	}
+	// A fork shows up as a branch walk that does not cover every entry.
+	if path := agents.PathToLeaf(entries, agents.LeafOf(entries)); len(path) != len(entries) {
+		t.Fatalf("the active branch holds %d of %d entries — concurrent appends forked the session", len(path), len(entries))
+	}
+}
+
 func TestSQLite_SessionIsolation(t *testing.T) {
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "agents.db")

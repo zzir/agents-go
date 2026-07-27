@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/sqliteshim"
@@ -147,12 +148,18 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 	return New(db, sessionID), db
 }
 
-// CreateSchema creates the agent_entries table and its lookup index if they do
-// not already exist. It is safe to call repeatedly.
+// CreateSchema creates the agent_entries table and its lookup indexes if they
+// do not already exist. It is safe to call repeatedly.
+//
+// Both indexes are UNIQUE, and that is load-bearing rather than an
+// optimization: sequence numbers and entry ids are never handed out twice
+// (spec §2.5e2), and a backend that can constrain them does — so a race or a
+// bug that would mint a duplicate becomes a failed write instead of two rows
+// answering to one name.
 //
 // The schema changed shape when sessions moved from items to entries; there is
-// no migration from agent_messages. This project does not ship migrations —
-// rebuild the database.
+// no migration from agent_messages, and none for the indexes turning unique.
+// This project does not ship migrations — rebuild the database.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range []any{(*entry)(nil), (*sessionRow)(nil)} {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
@@ -162,6 +169,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_session").
+		Unique().
 		Column("session_id", "gen", "seq").
 		IfNotExists().
 		Exec(ctx); err != nil {
@@ -172,6 +180,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	_, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_entry_id").
+		Unique().
 		Column("session_id", "gen", "entry_id").
 		IfNotExists().
 		Exec(ctx)
@@ -180,8 +189,12 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 
 // Entries implements agents.SessionStorage, paginating by cursor.
 func (s *Session) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+	return s.entriesIn(ctx, s.db, cur)
+}
+
+func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur agents.Cursor) ([]agents.SessionEntry, error) {
 	var rows []entry
-	q := s.scoped(s.db.NewSelect().Model(&rows))
+	q := s.scoped(db.NewSelect().Model(&rows))
 	if cur.AfterSeq > 0 {
 		q = q.Where("seq > ?", cur.AfterSeq)
 	}
@@ -214,21 +227,69 @@ func (s *Session) Entries(ctx context.Context, cur agents.Cursor) ([]agents.Sess
 	return out, nil
 }
 
-// Append implements agents.SessionStorage.
+// lockForWrite serializes this session's read-plan-write sequences.
+//
+// Reading the append point and writing the entries must be one step (spec
+// §2.5e2): two writers that both read the same tip mint the same sequence
+// numbers and fork the branch, silently. A transaction alone does not give
+// that — under read committed both transactions still read the old tip — so:
+//
+//   - PostgreSQL takes a transaction-scoped advisory lock on (id, gen),
+//     released automatically at commit or rollback.
+//   - SQLite needs nothing here: NewSQLite caps the pool at one connection,
+//     and a transaction holds it for its whole extent, so a competing write
+//     cannot interleave. (A caller wiring their own multi-connection SQLite
+//     pool through New gives that serialization up. The unique indexes still
+//     catch a doubly-issued seq or id, but two appends against one tip with
+//     distinct sequence numbers fork the branch without tripping anything —
+//     cap the pool, as NewSQLite does.)
+func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
+	if s.db.Dialect().Name() != dialect.PG {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx,
+		"SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))", s.ref.ID, s.ref.Gen)
+	if err != nil {
+		return fmt.Errorf("locking session for write: %w", err)
+	}
+	return nil
+}
+
+// touchIn records that the session changed, on the transaction that changed it
+// — one step, so the record cannot exist without the write or the write
+// without the record. A session used directly (no repo row) has nothing to
+// record; zero rows affected is that, not a failure.
+func (s *Session) touchIn(ctx context.Context, tx bun.Tx) error {
+	_, err := tx.NewUpdate().Model((*sessionRow)(nil)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+		Exec(ctx)
+	return err
+}
+
+// Append implements agents.SessionStorage. The append point is read inside the
+// same transaction as the insert — see lockForWrite for why.
 func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	at, err := s.appendPoint(ctx)
-	if err != nil {
-		return err
-	}
-	rows, err := s.encodeEntries(ctx, entries, at)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.NewInsert().Model(&rows).Exec(ctx)
-	return err
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := s.lockForWrite(ctx, tx); err != nil {
+			return err
+		}
+		at, err := s.appendPointIn(ctx, tx)
+		if err != nil {
+			return err
+		}
+		rows, err := s.encodeEntries(entries, at)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
+			return err
+		}
+		return s.touchIn(ctx, tx)
+	})
 }
 
 // PopEntry implements agents.EntryPopper.
@@ -241,133 +302,149 @@ func (s *Session) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
 	return s.pop(ctx, agents.PopLastItem)
 }
 
-// pop removes what PlanPop chose and applies its relinks in the same
-// transaction, so the session is never readable with a child hanging off an id
-// that is gone — a walk meeting a missing parent stops there, which would lose
-// everything BEFORE the entry that was removed rather than just it.
+// pop selects the entry to remove, deletes it and applies its relinks all in
+// ONE transaction, holding the write lock. Selecting on one view and deleting
+// on another is how a concurrent append's child ends up hanging off an id that
+// is gone — and a walk meeting a missing parent stops there, losing everything
+// BEFORE the removed entry rather than just it.
 //
-// The delete is also what arbitrates between two concurrent pops: a caller
-// whose delete affects nothing lost the race, and retries against whatever the
-// session holds now.
+// The delete still arbitrates: a writer not holding the lock (a foreign tool
+// touching the same database) can take the row first, in which case zero rows
+// are affected, this caller lost, and it retries against what the session
+// holds now.
 func (s *Session) pop(ctx context.Context, mode agents.PopMode) (*agents.SessionEntry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		entries, err := s.Entries(ctx, agents.Cursor{})
+		var popped *agents.SessionEntry
+		done := true
+		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := s.lockForWrite(ctx, tx); err != nil {
+				return err
+			}
+			entries, err := s.entriesIn(ctx, tx, agents.Cursor{})
+			if err != nil {
+				return err
+			}
+			plan, ok := agents.PlanPop(entries, mode)
+			if !ok {
+				return nil
+			}
+			res, derr := tx.NewDelete().Model((*entry)(nil)).
+				Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+				Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
+			if derr != nil {
+				return derr
+			}
+			if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+				done = false
+				return nil
+			}
+			byID := make(map[string]agents.SessionEntry, len(entries))
+			for _, e := range entries {
+				byID[e.ID] = e
+			}
+			if err := s.relinkIn(ctx, tx, plan, byID); err != nil {
+				return err
+			}
+			if err := s.touchIn(ctx, tx); err != nil {
+				return err
+			}
+			popped = &plan.Entry
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
-		plan, ok := agents.PlanPop(entries, mode)
-		if !ok {
-			return nil, nil
-		}
-		won, err := s.applyRemoval(ctx, plan)
-		if err != nil {
-			return nil, err
-		}
-		if won {
-			return &plan.Entry, nil
+		if done {
+			return popped, nil
 		}
 	}
 }
 
-// applyRemoval carries out one Removal, reporting whether this caller was the
-// one that removed it.
-func (s *Session) applyRemoval(ctx context.Context, plan agents.Removal) (bool, error) {
-	byID := map[string]agents.SessionEntry{}
-	if len(plan.Relink) > 0 {
-		entries, err := s.Entries(ctx, agents.Cursor{})
-		if err != nil {
-			return false, err
+// relinkIn re-points the entries a removal orphaned, on the transaction that
+// carried the delete.
+func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan agents.Removal, byID map[string]agents.SessionEntry) error {
+	for id, parent := range plan.Relink {
+		e, ok := byID[id]
+		if !ok {
+			continue
 		}
-		for _, e := range entries {
-			byID[e.ID] = e
-		}
-	}
-	won := false
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		res, derr := tx.NewDelete().Model((*entry)(nil)).
-			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
-			Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
-		if derr != nil {
-			return derr
-		}
-		if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
-			return nil
-		}
-		won = true
-		for id, parent := range plan.Relink {
-			e, ok := byID[id]
-			if !ok {
+		if e.Kind == agents.EntryKindLeaf {
+			updated, lerr := e.WithLeafTarget(parent)
+			if lerr != nil {
 				continue
 			}
-			if e.Kind == agents.EntryKindLeaf {
-				updated, lerr := e.WithLeafTarget(parent)
-				if lerr != nil {
-					continue
-				}
-				e = updated
-			} else {
-				e.ParentID = parent
-			}
-			raw, merr := json.Marshal(e)
-			if merr != nil {
-				return fmt.Errorf("encoding relinked entry %q: %w", id, merr)
-			}
-			if _, uerr := tx.NewUpdate().Model((*entry)(nil)).
-				Set("parent_id = ?", e.ParentID).
-				Set("entry = ?", string(raw)).
-				Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
-				Where("entry_id = ?", id).Exec(ctx); uerr != nil {
-				return uerr
-			}
+			e = updated
+		} else {
+			e.ParentID = parent
 		}
-		return nil
-	})
-	return won, err
+		raw, merr := json.Marshal(e)
+		if merr != nil {
+			return fmt.Errorf("encoding relinked entry %q: %w", id, merr)
+		}
+		if _, uerr := tx.NewUpdate().Model((*entry)(nil)).
+			Set("parent_id = ?", e.ParentID).
+			Set("entry = ?", string(raw)).
+			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+			Where("entry_id = ?", id).Exec(ctx); uerr != nil {
+			return uerr
+		}
+	}
+	return nil
 }
 
 // Clear implements agents.Session, removing every entry for this session ID.
+// Clearing is a change like any other, so it moves the session in a listing.
 func (s *Session) Clear(ctx context.Context) error {
-	_, err := s.db.NewDelete().Model((*entry)(nil)).
-		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx)
-	return err
-}
-
-// ReplaceEntries implements agents.EntriesReplacer: the delete of the old
-// history and the insert of the new one run in a single transaction, so a
-// failure mid-rewrite rolls back to the previous history instead of leaving the
-// session empty. Only this session ID's rows are touched.
-func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
-	// A replace does not restart the numbering — a cursor outlives the entries
-	// it pointed at — so the high-water mark is carried over while the branch
-	// starts fresh.
-	at, err := s.appendPoint(ctx)
-	if err != nil {
-		return err
-	}
-	rows, err := s.encodeEntries(ctx, entries, agents.AppendPoint{LastSeq: at.LastSeq})
-	if err != nil {
-		return err
-	}
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewDelete().Model((*entry)(nil)).
 			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			return nil
+		return s.touchIn(ctx, tx)
+	})
+}
+
+// ReplaceEntries implements agents.EntriesReplacer: the delete of the old
+// history and the insert of the new one run in a single transaction, so a
+// failure mid-rewrite rolls back to the previous history instead of leaving the
+// session empty. Only this session ID's rows are touched. The high-water mark
+// is read inside the same transaction — see lockForWrite.
+func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := s.lockForWrite(ctx, tx); err != nil {
+			return err
 		}
-		_, err := tx.NewInsert().Model(&rows).Exec(ctx)
-		return err
+		// A replace does not restart the numbering — a cursor outlives the
+		// entries it pointed at — so the high-water mark is carried over while
+		// the branch starts fresh.
+		at, err := s.appendPointIn(ctx, tx)
+		if err != nil {
+			return err
+		}
+		rows, err := s.encodeEntries(entries, agents.AppendPoint{LastSeq: at.LastSeq})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.NewDelete().Model((*entry)(nil)).
+			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return s.touchIn(ctx, tx)
 	})
 }
 
 // encodeEntries prepares entries for insertion, filling in the fields the store
 // owns. A caller-supplied id is kept, so an entry re-added by a fork or a
 // replace keeps the identity an update entry points at.
-func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEntry, at agents.AppendPoint) ([]entry, error) {
+func (s *Session) encodeEntries(entries []agents.SessionEntry, at agents.AppendPoint) ([]entry, error) {
 	prepared := agents.PrepareAppend(entries, at)
 	rows := make([]entry, 0, len(prepared))
 	for _, e := range prepared {
@@ -388,14 +465,16 @@ func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEnt
 	return rows, nil
 }
 
-// leaf reports the session's current branch tip, for linking an append.
+// appendPointIn reports the session's current branch tip, for linking an
+// append, reading through the caller's transaction so tip and write are one
+// step.
 //
 // Only the last row is read: the tip is either that entry, or — when it is a
 // leaf move — the entry it points at. Folding the whole session to learn the
 // same thing would make every append cost a full read.
-func (s *Session) appendPoint(ctx context.Context) (agents.AppendPoint, error) {
+func (s *Session) appendPointIn(ctx context.Context, db bun.IDB) (agents.AppendPoint, error) {
 	var row entry
-	err := s.scoped(s.db.NewSelect().Model(&row)).
+	err := s.scoped(db.NewSelect().Model(&row)).
 		Order("seq DESC").Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agents.AppendPoint{}, nil
