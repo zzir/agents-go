@@ -105,23 +105,58 @@ type Manager struct {
 	// creating the next one is a read-then-write, and the calls that race it
 	// are the ordinary case: several spawn_task calls in one model response
 	// execute concurrently, so without this they all see room and all create.
+	//
+	// Entries are reference-counted and removed when the last holder releases,
+	// the same shape memory.FileSession uses for its per-path locks. A map
+	// keyed on session id that only ever grows is a leak in a server: sessions
+	// churn, and a parent that does not exist, one over the cap and one whose
+	// launch failed each leave an entry behind just for asking.
 	spawnMu  sync.Mutex
-	spawning map[string]*sync.Mutex
+	spawning map[string]*parentSpawnLock
 }
 
-// parentLock returns the per-parent spawn lock, creating it on first use.
-func (m *Manager) parentLock(parentSessionID string) *sync.Mutex {
+// parentSpawnLock is one entry in Manager.spawning: the per-parent mutex plus
+// the number of current holders and waiters, managed under spawnMu.
+type parentSpawnLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockParent blocks until the spawn lock for parentSessionID is held and
+// returns the release func, which must be called exactly once. Different
+// parents proceed in parallel; the same parent is mutually exclusive.
+func (m *Manager) lockParent(parentSessionID string) (release func()) {
 	m.spawnMu.Lock()
-	defer m.spawnMu.Unlock()
 	if m.spawning == nil {
-		m.spawning = map[string]*sync.Mutex{}
+		m.spawning = map[string]*parentSpawnLock{}
 	}
 	l, ok := m.spawning[parentSessionID]
 	if !ok {
-		l = &sync.Mutex{}
+		l = &parentSpawnLock{}
 		m.spawning[parentSessionID] = l
 	}
-	return l
+	l.refs++
+	m.spawnMu.Unlock()
+
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		m.spawnMu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(m.spawning, parentSessionID)
+		}
+		m.spawnMu.Unlock()
+	}
+}
+
+// spawnLockCount reports how many per-parent locks are live. Test-only: the
+// count is zero whenever no Spawn is in flight, which is the property the
+// reference counting exists to keep.
+func (m *Manager) spawnLockCount() int {
+	m.spawnMu.Lock()
+	defer m.spawnMu.Unlock()
+	return len(m.spawning)
 }
 
 // New returns a Manager. It panics on a configuration that cannot work, since
@@ -174,12 +209,23 @@ type Meta struct {
 //
 // A host uses it to decide whether to attach the task tools: a task run at the
 // depth limit must not get them, which is how recursion is bounded.
-func (m *Manager) MetaFor(ctx context.Context, sessionID string) (*Meta, bool) {
+//
+// A store failure is returned rather than reported as "not a task". The two
+// answers lead to opposite actions — one withholds the task tools, the other
+// hands them out — so collapsing a failed lookup into the permissive one turns
+// a transient query error into a way past MaxDepth. A caller with nothing
+// better to do must refuse, not proceed.
+func (m *Manager) MetaFor(ctx context.Context, sessionID string) (*Meta, bool, error) {
 	t, err := m.cfg.Store.ByChildSession(ctx, sessionID)
-	if err != nil || t == nil {
-		return nil, false
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("tasks: looking up session %q: %w", sessionID, err)
+	case t == nil:
+		return nil, false, nil
 	}
-	return &Meta{TaskID: t.ID, Label: t.Label, ParentSessionID: t.ParentSessionID, Depth: t.Depth}, true
+	return &Meta{TaskID: t.ID, Label: t.Label, ParentSessionID: t.ParentSessionID, Depth: t.Depth}, true, nil
 }
 
 // Spawn starts a background task for parentSessionID.
@@ -198,7 +244,11 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	// "how many task hops deep may this go" — the default of 1 means a task
 	// cannot spawn tasks.
 	depth := 1
-	if meta, ok := m.MetaFor(ctx, req.ParentSessionID); ok {
+	meta, isTask, err := m.MetaFor(ctx, req.ParentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	if isTask {
 		depth = meta.Depth + 1
 		if depth > m.cfg.MaxDepth {
 			return nil, ErrDepthLimit{Limit: meta.Depth}
@@ -208,9 +258,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	// Hold the parent's spawn lock across the count and the create: they are
 	// one decision, and the concurrent spawns this has to survive are the
 	// normal case rather than an edge one.
-	lock := m.parentLock(req.ParentSessionID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer m.lockParent(req.ParentSessionID)()
 
 	// Check the cap BEFORE creating anything, so an over-cap spawn fails clean
 	// rather than being rolled back.

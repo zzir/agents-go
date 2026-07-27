@@ -85,12 +85,22 @@ A task's own run must not get these tools — that is what bounds recursion. Ask
 `MetaFor` before attaching them:
 
 ```go
-if _, isTask := mgr.MetaFor(ctx, sessionID); !isTask {
+_, isTask, err := mgr.MetaFor(ctx, sessionID)
+if err != nil {
+	return err // could not tell — withhold the tools rather than guess
+}
+if !isTask {
 	agent.Tools = append(agent.Tools, mgr.Tools(nil)...)
 }
 ```
 
-`Spawn` refuses past `MaxDepth` (default 1) as the backstop.
+The error is the point of the third return. A lookup that failed is not the
+same answer as "this is not a task": that one hands out the tools, so
+collapsing the two would make one transient store error a way past the depth
+limit. Refuse instead.
+
+`Spawn` refuses past `MaxDepth` (default 1) as the backstop, and propagates the
+same failure for the same reason.
 
 ## Notifications
 

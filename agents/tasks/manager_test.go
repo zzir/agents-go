@@ -651,14 +651,20 @@ func TestMetaFor_IdentifiesATaskSession(t *testing.T) {
 	h := newHarness(t)
 	info := h.spawn(t)
 
-	meta, ok := h.m.MetaFor(ctx, h.childOf(t, info.TaskID))
+	meta, ok, err := h.m.MetaFor(ctx, h.childOf(t, info.TaskID))
+	if err != nil {
+		t.Fatalf("MetaFor: %v", err)
+	}
 	if !ok {
 		t.Fatal("a task session was not recognized")
 	}
 	if meta.TaskID != info.TaskID || meta.ParentSessionID != "parent" {
 		t.Errorf("meta = %+v", meta)
 	}
-	if _, ok := h.m.MetaFor(ctx, "parent"); ok {
+	switch _, ok, err := h.m.MetaFor(ctx, "parent"); {
+	case err != nil:
+		t.Errorf("an ordinary session reported an error: %v", err)
+	case ok:
 		t.Error("an ordinary session was reported as a task session")
 	}
 }

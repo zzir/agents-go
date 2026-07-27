@@ -95,6 +95,17 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 		}
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
+	// Everything past the O_EXCL create must undo it on the way out. A sidecar
+	// that exists but was never finished is a session nothing can reach: List
+	// skips it, Open fails to parse it, and Create sees the file and reports
+	// "already exists" — so the id is burned with no way to recover it.
+	created := true
+	defer func() {
+		if created {
+			_ = os.Remove(r.sidecarPath(id))
+		}
+	}()
+
 	if _, err := f.Write(raw); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("create session %q: %w", id, err)
@@ -102,7 +113,12 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 	if err := f.Close(); err != nil {
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
-	return r.session(id)
+	sess, err := r.session(id)
+	if err != nil {
+		return nil, err
+	}
+	created = false
+	return sess, nil
 }
 
 // readSidecar returns the metadata stored under id's filename. The ID it
@@ -178,8 +194,19 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 func (r *Repo) Delete(_ context.Context, id string) error {
 	// Refuse to delete through a colliding name: the file on disk belongs to
 	// another session, and removing it would destroy that one's history.
-	if meta, err := r.readSidecar(id); err == nil && meta.ID != id {
+	//
+	// An unreadable sidecar stops the delete rather than allowing it. Failing
+	// open here means a corrupt or briefly unreadable file is enough to make
+	// "delete team+a" destroy team a's history, since both map to team_a — the
+	// one outcome this check exists to prevent. A missing file is the only
+	// error that means there is nothing to protect.
+	meta, err := r.readSidecar(id)
+	switch {
+	case err == nil && meta.ID != id:
 		return fmt.Errorf("delete session %q: the name maps to session %q", id, meta.ID)
+	case err != nil && !os.IsNotExist(err):
+		return fmt.Errorf("delete session %q: cannot verify which session %q holds: %w",
+			id, r.sidecarPath(id), err)
 	}
 	// The sidecar goes first: a session with entries but no sidecar is
 	// invisible to List and Open, whereas the reverse would leave a session
