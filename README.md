@@ -37,8 +37,8 @@ on its own — behavior is [specified](docs/spec.md), not inherited.
   tools and decisions are covered by fast offline tests.
 - **Dependency-light core** — one small module. Docker/SSH sandboxes, SQL
   sessions, and skills are opt-in submodules.
-- **Batteries included** — MCP client, code-execution sandboxes, web search,
-  Agent Skills, and a full web app on top of the SDK.
+- **Batteries included** — MCP client *and* server, code-execution sandboxes,
+  web search, Agent Skills, and a full web app on top of the SDK.
 
 ## Install
 
@@ -148,21 +148,29 @@ with `agents.RunStateFromJSON(data, registry)` for cross-process approvals.
 - [Human-in-the-loop](docs/human_in_the_loop.md) — durable approvals across
   processes
 - [Sessions](docs/sessions.md) — in-memory, JSONL file, SQLite/Postgres, or
-  OpenAI server-side history with automatic compaction
+  OpenAI server-side history; append-only entries, branching, and crash recovery
+- [Compaction](docs/sessions.md#run-level-compaction) — pluggable strategies
+  keep a long conversation in budget; a context-overflow error compacts and
+  retries the turn instead of failing the run
 - [Streaming](docs/streaming.md) — token and item events as a range-able
   iterator
 - [Models](docs/models.md) — OpenAI Responses provider; retry, fallback, and
   routing decorators
-- [MCP](docs/mcp.md) — stdio and streamable-HTTP tool servers
+- [Middleware](docs/running_agents.md#middleware) — wrap a whole run: an
+  evaluator loop, an approval policy, retry-the-run, structured logging
+- [MCP](docs/mcp.md) — a client for stdio and streamable-HTTP tool servers,
+  and a server that exposes your own tools or a whole agent over MCP
 - [Sandboxes](docs/sandbox.md) — run model-written code in Docker, SSH, or
   local backends; edit files via `apply_patch`
 - [Skills](docs/skills.md) — load `SKILL.md` Agent Skills
 - [Tracing](docs/tracing.md) — spans for every model call, tool call, handoff,
-  and guardrail
+  and guardrail; OpenTelemetry via the `tracing/otel` module
 - [Logging](docs/logging.md) — structured `slog` records, off by default, with
   conversation content behind a second opt-in
 - [Background tasks](docs/tasks.md) — sub-agents that outlive the turn that
   started them, waking the parent with their result
+- [Testing](docs/testing.md) — `agentstest` scripts the model, so an agent's
+  tools and decisions are covered offline
 
 The full capability → API map is in the
 [feature reference](docs/features.md).

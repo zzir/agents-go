@@ -22,6 +22,8 @@ Requires Go 1.26+.
 ./scripts/ci.sh                       # full CI locally: gofmt, vet, build, race tests, every submodule (GOWORK=off)
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
+go run ./cmd/verifyexamples           # every example still runs (fake Responses API)
+go run ./cmd/verifydocs               # doc snippets still name things that exist
 golangci-lint run                     # CI uses golangci-lint v2.12
 ```
 
@@ -46,9 +48,17 @@ hide a missing `go.mod` require — always validate with `./scripts/ci.sh`.
 
 Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 
-- **Run loop** — `agents/run.go`, `run_step.go`. `RunStreamed`
-  (`stream_run.go`) shares the same loop (`runner.sr != nil` gates the
-  streaming-only bits), so run-semantics changes are written once in `run.go`.
+- **Entry points** — `Run` returns `(RunStream, RunControl)`; `RunSync` returns
+  `(*RunResult, error)`. Both go through `withMiddleware` → `runStream`, which
+  takes a `rawEvents bool` for the only difference between them (whether the
+  model call is streamed). Run-semantics changes are written once, in
+  `run.go` / `run_step.go`.
+- **A run executes on the consumer's goroutine.** Ranging the stream advances
+  the loop; abandoning it stops the run. No producer goroutine, no context that
+  must be cancelled on early exit.
+- **Middleware** — `agents/middleware.go` defines `RunMiddleware`;
+  `agents/middleware/` ships `Loop`, `Approval`, `Retry`, `Logging`. Wrapping a
+  whole run belongs here, not in the loop.
 - **Models** — `agents/model.go`; the backend is `models/openai`
   (Responses API). Retry / fallback / routing are provider-agnostic decorators
   (`NewRetryModel`, `NewFallbackModel`, `RouterProvider`) — never run-loop
@@ -60,14 +70,37 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   `tool_guardrails.go`, `run_state.go`: `NeedsApproval` returns interruptions;
   serialize `RunState`, then `Approve`/`Reject` + `agents.ResumeRun` — runs
   survive process restarts.
-- **Sessions** — `InMemorySession` / `memory.FileSession` in core; `sessions`
-  module adds SQL backends; the `openai` package adds server-side variants
-  (Conversations, Compaction, `UsePreviousResponseID` / `ConversationID`).
+- **Sessions** — three layers: `SessionStorage` (reads/writes entries, knows no
+  meaning), `Session` (a struct, turns entries into model input), and
+  `EntryProjector` (which kinds reach the model). Storage is
+  `InMemorySession` / `memory.FileSession` in core, SQL in the `sessions`
+  module, server-side variants in `openai` (Conversations, Compaction,
+  `UsePreviousResponseID` / `ConversationID`).
+- **Entries are append-only** — `agents/session_entry.go`. A session is a TREE:
+  `ParentID` links, `Branch`/`PathEntries` walk it, and a display that settles
+  late is a new UPDATE entry folded in at read time, never a rewrite.
+- **Compaction** — `agents/compaction_points.go` drives it at three points;
+  `agents/compaction/` holds the strategies. A checkpoint is appended, never a
+  rewrite; `agents/overflow.go` turns a context-overflow error into
+  compact-and-retry.
 - **Tracing** — `tracing/`: a span is a `Type` tag + `Data map[string]any`,
-  the idiomatic-Go stand-in for Python's typed SpanData.
-- **MCP** — `mcp/`, bridged into the runner by `agents/mcp.go`.
+  the idiomatic-Go stand-in for Python's typed SpanData. The current parent
+  travels on the `context`, so a subsystem outside the runner (retry, MCP,
+  sandbox) opens a child without a threaded handle. `tracing/otel` maps it to
+  OpenTelemetry.
+- **MCP** — `mcp/`: a client bridged into the runner by `agents/mcp.go`, and
+  `mcp/serve.go` for the other direction (expose tools or a whole agent as an
+  MCP server).
 - **Sandbox** — `sandbox/`: `Sandbox` interface, wrapped as a tool via
-  `sandbox/tool.go`.
+  `sandbox/tool.go`; `policy.go` filters commands before the approval gate.
+- **Background tasks** — `agents/tasks/`: sub-agents that outlive the turn that
+  spawned them. The wake-up debt is a persisted state machine, and terminal
+  state is claimed by compare-and-set.
+- **Fan-out** — `agents/fanout.go`: one producer, many consumers, per-subscriber
+  buffers. A dropped event is reported as a `*GapError`, never silent.
+- **Test doubles** — `agentstest/` is the public harness for code that USES the
+  SDK. The `agents` package cannot import it (cycle), which is why
+  `agents/run_test.go` has its own unexported `fakeModel`.
 
 ## Design decisions (deliberate — don't "fix" without cause)
 
@@ -92,4 +125,5 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
 - **Docs track the code.** Any functional change must update the relevant
   `docs/` page — and `README.md` when it affects the feature set or
   quick-start. New public capabilities get a runnable example under
-  `examples/`.
+  `examples/`. `cmd/verifydocs` checks that doc snippets still name things that
+  exist; it runs in CI, so a rename that leaves the prose behind fails there.
