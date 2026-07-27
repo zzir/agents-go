@@ -414,6 +414,126 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   it can finish writing gives the claim back if the rest fails, or the id is
   burned: unusable and un-recreatable.
 
+### 2.5e2 The entry lifecycle contract 🚧
+
+Everything above describes what a session *is*. This describes what happens to
+an entry over its life — minted, addressed, walked, removed — and it exists as
+one section because the alternative was tried: these rules were decided one at a
+time, in whichever backend a defect was reported against, and four
+implementations drifted apart on every one of them.
+
+**The rule this section is really about: none of it is a backend's decision.**
+Each item below names who implements it. Where that is "shared", a backend that
+answers the question itself is a bug even if its answer is right, because the
+next backend will answer differently.
+
+#### Identity
+
+- **A session id names a session, not a place.** Deleting an id and creating it
+  again yields a session with storage of its own. A handle to the deleted one
+  can neither read what its replacement writes nor write into what it reads.
+  *Shared.* A backend that derives storage from the id — a filename, a
+  `WHERE session_id = ?` — needs a discriminator alongside it, and every
+  backend must get the same one rather than inventing its own.
+- **A handle is bound when it is BUILT**, never on first use. A handle created,
+  held, and first touched after its session was deleted and recreated still
+  refers to the one it was built for. *Shared.*
+- **A constructor where the id names the STORAGE** (`memory.NewFileSession`,
+  `sessions.New`) is a different thing and keeps its meaning: opening it twice
+  is the same conversation, and it cannot tell "reopened" from "recreated". It
+  does not share storage with a repo's sessions **in either direction** — a repo
+  delete does not reach it, and its writes do not reach a repo session.
+  *Per backend, since only some have one.*
+- **A lookup that failed is not an answer.** "This id has no session" is a fact;
+  a cancelled context or an unreachable store is a failure to look. Resolving
+  the second to the first silently moves a handle into another scope. *Shared.*
+
+#### Entry identity
+
+- **An entry id is unique within its session and never handed out twice**,
+  including after the entry holding it is gone. Minting from the stored entry
+  count is therefore wrong: removing an entry frees its id for the next append.
+  *Shared.*
+- **Ids are opaque.** Nothing outside the minting code constructs or parses one.
+  A caller that needs an entry reads its id back. *Contract on callers.*
+- **A backend that can constrain them does**, so a collision is a failed write
+  rather than two rows answering to one name. *Per backend.*
+
+#### Sequence numbers
+
+`Seq` is a **cursor position**, and that is the whole of its meaning.
+
+- **Monotonic within a session**, so `AfterSeq` orders.
+- **Never reused**, including after the entry holding it is removed. A caller
+  resuming from the last number it saw would otherwise skip the next append
+  forever, silently, its cursor already past it.
+- **Never moved for an entry that stays.** Numbering by position in a result set
+  shifts every survivor whenever a read filters one out — a compaction pass, an
+  item another model produced.
+- **`Clear` and `ReplaceEntries` do not restart it.** A cursor outlives the
+  entries it pointed at, so a replaced history that renumbers from the beginning
+  lands entirely before an existing cursor and is skipped in full.
+- One value per entry, whichever API returns it. *All shared.*
+
+#### The tree
+
+- **Parent links are assigned by the minting code**, which is the only layer
+  that knows the ids it is about to hand out.
+- **A removal never leaves a reference dangling.** Anything pointing at what was
+  removed — a child's `ParentID`, a leaf move's target, an update entry — is
+  re-pointed or removed with it, atomically. A walk that stops at a missing
+  parent reads the session short, so a removal in the middle of a branch
+  silently truncates everything before it.
+- **A removal operates on the active branch**, not on append order. Removing the
+  newest row can otherwise take an entry off a branch nobody is on. *All
+  shared.*
+
+#### Removing
+
+- **`EntryPopper.PopEntry` removes the most recent entry**, whatever kind it is.
+- **`ItemPopper.PopItem` removes the most recent conversation item**, skipping
+  what is not one — a banner, a leaf move, a folded-away entry. It is "undo my
+  last message".
+- **They are two capabilities because they answer two questions.** One interface
+  answering both meant the same call did different things depending on the
+  store.
+- **A capability is offered by every backend that can support it, or by none.**
+  An interface with one implementation, in an internal package, is an API a
+  caller cannot use and a doc snippet that fails at runtime. *Shared: a backend
+  that can remove an entry gets both, because the selection is shared.*
+
+#### The change record
+
+- **Every change moves a session in its listing**, not just an append: clearing
+  and popping are changes.
+- **It never moves backwards.** A backend that infers the time from stored
+  content moves a session back to its creation as soon as there is no content
+  left to infer from.
+- **A session with no writes yet sorts by when it was created**, not by the zero
+  time.
+- **A session's metadata and the listing's are the same answer**, read through
+  one path. *Shared.*
+
+#### What must be one step
+
+- **A write and the record that it happened.** Two commits mean a failure to
+  record reports an error for data that IS stored, and a caller that retries
+  stores it twice. Where a backend genuinely cannot — two files — the record is
+  best-effort and its failure is **not** reported: what is lost by staying quiet
+  is ordering, what is lost by reporting is data.
+- **Reading what is being removed, then removing it.** A record that cannot be
+  decoded is still the only copy of what it holds.
+- **Claiming and acting.** Checking that a session is still the one you mean and
+  then deleting it by name is two steps; between them the name can belong to
+  someone else. The check must be part of the write.
+- **Selecting a row to remove and removing it.** The delete decides who gets it;
+  a caller whose delete affects nothing lost the race and retries.
+
+#### Absence
+
+- Only "there is no such thing" is absence. Every other failure reaches the
+  caller. *Shared.*
+
 ### 2.5f Compaction ✅
 
 Compaction is a **run-level** concern. Deciding what to drop needs the model,
