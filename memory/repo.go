@@ -41,6 +41,12 @@ type sidecar struct {
 	Title     string    `json:"title,omitempty"`
 	Hidden    bool      `json:"hidden,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	// UpdatedAt is when the session last changed. The entries file's mtime
+	// answers most of the time, but not always: Clear REMOVES the file, and a
+	// session with no timestamp at all would move backwards in a listing — to
+	// the zero time — the moment it was emptied. Zero in sidecars written
+	// before the field existed.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // ref is what this sidecar's session is addressed by.
@@ -65,13 +71,125 @@ func (r *Repo) entriesPath(ref agents.SessionRef) string {
 	return filepath.Join(r.dir, name+".jsonl")
 }
 
-// session builds the storage for a ref.
+// session builds the storage for a ref, decorated with the sidecar's metadata.
 func (r *Repo) session(meta sidecar) (*agents.Session, error) {
 	fs, err := OpenFileSession(r.entriesPath(meta.ref()))
 	if err != nil {
 		return nil, err
 	}
-	return agents.NewSession(fs), nil
+	return agents.NewSession(&repoStorage{FileSession: fs, repo: r, meta: meta}), nil
+}
+
+// repoStorage is a repo session's storage: the entries file plus the sidecar.
+//
+// The FileSession alone cannot answer Metadata — title, hidden and created-at
+// live in the sidecar it knows nothing about — so a session opened through the
+// repo used to lose them, and the listing and the opened session gave two
+// different answers about the same session. This wrapper is the one path (spec
+// §2.5e2, "the change record"): Metadata merges the sidecar in, and every
+// successful mutation stamps the sidecar's updated_at.
+//
+// The stamp is best-effort and its failure is not reported: entries and
+// sidecar are two files that cannot commit together, and what is lost by
+// staying quiet is listing order, while what is lost by reporting is a write
+// that in fact succeeded.
+type repoStorage struct {
+	*FileSession
+	repo *Repo
+	// meta is the sidecar as of when the handle was BUILT. A handle is bound
+	// then, not on first use: after a delete-and-recreate under the same id,
+	// the sidecar on disk describes the replacement, and reading it back here
+	// would leak the new session's metadata into the old one's handle. The
+	// generation is the guard — a re-read is taken only when it still matches.
+	meta sidecar
+}
+
+var (
+	_ agents.SessionStorage = (*repoStorage)(nil)
+	_ agents.AtomicReplacer = (*repoStorage)(nil)
+	_ agents.EntryPopper    = (*repoStorage)(nil)
+	_ agents.ItemPopper     = (*repoStorage)(nil)
+)
+
+// Metadata merges the sidecar into the entries file's answer. The stored
+// sidecar is re-read so a fresher updated_at shows through, but only while it
+// still describes this handle's generation — after a delete-and-recreate it
+// describes somebody else, and the metadata bound at build time answers
+// instead.
+func (s *repoStorage) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+	md, err := s.FileSession.Metadata(ctx)
+	if err != nil {
+		return md, err
+	}
+	meta := s.meta
+	if cur, merr := s.repo.readSidecar(s.meta.ID); merr == nil && cur.ID == s.meta.ID && cur.Gen == s.meta.Gen {
+		meta = cur
+	}
+	md.ID = meta.ID
+	md.Title = meta.Title
+	md.Hidden = meta.Hidden
+	md.CreatedAt = meta.CreatedAt
+	if meta.UpdatedAt.After(md.UpdatedAt) {
+		md.UpdatedAt = meta.UpdatedAt
+	}
+	if md.UpdatedAt.IsZero() {
+		// No writes yet: the session sorts by when it was created, not by the
+		// zero time.
+		md.UpdatedAt = meta.CreatedAt
+	}
+	return md, nil
+}
+
+// touch stamps the sidecar's updated_at, best-effort. A sidecar that no longer
+// describes this handle's generation is somebody else's session and is left
+// alone.
+func (s *repoStorage) touch() {
+	cur, err := s.repo.readSidecar(s.meta.ID)
+	if err != nil || cur.ID != s.meta.ID || cur.Gen != s.meta.Gen {
+		return
+	}
+	cur.UpdatedAt = time.Now().UTC()
+	_ = s.repo.writeSidecar(cur)
+}
+
+func (s *repoStorage) Append(ctx context.Context, entries ...agents.SessionEntry) error {
+	err := s.FileSession.Append(ctx, entries...)
+	if err == nil && len(entries) > 0 {
+		s.touch()
+	}
+	return err
+}
+
+func (s *repoStorage) Clear(ctx context.Context) error {
+	err := s.FileSession.Clear(ctx)
+	if err == nil {
+		s.touch()
+	}
+	return err
+}
+
+func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
+	err := s.FileSession.ReplaceEntries(ctx, entries...)
+	if err == nil {
+		s.touch()
+	}
+	return err
+}
+
+func (s *repoStorage) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+	e, err := s.FileSession.PopEntry(ctx)
+	if err == nil && e != nil {
+		s.touch()
+	}
+	return e, err
+}
+
+func (s *repoStorage) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+	e, err := s.FileSession.PopItem(ctx)
+	if err == nil && e != nil {
+		s.touch()
+	}
+	return e, err
 }
 
 // Create records a new session and returns it.
@@ -143,6 +261,33 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 	return sess, nil
 }
 
+// writeSidecar replaces an EXISTING sidecar atomically (temp file + rename).
+// The sidecar is the claim on the id — Create's O_EXCL open is what mints it —
+// so an update must never leave it torn: a half-written sidecar is a session
+// that cannot be opened and an id that cannot be re-created.
+func (r *Repo) writeSidecar(meta sidecar) error {
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	path := r.sidecarPath(meta.ID)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".meta-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 // readSidecar returns the metadata stored under id's filename. The ID it
 // carries is the ORIGINAL one, which is what makes a sanitization collision
 // detectable: two different ids share a file, but only one wrote its own id.
@@ -200,8 +345,18 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 		md := agents.SessionMetadata{
 			ID: meta.ID, Title: meta.Title, Hidden: meta.Hidden, CreatedAt: meta.CreatedAt,
 		}
+		// Last change: the entries file's mtime or the sidecar's stamp,
+		// whichever is later — Clear removes the file, so the stamp is all
+		// that keeps an emptied session from moving backwards. A session
+		// with no writes at all sorts by when it was created.
 		if fi, serr := os.Stat(r.entriesPath(meta.ref())); serr == nil {
 			md.UpdatedAt = fi.ModTime().UTC()
+		}
+		if meta.UpdatedAt.After(md.UpdatedAt) {
+			md.UpdatedAt = meta.UpdatedAt
+		}
+		if md.UpdatedAt.IsZero() {
+			md.UpdatedAt = meta.CreatedAt
 		}
 		out = append(out, md)
 	}
