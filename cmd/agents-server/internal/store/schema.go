@@ -28,12 +28,17 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 			return fmt.Errorf("creating table for %T: %w", model, err)
 		}
 	}
-	// Every read of a transcript is "this session's entries in append order",
-	// so index (session_id, id) — it serves the ORDER BY directly.
+	// Entry reads and writes are addressed by (session, generation) — the gen
+	// belongs in every key. Both indexes are UNIQUE, and that is load-bearing:
+	// sequence numbers and entry ids are never handed out twice (spec §2.5e2),
+	// and a backend that can constrain them does, so a race or a bug that
+	// would mint a duplicate becomes a failed write instead of two rows
+	// answering to one name. No migration — rebuild the database.
 	if _, err := db.NewCreateIndex().
 		Model((*entryRow)(nil)).
-		Index("idx_entries_session_id").
-		Column("session_id", "seq").
+		Index("idx_entries_session_seq").
+		Unique().
+		Column("session_id", "gen", "seq").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating entries index: %w", err)
@@ -43,7 +48,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateIndex().
 		Model((*entryRow)(nil)).
 		Index("idx_entries_entry_id").
-		Column("session_id", "entry_id").
+		Unique().
+		Column("session_id", "gen", "entry_id").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating entries entry_id index: %w", err)
@@ -97,14 +103,16 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating memories agent index: %w", err)
 	}
-	// The session list orders by recency.
+	// The session list orders by recency OF CHANGE: every append, pop and
+	// clear moves a session (spec §2.5e2, "the change record"), so the list
+	// sorts and indexes on updated_at, not created_at.
 	if _, err := db.NewCreateIndex().
 		Model((*Session)(nil)).
-		Index("idx_sessions_created_at").
-		Column("created_at").
+		Index("idx_sessions_updated_at").
+		Column("updated_at").
 		IfNotExists().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("creating sessions created_at index: %w", err)
+		return fmt.Errorf("creating sessions updated_at index: %w", err)
 	}
 	// Agent names must be unique — HITL run state serializes the current agent
 	// by name, so a duplicate would resolve an approval resume to the wrong

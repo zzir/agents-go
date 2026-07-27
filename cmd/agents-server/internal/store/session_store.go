@@ -43,14 +43,16 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 	return nil
 }
 
-// List returns all chat sessions ordered newest first. Hidden task-transcript
-// sessions (owned by a tasks row) are excluded — they surface through the
-// parent session's task list, not the sidebar.
+// List returns all chat sessions, most recently CHANGED first — an append, a
+// pop or a clear moves a session up exactly as a rename does (the entry store
+// stamps updated_at on every write). Hidden task-transcript sessions (owned by
+// a tasks row) are excluded — they surface through the parent session's task
+// list, not the sidebar.
 func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 	var sessions []Session
 	if err := s.db.NewSelect().Model(&sessions).
 		Where("hidden = ?", false).
-		OrderExpr("created_at DESC").
+		OrderExpr("updated_at DESC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}

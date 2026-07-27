@@ -23,13 +23,17 @@ func TestSchemaIndexes(t *testing.T) {
 		{"idx_mcp_servers_name", true, "name"},
 		{"idx_guardrails_name", true, "name"},
 		{"idx_provider_routes_prefix", true, "prefix"},
+		// Entry identity: seq and entry id are never handed out twice within a
+		// (session, generation), and the store constrains what it can (spec
+		// §2.5e2) — so these are UNIQUE, not just query indexes.
+		{"idx_entries_session_seq", true, "session_id,gen,seq"},
+		{"idx_entries_entry_id", true, "session_id,gen,entry_id"},
 		// Query indexes for the history tables and hot lookups.
-		{"idx_entries_session_id", false, "session_id,id"},
-		{"idx_entries_entry_id", false, "session_id,entry_id"},
 		{"idx_trace_events_session_id", false, "session_id,id"},
 		{"idx_trace_events_created_at", false, "created_at"},
 		{"idx_memories_agent_config_id", false, "agent_config_id"},
-		{"idx_sessions_created_at", false, "created_at"},
+		// The session list orders by recency of change.
+		{"idx_sessions_updated_at", false, "updated_at"},
 	}
 
 	for _, w := range want {
@@ -69,13 +73,13 @@ func tableForIndex(index string) string {
 		return "guardrails"
 	case "idx_provider_routes_prefix":
 		return "provider_routes"
-	case "idx_entries_session_id", "idx_entries_entry_id":
+	case "idx_entries_session_seq", "idx_entries_entry_id":
 		return "entries"
 	case "idx_trace_events_session_id", "idx_trace_events_created_at":
 		return "trace_events"
 	case "idx_memories_agent_config_id":
 		return "memories"
-	case "idx_sessions_created_at":
+	case "idx_sessions_updated_at":
 		return "sessions"
 	}
 	return ""

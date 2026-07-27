@@ -161,23 +161,25 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	}
 }
 
-// A compaction checkpoint stands in for everything before it, so the model sees
-// [summary, kept…] — by construction, not because the reader hoists a row to
-// the front the way the messages table had to.
+// A compaction checkpoint names what it folded; the projection drops those
+// entries, renders the summary up front, and reads the kept turns from the
+// session itself — the checkpoint carries no copy of them.
 func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewEntryStore(db, "s1")
 
 	seed(t, s, userEntry(t, "old question"))
-	kept := []agents.TResponseInputItem{
-		mustItem(t, `{"type":"function_call_output","call_id":"c1","output":"kept output"}`),
-		mustItem(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final"}],"status":"completed"}`),
+	seed(t, s, rawEntry(t, `{"type":"function_call_output","call_id":"c1","output":"kept output"}`))
+	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final"}],"status":"completed"}`))
+	all, err := agents.NewSession(s).Entries(ctx, agents.Cursor{})
+	if err != nil {
+		t.Fatalf("entries: %v", err)
 	}
 	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
 		Summary:     "summary of older history",
-		ExcludedIDs: []string{"s1-e1"},
-	}, kept)
+		ExcludedIDs: []string{all[0].ID},
+	})
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
@@ -188,7 +190,7 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 		t.Fatalf("get items: %v", err)
 	}
 	if len(items) != 3 {
-		t.Fatalf("want 3 items (summary + 2 retained), got %d", len(items))
+		t.Fatalf("want 3 items (summary + 2 kept), got %d", len(items))
 	}
 	first, err := agents.MarshalInputItem(items[0])
 	if err != nil {
@@ -197,9 +199,12 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	if !strings.Contains(string(first), "summary of older history") {
 		t.Fatalf("summary not first, got: %s", first)
 	}
+	if strings.Contains(string(first), "old question") {
+		t.Fatalf("folded history re-sent: %s", first)
+	}
 	last, _ := agents.MarshalInputItem(items[2])
 	if !strings.Contains(string(last), "final") {
-		t.Fatalf("retained items reordered, last item: %s", last)
+		t.Fatalf("kept items reordered, last item: %s", last)
 	}
 }
 
@@ -216,7 +221,7 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 		ExcludedIDs:  []string{"s1-e1"},
 		TokensBefore: 12400,
 		TokensAfter:  3100,
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
@@ -387,15 +392,6 @@ func idsOf(views []EntryView) []int64 {
 	return out
 }
 
-func mustItem(t *testing.T, raw string) agents.TResponseInputItem {
-	t.Helper()
-	item, err := agents.UnmarshalInputItem([]byte(raw))
-	if err != nil {
-		t.Fatalf("unmarshal %s: %v", raw, err)
-	}
-	return item
-}
-
 // PopItem is "undo the last thing the model said": (nil, nil) on an empty
 // session, and never a UI-only annotation or a compacted (soft-deleted) row.
 // PopEntry, which takes the most recent entry whatever it is, is held to its
@@ -458,6 +454,120 @@ func TestEntryStorePopItem(t *testing.T) {
 	got, err = s.PopItem(ctx)
 	if err != nil || got != nil {
 		t.Fatalf("no replayable items: got=%v err=%v, want nil,nil", got, err)
+	}
+}
+
+// Popping a checkpoint undoes its fold in the store's own bookkeeping too: the
+// rows the compaction adapter marked compacted come back, in the same
+// transaction as the delete. The checkpoint and the flags are two records of
+// one fact — removing one without the other leaves rows hidden with nothing
+// left to explain why.
+func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sid := NewID()
+	s := NewEntryStore(db, sid)
+
+	seed(t, s, userEntry(t, "folded question"), userEntry(t, "kept answer"))
+	stored, err := s.Entries(ctx, agents.Cursor{})
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("seeded entries: %v %v", stored, err)
+	}
+
+	// What the adapter's persistCompaction does: mark folded, append the
+	// checkpoint naming it.
+	if _, err := db.NewUpdate().Model((*entryRow)(nil)).
+		Set("compacted = ?", true).
+		Where("session_id = ?", sid).Where("entry_id = ?", stored[0].ID).
+		Exec(ctx); err != nil {
+		t.Fatalf("mark compacted: %v", err)
+	}
+	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+		Summary:     "summary",
+		ExcludedIDs: []string{stored[0].ID},
+	})
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	seed(t, s, cp)
+
+	popped, err := s.PopEntry(ctx)
+	if err != nil {
+		t.Fatalf("pop: %v", err)
+	}
+	if popped == nil || popped.Kind != agents.EntryKindCompaction {
+		t.Fatalf("popped %+v, want the checkpoint", popped)
+	}
+
+	var rows []entryRow
+	if err := db.NewSelect().Model(&rows).Where("session_id = ?", sid).OrderExpr("id ASC").Scan(ctx); err != nil {
+		t.Fatalf("scan rows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want the two items (checkpoint gone)", len(rows))
+	}
+	for _, r := range rows {
+		if r.Compacted {
+			t.Errorf("row %s still marked compacted after its checkpoint was popped", r.EntryID)
+		}
+	}
+}
+
+// Appending, popping and clearing move the session in the listing: the entry
+// store stamps the session row's updated_at in the same transaction as the
+// write (spec §2.5e2, "the change record").
+func TestEntryWritesBumpSessionUpdatedAt(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sid := NewID()
+	ss := NewSessionStore(db)
+	if err := ss.Create(ctx, &Session{ID: sid, Name: "n"}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	ref, err := RefFor(ctx, db, sid)
+	if err != nil {
+		t.Fatalf("ref: %v", err)
+	}
+	s := NewEntryStoreFor(db, ref)
+
+	rewind := func() time.Time {
+		t.Helper()
+		past := time.Now().UTC().Add(-time.Hour)
+		if _, err := db.NewUpdate().Model((*Session)(nil)).
+			Set("updated_at = ?", past).Where("id = ?", sid).Exec(ctx); err != nil {
+			t.Fatalf("rewind updated_at: %v", err)
+		}
+		return past
+	}
+	updatedAt := func() time.Time {
+		t.Helper()
+		sess, err := ss.Get(ctx, sid)
+		if err != nil {
+			t.Fatalf("get session: %v", err)
+		}
+		return sess.UpdatedAt
+	}
+
+	past := rewind()
+	seed(t, s, userEntry(t, "hello"))
+	if got := updatedAt(); !got.After(past) {
+		t.Errorf("append did not move updated_at: %v", got)
+	}
+
+	past = rewind()
+	if _, err := s.PopEntry(ctx); err != nil {
+		t.Fatalf("pop: %v", err)
+	}
+	if got := updatedAt(); !got.After(past) {
+		t.Errorf("pop did not move updated_at: %v", got)
+	}
+
+	past = rewind()
+	if err := s.Clear(ctx); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := updatedAt(); !got.After(past) {
+		t.Errorf("clear did not move updated_at: %v", got)
 	}
 }
 

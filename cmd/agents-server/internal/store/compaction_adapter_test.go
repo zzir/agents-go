@@ -277,7 +277,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	rows := loadRows(t, db, sessionID)
 	ids := []int64{rows[0].ID, rows[1].ID}
 
-	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum"}, nil)
+	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum"})
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
 	got := loadRows(t, db, sessionID)
 	ids2 := []int64{got[0].ID, got[1].ID}
-	summary2, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum2"}, nil)
+	summary2, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum2"})
 	if err != nil {
 		t.Fatalf("checkpoint 2: %v", err)
 	}

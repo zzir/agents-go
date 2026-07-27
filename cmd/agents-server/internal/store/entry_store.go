@@ -133,8 +133,19 @@ func (s *EntryStore) SetRunID(runID string) { s.runID = runID }
 func (s *EntryStore) SetModel(model string) { s.model = model }
 
 // Append implements agents.SessionStorage.
+//
+// The append point is read inside the same transaction as the insert: reading
+// the tip and writing against it are one step (spec §2.5e2), or two concurrent
+// appends both read the old tip and silently fork the branch. The pool is
+// capped at one connection (see Open), so the transaction owns the database
+// for its whole extent and a competing write cannot interleave.
 func (s *EntryStore) Append(ctx context.Context, entries ...agents.SessionEntry) error {
-	return s.appendTo(ctx, s.db, entries...)
+	if len(entries) == 0 {
+		return nil
+	}
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.appendTo(ctx, tx, entries...)
+	})
 }
 
 // appendTo is Append against a specific handle, so a caller that must append as
@@ -172,6 +183,25 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents
 	}
 	if _, err := db.NewInsert().Model(&rows).Exec(ctx); err != nil {
 		return fmt.Errorf("appending %d entries: %w", len(rows), err)
+	}
+	return s.touchSessionIn(ctx, db)
+}
+
+// touchSessionIn records that the session changed, on the same handle as the
+// change — a listing sorts by recency of change, and an append, a pop or a
+// clear is a change exactly as a rename is. Zero rows affected means no
+// session row (a store used outside the repo), which is nothing to record
+// rather than a failure.
+func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
+	// Gen is part of the match: a handle held across a delete-and-recreate
+	// writes its entries into the old generation's scope, and must not move
+	// the NEW owner of the name in anyone's listing.
+	_, err := db.NewUpdate().Model((*Session)(nil)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("recording session change: %w", err)
 	}
 	return nil
 }
@@ -274,13 +304,21 @@ func (s *EntryStore) Entries(ctx context.Context, cur agents.Cursor) ([]agents.S
 }
 
 // Entry implements agents.SessionStorage.
+//
+// Only "no such entry" is absence; a cancelled context or an unreachable
+// database is a failure to look, and reaches the caller as one (spec §2.5e2,
+// "absence"). Folding the two into nil once made "does this entry exist"
+// checks silently pass over a database that was down.
 func (s *EntryStore) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
 	row := new(entryRow)
 	err := s.scoped(s.db.NewSelect().Model(row)).
 		Where("entry_id = ?", id).
 		Scan(ctx)
-	if err != nil {
-		return nil, nil //nolint:nilerr // absent is not an error; the caller checks for nil
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("loading entry %q: %w", id, err)
 	}
 	var e agents.SessionEntry
 	if err := json.Unmarshal([]byte(row.Entry), &e); err != nil {
@@ -298,61 +336,70 @@ func (s *EntryStore) Metadata(ctx context.Context) (agents.SessionMetadata, erro
 	return agents.SessionMetadata{ID: s.ref.ID, EntryCount: n}, nil
 }
 
-// Clear implements agents.SessionStorage.
+// Clear implements agents.SessionStorage. Clearing is a change like any other,
+// so it moves the session in a listing.
 func (s *EntryStore) Clear(ctx context.Context) error {
-	_, err := s.db.NewDelete().Model((*entryRow)(nil)).
-		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx)
-	return err
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
+			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
+			return err
+		}
+		return s.touchSessionIn(ctx, tx)
+	})
 }
 
-// PopEntry implements agents.EntryPopper: it removes the most recent entry, for
-// an application undoing a turn.
-//
-// "Most recent" here means the most recent entry the model would have seen: an
-// error banner or a folded-away entry is not something a person means to undo,
-// and popping one would leave the turn it belongs to still in the history.
-// Those rows stay where they are.
+// PopEntry implements agents.EntryPopper: it removes the most recent entry,
+// whatever kind it is — the selection is PlanPop's, shared by every backend.
+// Rows a compaction pass soft-deleted are not present to be taken; popping the
+// checkpoint that folded them brings them back instead (see pop).
 func (s *EntryStore) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
 	return s.pop(ctx, agents.PopLast)
 }
 
-// PopItem implements agents.ItemPopper: the most recent entry the model would
-// have seen. An error banner or a folded-away row is not something a person
-// means to undo.
+// PopItem implements agents.ItemPopper: the most recent conversation item on
+// the active branch, skipping what is not one — a banner, a leaf move, an
+// entry a checkpoint folded away. The selection is PlanPop's, shared by every
+// backend.
 func (s *EntryStore) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
 	return s.pop(ctx, agents.PopLastItem)
 }
 
-// pop removes what PlanPop chose and applies its relinks in the same
-// transaction. The two are one step: a walk that meets a missing parent stops
-// there, so deleting a row without re-pointing its children reads the session
-// short — losing everything BEFORE the entry that was removed rather than it.
+// pop selects the entry to remove, deletes it and applies its relinks all in
+// ONE transaction. Selection and deletion are one step (spec §2.5e2): chosen
+// on one view and deleted on another, a concurrent append's child ends up
+// hanging off an id that is gone, and a walk meeting the missing parent reads
+// the session short — losing everything BEFORE the removed entry rather than
+// it. The pool's single connection makes the transaction exclusive.
 //
-// The delete also arbitrates between concurrent pops: zero rows affected means
-// another caller took it, and this one retries against what the session holds
-// now.
+// Popping a compaction checkpoint UNDOES its fold: the entries it excluded
+// come back, so the rows the adapter marked compacted are unmarked in the same
+// transaction — the checkpoint and the flags are two records of one fact, and
+// removing one without the other leaves rows hidden with nothing left to
+// explain why.
+//
+// The delete still arbitrates against writers outside this process: zero rows
+// affected means the entry was already gone, this caller lost, and it retries
+// against what the session holds now.
 func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.SessionEntry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// Compacted rows are folded away, not present: they are not something a
-		// pop of either kind reaches. Strict, because a removal chosen from a
-		// view missing its newest row takes the wrong entry.
-		entries, err := s.loadIn(ctx, s.db, false, true)
-		if err != nil {
-			return nil, err
-		}
-		plan, ok := agents.PlanPop(entries, mode)
-		if !ok {
-			return nil, nil
-		}
-		byID := map[string]agents.SessionEntry{}
-		for _, e := range entries {
-			byID[e.ID] = e
-		}
-		won := false
-		if err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var popped *agents.SessionEntry
+		done := true
+		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			// Compacted rows are folded away, not present: they are not
+			// something a pop of either kind reaches. Strict, because a
+			// removal chosen from a view missing its newest row takes the
+			// wrong entry.
+			entries, err := s.loadIn(ctx, tx, false, true)
+			if err != nil {
+				return err
+			}
+			plan, ok := agents.PlanPop(entries, mode)
+			if !ok {
+				return nil
+			}
 			res, derr := tx.NewDelete().Model((*entryRow)(nil)).
 				Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
 				Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
@@ -360,17 +407,55 @@ func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.Sess
 				return derr
 			}
 			if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+				done = false
 				return nil
 			}
-			won = true
-			return relinkIn(ctx, tx, s.ref, plan, byID)
-		}); err != nil {
+			byID := make(map[string]agents.SessionEntry, len(entries))
+			for _, e := range entries {
+				byID[e.ID] = e
+			}
+			if err := relinkIn(ctx, tx, s.ref, plan, byID); err != nil {
+				return err
+			}
+			if err := s.unfoldIn(ctx, tx, plan.Entry); err != nil {
+				return err
+			}
+			if err := s.touchSessionIn(ctx, tx); err != nil {
+				return err
+			}
+			popped = &plan.Entry
+			return nil
+		})
+		if err != nil {
 			return nil, err
 		}
-		if won {
-			return &plan.Entry, nil
+		if done {
+			return popped, nil
 		}
 	}
+}
+
+// unfoldIn clears the compacted flag on everything a just-removed checkpoint
+// had folded, on the transaction that removed it. Not a checkpoint, or a
+// checkpoint that folded nothing: nothing to do.
+func (s *EntryStore) unfoldIn(ctx context.Context, tx bun.Tx, popped agents.SessionEntry) error {
+	if popped.Kind != agents.EntryKindCompaction {
+		return nil
+	}
+	p, err := popped.CompactionPayload()
+	if err != nil || len(p.ExcludedIDs) == 0 {
+		// An undecodable checkpoint names nothing to bring back; the pop
+		// itself already succeeded.
+		return nil //nolint:nilerr // see above: nothing to unfold is not a failure
+	}
+	if _, err := tx.NewUpdate().Model((*entryRow)(nil)).
+		Set("compacted = ?", false).
+		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+		Where("entry_id IN (?)", bun.List(p.ExcludedIDs)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("unfolding entries of popped checkpoint %q: %w", popped.ID, err)
+	}
+	return nil
 }
 
 // relinkIn re-points the entries a removal orphaned, on the transaction that
@@ -573,9 +658,9 @@ func contentOf(e agents.SessionEntry) string {
 }
 
 // compactionInfoOf reports what a checkpoint folded away, or nil for any other
-// entry. The retained tail is deliberately not carried over: those entries are
-// already in the session, and shipping them inside the checkpoint too would
-// show every kept turn twice.
+// entry. The kept entries are not part of it — a checkpoint names what it
+// folded and carries no copy of anything still in the session — so the client
+// timeline reads them where they are.
 func compactionInfoOf(e agents.SessionEntry) *CompactionInfo {
 	if e.Kind != agents.EntryKindCompaction {
 		return nil
@@ -611,12 +696,8 @@ func (s *EntryStore) Leaf(ctx context.Context, ref agents.SessionRef) (string, e
 }
 
 // activeBranch returns the ids on the current branch: the walk from the leaf up
-// through parent links to the root.
-//
-// It deliberately does NOT use PathToLeaf, which stops at a compaction
-// checkpoint. That stop is about what the MODEL reads; this is about which
-// entries a person is currently looking at, and an entry folded by compaction
-// is still on the branch they are on.
+// through parent links to the root, as a set rather than PathToLeaf's ordered
+// slice, because membership is all the views below ask.
 func activeBranch(entries []agents.SessionEntry) map[string]bool {
 	byID := make(map[string]agents.SessionEntry, len(entries))
 	for _, e := range entries {

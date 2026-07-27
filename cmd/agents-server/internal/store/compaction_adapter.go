@@ -69,8 +69,10 @@ func NewCompactionAdapter(
 // windowSize non-compacted entries intact.
 func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.CompactionArgs) error {
 	var active []entryRow
-	if err := ca.db.NewSelect().Model(&active).
-		Where("session_id = ?", ca.ref.ID).
+	// Through scoped, like every other read: the generation is part of the
+	// address, and a select that names only the session id folds another
+	// generation's history into this one's compaction pass.
+	if err := ca.scoped(ca.db.NewSelect().Model(&active)).
 		Where("compacted = ?", false).
 		OrderExpr("id ASC").
 		Scan(ctx); err != nil {
@@ -178,20 +180,16 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return nil
 	}
 
-	// A checkpoint, not a system message appended at the end. The distinction is
-	// what removed the front-loading hack this replaced: a checkpoint carries
-	// the retained tail inside it and truncates the path walk, so the model sees
-	// [summary, kept…] by construction rather than because the reader was taught
-	// to hoist one row to the front.
+	// A checkpoint, not a system message appended at the end: it names what it
+	// folded (ExcludedIDs) and carries the summary that stands in for it. The
+	// kept tail is NOT inside it — those entries stay in the session and the
+	// projection reads them from there, so a tail entry later popped is simply
+	// gone rather than living on in a copy (agents.CompactionPayload).
 	excluded := make([]string, 0, len(toCompact))
 	compactIDs := make([]int64, len(toCompact))
 	for i, row := range toCompact {
 		compactIDs[i] = row.ID
 		excluded = append(excluded, row.EntryID)
-	}
-	retained, err := ca.retainedItems(active[msgSplit:])
-	if err != nil {
-		return fmt.Errorf("compaction adapter: encoding retained tail: %w", err)
 	}
 	before, after := estimateFold(active, toCompact, summaryText)
 	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{
@@ -199,7 +197,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		ExcludedIDs:  excluded,
 		TokensBefore: before,
 		TokensAfter:  after,
-	}, retained)
+	})
 	if err != nil {
 		return fmt.Errorf("compaction adapter: encoding summary: %w", err)
 	}
@@ -249,20 +247,6 @@ func estimateFold(active, folded []entryRow, summaryText string) (before, after 
 	// The summary replaces what it folded, so it counts toward the new size.
 	after += len(summaryText) / 4
 	return before, after
-}
-
-// retainedItems projects the entries kept after the split into the items the
-// checkpoint carries verbatim.
-func (ca *CompactionAdapter) retainedItems(kept []entryRow) ([]agents.TResponseInputItem, error) {
-	entries := make([]agents.SessionEntry, 0, len(kept))
-	for i := range kept {
-		var e agents.SessionEntry
-		if json.Unmarshal([]byte(kept[i].Entry), &e) != nil {
-			continue
-		}
-		entries = append(entries, e)
-	}
-	return agents.ProjectEntries(entries, nil)
 }
 
 // persistCompaction marks the folded entries compacted and appends the
