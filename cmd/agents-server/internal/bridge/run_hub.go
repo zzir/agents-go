@@ -475,6 +475,14 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (int, boo
 				if mkErr == nil {
 					sink(SeqEnvelope{Seq: gap.LastGood, Env: env})
 				}
+				// A gap that runs to the end of the stream has no item after
+				// it: the value alongside it is the zero one, a nil envelope
+				// here. Forwarding it would hand every sink a nil to
+				// dereference — and the sinks run on this goroutine, so the
+				// panic takes the process down rather than one request.
+				if gap.AtEnd() {
+					continue
+				}
 			}
 			sink(SeqEnvelope{Seq: item.Seq, Env: item.Value})
 		}

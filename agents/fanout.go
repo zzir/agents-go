@@ -345,6 +345,16 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 // are still delivered — closing means "no more will be published", not "discard
 // what you have". Close is idempotent.
 func (f *Fanout[T]) Close() {
+	// pubMu before mu, the same order Publish and Subscribe take. Closing
+	// under mu alone would let Close slip into the window where Publish has
+	// released mu and not yet delivered: the item has its sequence number and
+	// is in replay, but every stream has already ended, so it is lost with no
+	// gap to report it. Taking pubMu makes Close wait for an accepted publish
+	// to land, which is what "items already buffered are still delivered"
+	// means.
+	f.pubMu.Lock()
+	defer f.pubMu.Unlock()
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {

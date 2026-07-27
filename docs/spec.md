@@ -405,6 +405,14 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   continuing, which is worse than failing.
 - **Deleting removes the entries with it**, atomically where the backend can, so
   no entries survive pointing at a session that is gone.
+- **A name that two ids share belongs to whichever id claimed it.** A backend
+  that maps ids onto a namespace with fewer characters than ids have — a
+  filesystem — must record the original id and refuse to open or delete through
+  the other one. **A check that cannot be made refuses**: not being able to read
+  who owns the name is a reason to stop, not to proceed.
+- **A failed create leaves nothing behind.** A backend that claims a name before
+  it can finish writing gives the claim back if the rest fails, or the id is
+  burned: unusable and un-recreatable.
 
 ### 2.5f Compaction ✅
 
@@ -431,6 +439,17 @@ configuration does too (`RunOptions.Compaction`).
 - **Compaction never fails a run.** The context it was shrinking is still
   valid, so a failed pass is recorded on the `compaction` span and the run
   continues with the entries it had.
+- **"Did the pass change anything" compares whole entries**, via
+  `SessionEntry.Equal`, not the count and not a chosen subset of the fields.
+  Same count with different content is a legal pass — one summary standing in
+  for one entry — and so is same ids with a rewritten payload. Calling either a
+  no-op discards it silently: the save point does not rebuild, and the
+  after-run point writes no checkpoint.
+- **An incremental index resumes only on an exact prefix**, compared the same
+  way. Entry ids are unique within a session, not globally, so a `Compactor`
+  reused across sessions would otherwise hand one conversation's history to
+  another. Token usage counts as part of the comparison, because the size
+  estimate a strategy budgets against is read off the entries.
 - **Local compaction and server-held history do not interact**, because
   `UsePreviousResponseID` / `ConversationID` already refuse a local `Session` —
   there are no local entries for a compactor to see.
@@ -887,8 +906,15 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   several goroutines publish concurrently.
 - **A subscriber's replay backlog precedes anything published after it
   attached.** Registration and backlog delivery are one atomic step.
+- **The zero item beside an `AtEnd` gap is not an event.** A consumer that
+  forwards items onward must skip it; forwarding a zero value hands whatever is
+  downstream something it has no reason to expect — a nil pointer, for a stream
+  of pointers.
 - `Close` means "nothing more will be published", not "discard what you have":
-  already-buffered items are still delivered.
+  already-buffered items are still delivered. **A publish already accepted is
+  one of them**: `Close` waits for it rather than ending the streams first,
+  which would lose an item that has a sequence number and sits in replay with
+  no gap to report it.
 
 Rejected alternatives, both worse: dropping silently (corrupts the consumer's
 view undetectably) and disconnecting the slow subscriber (turns a recoverable
@@ -1074,6 +1100,11 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
 - **Rollback of a half-finished spawn uses a detached context.** `Spawn` runs
   inside the parent run, so a parent cancellation racing it would kill the
   cleanup halfway.
+- **A depth check that cannot be made refuses**, the same rule as the wake
+  guard. Depth is read from the store, and a lookup that fails is not the same
+  answer as "this parent is not a task" — that one restarts the count at 1, so
+  treating them alike makes one transient query error a way past the limit.
+  `MetaFor` reports the failure rather than resolving it to "no".
 - Defaults: depth 1 (a task cannot spawn tasks), 6 concurrent tasks per parent,
   300-rune summaries, a 120s bound on `task_status`'s wait.
 - **A notification is a user-role entry** the model reads verbatim; a UI renders
