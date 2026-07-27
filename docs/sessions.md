@@ -53,7 +53,7 @@ read time.
 |---|---|
 | `item` | A Responses item — the conversation itself |
 | `annotation` | For people, not the model: an error, a cancellation notice |
-| `compaction` | A checkpoint: a summary plus the tail it retained |
+| `compaction` | A checkpoint: a summary standing in for the entries it folded |
 | `terminal` | Interactive terminal output |
 | `update` | An amendment to an earlier entry's display (see below) |
 | `custom` | The extension point; `CustomType` names the subtype |
@@ -75,9 +75,10 @@ two silently skips or repeats. A sequence number does not move.
 A **negative** limit takes the most recent N instead of the oldest — how a run
 bounds the history it loads.
 
-`ContextEntries` starts at the most recent compaction checkpoint: a checkpoint
-stands in for everything before it, and re-sending that history would undo the
-compaction.
+`ContextEntries` is the active branch minus what compaction folded: the
+checkpoints stay in the view (they carry the summary the projection renders up
+front), while the entries their exclusions name are left out — re-sending that
+history would undo the compaction.
 
 ## Derived state
 
@@ -134,7 +135,7 @@ Recording something and sending it to the model are different acts. An
 | Kind | Projected by default? |
 |---|---|
 | `item` | Yes — it *is* the conversation |
-| `compaction` | Yes — the summary (as a **system** message; nobody said it) plus its retained tail |
+| `compaction` | Structurally — its summary renders up front (as a **system** message; nobody said it) and the entries it folded are dropped; the kept history projects from the entries themselves |
 | everything else | **No** |
 
 Override per kind through `RunOptions.Conversation.Projectors`. The usual reason
@@ -245,7 +246,7 @@ sess, db := sessions.NewPostgres(sqldb, "user-123")
 err = sessions.CreateSchema(ctx, db)
 ```
 
-Both store one row per item in an `agent_messages` table, encoded with `agents.MarshalInputItem`. A single `*bun.DB` can serve many session IDs (`sessions.New(db, id)`); rows are isolated by `session_id`. One schema and CRUD path serves both backends — bun smooths over the dialect differences.
+Both store one row per entry in an `agent_entries` table — the whole entry serialized as JSON, with the id, parent and kind lifted into columns for indexed lookups. A single `*bun.DB` can serve many session IDs (`sessions.New(db, id)`); rows are isolated by `session_id`. One schema and CRUD path serves both backends — bun smooths over the dialect differences.
 
 ### OpenAI Conversations (server-side)
 
@@ -262,7 +263,7 @@ agents.Run(ctx, agent, "remember my name is Ada",
 	agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
 
-`GetItems`/`AddItems`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
+`Entries`/`Append`/`PopEntry`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
 
 Before persistence each item is **sanitized** for the Conversations API (mirroring Python's `_sanitize_openai_conversation_item`): stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
 
@@ -418,9 +419,11 @@ By default a run loads the session's stored history and appends the new input to
 
   ```go
   agents.Run(ctx, agent, input, agents.RunOptions{
-      Session: sess,
-      SessionInputCallback: func(history, newInput []agents.TResponseInputItem) ([]agents.TResponseInputItem, error) {
-          return append(summarize(history), newInput...), nil
+      Conversation: agents.ConversationOptions{
+          Session: sess,
+          InputCallback: func(history, newInput []agents.TResponseInputItem) ([]agents.TResponseInputItem, error) {
+              return append(summarize(history), newInput...), nil
+          },
       },
   })
   ```
@@ -472,9 +475,10 @@ attempts. The difference between them is exactly the set of abandoned entries.
 
 Two rules worth knowing:
 
-- **The walk stops at a compaction checkpoint**, which already stands in for
-  everything before it. A checkpoint is a branch boundary as well as a context
-  boundary.
+- **The walk does not stop at a compaction checkpoint.** Folded entries are
+  still on the branch — a UI shows them collapsed under the checkpoint — and
+  it is the projection that keeps them out of the model's context. Popping a
+  checkpoint un-folds them.
 - **A missing parent ends the walk rather than failing.** An ancestor may have
   been folded away; a corrupt link makes the session shorter, never unreadable.
 

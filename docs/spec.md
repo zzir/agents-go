@@ -311,8 +311,12 @@ compaction checkpoint, terminal output).
   `RunOptions.Conversation.Projectors` overrides this per kind.
 - **A compaction summary projects as a *system* message**, not a user one:
   nobody said it, and attributing it to the user would put words in their mouth.
-- **A checkpoint is self-contained** — it carries the retained tail inside it,
-  so reading it gives the whole context that replaced the folded history.
+- **A checkpoint copies nothing.** It NAMES what it folded (`ExcludedIDs`) and
+  carries only content that exists nowhere else — the summary, and stand-ins
+  for folded groups (`CompactionFold`). The entries a pass kept are never
+  inside it: a copy of a live entry has to be kept in step with the tree, and
+  the copy that fell out of step (a popped entry living on in the checkpoint
+  that "retained" it) is why the earlier self-contained shape was removed.
 
 **Entries are append-only.** ✅ Nothing is rewritten in place; that is what lets
 a session be forked, shared and read concurrently without a writer invalidating
@@ -355,9 +359,13 @@ recompute from the entries. A field maintained beside the log has to be updated
 on every write and can disagree with it after a crash, a concurrent writer or a
 fork; a fold cannot.
 
-**`ContextEntries` starts at the most recent compaction checkpoint** ✅ — the
-checkpoint stands in for everything before it, and re-sending that history would
-undo the compaction.
+**`ContextEntries` is the active branch minus what compaction folded** ✅ — the
+checkpoints themselves stay in the view (they carry the summary and stand-ins
+the projection renders), while the entries their exclusions name are left out:
+re-sending folded history would undo the compaction, and a cursor limit must
+count entries the model will actually see. `ProjectEntries` applies the same
+exclusions again wherever it is called, so a view built without the filter
+still cannot replay folded history.
 
 Capabilities a store may or may not have are **optional interfaces**, not
 required methods: `AtomicReplacer`, `EntryPopper`, `CompactionAware`. Popping in
@@ -382,9 +390,13 @@ An entry names its parent, so a session is a walk rather than a pile.
   the ids it is about to mint. `PrepareAppend` is shared so every backend links
   identically — a store that got this wrong would read back as disconnected
   roots, which no single-append test would catch.
-- **A walk stops at a compaction checkpoint** and at a missing parent (an
-  ancestor may have been folded away). A repeated id also stops it, so a corrupt
-  session reads short instead of hanging.
+- **A walk does NOT stop at a compaction checkpoint.** The walk answers "which
+  entries are on this branch", and a folded entry is still on the branch it was
+  written to; what the model sees is projection's question. Stopping the walk
+  at a checkpoint is how the kept entries once became unreachable to a pop
+  while the model could still see them. A missing parent ends the walk (a
+  filtered view may have dropped an ancestor), and a repeated id does too, so a
+  corrupt session reads short instead of hanging.
 
 **Fork extracts a branch; branch moves within one session.** ✅ A fork carries
 entry ids across unchanged, so an update entry naming one still finds its
@@ -414,7 +426,7 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   it can finish writing gives the claim back if the rest fails, or the id is
   burned: unusable and un-recreatable.
 
-### 2.5e2 The entry lifecycle contract 🚧
+### 2.5e2 The entry lifecycle contract ✅
 
 Everything above describes what a session *is*. This describes what happens to
 an entry over its life — minted, addressed, walked, removed — and it exists as
@@ -502,7 +514,19 @@ next backend will answer differently.
 - **A capability is offered by every backend that can support it, or by none.**
   An interface with one implementation, in an internal package, is an API a
   caller cannot use and a doc snippet that fails at runtime. *Shared: a backend
-  that can remove an entry gets both, because the selection is shared.*
+  that can remove an entry gets both, because the selection is shared.* A
+  **flat server-held backend** (`openai.ConversationsSession`) still offers
+  both: every entry it holds IS a conversation item, so the two pops answer
+  the same question and the trivial selection satisfies the shared one.
+- **A checkpoint folds entries out of a pop's reach; popping it brings them
+  back.** An entry a checkpoint folded is skipped exactly as a banner is — not
+  part of the conversation as anyone sees it — while the entries the pass KEPT
+  stay poppable: they are on the branch and in the model's view. And since
+  `PopEntry` takes the newest entry whatever it is, popping a checkpoint
+  UNDOES its fold: the exclusions leave with it. A store that materializes the
+  fold (the server's `compacted` flag) reverses that bookkeeping in the same
+  step — the checkpoint and the flag are two records of one fact. *Selection
+  shared (`PlanPop`); the bookkeeping reversal per backend that keeps any.*
 
 #### The change record
 
@@ -523,6 +547,16 @@ next backend will answer differently.
   stores it twice. Where a backend genuinely cannot — two files — the record is
   best-effort and its failure is **not** reported: what is lost by staying quiet
   is ordering, what is lost by reporting is data.
+- **Reading the append point and writing against it.** Two writers that both
+  read the same tip mint the same numbers and silently fork the branch — and a
+  transaction alone is not one step, because under read committed both still
+  read the old tip. A lock over read-and-write (file, memory), a transaction
+  owning the pool's single connection (SQLite), or a transaction-scoped
+  advisory lock (PostgreSQL): the mechanism is the backend's, the obligation is
+  not. The unique constraints above are the backstop for POSITIONS — a race
+  that slips through is a failed write, never two rows answering to one seq or
+  id. The fork itself only the serialization prevents: two children of one tip
+  with distinct numbers violate no constraint a database can see.
 - **Reading what is being removed, then removing it.** A record that cannot be
   decoded is still the only copy of what it holds.
 - **Claiming and acting.** Checking that a session is still the one you mean and
@@ -579,13 +613,19 @@ configuration does too (`RunOptions.Compaction`).
   compact API) takes the `CompactAfterRun` point instead; the two never both
   run on one session.
 
-**A checkpoint is appended, never a rewrite.** `CompactAfterRun` records the
-pass as an `EntryKindCompaction` entry whose payload names the entries it
-folded (`ExcludedIDs`) and carries the retained tail. The folded entries stay
-in the session untouched, so a reader can offer to expand them and a fork from
-before the checkpoint still finds its full history; `ContextEntries` starts at
-the most recent checkpoint, so the next run reads the shorter context without
-recomputing the pass.
+**A checkpoint is appended, never a rewrite — and it copies nothing.**
+`CompactAfterRun` records the pass as an `EntryKindCompaction` entry whose
+payload names the entries it folded (`ExcludedIDs`) and carries only what
+exists nowhere else: the summary text, and a `CompactionFold` per folded group
+whose stand-in renders in the group's place (anchored `Before` the first
+surviving entry after it). The entries the pass kept are read from the session
+itself — never from a copy inside the checkpoint, which is what keeps a later
+pop of a kept entry from living on in a duplicate. The folded entries stay in
+the session untouched, so a reader can offer to expand them, a fork from
+before the checkpoint still finds its full history, and popping the checkpoint
+un-folds them (§2.5e2). `ContextEntries` leaves folded entries out and
+`ProjectEntries` renders each live checkpoint's summary up front, so the next
+run reads the shorter context without recomputing the pass.
 
 Writing a checkpoint is an optional capability (`CompactionCheckpointer`): a
 compactor that only reshapes the context in memory is useful and has nothing

@@ -93,8 +93,9 @@ Three consequences fall out of that:
   abandoned attempt stays recorded, which is what makes "show me the other
   answer" possible at all.
 - **Compaction appends a checkpoint.** The folded entries stay; the checkpoint
-  names them and carries the retained tail, so the model sees `[summary, kept…]`
-  by construction and a reader can still expand what was folded.
+  names them and carries the summary; the projection drops what was folded and
+  renders the summary up front, so the model sees `[summary, kept…]` and a
+  reader can still expand what was folded.
 
 See [Sessions](sessions.md) and [Context management](context.md).
 
