@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -116,6 +117,66 @@ func TestFileSession_PopOnEmpty(t *testing.T) {
 	}
 	if item != nil {
 		t.Errorf("pop on empty should return nil, got %+v", item)
+	}
+}
+
+// A pop rewrites the file, and a rewrite computed from a lenient read destroys
+// every line it could not decode — the only copy of whatever those lines held.
+// So a pop on a file with a corrupt line REFUSES (spec §2.5e2: reading what is
+// being removed and removing it are one step), and the file — corrupt line
+// included — stays exactly as it was.
+func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	sess, err := NewFileSession(dir, "corrupt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := append(agents.InputItemsFromText("one"), agents.InputItemsFromText("two")...)
+	entries, err := agents.NewItemEntries(items, agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, entries...); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, "corrupt.jsonl")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{this is not json\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sess.PopEntry(ctx); err == nil {
+		t.Fatal("pop on a corrupt file succeeded; it would have silently destroyed the corrupt line")
+	}
+	if _, err := sess.PopItem(ctx); err == nil {
+		t.Fatal("item pop on a corrupt file succeeded; it would have silently destroyed the corrupt line")
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused pop still rewrote the file")
+	}
+
+	// Reading stays lenient: one bad record must not make the session
+	// unreadable, and nothing is destroyed by a read.
+	got, err := sess.Entries(ctx, agents.Cursor{})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("lenient read after corruption: %d entries, err=%v", len(got), err)
 	}
 }
 

@@ -242,6 +242,13 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
 func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.SessionEntry) error {
+	// The lock covers the read: the high-water mark below is only right if the
+	// file cannot grow between reading it and the rewrite. Outside the lock, a
+	// concurrent append lands after the read and the rewrite both discards its
+	// entries and re-issues their sequence numbers.
+	release := acquire(s.lockKey)
+	defer release()
+
 	// A replace does not restart the numbering: a cursor outlives the entries
 	// it pointed at, and a history renumbered from the beginning would land
 	// entirely before one and be skipped in full. What is on disk now is read
@@ -259,14 +266,11 @@ func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.Sessio
 		}
 		lines = append(lines, data)
 	}
-	release := acquire(s.lockKey)
-	defer release()
 	return s.writeLines(lines)
 }
 
 // PopEntry removes and returns the most recent entry, or nil if the session is
-// empty. The file is rewritten atomically. The entry is decoded before the file
-// is touched, so a corrupt last line is reported without destroying it.
+// empty. The file is rewritten atomically.
 func (s *FileSession) PopEntry(_ context.Context) (*agents.SessionEntry, error) {
 	return s.pop(agents.PopLast)
 }
@@ -279,10 +283,16 @@ func (s *FileSession) PopItem(_ context.Context) (*agents.SessionEntry, error) {
 // pop rewrites the file without the entry PlanPop chose, applying the relinks
 // in the same rewrite — the delete and the repair are one atomic replacement,
 // so the file is never on disk with a child hanging off an id that is gone.
+//
+// The read is STRICT, unlike Entries: a removal decided on a view with a hole
+// in it takes the wrong entry, and the rewrite would then silently destroy
+// every line that failed to decode — the only copy of whatever those lines
+// held. Refusing is the contract (spec §2.5e2, "what must be one step"): a
+// record that cannot be read cannot be part of deciding a removal.
 func (s *FileSession) pop(mode agents.PopMode) (*agents.SessionEntry, error) {
 	release := acquire(s.lockKey)
 	defer release()
-	entries, err := s.readEntries()
+	entries, err := s.readEntriesStrict()
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +325,11 @@ func (s *FileSession) Clear(_ context.Context) error {
 	return nil
 }
 
-// readEntries decodes the file's entries. Callers must hold the per-path lock.
+// readEntries decodes the file's entries, skipping lines that fail to decode —
+// one bad record must not make the whole session unreadable. Callers must hold
+// the per-path lock. A caller about to REWRITE the file from the result must
+// use readEntriesStrict instead: writing back a lenient read destroys the
+// skipped lines.
 func (s *FileSession) readEntries() ([]agents.SessionEntry, error) {
 	lines, err := s.readLines()
 	if err != nil {
@@ -327,6 +341,24 @@ func (s *FileSession) readEntries() ([]agents.SessionEntry, error) {
 		if json.Unmarshal(line, &e) == nil {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+// readEntriesStrict decodes the file's entries, failing on the first line that
+// cannot be decoded. Callers must hold the per-path lock.
+func (s *FileSession) readEntriesStrict() ([]agents.SessionEntry, error) {
+	lines, err := s.readLines()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agents.SessionEntry, 0, len(lines))
+	for i, line := range lines {
+		var e agents.SessionEntry
+		if err := json.Unmarshal(line, &e); err != nil {
+			return nil, fmt.Errorf("session file %s: line %d cannot be decoded: %w", s.path, i+1, err)
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
