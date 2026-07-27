@@ -147,6 +147,36 @@ tracer := tracing.NewTracer(proc)
 
 Runnable version: [`examples/otel`](../examples/otel/main.go).
 
+### Seeing it in a UI
+
+Jaeger is a collector and a viewer in one container, so a local setup is two
+commands. It accepts OTLP directly — no separate collector process:
+
+```bash
+docker run -d --name jaeger \
+  -p 16686:16686 \   # UI
+  -p 4317:4317 \     # OTLP/gRPC
+  jaegertracing/jaeger:2.11.0
+
+cd examples/otel && OPENAI_API_KEY=... OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 go run .
+```
+
+Then open <http://localhost:16686> and pick the service. One run appears as a
+tree: `invoke_agent` spanning the whole run, with a `chat` span per model call
+and an `execute_tool` span per tool underneath it.
+
+Two things worth setting, both in the example:
+
+- **A service name.** Without a `resource` carrying `service.name`, every trace
+  lands under `unknown_service` and a UI has nothing to group by.
+- **Flush both stages before exit.** `proc.ForceFlush()` moves our spans into
+  the OTel SDK; `tp.ForceFlush(ctx)` moves the SDK's batch over the wire.
+  Skipping either loses the trace of a short-lived program entirely.
+
+Anything else that speaks OTLP works the same way — Grafana Tempo, an
+OpenTelemetry Collector fanning out to several backends, or a hosted vendor
+(point `OTEL_EXPORTER_OTLP_ENDPOINT` at it and drop `WithInsecure`).
+
 ### How the tree survives
 
 Our spans are flat records with string ids, exported in batches *after* they
