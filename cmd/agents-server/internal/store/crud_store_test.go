@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/uptrace/bun"
@@ -113,5 +114,27 @@ func TestMemoryStoreListForAgent(t *testing.T) {
 	}
 	if len(globalOnly) != 1 || globalOnly[0].Key != "g" {
 		t.Fatalf("expected only global memory, got %+v", globalOnly)
+	}
+}
+
+// a missing agent config still reports ErrNotFound, and CrudStore deletes of
+// other entities go through the plain delete path.
+func TestAgentConfigDeleteNotFoundAndOtherEntities(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	if err := NewAgentConfigStore(db).Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting missing agent: want ErrNotFound, got %v", err)
+	}
+	// A Memory (also CrudStore-backed) deletes through the plain path.
+	memories := NewMemoryStore(db)
+	m := &Memory{Key: "k", Content: "c"}
+	if err := memories.Create(ctx, m); err != nil {
+		t.Fatalf("create memory: %v", err)
+	}
+	if err := memories.Delete(ctx, m.ID); err != nil {
+		t.Fatalf("delete memory: %v", err)
+	}
+	if err := memories.Delete(ctx, m.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("re-delete memory: want ErrNotFound, got %v", err)
 	}
 }

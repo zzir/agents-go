@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 	"time"
 )
@@ -311,5 +312,54 @@ func TestRouterProvider_CustomSeparator(t *testing.T) {
 	}
 	if groq.gotModel != "llama" {
 		t.Errorf("got %q, want llama", groq.gotModel)
+	}
+}
+
+func TestFallbackProvider_AllFallbacksFailReturnsAggregatedError(t *testing.T) {
+	primary := &stubProvider{model: &scriptedModel{}}
+	fp := NewFallbackProvider(primary,
+		errModelProvider{err: errors.New("f1 down")},
+		errModelProvider{err: errors.New("f2 down")},
+	)
+	m, err := fp.GetModel("x")
+	if err == nil {
+		t.Fatal("expected aggregated error when every fallback fails to resolve")
+	}
+	if m != nil {
+		t.Errorf("model should be nil on total fallback failure, got %T", m)
+	}
+	if !strings.Contains(err.Error(), "f1 down") || !strings.Contains(err.Error(), "f2 down") {
+		t.Errorf("error should aggregate both fallback failures: %v", err)
+	}
+}
+
+func TestFallbackProvider_PartialFallbackKeepsChain(t *testing.T) {
+	primary := &stubProvider{model: &scriptedModel{}}
+	good := &stubProvider{model: &scriptedModel{}}
+	fp := NewFallbackProvider(primary, errModelProvider{err: errors.New("bad down")}, good)
+	m, err := fp.GetModel("x")
+	if err != nil {
+		t.Fatalf("partial resolution should not error: %v", err)
+	}
+	if _, ok := m.(*FallbackModel); !ok {
+		t.Errorf("expected a *FallbackModel chaining the working fallback, got %T", m)
+	}
+}
+
+func TestFallbackProvider_NoFallbacksReturnsPrimary(t *testing.T) {
+	primary := &stubProvider{model: &scriptedModel{}}
+	m, err := NewFallbackProvider(primary).GetModel("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.(*FallbackModel); ok {
+		t.Errorf("with no fallbacks configured, expected the bare primary model, got *FallbackModel")
+	}
+}
+
+func TestFallbackProvider_PrimaryFailurePropagates(t *testing.T) {
+	fp := NewFallbackProvider(errModelProvider{err: errBoom}, &stubProvider{model: &scriptedModel{}})
+	if _, err := fp.GetModel("x"); !errors.Is(err, errBoom) {
+		t.Fatalf("primary failure should propagate, got %v", err)
 	}
 }

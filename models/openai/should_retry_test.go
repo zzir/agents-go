@@ -3,6 +3,7 @@ package openai
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	oai "github.com/openai/openai-go/v3"
 )
@@ -46,5 +47,45 @@ func TestRetryableErrorHonorsShouldRetryHeader(t *testing.T) {
 	// No Response at all must not panic.
 	if RetryableError(&oai.Error{StatusCode: 500}) != true {
 		t.Error("a 500 with no response should still be retryable")
+	}
+}
+
+// --- RetryAfter header parsing ----------------------------------------------
+
+func TestRetryAfter_MsHeader(t *testing.T) {
+	err := apiErr(http.StatusTooManyRequests, http.Header{"Retry-After-Ms": []string{"1500"}})
+	d, ok := RetryAfter(err)
+	if !ok || d != 1500*time.Millisecond {
+		t.Fatalf("d=%v ok=%v, want 1.5s true", d, ok)
+	}
+}
+
+func TestRetryAfter_MsPreferredOverSeconds(t *testing.T) {
+	err := apiErr(http.StatusTooManyRequests, http.Header{
+		"Retry-After-Ms": []string{"250"},
+		"Retry-After":    []string{"7"},
+	})
+	d, ok := RetryAfter(err)
+	if !ok || d != 250*time.Millisecond {
+		t.Fatalf("d=%v ok=%v, want 250ms true (Retry-After-Ms wins)", d, ok)
+	}
+}
+
+func TestRetryAfter_FloatSeconds(t *testing.T) {
+	err := apiErr(http.StatusTooManyRequests, http.Header{"Retry-After": []string{"0.5"}})
+	d, ok := RetryAfter(err)
+	if !ok || d != 500*time.Millisecond {
+		t.Fatalf("d=%v ok=%v, want 500ms true", d, ok)
+	}
+}
+
+func TestRetryAfter_BadMsFallsThroughToSeconds(t *testing.T) {
+	err := apiErr(http.StatusTooManyRequests, http.Header{
+		"Retry-After-Ms": []string{"soon"},
+		"Retry-After":    []string{"2"},
+	})
+	d, ok := RetryAfter(err)
+	if !ok || d != 2*time.Second {
+		t.Fatalf("d=%v ok=%v, want 2s true (unparseable ms header skipped)", d, ok)
 	}
 }

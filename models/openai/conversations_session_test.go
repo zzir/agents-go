@@ -172,3 +172,90 @@ func itemContains(t *testing.T, item agents.TResponseInputItem, sub string) bool
 	}
 	return strings.Contains(string(b), sub)
 }
+
+// itemBatchRecorder fakes the Conversations endpoints AddItems touches and
+// records the item count of every POST /conversations/{id}/items request.
+type itemBatchRecorder struct {
+	mu      sync.Mutex
+	batches []int
+	stored  []map[string]any
+	seq     int
+}
+
+func (f *itemBatchRecorder) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /conversations", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "conv_batch", "object": "conversation"})
+	})
+	mux.HandleFunc("POST /conversations/{id}/items", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Items []map[string]any `json:"items"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.batches = append(f.batches, len(body.Items))
+		created := []map[string]any{}
+		for _, it := range body.Items {
+			f.seq++
+			it["id"] = "item_" + strconv.Itoa(f.seq)
+			f.stored = append(f.stored, it)
+			created = append(created, it)
+		}
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": created})
+	})
+	return mux
+}
+
+func TestConversationsSession_AddItemsBatchesAtAPILimit(t *testing.T) {
+	ctx := t.Context()
+	fake := &itemBatchRecorder{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+	s := NewConversationsSession(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
+
+	items := make([]agents.TResponseInputItem, 0, 45)
+	for i := range 45 {
+		items = append(items, agents.InputItemsFromText("msg-"+strconv.Itoa(i))...)
+	}
+	if err := agents.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake.mu.Lock()
+	batches := append([]int(nil), fake.batches...)
+	stored := len(fake.stored)
+	fake.mu.Unlock()
+
+	want := []int{20, 20, 5}
+	if len(batches) != len(want) {
+		t.Fatalf("batches = %v, want %v", batches, want)
+	}
+	for i, n := range want {
+		if batches[i] != n {
+			t.Fatalf("batches = %v, want %v", batches, want)
+		}
+	}
+	if stored != 45 {
+		t.Errorf("stored items = %d, want 45", stored)
+	}
+}
+
+func TestConversationsSession_AddItemsSingleBatchUnderLimit(t *testing.T) {
+	ctx := t.Context()
+	fake := &itemBatchRecorder{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+	s := NewConversationsSession(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
+
+	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("only"), agents.Source{}); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.batches) != 1 || fake.batches[0] != 1 {
+		t.Errorf("batches = %v, want [1]", fake.batches)
+	}
+}

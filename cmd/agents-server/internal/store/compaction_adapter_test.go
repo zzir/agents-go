@@ -265,3 +265,56 @@ func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 		t.Errorf("notifier saw start=%d before=%d after=%d, want 1/5/3", started, doneBefore, doneAfter)
 	}
 }
+
+// persistCompaction must not insert an orphan checkpoint when the entries it
+// planned to fold were deleted out from under it.
+func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessionID := NewID()
+	sa := NewEntryStore(db, sessionID)
+	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
+	rows := loadRows(t, db, sessionID)
+	ids := []int64{rows[0].ID, rows[1].ID}
+
+	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum"}, nil)
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	ca := NewCompactionAdapter(sa, &summaryFakeModel{}, 1, 1, "", CompactionNotifier{})
+
+	// Simulate a concurrent session delete: the target entries are gone.
+	if _, err := db.NewDelete().Model((*entryRow)(nil)).Where("session_id = ?", sessionID).Exec(ctx); err != nil {
+		t.Fatalf("delete entries: %v", err)
+	}
+
+	applied, err := ca.persistCompaction(ctx, ids, summary)
+	if err != nil {
+		t.Fatalf("persistCompaction: %v", err)
+	}
+	if applied {
+		t.Fatal("compaction must not apply when target rows are gone")
+	}
+	if n := len(loadRows(t, db, sessionID)); n != 0 {
+		t.Fatalf("orphan checkpoint inserted into a vanished session: %d rows", n)
+	}
+
+	// Positive control: with the rows present it applies and appends the checkpoint.
+	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
+	got := loadRows(t, db, sessionID)
+	ids2 := []int64{got[0].ID, got[1].ID}
+	summary2, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum2"}, nil)
+	if err != nil {
+		t.Fatalf("checkpoint 2: %v", err)
+	}
+	applied, err = ca.persistCompaction(ctx, ids2, summary2)
+	if err != nil {
+		t.Fatalf("persistCompaction (positive): %v", err)
+	}
+	if !applied {
+		t.Fatal("compaction should apply when target rows exist")
+	}
+	if after := loadRows(t, db, sessionID); len(after) != 3 {
+		t.Fatalf("want 3 rows (2 compacted + checkpoint), got %d", len(after))
+	}
+}

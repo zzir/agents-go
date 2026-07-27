@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -500,5 +502,120 @@ func TestForkSessionMissingSource(t *testing.T) {
 	}
 	if _, err := NewSessionStore(db).Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("dst session must not exist after a missing-source fork")
+	}
+}
+
+// a row whose entry JSON can't be deserialized must survive: the delete only
+// commits after a successful decode, so a decode failure rolls back.
+func TestPopEntryRollsBackOnUndecodableRow(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sid := NewID()
+	s := NewEntryStore(db, sid)
+
+	seed(t, s, userEntry(t, "keep me"))
+	// A newer row with non-empty but undecodable entry JSON.
+	bad := entryRow{
+		SessionID: sid, RunID: "r", EntryID: sid + "-e2",
+		Kind: string(agents.EntryKindItem), Entry: `{"kind":`, CreatedAt: time.Now().UTC(),
+	}
+	if _, err := db.NewInsert().Model(&bad).Exec(ctx); err != nil {
+		t.Fatalf("insert bad: %v", err)
+	}
+
+	if _, err := s.PopEntry(ctx); err == nil {
+		t.Fatal("expected an error popping an undecodable row")
+	}
+	// Neither row was deleted — no silent data loss.
+	var remaining []entryRow
+	if err := db.NewSelect().Model(&remaining).Where("session_id = ?", sid).Scan(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(remaining) != 2 {
+		t.Fatalf("rows = %d, want 2 (nothing lost on decode failure)", len(remaining))
+	}
+}
+
+// ForkSession copies the source snapshot atomically, dedupes run ids, and
+// leaves the source untouched.
+func TestForkEntriesCopiesSnapshot(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	src := &Session{ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create src: %v", err)
+	}
+	s := NewEntryStore(db, src.ID)
+	s.SetRunID("runA")
+	seed(t, s, userEntry(t, "1"), userEntry(t, "2"))
+	s.SetRunID("runB")
+	seed(t, s, userEntry(t, "3"))
+
+	dst := &Session{ID: NewID(), Name: "dst"}
+	runIDs, err := s.ForkSession(ctx, dst, src.ID, 0, false)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	if len(runIDs) != 2 {
+		t.Fatalf("run ids = %v, want 2 deduped", runIDs)
+	}
+	copied, err := s.GetEntries(ctx, dst.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("get dst: %v", err)
+	}
+	if len(copied) != 3 {
+		t.Fatalf("dst copied %d rows, want 3", len(copied))
+	}
+	// Ids are rewritten into the destination's namespace, and parent links with
+	// them — a fork pointing back at another session's entries is not a tree.
+	for i, e := range copied {
+		if e.EntryID != fmt.Sprintf("%s-e%d", dst.ID, i+1) {
+			t.Fatalf("entry %d kept a foreign id: %q", i, e.EntryID)
+		}
+		if i > 0 && e.ParentID != copied[i-1].EntryID {
+			t.Fatalf("entry %d parent = %q, want %q", i, e.ParentID, copied[i-1].EntryID)
+		}
+	}
+	if orig, err := s.GetEntries(ctx, src.ID, 0, 0); err != nil || len(orig) != 3 {
+		t.Fatalf("src changed by fork: %d rows (%v)", len(orig), err)
+	}
+}
+
+// the upToID boundary is honored (inclusive vs exclusive).
+func TestForkEntriesUpToBoundary(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	src := &Session{ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create src: %v", err)
+	}
+	s := NewEntryStore(db, src.ID)
+	s.SetRunID("r")
+	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
+
+	all, err := s.GetEntries(ctx, src.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("get src: %v", err)
+	}
+	cut := all[1].ID
+
+	inc := &Session{ID: NewID(), Name: "inc"}
+	if _, err := s.ForkSession(ctx, inc, src.ID, cut, false); err != nil {
+		t.Fatalf("inclusive fork: %v", err)
+	}
+	got, _ := s.GetEntries(ctx, inc.ID, 0, 0)
+	if len(got) != 2 {
+		t.Fatalf("inclusive up-to copied %d, want 2", len(got))
+	}
+
+	exc := &Session{ID: NewID(), Name: "exc"}
+	if _, err := s.ForkSession(ctx, exc, src.ID, cut, true); err != nil {
+		t.Fatalf("exclusive fork: %v", err)
+	}
+	got, _ = s.GetEntries(ctx, exc.ID, 0, 0)
+	if len(got) != 1 {
+		t.Fatalf("exclusive up-to copied %d, want 1", len(got))
 	}
 }

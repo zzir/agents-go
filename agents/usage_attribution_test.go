@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"sync"
 	"testing"
 )
 
@@ -147,3 +148,47 @@ func TestUsage_ByResponse(t *testing.T) {
 		t.Errorf("r1 total = %d, want 12", got)
 	}
 }
+
+// --- Usage.Snapshot is a lock-guarded reader (race-clean with Add).
+
+func TestUsage_SnapshotConcurrentWithAdd(t *testing.T) {
+	u := NewUsage()
+	var wg sync.WaitGroup
+	const writers, adds = 8, 100
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range adds {
+				u.Add(&Usage{Requests: 1, InputTokens: 2, OutputTokens: 3, TotalTokens: 5})
+			}
+		}()
+	}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				_ = u.Snapshot().TotalTokens
+			}
+		}()
+	}
+	wg.Wait()
+
+	final := u.Snapshot()
+	if final.Requests != writers*adds {
+		t.Errorf("Requests = %d, want %d", final.Requests, writers*adds)
+	}
+	if final.TotalTokens != writers*adds*5 {
+		t.Errorf("TotalTokens = %d, want %d", final.TotalTokens, writers*adds*5)
+	}
+	if len(final.RequestUsageEntries) != writers*adds {
+		t.Errorf("entries = %d, want %d", len(final.RequestUsageEntries), writers*adds)
+	}
+}
+
+// --- FallbackProvider surfaces fallback-resolution errors.
+
+type errModelProvider struct{ err error }
+
+func (p errModelProvider) GetModel(string) (Model, error) { return nil, p.err }
