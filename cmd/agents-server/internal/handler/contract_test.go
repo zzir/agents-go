@@ -17,7 +17,7 @@ func TestRestContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sh := NewSessionHandler(sessions, store.NewEntryStore(db, ""), store.NewTraceStore(db), store.NewAgentConfigStore(db))
+	sh := NewSessionHandler(sessions, store.NewSharedEntryStore(db), store.NewTraceStore(db), store.NewAgentConfigStore(db))
 	ah := NewAgentConfigHandler(store.NewAgentConfigStore(db))
 
 	engine := gin.New()

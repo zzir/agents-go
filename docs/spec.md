@@ -432,9 +432,11 @@ next backend will answer differently.
 - **A session id names a session, not a place.** Deleting an id and creating it
   again yields a session with storage of its own. A handle to the deleted one
   can neither read what its replacement writes nor write into what it reads.
-  *Shared.* A backend that derives storage from the id — a filename, a
-  `WHERE session_id = ?` — needs a discriminator alongside it, and every
-  backend must get the same one rather than inventing its own.
+  *Shared:* `agents.SessionRef` is the address and `agents.NewGeneration`
+  mints the discriminator. A function that takes a ref cannot be handed a bare
+  id, which is the point — carrying the generation as a field beside the id
+  made every hand-built handle, every resolve-by-id and every delete-by-name a
+  chance to forget it, silently.
 - **A handle is bound when it is BUILT**, never on first use. A handle created,
   held, and first touched after its session was deleted and recreated still
   refers to the one it was built for. *Shared.*

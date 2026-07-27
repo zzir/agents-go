@@ -33,25 +33,41 @@ func NewRepo(dir string) (*Repo, error) {
 }
 
 type sidecar struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// Gen is this session's generation; see agents.SessionRef. Empty in
+	// sidecars written before the field existed, which is the direct scope's
+	// value and also where those sessions' entries actually are.
+	Gen       string    `json:"gen,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Hidden    bool      `json:"hidden,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ref is what this sidecar's session is addressed by.
+func (m sidecar) ref() agents.SessionRef { return agents.SessionRef{ID: m.ID, Gen: m.Gen} }
+
 func (r *Repo) sidecarPath(id string) string {
 	return filepath.Join(r.dir, sanitizeSessionID(id)+".meta.json")
 }
 
-func (r *Repo) entriesPath(id string) string {
-	return filepath.Join(r.dir, sanitizeSessionID(id)+".jsonl")
+// entriesPath is where a ref's entries live.
+//
+// The generation is part of the NAME, so a session and the one that replaced it
+// are two files and no code path can reach the wrong one by holding an id. The
+// direct scope — an empty generation — is <id>.jsonl, which is exactly what
+// NewFileSession(dir, id) opens, and is also where a session stored before
+// generations existed already is.
+func (r *Repo) entriesPath(ref agents.SessionRef) string {
+	name := sanitizeSessionID(ref.ID)
+	if !ref.IsDirect() {
+		name += "-" + ref.Gen
+	}
+	return filepath.Join(r.dir, name+".jsonl")
 }
 
-// session builds the storage for a session id, reusing FileSession's own path
-// and id sanitization rather than duplicating it — two answers to "where does
-// this session live" is one too many.
-func (r *Repo) session(id string) (*agents.Session, error) {
-	fs, err := NewFileSession(r.dir, id)
+// session builds the storage for a ref.
+func (r *Repo) session(meta sidecar) (*agents.Session, error) {
+	fs, err := OpenFileSession(r.entriesPath(meta.ref()))
 	if err != nil {
 		return nil, err
 	}
@@ -73,14 +89,20 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 		// under and would collide with every other such id.
 		return nil, fmt.Errorf("session id %q has no usable filename form", id)
 	}
-	meta := sidecar{ID: id, Title: opts.Title, Hidden: opts.Hidden, CreatedAt: time.Now().UTC()}
-	raw, err := json.Marshal(meta)
+	// A generation of its own, so this session's entries are a file no handle
+	// to a previous one of the same name can reach.
+	gen, err := agents.NewGeneration()
 	if err != nil {
 		return nil, err
 	}
-	// O_EXCL, not WriteFile: creating over an existing sidecar would hand back
-	// a "new" session already holding the previous one's entries, since the
-	// .jsonl beside it is keyed on the same name.
+	meta := sidecar{ID: id, Gen: gen, Title: opts.Title, Hidden: opts.Hidden, CreatedAt: time.Now().UTC()}
+	raw, merr := json.Marshal(meta)
+	if merr != nil {
+		return nil, merr
+	}
+	// O_EXCL, not WriteFile: the sidecar IS the claim on the id, and writing
+	// over one would hand two callers the same session while both believe they
+	// created it.
 	f, err := os.OpenFile(r.sidecarPath(id), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
@@ -113,7 +135,7 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 	if err := f.Close(); err != nil {
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
-	sess, err := r.session(id)
+	sess, err := r.session(meta)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +173,7 @@ func (r *Repo) Open(_ context.Context, id string) (*agents.Session, error) {
 		return nil, fmt.Errorf("open session %q: %w (the name maps to session %q)",
 			id, agents.ErrSessionNotFound, meta.ID)
 	}
-	return r.session(id)
+	return r.session(meta)
 }
 
 // List returns session metadata, newest first.
@@ -178,7 +200,7 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 		md := agents.SessionMetadata{
 			ID: meta.ID, Title: meta.Title, Hidden: meta.Hidden, CreatedAt: meta.CreatedAt,
 		}
-		if fi, serr := os.Stat(r.entriesPath(meta.ID)); serr == nil {
+		if fi, serr := os.Stat(r.entriesPath(meta.ref())); serr == nil {
 			md.UpdatedAt = fi.ModTime().UTC()
 		}
 		out = append(out, md)
@@ -192,21 +214,22 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 
 // Delete removes a session's entries and its metadata.
 func (r *Repo) Delete(_ context.Context, id string) error {
-	// Refuse to delete through a colliding name: the file on disk belongs to
-	// another session, and removing it would destroy that one's history.
-	//
-	// An unreadable sidecar stops the delete rather than allowing it. Failing
-	// open here means a corrupt or briefly unreadable file is enough to make
-	// "delete team+a" destroy team a's history, since both map to team_a — the
-	// one outcome this check exists to prevent. A missing file is the only
-	// error that means there is nothing to protect.
 	meta, err := r.readSidecar(id)
 	switch {
-	case err == nil && meta.ID != id:
-		return fmt.Errorf("delete session %q: the name maps to session %q", id, meta.ID)
-	case err != nil && !os.IsNotExist(err):
+	case os.IsNotExist(err):
+		// No sidecar, so this repo has no such session and there is nothing of
+		// its own to remove. It must NOT fall back to the id-derived name:
+		// that is the direct scope, where NewFileSession(dir, id) keeps its
+		// history, and a repo does not delete what it never created.
+		return nil
+	case err != nil:
+		// Not being able to read who owns the name is a reason to stop, not to
+		// proceed: two ids can share a filename, and only the sidecar says
+		// which of them this one is.
 		return fmt.Errorf("delete session %q: cannot verify which session %q holds: %w",
 			id, r.sidecarPath(id), err)
+	case meta.ID != id:
+		return fmt.Errorf("delete session %q: the name maps to session %q", id, meta.ID)
 	}
 	// The sidecar goes first: a session with entries but no sidecar is
 	// invisible to List and Open, whereas the reverse would leave a session
@@ -214,7 +237,9 @@ func (r *Repo) Delete(_ context.Context, id string) error {
 	if err := os.Remove(r.sidecarPath(id)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Remove(r.entriesPath(id)); err != nil && !os.IsNotExist(err) {
+	// By ref, so a delete cannot reach a generation the caller did not mean —
+	// including the direct scope, which shares the id and nothing else.
+	if err := os.Remove(r.entriesPath(meta.ref())); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

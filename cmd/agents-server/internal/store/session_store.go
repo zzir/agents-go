@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/zzir/agents-go/agents"
 )
 
 // SessionStore persists sessions and cascades deletes to their messages.
@@ -22,6 +24,16 @@ func NewSessionStore(db *bun.DB) *SessionStore {
 
 // Create inserts sess, stamping its created_at and updated_at timestamps.
 func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
+	if sess.Gen == "" {
+		// Assigned here rather than by each caller, so no path that creates a
+		// session can forget it and leave one sharing its entries with whatever
+		// held the name before.
+		gen, err := agents.NewGeneration()
+		if err != nil {
+			return err
+		}
+		sess.Gen = gen
+	}
 	now := time.Now().UTC()
 	sess.CreatedAt = now
 	sess.UpdatedAt = now

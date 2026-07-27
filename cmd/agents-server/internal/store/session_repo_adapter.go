@@ -16,7 +16,7 @@ import (
 // config, pinning, the sandbox — and the SDK only needs four operations.
 type SessionRepoAdapter struct {
 	sessions *SessionStore
-	entries  func(sessionID string) agents.SessionStorage
+	entries  func(ref agents.SessionRef) agents.SessionStorage
 	// agentConfigID is the config a task session is bound to. It is set per
 	// create by the caller through WithAgentConfig, since the SDK's
 	// CreateOptions has nowhere to carry it.
@@ -25,7 +25,7 @@ type SessionRepoAdapter struct {
 
 // NewSessionRepoAdapter wraps the session store. entries builds the storage for
 // one session's history.
-func NewSessionRepoAdapter(sessions *SessionStore, entries func(sessionID string) agents.SessionStorage) *SessionRepoAdapter {
+func NewSessionRepoAdapter(sessions *SessionStore, entries func(ref agents.SessionRef) agents.SessionStorage) *SessionRepoAdapter {
 	return &SessionRepoAdapter{sessions: sessions, entries: entries}
 }
 
@@ -57,20 +57,23 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts agents.CreateOptio
 	if err := a.sessions.Create(ctx, row); err != nil {
 		return nil, err
 	}
-	return agents.NewSession(a.entries(id)), nil
+	// From the row this call just wrote: resolving the id again is a second
+	// chance for it to be deleted and recreated in between.
+	return agents.NewSession(a.entries(agents.SessionRef{ID: row.ID, Gen: row.Gen})), nil
 }
 
 // Open implements agents.SessionRepo. An unknown id is an error, never an empty
 // session: a wrong id reading as a fresh conversation makes a run start over
 // instead of continuing.
 func (a *SessionRepoAdapter) Open(ctx context.Context, id string) (*agents.Session, error) {
-	if _, err := a.sessions.Get(ctx, id); err != nil {
+	row, err := a.sessions.Get(ctx, id)
+	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, agents.ErrSessionNotFound
 		}
 		return nil, err
 	}
-	return agents.NewSession(a.entries(id)), nil
+	return agents.NewSession(a.entries(agents.SessionRef{ID: row.ID, Gen: row.Gen})), nil
 }
 
 // List implements agents.SessionRepo.
@@ -93,9 +96,14 @@ func (a *SessionRepoAdapter) List(ctx context.Context, opts agents.ListOptions) 
 	return out, nil
 }
 
-// Delete implements agents.SessionRepo.
+// Delete implements agents.SessionRepo, for which deleting a session that is
+// not there is not an error: the caller wanted it gone, and it is. The store's
+// own Delete keeps reporting ErrNotFound, which the REST endpoint's 404 needs.
 func (a *SessionRepoAdapter) Delete(ctx context.Context, id string) error {
-	return a.sessions.Delete(ctx, id)
+	if err := a.sessions.Delete(ctx, id); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 var _ agents.SessionRepo = (*SessionRepoAdapter)(nil)

@@ -84,7 +84,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	sessionStore := store.NewSessionStore(db)
-	entryStore := store.NewEntryStore(db, "")
+	entryStore := store.NewSharedEntryStore(db)
 	traceStore := store.NewTraceStore(db)
 	agentConfigStore := store.NewAgentConfigStore(db)
 	mcpServerStore := store.NewMcpServerStore(db)

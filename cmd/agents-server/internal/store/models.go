@@ -12,7 +12,10 @@ import (
 type Session struct {
 	bun.BaseModel `bun:"table:sessions,alias:s"`
 
-	ID     string `bun:"id,pk"               json:"id"`
+	ID string `bun:"id,pk"               json:"id"`
+	// Gen names which generation of this id owns the session's entries; see
+	// agents.SessionRef.
+	Gen    string `bun:"gen,notnull"          json:"-"`
 	Name   string `bun:"name,notnull"         json:"name"`
 	Pinned bool   `bun:"pinned"               json:"pinned"`
 	// Hidden marks a session that exists to serve another one — a background

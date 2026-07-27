@@ -39,7 +39,16 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 			return
 		}
 		for _, p := range expired {
-			_ = entries.AppendAnnotation(ctx, p.SessionID, p.RunID,
+			ref, rerr := entries.RefFor(ctx, p.SessionID)
+			if rerr != nil {
+				// The session is gone, or unreadable: there is nowhere to put
+				// the banner, and guessing at a scope is how one lands where
+				// nothing reads it.
+				log.Warn().Err(rerr).Str("session_id", p.SessionID).
+					Msg("cannot record an approval-timeout banner")
+				continue
+			}
+			_ = entries.AppendAnnotation(ctx, ref, p.RunID,
 				"Tool approval timed out after "+strconv.Itoa(ttl)+" minutes; the run was terminated.")
 			// A background task's approval expiring must finalize the task row
 			// too — otherwise it is a zombie stuck at input_required that no

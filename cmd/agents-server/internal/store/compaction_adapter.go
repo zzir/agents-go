@@ -70,7 +70,7 @@ func NewCompactionAdapter(
 func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.CompactionArgs) error {
 	var active []entryRow
 	if err := ca.db.NewSelect().Model(&active).
-		Where("session_id = ?", ca.sessionID).
+		Where("session_id = ?", ca.ref.ID).
 		Where("compacted = ?", false).
 		OrderExpr("id ASC").
 		Scan(ctx); err != nil {

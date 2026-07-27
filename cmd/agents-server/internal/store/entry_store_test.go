@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/zzir/agents-go/agents"
 )
 
@@ -116,7 +118,7 @@ func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 	call.Diagnostics = []agents.Diagnostic{{Type: agents.DiagToolTimeout, Message: "slow"}}
 	seed(t, s, userEntry(t, "weather?"), call)
 
-	views, err := s.GetEntries(ctx, "s1", 0, 0)
+	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -150,7 +152,7 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	s := NewEntryStore(db, "s1")
 	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"text","text":"最终回答"}],"status":"completed"}`))
 
-	views, err := s.GetEntries(ctx, "s1", 0, 0)
+	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -220,7 +222,7 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	}
 	seed(t, s, cp)
 
-	views, err := s.GetEntries(ctx, "s1", 0, 0)
+	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -259,14 +261,14 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	call.Display = &agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1", ToolName: "f"}
 	seed(t, s, userEntry(t, "one"), call, userEntry(t, "two"), userEntry(t, "three"))
 	// Two update entries: rows in the table, never entries in a page.
-	if err := s.AppendCallDisplayUpdate(ctx, "s1", "c1", agents.ItemDisplay{Output: "done"}); err != nil {
+	if err := s.AppendCallDisplayUpdate(ctx, agents.Direct("s1"), "c1", agents.ItemDisplay{Output: "done"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if err := s.AppendCallDisplayUpdate(ctx, "s1", "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
+	if err := s.AppendCallDisplayUpdate(ctx, agents.Direct("s1"), "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
 		t.Fatalf("update 2: %v", err)
 	}
 
-	all, err := s.GetEntries(ctx, "s1", 0, 0)
+	all, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -279,7 +281,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	}
 
 	// A limit is a count of ENTRIES. Asking for 2 must give the newest 2.
-	page, err := s.GetEntries(ctx, "s1", 0, 2)
+	page, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 2)
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -289,7 +291,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 
 	// Paging backwards from it reaches the beginning without skipping the call
 	// the updates were folded into.
-	older, err := s.GetEntries(ctx, "s1", page[0].ID, 2)
+	older, err := s.GetEntries(ctx, agents.Direct("s1"), page[0].ID, 2)
 	if err != nil {
 		t.Fatalf("get older: %v", err)
 	}
@@ -316,12 +318,12 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	if err != nil || len(stored) != 2 {
 		t.Fatalf("seeded entries: %v %v", stored, err)
 	}
-	if err := s.Branch(ctx, "s1", stored[0].ID); err != nil {
+	if err := s.Branch(ctx, agents.Direct("s1"), stored[0].ID); err != nil {
 		t.Fatalf("branch: %v", err)
 	}
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}`, agents.Source{}))
 
-	views, gerr := s.GetEntries(ctx, "s1", 0, 0)
+	views, gerr := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
 	if gerr != nil {
 		t.Fatalf("get entries: %v", gerr)
 	}
@@ -363,10 +365,10 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	if firstID == "" {
 		t.Fatal("the first attempt is not in the listing")
 	}
-	if err := s.Branch(ctx, "s1", firstID); err != nil {
+	if err := s.Branch(ctx, agents.Direct("s1"), firstID); err != nil {
 		t.Fatalf("branch back: %v", err)
 	}
-	views, _ = s.GetEntries(ctx, "s1", 0, 0)
+	views, _ = s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
 	for _, v := range views {
 		if v.Content == "first" && !v.OnPath {
 			t.Error("switching back did not restore the first attempt")
@@ -489,7 +491,7 @@ func TestForkSessionAtomicNoOrphan(t *testing.T) {
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
-	s := NewEntryStore(db, src.ID)
+	s := storeFor(t, db, src.ID)
 	seed(t, s, userEntry(t, "hi"))
 
 	// Reuse an existing id so the session insert inside ForkSession fails.
@@ -498,7 +500,7 @@ func TestForkSessionAtomicNoOrphan(t *testing.T) {
 		t.Fatalf("create taken: %v", err)
 	}
 
-	if _, err := s.ForkSession(ctx, &Session{ID: taken.ID, Name: "fork"}, src.ID, 0, false); err == nil {
+	if _, err := s.ForkSession(ctx, &Session{ID: taken.ID, Name: "fork"}, refOf(t, db, src.ID), 0, false); err == nil {
 		t.Fatal("expected ForkSession to fail on a duplicate session id")
 	}
 	var copied []entryRow
@@ -518,7 +520,7 @@ func TestForkSessionMissingSource(t *testing.T) {
 	dst := &Session{ID: NewID(), Name: "fork"}
 
 	s := NewEntryStore(db, "nonexistent-src")
-	if _, err := s.ForkSession(ctx, dst, "nonexistent-src", 0, false); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ForkSession(ctx, dst, refOf(t, db, "nonexistent-src"), 0, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound for a missing source, got %v", err)
 	}
 	if _, err := NewSessionStore(db).Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
@@ -567,21 +569,21 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
-	s := NewEntryStore(db, src.ID)
+	s := storeFor(t, db, src.ID)
 	s.SetRunID("runA")
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"))
 	s.SetRunID("runB")
 	seed(t, s, userEntry(t, "3"))
 
 	dst := &Session{ID: NewID(), Name: "dst"}
-	runIDs, err := s.ForkSession(ctx, dst, src.ID, 0, false)
+	runIDs, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), 0, false)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 	if len(runIDs) != 2 {
 		t.Fatalf("run ids = %v, want 2 deduped", runIDs)
 	}
-	copied, err := s.GetEntries(ctx, dst.ID, 0, 0)
+	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID), 0, 0)
 	if err != nil {
 		t.Fatalf("get dst: %v", err)
 	}
@@ -598,7 +600,7 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 			t.Fatalf("entry %d parent = %q, want %q", i, e.ParentID, copied[i-1].EntryID)
 		}
 	}
-	if orig, err := s.GetEntries(ctx, src.ID, 0, 0); err != nil || len(orig) != 3 {
+	if orig, err := s.GetEntries(ctx, refOf(t, db, src.ID), 0, 0); err != nil || len(orig) != 3 {
 		t.Fatalf("src changed by fork: %d rows (%v)", len(orig), err)
 	}
 }
@@ -612,31 +614,51 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
-	s := NewEntryStore(db, src.ID)
+	s := storeFor(t, db, src.ID)
 	s.SetRunID("r")
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
 
-	all, err := s.GetEntries(ctx, src.ID, 0, 0)
+	all, err := s.GetEntries(ctx, refOf(t, db, src.ID), 0, 0)
 	if err != nil {
 		t.Fatalf("get src: %v", err)
 	}
 	cut := all[1].ID
 
 	inc := &Session{ID: NewID(), Name: "inc"}
-	if _, err := s.ForkSession(ctx, inc, src.ID, cut, false); err != nil {
+	if _, err := s.ForkSession(ctx, inc, refOf(t, db, src.ID), cut, false); err != nil {
 		t.Fatalf("inclusive fork: %v", err)
 	}
-	got, _ := s.GetEntries(ctx, inc.ID, 0, 0)
+	got, _ := s.GetEntries(ctx, refOf(t, db, inc.ID), 0, 0)
 	if len(got) != 2 {
 		t.Fatalf("inclusive up-to copied %d, want 2", len(got))
 	}
 
 	exc := &Session{ID: NewID(), Name: "exc"}
-	if _, err := s.ForkSession(ctx, exc, src.ID, cut, true); err != nil {
+	if _, err := s.ForkSession(ctx, exc, refOf(t, db, src.ID), cut, true); err != nil {
 		t.Fatalf("exclusive fork: %v", err)
 	}
-	got, _ = s.GetEntries(ctx, exc.ID, 0, 0)
+	got, _ = s.GetEntries(ctx, refOf(t, db, exc.ID), 0, 0)
 	if len(got) != 1 {
 		t.Fatalf("exclusive up-to copied %d, want 1", len(got))
 	}
+}
+
+// refOf addresses a session the way production code does: by resolving its
+// generation, never by pasting an id where a ref goes.
+func refOf(t *testing.T, db *bun.DB, id string) agents.SessionRef {
+	t.Helper()
+	ref, err := RefFor(context.Background(), db, id)
+	if err != nil {
+		// A session with no row is in the direct scope, which is where a
+		// handle built from a bare id writes.
+		return agents.Direct(id)
+	}
+	return ref
+}
+
+// storeFor is how a test gets a handle to a session it created a row for:
+// through the row's generation, not through the id.
+func storeFor(t *testing.T, db *bun.DB, id string) *EntryStore {
+	t.Helper()
+	return NewEntryStoreFor(db, refOf(t, db, id))
 }

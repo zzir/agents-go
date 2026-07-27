@@ -248,7 +248,12 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	}
 	// One transaction creates the session and copies its entries, so a failure
 	// (or a cancelled request) can't leave an orphaned empty session behind.
-	runIDs, err := h.entries.ForkSession(ctx, dst, srcID, upTo, req.Exclusive)
+	srcRef, err := h.entries.RefFor(ctx, srcID)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	runIDs, err := h.entries.ForkSession(ctx, dst, srcRef, upTo, req.Exclusive)
 	if err != nil {
 		// A source deleted out from under the fork (ErrNotFound) is a 404, not a
 		// 500; storeError maps it.
@@ -284,7 +289,13 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 //	@Router			/sessions/{id}/messages [get]
 func (h *SessionHandler) Messages(c *gin.Context) {
 	beforeID, limit := pageParams(c)
-	entries, err := h.entries.GetEntries(c.Request.Context(), c.Param("id"), beforeID, limit)
+	ctx := c.Request.Context()
+	ref, err := h.entries.RefFor(ctx, c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	entries, err := h.entries.GetEntries(ctx, ref, beforeID, limit)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -317,12 +328,16 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	id := c.Param("id")
-	if err := h.entries.Branch(ctx, id, req.EntryID); err != nil {
+	ref, err := h.entries.RefFor(ctx, c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if err := h.entries.Branch(ctx, ref, req.EntryID); err != nil {
 		badRequest(c, err.Error())
 		return
 	}
-	leaf, err := h.entries.Leaf(ctx, id)
+	leaf, err := h.entries.Leaf(ctx, ref)
 	if err != nil {
 		internalError(c, err)
 		return

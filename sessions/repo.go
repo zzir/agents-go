@@ -33,12 +33,16 @@ func (r *Repo) Create(ctx context.Context, opts agents.CreateOptions) (*agents.S
 	if id == "" {
 		id = newSessionID()
 	}
+	gen, err := agents.NewGeneration()
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
-	row := sessionRow{ID: id, Title: opts.Title, Hidden: opts.Hidden, CreatedAt: now, UpdatedAt: now}
+	row := sessionRow{ID: id, Gen: gen, Title: opts.Title, Hidden: opts.Hidden, CreatedAt: now, UpdatedAt: now}
 	if _, err := r.db.NewInsert().Model(&row).Exec(ctx); err != nil {
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
-	return agents.NewSession(New(r.db, id)), nil
+	return agents.NewSession(forRef(r.db, agents.SessionRef{ID: id, Gen: gen})), nil
 }
 
 // Open returns an existing session, or an error when there is none.
@@ -55,7 +59,10 @@ func (r *Repo) Open(ctx context.Context, id string) (*agents.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return agents.NewSession(New(r.db, id)), nil
+	// Built from the row this call already read: looking the session up a
+	// second time is a second chance for the id to be deleted and recreated in
+	// between, which would pair this row with the replacement's storage.
+	return agents.NewSession(forRef(r.db, agents.SessionRef{ID: id, Gen: row.Gen})), nil
 }
 
 // List returns session metadata, newest first.
@@ -88,7 +95,12 @@ func (r *Repo) List(ctx context.Context, opts agents.ListOptions) ([]agents.Sess
 // cannot leave orphaned entries behind pointing at a session that is gone.
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewDelete().Model((*entry)(nil)).Where("session_id = ?", id).Exec(ctx); err != nil {
+		// Every generation this REPO made, and only those. The direct scope —
+		// an empty generation — belongs to New(db, id): a session this repo
+		// never created, does not list and cannot open, so deleting it here
+		// would destroy history the caller keeps somewhere else entirely.
+		if _, err := tx.NewDelete().Model((*entry)(nil)).
+			Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx); err != nil {
 			return err
 		}
 		_, err := tx.NewDelete().Model((*sessionRow)(nil)).Where("id = ?", id).Exec(ctx)

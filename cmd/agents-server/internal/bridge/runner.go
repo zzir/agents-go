@@ -98,7 +98,7 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 		db:      db,
 		Deps:    deps,
 		hub:     NewRunHub(rootCtx),
-		entries: store.NewEntryStore(db, ""),
+		entries: store.NewSharedEntryStore(db),
 	}
 	if deps.MaxTasks > 0 {
 		r.hub.maxTasks = deps.MaxTasks
@@ -106,8 +106,8 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	if deps.Tasks != nil {
 		r.tasks = tasks.New(tasks.Config{
 			Store: store.NewTaskAdapter(deps.Tasks),
-			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(sessionID string) agents.SessionStorage {
-				return store.NewEntryStore(db, sessionID)
+			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref agents.SessionRef) agents.SessionStorage {
+				return store.NewEntryStoreFor(db, ref)
 			}),
 			Resolver:               taskResolver{r},
 			Launcher:               taskLauncher{r},
@@ -282,7 +282,15 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 	sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
 
-	sa := store.NewEntryStore(r.db, sessionID)
+	sessionRef, refErr := store.RefFor(ctx, r.db, sessionID)
+	if refErr != nil {
+		const msg = "cannot resolve this session's history"
+		sendEvent(protocol.EventRunError, protocol.RunError{
+			RunID: runID, Code: protocol.CodeSessionNotFound, Message: msg,
+		})
+		return mkErrResult(protocol.CodeSessionNotFound, msg)
+	}
+	sa := store.NewEntryStoreFor(r.db, sessionRef)
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
@@ -456,7 +464,15 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
 
-	resumeSA := store.NewEntryStore(r.db, sessionID)
+	resumeRef, refErr := store.RefFor(ctx, r.db, sessionID)
+	if refErr != nil {
+		const msg = "cannot resolve this session's history"
+		sendEvent(protocol.EventRunError, protocol.RunError{
+			RunID: runID, Code: protocol.CodeSessionNotFound, Message: msg,
+		})
+		return mkErrResult(protocol.CodeSessionNotFound, msg)
+	}
+	resumeSA := store.NewEntryStoreFor(r.db, resumeRef)
 	resumeSA.SetRunID(runID)
 	resumeSA.SetModel(built.Agent.Model)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
@@ -671,7 +687,13 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 	if len(entries) == 0 {
 		return
 	}
-	es := store.NewEntryStore(r.db, sessionID)
+	ref, refErr := store.RefFor(ctx, r.db, sessionID)
+	if refErr != nil {
+		zerolog.Ctx(r.hub.rootCtx).Warn().Err(refErr).Str("run_id", runID).Str("session_id", sessionID).
+			Msg("persisting partial turn")
+		return
+	}
+	es := store.NewEntryStoreFor(r.db, ref)
 	es.SetRunID(runID)
 	es.SetModel(model)
 	if err := es.Append(ctx, entries...); err != nil {

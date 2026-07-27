@@ -2,9 +2,14 @@ package bridge
 
 import (
 	"context"
+
+	"github.com/uptrace/bun"
+
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zzir/agents-go/agents"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -156,11 +161,11 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	// The notification run executes on a background goroutine; poll for its
 	// persisted prompt (the keyless test config fails at the provider stage,
 	// and that failure path saves the prompt).
-	entries := store.NewEntryStore(runner.db, parent.ID)
+	entries := store.NewSharedEntryStore(runner.db)
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := entries.GetEntries(ctx, parent.ID, 0, 50)
+		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID), 0, 50)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -215,11 +220,11 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 	}
 	runner.DrainPendingTaskNotifications(ctx)
 
-	entries := store.NewEntryStore(runner.db, parent.ID)
+	entries := store.NewSharedEntryStore(runner.db)
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := entries.GetEntries(ctx, parent.ID, 0, 50)
+		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID), 0, 50)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -271,4 +276,17 @@ func hasTool(b *BuildResult, name string) bool {
 		}
 	}
 	return false
+}
+
+// mustRef addresses a session the way production code does: by resolving its
+// generation. A test that reaches for agents.Direct is asking for the scope of
+// the constructors where an id names the storage, which a repo-created session
+// is not in.
+func mustRef(t *testing.T, db *bun.DB, id string) agents.SessionRef {
+	t.Helper()
+	ref, err := store.RefFor(context.Background(), db, id)
+	if err != nil {
+		t.Fatalf("resolving session %s: %v", id, err)
+	}
+	return ref
 }

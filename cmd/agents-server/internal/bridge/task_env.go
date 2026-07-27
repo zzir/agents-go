@@ -167,8 +167,13 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	if t.Summary != "" {
 		extra["task_summary"] = t.Summary
 	}
-	entries := store.NewEntryStore(r.db, t.ParentSessionID)
-	if err := entries.AppendCallDisplayUpdate(ctx, t.ParentSessionID, t.ToolCallID,
+	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
+	if rerr != nil {
+		zerolog.Ctx(ctx).Warn().Err(rerr).Str("task_id", t.ID).Msg("recording task display update")
+		return
+	}
+	entries := store.NewEntryStoreFor(r.db, ref)
+	if err := entries.AppendCallDisplayUpdate(ctx, ref, t.ToolCallID,
 		agents.ItemDisplay{Extra: extra}); err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", t.ID).Msg("recording task display update")
 	}

@@ -28,7 +28,7 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 // matches — the entry-model equivalent of the old (kind, role) row count.
 func countDisplays(t *testing.T, db *bun.DB, sid string, kind agents.EntryKind, display string) int {
 	t.Helper()
-	entries, err := store.NewEntryStore(db, sid).AllEntries(context.Background())
+	entries, err := mustStore(t, db, sid).AllEntries(context.Background())
 	if err != nil {
 		t.Fatalf("load entries: %v", err)
 	}
@@ -49,9 +49,15 @@ func countDisplays(t *testing.T, db *bun.DB, sid string, kind agents.EntryKind, 
 func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 	runner, db := newBareRunner(t)
 	sid, rid := store.NewID(), store.NewID()
+	// A session row, because that is what a session id addresses: the runner
+	// resolves the generation before it writes, and an id with no row is not a
+	// session it can write to.
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 
 	// Simulate the SDK having persisted the user input for this run.
-	es := store.NewEntryStore(db, sid)
+	es := mustStore(t, db, sid)
 	es.SetRunID(rid)
 	es.SetModel("m")
 	userItem, err := agents.NewItemEntry(agents.InputItemsFromText("hello")[0], agents.Source{Type: agents.SourceUser})
@@ -79,6 +85,12 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 	runner, db := newBareRunner(t)
 	sid, rid := store.NewID(), store.NewID()
+	// A session row, because that is what a session id addresses: the runner
+	// resolves the generation before it writes, and an id with no row is not a
+	// session it can write to.
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "let me think about primes", "here is my parti", "", "")
 
@@ -92,7 +104,7 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 	// Display-only: none of these annotations may be replayed to the model.
-	items, err := agents.NewSession(store.NewEntryStore(db, sid)).ContextItems(context.Background(), agents.Cursor{})
+	items, err := agents.NewSession(mustStore(t, db, sid)).ContextItems(context.Background(), agents.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -108,6 +120,12 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 	runner, db := newBareRunner(t)
 	sid, rid := store.NewID(), store.NewID()
+	// A session row, because that is what a session id addresses: the runner
+	// resolves the generation before it writes, and an id with no row is not a
+	// session it can write to.
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
@@ -140,4 +158,15 @@ func TestIsCancellation(t *testing.T) {
 			t.Errorf("%s: isCancellation = %v, want %v", tc.name, got, tc.want)
 		}
 	}
+}
+
+// mustStore addresses a session by resolving its generation, the way the code
+// under test does.
+func mustStore(t *testing.T, db *bun.DB, id string) *store.EntryStore {
+	t.Helper()
+	ref, err := store.RefFor(context.Background(), db, id)
+	if err != nil {
+		t.Fatalf("resolving session %s: %v", id, err)
+	}
+	return store.NewEntryStoreFor(db, ref)
 }

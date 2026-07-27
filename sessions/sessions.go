@@ -39,6 +39,10 @@ type entry struct {
 
 	ID        int64  `bun:"id,pk,autoincrement"`
 	SessionID string `bun:"session_id,notnull"`
+	// Gen is the session generation these entries belong to; see
+	// agents.SessionRef. Empty is the direct scope, which is a scope like any
+	// other and not a wildcard.
+	Gen string `bun:"gen,notnull"`
 	// Seq is the entry's cursor position, allocated by agents.PrepareAppend.
 	//
 	// It is a column rather than the row's autoincrement id because the two are
@@ -58,7 +62,9 @@ type entry struct {
 type sessionRow struct {
 	bun.BaseModel `bun:"table:agent_sessions,alias:s"`
 
-	ID        string    `bun:"id,pk"`
+	ID string `bun:"id,pk"`
+	// Gen names which generation of this id owns the session's entries.
+	Gen       string    `bun:"gen,notnull"`
 	Title     string    `bun:"title"`
 	Hidden    bool      `bun:"hidden"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
@@ -68,15 +74,28 @@ type sessionRow struct {
 // Session is a bun-backed agents.Session scoped to one session ID. Multiple
 // Sessions may share a *bun.DB with different IDs.
 type Session struct {
-	db        *bun.DB
-	sessionID string
+	db  *bun.DB
+	ref agents.SessionRef
 }
 
 // New wraps an existing *bun.DB as a Session for the given session ID. The
 // caller owns the db's lifecycle (and dialect). Use NewSQLite or NewPostgres for
 // the common cases. Call CreateSchema once before first use.
 func New(db *bun.DB, sessionID string) *Session {
-	return &Session{db: db, sessionID: sessionID}
+	return &Session{db: db, ref: agents.Direct(sessionID)}
+}
+
+// forRef is New for a repo-created session, addressed by one generation of an
+// id. Every query goes through scoped, so no path can reach another one's rows.
+func forRef(db *bun.DB, ref agents.SessionRef) *Session {
+	return &Session{db: db, ref: ref}
+}
+
+// scoped narrows a query to this session. Reads and writes both go through it,
+// which is what makes the generation part of the address rather than a field a
+// code path can forget.
+func (s *Session) scoped(q *bun.SelectQuery) *bun.SelectQuery {
+	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
 
 // NewSQLite opens a SQLite database at dsn (e.g. "file:agents.db?cache=shared",
@@ -143,7 +162,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_session").
-		Column("session_id", "seq").
+		Column("session_id", "gen", "seq").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return err
@@ -153,7 +172,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	_, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_entry_id").
-		Column("session_id", "entry_id").
+		Column("session_id", "gen", "entry_id").
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -162,7 +181,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 // Entries implements agents.SessionStorage, paginating by cursor.
 func (s *Session) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
 	var rows []entry
-	q := s.db.NewSelect().Model(&rows).Where("session_id = ?", s.sessionID)
+	q := s.scoped(s.db.NewSelect().Model(&rows))
 	if cur.AfterSeq > 0 {
 		q = q.Where("seq > ?", cur.AfterSeq)
 	}
@@ -269,7 +288,7 @@ func (s *Session) applyRemoval(ctx context.Context, plan agents.Removal) (bool, 
 	won := false
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		res, derr := tx.NewDelete().Model((*entry)(nil)).
-			Where("session_id = ?", s.sessionID).
+			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
 			Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
 		if derr != nil {
 			return derr
@@ -299,7 +318,7 @@ func (s *Session) applyRemoval(ctx context.Context, plan agents.Removal) (bool, 
 			if _, uerr := tx.NewUpdate().Model((*entry)(nil)).
 				Set("parent_id = ?", e.ParentID).
 				Set("entry = ?", string(raw)).
-				Where("session_id = ?", s.sessionID).
+				Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
 				Where("entry_id = ?", id).Exec(ctx); uerr != nil {
 				return uerr
 			}
@@ -311,7 +330,8 @@ func (s *Session) applyRemoval(ctx context.Context, plan agents.Removal) (bool, 
 
 // Clear implements agents.Session, removing every entry for this session ID.
 func (s *Session) Clear(ctx context.Context) error {
-	_, err := s.db.NewDelete().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx)
+	_, err := s.db.NewDelete().Model((*entry)(nil)).
+		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx)
 	return err
 }
 
@@ -332,7 +352,8 @@ func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionE
 		return err
 	}
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewDelete().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Exec(ctx); err != nil {
+		if _, err := tx.NewDelete().Model((*entry)(nil)).
+			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
 			return err
 		}
 		if len(rows) == 0 {
@@ -355,7 +376,8 @@ func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEnt
 			return nil, fmt.Errorf("encoding session entry: %w", err)
 		}
 		rows = append(rows, entry{
-			SessionID: s.sessionID,
+			SessionID: s.ref.ID,
+			Gen:       s.ref.Gen,
 			Seq:       e.Seq,
 			EntryID:   e.ID,
 			ParentID:  e.ParentID,
@@ -373,8 +395,7 @@ func (s *Session) encodeEntries(ctx context.Context, entries []agents.SessionEnt
 // same thing would make every append cost a full read.
 func (s *Session) appendPoint(ctx context.Context) (agents.AppendPoint, error) {
 	var row entry
-	err := s.db.NewSelect().Model(&row).
-		Where("session_id = ?", s.sessionID).
+	err := s.scoped(s.db.NewSelect().Model(&row)).
 		Order("seq DESC").Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agents.AppendPoint{}, nil
@@ -413,14 +434,15 @@ var (
 // Metadata implements agents.SessionStorage. It counts rather than loading, and
 // merges in the session row when one exists (a session created through a repo).
 func (s *Session) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
-	n, err := s.db.NewSelect().Model((*entry)(nil)).Where("session_id = ?", s.sessionID).Count(ctx)
+	n, err := s.scoped(s.db.NewSelect().Model((*entry)(nil))).Count(ctx)
 	if err != nil {
 		return agents.SessionMetadata{}, err
 	}
-	md := agents.SessionMetadata{ID: s.sessionID, EntryCount: n}
+	md := agents.SessionMetadata{ID: s.ref.ID, EntryCount: n}
 
 	var row sessionRow
-	err = s.db.NewSelect().Model(&row).Where("id = ?", s.sessionID).Limit(1).Scan(ctx)
+	err = s.db.NewSelect().Model(&row).
+		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Limit(1).Scan(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		// A session used directly, without a repo: entries are all there is.
@@ -437,8 +459,7 @@ func (s *Session) Metadata(ctx context.Context) (agents.SessionMetadata, error) 
 // scan of the session.
 func (s *Session) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
 	var row entry
-	err := s.db.NewSelect().Model(&row).
-		Where("session_id = ?", s.sessionID).
+	err := s.scoped(s.db.NewSelect().Model(&row)).
 		Where("entry_id = ?", id).
 		Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
