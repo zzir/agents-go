@@ -161,10 +161,16 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 // no migration from agent_messages, and none for the indexes turning unique.
 // This project does not ship migrations — rebuild the database.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
-	for _, model := range []any{(*entry)(nil), (*sessionRow)(nil)} {
-		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
-			return err
-		}
+	// The task table comes with it: Repo.Delete cascades task rows, so a
+	// database created by this call alone must have somewhere for that delete
+	// to look. CreateTaskSchema in turn creates the session table it resolves
+	// generations against, so either entry point leaves a consistent schema
+	// and calling both changes nothing (every creation is IfNotExists).
+	if err := CreateTaskSchema(ctx, db); err != nil {
+		return err
+	}
+	if _, err := db.NewCreateTable().Model((*entry)(nil)).IfNotExists().Exec(ctx); err != nil {
+		return err
 	}
 	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).

@@ -21,10 +21,24 @@ type taskRow struct {
 	Label string `bun:"label"`
 
 	ParentSessionID string `bun:"parent_session_id,notnull"`
-	ParentRunID     string `bun:"parent_run_id"`
-	ToolCallID      string `bun:"tool_call_id"`
-	ChildSessionID  string `bun:"child_session_id,notnull"`
-	Depth           int    `bun:"depth,notnull"`
+	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
+	// this row names (agents.SessionRef). A session id names a session, not a
+	// place: deleting an id and creating it again yields a different session,
+	// and a task row that matched on the id alone attached itself to the
+	// replacement — listing a dead incarnation's tasks under the new one and
+	// owing its wake-ups to a conversation that never spawned them.
+	//
+	// The store fills them from agent_sessions at insert and every read
+	// compares them against the generation that answers to the id NOW (see
+	// liveParent / liveChild), so a stale row is inert rather than wrong. The
+	// tasks API keeps addressing sessions by id — that is the host's
+	// vocabulary — and this column is what makes an id-keyed query safe.
+	ParentSessionGen string `bun:"parent_session_gen"`
+	ParentRunID      string `bun:"parent_run_id"`
+	ToolCallID       string `bun:"tool_call_id"`
+	ChildSessionID   string `bun:"child_session_id,notnull"`
+	ChildSessionGen  string `bun:"child_session_gen"`
+	Depth            int    `bun:"depth,notnull"`
 
 	Inherit string `bun:"inherit"`
 
@@ -96,15 +110,25 @@ type TaskStore struct {
 func NewTaskStore(db *bun.DB) *TaskStore { return &TaskStore{db: db} }
 
 // CreateTaskSchema creates the task table and its indexes.
+//
+// It also ensures the session table exists, because a task row names sessions
+// by (id, generation) and every read resolves the generation against it — a
+// task store built without it would fail at the first query rather than at
+// setup, depending on the order the two schema calls happened to be made in.
+// Both creations are IfNotExists, so calling this and CreateSchema in either
+// order (or both) is the same.
 func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
+	if _, err := db.NewCreateTable().Model((*sessionRow)(nil)).IfNotExists().Exec(ctx); err != nil {
+		return err
+	}
 	if _, err := db.NewCreateTable().Model((*taskRow)(nil)).IfNotExists().Exec(ctx); err != nil {
 		return err
 	}
 	// Listing a parent's tasks and finding a task by its child session are the
 	// two lookups on every run boundary; without these they are table scans.
 	for name, cols := range map[string][]string{
-		"idx_agent_tasks_parent": {"parent_session_id"},
-		"idx_agent_tasks_child":  {"child_session_id"},
+		"idx_agent_tasks_parent": {"parent_session_id", "parent_session_gen"},
+		"idx_agent_tasks_child":  {"child_session_id", "child_session_gen"},
 		"idx_agent_tasks_notify": {"notify_state"},
 	} {
 		if _, err := db.NewCreateIndex().Model((*taskRow)(nil)).
@@ -118,11 +142,36 @@ func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
 // terminalSet is the SQL fragment matching terminal statuses.
 const terminalSet = "('completed', 'failed', 'cancelled')"
 
+// liveParent and liveChild scope a task row to the session GENERATION that
+// answers to its session id right now. A row whose session was deleted — and
+// whose id may since belong to a different session — matches neither, so it
+// lists nowhere, owes no wake-up and resolves no run.
+//
+// COALESCE covers a session with no row at all: sessions.New(db, id) is the
+// direct scope, which has no agent_sessions entry, and its tasks store the
+// empty generation for the same reason its entries do.
+const (
+	liveParent = `t.parent_session_gen = COALESCE(` +
+		`(SELECT s.gen FROM agent_sessions AS s WHERE s.id = t.parent_session_id), '')`
+	liveChild = `t.child_session_gen = COALESCE(` +
+		`(SELECT s.gen FROM agent_sessions AS s WHERE s.id = t.child_session_id), '')`
+	// genOf reads the generation currently answering to a session id, for
+	// binding a row at insert. Same shape as above, as a value expression.
+	genOf = `COALESCE((SELECT s.gen FROM agent_sessions AS s WHERE s.id = ?), '')`
+)
+
 // Create implements tasks.Store.
 func (s *TaskStore) Create(ctx context.Context, t *tasks.Task) error {
 	now := time.Now().UTC()
 	t.CreatedAt, t.UpdatedAt = now, now
-	if _, err := s.db.NewInsert().Model(rowFrom(t)).Exec(ctx); err != nil {
+	// The generations are read and the row written in ONE statement: resolving
+	// them first and inserting after leaves a window where the session is
+	// deleted in between, and the row would bind to a generation that no
+	// longer exists while claiming to be current.
+	if _, err := s.db.NewInsert().Model(rowFrom(t)).
+		Value("parent_session_gen", genOf, t.ParentSessionID).
+		Value("child_session_gen", genOf, t.ChildSessionID).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("creating task %q: %w", t.ID, err)
 	}
 	return nil
@@ -144,7 +193,8 @@ func (s *TaskStore) Get(ctx context.Context, id string) (*tasks.Task, error) {
 // ByChildSession implements tasks.Store.
 func (s *TaskStore) ByChildSession(ctx context.Context, sessionID string) (*tasks.Task, error) {
 	row := new(taskRow)
-	if err := s.db.NewSelect().Model(row).Where("child_session_id = ?", sessionID).Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(row).
+		Where("child_session_id = ?", sessionID).Where(liveChild).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, tasks.ErrNotFound
 		}
@@ -157,7 +207,8 @@ func (s *TaskStore) ByChildSession(ctx context.Context, sessionID string) (*task
 // ListByParent implements tasks.Store, newest first.
 func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
 	return s.query(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
-		return q.Where("parent_session_id = ?", parentSessionID).OrderExpr("created_at DESC")
+		return q.Where("parent_session_id = ?", parentSessionID).Where(liveParent).
+			OrderExpr("created_at DESC")
 	})
 }
 
@@ -165,7 +216,7 @@ func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([
 // lists them in the order they finished.
 func (s *TaskStore) ListPendingNotify(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
 	return s.query(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
-		return q.Where("parent_session_id = ?", parentSessionID).
+		return q.Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 			Where("notify_state = ?", string(tasks.NotifyPending)).
 			OrderExpr("updated_at ASC")
 	})
@@ -174,7 +225,7 @@ func (s *TaskStore) ListPendingNotify(ctx context.Context, parentSessionID strin
 // ListNonTerminal implements tasks.Store.
 func (s *TaskStore) ListNonTerminal(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
 	return s.query(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
-		return q.Where("parent_session_id = ?", parentSessionID).
+		return q.Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 			Where("status NOT IN " + terminalSet)
 	})
 }
@@ -292,6 +343,7 @@ func (s *TaskStore) PendingNotifyParents(ctx context.Context) ([]string, error) 
 	if err := s.db.NewSelect().Model((*taskRow)(nil)).
 		ColumnExpr("DISTINCT parent_session_id").
 		Where("notify_state = ?", string(tasks.NotifyPending)).
+		Where(liveParent).
 		Scan(ctx, &ids); err != nil {
 		return nil, fmt.Errorf("listing notify-pending parents: %w", err)
 	}

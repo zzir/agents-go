@@ -46,11 +46,20 @@ type Task struct {
 	// model does not lock the two together.
 	RunID           string `bun:"run_id"               json:"run_id,omitempty"`
 	ParentSessionID string `bun:"parent_session_id,notnull" json:"parent_session_id"`
-	ParentRunID     string `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
-	ToolCallID      string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
-	Label           string `bun:"label"                json:"label,omitempty"`
-	AgentConfigID   string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
-	ChildSessionID  string `bun:"child_session_id,notnull" json:"child_session_id"`
+	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
+	// this row names (agents.SessionRef). A session id names a session, not a
+	// place, so a row matched on the id alone attaches itself to a replacement
+	// created under the same name — listing a dead incarnation's tasks under
+	// the new one and owing it wake-ups it never asked for. The store binds
+	// them at insert and every by-session read compares them against the
+	// generation answering to that id now (see liveParent / liveChild).
+	ParentSessionGen string `bun:"parent_session_gen" json:"-"`
+	ParentRunID      string `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
+	ToolCallID       string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
+	Label            string `bun:"label"                json:"label,omitempty"`
+	AgentConfigID    string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
+	ChildSessionID   string `bun:"child_session_id,notnull" json:"child_session_id"`
+	ChildSessionGen  string `bun:"child_session_gen"        json:"-"`
 	// ParentAgentConfigID / ParentSandboxID snapshot the spawning run's
 	// configuration so the completion notification can start a parent run with
 	// the same setup.

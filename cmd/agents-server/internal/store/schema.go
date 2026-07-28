@@ -67,11 +67,13 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		return fmt.Errorf("creating trace_events session index: %w", err)
 	}
 	// Task lookups run per chat turn (list by parent) and on every run start
-	// (taskMeta by child session) — index both edges.
+	// (taskMeta by child session) — index both edges. The generation is part
+	// of each key because it is part of every one of those lookups: a task row
+	// belongs to one generation of a session id, not to the id.
 	if _, err := db.NewCreateIndex().
 		Model((*Task)(nil)).
 		Index("idx_tasks_parent_session_id").
-		Column("parent_session_id").
+		Column("parent_session_id", "parent_session_gen").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating tasks parent index: %w", err)
@@ -79,7 +81,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateIndex().
 		Model((*Task)(nil)).
 		Index("idx_tasks_child_session_id").
-		Column("child_session_id").
+		Column("child_session_id", "child_session_gen").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating tasks child index: %w", err)

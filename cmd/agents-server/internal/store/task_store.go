@@ -20,12 +20,35 @@ type TaskStore struct {
 // NewTaskStore returns a store backed by db.
 func NewTaskStore(db *bun.DB) *TaskStore { return &TaskStore{db: db} }
 
+// liveParent and liveChild scope a task row to the session GENERATION that
+// answers to its session id right now. A row whose session was deleted — and
+// whose id may since belong to a different session — matches neither, so it
+// lists nowhere, owes no wake-up and resolves no run. COALESCE covers a
+// session row that is gone entirely, which reads as the empty generation and
+// therefore matches nothing a live session bound.
+const (
+	liveParent = `t.parent_session_gen = COALESCE(` +
+		`(SELECT s.gen FROM sessions AS s WHERE s.id = t.parent_session_id), '')`
+	liveChild = `t.child_session_gen = COALESCE(` +
+		`(SELECT s.gen FROM sessions AS s WHERE s.id = t.child_session_id), '')`
+	// genOf reads the generation currently answering to a session id, for
+	// binding a row at insert.
+	genOf = `COALESCE((SELECT s.gen FROM sessions AS s WHERE s.id = ?), '')`
+)
+
 // Create inserts the task row (status should be protocol.TaskWorking).
 func (s *TaskStore) Create(ctx context.Context, t *Task) error {
 	now := time.Now().UTC()
 	t.CreatedAt = now
 	t.UpdatedAt = now
-	if _, err := s.db.NewInsert().Model(t).Exec(ctx); err != nil {
+	// The generations are read and the row written in ONE statement: resolving
+	// them first and inserting after leaves a window where the session is
+	// deleted in between, and the row would bind to a generation that is
+	// already gone while claiming to be current.
+	if _, err := s.db.NewInsert().Model(t).
+		Value("parent_session_gen", genOf, t.ParentSessionID).
+		Value("child_session_gen", genOf, t.ChildSessionID).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("creating task: %w", err)
 	}
 	return nil
@@ -48,7 +71,7 @@ func (s *TaskStore) Get(ctx context.Context, id string) (*Task, error) {
 func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([]Task, error) {
 	var tasks []Task
 	if err := s.db.NewSelect().Model(&tasks).
-		Where("parent_session_id = ?", parentSessionID).
+		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 		OrderExpr("created_at DESC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing tasks for session %s: %w", parentSessionID, err)
@@ -170,7 +193,7 @@ func (s *TaskStore) MarkNotifyDelivered(ctx context.Context, id string) error {
 func (s *TaskStore) ListPendingNotify(ctx context.Context, parentSessionID string) ([]Task, error) {
 	var tasks []Task
 	if err := s.db.NewSelect().Model(&tasks).
-		Where("parent_session_id = ?", parentSessionID).
+		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 		Where("notify_state = ?", NotifyPending).
 		OrderExpr("updated_at ASC").
 		Scan(ctx); err != nil {
@@ -187,6 +210,7 @@ func (s *TaskStore) PendingNotifyParents(ctx context.Context) ([]string, error) 
 	if err := s.db.NewSelect().Model((*Task)(nil)).
 		ColumnExpr("DISTINCT parent_session_id").
 		Where("notify_state = ?", NotifyPending).
+		Where(liveParent).
 		Scan(ctx, &ids); err != nil {
 		return nil, fmt.Errorf("listing notify-pending parents: %w", err)
 	}
@@ -240,7 +264,8 @@ func (s *TaskStore) FailOrphans(ctx context.Context) (int64, error) {
 // ErrNotFound.
 func (s *TaskStore) ByChildSession(ctx context.Context, childSessionID string) (*Task, error) {
 	t := new(Task)
-	if err := s.db.NewSelect().Model(t).Where("child_session_id = ?", childSessionID).Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(t).
+		Where("child_session_id = ?", childSessionID).Where(liveChild).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = ErrNotFound
 		}

@@ -113,8 +113,24 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 		// an empty generation — belongs to New(db, id): a session this repo
 		// never created, does not list and cannot open, so deleting it here
 		// would destroy history the caller keeps somewhere else entirely.
-		_, err := tx.NewDelete().Model((*entry)(nil)).
-			Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx)
+		if _, err := tx.NewDelete().Model((*entry)(nil)).
+			Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx); err != nil {
+			return err
+		}
+		// Task rows go with the session, in both roles. A task row outlives
+		// nothing: as a PARENT reference it owes a wake-up to a conversation
+		// that no longer exists (retried at every restart, forever), and as a
+		// CHILD reference it names a hidden transcript this delete just
+		// removed. The generation columns make a surviving row inert; the
+		// cascade is what stops it surviving at all.
+		//
+		// Deleting by id rather than by (id, gen) is deliberate here: the
+		// session row is already gone, so every generation of this id is
+		// unreachable — including one an older incarnation left behind.
+		_, err := tx.NewDelete().Model((*taskRow)(nil)).
+			Where("parent_session_id = ?", id).
+			WhereOr("child_session_id = ?", id).
+			Exec(ctx)
 		return err
 	})
 }

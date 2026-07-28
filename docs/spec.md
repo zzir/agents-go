@@ -1339,6 +1339,18 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   prove it is safe" is not permission. A refused wake KEEPS the debt.
 - **A cancellation never wakes**, nor does a result the model already pulled
   with `task_status`. Both would burn a turn restating what is already known.
+- **A task row names sessions by GENERATION, not by id.** A session id names a
+  session, not a place (§2.5e2), and a task outlives the turn that spawned it
+  by design — so a row matched on the id alone attaches itself to whatever
+  session holds that name later: the replacement lists a dead incarnation's
+  tasks, is woken for results it never asked for, and the debt is retried at
+  every restart forever. A store that persists task rows binds the parent's
+  and the child's generation when it writes one, and every by-session read
+  compares them against the generation answering to that id NOW. **A store
+  that owns both tables also deletes task rows with the session**, in both
+  roles: the generation makes a surviving row inert, the cascade is what stops
+  it surviving. *Per backend, because only a backend that holds both can
+  answer it; an in-process store has no incarnations to confuse.*
 - **A notification line is machine-readable, and its fields come from
   untrusted text.** A label and a result are model output; formatting escapes
   the line delimiter AND the field delimiter, because the line pattern's own
