@@ -41,9 +41,9 @@ func DefaultNotifyFormatter(ts []Task) string {
 	lines := make([]string, 0, len(ts))
 	for i := range ts {
 		t := &ts[i]
-		line := fmt.Sprintf("Task %q (%s) %s.", t.Label, t.ID, t.Status)
+		line := fmt.Sprintf("Task %q (%s) %s.", notifyEscape(t.Label), t.ID, t.Status)
 		if t.Summary != "" {
-			line += " Result: " + t.Summary
+			line += " Result: " + notifyEscape(t.Summary)
 			if len(t.Result) > len(t.Summary) {
 				line += fmt.Sprintf(" [truncated — call task_status(%s) for the full result]", t.ID)
 			}
@@ -51,6 +51,17 @@ func DefaultNotifyFormatter(ts []Task) string {
 		lines = append(lines, line)
 	}
 	return NotificationPrefix + strings.Join(lines, "\n")
+}
+
+// notifyEscape flattens text onto the single line the wire format is: one
+// task, one line. A label and a summary are model output — untrusted — and an
+// embedded newline would let them mint LINES of their own: a multi-line
+// result parses back as its first line plus garbage, and a crafted result
+// containing "Task \"x\" (id) completed." forges a whole notification card
+// for a task the sender does not own.
+func notifyEscape(s string) string {
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.ReplaceAll(s, "\n", " ")
 }
 
 // notifyLine matches a line produced by DefaultNotifyFormatter.

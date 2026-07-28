@@ -85,7 +85,10 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []agents.Tool {
 		"Check a background task started with spawn_task. Statuses: working, input_required (waiting for a human approval), completed, failed, cancelled. "+
 			"For finished tasks the result field carries the FULL final output — the wake-up notification only shows a truncated summary. "+
 			"Set wait_seconds for one bounded wait instead of calling this in a loop.",
-		func(ctx context.Context, _ *agents.ToolContext, args statusArgs) (agents.ToolResult, error) {
+		func(ctx context.Context, tc *agents.ToolContext, args statusArgs) (agents.ToolResult, error) {
+			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
+				return agents.ToolResult{}, err
+			}
 			info, err := m.Status(ctx, args.TaskID, time.Duration(args.WaitSeconds)*time.Second)
 			if err != nil {
 				return agents.ToolResult{}, err
@@ -95,7 +98,10 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []agents.Tool {
 
 	stop := agents.NewFunctionTool("task_stop",
 		"Stop a background task started with spawn_task.",
-		func(ctx context.Context, _ *agents.ToolContext, args stopArgs) (agents.ToolResult, error) {
+		func(ctx context.Context, tc *agents.ToolContext, args stopArgs) (agents.ToolResult, error) {
+			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
+				return agents.ToolResult{}, err
+			}
 			info, err := m.Stop(ctx, args.TaskID, args.Graceful)
 			if err != nil {
 				// A stop of something already finished is news, not a failure:

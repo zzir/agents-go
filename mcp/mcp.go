@@ -317,18 +317,32 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	// same-session caller. Two callers racing a cold cache may each issue a
 	// ListTools request; that duplicate work is acceptable and preferable to
 	// holding the lock across a blocking network call.
-	var res *mcpsdk.ListToolsResult
+	// Every page, not just the first: tools/list paginates via nextCursor, and
+	// a server past page one would otherwise have those tools silently missing
+	// — no error, no log, just "no such tool" when the model calls one — and,
+	// with CacheToolsList, the truncated list cached as if it were complete.
+	var tools []*mcpsdk.Tool
 	err := s.runWithRetries(ctx, func() error {
-		var e error
-		res, e = s.session.ListTools(ctx, nil)
-		return e
+		tools = tools[:0]
+		var params *mcpsdk.ListToolsParams
+		for {
+			res, e := s.session.ListTools(ctx, params)
+			if e != nil {
+				return e
+			}
+			tools = append(tools, res.Tools...)
+			if res.NextCursor == "" {
+				return nil
+			}
+			params = &mcpsdk.ListToolsParams{Cursor: res.NextCursor}
+		}
 	})
 	if err != nil {
 		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err))
 	}
-	names := s.exposedNames(res.Tools)
-	list := make([]cachedTool, 0, len(res.Tools))
-	for i, mt := range res.Tools {
+	names := s.exposedNames(tools)
+	list := make([]cachedTool, 0, len(tools))
+	for i, mt := range tools {
 		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt, names[i])})
 	}
 	if s.opts.CacheToolsList {

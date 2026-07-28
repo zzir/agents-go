@@ -486,6 +486,26 @@ type RunOutcome struct {
 	GracefulStop bool
 }
 
+// ownedBy verifies taskID belongs to parentSessionID. A task id that leaked
+// into another conversation must read as nonexistent there, not as a handle:
+// spawn already refuses to act on a model-supplied session id for exactly this
+// reason, and status/stop are the same boundary — a foreign task_status
+// consumes the rightful parent's wake-up debt, and a foreign task_stop cancels
+// work the caller does not own.
+func (m *Manager) ownedBy(ctx context.Context, parentSessionID, taskID string) error {
+	if parentSessionID == "" {
+		return fmt.Errorf("task tools: no session in the run context")
+	}
+	t, err := m.cfg.Store.Get(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if t == nil || t.ParentSessionID != parentSessionID {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // OnRunFinished is the single entry point for advancing task state. A host
 // calls it when any run ends.
 //
@@ -494,9 +514,20 @@ type RunOutcome struct {
 // where they can finally be paid.
 func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOutcome) {
 	task, err := m.cfg.Store.ByChildSession(ctx, sessionID)
-	if err != nil || task == nil {
+	switch {
+	case errors.Is(err, ErrNotFound) || (err == nil && task == nil):
 		// Not a task session: it may be a parent that was too busy to be woken.
 		m.DrainPending(ctx, sessionID)
+		return
+	case err != nil:
+		// A failure to LOOK is not "not a task session". Proceeding as if it
+		// were silently drops the terminal state on the floor: the task stays
+		// working forever, its concurrency slot held, its parent never woken —
+		// until a restart's FailOrphans declares it dead. The check that
+		// cannot be made refuses loudly instead; FailOrphans remains the
+		// recovery of record.
+		m.log.ErrorContext(ctx, "resolving finished run's task; terminal state NOT recorded",
+			slog.String("session_id", sessionID), slog.String("error", err.Error()))
 		return
 	}
 
