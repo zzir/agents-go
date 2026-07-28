@@ -68,13 +68,9 @@ func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntr
 	}
 	// Walk the active branch, not the append order: an abandoned attempt is
 	// still recorded, and sending it would show the model a conversation that
-	// contradicts itself.
-	path := PathToLeaf(all, LeafOf(all))
-	if len(path) == 0 {
-		// No parent links yet (a session written before branching, or one
-		// whose entries carry none): fall back to append order.
-		path = all
-	}
+	// contradicts itself. A flat, linkless history reads whole — see
+	// activeBranchOf.
+	path := activeBranchOf(all)
 	if folded := FoldedEntryIDs(path); len(folded) > 0 {
 		kept := make([]SessionEntry, 0, len(path))
 		for _, e := range path {
@@ -123,8 +119,13 @@ func (s *Session) Entry(ctx context.Context, id string) (*SessionEntry, error) {
 
 // State folds the session's entries into the state they imply — the last agent,
 // the last response id, tool calls still awaiting outputs.
+//
+// It folds the ACTIVE BRANCH (the same view RecoverSession reads), not append
+// order: a dangling call on an abandoned attempt is not pending — the user
+// branched away from it, and no resume can ever clear it — yet folding every
+// branch reported it forever, a stuck approval no action could dismiss.
 func (s *Session) State(ctx context.Context) (DerivedState, error) {
-	entries, err := s.storage.Entries(ctx, Cursor{})
+	entries, err := s.ContextEntries(ctx, Cursor{})
 	if err != nil {
 		return DerivedState{}, err
 	}

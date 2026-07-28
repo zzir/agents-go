@@ -3,6 +3,7 @@ package agents
 import (
 	"cmp"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -59,6 +60,19 @@ func SeqFor(at AppendPoint) int64 {
 	return max(nowNanos(), at.LastSeq+1)
 }
 
+// seqOfEntryID reads the sequence claim out of a minted-form id ("e<seq>"),
+// reporting false for ids of any other shape.
+func seqOfEntryID(id string) (int64, bool) {
+	if len(id) < 2 || id[0] != 'e' {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(id[1:], 10, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // EntryIDFor returns the id of the entry at sequence number seq.
 //
 // The id is derived from the sequence number rather than minted separately
@@ -83,6 +97,17 @@ func EntryIDFor(seq int64) string { return fmt.Sprintf("e%d", seq) }
 // gets a fresh sequence number, which is strictly greater than anything issued
 // before, so no cursor can skip what a rewrite produced.
 func PrepareAppend(entries []SessionEntry, at AppendPoint) []SessionEntry {
+	// Imported entries keep their ids — a fork carries identity — and an id
+	// of the minted form e<seq> is a claim on that sequence position. Those
+	// claims join the floor: a destination whose clock trails the source's
+	// would otherwise walk through the imported range later and mint an id a
+	// preserved entry already answers to (spec §2.5e2: never handed out
+	// twice).
+	for _, e := range entries {
+		if n, ok := seqOfEntryID(e.ID); ok && n > at.LastSeq {
+			at.LastSeq = n
+		}
+	}
 	seq := SeqFor(at)
 	out := make([]SessionEntry, 0, len(entries))
 	parent := at.Leaf

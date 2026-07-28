@@ -64,6 +64,27 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 	return out
 }
 
+// activeBranchOf returns the entries a branch-scoped view should read:
+// PathToLeaf's walk, with the flat history handled. Entries carrying no tree
+// links at all — no parent ids, no leaf moves — are one straight line (a
+// session written before branching existed, or a server-held store that has
+// no tree), and walking them as a tree would read only the last entry: every
+// parent link is empty, so the walk stops after one step. The whole list IS
+// that session's branch.
+//
+// When links exist and the walk still comes back empty — a leaf move whose
+// target is gone — the active branch genuinely points at nothing, and empty
+// is the honest answer: falling back to append order here is how abandoned
+// attempts once leaked into the model's view.
+func activeBranchOf(entries []SessionEntry) []SessionEntry {
+	for _, e := range entries {
+		if e.ParentID != "" || e.Kind == EntryKindLeaf {
+			return PathToLeaf(entries, LeafOf(entries))
+		}
+	}
+	return entries
+}
+
 // Leaf returns the id of the session's active branch tip.
 func (s *Session) Leaf(ctx context.Context) (string, error) {
 	entries, err := s.storage.Entries(ctx, Cursor{})
@@ -86,6 +107,12 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 	if target == nil {
 		return newUserError("branch: no entry %q in this session", entryID)
 	}
+	if target.Kind == EntryKindLeaf {
+		// A leaf move is a pointer, not a place: the walk excludes it from the
+		// tree, so a branch "to" one resolves the tip to an id that is not a
+		// node and the session reads as having no active branch.
+		return newUserError("branch: entry %q is a branch move, not an entry to branch to", entryID)
+	}
 	leaf, err := NewLeafEntry(entryID)
 	if err != nil {
 		return err
@@ -93,15 +120,12 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 	return s.storage.Append(ctx, leaf)
 }
 
-// PathEntries returns the entries on the active branch, oldest-first.
+// PathEntries returns the entries on the active branch, oldest-first. A flat,
+// linkless history is one branch and reads whole (see activeBranchOf).
 func (s *Session) PathEntries(ctx context.Context) ([]SessionEntry, error) {
 	entries, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err
 	}
-	leaf := LeafOf(entries)
-	if leaf == "" {
-		return nil, nil
-	}
-	return PathToLeaf(entries, leaf), nil
+	return activeBranchOf(entries), nil
 }

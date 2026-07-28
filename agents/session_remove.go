@@ -69,11 +69,9 @@ func popTarget(entries []SessionEntry, mode PopMode) (SessionEntry, bool) {
 	}
 	// The newest item ON THE ACTIVE BRANCH. Append order would reach an item on
 	// an abandoned attempt, which is not what anyone means by "my last
-	// message": that attempt is already off the path.
-	path := PathToLeaf(entries, LeafOf(entries))
-	if len(path) == 0 {
-		path = entries
-	}
+	// message": that attempt is already off the path. A flat, linkless history
+	// reads whole — see activeBranchOf.
+	path := activeBranchOf(entries)
 	// An entry a checkpoint folded away is skipped like a banner: it is not
 	// part of the conversation as the model sees it, so it is not "my last
 	// message" either. The items a pass KEPT remain reachable — they are on
@@ -98,8 +96,16 @@ func planRemoval(entries []SessionEntry, target SessionEntry) Removal {
 		switch {
 		case e.Kind == EntryKindLeaf:
 			// A branch pointer at what is going: move it to where the branch
-			// was before, which is what the tip becomes anyway.
+			// was before, which is what the tip becomes anyway. When the
+			// target was a root there is nothing to re-point at — a leaf move
+			// to "" is a branch pointer at nothing, and a session left in that
+			// state reads as having no active branch at all — so the pointer
+			// goes with its target instead.
 			if p, err := e.LeafPayload(); err == nil && p.TargetID == target.ID {
+				if target.ParentID == "" {
+					r.Delete = append(r.Delete, e.ID)
+					continue
+				}
 				if r.Relink == nil {
 					r.Relink = map[string]string{}
 				}
