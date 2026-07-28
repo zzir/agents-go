@@ -17,7 +17,7 @@
 // which catches the failure mode that actually happens — a symbol is renamed
 // or removed and the prose keeps the old one.
 //
-// Three checks:
+// Four checks:
 //
 //   - A qualified reference (agents.Foo, tracing.Bar) whose package is one of
 //     ours must name something that package exports.
@@ -28,6 +28,10 @@
 //     package (or the qualified package) exports. The facade is the godoc a
 //     reader sees first, and nothing else compiles it — it kept linking
 //     [RunStreamed] and [InMemorySession] long after both were gone.
+//   - A markdown link must land: a relative target names a file that exists,
+//     and a #fragment — same-file or cross-file — names a heading in the file
+//     it points into. Renaming a heading keeps every inbound link reading
+//     fine as prose while it scrolls to nowhere.
 //
 // The second check covers less than "every method call" but reports no false
 // positives, which matters more: a check that cries wolf about errgroup.Go
@@ -84,6 +88,14 @@ var (
 	// [pkg.Name]. The lowercase group is a package qualifier; only qualifiers
 	// naming one of our packages are checked.
 	docGoLink = regexp.MustCompile(`\[(?:([a-z][a-zA-Z0-9]*)\.)?([A-Z][A-Za-z0-9_]*)(?:\.([A-Z][A-Za-z0-9_]*))?\]`)
+	// An inline markdown link target. Reference-style links are not used in
+	// this repo's docs.
+	mdLink  = regexp.MustCompile(`\]\(([^)\s]+)\)`)
+	heading = regexp.MustCompile(`^#{1,6}\s+(.*?)\s*$`)
+	// Code is stripped before link scanning: Go's `m[k](arg)` — fenced or
+	// inline — reads as a markdown link otherwise, and neither renders as one.
+	fence      = regexp.MustCompile("(?s)```.*?```")
+	inlineCode = regexp.MustCompile("`[^`\n]+`")
 )
 
 // pkgInfo is what one SDK package declares, indexed for the two checks.
@@ -136,7 +148,14 @@ func main() {
 	}
 	problems = append(problems, docProblems...)
 
-	fmt.Printf("verifydocs: %d Go blocks in %d files, %d doc.go links\n", blocks, len(docs), links)
+	anchorProblems, mdLinks, aerr := checkAnchors(root, docs)
+	if aerr != nil {
+		fail(aerr)
+	}
+	problems = append(problems, anchorProblems...)
+
+	fmt.Printf("verifydocs: %d Go blocks in %d files, %d doc.go links, %d markdown links\n",
+		blocks, len(docs), links, mdLinks)
 	if len(problems) == 0 {
 		fmt.Println("verifydocs: OK")
 		return
@@ -203,6 +222,92 @@ func checkBlock(file, block string, pkgs map[string]*pkgInfo) []string {
 		}
 	}
 	return out
+}
+
+// checkAnchors verifies that markdown links land: a relative target must name
+// a file that exists, and a #fragment — same-file or cross-file — must name a
+// heading in the file it points into. External URLs (a scheme) are left alone.
+func checkAnchors(root string, files []string) (problems []string, count int, err error) {
+	slugCache := map[string]map[string]bool{}
+	load := func(path string) (map[string]bool, error) {
+		if s, ok := slugCache[path]; ok {
+			return s, nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		s := map[string]bool{}
+		seen := map[string]int{}
+		for line := range strings.SplitSeq(string(src), "\n") {
+			m := heading.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			slug := slugify(m[1])
+			// GitHub disambiguates repeated headings with -1, -2, …
+			if n := seen[slug]; n > 0 {
+				s[fmt.Sprintf("%s-%d", slug, n)] = true
+			} else {
+				s[slug] = true
+			}
+			seen[slug]++
+		}
+		slugCache[path] = s
+		return s, nil
+	}
+	for _, path := range files {
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil, 0, rerr
+		}
+		rel, _ := filepath.Rel(root, path)
+		prose := inlineCode.ReplaceAllString(fence.ReplaceAllString(string(src), ""), "")
+		for _, m := range mdLink.FindAllStringSubmatch(prose, -1) {
+			target := m[1]
+			if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+				continue
+			}
+			count++
+			file, frag, hasFrag := strings.Cut(target, "#")
+			dest, label := path, "this file"
+			if file != "" {
+				label = file
+				dest = filepath.Join(filepath.Dir(path), file)
+				if _, serr := os.Stat(dest); serr != nil {
+					problems = append(problems, fmt.Sprintf("%s: link target %s does not exist", rel, file))
+					continue
+				}
+			}
+			if !hasFrag || frag == "" || !strings.HasSuffix(dest, ".md") {
+				continue // no fragment, or a fragment into non-markdown — not ours to judge
+			}
+			s, lerr := load(dest)
+			if lerr != nil {
+				return nil, 0, lerr
+			}
+			if !s[strings.ToLower(frag)] {
+				problems = append(problems, fmt.Sprintf("%s: anchor #%s not found in %s", rel, frag, label))
+			}
+		}
+	}
+	return problems, count, nil
+}
+
+// slugify reduces a heading to its GitHub anchor: lowercase, punctuation
+// dropped (underscores and hyphens survive), spaces to hyphens.
+func slugify(h string) string {
+	h = strings.ToLower(h)
+	var b strings.Builder
+	for _, r := range h {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
 }
 
 // checkDocGo verifies the [Symbol] doc links in each package's doc.go — the
@@ -442,6 +547,7 @@ func docFiles(root string) ([]string, error) {
 		}
 	}
 	out = append(out, filepath.Join(root, "README.md"))
+	out = append(out, filepath.Join(root, "cmd", "agents-server", "README.md"))
 	sort.Strings(out)
 	return out, nil
 }
