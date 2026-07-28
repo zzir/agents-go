@@ -803,9 +803,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// REPLACES the input rebuilds from the replacement, so the guarded
 		// call itself sees the rewritten input rather than just later turns.
 		var prevID string
+		usedOriginalInput := false
 		buildTurnInput := func() ([]TResponseInputItem, error) {
 			var in []TResponseInputItem
 			var err error
+			usedOriginalInput = false
 			switch {
 			case r.opts.Conversation.UsePreviousResponseID && previousResponseID != "":
 				in, err = itemsToInputList(generatedItems[serverItemCount:])
@@ -814,6 +816,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// The conversation already holds prior items server-side.
 				in, err = itemsToInputList(generatedItems[serverItemCount:])
 			default:
+				usedOriginalInput = true
 				in, err = buildModelInput(originalInput, generatedItems)
 			}
 			if err != nil {
@@ -888,6 +891,17 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					// replacement. Rebuild THIS turn's input from it — leaving
 					// the already-built input in place sent the original to the
 					// model while the result claimed it was replaced.
+					if !usedOriginalInput {
+						// A server-managed turn (previous_response_id / a
+						// server-held conversation) sends only a delta; the
+						// history the replacement would rewrite lives on the
+						// server and cannot be rewritten from here. Proceeding
+						// would send the original while claiming otherwise —
+						// fail instead.
+						return nil, r.fail(newUserError(
+							"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace"),
+							originalInput, generatedItems, rawResponses, currentAgent)
+					}
 					originalInput = repl
 					rebuilt, rerr := buildTurnInput()
 					if rerr != nil {
@@ -959,6 +973,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					return nil, r.fail(ferr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 				systemPrompt, modelInput = edited.Instructions, edited.Input
+				// The snapshot IS "what the model is sent this turn"
+				// (TurnSnapshot's contract); the turn hooks read it, and
+				// PrepareNextTurn may copy it forward. Leaving the pre-filter
+				// content there hands them — and the next turn — instructions
+				// and input the model never saw.
+				snapshot.Instructions, snapshot.Input = systemPrompt, modelInput
 				r.rc.setTurnInput(modelInput)
 			}
 			req := ModelRequest{
@@ -1020,6 +1040,18 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				modelCancel()
 				r.recordGuardrailResults(g.results...)
 				if repl, ok := inputReplacement(g.results); ok {
+					if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
+						// "Applies from the next turn on" is impossible here:
+						// server-managed turns send only deltas and never
+						// rebuild from the input, so the replacement would
+						// apply to NOTHING while the result claimed
+						// otherwise. Fail rather than pretend.
+						modelCancel()
+						span.Finish()
+						return nil, r.fail(newUserError(
+							"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace"),
+							originalInput, generatedItems, rawResponses, currentAgent)
+					}
 					// Too late for the call it raced; later turns and the
 					// result see the replacement.
 					originalInput = repl

@@ -380,7 +380,11 @@ Capabilities a store may or may not have are **optional interfaces**, not
 required methods: `AtomicReplacer`, `EntryPopper`, `CompactionAware`. Popping in
 particular is not in `SessionStorage` because a run never pops; requiring it
 would tax stores that cannot (a server-managed conversation) for a feature the
-run loop does not use.
+run loop does not use. **A wrapper that claims a capability delivers its
+contract or refuses**: delegating `AtomicReplacer` to a wrapped store without
+it must return an error before touching anything, never degrade to a
+non-atomic Clear+Append — a caller type-asserted the interface precisely to
+rule that failure mode out.
 
 ### 2.5d Sessions are trees ✅
 
@@ -758,6 +762,12 @@ that tool only.
   call it raced (the request is in flight when the verdict lands) and applies
   from the next turn on; a guardrail that must rewrite what the model sees sets
   `Blocking`.
+  **A replacement that cannot apply fails the run.** Server-managed turns
+  (`UsePreviousResponseID`, a server-held conversation) send only deltas and
+  never rebuild from the input — the history the replacement would rewrite
+  lives on the server. Proceeding would send the original while the result
+  claimed otherwise, so the run fails with a `*UserError` instead; use a
+  locally-managed session, or `Trip`.
   **Racing never de-streams the call**: in a streamed run the raced model call
   still yields raw events on the consumer's goroutine; a tripwire cancels it
   mid-stream, and events already yielded stand — the run's error says they came
@@ -1107,9 +1117,13 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   not an option the API offers: a consumer cannot distinguish a timeline missing
   content from one that never had it.
 - **Including a cursor from outside the reachable range.** Subscribing below
-  the replay window reports the evicted range as a gap; subscribing AHEAD of
-  the head (a cursor issued by a previous life of the stream, before a restart
-  renumbered it) reports a gap too — a fresh timeline must never read as the
+  the replay window reports the evicted range as a gap running forward from
+  the cursor. Subscribing AHEAD of the head — a cursor issued by a previous
+  life of the stream, before a restart renumbered it — is a **timeline
+  reset**: the gap reports `LastGood` 0 with the stale cursor as its `Dropped`
+  count, so the documented recovery (resubscribe from `LastGood`) replays the
+  new timeline from its start, and the gap's own sequence never runs backwards
+  past the deliveries that follow it. A fresh timeline must never read as the
   old one's continuation.
 - **Including when there is no next delivery.** A producer that finishes while a
   subscriber is still behind leaves drops with nothing to ride out on. Those are

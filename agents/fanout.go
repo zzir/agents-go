@@ -276,16 +276,20 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	// A cursor from OUTSIDE the stream's reachable range is a gap, and "a
 	// dropped item is always reported" applies to it exactly as to a slow
 	// consumer. Older than the replay window: the range up to the window's
-	// start was evicted and can never be delivered. Ahead of the head: this
-	// fanout did not issue that cursor (a restart recreated the stream and
-	// its numbering), and reading a fresh timeline as the old one's
-	// continuation is the silent hole GapError exists to rule out. Pre-arming
-	// the drop counter makes the next delivery carry the gap.
+	// start was evicted and can never be delivered; the gap runs forward from
+	// the cursor. Ahead of the head: this fanout did not issue that cursor (a
+	// restart recreated the stream and its numbering), so the gap is a
+	// TIMELINE RESET — LastGood drops to 0 and Dropped carries the cursor, so
+	// the consumer's documented recovery (resubscribe from LastGood) replays
+	// the new timeline from its start instead of chasing a number this stream
+	// will not reach for a long time, and the gap's own sequence never runs
+	// backwards past the deliveries that follow it.
 	if len(f.replay) > 0 && fromSeq >= 0 && fromSeq < f.replay[0].Seq-1 {
 		s.dropped = f.replay[0].Seq - 1 - fromSeq
 	}
 	if fromSeq > f.seq {
-		s.dropped++
+		s.lastGood = 0
+		s.dropped = fromSeq
 	}
 	f.subs[s.id] = s
 	f.mu.Unlock()

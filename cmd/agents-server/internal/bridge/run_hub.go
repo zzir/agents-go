@@ -243,19 +243,31 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 // an interrupted turn simply vanished from its session.
 func (h *RunHub) Shutdown(ctx context.Context) {
 	h.mu.Lock()
-	var gates []chan struct{}
+	recs := make([]*runRecord, 0, len(h.runs))
 	for _, rec := range h.runs {
-		if rec.info.Status != RunRunning {
-			continue
-		}
-		if rec.cancel != nil {
+		recs = append(recs, rec)
+	}
+	h.mu.Unlock()
+
+	// Status decides only whether to CANCEL; the wait covers every segment
+	// gate regardless. A run's status flips to terminal when its terminal
+	// EVENT publishes — before the goroutine has persisted approvals,
+	// finalized its task row and closed the gate — so waiting only on
+	// "running" records would let shutdown close the database under exactly
+	// the goroutines still writing their endings. Waiting on an
+	// already-closed gate costs nothing. Reads are under rec.mu, the lock the
+	// event path and resume mutate these fields under.
+	var gates []chan struct{}
+	for _, rec := range recs {
+		rec.mu.Lock()
+		if rec.info.Status == RunRunning && rec.cancel != nil {
 			rec.cancel()
 		}
 		if rec.done != nil {
 			gates = append(gates, rec.done)
 		}
+		rec.mu.Unlock()
 	}
-	h.mu.Unlock()
 	for _, gate := range gates {
 		select {
 		case <-gate:

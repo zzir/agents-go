@@ -64,7 +64,7 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 	return out
 }
 
-// activeBranchOf returns the entries a branch-scoped view should read:
+// ActiveBranchOf returns the entries a branch-scoped view should read:
 // PathToLeaf's walk, with the flat history handled. Entries carrying no tree
 // links at all — no parent ids, no leaf moves — are one straight line (a
 // session written before branching existed, or a server-held store that has
@@ -76,7 +76,7 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 // target is gone — the active branch genuinely points at nothing, and empty
 // is the honest answer: falling back to append order here is how abandoned
 // attempts once leaked into the model's view.
-func activeBranchOf(entries []SessionEntry) []SessionEntry {
+func ActiveBranchOf(entries []SessionEntry) []SessionEntry {
 	for _, e := range entries {
 		if e.ParentID != "" || e.Kind == EntryKindLeaf {
 			return PathToLeaf(entries, LeafOf(entries))
@@ -121,11 +121,11 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 }
 
 // PathEntries returns the entries on the active branch, oldest-first. A flat,
-// linkless history is one branch and reads whole (see activeBranchOf).
+// linkless history is one branch and reads whole (see ActiveBranchOf).
 func (s *Session) PathEntries(ctx context.Context) ([]SessionEntry, error) {
 	entries, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err
 	}
-	return activeBranchOf(entries), nil
+	return ActiveBranchOf(entries), nil
 }

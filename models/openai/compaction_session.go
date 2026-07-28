@@ -207,16 +207,26 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 	if err != nil {
 		return fmt.Errorf("compaction: encoding compacted history: %w", err)
 	}
-	// Non-item entries survive the rewrite. The projection above deliberately
+	// Display records survive the rewrite. The projection above deliberately
 	// excluded them from the compact INPUT — an annotation is not context —
 	// and the same reasoning forbids destroying them on the way out: a
 	// cancelled-run banner or a terminal record is what the projection refuses
 	// to treat as history, not something history's rewrite may delete. Their
 	// position among the summarized items is no longer meaningful, so they
 	// carry over first, in their stored order.
+	//
+	// A previous compaction CHECKPOINT does not survive: its summary already
+	// entered the compact input via the projection, so the output supersedes
+	// it — carrying it over would front the stale summary a second time on
+	// every later read, and its ExcludedIDs would name entries this rewrite
+	// deletes. (Leaf moves cannot appear here — isBranched refused them — but
+	// are excluded on the same grounds.)
 	var replacement []agents.SessionEntry
 	for _, e := range all {
-		if e.Kind != agents.EntryKindItem {
+		switch e.Kind {
+		case agents.EntryKindItem, agents.EntryKindCompaction, agents.EntryKindLeaf:
+			continue
+		default:
 			e.ID, e.ParentID, e.Seq = "", "", 0 // re-minted by the store, like the items'
 			replacement = append(replacement, e)
 		}
@@ -229,15 +239,13 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 }
 
 // isBranched reports whether the session's history is a tree rather than a
-// line: a leaf-move entry exists, or some entry is off the active path.
+// line. ActiveBranchOf is the one shared answer for what a branch view holds —
+// a linkless flat history (legacy entries, custom stores) reads WHOLE there,
+// so it is not "branched" merely because a raw tree walk of parentless entries
+// would stop at the last one. Leaf-move entries are excluded from the walk, so
+// their presence alone makes the lengths differ.
 func isBranched(entries []agents.SessionEntry) bool {
-	for _, e := range entries {
-		if e.Kind == agents.EntryKindLeaf {
-			return true
-		}
-	}
-	onPath := len(agents.PathToLeaf(entries, agents.LeafOf(entries)))
-	return onPath != 0 && onPath != len(entries)
+	return len(agents.ActiveBranchOf(entries)) != len(entries)
 }
 
 // PopEntry implements agents.EntryPopper by delegation: wrapping a session in
@@ -261,11 +269,20 @@ func (s *CompactionSession) PopItem(ctx context.Context) (*agents.SessionEntry, 
 	return p.PopItem(ctx)
 }
 
-// ReplaceEntries implements agents.AtomicReplacer by delegation, falling back
-// to Clear+Append exactly as ReplaceStorageEntries would on the unwrapped
-// store.
+// ReplaceEntries implements agents.AtomicReplacer by delegation — and only by
+// delegation: the interface PROMISES atomicity, so when the wrapped store
+// cannot give it, this refuses before touching anything rather than quietly
+// degrading to Clear+Append. A caller that type-asserted AtomicReplacer chose
+// this method precisely to avoid the failure mode where an Append error leaves
+// the history empty; handing them that failure mode anyway would make the
+// assertion a lie. (RunCompaction itself still uses ReplaceStorageEntries,
+// whose documented contract IS best-effort-with-fallback.)
 func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
-	return agents.ReplaceStorageEntries(ctx, s.underlying, entries...)
+	r, ok := s.underlying.(agents.AtomicReplacer)
+	if !ok {
+		return fmt.Errorf("session storage %T cannot replace entries atomically", s.underlying)
+	}
+	return r.ReplaceEntries(ctx, entries...)
 }
 
 // resolveCompactionMode mirrors Python's _resolve_compaction_mode: under "auto",

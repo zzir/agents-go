@@ -94,9 +94,16 @@ type codeToolArgs struct {
 // to the model as output so it can correct itself.
 func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 	cfg = cfg.withDefaults()
-	sessions := newSessionPool()
-	if cfg.RegisterCloser != nil {
-		cfg.RegisterCloser(sessions)
+	// The pool exists only when named sessions do: a tool built without
+	// Sessions never uses it, and unconditionally creating and registering one
+	// accumulated an empty pool (and a closer entry) per tool build for the
+	// life of the host.
+	var sessions *sessionPool
+	if cfg.Sessions {
+		sessions = newSessionPool()
+		if cfg.RegisterCloser != nil {
+			cfg.RegisterCloser(sessions)
+		}
 	}
 	schema, schemaErr := agents.SchemaFor[codeToolArgs](true)
 	if schemaErr != nil {

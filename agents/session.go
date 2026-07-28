@@ -70,7 +70,7 @@ func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntr
 	// still recorded, and sending it would show the model a conversation that
 	// contradicts itself. A flat, linkless history reads whole — see
 	// activeBranchOf.
-	path := activeBranchOf(all)
+	path := ActiveBranchOf(all)
 	if folded := FoldedEntryIDs(path); len(folded) > 0 {
 		kept := make([]SessionEntry, 0, len(path))
 		for _, e := range path {

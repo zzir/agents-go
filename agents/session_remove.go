@@ -70,8 +70,8 @@ func popTarget(entries []SessionEntry, mode PopMode) (SessionEntry, bool) {
 	// The newest item ON THE ACTIVE BRANCH. Append order would reach an item on
 	// an abandoned attempt, which is not what anyone means by "my last
 	// message": that attempt is already off the path. A flat, linkless history
-	// reads whole — see activeBranchOf.
-	path := activeBranchOf(entries)
+	// reads whole — see ActiveBranchOf.
+	path := ActiveBranchOf(entries)
 	// An entry a checkpoint folded away is skipped like a banner: it is not
 	// part of the conversation as the model sees it, so it is not "my last
 	// message" either. The items a pass KEPT remain reachable — they are on

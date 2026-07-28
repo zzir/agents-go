@@ -291,6 +291,10 @@ func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
 	return &clone
 }
 
+// maxToolListPages bounds a tools/list pagination walk; a server with more
+// pages than this is treated as misbehaving.
+const maxToolListPages = 1000
+
 // toolList returns the adapted tools, fetching them from the server (and caching
 // when CacheToolsList is set) or reusing the cache.
 func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
@@ -325,7 +329,14 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	err := s.runWithRetries(ctx, func() error {
 		tools = tools[:0]
 		var params *mcpsdk.ListToolsParams
-		for {
+		// A faulty (or hostile) server that repeats a cursor, or never runs
+		// out of pages, must produce a protocol error — not an unbounded loop
+		// appending the same tools until memory runs out.
+		seen := make(map[string]bool)
+		for page := 0; ; page++ {
+			if page >= maxToolListPages {
+				return fmt.Errorf("tools/list exceeded %d pages without finishing", maxToolListPages)
+			}
 			res, e := s.session.ListTools(ctx, params)
 			if e != nil {
 				return e
@@ -334,6 +345,10 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 			if res.NextCursor == "" {
 				return nil
 			}
+			if seen[res.NextCursor] {
+				return fmt.Errorf("tools/list repeated cursor %q", res.NextCursor)
+			}
+			seen[res.NextCursor] = true
 			params = &mcpsdk.ListToolsParams{Cursor: res.NextCursor}
 		}
 	})
