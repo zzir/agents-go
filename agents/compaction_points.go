@@ -214,10 +214,17 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []TResponseInp
 // implementation to invent a checkpoint would tax the simple case for the
 // benefit of the elaborate one.
 type CompactionCheckpointer interface {
-	// Checkpoint returns the entry recording what the compactor folded away.
-	// ok is false when nothing was folded, so no checkpoint is claimed for a
-	// compaction that did not happen.
-	Checkpoint() (SessionEntry, bool, error)
+	// Checkpoint returns the entry recording what the compactor folded away
+	// from exactly this context — the entries the caller's own preceding
+	// Compact call saw. ok is false when nothing was folded, and also when
+	// the compactor's state no longer describes these entries: a compactor is
+	// allowed to be shared across concurrent runs, and between one run's
+	// Compact and its Checkpoint another run's pass may have re-aimed the
+	// shared state at a different session. Writing that state here would
+	// durably record another conversation's exclusions — and content — in
+	// this one's log. A lost checkpoint merely costs the next run one more
+	// pass; a stolen one is a cross-session leak.
+	Checkpoint(compacted []SessionEntry) (SessionEntry, bool, error)
 }
 
 // checkpointAfterRun records the run's compaction as an append-only checkpoint,
@@ -245,10 +252,14 @@ func (r *runner) checkpointAfterRun(ctx context.Context) bool {
 		return false
 	}
 
-	entry, ok, err := cp.Checkpoint()
+	entry, ok, err := cp.Checkpoint(entries)
 	if err != nil || !ok {
 		if err != nil {
-			r.trace.StartCompactionSpan(r.agentParentID()).SetError(err.Error(), nil)
+			span := r.trace.StartCompactionSpan(r.agentParentID())
+			span.SetError(err.Error(), nil)
+			// Finished, or the error never leaves this process: a span is
+			// exported on Finish and an abandoned one reaches no processor.
+			span.Finish()
 		}
 		return false
 	}

@@ -78,10 +78,20 @@ var _ agents.Compactor = (*Compactor)(nil)
 // fall out of step when one of them is later removed. Only a group's
 // Replacement travels in the checkpoint (as a CompactionFold), because that
 // stand-in exists nowhere else.
-func (c *Compactor) Checkpoint() (agents.SessionEntry, bool, error) {
+func (c *Compactor) Checkpoint(compacted []agents.SessionEntry) (agents.SessionEntry, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.idx == nil {
+		return agents.SessionEntry{}, false, nil
+	}
+	// The index must still describe exactly the entries the caller's Compact
+	// saw. A Compactor may be shared across concurrent runs, and between one
+	// run's pass and its checkpoint another run's pass can have rebuilt the
+	// index over a different session — recording THAT state here would write
+	// the other conversation's exclusions and fold content into this one's
+	// log. Losing a checkpoint costs one recomputed pass; leaking one is
+	// unrecoverable.
+	if n, ok := c.idx.prefixMatches(compacted); !ok || n != len(compacted) {
 		return agents.SessionEntry{}, false, nil
 	}
 

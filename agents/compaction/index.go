@@ -47,6 +47,15 @@ func (idx *Index) Update(entries []agents.SessionEntry) {
 	if start >= len(entries) {
 		return
 	}
+	// New entries mean a model call happened since the last pass, and its
+	// usage measured the context as it then stood — without the groups already
+	// excluded. Mark those exclusions settled so ContextTokens stops
+	// subtracting what the newest measurement never counted.
+	for _, g := range idx.Groups {
+		if g.Excluded {
+			g.settled = true
+		}
+	}
 	idx.group(entries[start:])
 }
 
@@ -254,29 +263,70 @@ func (idx *Index) Counts() Counts {
 // after has to be estimated, and that is a handful of entries rather than a
 // whole conversation.
 //
+// The measurement predates THIS pass's exclusions: its InputTokens counted
+// every group in the context when the call was made, including any a strategy
+// has excluded since. Those unsettled exclusions are subtracted at their
+// estimated size (their replacement, which now stands in, added back) —
+// imprecise, but the point is movement: a number exclusion cannot lower keeps
+// every threshold trigger firing all the way to the preserve floor, and
+// Target/TokensBelow can never be reached. Exclusions from earlier passes are
+// settled by Update once a newer call has priced them in, and are not
+// subtracted twice.
+//
 // With no usable usage anywhere — a fresh session, or one whose calls all
 // failed — it falls back to estimating everything.
 func (idx *Index) ContextTokens() int {
-	entries := idx.IncludedEntries()
-
-	// Walk back to the most recent entry carrying usage. Its InputTokens
-	// already accounts for the history the model was sent, so nothing before it
-	// needs estimating.
-	for i := len(entries) - 1; i >= 0; i-- {
-		u := entries[i].Usage
-		if u == nil || u.TotalTokens == 0 {
+	// Locate the newest included entry carrying usage, and where it sits.
+	usageGroup, usageEntry := -1, -1
+	for gi := len(idx.Groups) - 1; gi >= 0 && usageGroup < 0; gi-- {
+		g := idx.Groups[gi]
+		if g.Excluded {
 			continue
 		}
-		total := int(u.InputTokens + u.OutputTokens)
-		for _, later := range entries[i+1:] {
-			total += idx.Estimator.Estimate(later)
+		for ei := len(g.Entries) - 1; ei >= 0; ei-- {
+			u := g.Entries[ei].Usage
+			if u != nil && u.TotalTokens != 0 {
+				usageGroup, usageEntry = gi, ei
+				break
+			}
+		}
+	}
+	if usageGroup < 0 {
+		total := 0
+		for _, e := range idx.IncludedEntries() {
+			total += idx.Estimator.Estimate(e)
 		}
 		return total
 	}
 
-	total := 0
-	for _, e := range entries {
+	u := idx.Groups[usageGroup].Entries[usageEntry].Usage
+	total := int(u.InputTokens + u.OutputTokens)
+	for gi := range usageGroup {
+		g := idx.Groups[gi]
+		if g.Excluded && !g.settled {
+			total -= g.Tokens
+			for _, re := range g.Replacement {
+				total += idx.Estimator.Estimate(re)
+			}
+		}
+	}
+	if total < 0 {
+		total = 0
+	}
+	// Everything after the measured entry is estimated on top of it.
+	for _, e := range idx.Groups[usageGroup].Entries[usageEntry+1:] {
 		total += idx.Estimator.Estimate(e)
+	}
+	for _, g := range idx.Groups[usageGroup+1:] {
+		if g.Excluded {
+			for _, re := range g.Replacement {
+				total += idx.Estimator.Estimate(re)
+			}
+			continue
+		}
+		for _, e := range g.Entries {
+			total += idx.Estimator.Estimate(e)
+		}
 	}
 	return total
 }

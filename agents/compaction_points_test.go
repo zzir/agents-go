@@ -203,7 +203,7 @@ func (c *checkpointingCompactor) Compact(_ context.Context, entries []SessionEnt
 	return entries[1:], nil
 }
 
-func (c *checkpointingCompactor) Checkpoint() (SessionEntry, bool, error) {
+func (c *checkpointingCompactor) Checkpoint(_ []SessionEntry) (SessionEntry, bool, error) {
 	if len(c.dropped) == 0 {
 		return SessionEntry{}, false, nil
 	}

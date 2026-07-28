@@ -72,6 +72,12 @@ type Group struct {
 	// group itself is NOT deleted: exclusion is a view, so a strategy can be
 	// re-run, undone, or explained, and the stored history stays intact.
 	Excluded bool
+	// settled marks an exclusion that a later model call has already priced
+	// in: once new entries arrive, any usage they carry measured the view
+	// WITHOUT this group, so ContextTokens must stop subtracting it. Fresh
+	// exclusions (this pass, no call since) are the ones the newest usage
+	// still counts.
+	settled bool
 	// ExcludeReason names the strategy that excluded it, for tracing and for
 	// telling a user why their history shrank.
 	ExcludeReason string
