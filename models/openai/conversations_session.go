@@ -79,15 +79,11 @@ func (s *ConversationsSession) ensureID(ctx context.Context) (string, error) {
 // Every entry is an item entry: the server holds Responses items and nothing
 // else, so nothing a run recorded outside the conversation itself comes back.
 func (s *ConversationsSession) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
-	limit := 0
+	fetch := 0
 	if cur.Limit < 0 {
-		limit = -cur.Limit
+		fetch = -cur.Limit
 	}
-	items, err := s.getItems(ctx, limit)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := agents.NewItemEntries(items, agents.Source{})
+	entries, err := s.listEntries(ctx, fetch)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +96,14 @@ func (s *ConversationsSession) Entries(ctx context.Context, cur agents.Cursor) (
 	for i := range entries {
 		entries[i].Seq = int64(i + 1)
 	}
-	return agents.PageEntries(entries, agents.Cursor{AfterSeq: cur.AfterSeq}), nil
+	page := agents.Cursor{AfterSeq: cur.AfterSeq}
+	if cur.Limit > 0 {
+		// A positive limit is part of the SessionStorage contract too; it was
+		// once silently dropped, and a pager asking for 50 got the whole
+		// conversation.
+		page.Limit = cur.Limit
+	}
+	return agents.PageEntries(entries, page), nil
 }
 
 // Metadata implements agents.SessionStorage. The server owns the conversation,
@@ -116,6 +119,9 @@ func (s *ConversationsSession) Metadata(ctx context.Context) (agents.SessionMeta
 // Entry implements agents.SessionStorage by scanning the conversation; the API
 // has no per-item fetch.
 func (s *ConversationsSession) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+	if id == "" {
+		return nil, nil
+	}
 	entries, err := s.Entries(ctx, agents.Cursor{})
 	if err != nil {
 		return nil, err
@@ -128,7 +134,12 @@ func (s *ConversationsSession) Entry(ctx context.Context, id string) (*agents.Se
 	return nil, nil
 }
 
-func (s *ConversationsSession) getItems(ctx context.Context, limit int) ([]agents.TResponseInputItem, error) {
+// listEntries reads the conversation as entries, carrying each server item's
+// ID onto the entry it becomes. The server is the id authority here — an entry
+// whose id were left blank could never be found again through Entry, and
+// "a caller that needs an entry reads its id back" (spec §2.5e2) would be
+// unsatisfiable against this store.
+func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
 	id, err := s.lockedEnsureID(ctx)
 	if err != nil {
 		return nil, err
@@ -141,15 +152,21 @@ func (s *ConversationsSession) getItems(ctx context.Context, limit int) ([]agent
 		params.Limit = oai.Int(int64(limit))
 	}
 
-	var items []agents.TResponseInputItem
+	var entries []agents.SessionEntry
 	pager := s.svc.Items.ListAutoPaging(ctx, id, params)
 	for pager.Next() {
-		item, err := conversationItemToInput(pager.Current())
+		raw := pager.Current()
+		item, err := conversationItemToInput(raw)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
-		if limit > 0 && len(items) >= limit {
+		entry, err := agents.NewItemEntry(item, agents.Source{})
+		if err != nil {
+			return nil, err
+		}
+		entry.ID = raw.ID
+		entries = append(entries, entry)
+		if limit > 0 && len(entries) >= limit {
 			break
 		}
 	}
@@ -157,9 +174,9 @@ func (s *ConversationsSession) getItems(ctx context.Context, limit int) ([]agent
 		return nil, fmt.Errorf("listing conversation items: %w", err)
 	}
 	if limit > 0 {
-		slices.Reverse(items)
+		slices.Reverse(entries)
 	}
-	return items, nil
+	return entries, nil
 }
 
 // conversationItemsBatchLimit is the Conversations API's per-request cap on
@@ -201,6 +218,11 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.TRespon
 	if len(in) == 0 {
 		return nil
 	}
+	// Serialized with PopEntry for the same reason its list+delete is: an
+	// append interleaving with a pop makes the pop remove an item that is no
+	// longer the most recent.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	sanitized := make([]agents.TResponseInputItem, 0, len(in))
 	for _, item := range in {
 		clean, keep, err := sanitizeConversationItem(item)
@@ -215,7 +237,7 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.TRespon
 	if len(sanitized) == 0 {
 		return nil
 	}
-	id, err := s.lockedEnsureID(ctx)
+	id, err := s.ensureID(ctx)
 	if err != nil {
 		return err
 	}
@@ -307,8 +329,17 @@ func isNonEmptyString(v any) bool {
 
 // PopEntry implements agents.Session: it removes and returns the most recent
 // item, or nil if the conversation is empty.
+//
+// The mutex is held across the list AND the delete: they are one removal
+// (spec §2.5e2, selecting a row and removing it), and unserialized, two
+// in-process pops both list the same newest item and one deletes what the
+// other chose — or an append lands in between and the pop removes an item
+// that is no longer the most recent. Cross-process races are inherent to the
+// server API; the ones this SDK creates itself are not.
 func (s *ConversationsSession) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
-	id, err := s.lockedEnsureID(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, err := s.ensureID(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -39,7 +39,10 @@ func TestRetryableError(t *testing.T) {
 		{"404", apiErr(http.StatusNotFound, nil), false},
 		{"wrapped-429", fmt.Errorf("call failed: %w", apiErr(http.StatusTooManyRequests, nil)), true},
 		{"context-canceled", context.Canceled, false},
-		{"context-deadline", context.DeadlineExceeded, false},
+		// A deadline is usually the ATTEMPT's (a per-request timeout) — the
+		// hung-call case retrying exists for. When the caller's own context
+		// expired, the retry loop's next wait sees ctx.Err() and stops anyway.
+		{"context-deadline", context.DeadlineExceeded, true},
 		{"net-error", fakeNetErr{}, true},
 		{"wrapped-net", fmt.Errorf("transport: %w", fakeNetErr{}), true},
 		{"plain-error", errors.New("nope"), false},

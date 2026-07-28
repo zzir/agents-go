@@ -24,8 +24,16 @@ func RetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
 		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		// A deadline is usually the ATTEMPT's (option.WithRequestTimeout, a
+		// per-call budget) — the hung-request case retrying exists for. When
+		// it is the caller's own context that expired, the retry loop's next
+		// wait sees ctx.Err() and stops anyway, so treating timeouts as
+		// non-retryable only ever threw away attempts that had budget left.
+		return true
 	}
 	var apiErr *oai.Error
 	if errors.As(err, &apiErr) {

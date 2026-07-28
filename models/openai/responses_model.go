@@ -163,6 +163,21 @@ func (m *ResponsesModel) GetResponse(ctx context.Context, req agents.ModelReques
 	if httpResp != nil {
 		requestID = httpResp.Header.Get("X-Request-Id")
 	}
+	// Terminal statuses fail here exactly as they fail the streaming path: the
+	// same response must not be a hard failure when streamed and a silent
+	// partial answer when not. Incomplete-for-length is the one recoverable
+	// case (the runner refuses its tool calls and the model resends); every
+	// other incomplete reason, and a failed response, is terminal.
+	switch resp.Status {
+	case responses.ResponseStatusFailed:
+		return nil, responseTerminalFailure("response.failed", string(resp.Status),
+			string(resp.Error.Code), resp.Error.Message, "")
+	case responses.ResponseStatusIncomplete:
+		if resp.IncompleteDetails.Reason != "max_output_tokens" {
+			return nil, responseTerminalFailure("response.incomplete", string(resp.Status),
+				"", "", resp.IncompleteDetails.Reason)
+		}
+	}
 	return &agents.ModelResponse{
 		Output:     resp.Output,
 		Usage:      usageFromResponse(usage),

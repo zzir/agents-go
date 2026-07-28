@@ -70,6 +70,9 @@ type CompactionSession struct {
 var (
 	_ agents.SessionStorage  = (*CompactionSession)(nil)
 	_ agents.CompactionAware = (*CompactionSession)(nil)
+	_ agents.EntryPopper     = (*CompactionSession)(nil)
+	_ agents.ItemPopper      = (*CompactionSession)(nil)
+	_ agents.AtomicReplacer  = (*CompactionSession)(nil)
 )
 
 // NewCompactionSession wraps underlying with automatic responses.compact
@@ -138,16 +141,26 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 // history via responses.compact when the decision hook (or args.Force) says so,
 // replacing the underlying session's items with the compacted output.
 func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.CompactionArgs) error {
-	// Server-side compaction operates on the conversation the model reads, so
-	// it starts from the projection: an annotation is not context and must not
-	// be sent to responses.compact as if it were.
-	entries, err := s.underlying.Entries(ctx, agents.Cursor{})
+	all, err := s.underlying.Entries(ctx, agents.Cursor{})
 	if err != nil {
 		return err
 	}
+	// The replacement below is a FLAT item list — a shape that cannot express
+	// a tree. A branched session (any leaf-move entry, or entries off the
+	// active path) would have its abandoned attempts summarized into the
+	// active context and then destroyed by the rewrite, so the pass skips
+	// rather than flattens. Compaction is housekeeping: skipping costs
+	// nothing but size (use run-level compaction for branching sessions).
+	if isBranched(all) {
+		return nil
+	}
 	// Server-side compaction operates on the conversation the model reads, so
-	// it starts from the projection: an annotation is not context and must not
-	// be sent to responses.compact as if it were.
+	// it starts from the branch view and its projection: an annotation is not
+	// context and must not be sent to responses.compact as if it were.
+	entries, err := agents.NewSession(s.underlying).ContextEntries(ctx, agents.Cursor{})
+	if err != nil {
+		return err
+	}
 	items, err := agents.ProjectEntries(entries, nil)
 	if err != nil {
 		return err
@@ -188,16 +201,71 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args agents.Compa
 	out = stripOrphanedAssistantIDs(out)
 	span.Set("after_items", len(out))
 
-	// ReplaceSessionEntries swaps atomically when the underlying session
+	// ReplaceStorageEntries swaps atomically when the underlying session
 	// supports it, so a failed write cannot leave the history cleared but empty.
-	replacement, err := agents.NewItemEntries(out, agents.Source{Type: agents.SourceCompaction})
+	compactedEntries, err := agents.NewItemEntries(out, agents.Source{Type: agents.SourceCompaction})
 	if err != nil {
 		return fmt.Errorf("compaction: encoding compacted history: %w", err)
 	}
+	// Non-item entries survive the rewrite. The projection above deliberately
+	// excluded them from the compact INPUT — an annotation is not context —
+	// and the same reasoning forbids destroying them on the way out: a
+	// cancelled-run banner or a terminal record is what the projection refuses
+	// to treat as history, not something history's rewrite may delete. Their
+	// position among the summarized items is no longer meaningful, so they
+	// carry over first, in their stored order.
+	var replacement []agents.SessionEntry
+	for _, e := range all {
+		if e.Kind != agents.EntryKindItem {
+			e.ID, e.ParentID, e.Seq = "", "", 0 // re-minted by the store, like the items'
+			replacement = append(replacement, e)
+		}
+	}
+	replacement = append(replacement, compactedEntries...)
 	if err := agents.ReplaceStorageEntries(ctx, s.underlying, replacement...); err != nil {
 		return fmt.Errorf("compaction: replacing history: %w", err)
 	}
 	return nil
+}
+
+// isBranched reports whether the session's history is a tree rather than a
+// line: a leaf-move entry exists, or some entry is off the active path.
+func isBranched(entries []agents.SessionEntry) bool {
+	for _, e := range entries {
+		if e.Kind == agents.EntryKindLeaf {
+			return true
+		}
+	}
+	onPath := len(agents.PathToLeaf(entries, agents.LeafOf(entries)))
+	return onPath != 0 && onPath != len(entries)
+}
+
+// PopEntry implements agents.EntryPopper by delegation: wrapping a session in
+// compaction must not take undo away from it — a capability is offered by
+// every backend that can support it (spec §2.5e2), and the wrapper can
+// whenever the wrapped store can.
+func (s *CompactionSession) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+	p, ok := s.underlying.(agents.EntryPopper)
+	if !ok {
+		return nil, fmt.Errorf("session storage %T cannot pop entries", s.underlying)
+	}
+	return p.PopEntry(ctx)
+}
+
+// PopItem implements agents.ItemPopper by delegation; see PopEntry.
+func (s *CompactionSession) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+	p, ok := s.underlying.(agents.ItemPopper)
+	if !ok {
+		return nil, fmt.Errorf("session storage %T cannot pop items", s.underlying)
+	}
+	return p.PopItem(ctx)
+}
+
+// ReplaceEntries implements agents.AtomicReplacer by delegation, falling back
+// to Clear+Append exactly as ReplaceStorageEntries would on the unwrapped
+// store.
+func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
+	return agents.ReplaceStorageEntries(ctx, s.underlying, entries...)
 }
 
 // resolveCompactionMode mirrors Python's _resolve_compaction_mode: under "auto",
