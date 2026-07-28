@@ -236,11 +236,50 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 	return h
 }
 
+// Shutdown cancels every live run and waits — bounded by ctx — for each
+// one's goroutine to finish, final persistence included. SIGTERM used to
+// close only the HTTP listener: nothing cancelled the runs, savePartialTurn
+// never happened, and db.Close() executed under still-writing goroutines, so
+// an interrupted turn simply vanished from its session.
+func (h *RunHub) Shutdown(ctx context.Context) {
+	h.mu.Lock()
+	var gates []chan struct{}
+	for _, rec := range h.runs {
+		if rec.info.Status != RunRunning {
+			continue
+		}
+		if rec.cancel != nil {
+			rec.cancel()
+		}
+		if rec.done != nil {
+			gates = append(gates, rec.done)
+		}
+	}
+	h.mu.Unlock()
+	for _, gate := range gates {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // markSessionDeleting records that sessionID's delete cascade has begun, so no
 // new run (fresh or resumed) is registered against it while it is torn down.
 func (h *RunHub) markSessionDeleting(sessionID string) {
 	h.mu.Lock()
 	h.deleting[sessionID] = true
+	h.mu.Unlock()
+}
+
+// unmarkSessionDeleting clears the mark after a delete cascade FAILED: the
+// store rolled back, the session still exists, and leaving the mark would
+// refuse every future run on it until the process restarts. (A successful
+// delete never clears it — the id is never reused.)
+func (h *RunHub) unmarkSessionDeleting(sessionID string) {
+	h.mu.Lock()
+	delete(h.deleting, sessionID)
 	h.mu.Unlock()
 }
 

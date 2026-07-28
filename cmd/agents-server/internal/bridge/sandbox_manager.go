@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/zzir/agents-go/agents"
@@ -17,6 +18,10 @@ import (
 type SandboxManager struct {
 	mu        sync.RWMutex
 	sandboxes map[string]sandbox.Sandbox
+	// closers holds each sandbox id's shell-session pools (one per CodeTool
+	// built for it), closed when the sandbox is removed — a named shell is a
+	// live PTY (or remote ssh session) and outliving its sandbox is a leak.
+	closers   map[string][]io.Closer
 	workspace string
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
@@ -78,6 +83,10 @@ func (m *SandboxManager) GetOrCreate(cfg *store.SandboxConfig) (sandbox.Sandbox,
 func (m *SandboxManager) Remove(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, c := range m.closers[id] {
+		_ = c.Close()
+	}
+	delete(m.closers, id)
 	if sb, ok := m.sandboxes[id]; ok {
 		_ = sb.Close()
 		delete(m.sandboxes, id)
@@ -88,6 +97,12 @@ func (m *SandboxManager) Remove(id string) {
 func (m *SandboxManager) CloseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for id, cs := range m.closers {
+		for _, c := range cs {
+			_ = c.Close()
+		}
+		delete(m.closers, id)
+	}
 	for id, sb := range m.sandboxes {
 		_ = sb.Close()
 		delete(m.sandboxes, id)
@@ -100,7 +115,22 @@ func (m *SandboxManager) CodeTool(cfg *store.SandboxConfig) (agents.Tool, error)
 	if err != nil {
 		return nil, err
 	}
-	return sandbox.CodeTool(sb, sandbox.CodeToolConfig{}), nil
+	return sandbox.CodeTool(sb, sandbox.CodeToolConfig{
+		RegisterCloser: m.trackCloser(cfg.ID),
+	}), nil
+}
+
+// trackCloser records a tool's shell pool under the sandbox id so Remove and
+// CloseAll release its held-open shells with the sandbox itself.
+func (m *SandboxManager) trackCloser(id string) func(io.Closer) {
+	return func(c io.Closer) {
+		m.mu.Lock()
+		if m.closers == nil {
+			m.closers = make(map[string][]io.Closer)
+		}
+		m.closers[id] = append(m.closers[id], c)
+		m.mu.Unlock()
+	}
 }
 
 // SandboxTools returns exec_command plus read_file, write_file, list_files and
@@ -114,7 +144,7 @@ func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, commandApproval 
 	if err != nil {
 		return nil, err
 	}
-	codeCfg := sandbox.CodeToolConfig{}
+	codeCfg := sandbox.CodeToolConfig{RegisterCloser: m.trackCloser(cfg.ID)}
 	if commandApproval {
 		codeCfg.NeedsApprovalFunc = m.commandGate
 	}

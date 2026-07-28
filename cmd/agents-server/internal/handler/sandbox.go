@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -238,8 +239,18 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
+	// Load the current row so masked secrets can round-trip to their stored
+	// values. A transient (non-not-found) Get failure must abort: continuing
+	// with an empty prev would resolve the ******** mask to "" and silently
+	// WIPE the stored ssh password — the same guard every sibling handler
+	// carries. Not-found falls through; the Update below returns 404 for it.
 	var prevConfig json.RawMessage
-	if prev, err := h.store.Get(ctx, id); err == nil {
+	prev, err := h.store.Get(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		internalError(c, err)
+		return
+	}
+	if prev != nil {
 		prevConfig = prev.Config
 	}
 	cfg := req.toConfig()

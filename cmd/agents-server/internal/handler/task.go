@@ -85,8 +85,18 @@ func (h *TaskHandler) ListBySession(c *gin.Context) {
 		return
 	}
 	for i := range tasks {
-		if info, ok := h.hub.Info(tasks[i].ID); ok {
-			tasks[i].Status = bridge.TaskStatusFor(info.Status)
+		// The hub tracks RUNS, so the overlay keys on the task's run id — its
+		// task id is a different namespace and never matched, leaving this
+		// overlay dead. Terminal states stay the row's: the hub finishes a run
+		// before the row lands, and "completed" in that window would show a
+		// task whose result is not readable yet.
+		if bridge.IsTerminalTaskStatus(tasks[i].Status) {
+			continue
+		}
+		if info, ok := h.hub.Info(tasks[i].RunID); ok {
+			if hs := bridge.TaskStatusFor(info.Status); !bridge.IsTerminalTaskStatus(hs) {
+				tasks[i].Status = hs
+			}
 		}
 	}
 	c.JSON(http.StatusOK, tasks)

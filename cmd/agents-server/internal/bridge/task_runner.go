@@ -42,6 +42,11 @@ func isTerminalTaskStatus(s string) bool {
 	return s == protocol.TaskCompleted || s == protocol.TaskFailed || s == protocol.TaskCancelled
 }
 
+// IsTerminalTaskStatus reports whether a task status string is terminal, for
+// handlers that overlay live hub state onto stored rows and must leave
+// terminal rows alone.
+func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
+
 // resolveSpawnAgent resolves a spawn target: an explicit config name/id wins;
 // an empty name or the "default" / "self" / "current" aliases (models reach
 // for these unprompted) fall back to the spawning run's own agent — a config
@@ -246,6 +251,15 @@ func (r *Runner) DrainPendingTaskNotifications(ctx context.Context) {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("task recovery sweep")
 	}
 }
+
+// Shutdown drains the hub: every live run is cancelled and waited for so its
+// partial turn persists before the process exits.
+func (r *Runner) Shutdown(ctx context.Context) { r.hub.Shutdown(ctx) }
+
+// AbortSessionDelete undoes StopSessionTree's deleting mark after the store
+// delete failed and rolled back — the session still exists and must accept
+// runs again.
+func (r *Runner) AbortSessionDelete(sessionID string) { r.hub.unmarkSessionDeleting(sessionID) }
 
 // StopSessionTree cancels the session's live run and every non-terminal task it
 // spawned, then waits (bounded) for their goroutines to finish — postRun

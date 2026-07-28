@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -172,6 +173,12 @@ func (o *ChatGPTOAuth) serveCallback(ctx context.Context, ln net.Listener, state
 	srv := &http.Server{Handler: mux}
 
 	writeHTML := func(w http.ResponseWriter, status, errMsg string) {
+		// The hash-pinned CSP means only the page's own script runs even if an
+		// escape is ever missed; the sibling MCP callback got this hardening
+		// first and this page predated it.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'none'; script-src 'sha256-"+chatgptCallbackScriptHash+"'")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, callbackHTML(status, errMsg))
 	}
 	shutdown := func() { go func() { _ = srv.Shutdown(context.Background()) }() }
@@ -480,16 +487,31 @@ func pkceChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
+// chatgptCallbackScript reads its status from a data attribute rather than
+// being assembled around interpolated values: the provider-controlled error
+// string once flowed into the HTML unescaped — a reflected XSS on the
+// localhost callback origin while a login was pending.
+const chatgptCallbackScript = `var s=document.body.getAttribute('data-status');
+if (window.opener) {
+  window.opener.postMessage({type:'chatgpt-oauth-done',status:s}, '*');
+}
+setTimeout(function(){ window.close(); }, 1500);`
+
+// chatgptCallbackScriptHash pins the script above in the page's CSP.
+var chatgptCallbackScriptHash = func() string {
+	h := sha256.Sum256([]byte(chatgptCallbackScript))
+	return base64.StdEncoding.EncodeToString(h[:])
+}()
+
 func callbackHTML(status, errMsg string) string {
 	msg := "Authorization successful. You can close this window."
 	if status != "success" {
 		msg = "Authorization failed: " + errMsg
 	}
-	return `<!DOCTYPE html><html><body><p>` + msg +
-		`</p><script>
-if (window.opener) {
-  window.opener.postMessage({type:'chatgpt-oauth-done',status:'` + status + `'}, '*');
-}
-setTimeout(function(){ window.close(); }, 1500);
-</script></body></html>`
+	if status != "success" {
+		status = "error"
+	}
+	return `<!DOCTYPE html><html><body data-status="` + status + `"><p>` +
+		html.EscapeString(msg) +
+		`</p><script>` + chatgptCallbackScript + `</script></body></html>`
 }

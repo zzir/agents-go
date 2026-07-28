@@ -19,6 +19,10 @@ import (
 // by the bridge runner. Deletion must stop execution before removing data.
 type RunStopper interface {
 	StopSessionTree(sessionID string)
+	// AbortSessionDelete clears the deleting mark when the store delete fails:
+	// the cascade rolled back, so the session still exists and must not be
+	// left refusing every run until restart.
+	AbortSessionDelete(sessionID string)
 }
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
@@ -190,6 +194,9 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		h.stopper.StopSessionTree(c.Param("id"))
 	}
 	if err := h.sessions.Delete(c.Request.Context(), c.Param("id")); err != nil {
+		if h.stopper != nil {
+			h.stopper.AbortSessionDelete(c.Param("id"))
+		}
 		storeError(c, err)
 		return
 	}
