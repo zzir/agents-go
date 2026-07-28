@@ -2462,9 +2462,10 @@ paths:
     get:
       description: 'Server-Sent Events stream. Each event id is the hub sequence number;
         reconnect with the Last-Event-ID header or from_seq to resume. The stream
-        closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted
-        (paused for approval — deciding via /approvals resumes the SAME run id; reconnect
-        with Last-Event-ID to continue the stream).'
+        closes after a final event: run.output, run.error or run.cancelled. run.interrupted
+        (paused for approval) does not close a live stream — deciding via /approvals
+        resumes the SAME run id and its events continue on the open connection; a
+        disconnected client reconnects with Last-Event-ID.'
       parameters:
       - description: Run ID
         in: path

@@ -224,10 +224,11 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 
 // Events streams the run's events as Server-Sent Events. Each event's id is
 // its hub sequence number; a reconnect with Last-Event-ID (or ?from_seq)
-// resumes without loss. The stream ends after a terminal event.
+// resumes without loss. The stream ends after a FINAL event; run.interrupted
+// only pauses the run, and the same-id resume continues on the open stream.
 //
 //	@Summary		Stream run events (SSE)
-//	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a terminal event: run.output, run.error, run.cancelled, or run.interrupted (paused for approval — deciding via /approvals resumes the SAME run id; reconnect with Last-Event-ID to continue the stream).
+//	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a final event: run.output, run.error or run.cancelled. run.interrupted (paused for approval) does not close a live stream — deciding via /approvals resumes the SAME run id and its events continue on the open connection; a disconnected client reconnects with Last-Event-ID.
 //	@Tags			runs
 //	@Produce		text/event-stream
 //	@Param			id			path		string	true	"Run ID"

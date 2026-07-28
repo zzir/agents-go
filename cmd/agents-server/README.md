@@ -11,7 +11,7 @@ servers, sandboxes, guardrails, memories, and skills.
 
 - [Quick start](#quick-start) — build, flags
 - [Authentication](#authentication)
-- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
+- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
 - [Architecture](#architecture)
 - [Design invariants](#design-invariants) — the rules every panel/handler pair must follow
@@ -21,10 +21,14 @@ servers, sandboxes, guardrails, memories, and skills.
 ## Quick start
 
 Grab a prebuilt binary for your platform from the
-[Releases](https://github.com/zzir/agents-go/releases) page, or build from source:
+[Releases](https://github.com/zzir/agents-go/releases) page, or build from
+source. The web UI is compiled into the binary via `go:embed`, and the built
+`frontend/dist` is not checked in — so a source build must build the frontend
+first; `make build` does both (npm required):
 
 ```bash
-go build -o agents-server ./cmd/agents-server
+cd cmd/agents-server
+make build          # npm install + build the SPA, then go build with it embedded
 ./agents-server --port 9527
 ```
 
@@ -33,13 +37,15 @@ On startup the server prints an auto-generated auth token. Open
 
 ### Flags
 
-| Flag                    | Default   | Description                                        |
-|-------------------------|-----------|----------------------------------------------------|
-| `--port`                | `9527`    | HTTP listen port                                   |
-| `--db`                  | `data.db` | SQLite database file                               |
-| `--workspace`           | `.`       | Workspace directory for skills and file operations |
-| `--token`               | auto      | Auth token; randomly generated when omitted        |
-| `--allow-local-sandbox` | `false`   | Allow creating local (non-isolated) sandboxes      |
+| Flag                    | Default     | Description                                            |
+|-------------------------|-------------|--------------------------------------------------------|
+| `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
+| `--port`                | `9527`      | HTTP listen port                                       |
+| `--db`                  | `data.db`   | SQLite database file                                   |
+| `--workspace`           | `.`         | Workspace directory for skills and file operations     |
+| `--token`               | auto        | Auth token; randomly generated when omitted            |
+| `--allow-local-sandbox` | `false`     | Allow creating local (non-isolated) sandboxes          |
+| `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
 
 ## Authentication
 
@@ -86,6 +92,7 @@ detail.
 | `conflict`     | 409  | Resource is in the wrong state for the request                                |
 | `upstream`     | 502  | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
 | `internal`     | 500  | Unexpected server error (detail is logged, not returned)                      |
+| `unavailable`  | 503  | Transient refusal while the server drains for shutdown — retry later          |
 
 ### Response conventions
 
@@ -110,7 +117,7 @@ detail.
 | POST   | `/sessions/:id/branch`    | Switch the active branch (`{entry_id}`)                              |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
 | GET    | `/sessions/:id/approvals` | List pending approvals (see [Approvals](#approvals--apiv1approvals)) |
-| GET    | `/sessions/:id/tasks`     | List background tasks spawned from the session (see below)          |
+| GET    | `/sessions/:id/tasks`     | List background tasks spawned from the session (see [Tasks](#tasks--apiv1tasks)) |
 
 `POST /sessions` accepts an optional `agent_config_id` to bind the session to an
 agent at creation (it must reference an existing agent). Rename and pin are a
@@ -163,17 +170,18 @@ up without loss.
 
 | Method | Path                 | Description                                            |
 |--------|----------------------|--------------------------------------------------------|
-| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?}` |
-| GET    | `/runs/:id`          | Get run status                                         |
-| GET    | `/runs/:id/events`   | Stream run events (Server-Sent Events)                 |
-| POST   | `/runs/:id/cancel`   | Cancel the run — `204`                                 |
+| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?}`                             |
+| GET    | `/runs/:id`          | Get run status                                                                     |
+| GET    | `/runs/:id/events`   | Stream run events (Server-Sent Events)                                             |
+| POST   | `/runs/:id/cancel`   | Cancel the run — `204`; `?mode=graceful` finishes the current turn, default aborts |
 
 `POST /sessions/:id/runs` returns `201` with `{run_id, session_id, status}`. With
 `?wait=true` it blocks until the run ends and returns `200` with
 `{run_id, session_id, status, final_output}` — or, when the run pauses for tool
 approval, `{run_id, session_id, status: "interrupted"}` (list
-`/sessions/:id/approvals` and decide; the decision resumes execution under a new
-run id). It returns `409` if the session already has an active run.
+`/sessions/:id/approvals` and decide; the decision resumes execution on the
+SAME run id, continuing its event sequence). It returns `409` if the session
+already has an active run.
 
 `GET /runs/:id` returns `{run_id, session_id, status, last_seq, agent_config_id?,
 sandbox_id?}`. `status` is one of `running`, `interrupted`, `completed`, `error`,
@@ -185,10 +193,12 @@ always in `/sessions/:id/messages`).
 for API consumers — unrelated to MCP's deprecated SSE transport, which this
 server does not expose.) Each event's `id:` is the hub sequence number;
 reconnect with the `Last-Event-ID` header (or `?from_seq=`) to resume without
-losing events. The stream closes after a terminal event: `run.output`,
-`run.error`, `run.cancelled`, or `run.interrupted` (paused for approval — after
-approving/rejecting, reconnect to the SAME run id with your `Last-Event-ID`
-— the resumed events continue its sequence).
+losing events. The stream closes after a FINAL event — `run.output`,
+`run.error` or `run.cancelled`. `run.interrupted` (paused for approval) does
+NOT close a live stream: the approval decision resumes the SAME run id, and
+the resumed events continue on the connection you are already holding. A
+client that did disconnect reconnects with its `Last-Event-ID` and picks the
+sequence back up.
 Event payloads mirror the WebSocket [server→client events](#server--client).
 
 Start a run and stream it with plain curl (token from server startup):
@@ -236,6 +246,26 @@ Unanswered approvals expire after the `approval_ttl_minutes` setting (default
 an error annotation is written to the session so the timeout is visible rather
 than silently vanishing.
 
+### Tasks — `/api/v1/tasks`
+
+Background tasks are sub-agents spawned from a chat via the `spawn_task` tool.
+Each runs on its own hidden session and reports back by injecting a
+notification into the parent session (see the SDK's
+[background tasks](../../docs/tasks.md)).
+
+| Method | Path                  | Description                                                                    |
+|--------|-----------------------|--------------------------------------------------------------------------------|
+| GET    | `/sessions/:id/tasks` | List the session's tasks, newest first                                         |
+| POST   | `/tasks/:id/stop`     | Stop a task — cancels a running one, discards a paused one's pending approval  |
+
+A task row carries `task_id` (the durable identity clients key state by),
+`run_id` (the current attempt's execution id — events route by it), plus
+`parent_session_id`, `parent_run_id`, `tool_call_id`, `label` and status.
+Status uses the MCP Tasks five-state vocabulary; it is read live from the hub
+for a running task and from the store after it ends. `stop` returns `200` with
+the task info, `409` if the task is already final. The per-session live-task
+cap is the `--max-tasks` flag.
+
 ### Agents — `/api/v1/agents`
 
 | Method | Path                         | Description                              |
@@ -249,20 +279,44 @@ than silently vanishing.
 | POST   | `/agents/:id/chatgpt/logout` | Clear this agent's ChatGPT token         |
 | GET    | `/agents/:id/chatgpt/status` | Check this agent's ChatGPT login status  |
 
-Agent config fields:
+Agent config shape — three top-level scalars, then the knobs as **grouped
+nested objects** (each group is one JSON column in the table, so a new knob
+needs no schema change), then a few top-level JSON blobs:
 
-- **Core**: `name`, `instructions`, `model`, `provider_type`, `auth_mode`, `api_key`, `base_url`
-- **Model settings**: `model_settings` (JSON), `stop_at_tools`, `disable_tool_choice_reset`, `max_turns`
-- **Resilience**: `retry_enabled`, `retry_policy`, `fallback_models`
-- **Error recovery**: `error_handlers` (JSON keyed by `max_turns` / `model_refusal` / `invalid_final_output`; each entry is `{"final_output": <JSON value>, "exclude_from_history": bool}` — the run completes with the static fallback instead of failing; `final_output` must be a string for plain-text agents or match `output_schema`)
-- **Structured output**: `output_schema` (JSON Schema)
-- **Guardrails**: `guardrails` (JSON array of names — one list, since a guardrail carries the stages it inspects)
-- **Tools / Handoffs**: `tools` (JSON), `handoffs` (JSON), `handoff_description`, `handoff_input_filter`
-- **Prompt**: `prompt_id`, `prompt_version` (OpenAI stored prompt)
-- **Other**: `use_previous_response_id`, `max_tool_concurrency`, `tool_not_found_behavior`
+- **Top level**: `name`, `instructions`, `model`
+- **`provider`**: `provider_type`, `auth_mode`, `api_key`, `base_url`
+- **`behavior`**: `max_turns`, `handoff_description`, `disable_tool_choice_reset`,
+  `stop_at_tools` (comma-separated tool names — the run ends after a turn that
+  called any of them), `handoff_input_filter`, `max_tool_concurrency`,
+  `tool_not_found_behavior`, `reasoning_item_id_policy` (`preserve` / `omit`)
+- **`resilience`**: `retry_enabled`, `retry_policy`, `fallback_models`
+- **`guardrails`**: `guardrails` (JSON array of names — one list, since a
+  guardrail carries the stages it inspects), `output_schema` (JSON Schema)
+- **`session`**: `use_previous_response_id`, `prompt_id`, `prompt_version`
+  (OpenAI stored prompt), `history_limit` (recent items per turn; `0` = all)
+- **`approval`**: `approve_tools` (JSON array: `["*"]` or tool names — the
+  human-in-the-loop gate; the `exec_command` approval flow above depends on it)
+- **`compaction`**: `compaction_enabled`, `compaction_threshold`,
+  `compaction_window`, `compaction_model`, `compaction_prompt`
+- **Top-level JSON blobs**: `model_settings`, `tools`, `skills`, `handoffs`,
+  `error_handlers` (keyed by `max_turns` / `model_refusal` /
+  `invalid_final_output`; each entry is `{"final_output": <JSON value>,
+  "exclude_from_history": bool}` — the run completes with the static fallback
+  instead of failing; `final_output` must be a string for plain-text agents or
+  match `output_schema`)
+
+```json
+{
+  "name": "coder",
+  "model": "gpt-5.2",
+  "provider": {"provider_type": "openai", "api_key": "sk-…"},
+  "behavior": {"max_turns": 20},
+  "approval": {"approve_tools": "[\"exec_command\"]"}
+}
+```
 
 Secret fields are masked on read — see [Secret handling](#secret-handling): the
-`api_key` and each `fallback_models[].api_key`.
+`provider.api_key` and each `resilience.fallback_models[].api_key`.
 
 The ChatGPT OAuth routes are a per-agent capability (previously under `/chatgpt/*`
 with an `?agent_config_id=` query parameter). The browser OAuth redirect lands at
@@ -432,7 +486,7 @@ Every response carries a computed `terminal` boolean — whether the sandbox can
 host an interactive web terminal (`ssh` always, `docker` only with
 `persistent: true`, `local` never, by design). The chat composer shows the
 terminal toggle only when the selected sandbox advertises it; the session
-itself runs over [`/ws/terminal`](#terminal-endpoint--wsterminal).
+itself runs over [`/ws/terminal`](#terminal-endpoint--get-wsterminal).
 
 ### Playground — `/api/v1/playground`
 
@@ -507,7 +561,10 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
 | `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?}`                                              |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
-| `run.cancel`    | Cancel an in-flight run — `{run_id}`                                                                            |
+| `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
+| `run.steer`     | Inject input into the live run, changing course inside the current exchange — `{run_id, input}`                 |
+| `run.next_turn` | Inject input consumed at the next turn boundary — `{run_id, input}`                                             |
+| `run.follow_up` | Queue input that starts a new exchange once the current one finishes — `{run_id, input}`                        |
 | `tool.approve`  | Approve a pending tool call — `{tool_call_id}`                                                                  |
 | `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
 
@@ -515,19 +572,22 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 
 | type                    | Description                                                                                                                                             |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run.started`           | Run begun — `{run_id, session_id, input}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble. A background task run additionally carries `{parent_session_id, parent_run_id, tool_call_id, label}` — the client routes it into the parent session's task list, never a chat timeline |
+| `run.started`           | Run begun — `{run_id, session_id, input}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble. A background task run additionally carries `{task_id, parent_session_id, parent_run_id, tool_call_id, label}` — clients key task state by the durable `task_id`, route events by `run_id`, and send it to the parent session's task list, never a chat timeline |
 | `run.agent_start`       | Agent taking its turn — `{run_id, agent_name}`                                                                                                          |
 | `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
 | `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
 | `run.message`           | One completed assistant message: a turn's full text, interim narration or final answer, authoritative over its `run.step` deltas — `{run_id, text}`     |
 | `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text}`                            |
 | `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
+| `run.tool_progress`     | Partial output from a running tool — `{run_id, call_id, tool_name, delta, renderer?}`; `delta` appends to what the client holds for the call, `renderer` is a display hint (e.g. `terminal`) |
 | `run.tool_result`       | Tool output — `{run_id, tool_call_id, output}`                                                                                                          |
 | `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |
 | `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
-| `run.interrupted`       | Paused for tool approval (ends the stream for now; the decision resumes the SAME run id, continuing its event sequence) — `{run_id}`                                          |
-| `run.error`             | Error — `{run_id?, session_id?, code, message}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`) |
+| `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription    |
+| `run.diagnostic`        | Trouble the run survived — `{run_id, type, code?, message?, details?}`; `type` is an open vocabulary (`model_retry`, `model_fallback`, `tool_panic`, …), so show unknown kinds generically |
+| `run.gap`               | This connection fell behind and events were dropped — `{run_id, dropped, last_good, next}`; resubscribe from `last_good` to refetch                     |
+| `run.error`             | Error — `{run_id?, session_id?, code, message, guardrail?, stage?}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`); `guardrail`/`stage` are set when `code` is `guardrail_tripwire` |
 | `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
 | `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, ...}`                                                                                                 |
@@ -585,10 +645,10 @@ cmd/agents-server/
 │   │   ├── retention.go        approval-expiry reaper & trace pruning
 │   │   └── ...                 tracing, guardrails, proxy, MCP/ChatGPT OAuth
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
-│   ├── store/                  SQLite data layer (bun ORM, 11 tables)
+│   ├── store/                  SQLite data layer (bun ORM, 12 tables)
 │   ├── protocol/               WebSocket message types
 │   └── web/                    embedded SPA static files
-└── skills/                     agent skills managed via API
+└── {workspace}/skills/         agent skills managed via API (runtime dir, not in the repo)
 ```
 
 ### Request flow
@@ -606,8 +666,9 @@ cmd/agents-server/
 4. If a tool requires approval, the run pauses and the pending approval is
    persisted; it resumes on `approve`/`reject` (over either transport) and
    survives a server restart.
-5. On completion the message history is persisted and the session title is
-   auto-generated.
+5. History is persisted per turn as the run progresses — a cancelled or failed
+   run keeps every completed turn — and the session title is generated in
+   parallel with the first run rather than after it.
 
 ## Design invariants
 
@@ -819,6 +880,7 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `guardrails`        | Custom guardrail definitions                                                        |
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction)                      |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
+| `tasks`             | Background tasks spawned via `spawn_task` (durable identity, status, wake-up state) |
 
 The database file can be deleted and recreated freely — there is no migration
 mechanism.
