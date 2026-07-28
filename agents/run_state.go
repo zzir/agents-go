@@ -237,7 +237,13 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// Re-install any paused agent-as-tool nested states so a resumed AsTool call
 	// continues its nested run. These survive a JSON round-trip (schema ≥ 1.2),
 	// so a cross-process resume continues the nested run too.
-	rc.nestedToolStates = state.nestedToolStates
+	//
+	// A COPY, not the state's own map: taking a nested state deletes it, and a
+	// second resume of the same state — what a Retry middleware over
+	// ResumeRun does on its next attempt — would then find the map depleted
+	// and RESTART each nested run instead of continuing it. The pause snapshot
+	// stays intact for every attempt.
+	rc.nestedToolStates = maps.Clone(state.nestedToolStates)
 	rc.inheritedOpts = &opts
 	// Scrub the resumed input the same way a fresh run scrubs session history:
 	// a state that was serialized, moved across processes, or hand-edited may

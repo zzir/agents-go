@@ -211,6 +211,9 @@ type RunHub struct {
 	mu        sync.Mutex
 	runs      map[string]*runRecord
 	bySession map[string]string // sessionID -> live run id (only while running)
+	// draining latches when Shutdown begins: no new run may register or
+	// resume from then on, so the drain's snapshot is the complete set.
+	draining bool
 	// deleting marks sessions whose delete cascade is in progress. register and
 	// resume refuse them so a task's postRun drain (or any late resume) cannot
 	// start a fresh run on a session that is about to be removed. The set
@@ -243,6 +246,12 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 // an interrupted turn simply vanished from its session.
 func (h *RunHub) Shutdown(ctx context.Context) {
 	h.mu.Lock()
+	// Latch FIRST: a cancelled run's postRun drains its task notifications,
+	// which starts a wake-up run. Registered after the snapshot, it would be
+	// neither cancelled nor waited on — and its notification debt is marked
+	// delivered as it starts, so the process exiting under it loses the
+	// notification for good. From here on, register and resume refuse.
+	h.draining = true
 	recs := make([]*runRecord, 0, len(h.runs))
 	for _, rec := range h.runs {
 		recs = append(recs, rec)
@@ -310,6 +319,15 @@ func (e ErrSessionDeleting) Error() string {
 	return "session is being deleted: " + e.SessionID
 }
 
+// ErrShuttingDown is returned by register/resume once Shutdown has begun. A
+// run started after the drain took its snapshot would never be waited on, and
+// the process would exit under it — exactly the vanished turn the drain
+// exists to prevent. The wake-up path is the live case: a drained run's
+// postRun drains its task notifications, which launches a NEW run.
+type ErrShuttingDown struct{}
+
+func (ErrShuttingDown) Error() string { return "server is shutting down" }
+
 // ErrSessionBusy is returned by register when the session already has a live run.
 type ErrSessionBusy struct{ RunID string }
 
@@ -332,6 +350,9 @@ func (e ErrTaskLimit) Error() string {
 func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.draining {
+		return nil, nil, ErrShuttingDown{}
+	}
 	if h.deleting[sessionID] {
 		return nil, nil, ErrSessionDeleting{SessionID: sessionID}
 	}
@@ -390,6 +411,9 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.draining {
+		return nil, nil, ErrShuttingDown{}
+	}
 	if h.deleting[sessionID] {
 		return nil, nil, ErrSessionDeleting{SessionID: sessionID}
 	}

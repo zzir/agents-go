@@ -97,15 +97,24 @@ func (r *Repo) List(ctx context.Context, opts agents.ListOptions) ([]agents.Sess
 // cannot leave orphaned entries behind pointing at a session that is gone.
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// The session ROW goes first, and that ordering is the fence against a
+		// concurrent write: an append proves its destination exists by
+		// updating this row (Session.touchIn), so once it is gone — and this
+		// transaction holds its lock until commit — every concurrent append
+		// either blocks and then fails, or already committed and is deleted
+		// below. Deleting the entries first left a window where an append saw
+		// a live row, committed, and its entries survived as orphans nothing
+		// references (spec §2.5e2).
+		if _, err := tx.NewDelete().Model((*sessionRow)(nil)).
+			Where("id = ?", id).Exec(ctx); err != nil {
+			return err
+		}
 		// Every generation this REPO made, and only those. The direct scope —
 		// an empty generation — belongs to New(db, id): a session this repo
 		// never created, does not list and cannot open, so deleting it here
 		// would destroy history the caller keeps somewhere else entirely.
-		if _, err := tx.NewDelete().Model((*entry)(nil)).
-			Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx); err != nil {
-			return err
-		}
-		_, err := tx.NewDelete().Model((*sessionRow)(nil)).Where("id = ?", id).Exec(ctx)
+		_, err := tx.NewDelete().Model((*entry)(nil)).
+			Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx)
 		return err
 	})
 }

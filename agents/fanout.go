@@ -287,9 +287,11 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	if len(f.replay) > 0 && fromSeq >= 0 && fromSeq < f.replay[0].Seq-1 {
 		s.dropped = f.replay[0].Seq - 1 - fromSeq
 	}
+	reset := false
 	if fromSeq > f.seq {
 		s.lastGood = 0
 		s.dropped = fromSeq
+		reset = true
 	}
 	f.subs[s.id] = s
 	f.mu.Unlock()
@@ -330,6 +332,21 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	}
 
 	stream := func(yield func(Seq[T], error) bool) {
+		// A timeline reset is reported IMMEDIATELY rather than riding out on
+		// the next delivery: the stream a stale cursor lands on has often
+		// already ended (a finished run, replayed after a restart), so there
+		// is no next delivery and the consumer would sit in silence until the
+		// producer closed — minutes later, or never. It is the one gap known
+		// at subscribe time, so it is the one gap that can be told at once.
+		if reset {
+			s.mu.Lock()
+			n, last := s.dropped, s.lastGood
+			s.dropped = 0
+			s.mu.Unlock()
+			if !yield(Seq[T]{}, &GapError{Dropped: n, LastGood: last}) {
+				return
+			}
+		}
 		for {
 			select {
 			case <-s.done:

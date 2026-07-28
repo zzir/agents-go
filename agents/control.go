@@ -120,6 +120,9 @@ type runControl struct {
 	mu           sync.Mutex
 	currentAgent *Agent
 	currentTurn  int
+	// restored guards the pause's pending input against being seeded more
+	// than once onto one control; see restore.
+	restored bool
 
 	// The three injection queues. They are separate rather than one queue with
 	// a mode tag because they are consumed at different points: steer and
@@ -243,13 +246,21 @@ func (c *runControl) takeContinuation() []TResponseInputItem {
 // restore seeds the queues from a paused run's state, so input that arrived
 // while a human was deciding on an approval is delivered when the run resumes
 // rather than lost.
+//
+// Once per control, not once per attempt: a Retry middleware over ResumeRun
+// re-enters the resume with the same control, and appending the pause's
+// pending input again delivered the human's steer to the model twice.
 func (c *runControl) restore(p PendingInput) {
 	if c == nil || p.Empty() {
 		return
 	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.restored {
+		return
+	}
+	c.restored = true
 	c.steer = append(c.steer, p.Steer...)
 	c.nextTurn = append(c.nextTurn, p.NextTurn...)
 	c.followUp = append(c.followUp, p.FollowUp...)
-	c.mu.Unlock()
 }

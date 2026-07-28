@@ -28,6 +28,11 @@ type Turn struct {
 // Non-zero so tests that assert usage accumulation see movement.
 var defaultTurnUsage = agents.RequestUsage{InputTokens: 5, OutputTokens: 3, TotalTokens: 8}
 
+// zeroTurnUsage asks completedEvent for a genuinely empty usage block, which
+// the plain zero value cannot express — that one means "unset, substitute the
+// default". Used for an exhausted script, which bills nothing.
+var zeroTurnUsage = agents.RequestUsage{TotalTokens: -1}
+
 // FakeModel is a scripted [agents.Model]. Each model call consumes the next
 // turn; once the script is exhausted every further call returns an empty
 // response, which the runner treats as a final output of "".
@@ -114,6 +119,9 @@ func (t Turn) response(seq int) *agents.ModelResponse {
 	if u == (agents.RequestUsage{}) {
 		u = defaultTurnUsage
 	}
+	if u == zeroTurnUsage {
+		u = agents.RequestUsage{}
+	}
 	id := t.ResponseID
 	if id == "" {
 		id = fmt.Sprintf("resp_%d", seq)
@@ -152,7 +160,10 @@ func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) i
 	return func(yield func(*agents.TResponseStreamEvent, error) bool) {
 		turn, ok := m.next(req)
 		if !ok {
-			ev := completedEvent(nil, "resp_empty", agents.RequestUsage{})
+			// An exhausted script bills nothing, on BOTH paths: the zero
+			// RequestUsage would be substituted with defaultTurnUsage, so a
+			// usage assertion passed under RunSync and failed under Run.
+			ev := completedEvent(nil, "resp_empty", zeroTurnUsage)
 			yield(&ev, nil)
 			return
 		}
@@ -215,6 +226,9 @@ func completedEvent(items []agents.TResponseOutputItem, respID string, u agents.
 	}
 	if u == (agents.RequestUsage{}) {
 		u = defaultTurnUsage
+	}
+	if u == zeroTurnUsage {
+		u = agents.RequestUsage{}
 	}
 	return rawEvent(fmt.Sprintf(
 		`{"type":"response.completed","sequence_number":0,"response":{"id":%s,"output":%s,`+

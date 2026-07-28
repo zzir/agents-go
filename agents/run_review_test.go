@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A Blocking input guardrail's Replace verdict must reach the model on the
@@ -170,5 +171,60 @@ func TestResumeDoesNotReattributeUsage(t *testing.T) {
 	// Each request attributed exactly once: 5+7 in, 3+2 out.
 	if in != 12 || out != 5 {
 		t.Fatalf("session entries carry %d/%d tokens, want 12/5 — a request was attributed twice", in, out)
+	}
+}
+
+// Abandoning a streamed run must stop it WHERE IT STANDS, including when a
+// racing input guardrail is still in flight: waiting for the guardrail parked
+// the consumer's break for its full duration, and forever for one that returns
+// only on cancellation.
+func TestAbandonedStreamDoesNotWaitForRacingGuardrail(t *testing.T) {
+	started := make(chan struct{})
+	released := make(chan struct{})
+	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}
+	agent := &Agent{
+		Name:      "a",
+		ModelImpl: model,
+		Guardrails: []Guardrail{{
+			Name:   "slow",
+			Stages: []GuardrailStage{StageInput},
+			Run: func(ctx context.Context, _ *RunContext, _ GuardrailPayload) (GuardrailDecision, error) {
+				// Returns only when cancelled, which is what a guardrail
+				// waiting on a remote moderation call looks like when the run
+				// is abandoned.
+				close(started)
+				<-ctx.Done()
+				close(released)
+				return Allow(nil), ctx.Err()
+			},
+		}},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stream, _ := Run(context.Background(), agent, "hi", RunOptions{})
+		for range stream {
+			break
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("abandoning the stream blocked on the racing input guardrail")
+	}
+	// If the guardrail got as far as running, abandoning the run must also
+	// have cancelled it — otherwise its goroutine outlives the run forever.
+	// (Cancelled before it started is equally fine and is what usually
+	// happens, since the abandon cancels immediately.)
+	select {
+	case <-started:
+		select {
+		case <-released:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the racing guardrail ran and was never cancelled; its goroutine outlives the run")
+		}
+	default:
 	}
 }

@@ -750,6 +750,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Usage:            r.rc.Usage,
 				GuardrailResults: r.snapshotGuardrailResults(),
 				Diagnostics:      r.diagnostics.All(),
+				StoppedEarly:     true,
 			}, nil
 		}
 		if r.maxTurns > 0 && turn > r.maxTurns {
@@ -898,13 +899,17 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 						// server and cannot be rewritten from here. Proceeding
 						// would send the original while claiming otherwise —
 						// fail instead.
-						return nil, r.fail(newUserError(
-							"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace"),
-							originalInput, generatedItems, rawResponses, currentAgent)
+						rerr := newUserError(
+							"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace")
+						gspan.SetError(rerr.Error(), nil)
+						gspan.Finish()
+						return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
 					}
 					originalInput = repl
 					rebuilt, rerr := buildTurnInput()
 					if rerr != nil {
+						gspan.SetError(rerr.Error(), nil)
+						gspan.Finish()
 						return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
 					}
 					modelInput = rebuilt
@@ -1032,6 +1037,19 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					resp, err = r.streamOneModelCall(modelCtx, span, model, req)
 				} else {
 					resp, err = model.GetResponse(modelCtx, req)
+				}
+				// An abandoned stream must stop the run WHERE IT STANDS
+				// (spec §2.0), and the guardrails are the run: waiting for
+				// them here parked the consumer's `break` for a slow
+				// guardrail's full duration — forever, for one that returns
+				// only on cancellation, since the deferred cancel cannot run
+				// while this read blocks. Cancel them and leave; their
+				// verdict is about a turn nobody will read.
+				if r.consumerStopped || errors.Is(err, errConsumerStopped) {
+					cancelInputGuardrails()
+					modelCancel()
+					span.Finish()
+					return nil, errConsumerStopped
 				}
 				// The guardrails always finish — a tripwire cancelled the call,
 				// completion just outlasted it — so honor a verdict still in
@@ -1371,6 +1389,11 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 	// Output guardrails: run-level ones first, then the producing agent's.
 	// A Replace decision substitutes the final output and the run continues.
 	if outGuardrails := selectStage(r.runGuardrails(agent), StageOutput); len(outGuardrails) > 0 {
+		// The output stage is the likeliest place for a slow (LLM-based)
+		// guardrail, and it ran under whatever phase the turn last set —
+		// "model" or "tools" — which is exactly the misreport Phase exists to
+		// prevent.
+		r.ctrl.setPhase(PhaseGuardrails)
 		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
 		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
 			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})

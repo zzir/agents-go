@@ -278,15 +278,23 @@ func run(_ *cobra.Command, _ []string) error {
 	<-quit
 
 	log.Info().Msg("shutting down")
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	shutErr := httpSrv.Shutdown(shutCtx)
-	// Drain runs AFTER the listener closes and BEFORE the deferred db.Close():
-	// each live run is cancelled and waited for, so its partial turn persists
-	// (run.cancelled, savePartialTurn) instead of vanishing when the process
-	// exits under it.
+	// Drain FIRST, then the listener. Each live run is cancelled and waited
+	// for, so its partial turn persists (run.cancelled, savePartialTurn)
+	// instead of vanishing when the process exits under it — and ending the
+	// runs is also what lets the long-lived SSE handlers return, so
+	// httpSrv.Shutdown does not spend its whole budget waiting on event
+	// streams that were waiting on those very runs.
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelDrain()
 	runner.Shutdown(drainCtx)
-	return shutErr
+
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutCtx); err != nil {
+		// A hijacked WebSocket keeps Shutdown waiting until its deadline; the
+		// runs are already drained and persisted by then, so reporting that as
+		// the process's exit status turned every ordinary stop into a failure.
+		log.Warn().Err(err).Msg("http shutdown did not complete cleanly")
+	}
+	return nil
 }

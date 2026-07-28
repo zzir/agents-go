@@ -44,6 +44,14 @@ type RunResult struct {
 	// CustomOutputExtractor); nil for top-level runs. The counterpart of
 	// Python's RunResult.agent_tool_invocation.
 	AgentToolInvocation *AgentToolInvocation
+
+	// StoppedEarly reports that the run ended at a turn boundary because
+	// RunControl.StopAfterTurn was requested, rather than because the agent
+	// was finished. It is how a middleware that re-runs (Loop) can tell "this
+	// answer is the agent's" from "the human stopped it": without it, a stop
+	// looked like an ordinary result and the next attempt started anyway,
+	// spending a model call per attempt on a run the caller had ended.
+	StoppedEarly bool
 }
 
 // FinalOutputString returns the final output as a string when the agent produced

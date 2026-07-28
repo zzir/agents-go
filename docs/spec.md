@@ -47,7 +47,11 @@ from upstream.
 
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
   the loop; abandoning it stops the run where it stands. There is no producer
-  goroutine to leak and no context that must be cancelled on early exit.
+  goroutine to leak and no context that must be cancelled on early exit. The
+  helpers a turn does spawn — racing input guardrails above all — are
+  CANCELLED by the abandonment rather than waited for: waiting on one parked
+  the consumer's `break` for its full duration, and forever for a guardrail
+  that returns only when cancelled.
 - **A `RunStream` is single-use.** Ranging it a second time yields a
   `*UserError` instead of anything else: the run body lives inside the
   iterator, so a second range would re-execute it — model billed again, tools
@@ -589,7 +593,10 @@ next backend will answer differently.
   references — invisible to every listing, unreachable by delete, orphaned
   storage by construction. Deletion itself honors the same serialization as
   writes (the repo lock, the write transaction), or it races them into
-  recreating what it just removed. *Shared contract; mechanism per backend.*
+  recreating what it just removed — and where the proof is a row, that row is
+  deleted FIRST, so a concurrent write either blocks on it and then fails or
+  has already committed and is deleted with the rest.
+  *Shared contract; mechanism per backend.*
 
 #### Absence
 
@@ -1124,7 +1131,10 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   count, so the documented recovery (resubscribe from `LastGood`) replays the
   new timeline from its start, and the gap's own sequence never runs backwards
   past the deliveries that follow it. A fresh timeline must never read as the
-  old one's continuation.
+  old one's continuation. It is delivered **immediately on subscribe**, not on
+  the next publish: the stream a stale cursor lands on has often already
+  ended, and a gap waiting for a delivery that never comes leaves the consumer
+  in exactly the silence it exists to break.
 - **Including when there is no next delivery.** A producer that finishes while a
   subscriber is still behind leaves drops with nothing to ride out on. Those are
   reported as the stream ends, with `GapError.AtEnd` true, `Next` zero and a
@@ -1292,6 +1302,12 @@ streaming is for.
 *another attempt* (an evaluator loop, a retry). Reversed, the outer one judges
 a result the inner one had not finished producing.
 
+**A stop the caller asked for is visible on the result** (`RunResult.
+StoppedEarly`). The stop flag lives on the control for the whole run and is
+never cleared, so a middleware that re-runs (`Loop`) cannot tell "the agent
+finished" from "the human stopped it" without it — and started every
+remaining attempt, each spending one model call before stopping again.
+
 **A middleware that resumes strips `Middlewares` first.** The chain is already
 unwound at that point; resuming with the run's own options would re-enter that
 middleware and every one outside it.
@@ -1323,6 +1339,11 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   prove it is safe" is not permission. A refused wake KEEPS the debt.
 - **A cancellation never wakes**, nor does a result the model already pulled
   with `task_status`. Both would burn a turn restating what is already known.
+- **A notification line is machine-readable, and its fields come from
+  untrusted text.** A label and a result are model output; formatting escapes
+  the line delimiter AND the field delimiter, because the line pattern's own
+  greediness otherwise lets a crafted result re-aim the task id and status on
+  the very same line — forging a card for a task the sender does not own.
 - **A wake-up runs under the configuration snapshotted at spawn**, not resolved
   fresh: the parent may be configured differently by then.
 - **A restart fails what it interrupted** and owes each parent a wake-up, so

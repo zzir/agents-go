@@ -834,7 +834,13 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src agents.S
 		// Confirm the source still exists inside the tx: a concurrent delete
 		// between the handler's read and here would otherwise yield an empty
 		// entry set and a bogus empty fork returned as success.
-		exists, err := tx.NewSelect().Model((*Session)(nil)).Where("id = ?", src.ID).Exists(ctx)
+		// By (id, gen), like every other read of a session's rows: an id alone
+		// matches a REPLACEMENT session created after this fork resolved its
+		// ref, and the guard would pass while forkEntriesTx copies zero rows
+		// from the generation that is gone — a bogus empty fork reported as
+		// success.
+		exists, err := tx.NewSelect().Model((*Session)(nil)).
+			Where("id = ?", src.ID).Where("gen = ?", src.Gen).Exists(ctx)
 		if err != nil {
 			return fmt.Errorf("fork source check: %w", err)
 		}

@@ -490,3 +490,46 @@ func TestFanoutCancelReportsNoGap(t *testing.T) {
 		}
 	}
 }
+
+// A cursor from a previous life of the stream — a restart renumbered it — is a
+// timeline reset, and it is reported AT ONCE: the stream a stale cursor lands
+// on has often already ended, so a gap that waits for the next delivery waits
+// forever and the consumer sits in silence.
+func TestFanoutAheadOfHeadCursorResetsImmediately(t *testing.T) {
+	f := NewFanout[string](FanoutOptions{Replay: 8, Subscriber: 8})
+	for range 3 {
+		f.Publish("event")
+	}
+
+	stream, cancel := f.Subscribe(100)
+	defer cancel()
+
+	type got struct {
+		gap *GapError
+		err error
+	}
+	ch := make(chan got, 1)
+	go func() {
+		for _, err := range stream {
+			var g *GapError
+			if errors.As(err, &g) {
+				ch <- got{gap: g}
+				return
+			}
+			ch <- got{err: err}
+			return
+		}
+	}()
+
+	select {
+	case r := <-ch:
+		if r.gap == nil {
+			t.Fatalf("first delivery was not a gap: %v", r.err)
+		}
+		if r.gap.LastGood != 0 {
+			t.Errorf("LastGood = %d, want 0 — resubscribing from it must replay the new timeline", r.gap.LastGood)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("an ahead-of-head cursor produced no gap; the consumer would sit in silence")
+	}
+}

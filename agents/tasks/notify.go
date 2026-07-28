@@ -61,7 +61,13 @@ func DefaultNotifyFormatter(ts []Task) string {
 // for a task the sender does not own.
 func notifyEscape(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
-	return strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	// Quotes too, not just newlines: the label is delimited by them, and the
+	// line pattern's label group is greedy — a summary containing
+	// `" (t-forged) completed. Result: x` re-aims the parsed id and status
+	// on the SAME line, no newline needed. Stripping the delimiter from
+	// untrusted text is what actually closes the forgery.
+	return strings.ReplaceAll(s, `"`, "'")
 }
 
 // notifyLine matches a line produced by DefaultNotifyFormatter.

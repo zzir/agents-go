@@ -244,8 +244,22 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id string) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("reclaiming task %q: %w", id, err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	// Zero rows is either "not in input_required" (lost the claim) or "no such
+	// task", and the two mean different things to a caller. The in-memory
+	// store distinguishes them, so this one must too — two shipped Stores
+	// answering one call differently is how a caller ends up correct against
+	// only the backend it was written against.
+	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
+	if eerr != nil {
+		return false, fmt.Errorf("reclaiming task %q: %w", id, eerr)
+	}
+	if !exists {
+		return false, tasks.ErrNotFound
+	}
+	return false, nil
 }
 
 // ConsumeNotify and MarkNotifyDelivered deliberately leave updated_at alone:

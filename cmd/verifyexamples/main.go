@@ -102,6 +102,11 @@ func runExample(root, name, baseURL string) (string, error) {
 		cmd.Dir = root
 	}
 	cmd.Env = append(os.Environ(),
+		// A nested-module example is not in the root go.work, so workspace
+		// mode resolves "." against the root module and cannot find the
+		// package at all. CI runs with GOWORK=off and never saw it; the
+		// documented local command did, and failed on examples/otel.
+		"GOWORK=off",
 		"OPENAI_BASE_URL="+baseURL,
 		"OPENAI_API_KEY=verifyexamples",
 		// Keep a developer's real key and org out of the run: an example that

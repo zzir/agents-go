@@ -69,6 +69,13 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 			}
 			last = res
 
+			// A stop the caller asked for ends the LOOP, not just the attempt.
+			// The stop flag lives on the run control for the whole run and is
+			// never cleared, so without this every remaining attempt started,
+			// spent one model call and stopped again.
+			if res.StoppedEarly {
+				break
+			}
 			if l.Evaluate == nil {
 				break
 			}

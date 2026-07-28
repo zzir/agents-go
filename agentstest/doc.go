@@ -10,7 +10,7 @@
 //	    Build()
 //
 //	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{weatherTool}, ModelImpl: model}
-//	res, err := agents.Run(ctx, agent, "weather in SF?", agents.RunOptions{})
+//	res, err := agents.RunSync(ctx, agent, "weather in SF?", agents.RunOptions{})
 //
 // Each turn of the builder becomes one model response, so the example above
 // scripts a run that calls a tool and then answers.

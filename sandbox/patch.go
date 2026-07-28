@@ -52,28 +52,43 @@ type fileEdit struct {
 
 // parsePatch parses a Codex-style patch into per-file edits. It is pure: no I/O,
 // no path resolution. A structural problem is an error naming the offending line.
-// rejectDuplicateSections refuses a patch that touches one file twice. The
-// plan phase reads every section's original from disk BEFORE any write, so a
-// second Update for the same file computes from pre-patch content and the
-// commit overwrites the first section's changes — the tool then reports both
-// as applied. One section per file; the model merges and retries.
+// rejectDuplicateSections refuses a patch whose sections would silently
+// overwrite each other.
+//
+// The hazard is UPDATE: the plan phase reads every section's original from
+// disk BEFORE any write, so a second Update for one file computes from
+// pre-patch content and the commit overwrites the first section's changes,
+// with the tool reporting both as applied. Two Updates for one path are
+// therefore refused — as is a rename onto a path another section touches,
+// where the outcome depends on commit order.
+//
+// Delete + Add of the same path is NOT refused: it is the ordinary
+// full-rewrite idiom (the delete removes the file, the add recreates it), it
+// applied correctly before this guard existed, and there is no single section
+// it could be "merged" into — the equivalent Update would have to match
+// context it is deliberately discarding.
 func rejectDuplicateSections(edits []fileEdit) error {
-	seen := make(map[string]bool, len(edits))
-	claim := func(path string) error {
-		if seen[path] {
-			return fmt.Errorf("apply_patch: file %q appears in more than one section; merge them into one section and retry", path)
-		}
-		seen[path] = true
-		return nil
-	}
+	updates := make(map[string]bool, len(edits))
+	moves := make(map[string]bool, len(edits))
+	touched := make(map[string]bool, len(edits))
 	for _, e := range edits {
-		if err := claim(e.path); err != nil {
-			return err
-		}
-		if e.movePath != "" {
-			if err := claim(e.movePath); err != nil {
-				return err
+		if e.op == opUpdate {
+			if updates[e.path] {
+				return fmt.Errorf("apply_patch: file %q is updated by more than one section; the second would be computed from pre-patch content and overwrite the first — merge them into one section and retry", e.path)
 			}
+			updates[e.path] = true
+		}
+		touched[e.path] = true
+		if e.movePath != "" {
+			if moves[e.movePath] || touched[e.movePath] {
+				return fmt.Errorf("apply_patch: %q is both a rename target and touched by another section; the result would depend on the order sections are applied", e.movePath)
+			}
+			moves[e.movePath] = true
+		}
+	}
+	for path := range moves {
+		if updates[path] {
+			return fmt.Errorf("apply_patch: %q is both a rename target and updated by another section; the result would depend on the order sections are applied", path)
 		}
 	}
 	return nil
