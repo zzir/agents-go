@@ -23,23 +23,24 @@ Requires Go 1.26+.
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
 go run ./cmd/verifyexamples           # every example still runs (fake Responses API)
-go run ./cmd/verifydocs               # doc snippets still name things that exist
+go run ./cmd/verifydocs               # doc snippets + doc.go links name things that exist
 golangci-lint run                     # CI uses golangci-lint v2.12
 ```
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with seven modules. **A submodule exists only
+Go workspace (`go.work`, gitignored) with eight modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:
 
-- **root** — the SDK
+- **root** — the SDK (includes `tools/bravesearch`, a first-party web-search tool)
 - **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) loader
 - **`tracing/otel`** — OpenTelemetry exporter (the core stays vendor-neutral)
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)
+- **`examples/otel`** — the one example with its own module, for the OTel deps
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix can
 hide a missing `go.mod` require — always validate with `./scripts/ci.sh`.
@@ -54,7 +55,8 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   model call is streamed). Run-semantics changes are written once, in the
   `agents/run*.go` family: `run.go` holds the loop, `run_step.go` the turn's
   side effects, and the other `run_*.go` files one loop stage each (options,
-  prepare, input guardrails, server cursor, persist, finish, resolve, tracing).
+  prepare, input guardrails, server cursor, persist, finish, resolve, tracing,
+  error handlers).
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
   the loop; abandoning it stops the run. No producer goroutine, no context that
   must be cancelled on early exit.
@@ -68,10 +70,11 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **Tools** — `agents/function_tool.go`: `NewFunctionTool[Args, Result]`
   reflects Args into a strict-mode JSON schema. `agent.AsTool(...)` wraps an
   agent as a callable tool.
-- **Handoffs / guardrails / HITL** — `handoff.go`, `guardrail.go` +
-  `tool_guardrails.go`, `run_state.go`: `NeedsApproval` returns interruptions;
-  serialize `RunState`, then `Approve`/`Reject` + `agents.ResumeRun` — runs
-  survive process restarts.
+- **Handoffs / guardrails / HITL** — `handoff.go`, `guardrail.go` (one
+  `Guardrail` type across four stages; the runner-side input gate/race lives
+  in `run_input_guardrails.go`), `run_state.go`: `NeedsApproval` returns
+  interruptions; serialize `RunState`, then `Approve`/`Reject` +
+  `agents.ResumeRun` — runs survive process restarts.
 - **Sessions** — three layers: `SessionStorage` (reads/writes entries, knows no
   meaning), `Session` (a struct, turns entries into model input), and
   `EntryProjector` (which kinds reach the model). Storage is

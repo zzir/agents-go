@@ -118,7 +118,9 @@ for event, err := range stream {
 		fmt.Println("done:", e.Result.FinalOutputString())
 	}
 }
-_ = ctrl // StopAfterTurn, Phase, CurrentAgent, CurrentTurn
+_ = ctrl // StopAfterTurn, Phase, CurrentAgent, CurrentTurn — and mid-run input:
+// ctrl.Steer("…") redirects the current exchange, ctrl.NextTurn("…") lands at
+// the next turn boundary, ctrl.FollowUp("…") queues the next exchange.
 ```
 
 **Human-in-the-loop.** Runs pause for approval and survive process restarts:
@@ -153,15 +155,18 @@ with `agents.RunStateFromJSON(data, registry)` for cross-process approvals.
   keep a long conversation in budget; a context-overflow error compacts and
   retries the turn instead of failing the run
 - [Streaming](docs/streaming.md) — token and item events as a range-able
-  iterator
+  iterator; steer a live run or queue follow-ups through `RunControl`
 - [Models](docs/models.md) — OpenAI Responses provider; retry, fallback, and
-  routing decorators
+  routing decorators; per-error-kind [error handlers](docs/running_agents.md)
+  turn a failing run into a fallback completion; OpenAI stored prompts via
+  `Agent.Prompt`
 - [Middleware](docs/running_agents.md#middleware) — wrap a whole run: an
   evaluator loop, an approval policy, retry-the-run, structured logging
 - [MCP](docs/mcp.md) — a client for stdio and streamable-HTTP tool servers,
   and a server that exposes your own tools or a whole agent over MCP
 - [Sandboxes](docs/sandbox.md) — run model-written code in Docker, SSH, or
-  local backends; edit files via `apply_patch`
+  local backends; edit files via `apply_patch`; persistent shell sessions,
+  and a command policy that filters what runs before the approval gate
 - [Skills](docs/skills.md) — load `SKILL.md` Agent Skills
 - [Tracing](docs/tracing.md) — spans for every model call, tool call, handoff,
   and guardrail; OpenTelemetry via the `tracing/otel` module
@@ -179,10 +184,11 @@ The full capability → API map is in the
 
 A full-featured **[web app](cmd/agents-server/README.md)** that wraps the
 SDK with a versioned REST API, WebSocket streaming, and an embedded browser UI.
-Configure agents, MCP servers, sandboxes, memories, and skills — then run
-conversations with streaming output, tool approval, tracing, and background
-tasks (`spawn_task` subagents with durable state, approval bubbling, and
-automatic completion wake-ups), all from the browser.
+Configure agents, MCP servers, sandboxes, guardrails, provider routes,
+memories, and skills — then run conversations with streaming output, tool
+approval, tracing, interactive sandbox terminals, and background tasks
+(`spawn_task` subagents with durable state, approval bubbling, and automatic
+completion wake-ups), all from the browser.
 
 ```bash
 go run ./cmd/agents-server --port 9527
@@ -192,7 +198,7 @@ go run ./cmd/agents-server --port 9527
 
 ## Examples
 
-Every feature ships with a runnable example:
+Nearly every capability has a runnable example under [examples/](examples/):
 
 ```bash
 export OPENAI_API_KEY=sk-...
