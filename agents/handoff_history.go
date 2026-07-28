@@ -156,9 +156,12 @@ func extractNestedTranscript(item TResponseInputItem, start, end string) ([]TRes
 		}
 		parsed = append(parsed, it)
 	}
-	if len(parsed) == 0 && sawUnparsable {
-		// Nothing decoded: keep the original item rather than silently
-		// dropping the whole message.
+	if sawUnparsable {
+		// One loss policy, not two: a transcript with ANY line this build
+		// cannot decode is kept verbatim, exactly like one with no decodable
+		// lines. Flattening the readable subset silently deleted the other
+		// lines from the target agent's view — three items gone with no
+		// diagnostic, while a fully unreadable summary survived intact.
 		return nil, false
 	}
 	return parsed, true

@@ -74,6 +74,7 @@ func NewFunctionTool[A any, R any](
 		ParamsJSONSchema:     strictSchema,
 		Strict:               true,
 		FailureErrorFunction: DefaultToolErrorFunction,
+		replaced:             &replacedCache{},
 	}
 	t.OnInvoke = func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
 		// Validate against the schema matching the tool's *current* strictness,
@@ -87,8 +88,12 @@ func NewFunctionTool[A any, R any](
 			validator = nonStrictValidator
 		case !sameSchema(t.ParamsJSONSchema, strictSchema):
 			// A caller replaced the schema after construction; honor it rather
-			// than validating against one the tool no longer advertises.
-			validator = newSchemaValidator(t.ParamsJSONSchema)
+			// than validating against one the tool no longer advertises. The
+			// compiled validator is cached per replacement — "compiled once per
+			// tool, not per call" — and invalidated only when the schema MAP is
+			// replaced again (replace the map to change it; mutating it in
+			// place is not a signal this can see).
+			validator = t.replacedValidator()
 		}
 		var args A
 		if err := decodeToolArgs(name, validator, argsJSON, &args); err != nil {

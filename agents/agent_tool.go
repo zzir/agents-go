@@ -141,12 +141,14 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) Tool {
 	if err != nil {
 		return failedFunctionTool(name, cfg.Description, fmt.Errorf("agent tool %q: %w", name, err))
 	}
-	// The validator decodes into Params like NewFunctionTool does for its
-	// args (and Python's as_tool TypeAdapter): malformed arguments go back to
-	// the model as a behavior error instead of flowing into the nested run.
+	// Arguments get the same whole-schema validation NewFunctionTool gives
+	// its args (spec: "validated against the whole JSON Schema") — a bare
+	// decode caught type mismatches but let a missing required key or a
+	// violated enum flow straight into the nested run's input.
+	validator := newSchemaValidator(schema)
 	validate := func(argsJSON string) error {
 		var params Params
-		return json.Unmarshal([]byte(argsJSON), &params)
+		return decodeToolArgs(name, validator, argsJSON, &params)
 	}
 	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema, cfg.IncludeInputSchema), validate)
 }

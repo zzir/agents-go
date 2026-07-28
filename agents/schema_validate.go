@@ -120,10 +120,9 @@ func sameSchema(a, b map[string]any) bool {
 	if len(a) == 0 {
 		return true
 	}
-	// Two non-empty maps with the same backing store share every key's address;
-	// comparing one probe key's presence is not enough, so fall back to a
-	// reflect-free identity check via a shared sentinel read.
-	return &a == &b || reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+	// Identity, not equality: two non-empty maps are "the same schema" when
+	// they are the same map.
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 }
 
 // relaxAdditionalProperties returns a copy of schema with every

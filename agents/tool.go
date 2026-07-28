@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sync"
 	"time"
 )
 
@@ -94,6 +96,41 @@ type FunctionTool struct {
 	// first model call — the tool is never sent to the model with a broken
 	// schema — instead of only when the model happens to call it.
 	constructionErr error
+
+	// replaced caches the validator compiled for a caller-replaced
+	// ParamsJSONSchema, so "compiled once per tool" holds for replacements too
+	// instead of recompiling on every call. A pointer slot rather than inline
+	// state: FunctionTool values are copied (the MCP bridge clones one per
+	// exposed name), and an inline mutex would make every copy a vet error.
+	// Constructors fill it; a hand-built literal leaves it nil and pays the
+	// per-call compile, which is correct, just slower.
+	replaced *replacedCache
+}
+
+// replacedCache is the compiled-validator slot for a replaced schema, keyed by
+// map identity: replacing the map invalidates it; mutating the map in place is
+// invisible.
+type replacedCache struct {
+	mu  sync.Mutex
+	ptr uintptr
+	v   *schemaValidator
+}
+
+// replacedValidator returns the validator for the tool's current (replaced)
+// ParamsJSONSchema, compiling it at most once per distinct schema map.
+func (t *FunctionTool) replacedValidator() *schemaValidator {
+	c := t.replaced
+	if c == nil {
+		return newSchemaValidator(t.ParamsJSONSchema)
+	}
+	ptr := reflect.ValueOf(t.ParamsJSONSchema).Pointer()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.v == nil || c.ptr != ptr {
+		c.v = newSchemaValidator(t.ParamsJSONSchema)
+		c.ptr = ptr
+	}
+	return c.v
 }
 
 // DefaultToolErrorFunction is the default FailureErrorFunction: it returns a
