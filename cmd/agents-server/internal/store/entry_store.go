@@ -196,12 +196,25 @@ func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 	// Gen is part of the match: a handle held across a delete-and-recreate
 	// writes its entries into the old generation's scope, and must not move
 	// the NEW owner of the name in anyone's listing.
-	_, err := db.NewUpdate().Model((*Session)(nil)).
+	res, err := db.NewUpdate().Model((*Session)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("recording session change: %w", err)
+	}
+	if s.ref.Gen == "" {
+		// A store used outside the repo never had a session row; nothing to
+		// record is not a failure.
+		return nil
+	}
+	// For a repo session the touch doubles as proof the session still EXISTS:
+	// zero rows means it was deleted under this handle, and the write must
+	// fail and roll back rather than mint entries no listing reaches and no
+	// delete can remove (spec §2.5e2: writing and proving the destination
+	// still exists are one step).
+	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+		return fmt.Errorf("session %s: %w", s.ref.ID, agents.ErrSessionNotFound)
 	}
 	return nil
 }

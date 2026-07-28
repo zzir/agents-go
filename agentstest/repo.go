@@ -2,6 +2,7 @@ package agentstest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
@@ -132,9 +133,21 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	if got := repoTexts(t, stale); len(got) != 0 {
 		t.Fatalf("a handle to the deleted session reads the new one's history: %v", got)
 	}
-	repoWrite(t, stale, "from the dead")
+	// A write through the stale handle REFUSES — its destination is gone. A
+	// quietly "isolated" write would mint entries nothing references:
+	// invisible to every listing, unreachable by Delete, orphaned storage by
+	// construction (spec §2.5e2: writing and proving the destination still
+	// exists are one step).
+	item, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"from the dead"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	werr := stale.AppendItems(ctx, []agents.TResponseInputItem{item}, agents.Source{})
+	if werr == nil || !errors.Is(werr, agents.ErrSessionNotFound) {
+		t.Fatalf("a write through a handle to a deleted session must refuse with ErrSessionNotFound, got: %v", werr)
+	}
 	if got := repoTexts(t, fresh); len(got) != 1 {
-		t.Fatalf("the new session absorbed the stale handle's writes: %v", got)
+		t.Fatalf("the new session was disturbed by the stale handle: %v", got)
 	}
 }
 

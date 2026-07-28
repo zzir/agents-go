@@ -2,7 +2,9 @@ package sessions
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -111,5 +113,10 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 var _ agents.SessionRepo = (*Repo)(nil)
 
 func newSessionID() string {
-	return fmt.Sprintf("sess_%d", time.Now().UnixNano())
+	// A random suffix beside the timestamp: two id-less Creates in one clock
+	// tick otherwise mint the same id, and the second fails for no reason the
+	// caller can see.
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), hex.EncodeToString(b[:]))
 }

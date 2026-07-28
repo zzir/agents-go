@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -111,6 +113,37 @@ var (
 	_ agents.ItemPopper     = (*repoStorage)(nil)
 )
 
+// lockKey names the per-session repo lock. Every mutation through a
+// repoStorage handle, every metadata stamp and Delete itself serialize on it:
+// unserialized, a delete raced a live handle's append and the append recreated
+// the just-removed entries file as an orphan no listing reaches and no Delete
+// can ever remove — and a metadata stamp's read-modify-write could resurrect a
+// deleted sidecar wholesale. Distinct from the FileSession's own per-path lock
+// (repo lock is taken first; the file lock nests inside), so the two never
+// deadlock.
+func (r *Repo) lockKey(id string) string {
+	return lockKeyFor(r.sidecarPath(id)) + "\x00repo"
+}
+
+// alive verifies the sidecar still describes this handle's session, under the
+// repo lock. Gone, or claimed by another generation: the session was deleted
+// under the handle, and a write must refuse rather than recreate storage
+// nothing references (spec §2.5e2: writing and proving the destination still
+// exists are one step).
+func (s *repoStorage) alive() error {
+	cur, err := s.repo.readSidecar(s.meta.ID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("session %q: %w", s.meta.ID, agents.ErrSessionNotFound)
+		}
+		return fmt.Errorf("session %q: cannot verify it still exists: %w", s.meta.ID, err)
+	}
+	if cur.ID != s.meta.ID || cur.Gen != s.meta.Gen {
+		return fmt.Errorf("session %q: %w (the name now belongs to another session)", s.meta.ID, agents.ErrSessionNotFound)
+	}
+	return nil
+}
+
 // Metadata merges the sidecar into the entries file's answer. The stored
 // sidecar is re-read so a fresher updated_at shows through, but only while it
 // still describes this handle's generation — after a delete-and-recreate it
@@ -140,9 +173,10 @@ func (s *repoStorage) Metadata(ctx context.Context) (agents.SessionMetadata, err
 	return md, nil
 }
 
-// touch stamps the sidecar's updated_at, best-effort. A sidecar that no longer
-// describes this handle's generation is somebody else's session and is left
-// alone.
+// touch stamps the sidecar's updated_at, best-effort. Callers hold the repo
+// lock, so the read-modify-write cannot interleave with Delete and resurrect a
+// removed sidecar; the generation guard keeps it off a replacement's sidecar
+// regardless.
 func (s *repoStorage) touch() {
 	cur, err := s.repo.readSidecar(s.meta.ID)
 	if err != nil || cur.ID != s.meta.ID || cur.Gen != s.meta.Gen {
@@ -153,30 +187,53 @@ func (s *repoStorage) touch() {
 }
 
 func (s *repoStorage) Append(ctx context.Context, entries ...agents.SessionEntry) error {
-	err := s.FileSession.Append(ctx, entries...)
-	if err == nil && len(entries) > 0 {
-		s.touch()
+	if len(entries) == 0 {
+		return nil
 	}
-	return err
+	release := acquire(s.repo.lockKey(s.meta.ID))
+	defer release()
+	if err := s.alive(); err != nil {
+		return err
+	}
+	if err := s.FileSession.Append(ctx, entries...); err != nil {
+		return err
+	}
+	s.touch()
+	return nil
 }
 
 func (s *repoStorage) Clear(ctx context.Context) error {
-	err := s.FileSession.Clear(ctx)
-	if err == nil {
-		s.touch()
+	release := acquire(s.repo.lockKey(s.meta.ID))
+	defer release()
+	if err := s.alive(); err != nil {
+		return err
 	}
-	return err
+	if err := s.FileSession.Clear(ctx); err != nil {
+		return err
+	}
+	s.touch()
+	return nil
 }
 
 func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
-	err := s.FileSession.ReplaceEntries(ctx, entries...)
-	if err == nil {
-		s.touch()
+	release := acquire(s.repo.lockKey(s.meta.ID))
+	defer release()
+	if err := s.alive(); err != nil {
+		return err
 	}
-	return err
+	if err := s.FileSession.ReplaceEntries(ctx, entries...); err != nil {
+		return err
+	}
+	s.touch()
+	return nil
 }
 
 func (s *repoStorage) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+	release := acquire(s.repo.lockKey(s.meta.ID))
+	defer release()
+	if err := s.alive(); err != nil {
+		return nil, err
+	}
 	e, err := s.FileSession.PopEntry(ctx)
 	if err == nil && e != nil {
 		s.touch()
@@ -185,6 +242,11 @@ func (s *repoStorage) PopEntry(ctx context.Context) (*agents.SessionEntry, error
 }
 
 func (s *repoStorage) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+	release := acquire(s.repo.lockKey(s.meta.ID))
+	defer release()
+	if err := s.alive(); err != nil {
+		return nil, err
+	}
 	e, err := s.FileSession.PopItem(ctx)
 	if err == nil && e != nil {
 		s.touch()
@@ -196,7 +258,12 @@ func (s *repoStorage) PopItem(ctx context.Context) (*agents.SessionEntry, error)
 func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Session, error) {
 	id := opts.ID
 	if id == "" {
-		id = fmt.Sprintf("sess_%d", time.Now().UnixNano())
+		// A random suffix beside the timestamp: two id-less Creates in one
+		// clock tick otherwise mint the same id, and the second fails with
+		// "already exists" for no reason the caller can see.
+		var b [4]byte
+		_, _ = rand.Read(b[:])
+		id = fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), hex.EncodeToString(b[:]))
 	}
 	if strings.ContainsAny(id, `/\`) {
 		// An id is a filename here, so a separator would escape the directory.
@@ -250,6 +317,12 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 		_ = f.Close()
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
+	// The sidecar is the claim on the id; a crash must not leave a torn claim
+	// that burns the name (see writeSidecar).
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("create session %q: %w", id, err)
+	}
 	if err := f.Close(); err != nil {
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
@@ -277,6 +350,15 @@ func (r *Repo) writeSidecar(meta sidecar) error {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	// Sync before the rename: the rename can survive a crash the data did
+	// not, publishing an empty or torn sidecar — and a torn sidecar burns the
+	// id (List skips it, Open cannot parse it, Create sees it, Delete refuses
+	// to guess what it was).
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 		return err
@@ -367,8 +449,13 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 	return out, nil
 }
 
-// Delete removes a session's entries and its metadata.
+// Delete removes a session's entries and its metadata, under the same
+// per-session lock every write through a repo handle holds — deletion is a
+// write like any other, and unserialized it raced appends into recreating the
+// entries file it had just removed.
 func (r *Repo) Delete(_ context.Context, id string) error {
+	release := acquire(r.lockKey(id))
+	defer release()
 	meta, err := r.readSidecar(id)
 	switch {
 	case os.IsNotExist(err):

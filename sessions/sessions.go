@@ -257,14 +257,30 @@ func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
 
 // touchIn records that the session changed, on the transaction that changed it
 // — one step, so the record cannot exist without the write or the write
-// without the record. A session used directly (no repo row) has nothing to
-// record; zero rows affected is that, not a failure.
+// without the record.
+//
+// For a repo-created session (non-empty generation) it doubles as the proof
+// the session still EXISTS: zero rows updated means the row is gone — deleted
+// under a live handle — and the write must fail and roll back rather than
+// leave entries no session references, unreachable forever (spec §2.5e2:
+// writing and proving the destination still exists are one step). A session
+// used directly (empty generation) never had a row; for it, zero rows is
+// simply nothing to record.
 func (s *Session) touchIn(ctx context.Context, tx bun.Tx) error {
-	_, err := tx.NewUpdate().Model((*sessionRow)(nil)).
+	res, err := tx.NewUpdate().Model((*sessionRow)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
 		Exec(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	if s.ref.Gen == "" {
+		return nil
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+		return fmt.Errorf("session %s: %w", s.ref.ID, agents.ErrSessionNotFound)
+	}
+	return nil
 }
 
 // Append implements agents.SessionStorage. The append point is read inside the
@@ -396,9 +412,16 @@ func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan agents.Removal, 
 }
 
 // Clear implements agents.Session, removing every entry for this session ID.
-// Clearing is a change like any other, so it moves the session in a listing.
+// Clearing is a change like any other: it moves the session in a listing, and
+// it holds the same write lock every other entry write holds — an unlocked
+// clear interleaving with a locked append can otherwise land between the
+// append's tip-read and its insert, leaving the new entry parented at a row
+// the clear removed.
 func (s *Session) Clear(ctx context.Context) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := s.lockForWrite(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.NewDelete().Model((*entry)(nil)).
 			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
 			return err

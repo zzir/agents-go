@@ -9,6 +9,8 @@ package memory
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -93,7 +95,12 @@ type FileSession struct {
 }
 
 // NewFileSession returns a session stored at dir/<sessionID>.jsonl, creating dir
-// if needed. The session ID is sanitized for use as a filename.
+// if needed. The session ID is sanitized for use as a filename; an id the
+// sanitizer had to alter also gets a fingerprint of the ORIGINAL id in the
+// name, so two different ids can never share a file. ("team a" and "team+a"
+// both sanitize to team_a — and any two ids in a non-Latin script collapse to
+// underscores — which silently interleaved two conversations in one file. Ids
+// that are already clean filenames keep their exact historical path.)
 func NewFileSession(dir, sessionID string) (*FileSession, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating session dir: %w", err)
@@ -102,8 +109,18 @@ func NewFileSession(dir, sessionID string) (*FileSession, error) {
 	if name == "" {
 		return nil, fmt.Errorf("invalid session id %q", sessionID)
 	}
+	if name != sessionID {
+		name += "-" + idFingerprint(sessionID)
+	}
 	path := filepath.Join(dir, name+".jsonl")
 	return &FileSession{path: path, lockKey: lockKeyFor(path)}, nil
+}
+
+// idFingerprint is a short stable digest of an original session id, appended
+// to a sanitized filename so lossy sanitization cannot merge two ids.
+func idFingerprint(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:4])
 }
 
 // OpenFileSession returns a session stored at the exact file path (one
