@@ -48,6 +48,12 @@ from upstream.
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
   the loop; abandoning it stops the run where it stands. There is no producer
   goroutine to leak and no context that must be cancelled on early exit.
+- **A `RunStream` is single-use.** Ranging it a second time yields a
+  `*UserError` instead of anything else: the run body lives inside the
+  iterator, so a second range would re-execute it — model billed again, tools
+  re-running their side effects, the session taking duplicates — and it would
+  do so silently, which is how "break out early, then Collect()" once
+  duplicated a run.
 - **The result is the stream's terminal event** (`RunCompletedEvent`), emitted
   exactly once on a run that ends without error. A failing run ends with a
   non-nil error and emits no completion — an outcome can never reach one channel
@@ -357,7 +363,10 @@ repeats. A negative `Cursor.Limit` takes the most recent N.
 **Derived state is a fold, never a stored field.** ✅ `State` and `Stats`
 recompute from the entries. A field maintained beside the log has to be updated
 on every write and can disagree with it after a crash, a concurrent writer or a
-fork; a fold cannot.
+fork; a fold cannot. `State` folds the ACTIVE BRANCH — the view recovery reads
+— not append order: a dangling call on an abandoned attempt is not pending,
+and folding every branch reported it forever as a stuck approval nothing could
+clear. `Stats` stays whole-log, because it counts what is stored.
 
 **`ContextEntries` is the active branch minus what compaction folded** ✅ — the
 checkpoints themselves stay in the view (they carry the summary and stand-ins
@@ -390,6 +399,12 @@ An entry names its parent, so a session is a walk rather than a pile.
   the ids it is about to mint. `PrepareAppend` is shared so every backend links
   identically — a store that got this wrong would read back as disconnected
   roots, which no single-append test would catch.
+- **A history with no tree links at all reads whole.** Entries carrying no
+  parent ids and no leaf moves — a session from before branching existed, a
+  server-held store with no tree — are one straight line; walking them as a
+  tree stops after one step and reads only the last entry. Every branch-scoped
+  view (`ContextEntries`, `PathEntries`, the pop selection) shares this rule
+  through one helper.
 - **A walk does NOT stop at a compaction checkpoint.** The walk answers "which
   entries are on this branch", and a folded entry is still on the branch it was
   written to; what the model sees is projection's question. Stopping the walk
@@ -564,6 +579,13 @@ next backend will answer differently.
   someone else. The check must be part of the write.
 - **Selecting a row to remove and removing it.** The delete decides who gets it;
   a caller whose delete affects nothing lost the race and retries.
+- **Writing and proving the destination still exists.** A handle held across
+  its session's deletion must REFUSE the write (`ErrSessionNotFound`), inside
+  the same step as the write: a quietly "isolated" write mints entries nothing
+  references — invisible to every listing, unreachable by delete, orphaned
+  storage by construction. Deletion itself honors the same serialization as
+  writes (the repo lock, the write transaction), or it races them into
+  recreating what it just removed. *Shared contract; mechanism per backend.*
 
 #### Absence
 
@@ -630,6 +652,13 @@ run reads the shorter context without recomputing the pass.
 Writing a checkpoint is an optional capability (`CompactionCheckpointer`): a
 compactor that only reshapes the context in memory is useful and has nothing
 durable to say.
+
+**A checkpoint is bound to its pass.** `Checkpoint(compacted)` names the
+entries the caller's own `Compact` saw, and a compactor whose state no longer
+describes them — one shared across concurrent runs, re-aimed at another
+session between the pass and the checkpoint — reports nothing rather than
+recording the other conversation's exclusions (and content) here. A lost
+checkpoint costs one recomputed pass; a stolen one is a cross-session leak.
 
 The one path that still rewrites is `openai.CompactionSession`, because the
 server's compact API returns a replacement rather than a decision.
@@ -722,6 +751,17 @@ that tool only.
 - `input` — appended as a single user text message replacing the original input.
   For finer rewriting use `ModelOptions.InputFilter`, which edits the exact
   items sent without changing what is saved.
+  **A `Blocking` input guardrail's replacement reaches the model on the
+  guarded call itself**: the turn's input is rebuilt from it before the call is
+  made — a replacement the result reports but the model never saw is a scrubber
+  that did not scrub. A racing guardrail's replacement necessarily misses the
+  call it raced (the request is in flight when the verdict lands) and applies
+  from the next turn on; a guardrail that must rewrite what the model sees sets
+  `Blocking`.
+  **Racing never de-streams the call**: in a streamed run the raced model call
+  still yields raw events on the consumer's goroutine; a tripwire cancels it
+  mid-stream, and events already yielded stand — the run's error says they came
+  to nothing.
 - `output` — replaces the final output value.
 - `tool_input` — the tool does not execute; `Message` becomes its result.
 - `tool_output` — replaces the content returned to the model.
@@ -856,6 +896,12 @@ A response the provider marks `status="incomplete"` with reason
 - Both model paths report it. The blocking path used to drop `Status` while the
   streaming path read it, so the same response was a hard failure when streamed
   and a silent partial answer when not.
+- **None of its tool calls PAUSE, either.** A truncated call never becomes an
+  approval interruption: pausing puts a doomed call in front of a human, and an
+  approval serialized into a `RunState` and resumed elsewhere would execute
+  what the pausing process refuses. The guard runs before the approval
+  partition, and `Status`/`IncompleteReason` survive `RunState` serialization
+  so a cross-process resume refuses the same calls.
 
 ### 2.7f Usage attribution ✅
 
@@ -952,6 +998,9 @@ A tool marked `WithDeferred` is withheld from the model until some
 - Before, not after: a person asked to judge forty commands an hour stops
   reading them, so what was never going to be allowed should not reach the
   prompt — and filtering after approval would ask, get a yes, then refuse.
+  The veto wraps the tool's own `NeedsApprovalFunc`, so a policy-refused
+  command answers "no approval needed" and is refused as text by the tool
+  itself.
 - `Deny` is checked after `Allow`, so **a deny always wins**.
 - A refusal is a tool **result** naming the rule, not an error. Told only "not
   allowed" a model tries variations; told which rule stopped it, it can ask for
@@ -1057,6 +1106,11 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   stream is preceded by a `*GapError` naming the range it lost. Silent loss is
   not an option the API offers: a consumer cannot distinguish a timeline missing
   content from one that never had it.
+- **Including a cursor from outside the reachable range.** Subscribing below
+  the replay window reports the evicted range as a gap; subscribing AHEAD of
+  the head (a cursor issued by a previous life of the stream, before a restart
+  renumbered it) reports a gap too — a fresh timeline must never read as the
+  old one's continuation.
 - **Including when there is no next delivery.** A producer that finishes while a
   subscriber is still behind leaves drops with nothing to ride out on. Those are
   reported as the stream ends, with `GapError.AtEnd` true, `Next` zero and a
@@ -1227,6 +1281,13 @@ a result the inner one had not finished producing.
 **A middleware that resumes strips `Middlewares` first.** The chain is already
 unwound at that point; resuming with the run's own options would re-enter that
 middleware and every one outside it.
+
+**The public `ResumeRun` applies `opts.Middlewares` exactly as `Run` does.** A
+caller resuming with the options it ran with gets the wrapping it ran with —
+logging still logs, `Retry` still retries, `Approval` still resolves further
+pauses. (The rule above is what keeps the two from compounding: an in-chain
+resume passes stripped options.) The paused state's agent and input are
+already decided; a middleware's edits to those fields do not apply on resume.
 
 ---
 

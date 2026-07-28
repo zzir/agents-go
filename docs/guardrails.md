@@ -48,7 +48,11 @@ scanner := agents.Guardrail{
 What `Replace` substitutes depends on the stage:
 
 - `StageInput` — the run input becomes a single user message carrying the text.
-  For finer rewriting use a model-input filter instead.
+  A **`Blocking`** guardrail's replacement reaches the model on the guarded
+  call itself (the turn's input is rebuilt from it before the call); a racing
+  one necessarily misses the call it raced and applies from the next turn on —
+  a guardrail that must rewrite what the model sees sets `Blocking`. For finer
+  rewriting use a model-input filter instead.
 - `StageOutput` — it becomes the run's final output.
 - `StageToolInput` — the tool does **not** execute; the text becomes its result.
 - `StageToolOutput` — it replaces the result sent back to the model.
