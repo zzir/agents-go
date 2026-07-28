@@ -1,275 +1,24 @@
 package agents
 
+// This file is the run loop and its entry points. The stages the loop
+// sequences live in their own files: run_options.go (what a run can be told),
+// run_prepare.go (input normalization, trace/session wiring, resume seeding),
+// run_input_guardrails.go (the first-turn gate and race),
+// run_server_cursor.go (server-managed history deltas), run_step.go (tool
+// execution and side effects), run_persist.go (session writes),
+// run_finish.go (completion and failure), run_resolve.go (per-turn
+// model/tool/handoff resolution) and run_tracing.go (span recording).
+
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
-	"os"
-	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/zzir/agents-go/tracing"
 )
-
-// DefaultMaxTurns is the turn budget applied when RunOptions.Exec.MaxTurns is zero.
-const DefaultMaxTurns = 10
-
-// MaxTurnsUnlimited disables the turn budget when set as RunOptions.Exec.MaxTurns —
-// the run loops until it produces a final output, hands off to a finishing
-// agent, or is cancelled. The counterpart of Python's max_turns=None. Use with
-// care: a model that never finishes will loop indefinitely.
-const MaxTurnsUnlimited = -1
-
-// ModelInputData is the editable portion of a model call passed to a
-// CallModelInputFilter: the system instructions and the input items.
-type ModelInputData struct {
-	Instructions string
-	Input        []TResponseInputItem
-}
-
-// CallModelInputFilter edits the instructions and input items just before a
-// model call. Returning an error aborts the run.
-type CallModelInputFilter func(ctx context.Context, rc *RunContext, agent *Agent, data ModelInputData) (ModelInputData, error)
-
-// RunOptions configures a run. The zero value is valid: MaxTurns defaults to
-// DefaultMaxTurns and a fresh RunContext is created. A ModelProvider (or an
-// agent with an explicit ModelImpl) is required so the runner can obtain a Model.
-// RunOptions configures a run. The zero value is usable: agents.RunSync(ctx,
-// agent, "hi", agents.RunOptions{}) works as long as the agent can resolve a
-// model.
-//
-// Fields are grouped by what they configure rather than listed flat. The groups
-// are not cosmetic — Conversation in particular collects options that constrain
-// each other (a local Session and server-managed state are alternatives, not
-// layers), which a flat list hid.
-type RunOptions struct {
-	// Model selects and configures the model behind every agent in the run.
-	Model ModelOptions
-
-	// Conversation decides where history lives and how it is combined with the
-	// run's new input.
-	Conversation ConversationOptions
-
-	// Exec bounds and steers the loop itself.
-	Exec ExecOptions
-
-	// Compaction shrinks the model's context as the conversation grows. The
-	// zero value disables it.
-	Compaction CompactionOptions
-
-	// Guardrails apply to the whole run, in addition to each agent's own
-	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
-	Guardrails []Guardrail
-
-	// Middlewares wrap the run, outermost first. They are where optional
-	// policy lives — logging, retrying, recovering — so the loop does not grow
-	// a field and a branch for each one.
-	Middlewares []RunMiddleware
-
-	// Observe configures tracing.
-	Observe ObserveOptions
-
-	// Log configures the SDK's own structured logging. The zero value is
-	// silent.
-	Log LogConfig
-
-	// Context is arbitrary user data threaded through tools, guardrails and
-	// hooks via RunContext.Context. Ignored if RunContext is set.
-	Context any
-
-	// RunContext, when set, is used directly (and its Usage is accumulated into).
-	// Otherwise a new one wrapping Context is created.
-	RunContext *RunContext
-
-	// parentTrace, when set, makes the run record its spans into an existing
-	// trace instead of starting (and finishing) its own. Set internally for
-	// nested agent-as-tool runs; not user-facing.
-	parentTrace *tracing.TraceHandle
-
-	// parentSpanID, when set alongside parentTrace, parents the nested run's
-	// agent spans under the function span of the agent-as-tool call that
-	// triggered it, so trace trees show which tool call owns the nested run.
-	// Set internally; not user-facing.
-	parentSpanID string
-}
-
-// ModelOptions selects and configures the model used by every agent in a run.
-type ModelOptions struct {
-
-	// ModelProvider resolves an agent's model name to a Model. Required unless
-	// every agent in the run sets ModelImpl (or Override below is set).
-	Provider ModelProvider
-
-	// Override replaces the model for every agent in the run, ignoring agent
-	// model names. Takes precedence over Provider lookups.
-	Override Model
-
-	// ModelSettings is a run-level settings override merged over each agent's
-	// own ModelSettings.
-	Settings *ModelSettings
-
-	// CallModelInputFilter, when set, is invoked just before each model call to
-	// edit the instructions and input items sent (e.g. to trim tokens or inject
-	// context). It does not change what is saved to the session.
-	InputFilter CallModelInputFilter
-}
-
-// ConversationOptions decides where a run's history lives: in a local Session,
-// or on the server via previous_response_id or a conversation id. The two are
-// alternatives — a run that sets both is rejected.
-type ConversationOptions struct {
-
-	// Session, when set, supplies and persists conversation history: prior items
-	// are prepended to the input, and the new input plus generated items are
-	// saved after the run completes.
-	Session *Session
-
-	// SessionInputCallback customizes how stored session history is combined with
-	// the run's new input. Nil (the default) appends new input to history; a
-	// custom callback may reorder, filter or fold history. Only genuinely new
-	// items are persisted back to the session. Ignored without a Session — the
-	// counterpart of Python's RunConfig.session_input_callback.
-	InputCallback SessionInputCallback
-
-	// SessionSettings overrides how the run reads the Session (e.g. how many
-	// recent items to load). Non-zero fields take precedence over a Session-level
-	// default. Ignored without a Session — the counterpart of Python's
-	// RunConfig.session_settings.
-	Settings *SessionSettings
-
-	// UsePreviousResponseID opts into server-managed conversation state: instead
-	// of resending the full history each turn, the runner chains calls via the
-	// OpenAI Responses API's previous_response_id and sends only new items. This
-	// saves tokens but requires a model that returns response IDs and keeps
-	// responses stored (the default; do not set ModelSettings.Store=false).
-	UsePreviousResponseID bool
-
-	// ConversationID attaches the run to a server-side OpenAI conversation
-	// (the Responses API `conversation` parameter). Like UsePreviousResponseID,
-	// the server holds history, so the runner sends only new items each turn. It
-	// is server-managed state and must not be combined with a local Session.
-	ConversationID string
-
-	// Projectors overrides how session entries become model input, per entry
-	// kind. It is the single place that answers "what does the model get to
-	// read": the defaults send items and compaction checkpoints and nothing
-	// else, so an annotation or terminal output is recorded without being put
-	// in the model's mouth.
-	//
-	// A projector mapped to nil suppresses that kind entirely. The common
-	// override is the opposite — projecting EntryKindTerminal as a user message
-	// so the model can see what was run by hand.
-	Projectors map[EntryKind]EntryProjector
-}
-
-// ExecOptions bounds and steers the run loop.
-type ExecOptions struct {
-	// MaxTurns bounds the number of model calls before the run aborts with a
-	// MaxTurnsError. Zero means DefaultMaxTurns.
-	MaxTurns int
-
-	// MaxToolConcurrency bounds how many function tools run concurrently within a
-	// single turn. Zero means no limit (every tool call in the turn runs in
-	// parallel).
-	MaxToolConcurrency int
-
-	// ToolNotFoundBehavior controls what happens when the model calls a tool the
-	// agent does not expose. The default (ToolNotFoundError) aborts the run;
-	// ToolNotFoundReturnToModel feeds an error back so the model can retry.
-	ToolNotFoundBehavior ToolNotFoundBehavior
-
-	// PreApprovalToolInputGuardrails, when true, runs a tool's input guardrails
-	// before surfacing a human-approval interruption for it: a guardrail
-	// rejection returns the guardrail message as the tool output without
-	// emitting an approval request or executing the tool. Calls that pass still
-	// re-run the same guardrails immediately before execution after approval,
-	// so time-sensitive checks are revalidated on resume. Off by default —
-	// the counterpart of Python's
-	// RunConfig.tool_execution.pre_approval_tool_input_guardrails.
-	PreApprovalToolInputGuardrails bool
-
-	// HandoffInputFilter is a run-level default applied to any handoff that does
-	// not set its own Handoff.InputFilter. Use NestHandoffHistory to fold prior
-	// history across all handoffs.
-	HandoffInputFilter func(HandoffInputData) HandoffInputData
-
-	// ErrorHandlers supplies per-error-kind recovery handlers that can turn a
-	// failing run — max turns exceeded, a model refusal, or an invalid
-	// structured final output — into a normal completion with a fallback final
-	// output. The zero value leaves every error fatal. The counterpart of
-	// Python's Runner.run(..., error_handlers={...}).
-	ErrorHandlers RunErrorHandlers
-
-	// ToolLoop bounds the tool loop: consecutive all-failed turns, and what
-	// happens when the turn budget runs out. The zero value is sensible.
-	ToolLoop ToolLoopPolicy
-
-	// Overflow decides what happens when a model call fails because the
-	// context did not fit. The zero value returns the error unchanged.
-	Overflow OverflowPolicy
-
-	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
-	// items are converted back into model input on later turns. The default
-	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It is
-	// persisted across interruptions in RunState — the counterpart of Python's
-	// RunConfig.reasoning_item_id_policy.
-	ReasoningItemIDPolicy ReasoningItemIDPolicy
-
-	// PrepareNextTurn rebuilds the next turn's configuration at the turn
-	// boundary, returning nil to leave it to the usual resolution.
-	//
-	// It is how a run changes shape mid-flight — swap in a cheaper model once
-	// the hard part is done, withdraw a tool after it has been used, tighten
-	// the instructions — without mutating the Agent, which a concurrent run
-	// may be reading.
-	PrepareNextTurn func(ctx context.Context, tr *TurnResult) (*TurnSnapshot, error)
-
-	// ShouldStopAfterTurn ends the run after a turn that would otherwise
-	// continue, instead of calling the model again.
-	//
-	// It is consulted at the turn boundary — after the turn's items are
-	// persisted, before the next model call — so a run stopped here has its
-	// full history saved. It is a predicate, not a producer: the final output
-	// is the turn's last message text, or the last tool output when the turn
-	// produced no message. Anything richer is available on the RunResult.
-	//
-	// It replaces the agent-level tool-use behavior it grew out of. Deciding
-	// from what a turn produced is strictly more expressive than naming tools
-	// up front, and it belongs to the run rather than the agent: the same agent
-	// is reused across runs that want to stop at different points.
-	ShouldStopAfterTurn func(ctx context.Context, tr *TurnResult) (bool, error)
-}
-
-// ObserveOptions configures tracing for a run.
-type ObserveOptions struct {
-
-	// Tracer, when set, records a trace of the run with a span per model call.
-	// Build one with tracing.NewTracer(processor).
-	Tracer *tracing.Tracer
-
-	// TraceIncludeSensitiveData controls whether generation spans record the
-	// full model request (model, system instructions, input items) and output
-	// items. nil reads the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA
-	// environment variable, where anything but "false" means true — matching
-	// the Python SDK's RunConfig.trace_include_sensitive_data default. Set to
-	// false when trace exports must not carry conversation content.
-	IncludeSensitiveData *bool
-
-	// TraceGroupID links this run's trace to a group of related traces (e.g.
-	// one chat thread across several runs) — the counterpart of Python's
-	// RunConfig.group_id. Only used when Tracer starts a new trace.
-	TraceGroupID string
-
-	// TraceMetadata attaches user metadata to the run's trace — the
-	// counterpart of Python's RunConfig.trace_metadata. Only used when Tracer
-	// starts a new trace.
-	TraceMetadata map[string]any
-}
 
 // Run starts an agent run and returns it as a stream plus a control handle.
 // Nothing executes until the stream is ranged: the run happens on the
@@ -290,6 +39,13 @@ type ObserveOptions struct {
 // Abandoning the stream stops the run where it stands. To stop cleanly at a
 // turn boundary, call ctrl.StopAfterTurn and keep ranging until the stream
 // ends.
+//
+// One exception to "the consumer's goroutine": a tool streaming partial
+// results yields its ToolProgressEvent from the tool's own goroutine. Yields
+// are serialized, so the loop body never runs concurrently with itself — but
+// it does not always run on the goroutine that started the range. Code that
+// pins work to that goroutine (a thread-locked UI, goroutine-local state)
+// must hand such events off; see docs/streaming.md.
 func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, RunControl) {
 	ctrl := newRunControl()
 	return withMiddleware(ctx, agent, input, opts, ctrl, true), ctrl
@@ -306,10 +62,6 @@ func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*Ru
 	return withMiddleware(ctx, agent, input, opts, ctrl, false).Collect()
 }
 
-// withMiddleware builds the run's stream through the configured middleware
-// chain. Input normalization happens once, up front, so a middleware inspects
-// and edits the same item list the loop will use rather than a string it would
-// have to normalize itself.
 // singleUse guards a RunStream against being ranged twice. A second range
 // re-invokes the whole run — model billed again, tools re-executing their side
 // effects, the session taking duplicate items — and it does so SILENTLY, which
@@ -326,6 +78,10 @@ func singleUse(stream RunStream) RunStream {
 	}
 }
 
+// withMiddleware builds the run's stream through the configured middleware
+// chain. Input normalization happens once, up front, so a middleware inspects
+// and edits the same item list the loop will use rather than a string it would
+// have to normalize itself.
 func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
@@ -386,119 +142,6 @@ func (r *runner) finishStream(res *RunResult, err error) {
 		return
 	}
 	r.yield(&RunCompletedEvent{Result: res}, nil)
-}
-
-// prepareRun builds the runner shared by Run and RunStreamed: it normalizes
-// the input, validates server-state options, wires the run context, starts
-// (or joins) the trace and prepends session history to the model input. The
-// returned finish func ends the trace — a no-op when the trace was joined
-// (nested run) or tracing is off — and must be deferred by the caller.
-// ResumeRun has its own entry construction (it seeds from a RunState) and
-// shares only the loop.
-func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []TResponseInputItem, func(), error) {
-	maxTurns := opts.Exec.MaxTurns
-	if maxTurns == 0 {
-		maxTurns = DefaultMaxTurns
-	}
-	// A negative value (MaxTurnsUnlimited) disables the budget; it passes
-	// through here and the turn check skips it.
-
-	rc := opts.RunContext
-	if rc == nil {
-		rc = NewRunContext(opts.Context)
-	}
-	if rc.Usage == nil {
-		rc.Usage = NewUsage()
-	}
-	rc.inheritedOpts = &opts
-
-	userInput, err := normalizeInput(input)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if err := validateServerState(opts); err != nil {
-		return nil, nil, nil, err
-	}
-
-	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
-	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agent.Name))
-	r.diagnostics = &DiagnosticSink{}
-
-	finishTrace := func() {}
-	if opts.parentTrace != nil {
-		// Nested run (agent-as-tool): record spans into the parent's trace
-		// rather than starting an orphan root trace. The parent finishes it.
-		r.trace = opts.parentTrace
-	} else if opts.Observe.Tracer != nil {
-		workflow := agent.Name
-		workflow = cmp.Or(workflow, "Agent workflow")
-		var topts []tracing.TraceOption
-		if opts.Observe.TraceGroupID != "" {
-			topts = append(topts, tracing.WithGroupID(opts.Observe.TraceGroupID))
-		}
-		if opts.Observe.TraceMetadata != nil {
-			topts = append(topts, tracing.WithMetadata(opts.Observe.TraceMetadata))
-		}
-		r.trace = opts.Observe.Tracer.StartTrace(workflow, topts...)
-		finishTrace = r.trace.Finish
-	}
-	rc.activeTrace = r.trace
-
-	// With a session, prepend stored history to the model input. A
-	// SessionInputCallback may instead reorder or fold history; when it does,
-	// only the genuinely new items are persisted (r.userInput is narrowed).
-	modelInput := userInput
-	if opts.Conversation.Session != nil {
-		// Read the active branch minus what compaction folded, then project:
-		// the projection renders each checkpoint's summary in the folded
-		// history's place. An annotation or terminal entry is recorded but not
-		// sent unless Conversation.Projectors says otherwise.
-		cur := Cursor{Limit: -resolveSessionLimit(opts.Conversation.Settings)}
-		entries, herr := opts.Conversation.Session.ContextEntries(ctx, cur)
-		if herr != nil {
-			return nil, nil, nil, herr
-		}
-		// Compact before projecting: the compactor reasons about entries —
-		// their kinds, their turns, their usage — and projection is what turns
-		// whatever survives into model input.
-		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
-		history, herr := ProjectEntries(entries, opts.Conversation.Projectors)
-		if herr != nil {
-			return nil, nil, nil, herr
-		}
-		if opts.Conversation.InputCallback != nil {
-			combined, cerr := opts.Conversation.InputCallback(history, userInput)
-			if cerr != nil {
-				return nil, nil, nil, cerr
-			}
-			// Persistence diffs against the raw combined so the callback's chosen
-			// new items are saved intact, but the model input is scrubbed just like
-			// the default branch below: a callback that folds history can carry a
-			// dangling tool call or a duplicate that would otherwise 400 at the
-			// Responses API.
-			r.userInput = sessionAppendedItems(history, userInput, combined)
-			modelInput = normalizeStoredInput(combined)
-		} else if len(history) > 0 {
-			modelInput = make([]TResponseInputItem, 0, len(history)+len(userInput))
-			modelInput = append(modelInput, history...)
-			modelInput = append(modelInput, userInput...)
-			// Scrub the merged history+input before it reaches the model: a
-			// stored dangling tool call (e.g. persisted by the Python SDK at an
-			// interruption) or a duplicate re-sent item would otherwise 400 at
-			// the Responses API. Mirrors Python's prepare_input_with_session.
-			modelInput = normalizeStoredInput(modelInput)
-		}
-	}
-
-	return r, modelInput, finishTrace, nil
-}
-
-// inputGuardOutcome carries the parallel input guardrails' collected results and
-// tripwire/error off their goroutine, so the main loop can both honor the
-// tripwire and record every result on the RunResult.
-type inputGuardOutcome struct {
-	results []GuardrailResult
-	err     error
 }
 
 // runner holds the mutable state for a single Run invocation.
@@ -614,36 +257,6 @@ type runner struct {
 	guardrailResults []GuardrailResult
 }
 
-// recordGuardrailResults appends guardrail results under the lock, since
-// concurrent tool calls record in parallel.
-func (r *runner) recordGuardrailResults(res ...GuardrailResult) {
-	if len(res) == 0 {
-		return
-	}
-	r.guardrailMu.Lock()
-	r.guardrailResults = append(r.guardrailResults, res...)
-	r.guardrailMu.Unlock()
-}
-
-// snapshotGuardrailResults copies the accumulated results for a RunResult.
-func (r *runner) snapshotGuardrailResults() []GuardrailResult {
-	r.guardrailMu.Lock()
-	defer r.guardrailMu.Unlock()
-	return append([]GuardrailResult(nil), r.guardrailResults...)
-}
-
-// runGuardrails is the run-level guardrail set for an agent: run-scoped ones
-// first, then the agent's own.
-func (r *runner) runGuardrails(agent *Agent) []Guardrail {
-	if len(r.opts.Guardrails) == 0 {
-		return agent.Guardrails
-	}
-	out := make([]Guardrail, 0, len(r.opts.Guardrails)+len(agent.Guardrails))
-	out = append(out, r.opts.Guardrails...)
-	out = append(out, agent.Guardrails...)
-	return out
-}
-
 // agentParentID returns the current agent span's ID for nesting child spans.
 func (r *runner) agentParentID() string {
 	if r.agentSpan == nil || r.agentSpan.Span == nil {
@@ -656,55 +269,29 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	// Finish the active agent span when the loop ends (nil-safe when untraced).
 	defer func() { r.agentSpan.Finish() }()
 
-	// cancelInputGuardrails, when set, cancels the in-flight input-guardrail
-	// goroutine. Deferred so every early exit (e.g. a failed model call) stops
-	// an LLM-based guardrail instead of letting it run to completion after the
-	// run has already returned.
-	var cancelInputGuardrails context.CancelFunc
-	defer func() {
-		if cancelInputGuardrails != nil {
-			cancelInputGuardrails()
-		}
-	}()
+	// inputRace holds the first turn's racing input guardrails once spawned.
+	// The deferred stop covers every early exit (e.g. a failed model call), so
+	// an LLM-based guardrail is cancelled instead of running to completion
+	// after the run has already returned.
+	var inputRace *inputGuardRace
+	defer func() { inputRace.stop() }()
 
-	currentAgent := startAgent
-	generatedItems := []RunItem{}
-	rawResponses := []*ModelResponse{}
+	// When resuming from an interruption, the seed carries the prior state and
+	// the captured response, re-processed on the first iteration instead of
+	// calling the model.
+	seed := r.seedLoop(startAgent, originalInput)
+	currentAgent := seed.agent
+	originalInput = seed.originalInput
+	generatedItems := seed.generatedItems
+	rawResponses := seed.rawResponses
+	pendingResponse := seed.pendingResponse
+	startTurn := seed.startTurn
 	shouldRunStartHooks := true
-	startTurn := 1
 
-	// When resuming from an interruption, seed prior state and re-process the
-	// captured response on the first iteration instead of calling the model.
-	var pendingResponse *ModelResponse
-	if r.resume != nil {
-		currentAgent = r.resume.CurrentAgent
-		originalInput = r.resume.OriginalInput
-		generatedItems = append([]RunItem{}, r.resume.GeneratedItems...)
-		rawResponses = append([]*ModelResponse{}, r.resume.RawResponses...)
-		pendingResponse = r.resume.InterruptedResponse
-		sessionSeed := r.resume.SessionItems
-		if sessionSeed == nil {
-			sessionSeed = r.resume.GeneratedItems
-		}
-		r.sessionItems = append([]RunItem{}, sessionSeed...)
-		// The interrupted run already persisted its user input and every turn up
-		// to the pause (holding back the pending, output-less tool calls), so the
-		// resume continues from that cursor instead of re-saving.
-		r.persistedSessionItems = r.resume.PersistedSessionItems
-		r.userInputSaved = true
-		// Continue counting turns where the interrupted run stopped, so repeated
-		// interrupt/resume cycles cannot exceed the turn budget.
-		if r.resume.CurrentTurn > 1 {
-			startTurn = r.resume.CurrentTurn
-		}
-	}
-
-	// previous_response_id tracking: previousResponseID chains server-side
-	// conversation state; serverItemCount marks how many generated items the
-	// server already has (so we only send the rest).
-	var previousResponseID string
-	var serverItemCount int
-	var serverCursorActive bool
+	// cursor tracks what a server-managed conversation already holds
+	// (previous_response_id chaining, or a server-side conversation id), so
+	// each turn sends only the delta.
+	var cursor serverCursor
 
 	// pending holds a snapshot supplied by PrepareNextTurn at the last save
 	// point, to be used instead of resolving the next turn from the agent.
@@ -719,11 +306,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 	// recovering, it is looping.
 	var overflowRetries int
 
-	// Persist the new user input up front (original run only; a resume's input
-	// was saved before it paused). Mirrors Python persisting input before the
-	// Runs defer the one-time user-input save to just before the first model
-	// call (see below), so a failure ahead of that — a blocking input-guardrail
-	// tripwire, a bad model config — leaves no orphan user message behind.
+	// The one-time save of the run's new user input is deferred to just before
+	// the first model call (see the persistUserInput call below), so a failure
+	// ahead of that — a blocking input-guardrail tripwire, a bad model config —
+	// leaves no orphan user message behind. A resume's input was saved before
+	// it paused.
 
 	r.log.Info(ctx, "run started",
 		slog.Int("max_turns", r.maxTurns),
@@ -798,35 +385,13 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			r.agentSpan = r.trace.StartAgentSpan(currentAgent.Name, r.opts.parentSpanID)
 		}
 
-		// Build the model input. In previous_response_id mode, send only the
-		// items the server does not yet have; otherwise send the full history.
-		// A closure because it can run twice: a Blocking input guardrail that
-		// REPLACES the input rebuilds from the replacement, so the guarded
-		// call itself sees the rewritten input rather than just later turns.
-		var prevID string
-		usedOriginalInput := false
-		buildTurnInput := func() ([]TResponseInputItem, error) {
-			var in []TResponseInputItem
-			var err error
-			usedOriginalInput = false
-			switch {
-			case r.opts.Conversation.UsePreviousResponseID && previousResponseID != "":
-				in, err = itemsToInputList(generatedItems[serverItemCount:])
-				prevID = previousResponseID
-			case r.opts.Conversation.ConversationID != "" && serverCursorActive:
-				// The conversation already holds prior items server-side.
-				in, err = itemsToInputList(generatedItems[serverItemCount:])
-			default:
-				usedOriginalInput = true
-				in, err = buildModelInput(originalInput, generatedItems)
-			}
-			if err != nil {
-				return nil, err
-			}
-			// Optionally strip reasoning-item ids before sending them to the model.
-			return applyReasoningItemIDPolicy(in, r.opts.Exec.ReasoningItemIDPolicy), nil
-		}
-		turnInput, inputErr := buildTurnInput()
+		// Build the model input. In a server-managed mode, only the items the
+		// server does not yet have are sent; otherwise the full history is.
+		// It can run twice within the first turn: a Blocking input guardrail
+		// that REPLACES the input rebuilds from the replacement (see the gate
+		// below), so the guarded call itself sees the rewritten input rather
+		// than just later turns.
+		turnInput, prevID, usedOriginalInput, inputErr := r.buildTurnInput(cursor, originalInput, generatedItems)
 		if inputErr != nil {
 			return nil, r.fail(inputErr, originalInput, generatedItems, rawResponses, currentAgent)
 		}
@@ -860,90 +425,24 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		// edit it below, in which case this is refreshed.
 		r.rc.setTurnInput(modelInput)
 
-		// On the first turn, run input guardrails (run-level ones first, then the
-		// starting agent's). A guardrail with Blocking=true runs to completion
-		// BEFORE the model call — a gate. It runs after the turn's input is
-		// built and published, so it can inspect rc.TurnInput(); a Replace
-		// verdict rebuilds that input from the replacement, which is what makes
-		// the verdict real for the guarded call itself. The rest race the model
-		// call; guardCh delivers their results and tripwire. They already ran
+		// On the first turn, run input guardrails. Blocking ones gate the
+		// model call and may rewrite this turn's input (Replace); the rest are
+		// spawned to race it, delivered through inputRace. They already ran
 		// before an interruption, so a resumed run skips them.
-		var guardCh chan inputGuardOutcome
 		if turn == startTurn && r.resume == nil && !r.inputGuardrailsRan {
 			r.inputGuardrailsRan = true
-			all := selectStage(r.runGuardrails(startAgent), StageInput)
-			var sequential, parallel []Guardrail
-			for _, g := range all {
-				if g.Blocking {
-					sequential = append(sequential, g)
-				} else {
-					parallel = append(parallel, g)
-				}
+			gate, gerr := r.firstTurnInputGuardrails(ctx, startAgent, originalInput, usedOriginalInput, snapshot,
+				func(replaced []TResponseInputItem) ([]TResponseInputItem, error) {
+					in, _, _, err := r.buildTurnInput(cursor, replaced, generatedItems)
+					return in, err
+				})
+			originalInput = gate.original
+			inputRace = gate.race
+			if gerr != nil {
+				return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
 			}
-			// Sequential (blocking) guardrails: a tripwire prevents the model call.
-			if len(sequential) > 0 {
-				r.ctrl.setPhase(PhaseGuardrails)
-				gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-				res, gerr := runStageConcurrent(ctx, r.rc, sequential,
-					GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
-				r.recordGuardrailResults(res...)
-				if repl, ok := inputReplacement(res); ok {
-					// The whole point of Replace: the model must see the
-					// replacement. Rebuild THIS turn's input from it — leaving
-					// the already-built input in place sent the original to the
-					// model while the result claimed it was replaced.
-					if !usedOriginalInput {
-						// A server-managed turn (previous_response_id / a
-						// server-held conversation) sends only a delta; the
-						// history the replacement would rewrite lives on the
-						// server and cannot be rewritten from here. Proceeding
-						// would send the original while claiming otherwise —
-						// fail instead.
-						rerr := newUserError(
-							"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace")
-						gspan.SetError(rerr.Error(), nil)
-						gspan.Finish()
-						return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
-					}
-					originalInput = repl
-					rebuilt, rerr := buildTurnInput()
-					if rerr != nil {
-						gspan.SetError(rerr.Error(), nil)
-						gspan.Finish()
-						return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
-					}
-					modelInput = rebuilt
-					snapshot.Input = rebuilt
-					r.rc.setTurnInput(modelInput)
-				}
-				if gerr != nil {
-					gspan.SetError(gerr.Error(), nil)
-					gspan.Finish()
-					return nil, r.fail(gerr, originalInput, generatedItems, rawResponses, currentAgent)
-				}
-				gspan.Finish()
-			}
-			// Non-blocking guardrails race the model call: a tripwire cancels it,
-			// so the run fails without waiting for a response nobody will use.
-			// A Replace verdict from a racing guardrail necessarily misses the
-			// call it raced — the request is already in flight when the verdict
-			// lands — and applies from the next turn on; a guardrail that must
-			// rewrite what the model sees sets Blocking.
-			if len(parallel) > 0 {
-				guardCh = make(chan inputGuardOutcome, 1)
-				gctx, gcancel := context.WithCancel(ctx)
-				cancelInputGuardrails = gcancel
-				parentID := r.agentParentID() // read before the goroutine races a handoff
-				go func() {
-					gspan := r.trace.StartGuardrailSpan("input", parentID)
-					res, gerr := runStageConcurrent(gctx, r.rc, parallel,
-						GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
-					if gerr != nil {
-						gspan.SetError(gerr.Error(), nil)
-					}
-					gspan.Finish()
-					guardCh <- inputGuardOutcome{results: res, err: gerr}
-				}()
+			if gate.model != nil {
+				modelInput = gate.model
 			}
 		}
 
@@ -1009,76 +508,24 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// reach; the span rides on the context so they nest under it.
 			callCtx := tracing.WithSpan(ctx, span)
 			switch {
-			case guardCh != nil:
-				// First-turn racing input guardrails: run the model call under a
-				// cancelable context and watch the verdict from the side, so a
-				// tripwire cancels the in-flight call. The call itself stays on
-				// THIS goroutine in its usual form — streamed when the run
-				// streams — because racing must not de-stream it: yielding raw
-				// events from a helper goroutine would race the iterator, and
-				// downgrading to a blocking call silently cost a streaming UI
-				// its whole first turn of deltas.
-				//
-				// A tripped guardrail aborts the turn WITHOUT billing usage or
-				// firing OnLLMEnd — the model outcome is discarded (Python
-				// parity: should_cancel_parallel_model_task_on_input_guardrail_trip).
-				// Raw events already yielded by a streamed call stand; the
-				// run's error is what says they came to nothing.
-				modelCtx, modelCancel := context.WithCancel(callCtx)
-				relay := make(chan inputGuardOutcome, 1)
-				go func() {
-					g := <-guardCh
-					if g.err != nil {
-						modelCancel()
-					}
-					relay <- g
-				}()
-				if r.rawEvents {
-					resp, err = r.streamOneModelCall(modelCtx, span, model, req)
-				} else {
-					resp, err = model.GetResponse(modelCtx, req)
-				}
-				// An abandoned stream must stop the run WHERE IT STANDS
-				// (spec §2.0), and the guardrails are the run: waiting for
-				// them here parked the consumer's `break` for a slow
-				// guardrail's full duration — forever, for one that returns
-				// only on cancellation, since the deferred cancel cannot run
-				// while this read blocks. Cancel them and leave; their
-				// verdict is about a turn nobody will read.
-				if r.consumerStopped || errors.Is(err, errConsumerStopped) {
-					cancelInputGuardrails()
-					modelCancel()
-					span.Finish()
+			case inputRace != nil:
+				// First-turn racing input guardrails: the call runs under a
+				// cancelable context with the verdict watched from the side.
+				out := r.raceModelCall(callCtx, span, model, req, inputRace, originalInput)
+				// The race is decided — release its cancel context now, not at
+				// loop exit: with a long-lived parent ctx the registration
+				// would otherwise outlive the run. Idempotent with the
+				// consumer-stopped path's own stop.
+				inputRace.stop()
+				inputRace = nil
+				originalInput = out.original
+				if out.stopped {
 					return nil, errConsumerStopped
 				}
-				// The guardrails always finish — a tripwire cancelled the call,
-				// completion just outlasted it — so honor a verdict still in
-				// flight before trusting the model outcome.
-				g := <-relay
-				modelCancel()
-				r.recordGuardrailResults(g.results...)
-				if repl, ok := inputReplacement(g.results); ok {
-					if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
-						// "Applies from the next turn on" is impossible here:
-						// server-managed turns send only deltas and never
-						// rebuild from the input, so the replacement would
-						// apply to NOTHING while the result claimed
-						// otherwise. Fail rather than pretend.
-						modelCancel()
-						span.Finish()
-						return nil, r.fail(newUserError(
-							"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace"),
-							originalInput, generatedItems, rawResponses, currentAgent)
-					}
-					// Too late for the call it raced; later turns and the
-					// result see the replacement.
-					originalInput = repl
+				if out.guardErr != nil {
+					return nil, r.fail(out.guardErr, originalInput, generatedItems, rawResponses, currentAgent)
 				}
-				if g.err != nil {
-					span.SetError(g.err.Error(), nil)
-					span.Finish()
-					return nil, r.fail(g.err, originalInput, generatedItems, rawResponses, currentAgent)
-				}
+				resp, err = out.resp, out.modelErr
 			case r.rawEvents:
 				resp, err = r.streamOneModelCall(callCtx, span, model, req)
 			default:
@@ -1174,29 +621,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			r.markToolsUsed(currentAgent)
 		}
 
-		// Advance the server cursor: items the server already has are everything
-		// sent this turn plus the model's own output items; synthesized items
+		// Advance the server cursor past this turn: the server now has
+		// everything sent plus the model's own output items; synthesized items
 		// (tool outputs) remain pending for the next call.
-		if r.opts.Conversation.UsePreviousResponseID && resp.ResponseID != "" {
-			previousResponseID = resp.ResponseID
-			if resumedTurn {
-				// The interrupted response's own items were already recorded
-				// before the run paused; only this turn's tool outputs pend.
-				serverItemCount = lenBeforeStep
-			} else {
-				serverItemCount = lenBeforeStep + len(processed.NewItems)
-			}
-		}
-		// conversation_id mode: the server appends each turn's items, so advance
-		// the cursor and send only deltas from the next turn on.
-		if r.opts.Conversation.ConversationID != "" {
-			serverCursorActive = true
-			if resumedTurn {
-				serverItemCount = lenBeforeStep
-			} else {
-				serverItemCount = lenBeforeStep + len(processed.NewItems)
-			}
-		}
+		cursor.advance(r.opts.Conversation, resp, resumedTurn, lenBeforeStep, len(processed.NewItems))
 
 		switch step.NextStep {
 		case stepFinalOutput:
@@ -1372,606 +800,4 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			continue
 		}
 	}
-}
-
-// finishRun is the final-output tail shared by the normal completion path and
-// a max-turns recovery. Order: the agent-end hook fires FIRST (matching Python;
-// before output guardrails — a tripped
-// guardrail does not suppress on_agent_end), then output guardrails, then
-// session persistence and compaction (kept after guardrails, matching Python's
-// streaming path: a guardrail-tripped final output is not persisted).
-func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TResponseInputItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
-	if agent.OnEnd != nil {
-		if err := agent.OnEnd(ctx, r.rc, finalOutput); err != nil {
-			return nil, err
-		}
-	}
-	// Output guardrails: run-level ones first, then the producing agent's.
-	// A Replace decision substitutes the final output and the run continues.
-	if outGuardrails := selectStage(r.runGuardrails(agent), StageOutput); len(outGuardrails) > 0 {
-		// The output stage is the likeliest place for a slow (LLM-based)
-		// guardrail, and it ran under whatever phase the turn last set —
-		// "model" or "tools" — which is exactly the misreport Phase exists to
-		// prevent.
-		r.ctrl.setPhase(PhaseGuardrails)
-		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
-		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
-			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})
-		r.recordGuardrailResults(res...)
-		if gerr != nil {
-			gspan.SetError(gerr.Error(), nil)
-			gspan.Finish()
-			return nil, gerr
-		}
-		gspan.Finish()
-		for _, g := range res {
-			if g.Decision.Action == GuardrailReplace {
-				finalOutput = g.Decision.Message
-				break
-			}
-		}
-	}
-	if err := r.persistSessionItems(ctx); err != nil {
-		return nil, err
-	}
-	r.compactAfterRun(ctx)
-	return &RunResult{
-		Input: originalInput,
-		// The unfiltered item log: a handoff input filter rewrites the model's
-		// view (generatedItems) but never what the result reports (Python parity:
-		// new_items = session_items).
-		NewItems:         r.sessionItems,
-		RawResponses:     raw,
-		FinalOutput:      finalOutput,
-		LastAgent:        agent,
-		Usage:            r.rc.Usage,
-		GuardrailResults: r.snapshotGuardrailResults(),
-		Diagnostics:      r.diagnostics.All(),
-		// A run can also reach its final output on the very turn the stop was
-		// asked for — a single-turn agent always does, and each Loop attempt
-		// starts at turn one, so the turn-boundary check above never fires for
-		// them. The flag answers "did the caller stop this", not "where did it
-		// stop", so it is set wherever the request is live.
-		StoppedEarly: r.ctrl.stopRequested(),
-	}, nil
-}
-
-// recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn a turn-budget
-// overrun into a normal completion. It returns (nil, nil) when there is no
-// handler or it declines — the caller then fails with the MaxTurnsError. On
-// recovery the agent span still records the overrun (Python parity: the error
-// is traced even when handled), the synthesized fallback message joins the
-// run's items and session unless the handler opted out, and the run finishes
-// through the same guardrail/persist/hook tail as a normal final output.
-func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []TResponseInputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
-	// Handlers see the session view of the run (never reset by handoff input
-	// filters), like Python's session_items-based RunErrorData for max_turns.
-	rec, err := r.resolveErrorRecovery(ctx, "max_turns", r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
-	if err != nil || rec == nil {
-		return nil, err
-	}
-	r.agentSpan.SetError(cause.Error(), map[string]any{"max_turns": r.maxTurns})
-	if rec.message != nil {
-		// finishRun reports r.sessionItems as NewItems, so the synthesized
-		// fallback message joins the run there (and the session).
-		r.sessionItems = append(r.sessionItems, rec.message)
-		if !r.emit(&RunItemStreamEvent{Name: runItemEventName(rec.message), Item: rec.message}) {
-			return nil, errConsumerStopped
-		}
-	}
-	return r.finishRun(ctx, agent, originalInput, rawResponses, rec.finalOutput)
-}
-
-func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, raw []*ModelResponse, last *Agent) error {
-	// Mark the current agent span failed so the error is visible in traces;
-	// child spans (generation, function) set their own errors at the source.
-	r.agentSpan.SetError(err.Error(), nil)
-	// Report the unfiltered item log when a handoff input filter has reset the
-	// caller's generatedItems view (Python parity: RunErrorDetails carries
-	// session_items). Without a filter the two are identical.
-	newItems := items
-	if len(r.sessionItems) > len(items) {
-		newItems = r.sessionItems
-	}
-	details := &RunErrorDetails{
-		Input:            input,
-		NewItems:         newItems,
-		RawResponses:     raw,
-		LastAgent:        last,
-		Usage:            r.rc.Usage,
-		GuardrailResults: r.snapshotGuardrailResults(),
-		Diagnostics:      r.diagnostics.All(),
-	}
-	var ae *AgentsError
-	if asAgentsError(err, &ae) {
-		ae.Details = details
-		return err
-	}
-	return err
-}
-
-// persistUserInput writes the run's new user input to the session once, at loop
-// start. Later per-turn saves persist only generated items, so the prompt is
-// never rewritten. No-op without a session or when there is no new input.
-func (r *runner) persistUserInput(ctx context.Context) error {
-	if r.opts.Conversation.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
-		return nil
-	}
-	if err := r.opts.Conversation.Session.AppendItems(ctx, r.userInput, Source{Type: SourceUser}); err != nil {
-		return err
-	}
-	r.userInputSaved = true
-	return nil
-}
-
-// persistSessionItems incrementally saves the sessionItems produced since the
-// last save. It persists only the "safe" leading prefix: a trailing
-// function_call still awaiting its output (a HITL pause) is held back so the
-// stored conversation never contains a call without its output, which would be
-// rejected on replay. The held-back calls save on the next turn, once their
-// outputs arrive. sessionItems is the unfiltered log, so handoff input filters
-// never affect what is stored.
-func (r *runner) persistSessionItems(ctx context.Context) error {
-	if r.opts.Conversation.Session == nil {
-		return nil
-	}
-	end := safePersistBoundary(r.sessionItems, r.persistedSessionItems)
-	if end <= r.persistedSessionItems {
-		return nil
-	}
-	toSave := make([]SessionEntry, 0, end-r.persistedSessionItems)
-	for _, it := range r.sessionItems[r.persistedSessionItems:end] {
-		// Provenance and display ride along, so a reader gets the same timeline
-		// the run produced instead of re-deriving it from the wire item.
-		e, err := EntryFromRunItem(it, r.lastResponseID)
-		if err != nil {
-			return err
-		}
-		toSave = append(toSave, e)
-	}
-	r.attributeUsage(toSave)
-	r.attributeDiagnostics(toSave)
-	if len(toSave) > 0 {
-		if err := r.opts.Conversation.Session.Append(ctx, toSave...); err != nil {
-			return err
-		}
-		r.log.Debug(ctx, "turn persisted", slog.Int("entries", len(toSave)))
-	}
-	r.persistedSessionItems = end
-	return nil
-}
-
-// safePersistBoundary returns the exclusive end index up to which items[start:]
-// can be safely persisted without ever storing a function_call that lacks its
-// matching function_call_output. It returns the largest end such that every
-// function_call in items[start:end] has its output also within items[start:end).
-//
-// Scanning left to right, the boundary advances to just past each point where no
-// call is left open (awaiting its output). A pending call — and everything
-// ordered after it, including a completed sibling's output that happens to sit
-// after it (as at a nested agent-as-tool pause: [call S, call A(pending),
-// output S]) — is held back until the missing outputs arrive on resume, so the
-// stored history never contains a dangling call. A turn whose calls are all
-// paired therefore persists in full.
-func safePersistBoundary(items []RunItem, start int) int {
-	if start >= len(items) {
-		return len(items)
-	}
-	end := start
-	open := map[string]struct{}{}
-	for i := start; i < len(items); i++ {
-		id, isCall, isOutput := runItemCallID(items[i])
-		switch {
-		case isCall:
-			open[id] = struct{}{}
-		case isOutput:
-			delete(open, id)
-		}
-		if len(open) == 0 {
-			end = i + 1
-		}
-	}
-	return end
-}
-
-// runItemCallID reports a run item's function-call correlation id and whether it
-// is a call or an output, by inspecting its input-item form. Non-function items
-// (messages, reasoning, handoffs) report isCall=isOutput=false. Works uniformly
-// for live items and items rebuilt from serialized RunState.
-func runItemCallID(it RunItem) (callID string, isCall, isOutput bool) {
-	in, err := it.ToInputItem()
-	if err != nil {
-		return "", false, false
-	}
-	switch {
-	case in.OfFunctionCall != nil:
-		return in.OfFunctionCall.CallID, true, false
-	case in.OfFunctionCallOutput != nil:
-		return in.OfFunctionCallOutput.CallID, false, true
-	}
-	return "", false, false
-}
-
-// compactAfterRun is the CompactAfterRun point: the run's items are persisted
-// and its final output produced, so a self-compacting storage gets its turn to
-// shrink what it keeps.
-//
-// It is best-effort housekeeping: a failure is recorded on the trace instead of
-// turning a successful run into a failed one.
-func (r *runner) compactAfterRun(ctx context.Context) {
-	if r.opts.Conversation.Session == nil {
-		return
-	}
-	// A configured Compactor records its result as a checkpoint. It and a
-	// self-compacting storage never both apply: compactContext stands aside
-	// when the storage compacts itself.
-	if r.checkpointAfterRun(ctx) {
-		return
-	}
-	// Items produced locally AFTER the last model response — a final turn's
-	// tool/handoff outputs (a terminating tool, rejected calls) or a synthesized
-	// error-handler fallback message — are not on the server's
-	// previous_response_id chain, so compacting from lastResponseID would
-	// erase them from the stored history. Python defers compaction for such
-	// turns (save_result_to_session's has_local_tool_outputs check); with one
-	// compaction per run, ending on such a turn means skipping it.
-	if endsWithLocalItem(r.sessionItems) {
-		return
-	}
-	if cs, ok := r.opts.Conversation.Session.Storage().(CompactionAware); ok {
-		// The span starts lazily — only when the session actually compacts —
-		// so no-op passes don't clutter the trace.
-		var cspan *tracing.SpanHandle
-		cerr := cs.RunCompaction(ctx, CompactionArgs{
-			ResponseID: r.lastResponseID,
-			Store:      r.lastStore,
-			StartSpan: func() *tracing.SpanHandle {
-				cspan = r.trace.StartCompactionSpan(r.agentParentID())
-				return cspan
-			},
-		})
-		if cerr != nil && cspan == nil {
-			// Failed before the session opened the span; open one so the
-			// error is still visible on the trace.
-			cspan = r.trace.StartCompactionSpan(r.agentParentID())
-		}
-		if cspan != nil {
-			if cerr != nil {
-				cspan.SetError(cerr.Error(), nil)
-			}
-			cspan.Finish()
-		}
-	}
-}
-
-// endsWithLocalItem reports whether the run's last item was produced locally
-// by the SDK rather than returned by the model: a tool/handoff output, or an
-// error-handler's synthesized fallback message (marked with the fake response
-// id). Such items postdate the last model response and are absent from the
-// server-side response chain that previous_response_id compaction replays.
-func endsWithLocalItem(items []RunItem) bool {
-	if len(items) == 0 {
-		return false
-	}
-	// Anything the runner synthesized — a tool output, a handoff
-	// acknowledgement, an error handler's fallback message — is local. The
-	// model's own output and the caller's input are not.
-	//
-	// This used to be a type switch that string-compared a sentinel id on
-	// messages and re-derived the answer from a kind string on restored items;
-	// provenance answers it directly, and correctly for item types added later.
-	return !items[len(items)-1].Source().IsExternal()
-}
-
-// mergeNestedStates combines any agent-as-tool nested states still cached on
-// the run context (un-consumed from a prior resume) with those freshly paused
-// this turn, preferring the fresh ones. Returns nil when both are empty so a
-// run without nested-tool HITL carries no map.
-func mergeNestedStates(carried, fresh map[string]*RunState) map[string]*RunState {
-	if len(carried) == 0 && len(fresh) == 0 {
-		return nil
-	}
-	out := make(map[string]*RunState, len(carried)+len(fresh))
-	maps.Copy(out, carried)
-	maps.Copy(out, fresh)
-	return out
-}
-
-// validateServerState rejects incompatible server-managed conversation options.
-// conversation_id and previous_response_id both put history on the server, so
-// they cannot be combined with each other or with a local Session.
-func validateServerState(opts RunOptions) error {
-	if opts.Conversation.ConversationID != "" {
-		if opts.Conversation.UsePreviousResponseID {
-			return newUserError("ConversationID cannot be combined with UsePreviousResponseID")
-		}
-		if opts.Conversation.Session != nil {
-			return newUserError("ConversationID cannot be combined with a local Session")
-		}
-	}
-	if opts.Conversation.UsePreviousResponseID && opts.Conversation.Session != nil {
-		return newUserError("UsePreviousResponseID cannot be combined with a local Session")
-	}
-	return nil
-}
-
-// toolsUsedList returns the agent names in a tool-use tracker as a slice, for
-// carrying the tool_choice reset across an interrupt/resume in RunState.
-func toolsUsedList(m map[string]bool) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	return slices.Sorted(maps.Keys(m))
-}
-
-// markToolsUsed records that agent called tools this run (for tool_choice reset).
-func (r *runner) markToolsUsed(agent *Agent) {
-	if r.toolsUsedBy == nil {
-		r.toolsUsedBy = map[string]bool{}
-	}
-	r.toolsUsedBy[agent.Name] = true
-}
-
-// resolveModel returns the Model for the given agent, honoring (in order) the
-// agent's explicit ModelImpl, the run-level Model override, then the provider.
-// setGenerationUsage records a single model call's token counts on its
-// generation span, so trace consumers see per-call input/output/total tokens
-// (rc.Usage holds the run-wide accumulation separately).
-func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
-	if u == nil {
-		return
-	}
-	span.Set("input_tokens", u.InputTokens)
-	span.Set("output_tokens", u.OutputTokens)
-	span.Set("total_tokens", u.TotalTokens)
-}
-
-// traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData,
-// falling back to the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
-// variable where anything but "false" means true — the same default as the
-// Python SDK.
-func (r *runner) traceIncludeSensitiveData() bool {
-	if r.opts.Observe.IncludeSensitiveData != nil {
-		return *r.opts.Observe.IncludeSensitiveData
-	}
-	return !strings.EqualFold(strings.TrimSpace(os.Getenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA")), "false")
-}
-
-// traceTools projects the request's tools into a serializable form — the
-// function fields on FunctionTool cannot be marshaled.
-func traceTools(tools []Tool) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, t := range tools {
-		m := map[string]any{"name": t.ToolName()}
-		if d, ok := ToolAs[DescribableTool](t); ok {
-			if desc := d.ToolDescription(); desc != "" {
-				m["description"] = desc
-			}
-			if schema := d.ToolParamsSchema(); schema != nil {
-				m["parameters"] = schema
-			}
-		}
-		out = append(out, m)
-	}
-	return out
-}
-
-// traceHandoffs projects the request's handoffs into a serializable form.
-func traceHandoffs(handoffs []Handoff) []map[string]any {
-	out := make([]map[string]any, 0, len(handoffs))
-	for _, h := range handoffs {
-		out = append(out, map[string]any{
-			"tool_name":  h.ToolName,
-			"agent_name": h.AgentName,
-		})
-	}
-	return out
-}
-
-// startGenerationSpan opens the span for one model call and, unless
-// sensitive-data tracing is off, records the full request body: model name,
-// system instructions, input items, tool definitions, model settings (the
-// Extra* passthrough fields are excluded by their json tags), handoffs, and
-// output schema. Slices are cloned or projected because exporters serialize
-// asynchronously, after the runner may have modified the originals.
-func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.SpanHandle {
-	span := r.trace.StartGenerationSpan(agent.Name, r.agentParentID())
-	if span.Span == nil || !r.traceIncludeSensitiveData() {
-		return span
-	}
-	if agent.Model != "" {
-		span.Set("model", agent.Model)
-	}
-	if req.SystemInstructions != "" {
-		span.Set("system_instructions", req.SystemInstructions)
-	}
-	span.Set("input", slices.Clone(req.Input))
-	if len(req.Tools) > 0 {
-		span.Set("tools", traceTools(req.Tools))
-	}
-	if len(req.Handoffs) > 0 {
-		span.Set("handoffs", traceHandoffs(req.Handoffs))
-	}
-	if req.Settings != nil {
-		span.Set("model_settings", *req.Settings)
-	}
-	if req.OutputSchema != nil && !req.OutputSchema.IsPlainText() {
-		span.Set("output_schema", map[string]any{
-			"name":   req.OutputSchema.Name(),
-			"schema": req.OutputSchema.JSONSchema(),
-		})
-	}
-	if req.Prompt != nil {
-		span.Set("prompt", *req.Prompt)
-	}
-	if req.PreviousResponseID != "" {
-		span.Set("previous_response_id", req.PreviousResponseID)
-	}
-	if req.ConversationID != "" {
-		span.Set("conversation_id", req.ConversationID)
-	}
-	return span
-}
-
-// finishGenerationSpan records the model call's outcome — response id, usage,
-// and (unless sensitive-data tracing is off) the output items — and ends the
-// span.
-func (r *runner) finishGenerationSpan(span *tracing.SpanHandle, resp *ModelResponse) {
-	span.Set("response_id", resp.ResponseID)
-	setGenerationUsage(span, resp.Usage)
-	if span.Span != nil && r.traceIncludeSensitiveData() {
-		span.Set("output", slices.Clone(resp.Output))
-	}
-	span.Finish()
-}
-
-func (r *runner) resolveModel(agent *Agent) (Model, error) {
-	if agent.ModelImpl != nil {
-		return agent.ModelImpl, nil
-	}
-	if r.opts.Model.Override != nil {
-		return r.opts.Model.Override, nil
-	}
-	if r.opts.Model.Provider != nil {
-		return r.opts.Model.Provider.GetModel(agent.Model)
-	}
-	return nil, newUserError("no model available: set Agent.ModelImpl, RunOptions.Model.Override, or RunOptions.Model.Provider")
-}
-
-// resolveSettings merges the run-level settings override over the agent's own.
-func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
-	base := agent.ModelSettings
-	if base == nil {
-		base = &ModelSettings{}
-	}
-	s := base.Resolve(r.opts.Model.Settings)
-	// Once an agent has called tools, leave tool_choice unset on its later
-	// turns so a "required"/specific-tool setting cannot force an infinite
-	// tool-call loop (the Python SDK's reset_tool_choice behavior).
-	if !agent.DisableToolChoiceReset && s.ToolChoice != "" && r.toolsUsedBy[agent.Name] {
-		s.ToolChoice = ""
-	}
-	return s
-}
-
-// enabledTools returns the agent's tools, filtered by any IsEnabled predicate
-// and augmented with the tools exposed by the agent's MCP servers.
-func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error) {
-	out := make([]Tool, 0, len(agent.Tools))
-	for _, t := range agent.Tools {
-		// A tool built from an unusable schema/argument type is never sent to
-		// the model — fail the run now with a *UserError instead of letting the
-		// model call it and receive a schema error. Construction errors are
-		// deferred so constructors stay single-valued, so the runner surfaces
-		// them here.
-		if ft, ok := ToolAs[*FunctionTool](t); ok && ft.constructionErr != nil {
-			return nil, newUserError("tool %q: %v", ft.Name, ft.constructionErr)
-		}
-		if e, ok := ToolAs[EnableableTool](t); ok {
-			enabled, err := e.IsToolEnabled(ctx, r.rc, agent)
-			if err != nil {
-				return nil, err
-			}
-			if !enabled {
-				continue
-			}
-		}
-		// A deferred tool waits until something discloses it. It is checked
-		// after IsEnabled so a disclosed tool that is also disabled stays
-		// hidden — disclosure opens a door, it does not force one.
-		if d, ok := ToolAs[DeferredTool](t); ok && d.IsDeferred() && !r.disclosed[t.ToolName()] {
-			continue
-		}
-		out = append(out, t)
-	}
-	for _, server := range agent.MCPServers {
-		mcpTools, err := server.ListTools(ctx, r.rc, agent)
-		if err != nil {
-			// Failing the turn, not skipping the server: with its tools quietly
-			// missing, the model's next call to one it used a turn ago becomes
-			// a "tool not found" error blamed on the model. A listing failure
-			// is this run's failure, named as such.
-			return nil, fmt.Errorf("listing tools of MCP server for agent %q: %w", agent.Name, err)
-		}
-		out = append(out, mcpTools...)
-	}
-	// Reject duplicate tool names instead of silently letting the last one
-	// shadow the others in the runner's dispatch map (the Python SDK raises a
-	// UserError for duplicates too).
-	seen := make(map[string]bool, len(out))
-	for _, t := range out {
-		name := t.ToolName()
-		if name == "" {
-			continue
-		}
-		if seen[name] {
-			return nil, newUserError("duplicate tool name %q on agent %q: tool names must be unique across Agent.Tools and MCP server tools", name, agent.Name)
-		}
-		seen[name] = true
-	}
-	return out, nil
-}
-
-// enabledHandoffs returns the agent's handoffs, filtered by any IsEnabled
-// predicate (nil means enabled; a predicate error aborts the run). A disabled
-// handoff is not offered to the model and cannot be invoked.
-func (r *runner) enabledHandoffs(ctx context.Context, agent *Agent) ([]Handoff, error) {
-	out := make([]Handoff, 0, len(agent.Handoffs))
-	for _, h := range agent.Handoffs {
-		if h.IsEnabled != nil {
-			ok, err := h.IsEnabled(ctx, r.rc, agent)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				continue
-			}
-		}
-		out = append(out, h)
-	}
-	return out, nil
-}
-
-func agentOutputSchema(agent *Agent) OutputSchema {
-	if agent.OutputType != nil {
-		return agent.OutputType
-	}
-	return PlainTextOutput()
-}
-
-// buildModelInput assembles the model input for a turn: the original input
-// followed by every generated item converted back to input form.
-func buildModelInput(originalInput []TResponseInputItem, generated []RunItem) ([]TResponseInputItem, error) {
-	genInput, err := itemsToInputList(generated)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TResponseInputItem, 0, len(originalInput)+len(genInput))
-	out = append(out, originalInput...)
-	out = append(out, genInput...)
-	return out, nil
-}
-
-// normalizeInput coerces a string or []TResponseInputItem into the input list.
-func normalizeInput(input any) ([]TResponseInputItem, error) {
-	switch v := input.(type) {
-	case string:
-		return InputItemsFromText(v), nil
-	case []TResponseInputItem:
-		return v, nil
-	case nil:
-		return nil, newUserError("run input must not be nil")
-	default:
-		return nil, newUserError("unsupported run input type %T (want string or []TResponseInputItem)", input)
-	}
-}
-
-// asAgentsError finds the embedded AgentsError of any SDK error type in err's
-// chain (unwrapping fmt.Errorf %w wrapping), so RunErrorDetails can be attached.
-func asAgentsError(err error, target **AgentsError) bool {
-	if c, ok := errors.AsType[agentsErrorCarrier](err); ok {
-		*target = c.base()
-		return true
-	}
-	return false
 }

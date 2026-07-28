@@ -229,3 +229,13 @@ var (
 
 // Is lets errors.Is(err, ErrMaxTurns) match a *MaxTurnsError.
 func (e *MaxTurnsError) Is(target error) bool { return target == ErrMaxTurns }
+
+// asAgentsError finds the embedded AgentsError of any SDK error type in err's
+// chain (unwrapping fmt.Errorf %w wrapping), so RunErrorDetails can be attached.
+func asAgentsError(err error, target **AgentsError) bool {
+	if c, ok := errors.AsType[agentsErrorCarrier](err); ok {
+		*target = c.base()
+		return true
+	}
+	return false
+}

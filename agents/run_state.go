@@ -774,3 +774,17 @@ func deserializeResponse(sr serialResponse) (*ModelResponse, error) {
 	}
 	return resp, nil
 }
+
+// mergeNestedStates combines any agent-as-tool nested states still cached on
+// the run context (un-consumed from a prior resume) with those freshly paused
+// this turn, preferring the fresh ones. Returns nil when both are empty so a
+// run without nested-tool HITL carries no map.
+func mergeNestedStates(carried, fresh map[string]*RunState) map[string]*RunState {
+	if len(carried) == 0 && len(fresh) == 0 {
+		return nil
+	}
+	out := make(map[string]*RunState, len(carried)+len(fresh))
+	maps.Copy(out, carried)
+	maps.Copy(out, fresh)
+	return out
+}

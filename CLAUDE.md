@@ -51,8 +51,10 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **Entry points** — `Run` returns `(RunStream, RunControl)`; `RunSync` returns
   `(*RunResult, error)`. Both go through `withMiddleware` → `runStream`, which
   takes a `rawEvents bool` for the only difference between them (whether the
-  model call is streamed). Run-semantics changes are written once, in
-  `run.go` / `run_step.go`.
+  model call is streamed). Run-semantics changes are written once, in the
+  `agents/run*.go` family: `run.go` holds the loop, `run_step.go` the turn's
+  side effects, and the other `run_*.go` files one loop stage each (options,
+  prepare, input guardrails, server cursor, persist, finish, resolve, tracing).
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
   the loop; abandoning it stops the run. No producer goroutine, no context that
   must be cancelled on early exit.
@@ -73,7 +75,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **Sessions** — three layers: `SessionStorage` (reads/writes entries, knows no
   meaning), `Session` (a struct, turns entries into model input), and
   `EntryProjector` (which kinds reach the model). Storage is
-  `InMemorySession` / `memory.FileSession` in core, SQL in the `sessions`
+  `InMemoryStorage` / `memory.FileSession` in core, SQL in the `sessions`
   module, server-side variants in `openai` (Conversations, Compaction,
   `UsePreviousResponseID` / `ConversationID`).
 - **Entries are append-only** — `agents/session_entry.go`. A session is a TREE:
