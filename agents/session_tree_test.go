@@ -203,3 +203,55 @@ func TestFork_ExtractsTheActiveBranch(t *testing.T) {
 		t.Error("writing to the fork changed the source")
 	}
 }
+
+// A session written before branching existed carries no parent links, so the
+// tree walk reaches only its last entry. The branch continues from there — the
+// next append links to it — and reading only the walk dropped the entire prior
+// conversation from the model's view on the FIRST append after an upgrade,
+// silently, with the entries still on disk.
+func TestTree_LinklessHistoryKeepsItsPrefix(t *testing.T) {
+	ctx := context.Background()
+	st := NewInMemoryStorage("legacy")
+
+	// Three entries as a pre-branching store wrote them: ids, no parents.
+	legacy := make([]SessionEntry, 0, 3)
+	for _, text := range []string{"one", "two", "three"} {
+		e, err := NewItemEntry(InputItemsFromText(text)[0], Source{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.ID, e.Seq = "legacy-"+text, int64(len(legacy)+1)
+		legacy = append(legacy, e)
+	}
+	if err := st.ReplaceEntries(ctx, legacy...); err != nil {
+		t.Fatal(err)
+	}
+	// ReplaceEntries links what it is given; strip the links back off to get
+	// the shape a pre-branching store actually holds.
+	stored, err := st.Entries(ctx, Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range stored {
+		stored[i].ParentID = ""
+	}
+	if n := len(ActiveBranchOf(stored)); n != 3 {
+		t.Fatalf("a linkless history reads %d of 3 entries", n)
+	}
+
+	// The first append after the upgrade links to the last old entry.
+	next, err := NewItemEntry(InputItemsFromText("four")[0], Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.ID, next.Seq, next.ParentID = "new-four", 4, stored[2].ID
+	mixed := append(append([]SessionEntry{}, stored...), next)
+
+	got := ActiveBranchOf(mixed)
+	if len(got) != 4 {
+		t.Fatalf("after the first linked append the branch reads %d of 4 entries — the old conversation was dropped", len(got))
+	}
+	if got[0].ID != "legacy-one" || got[3].ID != "new-four" {
+		t.Errorf("branch = %s..%s, want the whole line oldest-first", got[0].ID, got[3].ID)
+	}
+}

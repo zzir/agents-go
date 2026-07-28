@@ -95,21 +95,24 @@ func (r *Runner) agentConfigByName(ctx context.Context, name string) (*store.Age
 }
 
 // taskMeta reports whether sessionID is a task's hidden child session,
-// returning its parent linkage for the run pipeline (nil for chat sessions).
-// The tasks row is created before the run starts, so the lookup is reliable
-// on both fresh runs and approval resumes.
-func (r *Runner) taskMeta(ctx context.Context, sessionID string) *TaskMeta {
+// returning its parent linkage for the run pipeline (nil, nil for chat
+// sessions). The tasks row is created before the run starts, so the lookup is
+// reliable on both fresh runs and approval resumes.
+func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, error) {
 	if r.Deps.Tasks == nil {
-		return nil
+		return nil, nil
 	}
 	task, err := r.Deps.Tasks.ByChildSession(ctx, sessionID)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			// A transient store error here would silently demote a task run to
-			// a chat run (wrong routing, no cap, no parent linkage) — log it.
-			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("task meta lookup")
-		}
-		return nil
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		// A check that cannot be made refuses (spec §2.13). Reading a store
+		// failure as "not a task session" demotes a TASK run to a chat run:
+		// it is handed the task tools it must not have — so it spawns
+		// grandchildren past MaxDepth — and its row is never reclaimed from
+		// input_required while the run executes.
+		return nil, fmt.Errorf("resolving task for session %s: %w", sessionID, err)
 	}
 	return &TaskMeta{
 		TaskID:          task.ID,
@@ -117,7 +120,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) *TaskMeta {
 		ParentRunID:     task.ParentRunID,
 		ToolCallID:      task.ToolCallID,
 		Label:           task.Label,
-	}
+	}, nil
 }
 
 // taskToolCallIDFrom pulls the spawning tool call id out of the tool context.

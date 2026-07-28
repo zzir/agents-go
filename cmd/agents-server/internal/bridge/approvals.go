@@ -177,7 +177,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 
 	// A pending approval may belong to a background task's child session — its
 	// agent must be rebuilt task-shaped (no task tools), like the original run.
-	taskMeta := r.taskMeta(ctx, pending.SessionID)
+	taskMeta, err := r.taskMeta(ctx, pending.SessionID)
+	if err != nil {
+		// Rebuilding a task run as a chat run would hand it the task tools and
+		// skip its reclaim; refuse rather than guess.
+		return "", pending.SessionID, err
+	}
 	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, taskMeta != nil)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)

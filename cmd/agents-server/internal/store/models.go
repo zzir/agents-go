@@ -60,6 +60,11 @@ type Task struct {
 	AgentConfigID    string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
 	ChildSessionID   string `bun:"child_session_id,notnull" json:"child_session_id"`
 	ChildSessionGen  string `bun:"child_session_gen"        json:"-"`
+	// Depth is how many task hops from a user-initiated run. Persisted because
+	// it is the ONLY input to the recursion bound: dropping it made every task
+	// report depth 0, so MaxDepth — the documented backstop against a task
+	// spawning tasks forever — could never trip on this host.
+	Depth int `bun:"depth" json:"depth,omitempty"`
 	// ParentAgentConfigID / ParentSandboxID snapshot the spawning run's
 	// configuration so the completion notification can start a parent run with
 	// the same setup.

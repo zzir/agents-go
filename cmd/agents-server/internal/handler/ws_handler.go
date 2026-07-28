@@ -198,12 +198,13 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 		var busy bridge.ErrSessionBusy
 		var limit bridge.ErrTaskLimit
 		var deleting bridge.ErrSessionDeleting
+		var down bridge.ErrShuttingDown
 		var runID string
 		code := protocol.CodeConfigError // a genuine server-side failure by default
 		switch {
 		case errors.As(err, &busy):
 			code, runID = protocol.CodeSessionBusy, busy.RunID
-		case errors.As(err, &limit) || errors.As(err, &deleting):
+		case errors.As(err, &limit) || errors.As(err, &deleting) || errors.As(err, &down):
 			code = protocol.CodeSessionBusy
 		case errors.Is(err, store.ErrNotFound):
 			code = protocol.CodeSessionNotFound

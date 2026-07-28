@@ -788,10 +788,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `Diagnostics`, `NestedUsage` and the parent link had nowhere to go and were
     dropped on the way in. Compaction soft-deletes (`compacted = true`) so the
     UI can still show what was folded, and appends a compaction CHECKPOINT
-    whose payload carries the retained tail — which is why the model sees
-    `[summary, kept…]` by construction rather than because the reader hoists a
-    row to the front. The checkpoint also names what it folded
-    (`compaction.excluded_ids`), and the timeline moves those entries INSIDE
+    whose payload names what it folded (`compaction.excluded_ids`) and carries
+    the summary that stands in for it — which is why the model sees
+    `[summary, kept…]`: the projection drops what the checkpoint excluded and
+    renders its summary up front, reading the kept turns from the session
+    itself rather than from a copy. The timeline moves the folded entries INSIDE
     it: a reader scrolling back sees one "~12k → ~3k tokens" marker, not the
     folded turns rendered as though the model still reads them. They stay real
     and one expand away — an entry marked compacted that no checkpoint names

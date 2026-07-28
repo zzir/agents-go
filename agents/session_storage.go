@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -76,6 +77,26 @@ type InMemoryStorage struct {
 	updatedAt time.Time
 	hidden    bool
 	title     string
+	// retired marks storage whose session was deleted through the repo that
+	// created it. A handle outlives the delete, and a write through one would
+	// otherwise land in a map nothing reads — orphan entries by construction.
+	retired bool
+}
+
+// retire marks the storage as belonging to a deleted session; every later
+// write refuses with ErrSessionNotFound.
+func (s *InMemoryStorage) retire() {
+	s.mu.Lock()
+	s.retired = true
+	s.mu.Unlock()
+}
+
+// checkLive reports whether writes are still allowed. Callers hold s.mu.
+func (s *InMemoryStorage) checkLive() error {
+	if s.retired {
+		return fmt.Errorf("session %s: %w", s.id, ErrSessionNotFound)
+	}
+	return nil
 }
 
 // NewInMemoryStorage returns empty storage. The id is cosmetic — nothing
@@ -103,6 +124,9 @@ func (s *InMemoryStorage) Metadata(context.Context) (SessionMetadata, error) {
 func (s *InMemoryStorage) Append(_ context.Context, entries ...SessionEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkLive(); err != nil {
+		return err
+	}
 	prepared := PrepareAppend(entries, AppendPoint{Leaf: LeafOf(s.entries), LastSeq: s.seq})
 	s.entries = append(s.entries, prepared...)
 	if n := len(prepared); n > 0 {
@@ -136,6 +160,9 @@ func (s *InMemoryStorage) Entries(_ context.Context, cur Cursor) ([]SessionEntry
 func (s *InMemoryStorage) Clear(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkLive(); err != nil {
+		return err
+	}
 	s.entries = nil
 	s.updatedAt = time.Now().UTC()
 	return nil
@@ -154,6 +181,9 @@ func (s *InMemoryStorage) PopItem(context.Context) (*SessionEntry, error) {
 func (s *InMemoryStorage) pop(mode PopMode) (*SessionEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkLive(); err != nil {
+		return nil, err
+	}
 	plan, ok := PlanPop(s.entries, mode)
 	if !ok {
 		return nil, nil
@@ -167,6 +197,9 @@ func (s *InMemoryStorage) pop(mode PopMode) (*SessionEntry, error) {
 func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...SessionEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkLive(); err != nil {
+		return err
+	}
 	s.entries = nil
 	prepared := PrepareAppend(entries, AppendPoint{LastSeq: s.seq})
 	s.entries = prepared

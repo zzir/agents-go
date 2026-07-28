@@ -120,9 +120,6 @@ type runControl struct {
 	mu           sync.Mutex
 	currentAgent *Agent
 	currentTurn  int
-	// restored guards the pause's pending input against being seeded more
-	// than once onto one control; see restore.
-	restored bool
 
 	// The three injection queues. They are separate rather than one queue with
 	// a mode tag because they are consumed at different points: steer and
@@ -247,20 +244,27 @@ func (c *runControl) takeContinuation() []TResponseInputItem {
 // while a human was deciding on an approval is delivered when the run resumes
 // rather than lost.
 //
-// Once per control, not once per attempt: a Retry middleware over ResumeRun
-// re-enters the resume with the same control, and appending the pause's
-// pending input again delivered the human's steer to the model twice.
+// A middleware that retries a resume re-enters this with the same control, so
+// the seeding is per QUEUE STATE rather than once per control or once per
+// attempt. Both extremes were wrong: appending every attempt delivered the
+// human's steer to the model twice when the failed attempt had not consumed
+// it, and seeding only once lost it entirely when the failed attempt had. A
+// queue that still holds the previous attempt's copy is left alone; an empty
+// one — which is what consuming leaves behind, since taking drains — is
+// seeded again.
 func (c *runControl) restore(p PendingInput) {
 	if c == nil || p.Empty() {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.restored {
-		return
+	if len(c.steer) == 0 {
+		c.steer = append(c.steer, p.Steer...)
 	}
-	c.restored = true
-	c.steer = append(c.steer, p.Steer...)
-	c.nextTurn = append(c.nextTurn, p.NextTurn...)
-	c.followUp = append(c.followUp, p.FollowUp...)
+	if len(c.nextTurn) == 0 {
+		c.nextTurn = append(c.nextTurn, p.NextTurn...)
+	}
+	if len(c.followUp) == 0 {
+		c.followUp = append(c.followUp, p.FollowUp...)
+	}
 }

@@ -167,6 +167,13 @@ func (h *RunHandler) startError(c *gin.Context, err error) {
 		conflict(c, deleting.Error())
 		return
 	}
+	// The server is draining: 503, not 500. The request was fine; the answer
+	// is to retry against the process that comes back.
+	var down bridge.ErrShuttingDown
+	if errors.As(err, &down) {
+		unavailable(c, down.Error())
+		return
+	}
 	// The remaining failures come from the session lookup StartRun does first:
 	// an unknown session -> 404, any other DB error -> 500. Folding the latter
 	// into 404 would mislabel a transient failure as "session not found".

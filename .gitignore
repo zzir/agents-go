@@ -21,6 +21,12 @@ dist/
 !/examples/*/go.sum
 !/examples/*/*.md
 /cmd/*/[a-z]*
+# ...and the repo ROOT, where `go build ./cmd/<tool>` writes when run from
+# there. The patterns above only cover a build started inside the package;
+# this is the spelling that actually let a 9MB binary reach a commit.
+/agents-server
+/verifydocs
+/verifyexamples
 !/cmd/*/*.go
 !/cmd/*/go.mod
 !/cmd/*/go.sum

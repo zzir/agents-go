@@ -67,6 +67,7 @@ func toSDK(t *Task) *tasks.Task {
 		ParentRunID:     t.ParentRunID,
 		ToolCallID:      t.ToolCallID,
 		ChildSessionID:  t.ChildSessionID,
+		Depth:           t.Depth,
 		Inherit: EncodeInherit(Inherit{
 			AgentConfigID: t.ParentAgentConfigID,
 			SandboxID:     t.ParentSandboxID,
@@ -99,6 +100,7 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		ParentRunID:     t.ParentRunID,
 		ToolCallID:      t.ToolCallID,
 		ChildSessionID:  t.ChildSessionID,
+		Depth:           t.Depth,
 		// AgentConfigID is the task's own agent; ParentAgentConfigID is the
 		// snapshot the wake-up run uses. They differ whenever a task runs as a
 		// different agent than the one that spawned it, which is the usual case.
@@ -190,9 +192,14 @@ func (a *TaskAdapter) FailOrphans(ctx context.Context) (int64, error) {
 
 // ListNonTerminal implements tasks.Store.
 func (a *TaskAdapter) ListNonTerminal(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
+	// liveParent like every other by-session read (spec §2.13): without it a
+	// dead incarnation's rows still counted against the live session's
+	// concurrency cap — an ErrTaskLimit nothing could clear, since the list
+	// the user sees is guarded — and StopTree cancelled a previous
+	// incarnation's tasks.
 	var rows []Task
 	if err := a.store.db.NewSelect().Model(&rows).
-		Where("parent_session_id = ?", parentSessionID).
+		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 		Where("status NOT IN " + taskTerminalSet).
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing live tasks for %s: %w", parentSessionID, err)

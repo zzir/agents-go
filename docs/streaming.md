@@ -39,8 +39,15 @@ res, err := agents.RunSync(ctx, agent, "Tell me 5 jokes.", opts)
 
 `RunSync` is not merely `Run` with the events discarded — it also calls the
 model **without** streaming, since nobody is watching the deltas. That is the
-only behavioral difference between the two entry points. If you already hold a
-stream and decide you want just the result, `stream.Collect()` folds it.
+only behavioral difference between the two entry points. If you hold a stream
+you have not started ranging, `stream.Collect()` folds it to the result.
+
+**A stream is single-use.** Ranging it *is* the run, so ranging it a second
+time — including `Collect()` after you have already broken out of a range loop
+— would re-execute everything: another model call, tools re-running their side
+effects, duplicate items in the session. That second range yields a
+`*UserError` instead. To stop early and keep what you have, collect the events
+as you range them; to stop the run, just `break`.
 
 ## The run happens on your goroutine
 

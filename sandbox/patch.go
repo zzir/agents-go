@@ -68,30 +68,48 @@ type fileEdit struct {
 // it could be "merged" into — the equivalent Update would have to match
 // context it is deliberately discarding.
 func rejectDuplicateSections(edits []fileEdit) error {
-	updates := make(map[string]bool, len(edits))
+	ops := make(map[string][]patchOp, len(edits))
 	moves := make(map[string]bool, len(edits))
-	touched := make(map[string]bool, len(edits))
 	for _, e := range edits {
-		if e.op == opUpdate {
-			if updates[e.path] {
-				return fmt.Errorf("apply_patch: file %q is updated by more than one section; the second would be computed from pre-patch content and overwrite the first — merge them into one section and retry", e.path)
-			}
-			updates[e.path] = true
-		}
-		touched[e.path] = true
+		ops[e.path] = append(ops[e.path], e.op)
 		if e.movePath != "" {
-			if moves[e.movePath] || touched[e.movePath] {
-				return fmt.Errorf("apply_patch: %q is both a rename target and touched by another section; the result would depend on the order sections are applied", e.movePath)
-			}
 			moves[e.movePath] = true
+			ops[e.movePath] = append(ops[e.movePath], opAdd) // a rename creates it
 		}
 	}
-	for path := range moves {
-		if updates[path] {
-			return fmt.Errorf("apply_patch: %q is both a rename target and updated by another section; the result would depend on the order sections are applied", path)
+	for path, list := range ops {
+		if len(list) < 2 {
+			continue
 		}
+		// Delete + Add is the full-rewrite idiom and applies correctly: the
+		// delete removes the file, the add recreates it. Every other repeat is
+		// order-dependent — an Update computes from PRE-patch content, so
+		// pairing it with anything else on the same path silently discards one
+		// of the two, and a repeated Add or Delete is a contradiction.
+		if len(list) == 2 && !moves[path] &&
+			((list[0] == opDelete && list[1] == opAdd) || (list[0] == opAdd && list[1] == opDelete)) {
+			continue
+		}
+		return fmt.Errorf("apply_patch: file %q is touched by more than one section (%s); every section reads the file as it was BEFORE the patch, so the result would depend on the order they are applied — use one section per file (or a delete followed by an add to rewrite it whole)",
+			path, describeOps(list))
 	}
 	return nil
+}
+
+// describeOps names a path's section kinds, so the refusal says what it saw.
+func describeOps(list []patchOp) string {
+	names := make([]string, 0, len(list))
+	for _, o := range list {
+		switch o {
+		case opAdd:
+			names = append(names, "add")
+		case opDelete:
+			names = append(names, "delete")
+		case opUpdate:
+			names = append(names, "update")
+		}
+	}
+	return strings.Join(names, " + ")
 }
 
 func parsePatch(patch string) ([]fileEdit, error) {

@@ -340,13 +340,30 @@ func (s *EntryStore) Entry(ctx context.Context, id string) (*agents.SessionEntry
 	return &e, nil
 }
 
-// Metadata implements agents.SessionStorage.
+// Metadata implements agents.SessionStorage. It merges the session row, so a
+// handle and the listing give the same answer about the same session (spec
+// §2.5e2, "the change record") — this was the one backend still reporting only
+// a count while its own List returned title, hidden and both timestamps.
 func (s *EntryStore) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
 	n, err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).Count(ctx)
 	if err != nil {
 		return agents.SessionMetadata{}, err
 	}
-	return agents.SessionMetadata{ID: s.ref.ID, EntryCount: n}, nil
+	md := agents.SessionMetadata{ID: s.ref.ID, EntryCount: n}
+	var row Session
+	err = s.db.NewSelect().Model(&row).
+		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Limit(1).Scan(ctx)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// A store used outside the repo (or a handle to a deleted session):
+		// the entries are all there is to report.
+		return md, nil
+	case err != nil:
+		return md, err
+	}
+	md.Title, md.Hidden = row.Name, row.Hidden
+	md.CreatedAt, md.UpdatedAt = row.CreatedAt, row.UpdatedAt
+	return md, nil
 }
 
 // Clear implements agents.SessionStorage. Clearing is a change like any other,

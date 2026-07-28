@@ -1427,6 +1427,12 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 		Usage:            r.rc.Usage,
 		GuardrailResults: r.snapshotGuardrailResults(),
 		Diagnostics:      r.diagnostics.All(),
+		// A run can also reach its final output on the very turn the stop was
+		// asked for — a single-turn agent always does, and each Loop attempt
+		// starts at turn one, so the turn-boundary check above never fires for
+		// them. The flag answers "did the caller stop this", not "where did it
+		// stop", so it is set wherever the request is live.
+		StoppedEarly: r.ctrl.stopRequested(),
 	}, nil
 }
 

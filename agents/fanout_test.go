@@ -529,6 +529,11 @@ func TestFanoutAheadOfHeadCursorResetsImmediately(t *testing.T) {
 		if r.gap.LastGood != 0 {
 			t.Errorf("LastGood = %d, want 0 — resubscribing from it must replay the new timeline", r.gap.LastGood)
 		}
+		// AtEnd means "nothing further will arrive to close this gap"; a
+		// consumer that believes it stops reading a run that is still going.
+		if r.gap.AtEnd() {
+			t.Error("the reset gap claims the stream ended, on a stream that is still live")
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("an ahead-of-head cursor produced no gap; the consumer would sit in silence")
 	}

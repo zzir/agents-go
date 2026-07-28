@@ -148,11 +148,15 @@ func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.App
 func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 	var busy bridge.ErrSessionBusy
 	var deleting bridge.ErrSessionDeleting
+	var down bridge.ErrShuttingDown
 	var notResumable bridge.ErrRunNotResumable
 	var stale *bridge.StaleApprovalStateError
 	var void *bridge.ApprovalVoidError
 	var notReady *bridge.ApprovalNotReadyError
 	switch {
+	case errors.As(err, &down):
+		// Draining: retryable, not an internal failure.
+		unavailable(c, down.Error())
 	case errors.As(err, &busy):
 		conflict(c, "session already has an active run: "+busy.RunID)
 	case errors.As(err, &stale):

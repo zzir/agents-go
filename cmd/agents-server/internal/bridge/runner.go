@@ -164,7 +164,11 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 	if _, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID); err != nil {
 		return "", err
 	}
-	seg, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
+	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	seg, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID, meta)
 	if err != nil {
 		return "", err
 	}
@@ -217,7 +221,13 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		r.hub.publish(runID, env)
 	}
 
-	task := r.taskMeta(ctx, sessionID)
+	// From the hub record, not a second store lookup: register already
+	// resolved it (and refused the run if it could not), so this cannot fail
+	// and cannot disagree with what the run was registered as.
+	var task *TaskMeta
+	if info, ok := r.hub.Info(runID); ok {
+		task = info.Task
+	}
 	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: input}
 	if task != nil {
 		started.ParentSessionID = task.ParentSessionID
@@ -371,7 +381,11 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // keeps one id across interrupt/resume — events, traces, and messages all
 // stay under that id and the trace panel shows one group per turn.
 func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunResult)) (string, error) {
-	seg, ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, r.taskMeta(r.hub.rootCtx, sessionID))
+	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	seg, ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, meta)
 	if err != nil {
 		return "", err
 	}
@@ -418,7 +432,11 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		return res
 	}
 
-	task := r.taskMeta(ctx, sessionID)
+	// From the hub record; resume already resolved it (see startRun).
+	var task *TaskMeta
+	if info, ok := r.hub.Info(runID); ok {
+		task = info.Task
+	}
 	// The resumed segment re-announces the original prompt so a late-joining
 	// browser (attached at resume) can render the user bubble; earlier
 	// subscribers dedup it against the bubble they already show.

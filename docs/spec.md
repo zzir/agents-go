@@ -407,12 +407,14 @@ An entry names its parent, so a session is a walk rather than a pile.
   the ids it is about to mint. `PrepareAppend` is shared so every backend links
   identically — a store that got this wrong would read back as disconnected
   roots, which no single-append test would catch.
-- **A history with no tree links at all reads whole.** Entries carrying no
-  parent ids and no leaf moves — a session from before branching existed, a
-  server-held store with no tree — are one straight line; walking them as a
-  tree stops after one step and reads only the last entry. Every branch-scoped
-  view (`ContextEntries`, `PathEntries`, the pop selection) shares this rule
-  through one helper.
+- **A linkless run of entries is one straight line, and the branch continues
+  through it.** Entries carrying no parent ids and no leaf moves — a session
+  from before branching existed, a server-held store with no tree — cannot be
+  off-branch, since branching needs links. The walk to the leaf is extended
+  over the linkless prefix ahead of its root, so the first LINKED append to
+  such a session does not drop everything written before it. Every
+  branch-scoped view (`ContextEntries`, `PathEntries`, the pop selection)
+  shares this rule through one helper (`ActiveBranchOf`).
 - **A walk does NOT stop at a compaction checkpoint.** The walk answers "which
   entries are on this branch", and a folded entry is still on the branch it was
   written to; what the model sees is projection's question. Stopping the walk
@@ -1128,9 +1130,11 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   the cursor. Subscribing AHEAD of the head — a cursor issued by a previous
   life of the stream, before a restart renumbered it — is a **timeline
   reset**: the gap reports `LastGood` 0 with the stale cursor as its `Dropped`
-  count, so the documented recovery (resubscribe from `LastGood`) replays the
-  new timeline from its start, and the gap's own sequence never runs backwards
-  past the deliveries that follow it. A fresh timeline must never read as the
+  count and the timeline's next sequence as `Next`, so the documented recovery
+  (resubscribe from `LastGood`) replays the new timeline from its start, the
+  gap's own sequence never runs backwards past the deliveries that follow it,
+  and it does not read as `AtEnd` — which would tell a consumer to stop
+  reading a run that is still going. A fresh timeline must never read as the
   old one's continuation. It is delivered **immediately on subscribe**, not on
   the next publish: the stream a stale cursor lands on has often already
   ended, and a gap waiting for a delivery that never comes leaves the consumer
@@ -1303,10 +1307,13 @@ streaming is for.
 a result the inner one had not finished producing.
 
 **A stop the caller asked for is visible on the result** (`RunResult.
-StoppedEarly`). The stop flag lives on the control for the whole run and is
-never cleared, so a middleware that re-runs (`Loop`) cannot tell "the agent
-finished" from "the human stopped it" without it — and started every
-remaining attempt, each spending one model call before stopping again.
+StoppedEarly`), wherever the run ends — at the turn boundary that saw the
+request, and equally on a run that reached its final output on that same turn.
+The flag answers "did the caller stop this", not "where did it stop": the stop
+lives on the control for the whole run and is never cleared, so a middleware
+that re-runs (`Loop`) cannot tell "the agent finished" from "the human stopped
+it" without it, and started every remaining attempt — including for
+single-turn agents, which never reach a turn boundary at all.
 
 **A middleware that resumes strips `Middlewares` first.** The chain is already
 unwound at that point; resuming with the run's own options would re-enter that

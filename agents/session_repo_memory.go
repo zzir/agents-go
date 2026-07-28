@@ -83,9 +83,17 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]SessionMet
 
 // Delete implements SessionRepo. Deleting an unknown session is not an error:
 // the caller wanted it gone, and it is.
+//
+// A handle already handed out is retired with it: a write through one must
+// refuse rather than land in storage nothing references (spec §2.5e2). The
+// other three repos prove their destination on every write; this one has no
+// row or file to check, so the storage itself is marked.
 func (r *InMemoryRepo) Delete(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if st := r.sessions[id]; st != nil {
+		st.retire()
+	}
 	delete(r.sessions, id)
 	for i, v := range r.order {
 		if v == id {

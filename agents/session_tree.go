@@ -64,25 +64,51 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 	return out
 }
 
-// ActiveBranchOf returns the entries a branch-scoped view should read:
-// PathToLeaf's walk, with the flat history handled. Entries carrying no tree
-// links at all — no parent ids, no leaf moves — are one straight line (a
-// session written before branching existed, or a server-held store that has
-// no tree), and walking them as a tree would read only the last entry: every
-// parent link is empty, so the walk stops after one step. The whole list IS
-// that session's branch.
+// ActiveBranchOf returns the entries a branch-scoped view should read: the
+// walk to the active leaf, extended over the LINKLESS PREFIX ahead of it.
 //
-// When links exist and the walk still comes back empty — a leaf move whose
-// target is gone — the active branch genuinely points at nothing, and empty
-// is the honest answer: falling back to append order here is how abandoned
+// Entries written before branching existed carry no parent links at all, so
+// each is its own root and the walk reaches exactly the last one — a whole
+// conversation read as a single entry. Those entries are one straight line
+// (branching needs links, so a linkless entry cannot be off-branch), and the
+// branch continues from them: the run that appends to such a session links its
+// new entry to the last old one, and the walk then stops there with everything
+// before it dropped. Reading the linkless run that precedes the walk's root
+// back in is what makes the upgrade path not lose history — silently, since
+// the entries are still on disk and only the model goes amnesiac.
+//
+// A linked entry ahead of that root belongs to another branch and stays out.
+// And when links exist but the walk comes back empty — a leaf move whose
+// target is gone — the active branch genuinely points at nothing: empty is the
+// honest answer, and falling back to append order there is how abandoned
 // attempts once leaked into the model's view.
 func ActiveBranchOf(entries []SessionEntry) []SessionEntry {
-	for _, e := range entries {
-		if e.ParentID != "" || e.Kind == EntryKindLeaf {
-			return PathToLeaf(entries, LeafOf(entries))
+	path := PathToLeaf(entries, LeafOf(entries))
+	if len(path) == 0 || path[0].ParentID != "" {
+		return path
+	}
+	// Where the walk's root sits in append order, and how far back the
+	// linkless run before it reaches.
+	root := len(entries)
+	for i := range entries {
+		if entries[i].ID == path[0].ID && entries[i].Kind != EntryKindLeaf {
+			root = i
+			break
 		}
 	}
-	return entries
+	start := root
+	for i := root - 1; i >= 0; i-- {
+		if entries[i].Kind == EntryKindLeaf || entries[i].ParentID != "" {
+			break
+		}
+		start = i
+	}
+	if start == root {
+		return path
+	}
+	out := make([]SessionEntry, 0, (root-start)+len(path))
+	out = append(out, entries[start:root]...)
+	return append(out, path...)
 }
 
 // Leaf returns the id of the session's active branch tip.

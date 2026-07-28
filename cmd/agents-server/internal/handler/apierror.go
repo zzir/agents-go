@@ -21,6 +21,10 @@ const (
 	CodeForbidden  = "forbidden"
 	CodeUpstream   = "upstream"
 	CodeInternal   = "internal"
+	// CodeUnavailable is a transient refusal — the server is shutting down.
+	// Distinct from internal: the request was fine and retrying elsewhere (or
+	// later) is the answer.
+	CodeUnavailable = "unavailable"
 )
 
 // APIError is the machine-readable error payload of every non-2xx response.
@@ -52,6 +56,12 @@ func notFound(c *gin.Context) {
 // the wrong state for it (e.g. listing tools of a disconnected MCP server).
 func conflict(c *gin.Context, message string) {
 	abortError(c, http.StatusConflict, CodeConflict, message)
+}
+
+// unavailable reports a 503: the server is draining and cannot take the
+// request. Retryable, unlike an internal error.
+func unavailable(c *gin.Context, message string) {
+	abortError(c, http.StatusServiceUnavailable, CodeUnavailable, message)
 }
 
 // forbidden reports a 403 for operations disabled by server policy.

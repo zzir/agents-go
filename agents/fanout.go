@@ -287,10 +287,13 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	if len(f.replay) > 0 && fromSeq >= 0 && fromSeq < f.replay[0].Seq-1 {
 		s.dropped = f.replay[0].Seq - 1 - fromSeq
 	}
-	reset := false
+	reset, resumeAt := false, 0
 	if fromSeq > f.seq {
 		s.lastGood = 0
 		s.dropped = fromSeq
+		// Where the consumer picks the new timeline up: the next sequence this
+		// fanout will issue.
+		resumeAt = f.seq + 1
 		reset = true
 	}
 	f.subs[s.id] = s
@@ -343,7 +346,12 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 			n, last := s.dropped, s.lastGood
 			s.dropped = 0
 			s.mu.Unlock()
-			if !yield(Seq[T]{}, &GapError{Dropped: n, LastGood: last}) {
+			// Next is the sequence the stream WILL resume at, not zero: zero
+			// means AtEnd — "nothing further will arrive to close this gap" —
+			// and announcing that on a stream about to deliver tells a
+			// consumer following the documented meaning to stop reading a live
+			// run. A reset points at the next sequence this timeline issues.
+			if n > 0 && !yield(Seq[T]{}, &GapError{Dropped: n, LastGood: last, Next: resumeAt}) {
 				return
 			}
 		}

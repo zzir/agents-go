@@ -12,3 +12,12 @@ func TestInMemoryStorageConformance(t *testing.T) {
 		return agents.NewInMemoryStorage("mem")
 	})
 }
+
+// The in-process repo answers the same identity rules as the persistent ones.
+// It ran neither conformance suite until now, which is how it came to be the
+// one repo whose handle kept writing into a session that had been deleted.
+func TestInMemoryRepoConformance(t *testing.T) {
+	agentstest.RepoConformance(t, func(*testing.T) agentstest.RepoUnderTest {
+		return agentstest.RepoUnderTest{Repo: agents.NewInMemoryRepo()}
+	})
+}

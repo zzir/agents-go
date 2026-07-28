@@ -1110,6 +1110,13 @@ components:
           type: string
         created_at:
           type: string
+        depth:
+          description: |-
+            Depth is how many task hops from a user-initiated run. Persisted because
+            it is the ONLY input to the recursion bound: dropping it made every task
+            report depth 0, so MaxDepth — the documented backstop against a task
+            spawning tasks forever — could never trip on this host.
+          type: integer
         label:
           type: string
         parent_run_id:

@@ -105,3 +105,41 @@ func TestParseHunkAnchorForms(t *testing.T) {
 		}
 	}
 }
+
+// Delete + Add of one path is the full-rewrite idiom: the delete removes the
+// file, the add recreates it, and both apply correctly. A guard that refused
+// every repeated path blocked it — and suggested merging two sections that
+// cannot be merged.
+func TestPatchAllowsDeleteThenAddOfOnePath(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n" +
+		"*** Delete File: a.txt\n" +
+		"*** Add File: a.txt\n" +
+		"+rewritten\n" +
+		"*** End Patch\n")
+	if err != nil {
+		t.Fatalf("the full-rewrite idiom was refused: %v", err)
+	}
+	if len(edits) != 2 {
+		t.Fatalf("parsed %d sections, want 2", len(edits))
+	}
+}
+
+// Every other repeat stays refused: each section reads the file as it was
+// BEFORE the patch, so the outcome would depend on the order they are applied.
+func TestPatchRefusesOrderDependentRepeats(t *testing.T) {
+	cases := map[string]string{
+		"two updates": "*** Update File: a.txt\n@@\n-old\n+new\n" +
+			"*** Update File: a.txt\n@@\n-other\n+thing\n",
+		"delete then update": "*** Delete File: a.txt\n" +
+			"*** Update File: a.txt\n@@\n-old\n+new\n",
+		"add then update": "*** Add File: a.txt\n+body\n" +
+			"*** Update File: a.txt\n@@\n-body\n+other\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parsePatch("*** Begin Patch\n" + body + "*** End Patch\n"); err == nil {
+				t.Error("an order-dependent patch was accepted; one section's changes would be silently discarded")
+			}
+		})
+	}
+}
