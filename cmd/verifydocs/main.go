@@ -17,13 +17,17 @@
 // which catches the failure mode that actually happens — a symbol is renamed
 // or removed and the prose keeps the old one.
 //
-// Two checks:
+// Three checks:
 //
 //   - A qualified reference (agents.Foo, tracing.Bar) whose package is one of
 //     ours must name something that package exports.
 //   - A method call whose receiver's type the snippet states — x from
 //     `x := agents.NewFoo()` or `var x agents.Foo` — must name a method that
 //     type has.
+//   - A [Symbol] doc link in a package's doc.go must name something that
+//     package (or the qualified package) exports. The facade is the godoc a
+//     reader sees first, and nothing else compiles it — it kept linking
+//     [RunStreamed] and [InMemorySession] long after both were gone.
 //
 // The second check covers less than "every method call" but reports no false
 // positives, which matters more: a check that cries wolf about errgroup.Go
@@ -49,6 +53,7 @@ import (
 // else is assumed to be stdlib or a third-party package and left alone.
 var sdkPackages = map[string]string{
 	"agents":     "agents",
+	"agentstest": "agentstest",
 	"compaction": "agents/compaction",
 	"middleware": "agents/middleware",
 	"tasks":      "agents/tasks",
@@ -75,12 +80,17 @@ var (
 	// var x agents.Foo  |  var x *agents.Foo
 	varBind    = regexp.MustCompile(`var\s+(\w+)\s+\*?([a-z][a-zA-Z0-9]*)\.([A-Z]\w*)`)
 	methodCall = regexp.MustCompile(`\b(\w+)\.([A-Z][A-Za-z0-9_]*)\(`)
+	// A godoc doc link in a doc.go comment: [Name], [Type.Method] or
+	// [pkg.Name]. The lowercase group is a package qualifier; only qualifiers
+	// naming one of our packages are checked.
+	docGoLink = regexp.MustCompile(`\[(?:([a-z][a-zA-Z0-9]*)\.)?([A-Z][A-Za-z0-9_]*)(?:\.([A-Z][A-Za-z0-9_]*))?\]`)
 )
 
 // pkgInfo is what one SDK package declares, indexed for the two checks.
 type pkgInfo struct {
 	exports map[string]bool            // every exported name
 	methods map[string]map[string]bool // type name -> its method set
+	fields  map[string]map[string]bool // struct name -> its exported fields
 	ctors   map[string]string          // constructor name -> type it returns
 }
 
@@ -120,7 +130,13 @@ func main() {
 		}
 	}
 
-	fmt.Printf("verifydocs: %d Go blocks in %d files\n", blocks, len(docs))
+	docProblems, links, derr := checkDocGo(root, pkgs)
+	if derr != nil {
+		fail(derr)
+	}
+	problems = append(problems, docProblems...)
+
+	fmt.Printf("verifydocs: %d Go blocks in %d files, %d doc.go links\n", blocks, len(docs), links)
 	if len(problems) == 0 {
 		fmt.Println("verifydocs: OK")
 		return
@@ -189,6 +205,59 @@ func checkBlock(file, block string, pkgs map[string]*pkgInfo) []string {
 	return out
 }
 
+// checkDocGo verifies the [Symbol] doc links in each package's doc.go — the
+// facade godoc renders first. Links to a package we do not index (stdlib,
+// third-party) are left alone, like unqualified references in snippets.
+func checkDocGo(root string, pkgs map[string]*pkgInfo) (problems []string, links int, err error) {
+	aliases := make([]string, 0, len(sdkPackages))
+	for a := range sdkPackages {
+		aliases = append(aliases, a)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		path := filepath.Join(root, sdkPackages[alias], "doc.go")
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			if os.IsNotExist(rerr) {
+				continue // not every package keeps a facade file
+			}
+			return nil, 0, rerr
+		}
+		rel, _ := filepath.Rel(root, path)
+		// Comment lines only: a doc.go that ever grows example code must not
+		// have its `Foo[T]` / `x[Index]` brackets read as doc links.
+		var comments strings.Builder
+		for line := range strings.SplitSeq(string(src), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				comments.WriteString(line)
+				comments.WriteByte('\n')
+			}
+		}
+		for _, m := range docGoLink.FindAllStringSubmatch(comments.String(), -1) {
+			qual, name, method := m[1], m[2], m[3]
+			info, label := pkgs[alias], name
+			if qual != "" {
+				other, ours := pkgs[qual]
+				if !ours {
+					continue
+				}
+				info, label = other, qual+"."+name
+			}
+			links++
+			if method != "" {
+				if !info.methods[name][method] && !info.fields[name][method] {
+					problems = append(problems, fmt.Sprintf("%s: doc link [%s.%s] names no method or field of %s", rel, label, method, label))
+				}
+				continue
+			}
+			if !info.exports[name] {
+				problems = append(problems, fmt.Sprintf("%s: doc link [%s] does not exist", rel, label))
+			}
+		}
+	}
+	return problems, links, nil
+}
+
 // loadSymbols parses the SDK's packages and returns what each one exports,
 // plus the union of every exported method name across all of them.
 func loadSymbols(root string) (map[string]*pkgInfo, error) {
@@ -198,6 +267,7 @@ func loadSymbols(root string) (map[string]*pkgInfo, error) {
 		info := &pkgInfo{
 			exports: map[string]bool{},
 			methods: map[string]map[string]bool{},
+			fields:  map[string]map[string]bool{},
 			ctors:   map[string]string{},
 		}
 		files, err := goFiles(filepath.Join(root, dir))
@@ -267,6 +337,7 @@ func collect(f *ast.File, info *pkgInfo) {
 					if s.Name.IsExported() {
 						info.exports[s.Name.Name] = true
 						collectInterfaceMethods(s, info)
+						collectStructFields(s, info)
 					}
 				case *ast.ValueSpec:
 					for _, n := range s.Names {
@@ -316,6 +387,26 @@ func typeName(e ast.Expr) string {
 		}
 	}
 	return ""
+}
+
+// collectStructFields records a struct's exported field names: a godoc doc
+// link may target [Type.Field] just as legally as [Type.Method], and a field
+// reported as "no method" would teach authors to distrust the check.
+func collectStructFields(s *ast.TypeSpec, info *pkgInfo) {
+	st, ok := s.Type.(*ast.StructType)
+	if !ok || st.Fields == nil {
+		return
+	}
+	for _, field := range st.Fields.List {
+		for _, n := range field.Names {
+			if n.IsExported() {
+				if info.fields[s.Name.Name] == nil {
+					info.fields[s.Name.Name] = map[string]bool{}
+				}
+				info.fields[s.Name.Name][n.Name] = true
+			}
+		}
+	}
 }
 
 // collectInterfaceMethods records an interface's methods, which have no

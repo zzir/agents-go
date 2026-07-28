@@ -1,45 +1,79 @@
-// Package agents is a Go SDK for building agentic applications on top of large
-// language models, ported from openai-agents-python (tracking v0.17.4).
+// Package agents is a Go SDK for building agent applications on the OpenAI
+// Responses API: a run loop with tools, handoffs, guardrails, sessions,
+// human-in-the-loop approval and tracing.
 //
-// An [Agent] pairs a model with instructions, tools, handoffs, guardrails and an
-// optional structured output type. [Run] drives the agent loop until the agent
-// produces a final output, hands off to another agent that finishes, or the turn
-// budget is exhausted; [RunStreamed] does the same while streaming events.
+// It began as a port of openai-agents-python and now evolves independently.
+// Behavior is specified in docs/spec.md, not inherited; docs/architecture.md
+// explains how the pieces compose.
+//
+// # Running
+//
+// An [Agent] is a plain struct pairing a model with instructions, tools,
+// handoffs, guardrails and an optional structured output type. It has no Run
+// method — everything happens in the runner, which takes the agent as data.
+// [RunSync] executes a run and returns its [RunResult]. [Run] returns the
+// same run as a [RunStream] to range over plus a [RunControl] to steer it:
+// the run executes on the consumer's goroutine, ranging the stream advances
+// the loop, and abandoning it stops the run where it stands.
+//
+// [RunOptions] configures a run; its zero value works as long as the agent
+// can resolve a model. Cross-cutting policy — retrying a run, gating it on
+// approvals, logging it — wraps the run as a [RunMiddleware]; the middleware
+// subpackage ships the common ones.
 //
 // # Tools
 //
-// Build a function tool from a typed Go function with [NewFunctionTool]; the
-// argument struct is reflected into a strict JSON schema shown to the model.
-// An agent can also be exposed as a tool via [Agent.AsTool].
+// [NewFunctionTool] builds a tool from a typed Go function; the argument
+// struct is reflected into a strict JSON schema shown to the model. Every
+// tool executes locally — the [Tool] interface is sealed, and provider-hosted
+// tools are deliberately not modeled. Optional capabilities (approval,
+// enablement, deferral, streamed progress) are side interfaces discovered
+// with [ToolAs], which walks decorator stacks the way errors.As walks error
+// chains. [Agent.AsTool] exposes a whole agent as a callable tool.
 //
 // # Structured output
 //
-// Set [Agent.OutputType] to [OutputType][T] to have the model return a validated
-// value of type T; recover it with [FinalOutputAs].
+// Give the agent an OutputType built with [OutputType] to have the model
+// return a validated value of type T; recover it with [FinalOutputAs].
 //
 // # Handoffs
 //
-// [HandoffTo] builds a handoff that transfers control to another agent.
+// [HandoffTo] builds a handoff that transfers control to another agent; the
+// run continues under the new agent until one of them finishes.
 //
 // # Guardrails
 //
-// A single [Guardrail] type covers every stage ([StageInput], [StageOutput],
-// [StageToolInput], [StageToolOutput]) and can halt a run or substitute tool
-// content when a tripwire fires.
+// A single [Guardrail] type covers four stages — [StageInput], [StageOutput],
+// [StageToolInput], [StageToolOutput] — and one value can serve several. A
+// tripwire halts the run; a Replace verdict substitutes content instead.
 //
 // # Sessions
 //
-// A [Session] persists conversation history across runs. [InMemorySession] is
-// built in; see the memory subpackage for a SQLite-backed implementation.
+// A [Session] persists conversation history as append-only [SessionEntry]
+// values forming a tree: a retry abandons a branch instead of deleting it,
+// and compaction appends a checkpoint instead of rewriting. Which entry kinds
+// reach the model is a projection decided by [EntryProjector]. Storage is
+// pluggable: [NewInMemorySession] is built in, the memory package stores
+// entries in JSONL files, and the sessions module adds SQLite and PostgreSQL.
 //
-// # Human-in-the-loop
+// # Human in the loop
 //
-// Mark a tool with NeedsApproval to pause the run before it executes. The paused
-// [RunState] (on [RunResult].State) can be approved or rejected and resumed with
-// [ResumeRun], and serialized to JSON for cross-process approval flows.
+// A tool marked as needing approval pauses the run: the [RunResult] carries a
+// [RunState] whose interruptions can be approved or rejected and then resumed
+// with [ResumeRun]. The state serializes to JSON, so a run can pause in one
+// process and resume in another.
 //
 // # Models
 //
-// Implementations of the [Model] interface live in provider subpackages; the
-// openai subpackage targets the OpenAI Responses API.
+// [Model] and [ModelProvider] are the backend seam; the models/openai
+// subpackage implements them for the OpenAI Responses API. [NewRetryModel],
+// [NewFallbackModel] and [RouterProvider] add retry, failover and routing as
+// provider-agnostic decorators, never as run-loop changes.
+//
+// # Observability
+//
+// [ErrorCode] classifies failures for transport; [RunResult].Diagnostics
+// lists trouble the run survived. The tracing package records spans (the
+// tracing/otel module maps them to OpenTelemetry), and [LogConfig] turns on
+// structured slog records, silent by default.
 package agents

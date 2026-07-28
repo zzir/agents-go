@@ -599,7 +599,7 @@ cmd/agents-server/
    connection.
 2. The runner loads config from the database and calls `BuildFullAgent` to
    assemble the agent with its provider, MCP tools, sandbox, guardrails,
-   memories, and hooks, then calls the SDK's `agents.RunStreamed()` to execute.
+   memories, and hooks, then calls the SDK's `agents.Run()` to execute.
 3. Streaming events are published to the hub, which fans them out to every
    subscriber (WebSocket connections and SSE streams) and buffers them for replay
    so a reconnecting client can resume from a sequence number.
