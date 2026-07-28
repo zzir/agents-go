@@ -22,8 +22,12 @@ import (
 // mutex; a caller sharing one generator across concurrent exporters would get
 // crossed ids.
 //
-// When nothing is pinned it falls back to random ids, so a TracerProvider built
-// with it stays usable for ordinary instrumentation.
+// When nothing is pinned it falls back to random ids. Do NOT share the
+// TracerProvider with ordinary application instrumentation: only the Exporter
+// serializes pin-then-Start, so an app span started between another span's pin
+// and Start would CONSUME the pin — emitted under the agent span's exact ids
+// while the agent span is orphaned onto random ones. Dedicate the provider to
+// the exporter.
 type IDGenerator struct {
 	mu      sync.Mutex
 	traceID oteltrace.TraceID
