@@ -41,6 +41,11 @@ type ShellSession struct {
 	// that never finishes and no timer can interrupt it.
 	chunks  chan []byte
 	readErr chan error
+	// done releases the reader when the session closes with chunks full: a
+	// channel send is not unblocked by closing the Terminal, so a timed-out
+	// flooding command would otherwise pin the goroutine (and its buffered
+	// output) for the life of the process.
+	done chan struct{}
 
 	mu sync.Mutex
 	// lastLine is what was written for the command in flight, so its echo can
@@ -84,6 +89,7 @@ func newShellSession(term Terminal) *ShellSession {
 		tail:     tail,
 		chunks:   make(chan []byte, 16),
 		readErr:  make(chan error, 1),
+		done:     make(chan struct{}),
 	}
 	go s.readLoop()
 	return s
@@ -97,7 +103,11 @@ func (s *ShellSession) readLoop() {
 	for {
 		n, err := s.term.Read(buf)
 		if n > 0 {
-			s.chunks <- append([]byte(nil), buf[:n]...)
+			select {
+			case s.chunks <- append([]byte(nil), buf[:n]...):
+			case <-s.done:
+				return
+			}
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
@@ -241,6 +251,7 @@ func (s *ShellSession) closeLocked() error {
 		return nil
 	}
 	s.closed = true
+	close(s.done)
 	return s.term.Close()
 }
 

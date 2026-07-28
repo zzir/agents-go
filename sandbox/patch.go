@@ -52,6 +52,33 @@ type fileEdit struct {
 
 // parsePatch parses a Codex-style patch into per-file edits. It is pure: no I/O,
 // no path resolution. A structural problem is an error naming the offending line.
+// rejectDuplicateSections refuses a patch that touches one file twice. The
+// plan phase reads every section's original from disk BEFORE any write, so a
+// second Update for the same file computes from pre-patch content and the
+// commit overwrites the first section's changes — the tool then reports both
+// as applied. One section per file; the model merges and retries.
+func rejectDuplicateSections(edits []fileEdit) error {
+	seen := make(map[string]bool, len(edits))
+	claim := func(path string) error {
+		if seen[path] {
+			return fmt.Errorf("apply_patch: file %q appears in more than one section; merge them into one section and retry", path)
+		}
+		seen[path] = true
+		return nil
+	}
+	for _, e := range edits {
+		if err := claim(e.path); err != nil {
+			return err
+		}
+		if e.movePath != "" {
+			if err := claim(e.movePath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func parsePatch(patch string) ([]fileEdit, error) {
 	lines := strings.Split(patch, "\n")
 	i := 0
@@ -70,6 +97,9 @@ func parsePatch(patch string) ([]fileEdit, error) {
 		case strings.TrimSpace(line) == patchEnd:
 			if len(edits) == 0 {
 				return nil, fmt.Errorf("apply_patch: patch contains no file sections")
+			}
+			if err := rejectDuplicateSections(edits); err != nil {
+				return nil, err
 			}
 			return edits, nil
 

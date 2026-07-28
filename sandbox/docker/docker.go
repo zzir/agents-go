@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -175,8 +176,16 @@ func (s *Sandbox) ensureContainer(ctx context.Context) (string, error) {
 		id := s.containerID
 		s.mu.Unlock()
 		info, err := s.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
-		if err == nil && info.Container.State != nil && info.Container.State.Running {
+		switch {
+		case err == nil && info.Container.State != nil && info.Container.State.Running:
 			return id, nil
+		case err != nil && !cerrdefs.IsNotFound(err):
+			// A failure to LOOK is not "the container is dead". Treating it as
+			// dead force-removed a healthy container — packages, processes and
+			// the workspace volume — on a daemon hiccup, or merely because the
+			// caller's ctx was already cancelled when inspect ran. Only a
+			// positive answer (inspected: not running / not found) may retire it.
+			return "", fmt.Errorf("inspecting persistent container: %w", err)
 		}
 		s.mu.Lock()
 		if s.containerID == id {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -51,6 +52,14 @@ type CodeToolConfig struct {
 	// The sandbox package attaches no policy of its own — the caller supplies the
 	// decision.
 	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)
+
+	// RegisterCloser, when set, receives the closer that releases every named
+	// shell the tool's Sessions pool holds open. Without it there was no path
+	// to those shells at all: agents.Tool has no close, so a host that rebuilt
+	// its tools accumulated live PTYs (and remote ssh sessions) for the life of
+	// the process. Wire it to whatever owns the sandbox's lifetime and call
+	// Close there.
+	RegisterCloser func(io.Closer)
 }
 
 const defaultMaxTimeout = 10 * time.Minute
@@ -86,6 +95,9 @@ type codeToolArgs struct {
 func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 	cfg = cfg.withDefaults()
 	sessions := newSessionPool()
+	if cfg.RegisterCloser != nil {
+		cfg.RegisterCloser(sessions)
+	}
 	schema, schemaErr := agents.SchemaFor[codeToolArgs](true)
 	if schemaErr != nil {
 		return &agents.FunctionTool{
@@ -98,12 +110,30 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) agents.Tool {
 			},
 		}
 	}
+	// The policy veto precedes the approval gate (spec §2.7j): a command the
+	// policy refuses must never reach a human — the runner would ask, get a
+	// yes, and then refuse anyway, which wastes the approval and teaches the
+	// user their answers change nothing. A refused command reports "no
+	// approval needed" here and OnInvoke refuses it as text the model can act
+	// on.
+	needsApproval := cfg.NeedsApprovalFunc
+	if needsApproval != nil {
+		inner := needsApproval
+		policy := cfg.Policy // the zero Policy allows everything; the veto no-ops
+		needsApproval = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
+			var args codeToolArgs
+			if json.Unmarshal([]byte(argsJSON), &args) == nil && policy.Check(args.Cmd) != nil {
+				return false, nil //nolint:nilerr // the veto is deliberate: OnInvoke refuses this command as text
+			}
+			return inner(ctx, rc, argsJSON, callID)
+		}
+	}
 	return &agents.FunctionTool{
 		Name:              cfg.Name,
 		Description:       cfg.Description,
 		ParamsJSONSchema:  schema,
 		Strict:            true,
-		NeedsApprovalFunc: cfg.NeedsApprovalFunc,
+		NeedsApprovalFunc: needsApproval,
 		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
@@ -292,13 +322,22 @@ func forwardToRuneStart(s string, i int) int {
 // event per line, and a consumer redrawing per event would spend more time
 // rendering than the command spends running. Output is coalesced until a write
 // completes a line, which is the granularity a terminal view wants anyway.
+//
+// One writer serves BOTH the stdout and stderr streams, and most backends
+// pump those from separate goroutines (os/exec starts one copier per pipe;
+// the ssh client does the same) — so the buffer is guarded. Interleaving
+// stays at line granularity, which is the best a merged view can promise.
 type progressWriter struct {
 	tc  *agents.ToolContext
 	cmd string
+
+	mu  sync.Mutex
 	buf []byte
 }
 
 func (w *progressWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.buf = append(w.buf, p...)
 	if i := bytes.LastIndexByte(w.buf, '\n'); i >= 0 {
 		w.send(string(w.buf[:i+1]))
@@ -310,6 +349,8 @@ func (w *progressWriter) Write(p []byte) (int, error) {
 // flush emits whatever did not end in a newline — the last line of output,
 // or a prompt a command left hanging.
 func (w *progressWriter) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if len(w.buf) > 0 {
 		w.send(string(w.buf))
 		w.buf = nil
