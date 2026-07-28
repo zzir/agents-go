@@ -106,6 +106,15 @@ type RunState struct {
 	// serialized before this field existed → nil (a resumed nested run starts
 	// fresh, the pre-1.2 behavior).
 	nestedToolStates map[string]*RunState
+
+	// usagePending records whether the interrupted response's usage was still
+	// unattributed when the run paused. It usually is: the pause-time persist
+	// withholds the turn's items (a stored call without its output is a
+	// dangling call), so the usage has nothing to land on until the resumed
+	// batch. The resumed runner re-arms attribution exactly when this says the
+	// debt exists — unconditionally re-arming double-counted the request
+	// whenever the pausing segment HAD already attributed it.
+	usagePending bool
 }
 
 // Approve records approval for a pending tool call. Pass always=true to approve
@@ -135,21 +144,45 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 // Items the interrupted segment already emitted before pausing (the paused
 // turn's message and tool-call items) are not re-emitted; the stream picks up
 // with the side effects of the approval decisions and every later turn.
+// ResumeRun applies opts.Middlewares exactly as Run does: a caller resuming
+// with the same options gets the same wrapping — logging still logs, Retry
+// still retries, Approval still auto-resolves further pauses. (A middleware
+// resuming from INSIDE the chain passes stripped options, per its own
+// contract, so the chain is never entered twice.) A middleware may edit
+// in.Opts; the paused state's agent and input are already decided, so edits
+// to those fields do not apply.
 func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, RunControl) {
 	ctrl := newRunControl()
-	return func(yield func(StreamEvent, error) bool) {
-		resumeStream(ctx, state, opts, ctrl, true, yield)
-	}, ctrl
+	return resumeWithMiddleware(ctx, state, opts, ctrl, true), ctrl
 }
 
 // ResumeRunSync continues a paused run to completion and returns its result.
 // It is ResumeRun without the stream, matching RunSync.
 func ResumeRunSync(ctx context.Context, state *RunState, opts RunOptions) (*RunResult, error) {
 	ctrl := newRunControl()
-	stream := RunStream(func(yield func(StreamEvent, error) bool) {
-		resumeStream(ctx, state, opts, ctrl, false, yield)
+	return resumeWithMiddleware(ctx, state, opts, ctrl, false).Collect()
+}
+
+// resumeWithMiddleware is ResumeRun's counterpart of withMiddleware.
+func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
+	if len(opts.Middlewares) == 0 {
+		return singleUse(func(yield func(StreamEvent, error) bool) {
+			resumeStream(ctx, state, opts, ctrl, rawEvents, yield)
+		})
+	}
+	base := func(ctx context.Context, in RunInput) RunStream {
+		return func(yield func(StreamEvent, error) bool) {
+			resumeStream(ctx, state, *in.Opts, ctrl, rawEvents, yield)
+		}
+	}
+	return singleUse(func(yield func(StreamEvent, error) bool) {
+		in := RunInput{Agent: state.CurrentAgent, Input: state.OriginalInput, Opts: &opts}
+		for ev, ierr := range chainMiddleware(base, opts.Middlewares)(ctx, in) {
+			if !yield(ev, ierr) {
+				return
+			}
+		}
 	})
-	return stream.Collect()
 }
 
 func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
@@ -281,6 +314,13 @@ type serialResponse struct {
 	ID     string            `json:"id"`
 	Output []json.RawMessage `json:"output"`
 	Usage  *Usage            `json:"usage,omitempty"`
+	// Status and IncompleteReason survive serialization because Truncated()
+	// reads them: a response cut off at the output-token limit must still
+	// read as cut off after a cross-process resume, or the resumed segment
+	// executes tool calls whose arguments stopped mid-JSON — the exact thing
+	// the in-process path refuses (spec §2.7e).
+	Status           string `json:"status,omitempty"`
+	IncompleteReason string `json:"incomplete_reason,omitempty"`
 }
 
 // serialApprovalEntry is the per-tool approval entry (schema ≥ 1.1): a permanent
@@ -323,6 +363,11 @@ type serialRunState struct {
 	// nested run, keyed by the parent tool call id. Each value is a full RunState
 	// JSON that round-trips through RunStateFromJSON with the same agent registry.
 	NestedToolStates map[string]json.RawMessage `json:"nested_tool_states,omitempty"`
+	// UsagePending records an unattributed interrupted-response usage; see
+	// RunState.usagePending. A pointer so absence is distinguishable: states
+	// serialized before the field existed decode as nil and resume with the
+	// old always-re-arm behavior, which loses nothing they had.
+	UsagePending *bool `json:"usage_pending,omitempty"`
 
 	// Guardrail results accumulated before the pause (schema ≥ 1.3), serialized
 	// lossily as name + output payload — the live guardrail func is not restored.
@@ -440,6 +485,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		Usage:                 s.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyToString(s.ReasoningItemIDPolicy),
 		GuardrailResults:      toSerialGuardrailResults(s.GuardrailResults),
+		UsagePending:          &s.usagePending,
 	}
 	if s.CurrentAgent != nil {
 		out.CurrentAgent = s.CurrentAgent.Name
@@ -549,7 +595,12 @@ func serializeItems(items []RunItem) ([]serialItem, error) {
 }
 
 func serializeResponse(resp *ModelResponse) serialResponse {
-	sr := serialResponse{ID: resp.ResponseID, Usage: resp.Usage}
+	sr := serialResponse{
+		ID:               resp.ResponseID,
+		Usage:            resp.Usage,
+		Status:           resp.Status,
+		IncompleteReason: resp.IncompleteReason,
+	}
 	for i := range resp.Output {
 		sr.Output = append(sr.Output, json.RawMessage(resp.Output[i].RawJSON()))
 	}
@@ -580,6 +631,10 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		ReasoningItemIDPolicy: reasoningPolicyFromString(in.ReasoningItemIDPolicy),
 		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),
 		Approvals:             NewApprovalStore(),
+		// Absent (a pre-flag state) resumes with the old always-re-arm
+		// behavior: those states almost certainly paused with the usage
+		// unattributed, and losing it would be the regression.
+		usagePending: in.UsagePending == nil || *in.UsagePending,
 	}
 	if st.CurrentAgent == nil {
 		return nil, newUserError("run state references unknown agent %q; add it to the registry", in.CurrentAgent)
@@ -695,7 +750,12 @@ func deserializeItems(items []serialItem, lookup func(string) *Agent) ([]RunItem
 }
 
 func deserializeResponse(sr serialResponse) (*ModelResponse, error) {
-	resp := &ModelResponse{ResponseID: sr.ID, Usage: sr.Usage}
+	resp := &ModelResponse{
+		ResponseID:       sr.ID,
+		Usage:            sr.Usage,
+		Status:           sr.Status,
+		IncompleteReason: sr.IncompleteReason,
+	}
 	if resp.Usage == nil {
 		resp.Usage = NewUsage()
 	}

@@ -209,9 +209,24 @@ func (r *runner) executeToolsAndSideEffects(
 
 	// Human-in-the-loop: partition function calls into those ready to run, those
 	// awaiting approval, and rejected calls (already resolved to results).
-	toRun, interruptions, rejected, err := r.partitionByApproval(ctx, agent, functions)
-	if err != nil {
-		return nil, err
+	//
+	// A truncated response bypasses the partition: a call whose arguments may
+	// stop mid-JSON must neither run nor ASK. Pausing would put a doomed call
+	// in front of a human — and an approval serialized into a RunState and
+	// resumed in another process would then execute what this process refuses,
+	// since nothing after the pause re-checks what only the truncation guard
+	// below knows. Every call falls through to truncatedCallResults instead.
+	var toRun []toolRunFunction
+	var interruptions []*ToolApprovalItem
+	var rejected []functionToolResult
+	var err error
+	if resp.Truncated() {
+		toRun = functions
+	} else {
+		toRun, interruptions, rejected, err = r.partitionByApproval(ctx, agent, functions)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// If any tool call awaits approval, pause the run before executing anything
@@ -241,6 +256,7 @@ func (r *runner) executeToolsAndSideEffects(
 		})
 		executed = truncatedCallResults(agent, toRun)
 	} else {
+		r.ctrl.setPhase(PhaseToolExecution)
 		executed, err = r.runFunctionTools(ctx, agent, toRun)
 		if err != nil {
 			return nil, err
@@ -607,7 +623,13 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 					err = perr.fatalError()
 					return
 				}
-				msg := toolHandleFailure(gctx, run.Tool, tc, perr)
+				msg, herr := toolHandleFailure(gctx, run.Tool, tc, perr)
+				if herr != nil {
+					// The failure handler panicked too. Report it instead of
+					// letting the second panic unwind the process.
+					err = herr
+					return
+				}
 				results[i] = functionToolResult{
 					tool:       run.Tool,
 					outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
@@ -684,7 +706,12 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				// the same tail as a success — output guardrails, custom data,
 				// and OnToolEnd all see it (Python parity: the error is converted
 				// inside the invocation, then handled like a normal result).
-				out = toolHandleFailure(gctx, run.Tool, tc, err)
+				var herr error
+				out, herr = toolHandleFailure(gctx, run.Tool, tc, err)
+				if herr != nil {
+					// The handler itself panicked: fatal, like a tool without one.
+					return herr
+				}
 				// A handled failure is still a failure as far as the UI is
 				// concerned; the model sees the message either way.
 				result = TextResult(stringifyToolOutput(out))
@@ -1079,11 +1106,26 @@ func toolHandlesFailure(tool Tool) bool {
 	return true
 }
 
-func toolHandleFailure(ctx context.Context, tool Tool, tc *ToolContext, err error) string {
+// toolHandleFailure invokes the tool's failure handler. The handler is user
+// code and gets the same panic protection the tool body has: one of its call
+// sites is the recovery defer itself, where an unrecovered second panic would
+// unwind straight out of the errgroup goroutine and kill the process — after
+// the deferred done() had already let the run "complete". A panicking handler
+// is reported as the fatal error it is, never re-thrown.
+func toolHandleFailure(ctx context.Context, tool Tool, tc *ToolContext, cause error) (msg string, fatal error) {
+	defer func() {
+		if p := recover(); p != nil {
+			perr := &toolPanicError{toolName: tool.ToolName(), value: p, stack: debug.Stack()}
+			RecordDiagnostic(ctx, DiagToolPanic, perr, map[string]any{
+				"tool": tool.ToolName(), "source": "failure_handler",
+			})
+			fatal = perr.fatalError()
+		}
+	}()
 	if h, ok := ToolAs[FailureHandlingTool](tool); ok {
-		return h.HandleToolFailure(ctx, tc, err)
+		return h.HandleToolFailure(ctx, tc, cause), nil
 	}
-	return ""
+	return "", nil
 }
 
 // toolNeedsApproval asks a tool whether this specific call needs human

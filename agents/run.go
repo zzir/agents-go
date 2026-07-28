@@ -4,12 +4,14 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -308,6 +310,22 @@ func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*Ru
 // chain. Input normalization happens once, up front, so a middleware inspects
 // and edits the same item list the loop will use rather than a string it would
 // have to normalize itself.
+// singleUse guards a RunStream against being ranged twice. A second range
+// re-invokes the whole run — model billed again, tools re-executing their side
+// effects, the session taking duplicate items — and it does so SILENTLY, which
+// is how "break out of the loop, then Collect() for the result" duplicated a
+// run. The second range yields an error instead.
+func singleUse(stream RunStream) RunStream {
+	var consumed atomic.Bool
+	return func(yield func(StreamEvent, error) bool) {
+		if !consumed.CompareAndSwap(false, true) {
+			yield(nil, newUserError("run stream already consumed: a RunStream is single-use, and ranging it again would re-execute the run"))
+			return
+		}
+		stream(yield)
+	}
+}
+
 func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
@@ -315,12 +333,12 @@ func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOption
 		}
 	}
 	if len(opts.Middlewares) == 0 {
-		return func(yield func(StreamEvent, error) bool) {
+		return singleUse(func(yield func(StreamEvent, error) bool) {
 			runStream(ctx, agent, input, opts, ctrl, rawEvents, yield)
-		}
+		})
 	}
 
-	return func(yield func(StreamEvent, error) bool) {
+	return singleUse(func(yield func(StreamEvent, error) bool) {
 		items, err := normalizeInput(input)
 		if err != nil {
 			yield(nil, err)
@@ -332,7 +350,7 @@ func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOption
 				return
 			}
 		}
-	}
+	})
 }
 
 // runStream is the body shared by Run and RunSync: prepare, loop, and report
@@ -475,13 +493,6 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	return r, modelInput, finishTrace, nil
 }
 
-// modelCallOutcome carries a model call's result off a goroutine when the call
-// races the first-turn input guardrails (see the loop's guardCh path).
-type modelCallOutcome struct {
-	resp *ModelResponse
-	err  error
-}
-
 // inputGuardOutcome carries the parallel input guardrails' collected results and
 // tripwire/error off their goroutine, so the main loop can both honor the
 // tripwire and record every result on the RunResult.
@@ -565,6 +576,13 @@ type runner struct {
 	// the split an approval pause creates — cannot count the same request
 	// twice.
 	usagePending bool
+
+	// inputGuardrailsRan records that the first turn's input guardrails have
+	// executed, so an overflow retry of that turn — which re-enters it with
+	// the same turn number — does not run them again: a moderation guardrail
+	// double-bills and double-fires its side effects, and a non-idempotent one
+	// can trip on input it already passed.
+	inputGuardrailsRan bool
 
 	// disclosed names the deferred tools a ToolResult has opened up. It is
 	// carried on RunState so a resumed run does not re-hide a tool the model
@@ -781,24 +799,33 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 		// Build the model input. In previous_response_id mode, send only the
 		// items the server does not yet have; otherwise send the full history.
-		var turnInput []TResponseInputItem
+		// A closure because it can run twice: a Blocking input guardrail that
+		// REPLACES the input rebuilds from the replacement, so the guarded
+		// call itself sees the rewritten input rather than just later turns.
 		var prevID string
-		var inputErr error
-		switch {
-		case r.opts.Conversation.UsePreviousResponseID && previousResponseID != "":
-			turnInput, inputErr = itemsToInputList(generatedItems[serverItemCount:])
-			prevID = previousResponseID
-		case r.opts.Conversation.ConversationID != "" && serverCursorActive:
-			// The conversation already holds prior items server-side.
-			turnInput, inputErr = itemsToInputList(generatedItems[serverItemCount:])
-		default:
-			turnInput, inputErr = buildModelInput(originalInput, generatedItems)
+		buildTurnInput := func() ([]TResponseInputItem, error) {
+			var in []TResponseInputItem
+			var err error
+			switch {
+			case r.opts.Conversation.UsePreviousResponseID && previousResponseID != "":
+				in, err = itemsToInputList(generatedItems[serverItemCount:])
+				prevID = previousResponseID
+			case r.opts.Conversation.ConversationID != "" && serverCursorActive:
+				// The conversation already holds prior items server-side.
+				in, err = itemsToInputList(generatedItems[serverItemCount:])
+			default:
+				in, err = buildModelInput(originalInput, generatedItems)
+			}
+			if err != nil {
+				return nil, err
+			}
+			// Optionally strip reasoning-item ids before sending them to the model.
+			return applyReasoningItemIDPolicy(in, r.opts.Exec.ReasoningItemIDPolicy), nil
 		}
+		turnInput, inputErr := buildTurnInput()
 		if inputErr != nil {
 			return nil, r.fail(inputErr, originalInput, generatedItems, rawResponses, currentAgent)
 		}
-		// Optionally strip reasoning-item ids before sending them to the model.
-		turnInput = applyReasoningItemIDPolicy(turnInput, r.opts.Exec.ReasoningItemIDPolicy)
 
 		snapshot, err := r.buildSnapshot(ctx, currentAgent, turnInput)
 		if err != nil {
@@ -830,14 +857,16 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		r.rc.setTurnInput(modelInput)
 
 		// On the first turn, run input guardrails (run-level ones first, then the
-		// starting agent's). A guardrail with Blocking=true runs to
-		// completion BEFORE the model call — a gate. The rest run
-		// concurrently with the model call for blocking runs (matching the Python
-		// SDK), synchronously before it for streaming runs (the documented
-		// difference); guardCh delivers their results and tripwire. They already
-		// ran before an interruption, so a resumed run skips them.
+		// starting agent's). A guardrail with Blocking=true runs to completion
+		// BEFORE the model call — a gate. It runs after the turn's input is
+		// built and published, so it can inspect rc.TurnInput(); a Replace
+		// verdict rebuilds that input from the replacement, which is what makes
+		// the verdict real for the guarded call itself. The rest race the model
+		// call; guardCh delivers their results and tripwire. They already ran
+		// before an interruption, so a resumed run skips them.
 		var guardCh chan inputGuardOutcome
-		if turn == startTurn && r.resume == nil {
+		if turn == startTurn && r.resume == nil && !r.inputGuardrailsRan {
+			r.inputGuardrailsRan = true
 			all := selectStage(r.runGuardrails(startAgent), StageInput)
 			var sequential, parallel []Guardrail
 			for _, g := range all {
@@ -849,12 +878,24 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			// Sequential (blocking) guardrails: a tripwire prevents the model call.
 			if len(sequential) > 0 {
+				r.ctrl.setPhase(PhaseGuardrails)
 				gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
 				res, gerr := runStageConcurrent(ctx, r.rc, sequential,
 					GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: originalInput})
 				r.recordGuardrailResults(res...)
 				if repl, ok := inputReplacement(res); ok {
+					// The whole point of Replace: the model must see the
+					// replacement. Rebuild THIS turn's input from it — leaving
+					// the already-built input in place sent the original to the
+					// model while the result claimed it was replaced.
 					originalInput = repl
+					rebuilt, rerr := buildTurnInput()
+					if rerr != nil {
+						return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)
+					}
+					modelInput = rebuilt
+					snapshot.Input = rebuilt
+					r.rc.setTurnInput(modelInput)
 				}
 				if gerr != nil {
 					gspan.SetError(gerr.Error(), nil)
@@ -865,11 +906,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			// Non-blocking guardrails race the model call: a tripwire cancels it,
 			// so the run fails without waiting for a response nobody will use.
-			//
-			// This used to be the blocking entry point's behavior only —
-			// streaming ran them synchronously first, which is what the guardrail
-			// docs called "the documented difference". There is one entry point
-			// now, and racing is the behavior the docs describe.
+			// A Replace verdict from a racing guardrail necessarily misses the
+			// call it raced — the request is already in flight when the verdict
+			// lands — and applies from the next turn on; a guardrail that must
+			// rewrite what the model sees sets Blocking.
 			if len(parallel) > 0 {
 				guardCh = make(chan inputGuardOutcome, 1)
 				gctx, gcancel := context.WithCancel(ctx)
@@ -945,41 +985,49 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			callCtx := tracing.WithSpan(ctx, span)
 			switch {
 			case guardCh != nil:
-				// Blocking run with first-turn parallel input guardrails: race the
-				// model call against them so a tripwire cancels the in-flight call.
+				// First-turn racing input guardrails: run the model call under a
+				// cancelable context and watch the verdict from the side, so a
+				// tripwire cancels the in-flight call. The call itself stays on
+				// THIS goroutine in its usual form — streamed when the run
+				// streams — because racing must not de-stream it: yielding raw
+				// events from a helper goroutine would race the iterator, and
+				// downgrading to a blocking call silently cost a streaming UI
+				// its whole first turn of deltas.
+				//
 				// A tripped guardrail aborts the turn WITHOUT billing usage or
-				// firing OnLLMEnd — the model task is discarded (Python parity:
-				// should_cancel_parallel_model_task_on_input_guardrail_trip).
+				// firing OnLLMEnd — the model outcome is discarded (Python
+				// parity: should_cancel_parallel_model_task_on_input_guardrail_trip).
+				// Raw events already yielded by a streamed call stand; the
+				// run's error is what says they came to nothing.
 				modelCtx, modelCancel := context.WithCancel(callCtx)
-				ch := make(chan modelCallOutcome, 1)
+				relay := make(chan inputGuardOutcome, 1)
 				go func() {
-					rr, ee := model.GetResponse(modelCtx, req)
-					ch <- modelCallOutcome{resp: rr, err: ee}
+					g := <-guardCh
+					if g.err != nil {
+						modelCancel()
+					}
+					relay <- g
 				}()
-				var tripwire error
-				readGuard := func(g inputGuardOutcome) {
-					r.recordGuardrailResults(g.results...)
-					tripwire = g.err
+				if r.rawEvents {
+					resp, err = r.streamOneModelCall(modelCtx, span, model, req)
+				} else {
+					resp, err = model.GetResponse(modelCtx, req)
 				}
-				select {
-				case g := <-guardCh:
-					readGuard(g)
-					if tripwire == nil {
-						out := <-ch
-						resp, err = out.resp, out.err
-					}
-				case out := <-ch:
-					// Model finished first; honor a tripwire verdict still in flight.
-					readGuard(<-guardCh)
-					if tripwire == nil {
-						resp, err = out.resp, out.err
-					}
-				}
+				// The guardrails always finish — a tripwire cancelled the call,
+				// completion just outlasted it — so honor a verdict still in
+				// flight before trusting the model outcome.
+				g := <-relay
 				modelCancel()
-				if tripwire != nil {
-					span.SetError(tripwire.Error(), nil)
+				r.recordGuardrailResults(g.results...)
+				if repl, ok := inputReplacement(g.results); ok {
+					// Too late for the call it raced; later turns and the
+					// result see the replacement.
+					originalInput = repl
+				}
+				if g.err != nil {
+					span.SetError(g.err.Error(), nil)
 					span.Finish()
-					return nil, r.fail(tripwire, originalInput, generatedItems, rawResponses, currentAgent)
+					return nil, r.fail(g.err, originalInput, generatedItems, rawResponses, currentAgent)
 				}
 			case r.rawEvents:
 				resp, err = r.streamOneModelCall(callCtx, span, model, req)
@@ -1019,9 +1067,20 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			slog.Int64("input_tokens", usageOr(resp.Usage).InputTokens),
 			slog.Int64("output_tokens", usageOr(resp.Usage).OutputTokens))
 		r.lastResponseID = resp.ResponseID
-		r.lastUsage = resp.Usage
-		r.usagePending = true
 		r.lastStore = r.resolveSettings(currentAgent).Store
+		if !resumedTurn {
+			r.lastUsage = resp.Usage
+			r.usagePending = true
+		} else if r.resume != nil && r.resume.usagePending {
+			// The pausing segment stopped with this response's usage still
+			// unattributed — the pause-time persist withholds the turn's items
+			// (a stored call without its output is a dangling call), so the
+			// usage had nothing to land on. The debt transfers to the resumed
+			// batch, once. Re-arming unconditionally is what double-counted the
+			// request whenever the pausing segment HAD already attributed it.
+			r.lastUsage = resp.Usage
+			r.usagePending = true
+		}
 
 		processed, err := processModelResponse(currentAgent, tools, handoffs, resp, r.opts.Exec.ToolNotFoundBehavior)
 		if err != nil {
@@ -1208,6 +1267,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// from an earlier resume of the same parent run. Serialized in
 				// RunState JSON, so a cross-process resume continues them too.
 				nestedToolStates: mergeNestedStates(carriedNested, step.NestedStates),
+				// Whether this response's usage still needs attributing; the
+				// resumed batch settles the debt exactly once (see attributeUsage).
+				usagePending: r.usagePending,
 			}
 			return &RunResult{
 				Input: originalInput,
@@ -1764,9 +1826,11 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 	for _, server := range agent.MCPServers {
 		mcpTools, err := server.ListTools(ctx, r.rc, agent)
 		if err != nil {
-			r.log.component("mcp").Warn(ctx, "MCP ListTools failed, skipping server",
-				slog.String("agent", agent.Name), slog.String("error", err.Error()))
-			continue
+			// Failing the turn, not skipping the server: with its tools quietly
+			// missing, the model's next call to one it used a turn ago becomes
+			// a "tool not found" error blamed on the model. A listing failure
+			// is this run's failure, named as such.
+			return nil, fmt.Errorf("listing tools of MCP server for agent %q: %w", agent.Name, err)
 		}
 		out = append(out, mcpTools...)
 	}
