@@ -31,6 +31,18 @@ type RunFunc func(ctx context.Context, in RunInput) RunStream
 // guardrails race the model call and cancel it, persistence has a boundary that
 // only the loop knows. Expressing them as middleware would turn three
 // invariants into implicit protocols between wrappers.
+//
+// The stream contract (spec §2.12) — an implementation owes all three clauses:
+//
+//  1. Every event other than *RunCompletedEvent flows through as it happens.
+//     Buffering until satisfied turns a live retry into an apparent hang.
+//  2. *RunCompletedEvent appears exactly once, LAST, on a run that ends
+//     without error — and zero times on one that errors. It is the one event
+//     whose meaning a middleware owns ("this attempt finished" versus "the
+//     run finished"): one that re-enters the run holds back each attempt's
+//     completion event and emits a single one for the attempt it accepts.
+//  3. Once the consumer stops ranging — yield returned false — nothing more
+//     is yielded, not even an error. There is nobody to receive it.
 type RunMiddleware interface {
 	Run(ctx context.Context, next RunFunc, in RunInput) RunStream
 }

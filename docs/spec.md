@@ -51,7 +51,9 @@ from upstream.
   helpers a turn does spawn — racing input guardrails above all — are
   CANCELLED by the abandonment rather than waited for: waiting on one parked
   the consumer's `break` for its full duration, and forever for a guardrail
-  that returns only when cancelled.
+  that returns only when cancelled. (One narrow exception to "the consumer's
+  goroutine": a tool streaming progress yields from its own goroutine —
+  [§2.7g](#27g-tool-progress-).)
 - **A `RunStream` is single-use.** Ranging it a second time yields a
   `*UserError` instead of anything else: the run body lives inside the
   iterator, so a second range would re-execute it — model billed again, tools
@@ -1004,6 +1006,14 @@ A tool marked `WithDeferred` is withheld from the model until some
 - **`emit` serializes with the run loop's own yields.** Several tools stream at
   once while the loop waits on the batch, and an iterator's `yield` is not safe
   for concurrent calls — the mutex is what makes `Emit` possible at all.
+- **The consumer's range body runs on the emitting tool's goroutine** for a
+  progress event — never concurrently with itself (the mutex above), but not
+  on the goroutine that started the range. This is the visible half of the
+  serialization trade: marshalling to the consumer's goroutine would need a
+  channel and a second consumer loop, which is the producer-goroutine design
+  §2.0 removed. Consumers that pin work to the starting goroutine
+  (thread-locked UI, goroutine-local state) hand the event off instead —
+  stated consumer-side in [streaming.md](streaming.md).
 - A **nested agent-as-tool run is streamed whenever the parent is**, so its work
   shows up as progress without the caller wiring `OnStream`. Only its messages
   are forwarded: relaying the nested raw deltas would bury the parent's stream.
@@ -1301,6 +1311,22 @@ run finished". A middleware that buffered everything until it was satisfied
 would make a long retry look like a hang, which is the opposite of what
 streaming is for.
 
+That norm is a three-clause contract, and an author owes all three (stated on
+`RunMiddleware`'s godoc, where an author starts):
+
+1. Every event other than `RunCompletedEvent` flows through as it happens.
+2. `RunCompletedEvent` appears **exactly once, last**, on a run that ends
+   without error — and zero times on one that errors. A re-entering middleware
+   therefore holds back each attempt's completion event and emits a single one
+   for the attempt it accepts.
+3. Once the consumer stops ranging — yield returned false — nothing more is
+   yielded, **not even an error**: there is nobody to receive it.
+
+The shipped middleware that re-enter or terminate a run keep the contract
+through the package's internal `collect`/`finish` helpers (a pure pass-through
+like `Logging` keeps it by construction); a third-party author implements the
+same three clauses directly.
+
 **Order is behavior.** A middleware that resolves something about *one attempt*
 (answering an approval pause) must sit inside one that decides whether to make
 *another attempt* (an evaluator loop, a retry). Reversed, the outer one judges
@@ -1459,6 +1485,26 @@ Zero conversion, zero information loss — reasoning ids, `encrypted_content` an
 strict schemas all survive round-trips. The cost is that non-LLM entries need a
 `SessionEntry` wrapper to have somewhere to live.
 
+### 5.5b The wire types couple our compatibility to openai-go's
+
+§5.5's zero-conversion choice has a price with a name: `TResponseInputItem` and
+friends are **type aliases of `openai-go/v3` union types**, and they appear in
+nearly every exported signature. A major-version bump of openai-go (v3→v4) is
+therefore a breaking change of this SDK's **entire API surface**, whatever else
+it contains.
+
+This is accepted, not overlooked:
+
+- Wrapping the wire types behind our own structs would cost the round-trip
+  fidelity §5.5 exists for, plus a conversion layer that must chase every
+  Responses API addition forever.
+- The major version is pinned in `go.mod`; nothing forces a bump on users
+  until we take one deliberately.
+- **When a bump does come, it is the merge window** for every other
+  API-surface change on the shelf — e.g. renaming the Python-inherited
+  `T`-prefixed aliases (§5.2 does not protect names whose surface is breaking
+  anyway) — so users absorb one deprecation cycle (§5.8), not two.
+
 ### 5.6 Background work runs in-process, not in isolated processes
 
 Background sub-agents ("tasks") run as **nested runs inside the same process**,
@@ -1505,6 +1551,42 @@ self-contained they are.
 Versions before v0.2.0 make no compatibility promise: the API is still being
 shaped. From v0.2.0 onward, breaking changes to exported identifiers go through
 a deprecation cycle.
+
+### 5.9 A parent-linked checkpoint chain for execution state is declined
+
+Microsoft's agent-framework-go checkpoints every workflow superstep into a
+parent-linked store (`CreateCheckpoint(..., parent)` /
+`RetrieveIndex(withParent)`), so a run can resume from **any** historical
+point and the checkpoints form a browsable tree — time-travel debugging
+included. It needs that structure because its `Session` is a key-value bag:
+the checkpoint tree is its only history.
+
+Declined here, because this SDK already carries the stronger halves of that
+design:
+
+- **The session tree is the parent chain** (§2.5d). "Re-run from message X"
+  and "same history, different model or options from turn N" are session
+  branches: a new run starts from any leaf, its model input rebuilt by
+  projection.
+- **`RunState` serializes the one state that cannot be rebuilt** — the
+  mid-turn pause with tool calls awaiting approval (§2.7) — and resumes
+  across processes. Between turns, the session is the truth; the rest of the
+  runner's state is derivable or expendable.
+- **Per-turn persistence bounds crash loss to the in-flight turn**, and
+  repair (§2.5h) makes the session loadable again.
+
+The net capability a chain would add — deterministic replay, and a byte-exact
+"resume turn N with the execution state it had then" — does not justify a
+second history structure beside the tree, with its own consistency rules
+against it.
+
+Revisit only with a concrete replay/debugger need, and then on three terms: a
+checkpoint is a **session entry kind** (payload: a trimmed `RunState`,
+projected to nothing), so the tree stays the only history structure; a
+deterministic execution mode comes first, because replaying a
+nondeterministic run replays into different behavior; and the payload must be
+trimmed — `RunState` carries every raw response, and a per-turn copy of that
+grows quadratically.
 
 ---
 

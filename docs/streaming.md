@@ -64,6 +64,15 @@ is backpressure working correctly. For one run feeding several consumers at
 different speeds — a server broadcasting to several browsers — put a
 [`Fanout`](#fanning-out-to-many-consumers) between them.
 
+And one exception: **a tool streaming progress yields from its own
+goroutine.** While a turn's tools run, a `*ToolProgressEvent` reaches your
+range body on the goroutine of the tool that emitted it. Every yield is
+serialized by a mutex, so the body never runs concurrently with itself — but
+it does not always run on the goroutine that started the range. Treat events
+as data and this is invisible; code that pins work to the starting goroutine —
+a thread-locked UI toolkit, goroutine-local state — should hand the event off
+(a channel, a dispatch queue) rather than act in place.
+
 ## Event types
 
 ### Raw response events
