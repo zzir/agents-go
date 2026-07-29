@@ -353,11 +353,18 @@ connect again is safe and intended: it supersedes the stale attempt (e.g. the
 user closed the popup, which sends no signal) and returns a fresh authorize
 URL; an abandoned attempt otherwise expires on its own after 5 minutes.
 
-OAuth tokens obtained during authorization are persisted and reported as
-`has_oauth_token`, so reconnecting — including the automatic reconnect after a
-disable/enable cycle or a restart — needs no re-authorization. Use the
+OAuth grants obtained during authorization are persisted — the token together
+with the token endpoint and (possibly dynamically registered) client
+credentials — and reported as `has_oauth_token`, so reconnecting — including
+the automatic reconnect after a disable/enable cycle or a restart — needs no
+re-authorization. Expired access tokens are refreshed automatically, both
+mid-session and when reconnecting after a restart; every refresh (including a
+rotated refresh token) is written back to the store. Only when the refresh
+token itself is rejected does the server fall back to interactive
+authorization: in-flight tool calls fail fast with a re-authorize message
+rather than hanging, and the next connect returns an authorize URL. Use the
 `oauth-token` DELETE endpoint — the "Clear auth" button in the server's edit
-form — to drop the saved token, e.g. to re-authorize with a different account.
+form — to drop the saved grant, e.g. to re-authorize with a different account.
 
 For `streamable_http` servers, the secret-bearing config fields are masked on
 read — see [Secret handling](#secret-handling): every `headers` value and
@@ -736,13 +743,22 @@ When a change genuinely doesn't fit, update this list in the same PR.
     (`ExcludeColumn`), and expose only a derived boolean
     (`has_oauth_token`, `chatgpt_logged_in`). Do not reuse a masked token
     string as a truthiness signal.
+11. **An OAuth grant persists as a self-contained refreshable unit, through one
+    writer.** The stored payload carries the token AND its refresh context —
+    token endpoint plus (possibly dynamically registered) client credentials —
+    and every mutation flows through `bridge.persistGrant`: the initial
+    authorize and every later refresh, including a rotated refresh token
+    (`persistingTokenSource`). Restored and live connections must use the same
+    refreshing `oauth2.TokenSource` machinery — never a static snapshot of the
+    access token, which is exactly the two-mechanism drift (in-process refresh
+    worked, restart silently didn't) this replaced.
 
 **Store layer**
 
-11. **No bun `default:` tags on booleans.** bun swaps a zero-value field for
+12. **No bun `default:` tags on booleans.** bun swaps a zero-value field for
     SQL `DEFAULT` on insert, so `default:true` silently enables a row created
     with `enabled=false`. Use `notnull` and set the value in Go.
-12. **Deleting a referenced resource fails loud at use, never silently skips a
+13. **Deleting a referenced resource fails loud at use, never silently skips a
     safety feature.** Guardrail names that no longer resolve fail the agent
     build (a guardrail that appears enabled but never runs is a security hole);
     dangling MCP/skill ids are filtered with a visible count in the UI. Pick
@@ -750,7 +766,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 **Chat / run streaming**
 
-13. **Run events are a broadcast bus, not a reply channel.** Every
+14. **Run events are a broadcast bus, not a reply channel.** Every
     authenticated WS connection is attached to every run's stream — on
     connect (all live runs, with replay) and through `Runner.OnRunAttach`
     when a run starts or resumes, whether it was created over WS or REST.
@@ -758,13 +774,13 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `run.started` carries the prompt (`input`) so a browser that didn't send
     it can render the user bubble. Never wire an event to "the connection
     that asked" — that is exactly the bug this replaced.
-14. **Protocol constants have one definition per side.** Event types
+15. **Protocol constants have one definition per side.** Event types
     (`run.error`, …) and error codes (`session_busy`, …) live in
     `internal/protocol` (Go) and `src/lib/protocol.ts` (TS mirror). Emitters
     and consumers reference the constants, never string literals — a typo must
     be a compile error, not an event that silently never fires. Adding an
     event means updating both files.
-15. **A streamed turn must equal its reload.** The streaming path
+16. **A streamed turn must equal its reload.** The streaming path
     (`src/lib/streamReducer.ts` pure transforms, applied by `useAgentSocket`)
     and the replay path (`buildTimeline` over persisted ENTRIES) must produce
     the same `turn.parts`; `src/lib/timeline.test.ts` pins this isomorphism — run
@@ -772,12 +788,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     there (currently: handoff parts are live-only; a rejected call's status
     replays as completed). A new part type or field lands on BOTH paths plus
     the shared types in `timeline.ts`, or the test fails.
-16. **Terminal run events reconcile against the store.** Every terminal event
+17. **Terminal run events reconcile against the store.** Every terminal event
     handler (output/error/cancelled) applies its optimistic parts and then
     reloads the persisted timeline as the authority. Exceptions must be
     deliberate and listed here — currently only `guardrail_tripwire`, which
     skips the reload to keep the retracted-answer view the SDK never persists.
-17. **The streaming block patches the DOM; user intent beats the pin.** The
+18. **The streaming block patches the DOM; user intent beats the pin.** The
     live text is morphdom-patched (`StreamingMarkdown.tsx`), never rewritten
     via innerHTML — node identity is what keeps a text selection alive across
     deltas, so anything that replaces those nodes wholesale is a regression.
@@ -790,7 +806,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 **Background tasks**
 
-18. **A task is a durable entity; a run is one execution of it.** `spawn_task`
+19. **A task is a durable entity; a run is one execution of it.** `spawn_task`
     mints separate ids: the task row carries `run_id` (its current attempt),
     and `run.started` / `RunInfo.task` carry `task_id` — clients route events
     by run id and key task state by task id (a future retry mints a new run id
@@ -801,7 +817,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     the same broadcast bus, replay cursors, approval persistence, and
     retention as chat runs — a task-specific transport is how the two
     lifecycles would drift.
-19. **The spawn card's durable truth is an appended update entry.** The hub's
+20. **The spawn card's durable truth is an appended update entry.** The hub's
     RunInfo is GC'd minutes after a run ends; when a task changes state the
     server APPENDS an update entry carrying
     `{task_id, task_label, task_status, task_summary}` addressed to the spawn
@@ -822,12 +838,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     and the Inspector are the human-facing surfaces; the model reads the text
     verbatim. The prefix carries no privileged behavior: a user typing it
     merely hides their own message from the transcript view.
-20. **The right side panel is a single-instance Inspector.** Traces, the task
+21. **The right side panel is a single-instance Inspector.** Traces, the task
     list, and one task's detail (live transcript + trace, assembled with the
     same streamReducer/timeline code as the chat) are lenses of one panel —
     a new inspection surface is a new lens, not a second drawer. Task detail
     accumulates live child-run events only while open (watchTask/unwatchTask).
-21. **A task's terminal state is written exactly once, via row CAS.** The
+22. **A task's terminal state is written exactly once, via row CAS.** The
     durable row is the terminal authority: `Finalize` (status + full result +
     notification debt in one UPDATE) only wins while the row is non-terminal,
     stop/approve claims race through the same CAS (`Finalize` vs
@@ -840,7 +856,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     completed / failed are the states worth waking the parent for). Deleting a
     session stops its run tree first (cancel + bounded wait on the done gate)
     so no write can land after the cascade.
-22. **One entry in, the same entry out.** The `entries` table stores whole
+23. **One entry in, the same entry out.** The `entries` table stores whole
     `agents.SessionEntry` JSON, with only the columns the queries need lifted
     out. The server does not re-derive a display, a role, or provenance at read
     time — the runner already decided all three, and a reader that recomputes
@@ -858,7 +874,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     folded turns rendered as though the model still reads them. They stay real
     and one expand away — an entry marked compacted that no checkpoint names
     renders in place, because history is not what compaction deletes.
-23. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
+24. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided
     deliberately). Never add ALTER TABLE migration machinery here.

@@ -149,9 +149,11 @@ type McpServerConfig struct {
 	// exchanged with the API as a raw JSON object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
-	// OAuthToken is the JSON-serialized oauth2.Token obtained during the OAuth
-	// flow. Stored separately from Config so that regular CRUD updates (which
-	// overwrite Config) don't erase it, and hidden from the API (json:"-").
+	// OAuthToken is the JSON-serialized OAuth grant obtained during the OAuth
+	// flow: the oauth2.Token plus the token endpoint and client credentials
+	// needed to refresh it across restarts (bridge.tokenPayload). Stored
+	// separately from Config so that regular CRUD updates (which overwrite
+	// Config) don't erase it, and hidden from the API (json:"-").
 	OAuthToken string `bun:"oauth_token,type:text,nullzero" json:"-"`
 
 	CreatedAt time.Time `bun:"created_at,notnull"     json:"created_at"`

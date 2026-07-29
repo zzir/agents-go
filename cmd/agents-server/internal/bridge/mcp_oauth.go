@@ -3,17 +3,78 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"golang.org/x/oauth2"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 const oauthPendingTimeout = 5 * time.Minute
+
+// oauthHTTPTimeout bounds each OAuth HTTP request (metadata discovery, client
+// registration, code exchange, token refresh). Refreshes run on a background
+// context — the oauth2 library retains the context passed at TokenSource
+// construction — so this client timeout is the only bound on a hung token
+// endpoint.
+const oauthHTTPTimeout = 30 * time.Second
+
+// oauthHTTPClient wraps the optional proxy client with the OAuth timeout.
+func oauthHTTPClient(proxy *http.Client) *http.Client {
+	client := &http.Client{Timeout: oauthHTTPTimeout}
+	if proxy != nil {
+		client.Transport = proxy.Transport
+		if proxy.Timeout > 0 {
+			client.Timeout = proxy.Timeout
+		}
+	}
+	return client
+}
+
+// Connect-attempt phases for the OAuth fetcher (see newConnectFetcher).
+const (
+	oauthPhaseSilent      int32 = iota // trying the saved grant; a popup can't be serviced
+	oauthPhaseInteractive              // full flow in progress; park for the popup callback
+	oauthPhaseEstablished              // connect resolved; re-auth needs a fresh user-driven flow
+)
+
+// newConnectFetcher builds the AuthorizationCodeFetcher for one connect
+// attempt, plus the phase the attempt advances as it progresses. Only the
+// interactive phase can service an authorization popup — the fetcher then
+// publishes the authorize URL on urlCh and parks until the OAuth callback
+// delivers the code on codeCh. In every other phase Authorize means the saved
+// grant was rejected (a 401 the refresh token could not fix), and nobody is
+// watching urlCh: fail the request fast instead of parking it until its
+// context expires. During the silent phase that failure makes the caller fall
+// through to the interactive flow immediately; once established, the error
+// tells the user to re-authorize from the MCP settings page, which starts a
+// fresh flow.
+func newConnectFetcher(serverName string, urlCh chan string, codeCh chan *auth.AuthorizationResult) (auth.AuthorizationCodeFetcher, *atomic.Int32) {
+	phase := &atomic.Int32{}
+	fetcher := func(fctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
+		switch phase.Load() {
+		case oauthPhaseInteractive:
+			urlCh <- args.URL
+			select {
+			case result := <-codeCh:
+				return result, nil
+			case <-fctx.Done():
+				return nil, fctx.Err()
+			}
+		case oauthPhaseSilent:
+			return nil, fmt.Errorf("mcp server %q: saved authorization no longer accepted", serverName)
+		default:
+			return nil, fmt.Errorf("mcp server %q: authorization no longer accepted and re-authorizing requires user action; re-authorize the server from the MCP settings page", serverName)
+		}
+	}
+	return fetcher, phase
+}
 
 // OAuthPending represents a pending OAuth authorization awaiting the callback.
 type OAuthPending struct {
@@ -152,23 +213,33 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	codeCh := make(chan *auth.AuthorizationResult, 1)
 	urlCh := make(chan string, 1)
 
-	// The SDK passes its own context derived from connectCtx (5-min timeout).
-	// We must use that — NOT the outer ctx which is the HTTP request context
-	// and gets cancelled as soon as the handler returns the authorize URL.
-	fetcher := func(fctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
-		urlCh <- args.URL
+	// The SDK passes the fetcher its own context derived from connectCtx
+	// (5-min timeout). It must use that — NOT the outer ctx which is the HTTP
+	// request context and gets cancelled as soon as the handler returns the
+	// authorize URL.
+	fetcher, phase := newConnectFetcher(cfg.Name, urlCh, codeCh)
 
-		select {
-		case result := <-codeCh:
-			return result, nil
-		case <-fctx.Done():
-			return nil, fctx.Err()
-		}
-	}
+	httpClient := oauthHTTPClient(mgr.proxyClient(context.Background()))
 
 	handlerCfg := &auth.AuthorizationCodeHandlerConfig{
 		RedirectURL:              RedirectURI(requestOrigin),
 		AuthorizationCodeFetcher: fetcher,
+		Client:                   httpClient,
+		// SEP-2207: request offline_access when the server advertises it, so
+		// the grant carries a refresh token at all.
+		RequestRefreshToken: true,
+		// Persist the fresh grant — token plus the resolved client
+		// credentials and token endpoint, which for a dynamically registered
+		// client exist nowhere else — then keep re-persisting on every
+		// refresh. rctx is the SDK's background refresh context.
+		NewTokenSource: func(rctx context.Context, ocfg *oauth2.Config, tok *oauth2.Token) (oauth2.TokenSource, error) {
+			persistGrant(c.store, cfg.ID, ocfg, tok)
+			return newPersistingSource(ocfg.TokenSource(rctx, tok), ocfg, cfg.ID, c.store, tok), nil
+		},
+		// A restored grant refreshes through the same persisting machinery as
+		// a live one, so the restart and live paths are a single mechanism.
+		// nil (no usable saved grant) triggers the interactive flow.
+		InitialTokenSource: restoredTokenSource(cfg.ID, cfg.OAuthToken, c.store, httpClient),
 	}
 	if preregistered != nil {
 		handlerCfg.PreregisteredClient = preregistered
@@ -179,13 +250,11 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 				ClientName:   "agents-go",
 				RedirectURIs: []string{redirectURI},
 				Scope:        hc.OAuthScopes,
+				// RFC 7591 defaults to authorization_code only; without
+				// advertising refresh_token many servers never issue one.
+				GrantTypes: []string{"authorization_code", "refresh_token"},
 			},
 		}
-	}
-
-	proxyClient := mgr.proxyClient(context.Background())
-	if proxyClient != nil {
-		handlerCfg.Client = proxyClient
 	}
 
 	authHandler, err := auth.NewAuthorizationCodeHandler(handlerCfg)
@@ -193,20 +262,20 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		return nil, fmt.Errorf("creating oauth handler: %w", err)
 	}
 
-	// Wrap with persistence: pre-populates from saved token and saves after
-	// a successful authorize.
-	handler := newPersistentOAuthHandler(authHandler, cfg.ID, c.store, cfg.OAuthToken)
-
-	// If we have a valid saved token, try connecting directly — no popup needed.
-	// This is a silent, synchronous path, so it honors the caller's ctx: startup
-	// auto-connect passes a per-server timeout, so one hung server can't stall
-	// the others.
-	if ts, _ := handler.TokenSource(ctx); ts != nil {
-		if tok, _ := ts.Token(); tok != nil && tok.Valid() {
-			if err := mgr.ConnectHTTPWithOAuth(ctx, cfg, hc, handler); err == nil {
+	// If the saved grant yields a usable token — including refreshing an
+	// expired access token — connect directly, no popup. This is a silent,
+	// synchronous path honoring the caller's ctx for the connect itself
+	// (startup auto-connect passes a per-server timeout, so one hung server
+	// can't stall the others); a refresh inside Token() is bounded by
+	// httpClient's timeout instead, as oauth2.TokenSource carries no per-call
+	// context.
+	if ts, _ := authHandler.TokenSource(ctx); ts != nil {
+		if tok, tokErr := ts.Token(); tokErr == nil && tok.Valid() {
+			if err := mgr.ConnectHTTPWithOAuth(ctx, cfg, hc, authHandler); err == nil {
+				phase.Store(oauthPhaseEstablished)
 				return &ConnectResult{Connected: true}, nil
 			}
-			// Token rejected (expired / revoked) — fall through to full OAuth flow.
+			// Token rejected (revoked?) — fall through to full OAuth flow.
 		}
 	}
 
@@ -216,6 +285,10 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	if !interactive {
 		return &ConnectResult{Connected: false}, nil
 	}
+
+	// From here the popup flow owns the fetcher: Authorize may park for the
+	// callback. Must be stored before the goroutine's transport can 401.
+	phase.Store(oauthPhaseInteractive)
 
 	connectCtx, connectCancel := context.WithTimeout(context.Background(), oauthPendingTimeout)
 	attempt := &oauthAttempt{cancel: connectCancel, done: make(chan struct{})}
@@ -228,7 +301,11 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		// ConnectHTTPWithOAuth releases the manager's connect slot (finishConnect)
 		// before returning; only then clear the attempt and close done, so a
 		// superseding authorize that waits on done can safely re-claim the slot.
-		err := mgr.ConnectHTTPWithOAuth(connectCtx, cfg, hc, handler)
+		err := mgr.ConnectHTTPWithOAuth(connectCtx, cfg, hc, authHandler)
+		// The connect resolved either way; from here any Authorize on this
+		// handler is a post-connect re-auth and must fail fast (see
+		// newConnectFetcher).
+		phase.Store(oauthPhaseEstablished)
 		connectCancel()
 		c.clearInflight(cfg.ID, attempt)
 		close(attempt.done)
