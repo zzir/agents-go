@@ -23,13 +23,13 @@ func TestHandleCallbackIdempotentAndNonBlocking(t *testing.T) {
 	c.pending[state] = &OAuthPending{AuthorizeURL: "http://x", codeCh: codeCh}
 	c.mu.Unlock()
 
-	if err := c.HandleCallback(state, "code-1"); err != nil {
+	if err := c.HandleCallback(state, "code-1", ""); err != nil {
 		t.Fatalf("first callback: %v", err)
 	}
 	if got := <-codeCh; got.Code != "code-1" {
 		t.Fatalf("delivered code = %q, want code-1", got.Code)
 	}
-	if err := c.HandleCallback(state, "code-2"); err == nil {
+	if err := c.HandleCallback(state, "code-2", ""); err == nil {
 		t.Fatal("duplicate callback should report unknown/expired state (consumed once)")
 	}
 
@@ -43,7 +43,7 @@ func TestHandleCallbackIdempotentAndNonBlocking(t *testing.T) {
 	c.mu.Unlock()
 
 	done := make(chan struct{})
-	go func() { _ = c.HandleCallback(state2, "code-3"); close(done) }()
+	go func() { _ = c.HandleCallback(state2, "code-3", ""); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):

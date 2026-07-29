@@ -2003,6 +2003,11 @@ paths:
         required: true
         schema:
           type: string
+      - description: RFC 9207 issuer identifier
+        in: query
+        name: iss
+        schema:
+          type: string
       - description: Provider error, e.g. access_denied
         in: query
         name: error

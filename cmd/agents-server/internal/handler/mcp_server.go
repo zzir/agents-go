@@ -457,6 +457,7 @@ func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 //	@Produce		html
 //	@Param			state	query		string	true	"OAuth state"
 //	@Param			code	query		string	true	"Authorization code"
+//	@Param			iss		query		string	false	"RFC 9207 issuer identifier"
 //	@Param			error	query		string	false	"Provider error, e.g. access_denied"
 //	@Success		200		{string}	string	"HTML result page"
 //	@Failure		400		{string}	string	"missing state or code parameter"
@@ -474,7 +475,7 @@ func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
 		c.String(http.StatusBadRequest, "missing state or code parameter")
 		return
 	}
-	if err := h.oauth.HandleCallback(state, code); err != nil {
+	if err := h.oauth.HandleCallback(state, code, c.Query("iss")); err != nil {
 		writeOAuthCallbackPage(c, "error", err.Error())
 		return
 	}

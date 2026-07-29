@@ -274,7 +274,10 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 
 // HandleCallback processes the OAuth authorization callback. It delivers the
 // code to the pending connection goroutine exactly once. Returns an error if
-// the state is unknown or already consumed.
+// the state is unknown or already consumed. iss is the RFC 9207 issuer from
+// the redirect's "iss" query parameter (empty when the server sent none); the
+// SDK rejects the exchange when its presence disagrees with the server's
+// advertised authorization_response_iss_parameter_supported.
 //
 // The pending entry is removed under the lock BEFORE delivery, so a duplicate
 // callback (browsers re-issue redirects; a user may reload the callback tab)
@@ -282,7 +285,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 // itself is non-blocking: codeCh is buffered (cap 1) and the fetcher receives
 // at most once, so a redundant delivery must never park this goroutine forever
 // on a full channel.
-func (c *OAuthCoordinator) HandleCallback(state, code string) error {
+func (c *OAuthCoordinator) HandleCallback(state, code, iss string) error {
 	c.mu.Lock()
 	p, ok := c.pending[state]
 	if ok {
@@ -295,7 +298,7 @@ func (c *OAuthCoordinator) HandleCallback(state, code string) error {
 	}
 
 	select {
-	case p.codeCh <- &auth.AuthorizationResult{Code: code, State: state}:
+	case p.codeCh <- &auth.AuthorizationResult{Code: code, State: state, Iss: iss}:
 	default:
 		// The fetcher already received (or gave up) — nothing to deliver to.
 	}
