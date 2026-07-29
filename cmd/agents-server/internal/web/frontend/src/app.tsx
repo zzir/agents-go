@@ -455,7 +455,10 @@ export default function App() {
     try {
       await api.sessions.branch(activeSession, userEntryId);
       await reloadTimeline(activeSession);
-      setActivePanel(null);
+      // The Inspector stays open: regen is in-place (same session), so an open
+      // trace/task panel remains valid — the replaced attempt gets its "replaced"
+      // chip and the drawer follows the new live run. (The close that used to sit
+      // here was a leftover from the fork-a-new-session implementation.)
       // Empty input: the run answers the branch we just switched to rather
       // than adding a new user message. The server maps it to an empty item list.
       const payload: Record<string, any> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
