@@ -226,6 +226,8 @@ refuse before the model is ever called.
 | `middleware.Approval` | Answers approval interruptions from a standing `ApprovalPolicy` and resumes, so the caller only sees the pauses the policy declined |
 | `middleware.Retry` | Re-runs a **failed** run |
 | `middleware.Logging` | Logs a run's shape: start, items, how it ended |
+| `middleware.Plan` | Plan mode: read-only exploration, a plan submitted through `submit_plan` pauses for approval, and approval unlocks the toolset in the same run |
+| `middleware.Todo` | Has the agent keep a working todo list through `todo_write`; the host observes it via `OnUpdate` |
 
 ```go
 import "github.com/zzir/agents-go/agents/middleware"
@@ -251,6 +253,28 @@ make another attempt.
 `Loop` is the shape middleware exists for: the run loop knows when a model has
 *finished talking* and nothing more, while "good enough" is the caller's
 question — a critic agent, a schema check, a compiler.
+
+**Plan mode** (`middleware.Plan`) splits a run into two phases with one pause
+between them. While planning, only the tools named in `ReadOnlyTools`
+(`DefaultReadOnlyTools` when nil) are visible — direct tools through their
+enabled hook, MCP tools by filtering each turn's listing, handoffs through
+`Handoff.IsEnabled` (a target's full toolset would be a side door out of plan
+mode) — plus a `submit_plan` tool that is always approval-gated. The pause IS the plan
+review: an interruption whose tool is `middleware.PlanToolName` carries the
+plan in its arguments; `Approve` unlocks the full toolset and the same run
+continues into execution, `Reject`'s message sends the model back to planning
+with the write tools still hidden. Read-only-ness is a name list, not a tool
+capability — tools carry no side-effect marker, and a list the caller can see
+and edit beats an interface nobody remembers to implement.
+
+**Todo mode** (`middleware.Todo`) adds a `todo_write` tool and a preamble
+telling the model to keep a working list. Every call replaces the whole list —
+the model always sends every item, which is simpler to prompt for and
+impossible to desynchronize. The host renders it from `OnUpdate` (or reads the
+calls off the stream); a malformed list is refused whole, so an observer never
+sees a half-applied update. Both middlewares rewrite the entry agent only;
+handoff targets keep their own toolset. See
+[examples/planmode](../examples/planmode/main.go) for both together.
 
 `middleware.Retry` and `agents.NewRetryModel` are different and usually both
 right. The model decorator retries one call (a 429, a dropped connection) and
