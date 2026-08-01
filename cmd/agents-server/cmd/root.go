@@ -187,6 +187,9 @@ func run(_ *cobra.Command, _ []string) error {
 		AgentGet:    agentConfigHandler.Get,
 		AgentUpdate: agentConfigHandler.Update,
 		AgentDelete: agentConfigHandler.Delete,
+		// The tool surface is assembled by BuildFullAgent, which lives with
+		// the playground handler's deps — not a CRUD concern.
+		AgentTools: playgroundHandler.AgentTools,
 
 		McpServerList:          mcpServerHandler.List,
 		McpServerCreate:        mcpServerHandler.Create,
@@ -220,6 +223,8 @@ func run(_ *cobra.Command, _ []string) error {
 		ProviderRouteGet:    providerRouteHandler.Get,
 		ProviderRouteUpdate: providerRouteHandler.Update,
 		ProviderRouteDelete: providerRouteHandler.Delete,
+
+		ProviderTypeList: handler.ProviderTypeList,
 
 		GuardrailList:   guardrailHandler.List,
 		GuardrailCreate: guardrailHandler.Create,

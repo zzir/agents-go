@@ -386,6 +386,28 @@ components:
           type: array
           uniqueItems: false
       type: object
+    bridge.ProviderTypeInfo:
+      properties:
+        auth_modes:
+          description: |-
+            AuthModes and Unsupported serialize as [] rather than being omitted:
+            a client caching these facts must be able to tell "this backend has
+            none" apart from "not fetched yet" — omitempty would make an emptied
+            list look like missing data and let a stale local fallback win.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        setting_key:
+          type: string
+        type:
+          type: string
+        unsupported:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
     bridge.RunInfo:
       properties:
         agent_config_id:
@@ -657,6 +679,13 @@ components:
           type: string
         model_settings:
           $ref: '#/components/schemas/agents.ModelSettings'
+        output_schema:
+          $ref: '#/components/schemas/handler.playgroundSchema'
+        stream:
+          description: |-
+            Stream selects the SSE response: `delta`/`reasoning` text events as they
+            arrive, then one `done` (output, usage, duration_ms, ttft_ms) or `error`.
+          type: boolean
         system_instructions:
           description: SystemInstructions is the system prompt to send.
           type: string
@@ -679,8 +708,26 @@ components:
             type: integer
           type: array
           uniqueItems: false
+        ttft_ms:
+          description: TTFTMS is the time to first streamed token; -1 on the non-streaming
+            path.
+          type: integer
         usage:
           $ref: '#/components/schemas/agents.Usage'
+      type: object
+    handler.playgroundSchema:
+      description: |-
+        OutputSchema, when set, requests structured output — echoed from the
+        traced generation so a structured call replays as one. Without it a
+        replay of such a call is a different request (free text).
+      properties:
+        name:
+          type: string
+        schema:
+          additionalProperties: {}
+          type: object
+        strict:
+          type: boolean
       type: object
     handler.playgroundTool:
       properties:
@@ -699,6 +746,10 @@ components:
         base_url:
           type: string
         prefix:
+          type: string
+        provider_type:
+          description: ProviderType selects the backend ("openai" / "anthropic");
+            empty is openai.
           type: string
       type: object
     handler.rejectReq:
@@ -834,6 +885,12 @@ components:
           type: integer
         max_turns:
           type: integer
+        plan_mode:
+          description: |-
+            PlanMode has each run start read-only: the agent explores, submits a
+            plan through submit_plan (an approval pause — the review), and only an
+            approved plan unlocks the full toolset for the rest of the run.
+          type: boolean
         reasoning_item_id_policy:
           description: |-
             ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
@@ -845,6 +902,11 @@ components:
             turn that called any of them, instead of feeding the results back to the
             model. Empty means the run continues until the model stops on its own.
           type: string
+        todo_list:
+          description: |-
+            TodoList gives the agent a todo_write tool and a preamble telling it to
+            keep a working list; the chat renders the calls as a checklist.
+          type: boolean
         tool_not_found_behavior:
           type: string
       type: object
@@ -856,7 +918,12 @@ components:
           type: string
         compaction_prompt:
           type: string
-        compaction_threshold:
+        compaction_threshold_tokens:
+          description: |-
+            Threshold is in TOKENS. The key is compaction_threshold_tokens — a NEW
+            name, deliberately: the old compaction_threshold counted ENTRIES, and
+            reinterpreting a stored 20 as 20 tokens would compact on every turn.
+            Legacy rows decode past the old key and fall back to the default.
           type: integer
         compaction_window:
           type: integer
@@ -1015,6 +1082,11 @@ components:
           type: string
         prefix:
           type: string
+        provider_type:
+          description: |-
+            ProviderType selects the backend ("openai" / "anthropic"); empty is
+            openai.
+          type: string
         updated_at:
           type: string
       type: object
@@ -1092,8 +1164,6 @@ components:
           type: string
         prompt_version:
           type: string
-        use_previous_response_id:
-          type: boolean
       type: object
     store.Setting:
       properties:
@@ -1214,9 +1284,8 @@ paths:
     post:
       description: 'Secret fields (api_key, fallback_models[].api_key) are write-only:
         responses mask them with ********; sending the mask back keeps the stored
-        value, "" clears it. use_previous_response_id is rejected (incompatible with
-        the server-side session store), as are tool selections whose statically known
-        tool names would collide.'
+        value, "" clears it. Tool selections whose statically known tool names would
+        collide are rejected.'
       requestBody:
         content:
           application/json:
@@ -1315,9 +1384,9 @@ paths:
       - agents
     put:
       description: 'Full replace. Secret fields are write-only: send back the ********
-        mask to keep the stored value, "" to clear it. use_previous_response_id is
-        rejected (incompatible with the server-side session store), as are tool selections
-        whose statically known tool names would collide.'
+        mask to keep the stored value, "" to clear it; a mask kept across a provider_type
+        or base_url change is rejected (the stored key belongs to the previous destination).
+        Tool selections whose statically known tool names would collide are rejected.'
       parameters:
       - description: Agent ID
         in: path
@@ -1437,6 +1506,38 @@ paths:
       security:
       - BearerAuth: []
       summary: ChatGPT login status
+      tags:
+      - agents
+  /agents/{id}/tools:
+    get:
+      description: Schema-only definitions (name, description, parameters) of every
+        tool the agent would carry right now, excluding sandbox tools (no sandbox
+        is selected). Tools are never executed from here.
+      parameters:
+      - description: Agent config ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.playgroundTool'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Agent tool surface
       tags:
       - agents
   /approvals/{tool_call_id}/approve:
@@ -2202,7 +2303,8 @@ paths:
     post:
       description: One-off model call for replaying a traced generation with edited
         inputs. Touches no session, records no run; tools are schema-only and never
-        executed.
+        executed. output_schema replays structured output; stream=true switches the
+        response to SSE (delta/reasoning events, then done or error).
       requestBody:
         content:
           application/json:
@@ -2406,6 +2508,25 @@ paths:
       security:
       - BearerAuth: []
       summary: Update provider route
+      tags:
+      - provider-routes
+  /provider-types:
+    get:
+      description: The backends agents, fallback entries and provider routes can select
+        via provider_type. "unsupported" lists request features that fail loudly on
+        that backend.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/bridge.ProviderTypeInfo'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List provider types
       tags:
       - provider-routes
   /runs/{id}:

@@ -35,6 +35,7 @@ type Routes struct {
 	ApprovalReject        gin.HandlerFunc
 
 	AgentList   gin.HandlerFunc
+	AgentTools  gin.HandlerFunc
 	AgentCreate gin.HandlerFunc
 	AgentGet    gin.HandlerFunc
 	AgentUpdate gin.HandlerFunc
@@ -74,6 +75,10 @@ type Routes struct {
 	ProviderRouteGet    gin.HandlerFunc
 	ProviderRouteUpdate gin.HandlerFunc
 	ProviderRouteDelete gin.HandlerFunc
+
+	// ProviderTypeList serves the provider registry's machine facts (types,
+	// auth modes, unsupported features) so config UIs stay in sync with it.
+	ProviderTypeList gin.HandlerFunc
 
 	GuardrailList   gin.HandlerFunc
 	GuardrailCreate gin.HandlerFunc
@@ -155,6 +160,7 @@ func registerAPIRoutes(api *gin.RouterGroup, r Routes) {
 		agents.GET("", r.AgentList)
 		agents.POST("", r.AgentCreate)
 		agents.GET("/:id", r.AgentGet)
+		agents.GET("/:id/tools", r.AgentTools)
 		agents.PUT("/:id", r.AgentUpdate)
 		agents.DELETE("/:id", r.AgentDelete)
 		agents.POST("/:id/chatgpt/login", r.ChatGPTLogin)
@@ -198,6 +204,7 @@ func registerAPIRoutes(api *gin.RouterGroup, r Routes) {
 		repos.POST("/:name/sync", r.SkillRepoSync)
 		repos.DELETE("/:name", r.SkillRepoDelete)
 	}
+	api.GET("/provider-types", r.ProviderTypeList)
 	{
 		providerRoutes := api.Group("/provider-routes")
 		providerRoutes.GET("", r.ProviderRouteList)
