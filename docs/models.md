@@ -1,6 +1,6 @@
 # Models
 
-The SDK abstracts model access behind two small interfaces, with an OpenAI Responses API implementation out of the box:
+The SDK abstracts model access behind two small interfaces, with two backends out of the box: the OpenAI **Responses API** (the SDK's native format) and the Anthropic **Messages API** (translated at the model boundary):
 
 ```go
 // Model is one LLM: one call (or one streamed call) per turn.
@@ -27,7 +27,35 @@ provider = provider.WithDefaultModel("gpt-4o-mini")    // model used when Agent.
 
 Unlike the Python SDK, this port ships **no built-in default model** ([differences](migration_from_python.md)): a model must be named per agent (`Agent.Model`) or configured on the provider (`WithDefaultModel`). Resolving an agent that names no model, with no provider default set, returns a `*agents.UserError` — the caller is expected to be explicit about the model.
 
-Only the **Responses API** is implemented (`openai.ResponsesModel`); there is no Chat Completions fallback. Any OpenAI-compatible gateway that speaks the Responses API works via `option.WithBaseURL`, and you can drive several such providers in one run with retries and fallback — see [Retries, fallback, and multiple providers](#retries-fallback-and-multiple-providers).
+The OpenAI provider implements only the **Responses API** (`openai.ResponsesModel`); there is no Chat Completions fallback. Any OpenAI-compatible gateway that speaks the Responses API works via `option.WithBaseURL`, and you can drive several such providers in one run with retries and fallback — see [Retries, fallback, and multiple providers](#retries-fallback-and-multiple-providers).
+
+## The Anthropic provider
+
+```go
+import "github.com/zzir/agents-go/models/anthropic"
+
+provider := anthropic.NewProvider()                       // ANTHROPIC_API_KEY from env
+provider = anthropic.NewProvider(option.WithAPIKey("…"))  // any anthropic-sdk-go option
+provider = provider.WithDefaultModel("claude-opus-5")
+```
+
+`models/anthropic` is its own Go module (it carries the `anthropic-sdk-go` dependency, [spec §5.7](spec.md#57-a-submodule-exists-only-to-keep-a-heavy-dependency-out-of-the-core)):
+
+```bash
+go get github.com/zzir/agents-go/models/anthropic
+```
+
+The adapter (`anthropic.MessagesModel`) translates the **Messages API** to and from the SDK's canonical Responses format at the model boundary, so tools, sessions, streaming, handoffs and structured output work unchanged. What to know:
+
+- **Thinking.** `ModelSettings.Reasoning.Effort` maps to a thinking token budget (minimal 1024 / low 4096 / medium 16384 / high 32768 tokens). Thinking comes back as reasoning items; the signature rides in `encrypted_content` and survives session round-trips, so multi-turn extended thinking works.
+- **max_tokens.** The Messages API requires it on every call; unset defaults to `anthropic.DefaultMaxTokens` (8192) — when a thinking budget would not fit under it, the default grows to budget + 8192. An explicit `MaxTokens` at or below the budget is a `*agents.UserError`, and models whose output cap is below 8192 (older Haiku generations) need an explicit `MaxTokens`. Thinking is also incompatible with `Temperature`/`TopP` and forced tool choice — those combinations are rejected up front.
+- **Prompt caching.** On by default via the request-level `cache_control` marker — an agent loop resends a growing prefix every turn, which is exactly the shape caching pays for. `provider.WithPromptCaching(false)` opts out.
+- **Unsupported settings fail loudly.** Responses-specific settings (`service_tier`, `verbosity`, `store`, `prompt_cache_*`, penalties, `truncation`, `top_logprobs`, `response_include`, `context_management`, `reasoning.summary`, `previous_response_id`, `conversation_id`, stored prompts) return a `*agents.UserError` instead of being silently dropped; `anthropic.Capabilities()` lists them. `ExtraBody` / `ExtraHeaders` remain the escape hatch for Anthropic-only parameters (`top_k`, `stop_sequences`, …). `Metadata` supports the one key the Messages API has: `user_id`.
+- **Overflow.** A context overflow — a 400 "prompt is too long", or a response stopped with `model_context_window_exceeded` — surfaces as an error `agents.DetectContextOverflow` recognizes, so [compact-and-retry](sessions.md) works.
+- **Retry classification.** `anthropic.RetryableError` / `anthropic.RetryAfter` mirror the OpenAI helpers for `agents.RetryPolicy`.
+- **Refusals.** A `stop_reason: "refusal"` becomes ONE canonical refusal message and nothing else — the refusal text from the response (else `stop_details.explanation`, else a fixed line), with any partially generated `tool_use` blocks dropped so a refused response's actions never execute. `ModelRefusalError` and `model_refusal` error handlers fire exactly as on the OpenAI backend.
+
+Cross-provider mixing goes through the standard decorators below: route prefixed model names (`anthropic/claude-opus-5`) with `NewRouterProvider`, or chain an Anthropic fallback behind an OpenAI primary. A runnable example is in `examples/anthropic`.
 
 ## Choosing models per agent
 
@@ -146,7 +174,7 @@ Notes:
 
 ## Custom models
 
-Implement `Model` to use any backend — return Responses-format output items and usage:
+Implement `Model` to use any backend — return Responses-format output items and usage. The `models/modelkit` package holds the shared halves of that job: `modelkit.ParseInput` walks canonical input items into a neutral view, the item/event builders (`modelkit.MessageItem`, `modelkit.OutputItemDoneEvent`, `modelkit.CompletedEvent`, …) synthesize canonical output whose raw JSON round-trips, and `modelkit.Reject` enforces the fail-loud contract for unsupported settings. The golden test matrix in `modelkit/conformancetest` checks an adapter against the runner's consumption contract ([spec §5.10](spec.md#510-non-responses-backends-adapt-at-the-model-boundary)) — both in-repo providers pass it.
 
 ```go
 type myModel struct{}

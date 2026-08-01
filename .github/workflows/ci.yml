@@ -36,6 +36,26 @@ jobs:
       - name: Test skills module
         run: (cd skills && go vet ./... && go test ./...)
 
+      - name: Test models/anthropic module
+        run: |
+          (cd models/anthropic && go vet ./... && go test ./...)
+          (cd examples/anthropic && go vet ./... && go build -o /dev/null ./...)
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          # package-lock.json is gitignored; key the npm cache on package.json instead.
+          cache-dependency-path: cmd/agents-server/internal/web/frontend/package.json
+
+      # The server embeds frontend/dist (go:embed), so the frontend must build
+      # before the agents-server module can compile at all.
+      - name: Frontend build
+        run: cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build
+
+      - name: Test agents-server module
+        run: (cd cmd/agents-server && go vet ./... && go test -race ./...)
+
       - name: Test tracing/otel module
         run: |
           (cd tracing/otel && go vet ./... && go test ./...)
@@ -44,8 +64,28 @@ jobs:
       # go build proves the examples compile; this proves they still run. A bad
       # struct tag or a nil provider is a runtime failure the compiler misses,
       # and the examples are what a reader copies first.
-      - name: Examples run (fake Responses API)
+      - name: Examples run (fake model APIs)
         run: go run ./cmd/verifyexamples
+
+      # The docs are the API's other surface and nothing compiled them; this
+      # checks that snippets and links name things that exist.
+      - name: Docs name things that exist
+        run: go run ./cmd/verifydocs
+
+      # Stale means "regenerating changes the file" — compared by content, so
+      # a fresh-but-uncommitted regeneration passes locally and a clean CI
+      # checkout still catches a forgotten commit.
+      - name: OpenAPI spec up to date
+        run: |
+          cd cmd/agents-server
+          before=$(git hash-object internal/docs/swagger.yaml)
+          go tool swag init --v3.1 -g main.go --parseDependency --parseInternal -o internal/docs --outputTypes yaml --quiet
+          after=$(git hash-object internal/docs/swagger.yaml)
+          if [ "$before" != "$after" ]; then
+            echo "::error::internal/docs is stale — run 'make openapi' in cmd/agents-server and commit the result."
+            git diff internal/docs
+            exit 1
+          fi
 
   vuln:
     runs-on: ubuntu-latest
@@ -68,16 +108,31 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cmd/agents-server/internal/web/frontend/package.json
+      # Linting agents-server needs the package to compile, and it embeds
+      # frontend/dist — so the frontend builds here too.
+      - name: Frontend build
+        run: cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.12
-      # `run` above covers the root module (lint + gofmt/goimports formatters).
-      # The other modules don't run full golangci, so check their formatting here.
+      - name: golangci-lint (agents-server)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12
+          working-directory: cmd/agents-server
+      # The two runs above cover root and agents-server (lint + gofmt/goimports
+      # formatters). The support submodules don't run full golangci, so check
+      # their formatting only — matching scripts/ci.sh.
       # (golangci-lint-action puts the binary on PATH for later steps.)
       - name: Verify formatting (gofmt + goimports)
         run: |
-          for m in cmd/agents-server sandbox/docker sandbox/ssh sessions skills; do
+          for m in models/anthropic examples/anthropic examples/otel sandbox/docker sandbox/ssh sessions skills tracing/otel; do
             out=$(cd "$m" && golangci-lint fmt --diff)
             if [ -n "$out" ]; then
               echo "::error::$m is not gofmt/goimports-clean"; echo "$out"; exit 1

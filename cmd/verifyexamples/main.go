@@ -1,5 +1,6 @@
-// Command verifyexamples runs every example under examples/ against a fake
-// Responses API and fails if one does not complete.
+// Command verifyexamples runs every example under examples/ against fake
+// model APIs (Responses and Messages, one server) and fails if one does not
+// complete.
 //
 //	go run ./cmd/verifyexamples          # run them
 //	go run ./cmd/verifyexamples -v       # ...and show each example's output
@@ -7,8 +8,8 @@
 // Why it exists: `go build ./...` already proves the examples compile, which is
 // the cheap half. It does not catch an example that compiles and then panics on
 // a nil provider, loops forever, or silently prints nothing — and the examples
-// are exactly what a reader copies first. A broad API change rewrites all 16
-// of them; this is the net under that.
+// are exactly what a reader copies first. A broad API change rewrites all of
+// them; this is the net under that.
 //
 // It is deliberately NOT an assertion of model behavior. The fake answers with
 // the shortest plausible response, so the only claims made here are "the
@@ -18,6 +19,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -67,8 +69,18 @@ func main() {
 			continue
 		}
 		// Each example gets its own fake, so its first turn is the one that
-		// receives a tool call regardless of what ran before it.
-		srv := httptest.NewServer(&fakeResponses{})
+		// receives a tool call regardless of what ran before it. One server
+		// speaks both wire protocols, keyed by path — the example's provider
+		// picks its own via OPENAI_BASE_URL / ANTHROPIC_BASE_URL.
+		responses := &fakeResponses{}
+		messages := &fakeMessages{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/messages") {
+				messages.ServeHTTP(w, r)
+				return
+			}
+			responses.ServeHTTP(w, r)
+		}))
 		out, err := runExample(root, name, srv.URL)
 		srv.Close()
 		if err != nil {
@@ -109,11 +121,14 @@ func runExample(root, name, baseURL string) (string, error) {
 		"GOWORK=off",
 		"OPENAI_BASE_URL="+baseURL,
 		"OPENAI_API_KEY=verifyexamples",
+		"ANTHROPIC_BASE_URL="+baseURL,
+		"ANTHROPIC_API_KEY=verifyexamples",
 		// Keep a developer's real key and org out of the run: an example that
-		// ignored OPENAI_BASE_URL would otherwise quietly hit the real API and
-		// bill for it.
+		// ignored the BASE_URL overrides would otherwise quietly hit the real
+		// API and bill for it.
 		"OPENAI_ORG_ID=",
 		"OPENAI_PROJECT_ID=",
+		"ANTHROPIC_AUTH_TOKEN=",
 	)
 
 	done := make(chan struct{})

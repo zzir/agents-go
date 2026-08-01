@@ -44,10 +44,16 @@ step "Test sessions module"
 step "Test skills module"
 (cd skills && go vet ./... && go test ./...)
 
+step "Test models/anthropic module"
+(cd models/anthropic && go vet ./... && go test ./...)
+# examples/anthropic has its own go.mod (anthropic-sdk-go), so root `go build
+# ./...` does not reach it; discard the output like examples/otel.
+(cd examples/anthropic && go vet ./... && go build -o /dev/null ./...)
+
 step "Test agents-server module"
 (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
-step "Examples run (fake Responses API)"
+step "Examples run (fake model APIs)"
 # go build proves they compile; this proves they still *work*. Every API change
 # rewrites all of them, and a runtime break (bad struct tag, nil provider,
 # infinite loop) is invisible to the compiler.
@@ -68,9 +74,14 @@ else
 fi
 
 step "OpenAPI spec up to date"
+# Stale means "regenerating changes the file" — compared by content (not by
+# `git diff`, which would also fail on a fresh regeneration that simply is not
+# committed yet), so this passes on a dirty tree whose spec is current.
 (cd cmd/agents-server \
+  && before=$(git hash-object internal/docs/swagger.yaml) \
   && go tool swag init --v3.1 -g main.go --parseDependency --parseInternal -o internal/docs --outputTypes yaml --quiet \
-  && git diff --exit-code internal/docs) || {
+  && after=$(git hash-object internal/docs/swagger.yaml) \
+  && [ "$before" = "$after" ]) || {
   echo "internal/docs is stale — run 'make openapi' in cmd/agents-server and commit the result." >&2
   exit 1
 }
@@ -80,7 +91,7 @@ if command -v golangci-lint >/dev/null; then
   golangci-lint run                            # root: lint + formatters
   (cd cmd/agents-server && golangci-lint run)  # agents-server: lint + formatters
   # The support submodules don't run full golangci; check their formatting only.
-  for m in sandbox/docker sandbox/ssh sessions skills tracing/otel; do
+  for m in models/anthropic examples/anthropic examples/otel sandbox/docker sandbox/ssh sessions skills tracing/otel; do
     out=$(cd "$m" && golangci-lint fmt --diff)
     if [ -n "$out" ]; then
       echo "$m is not gofmt/goimports-clean:"; echo "$out"; exit 1

@@ -5,6 +5,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/models/modelkit"
 )
 
 // Provider resolves model names to ResponsesModel instances backed by a shared
@@ -30,6 +31,14 @@ func NewProvider(opts ...option.RequestOption) *Provider {
 func (p *Provider) WithDefaultModel(name string) *Provider {
 	p.defaultModel = name
 	return p
+}
+
+// Capabilities declares this adapter's unsupported request features — none:
+// the Responses API is the SDK's native format, so every ModelRequest feature
+// maps directly. It exists so hosting layers can treat all providers through
+// one declaration (modelkit.Capabilities) instead of special-casing this one.
+func Capabilities() modelkit.Capabilities {
+	return modelkit.Capabilities{Provider: "openai"}
 }
 
 // GetModel implements agents.ModelProvider.

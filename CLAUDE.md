@@ -22,25 +22,29 @@ Requires Go 1.26+.
 ./scripts/ci.sh                       # full CI locally: gofmt, vet, build, race tests, every submodule (GOWORK=off)
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
-go run ./cmd/verifyexamples           # every example still runs (fake Responses API)
+go run ./cmd/verifyexamples           # every example still runs (fake model APIs)
 go run ./cmd/verifydocs               # doc snippets + doc.go links name things that exist
 golangci-lint run                     # CI uses golangci-lint v2.12
 ```
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with eight modules. **A submodule exists only
+Go workspace (`go.work`, gitignored) with ten modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:
 
-- **root** — the SDK (includes `tools/bravesearch`, a first-party web-search tool)
+- **root** — the SDK (includes `tools/bravesearch` and `models/modelkit`, the
+  dependency-free toolkit + conformance suite for model adapters)
+- **`models/anthropic`** — Anthropic Messages API backend (carries
+  anthropic-sdk-go; translates to the canonical Responses format, spec §5.10)
 - **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) loader
 - **`tracing/otel`** — OpenTelemetry exporter (the core stays vendor-neutral)
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)
-- **`examples/otel`** — the one example with its own module, for the OTel deps
+- **`examples/otel`**, **`examples/anthropic`** — the examples with their own
+  modules, for their extra deps
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix can
 hide a missing `go.mod` require — always validate with `./scripts/ci.sh`.
@@ -63,10 +67,13 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **Middleware** — `agents/middleware.go` defines `RunMiddleware`;
   `agents/middleware/` ships `Loop`, `Approval`, `Retry`, `Logging`. Wrapping a
   whole run belongs here, not in the loop.
-- **Models** — `agents/model.go`; the backend is `models/openai`
-  (Responses API). Retry / fallback / routing are provider-agnostic decorators
-  (`NewRetryModel`, `NewFallbackModel`, `RouterProvider`) — never run-loop
-  changes.
+- **Models** — `agents/model.go`; backends are `models/openai` (Responses
+  API, the native format) and `models/anthropic` (Messages API, translated in
+  the adapter — spec §5.10). `models/modelkit` holds the shared adapter
+  plumbing and `modelkit/conformancetest` the golden matrix every `Model`
+  implementation must pass. Retry / fallback / routing are provider-agnostic
+  decorators (`NewRetryModel`, `NewFallbackModel`, `RouterProvider`) — never
+  run-loop changes.
 - **Tools** — `agents/function_tool.go`: `NewFunctionTool[Args, Result]`
   reflects Args into a strict-mode JSON schema. `agent.AsTool(...)` wraps an
   agent as a callable tool.
@@ -112,8 +119,10 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-goals),
 §3 (capabilities not provided) and §5 (recorded decisions). The two that come up most:
 
-- **Responses API only.** Chat Completions is intentionally NOT supported and
-  will not be ported. Internal item types are Responses types.
+- **Responses is the only canonical format.** Internal item types are Responses
+  types. Another backend is supported by translating inside its adapter
+  (`models/anthropic`, spec §5.10) — never by a second canonical format or a
+  neutral abstraction layer. Chat Completions is intentionally NOT supported.
 - **No hosted tools.** Every `Tool` is a locally-executed `FunctionTool`; the
   `Tool` interface is sealed. Provider-hosted tools (`web_search`,
   `file_search`, …) are deliberately not modeled — do not reintroduce them.
