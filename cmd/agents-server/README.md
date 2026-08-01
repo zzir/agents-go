@@ -275,6 +275,7 @@ cap is the `--max-tasks` flag.
 | GET    | `/agents/:id`                | Get agent                                |
 | PUT    | `/agents/:id`                | Update agent                             |
 | DELETE | `/agents/:id`                | Delete agent                             |
+| GET    | `/agents/:id/tools`          | The agent's current tool surface as schema-only definitions (`{name, description?, parameters?}`) — built-ins, connected MCP servers' tools, the skills reader; sandbox tools excluded (no sandbox is selected). Nothing here executes; backs the Replay dialog's tool picker |
 | POST   | `/agents/:id/chatgpt/login`  | Start ChatGPT OAuth login for this agent |
 | POST   | `/agents/:id/chatgpt/logout` | Clear this agent's ChatGPT token         |
 | GET    | `/agents/:id/chatgpt/status` | Check this agent's ChatGPT login status  |
@@ -284,20 +285,36 @@ nested objects** (each group is one JSON column in the table, so a new knob
 needs no schema change), then a few top-level JSON blobs:
 
 - **Top level**: `name`, `instructions`, `model`
-- **`provider`**: `provider_type`, `auth_mode`, `api_key`, `base_url`
+- **`provider`**: `provider_type` (`openai` default / `anthropic` — selects the
+  API protocol; `chatgpt_login` auth is openai-only), `auth_mode`, `api_key`,
+  `base_url`
 - **`behavior`**: `max_turns`, `handoff_description`, `disable_tool_choice_reset`,
   `stop_at_tools` (comma-separated tool names — the run ends after a turn that
   called any of them), `handoff_input_filter`, `max_tool_concurrency`,
-  `tool_not_found_behavior`, `reasoning_item_id_policy` (`preserve` / `omit`)
-- **`resilience`**: `retry_enabled`, `retry_policy`, `fallback_models`
+  `tool_not_found_behavior`, `reasoning_item_id_policy` (`preserve` / `omit`),
+  `plan_mode` (each run starts read-only; the plan arrives as a `submit_plan`
+  approval card — the review — and approving it unlocks the full toolset for
+  the rest of the run, resumes after the approval included), `todo_list` (a
+  `todo_write` tool the chat renders as a live checklist)
+- **`resilience`**: `retry_enabled`, `retry_policy`, `fallback_models` (JSON
+  array of `{model, provider_type, api_key, base_url}`; `provider_type`
+  defaults to `openai`, and unknown keys are rejected)
 - **`guardrails`**: `guardrails` (JSON array of names — one list, since a
   guardrail carries the stages it inspects), `output_schema` (JSON Schema)
-- **`session`**: `use_previous_response_id`, `prompt_id`, `prompt_version`
-  (OpenAI stored prompt), `history_limit` (recent items per turn; `0` = all)
+- **`session`**: `prompt_id`, `prompt_version` (OpenAI stored prompt),
+  `history_limit` (recent items per turn; `0` = all)
 - **`approval`**: `approve_tools` (JSON array: `["*"]` or tool names — the
   human-in-the-loop gate; the `exec_command` approval flow above depends on it)
-- **`compaction`**: `compaction_enabled`, `compaction_threshold`,
-  `compaction_window`, `compaction_model`, `compaction_prompt`
+- **`compaction`**: `compaction_enabled`, `compaction_threshold_tokens` (a
+  pass fires when the active history sizes past this many tokens, priced from
+  the newest entry's real usage plus a byte estimate of what follows; `0` =
+  50000 — a NEW key: the retired `compaction_threshold` counted entries, and
+  a stored value silently reinterpreted as tokens would compact every turn),
+  `compaction_window` (recent ENTRIES kept intact; `0` = 10),
+  `compaction_model`, `compaction_prompt`. With compaction enabled, a
+  context-overflow error from the provider also triggers a FORCED pass and the
+  turn retries from the shrunk history (SDK overflow recovery, spec §2.5g) —
+  the threshold predicts, this reacts.
 - **Top-level JSON blobs**: `model_settings`, `tools`, `skills`, `handoffs`,
   `error_handlers` (keyed by `max_turns` / `model_refusal` /
   `invalid_final_output`; each entry is `{"final_output": <JSON value>,
@@ -395,12 +412,18 @@ Known keys:
 
 - `proxy_url` — HTTP proxy for model and MCP calls
 - `system_prompt` — global system prompt prefix
-- `openai_api_key` — fallback provider key for agents that have no `api_key` of
-  their own (secret; masked on read — see [Secret handling](#secret-handling))
+- `openai_api_key`, `anthropic_api_key` — fallback provider keys, one per
+  `provider_type`, for agents (and `fallback_models` entries) that have no
+  `api_key` of their own (secret; masked on read — see
+  [Secret handling](#secret-handling))
 - `brave_api_key` — injects a `brave_search` tool into all agents (secret; masked
   on read — see [Secret handling](#secret-handling))
 - `trace_retention_days` — prune trace events older than N days (checked at
   startup and once a day); empty or `0` disables pruning
+- `trace_include_sensitive_data` — `false` keeps prompts, outputs and tool
+  arguments out of stored traces (generation spans carry only timing/usage
+  metadata; the trace panel's Replay then has nothing to seed from). Empty or
+  `true` records everything (the default). Applies to new runs
 - `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
   before it expires (default `1440` = 24h; `0` disables expiry)
 
@@ -429,8 +452,10 @@ transport are rejected). `sync` replaces the former `PUT /skills/:name`.
 
 ### Provider Routes — `/api/v1/provider-routes`
 
-Map model-name prefixes to different API keys and base URLs for multi-provider
-routing.
+Map model-name prefixes to different backends for multi-provider routing: each
+route carries a `provider_type` (`openai` default / `anthropic`), `api_key` and
+`base_url`, so `anthropic/claude-opus-5` can route to the Messages API while
+everything else stays on the agent's own provider.
 
 | Method | Path                   | Description  |
 |--------|------------------------|--------------|
@@ -441,6 +466,13 @@ routing.
 | DELETE | `/provider-routes/:id` | Delete route |
 
 The `api_key` field is masked on read — see [Secret handling](#secret-handling).
+
+`GET /provider-types` (read-only) lists the registered backends as machine
+facts — `type`, `auth_modes`, `unsupported` request features, and the global
+key `setting_key` — straight from the server's provider registry, which is
+also what validation and provider construction derive from. The UI's
+capability hints read this endpoint, so they cannot drift from what the build
+enforces; adding a backend is one registry entry plus a frontend metadata row.
 
 ### Guardrails — `/api/v1/guardrails`
 
@@ -499,7 +531,7 @@ itself runs over [`/ws/terminal`](#terminal-endpoint--get-wsterminal).
 
 | Method | Path                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |--------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| POST   | `/playground/generate` | One-off model call — `{agent_config_id, model?, system_instructions?, input_items, model_settings?, tools?}`; uses the agent's provider credentials, touches no session, records no run. `model_settings` overrides the agent's settings; `tools` are schema-only definitions (`{name, description?, parameters?}`) echoed from the traced request so the model can emit function calls — they are never executed. Backs the trace panel's "Replay" dialog. |
+| POST   | `/playground/generate` | One-off model call — `{agent_config_id, model?, system_instructions?, input_items, model_settings?, tools?, output_schema?, stream?}`; uses the agent's provider credentials, touches no session, records no run. `model_settings` overrides the agent's settings; `tools` are schema-only definitions (`{name, description?, parameters?}`) echoed from the traced request so the model can emit function calls — they are never executed (the Replay dialog also folds the traced handoffs in as such tools). `output_schema` (`{name?, schema, strict?}`, echoed from the generation span) replays structured output as structured output. `stream: true` switches the response to SSE: `delta` / `reasoning` text events as they arrive, then one `done` (`{output, usage, duration_ms, ttft_ms}`) or `error` (`{message}`); aborting the request cancels the model call. Backs the trace panel's "Replay" dialog. |
 
 ### ChatGPT OAuth
 
@@ -524,6 +556,14 @@ This lets the UI round-trip whole objects without ever seeing the plaintext.
 Masked fields: agent `api_key` and each `fallback_models[].api_key`,
 provider-route `api_key`, MCP `headers` values and `oauth_client_secret`
 (`streamable_http` only), SSH sandbox `password`, and the `brave_api_key` setting.
+
+**A masked key round-trips only to the destination it was stored for.**
+Changing an agent's or route's `provider_type` OR `base_url` while keeping
+the `********` mask is rejected with 400 (replace the key or clear it) —
+restoring it would send the previous backend's real credential to another
+provider or endpoint. Fallback entries restore their masked keys strictly by
+`(provider_type, base_url, model)`, never across providers or endpoints and
+never by position; an unmatched mask clears.
 
 ### Health
 
@@ -738,6 +778,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
    masks with `********`; write side resolves the sentinel (mask = keep stored,
    `""` = clear, anything else = replace). New secret fields must use the same
    sanitize/restore helpers and get a round-trip test — no ad-hoc masking.
+   **A mask never round-trips across a destination change**: restoring a
+   stored key under a changed `provider_type` OR `base_url` sends one
+   backend's real credential to another provider or endpoint, so the update
+   is rejected (agents, routes) and fallback entries restore strictly by
+   `(normalized provider_type, normalized base_url, model)` — never by
+   position; an unmatched mask clears.
 10. **OAuth-class tokens never leave the server.** Store them in their own
     column with `json:"-"`, exclude the column from CRUD updates
     (`ExcludeColumn`), and expose only a derived boolean
@@ -803,10 +849,23 @@ When a change genuinely doesn't fit, update this list in the same PR.
     immediately; a stale leftover selection must NOT block re-sticking when
     the user scrolls back down (recency windows, not standing state, arbitrate
     the races with the pin's own trailing scroll events).
+19. **A branch move obsoletes every client view of the old path.** Regenerate
+    and attempt-switch are server-side appends (`POST /sessions/:id/branch`);
+    the client reconciles by refetch, and four rules keep the abandoned
+    attempt from lingering on screen: the timeline's `on_path === false`
+    filter applies even when no fork exists yet (right after the switch the
+    old answer is the user entry's ONLY child — the new attempt has persisted
+    nothing); a branch move bumps the session's timeline generation so a
+    fetch launched before it is dropped on resolve, never applied; the
+    live-tail merge re-appends only the CURRENT live run's turn
+    (`mergeLiveTail(…, liveRunId)`); and a pending approval whose run has
+    off-path entries stays out of the timeline — the row itself is kept, so
+    switching back to the paused attempt re-admits its card and the pause can
+    still resume.
 
 **Background tasks**
 
-19. **A task is a durable entity; a run is one execution of it.** `spawn_task`
+20. **A task is a durable entity; a run is one execution of it.** `spawn_task`
     mints separate ids: the task row carries `run_id` (its current attempt),
     and `run.started` / `RunInfo.task` carry `task_id` — clients route events
     by run id and key task state by task id (a future retry mints a new run id
@@ -817,7 +876,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     the same broadcast bus, replay cursors, approval persistence, and
     retention as chat runs — a task-specific transport is how the two
     lifecycles would drift.
-20. **The spawn card's durable truth is an appended update entry.** The hub's
+21. **The spawn card's durable truth is an appended update entry.** The hub's
     RunInfo is GC'd minutes after a run ends; when a task changes state the
     server APPENDS an update entry carrying
     `{task_id, task_label, task_status, task_summary}` addressed to the spawn
@@ -838,12 +897,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     and the Inspector are the human-facing surfaces; the model reads the text
     verbatim. The prefix carries no privileged behavior: a user typing it
     merely hides their own message from the transcript view.
-21. **The right side panel is a single-instance Inspector.** Traces, the task
+22. **The right side panel is a single-instance Inspector.** Traces, the task
     list, and one task's detail (live transcript + trace, assembled with the
     same streamReducer/timeline code as the chat) are lenses of one panel —
     a new inspection surface is a new lens, not a second drawer. Task detail
     accumulates live child-run events only while open (watchTask/unwatchTask).
-22. **A task's terminal state is written exactly once, via row CAS.** The
+23. **A task's terminal state is written exactly once, via row CAS.** The
     durable row is the terminal authority: `Finalize` (status + full result +
     notification debt in one UPDATE) only wins while the row is non-terminal,
     stop/approve claims race through the same CAS (`Finalize` vs
@@ -856,7 +915,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     completed / failed are the states worth waking the parent for). Deleting a
     session stops its run tree first (cancel + bounded wait on the done gate)
     so no write can land after the cascade.
-23. **One entry in, the same entry out.** The `entries` table stores whole
+24. **One entry in, the same entry out.** The `entries` table stores whole
     `agents.SessionEntry` JSON, with only the columns the queries need lifted
     out. The server does not re-derive a display, a role, or provenance at read
     time — the runner already decided all three, and a reader that recomputes
@@ -874,7 +933,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     folded turns rendered as though the model still reads them. They stay real
     and one expand away — an entry marked compacted that no checkpoint names
     renders in place, because history is not what compaction deletes.
-24. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
+25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided
     deliberately). Never add ALTER TABLE migration machinery here.

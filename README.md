@@ -5,7 +5,8 @@
 **Build production AI agents in Go** — tools, handoffs, guardrails, sessions,
 human-in-the-loop, streaming, tracing.
 
-Built on the OpenAI **Responses API**. Started as a port of the
+Built on the OpenAI **Responses API**, with an **Anthropic Messages API**
+provider that translates at the model boundary. Started as a port of the
 [OpenAI Agents SDK](https://github.com/openai/openai-agents-python), now evolving
 on its own — behavior is [specified](docs/spec.md), not inherited.
 
@@ -156,12 +157,15 @@ with `agents.RunStateFromJSON(data, registry)` for cross-process approvals.
   retries the turn instead of failing the run
 - [Streaming](docs/streaming.md) — token and item events as a range-able
   iterator; steer a live run or queue follow-ups through `RunControl`
-- [Models](docs/models.md) — OpenAI Responses provider; retry, fallback, and
-  routing decorators; per-error-kind [error handlers](docs/running_agents.md)
-  turn a failing run into a fallback completion; OpenAI stored prompts via
-  `Agent.Prompt`
+- [Models](docs/models.md) — OpenAI Responses provider and an Anthropic
+  Messages provider (thinking, tool use and prompt caching mapped onto the
+  same canonical format); retry, fallback, and routing decorators; per-error-kind
+  [error handlers](docs/running_agents.md) turn a failing run into a fallback
+  completion; OpenAI stored prompts via `Agent.Prompt`
 - [Middleware](docs/running_agents.md#middleware) — wrap a whole run: an
-  evaluator loop, an approval policy, retry-the-run, structured logging
+  evaluator loop, an approval policy, retry-the-run, structured logging,
+  plan mode (read-only until an approved `submit_plan`), and an agent-kept
+  todo list
 - [MCP](docs/mcp.md) — a client for stdio and streamable-HTTP tool servers,
   and a server that exposes your own tools or a whole agent over MCP
 - [Sandboxes](docs/sandbox.md) — run model-written code in Docker, SSH, or
