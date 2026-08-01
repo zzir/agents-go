@@ -1,8 +1,6 @@
 package compaction
 
 import (
-	"unicode/utf8"
-
 	"github.com/zzir/agents-go/agents"
 )
 
@@ -63,8 +61,11 @@ func (CharEstimator) Estimate(e agents.SessionEntry) int {
 	return chars / charsPerToken
 }
 
-// contentChars counts a content blob, charging images their fixed cost instead
-// of the length of the URL that names them.
+// contentChars counts a content blob by its byte length — deliberately bytes,
+// not runes: CJK text runs ~3 bytes per character and roughly one token, so
+// bytes/4 lands near the truth where runes/4 would under-count it fourfold.
+// Images are charged their fixed cost instead of the length of the URL that
+// names them.
 func contentChars(raw []byte) int {
 	if len(raw) == 0 {
 		return 0
@@ -73,9 +74,6 @@ func contentChars(raw []byte) int {
 	// Every image part replaces its JSON with the fixed image cost.
 	for _, marker := range [][]byte{[]byte(`"input_image"`), []byte(`"image_url"`)} {
 		chars += imageChars * countOccurrences(raw, marker)
-	}
-	if !utf8.Valid(raw) {
-		return chars
 	}
 	return chars
 }

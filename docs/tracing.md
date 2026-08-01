@@ -54,8 +54,9 @@ By default each generation span also records the full request body: `"model"`,
 `"system_instructions"`, `"input"` (the exact items sent, after session
 history, compaction, and input filters were applied), `"tools"` (name,
 description, and parameter schema per tool), `"model_settings"` (the resolved
-settings; the `Extra*` passthrough fields are excluded), `"handoffs"`,
-`"output_schema"`, `"prompt"`, `"previous_response_id"`/`"conversation_id"`,
+settings; the `Extra*` passthrough fields are excluded), `"handoffs"` (tool
+name, agent name, description, and input schema per handoff), `"output_schema"`
+(`name`, `schema`, `strict`), `"prompt"`, `"previous_response_id"`/`"conversation_id"`,
 and `"output"` (the items returned). Streamed calls additionally record
 `"time_to_first_token_ms"`. Function spans record the tool call's `"input"`
 (arguments JSON) and stringified `"output"`. This is what makes a trace answer

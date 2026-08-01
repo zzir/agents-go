@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+
+	"github.com/zzir/agents-go/tracing"
 )
 
 // OverflowPolicy decides what happens when a model call fails because the
@@ -46,6 +48,13 @@ func DetectContextOverflow(err error, _ *ModelResponse) bool {
 		"exceeds the context window",
 		"maximum context length",
 		"reduce the length of the messages",
+		// Anthropic's two shapes: a 400 whose message says the prompt did not
+		// fit, and a response that ARRIVED but stopped with
+		// stop_reason=model_context_window_exceeded — which the anthropic
+		// adapter surfaces as an error carrying that marker, because a resend
+		// without compacting would stop at the same wall.
+		"prompt is too long",
+		"model_context_window_exceeded",
 	} {
 		if strings.Contains(msg, marker) {
 			return true
@@ -79,8 +88,73 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]TResponseInp
 	RecordDiagnostic(ctx, DiagContextOverflow, err, nil)
 
 	compacted, did, cerr := r.recompactAtSavePoint(ctx)
-	if cerr != nil || !did {
+	if cerr == nil && did {
+		return compacted, true
+	}
+	if cerr != nil {
 		return nil, false
 	}
-	return compacted, true
+	// No run-level Compactor applied (none configured, or it stood aside for a
+	// self-compacting storage). A CompactionAware storage gets a FORCED pass:
+	// its own trigger normally decides when to compact, but an overflow is the
+	// one moment that question has already been answered — by the provider.
+	return r.recoverOverflowViaStorage(ctx)
+}
+
+// recoverOverflowViaStorage runs a forced RunCompaction on a CompactionAware
+// storage and rebuilds the turn's context from the session, reporting whether
+// the pass changed anything (an unchanged history buys no retry, same as the
+// Compactor path).
+func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]TResponseInputItem, bool) {
+	sess := r.opts.Conversation.Session
+	if sess == nil {
+		return nil, false
+	}
+	cs, ok := sess.Storage().(CompactionAware)
+	if !ok {
+		return nil, false
+	}
+	cur := Cursor{Limit: -resolveSessionLimit(r.opts.Conversation.Settings)}
+	before, err := sess.ContextEntries(ctx, cur)
+	if err != nil {
+		return nil, false
+	}
+	var cspan *tracing.SpanHandle
+	cerr := cs.RunCompaction(ctx, CompactionArgs{
+		Force:      true,
+		ResponseID: r.lastResponseID,
+		Store:      r.lastStore,
+		StartSpan: func() *tracing.SpanHandle {
+			cspan = r.trace.StartCompactionSpan(r.agentParentID())
+			return cspan
+		},
+	})
+	if cerr != nil && cspan == nil {
+		// Failed before the storage opened the span; open one so the error is
+		// still visible on the trace (mirrors compactAfterRun).
+		cspan = r.trace.StartCompactionSpan(r.agentParentID())
+	}
+	if cspan != nil {
+		if cerr != nil {
+			cspan.SetError(cerr.Error(), nil)
+		}
+		cspan.Finish()
+	}
+	if cerr != nil {
+		return nil, false
+	}
+	after, err := sess.ContextEntries(ctx, cur)
+	if err != nil {
+		return nil, false
+	}
+	if !changedEntries(before, after) {
+		return nil, false
+	}
+	history, err := ProjectEntries(after, r.opts.Conversation.Projectors)
+	if err != nil {
+		return nil, false
+	}
+	// Scrub exactly as the save-point rebuild does: a fold can orphan a tool
+	// output whose call is gone, which the Responses API rejects.
+	return normalizeStoredInput(history), true
 }

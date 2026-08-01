@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -41,6 +42,18 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 	acc := &streamAccumulator{}
 	start := time.Now()
 	first := false
+	// The stamp waits for the first DELTA — the first actual token. Earlier
+	// events carry none: response.created arrives immediately (it would
+	// measure connection setup) and response.output_item.added only announces
+	// an item whose content is still to come. Terminal events stamp as a
+	// fallback so a stream that carries only its final payload still records
+	// something.
+	stamp := func() {
+		if !first {
+			first = true
+			span.Set("time_to_first_token_ms", time.Since(start).Milliseconds())
+		}
+	}
 	for event, err := range model.StreamResponse(ctx, req) {
 		if err != nil {
 			return nil, err
@@ -48,9 +61,9 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 		if event == nil {
 			continue
 		}
-		if !first {
-			first = true
-			span.Set("time_to_first_token_ms", time.Since(start).Milliseconds())
+		if strings.HasSuffix(event.Type, ".delta") ||
+			event.Type == "response.completed" || event.Type == "response.incomplete" {
+			stamp()
 		}
 		if !r.emit(&RawResponsesStreamEvent{Data: event}) {
 			return nil, errConsumerStopped

@@ -51,13 +51,23 @@ func traceTools(tools []Tool) []map[string]any {
 }
 
 // traceHandoffs projects the request's handoffs into a serializable form.
+// Description and input schema are recorded alongside the names: they are part
+// of the tool surface the model saw, and a replay that lacks them is a
+// different request.
 func traceHandoffs(handoffs []Handoff) []map[string]any {
 	out := make([]map[string]any, 0, len(handoffs))
 	for _, h := range handoffs {
-		out = append(out, map[string]any{
+		m := map[string]any{
 			"tool_name":  h.ToolName,
 			"agent_name": h.AgentName,
-		})
+		}
+		if h.ToolDescription != "" {
+			m["description"] = h.ToolDescription
+		}
+		if h.InputJSONSchema != nil {
+			m["parameters"] = h.InputJSONSchema
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -93,6 +103,7 @@ func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.Sp
 		span.Set("output_schema", map[string]any{
 			"name":   req.OutputSchema.Name(),
 			"schema": req.OutputSchema.JSONSchema(),
+			"strict": req.OutputSchema.IsStrictJSONSchema(),
 		})
 	}
 	if req.Prompt != nil {
