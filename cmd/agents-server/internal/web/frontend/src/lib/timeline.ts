@@ -229,11 +229,13 @@ export function buildTimeline(entries: EntryView[] | null | undefined): Timeline
   // Off-path entries are abandoned attempts. They are dropped from the rendered
   // conversation — showing both answers to the same question inline would be
   // showing a conversation that never happened — and surfaced instead as the
-  // "2 / 3" switcher on the attempt that IS current.
+  // "2 / 3" switcher on the attempt that IS current. The filter is NOT gated
+  // on a fork existing: right after a regenerate's branch switch the abandoned
+  // attempt is still the user message's ONLY child (the new attempt has not
+  // persisted anything yet, and the switch's leaf is not a child), so a fork
+  // gate would leave the old answer on screen for the whole regeneration.
   const forks = findForks(entries);
-  if (forks.size > 0) {
-    entries = entries.filter(e => e.on_path !== false);
-  }
+  entries = entries.filter(e => e.on_path !== false);
 
   // Which checkpoint folded each entry. A checkpoint is appended AFTER what it
   // folds, so this needs its own pass. A later checkpoint wins when two name

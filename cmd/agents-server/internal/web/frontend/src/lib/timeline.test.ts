@@ -180,7 +180,7 @@ describe('stream/replay isomorphism', () => {
     ]);
     let live = ensureLiveTurn([], RUN, 'new q')!;
     live = appendMessageItem(live, 'streaming…', false)!;
-    const merged = mergeLiveTail(persisted, live);
+    const merged = mergeLiveTail(persisted, live, RUN);
     expect(merged.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
     expect((merged[2] as { content?: string }).content).toBe('new q');
 
@@ -189,9 +189,27 @@ describe('stream/replay isomorphism', () => {
     const persistedWithPrompt = buildTimeline([
       { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'new q' },
     ]);
-    const merged2 = mergeLiveTail(persistedWithPrompt, live);
+    const merged2 = mergeLiveTail(persistedWithPrompt, live, RUN);
     expect(merged2.filter(m => m.role === 'user')).toHaveLength(1);
     expect(merged2.filter(m => m.role === 'turn')).toHaveLength(1);
+  });
+
+  it('mergeLiveTail: only the CURRENT live run\'s turn survives the merge', () => {
+    // The tail holds a finished (or branched-away) turn that never got its
+    // messageId stamped — e.g. a regenerate raced the terminal reload. The
+    // fetched timeline already pruned it; the merge must not put it back.
+    const persisted = buildTimeline([
+      { id: 1, run_id: 'run-old', kind: 'item', role: 'user', content: 'hello', entry_id: 'u1' },
+    ]);
+    const stale = [
+      { role: 'user', content: 'hello', clientMsgId: 'c1' },
+      { role: 'turn', parts: [{ type: 'text', content: 'OLD ANSWER' }], runId: 'run-old' },
+    ] as unknown as ReturnType<typeof buildTimeline>;
+    // No live run: the stale turn is dropped, the bubble dedups onto its row.
+    expect(mergeLiveTail(persisted, stale, null)).toEqual(persisted);
+    // A different run is live: the stale turn still does not come back.
+    const merged = mergeLiveTail(persisted, [...stale, { role: 'turn', parts: [], runId: RUN }] as unknown as ReturnType<typeof buildTimeline>, RUN);
+    expect(merged.filter(m => m.role === 'turn').map(m => (m as TurnEntry).runId)).toEqual([RUN]);
   });
 
   it('mergeLiveTail: two identical optimistic sends both survive one persisted copy', () => {
@@ -283,6 +301,20 @@ describe('stream/replay isomorphism', () => {
     // The tip is the attempt's last CONTENT entry — e2, not the leaf marker
     // e3 that the switch away from it appended.
     expect(turn.branches).toEqual({ parentId: 'e1', tips: ['e2', 'e4'], active: 1 });
+  });
+
+  it('branching: an abandoned only-child is pruned before the new attempt exists', () => {
+    // The regenerate window: branch switched back to the user message, the new
+    // run has not persisted anything yet. The old answer is the user entry's
+    // ONLY child (the switch's leaf is not one), so no fork exists — the
+    // off-path filter must apply anyway, or the replaced answer stays on
+    // screen for the whole regeneration.
+    const timeline = buildTimeline([
+      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'question', on_path: true },
+      { id: 2, entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'old answer', display: { kind: 'message', text: 'old answer' }, on_path: false },
+      { id: 3, entry_id: 'e3', parent_id: 'e1', kind: 'leaf', role: 'user', on_path: true },
+    ]);
+    expect(timeline.map(m => m.role)).toEqual(['user']);
   });
 
   it('branching: a leaf entry is not an attempt', () => {

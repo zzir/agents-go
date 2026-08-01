@@ -87,12 +87,18 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
 
   useEffect(() => {
-    setTabComp(null);
+    // The previous panel stays on screen while the next chunk loads — clearing
+    // first blanked the dialog on every switch, even for already-cached
+    // modules (the import still resolves a microtask later). The stale flag
+    // drops a resolution that no longer matches the selected tab: a slow
+    // first-load chunk must not overwrite a faster later click's panel.
+    let stale = false;
     const entry = DIALOG_TABS.find(t => t.key === tab);
     if (!entry) return;
     entry.load().then(mod => {
-      setTabComp(() => mod.default);
+      if (!stale) setTabComp(() => mod.default);
     });
+    return () => { stale = true; };
   }, [tab]);
 
   return (

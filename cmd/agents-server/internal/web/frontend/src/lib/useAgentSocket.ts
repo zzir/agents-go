@@ -125,6 +125,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // being dropped as if it were a replay.
   const appendedItemsRef = useRef<Record<string, Set<string>>>({});
   const loadedRef = useRef<Set<string>>(new Set());
+  // Per-session timeline generation, bumped by forgetLoaded (a branch move).
+  // A fetch launched before the bump describes a path the session is no longer
+  // on; its late resolution must be dropped, not applied — a pre-branch
+  // reloadMessages resolving after the regenerate's reload used to put the
+  // replaced answer back on screen.
+  const timelineGenRef = useRef<Record<string, number>>({});
   // Sessions with a "load earlier" fetch in flight. A ref rather than the
   // loadingMore flag because the guard must hold across the render the flag
   // needs to land, and React may run the state updater twice.
@@ -180,8 +186,14 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         return { ...s, tasks };
       });
     }
-    const pending = (pendingAll || []).filter(p => !p.task_id);
     const entries = msgs || [];
+    // A pending approval whose run has off-path entries belongs to an attempt
+    // that was branched away (regenerated while paused). Its card must not be
+    // rebuilt into the timeline — the branch handler deliberately keeps the
+    // row (switching back puts the run's entries on path again, which
+    // re-admits it here and lets the pause resume).
+    const offPathRuns = new Set(entries.filter(e => e.run_id && e.on_path === false).map(e => e.run_id));
+    const pending = (pendingAll || []).filter(p => !p.task_id && !offPathRuns.has(p.run_id));
     // A short page means we reached the beginning; a full one means there may
     // be more, and the next fetch settles it.
     const page = { entries, hasMore: limit > 0 && entries.length >= limit };
@@ -229,7 +241,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   }, []);
 
   const reloadMessages = useCallback((sid: string) => {
+    const gen = timelineGenRef.current[sid] || 0;
     fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
+      // A branch move happened while this fetch was in flight: the response
+      // describes the abandoned path — drop it, the move's own reload owns
+      // the state.
+      if ((timelineGenRef.current[sid] || 0) !== gen) return;
       // Never clobber a running session: mid-resume the paused turn exists
       // NEITHER in messages (saved on completion) nor in approvals (the row is
       // deleted as the resume's claim), so a reload in that window would blank
@@ -242,12 +259,18 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   const loadSession = useCallback((sid: string): Promise<void> => {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
     loadedRef.current.add(sid);
+    const gen = timelineGenRef.current[sid] || 0;
     const msgP = fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
+      // Superseded by a later branch move's own reload — drop it (see
+      // reloadMessages).
+      if ((timelineGenRef.current[sid] || 0) !== gen) return;
       // Live events may have landed while fetching (loaded flipped true, e.g.
       // a broadcast run.started from another browser's run) — merge them onto
-      // the persisted snapshot instead of dropping either side.
+      // the persisted snapshot instead of dropping either side. Scoped to the
+      // CURRENT live run: a finished or branched-away turn in the tail stays
+      // dropped.
       updateSS(sid, s => s.loaded
-        ? { ...s, messages: mergeLiveTail(timeline, s.messages), entries, hasMore }
+        ? { ...s, messages: mergeLiveTail(timeline, s.messages, s.liveRunId), entries, hasMore }
         : { ...s, messages: timeline, entries, hasMore, loaded: true });
     }).catch(err => {
       // The fetch failed: roll back the loaded mark so a later retry (or a
@@ -1027,12 +1050,15 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           if (page.length === 0) return { ...s, hasMore: false, loadingMore: false };
           const entries = [...page, ...s.entries];
           // The live tail is re-merged because the rebuild only knows what is
-          // persisted; an in-flight turn has nothing in the store yet.
+          // persisted; an in-flight turn has nothing in the store yet. The
+          // merge is scoped to the CURRENT live run — omitting liveRunId here
+          // dropped the streaming turn when the user loaded earlier messages
+          // mid-generation.
           const rebuilt = buildTimeline(entries) as SessionState['messages'];
           return {
             ...s,
             entries,
-            messages: mergeLiveTail(rebuilt, s.messages),
+            messages: mergeLiveTail(rebuilt, s.messages, s.liveRunId),
             hasMore: page.length >= HISTORY_PAGE,
             loadingMore: false,
           };
@@ -1045,9 +1071,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // forgetLoaded drops the "already fetched" mark so the next loadSession
   // re-reads from the server. A branch switch is the case that needs it: the
   // conversation changed shape server-side, and no local patch can express
-  // "this is now a different branch".
+  // "this is now a different branch". Bumping the generation invalidates every
+  // timeline fetch already in flight — their responses describe the old path.
   const forgetLoaded = useCallback((sid: string) => {
     loadedRef.current.delete(sid);
+    timelineGenRef.current[sid] = (timelineGenRef.current[sid] || 0) + 1;
     updateSS(sid, s => ({ ...s, loaded: false, entries: [], hasMore: false }));
   }, [updateSS]);
 

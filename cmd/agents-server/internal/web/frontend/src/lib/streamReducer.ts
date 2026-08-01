@@ -61,7 +61,13 @@ export function ensureLiveTurn(msgs: Msgs, runId: string, input?: string): Msgs 
 // already covers. Without this, a broadcast replay arriving before the fetch
 // marked the session loaded and the fetch result was dropped — a second
 // browser saw the live turn but no history.
-export function mergeLiveTail(persisted: Msgs, current: Msgs): Msgs {
+//
+// liveRunId scopes which TURN is genuinely in flight: only the current live
+// run's turn survives the merge. A finished turn whose terminal reload hasn't
+// landed yet, or one paused on an approval, also sits unstamped in the tail —
+// re-appending those after a regenerate's branch switch is how the replaced
+// answer used to linger on screen.
+export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string | null): Msgs {
   let i = current.length;
   while (i > 0 && current[i - 1].messageId === undefined) i--;
   const tail = current.slice(i);
@@ -101,7 +107,8 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs): Msgs {
       if (!dup) out.push(m);
     } else if (m.role === 'turn') {
       const rid = (m as TurnEntry).runId;
-      const dup = !!rid && out.some(p => p.role === 'turn' && (p as TurnEntry).runId === rid);
+      if (!rid || rid !== liveRunId) continue;
+      const dup = out.some(p => p.role === 'turn' && (p as TurnEntry).runId === rid);
       if (!dup) out.push(m);
     } else {
       out.push(m);
