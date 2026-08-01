@@ -29,9 +29,9 @@ from upstream.
 
 | Not doing | Why |
 |---|---|
-| **Chat Completions API** | Internal item types *are* Responses types. Supporting a second wire format would degrade the whole message model to a lowest common denominator. |
+| **Chat Completions API** | Internal item types *are* Responses types ([§5.5](#55-internal-item-types-are-responses-wire-types)). A backend that speaks another protocol is supported by translating at the model boundary ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)) — never by making a second format canonical. Chat Completions specifically was declined again 2026-07-31 in favor of a native Anthropic adapter; revisit only with a concrete backend nothing else covers. |
 | **Provider-hosted tools** (`web_search`, `file_search`, `code_interpreter`, `computer_use`, …) | `Tool` is a sealed interface; every tool is a locally executed `FunctionTool`. Hosted tools bind a tool to one backend. |
-| **A multi-provider abstraction** | Implement the `Model` interface for any backend you like. The SDK itself only guarantees depth of correctness for Responses semantics. |
+| **A neutral multi-provider abstraction** | No lowest-common-denominator message model. An adapter implements `Model` by translating to the canonical Responses format ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)); `models/modelkit` is shared plumbing for writing adapters, not an abstraction layer. The SDK guarantees depth of correctness for Responses semantics. |
 | **Model price or capability tables** | They change constantly and do not belong in an SDK. `Usage` exposes raw token counts; pricing is the caller's concern. |
 | **Realtime and voice** | A different interaction model, out of scope. |
 | **Graph orchestration as the multi-agent primitive** | Handoffs already cover "switch agent at runtime". Graph orchestration, if ever needed, layers *on top* — see [§5.1](#51-handoffs-stay-graph-orchestration-does-not-replace-them). |
@@ -695,10 +695,25 @@ cannot otherwise survive.
   overflow.
 - Retries are counted **across the run**, not per turn: a run that overflows
   every turn is not recovering, it is looping.
+- **A self-compacting storage recovers too.** With no run-level Compactor (or
+  with one standing aside because the storage is `CompactionAware`), overflow
+  recovery calls the storage's `RunCompaction` with `Force: true` and rebuilds
+  the turn's context from the session. Forced, because the storage's own
+  trigger normally decides when to compact and an overflow is the one moment
+  that question has already been answered — by the provider. The no-op rule is
+  unchanged: a forced pass that leaves the history identical buys no retry.
 - Detection matches the provider's message, because that is all a context
   overflow arrives as — a 400 with prose in it. Treating every 400 as an
   overflow would compact and retry after a malformed request, hiding a bug
-  behind a shrinking conversation.
+  behind a shrinking conversation. The marker list covers both providers'
+  shapes (OpenAI's `context_length_exceeded` family; Anthropic's "prompt is
+  too long" and `model_context_window_exceeded`).
+- A backend may report overflow in a SUCCESS-shaped response: Anthropic's
+  `stop_reason: model_context_window_exceeded` means generation hit the
+  window mid-response. The adapter surfaces that as an error carrying the
+  marker ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)) —
+  resending unchanged would stop at the same wall, and compact-and-retry is
+  the recovery that actually helps.
 - **A truncated response is NOT an overflow** ([§2.7e](#27e-truncated-responses-)).
   Its input fit; compacting the input does not raise the output cap that cut it
   off.
@@ -1352,6 +1367,48 @@ pauses. (The rule above is what keeps the two from compounding: an in-chain
 resume passes stripped options.) The paused state's agent and input are
 already decided; a middleware's edits to those fields do not apply on resume.
 
+**Workflow middlewares (`Plan`, `Todo`)** rewrite the ENTRY agent only —
+handoff targets keep their own toolset, the same scoping as every
+instruction-injecting middleware. Their invariants:
+
+- **Plan gates by hiding, not failing.** While planning, tools outside the
+  read-only set are absent from the model's toolset (direct tools via their
+  enabled hook; MCP tools filtered out of each turn's listing; handoffs via
+  `Handoff.IsEnabled` — a target's full toolset would otherwise be a side
+  door out of plan mode), so a write cannot even be attempted. Every gate
+  COMPOSES with the predicate it wraps rather than shadowing it — the
+  resolver consults only the outermost layer, and unlocking the plan gate
+  must not resurrect a tool or handoff the host itself disabled. Read-only-ness
+  is a NAME LIST (`DefaultReadOnlyTools` when nil), not a tool capability:
+  tools carry no side-effect marker, and a visible, editable list beats an
+  interface nobody remembers to implement.
+- **The plan review is an ordinary approval pause.** `submit_plan` is
+  approval-gated always; the plan text is the call's arguments. Approving it
+  unlocks the toolset and the SAME run continues; rejecting feeds the message
+  back and planning continues, write tools still hidden. No second pause
+  mechanism exists for hosts to learn.
+- **`todo_write` replaces the whole list, atomically.** The model always sends
+  every item (simpler to prompt for, impossible to desynchronize); a malformed
+  list is refused whole, so `OnUpdate` never observes a half-applied state.
+  An empty status defaults to pending. `todo_write` is on
+  `DefaultReadOnlyTools`, so stacking Todo with Plan works in either order.
+- **The rewrite is exported as `Apply`, for hosts with durable resume.** A
+  host that deserializes a paused `RunState` against a rebuilt agent registry
+  must rebuild WITH the plan/todo tools, or the approved `submit_plan` fails
+  with "tool not found" — so `Plan.Apply` / `Todo.Apply` run the same rewrite
+  at agent-build time. `Plan.Apply` also returns the run's `*PlanPhase`;
+  `Unlock` starts a rebuilt run in the executing phase, which is how a resume
+  after the plan phase ended avoids demanding a second plan.
+- **What a durable-resume host persists is the UNLOCK, not the approval —
+  and persisting it is the unlock's PRECONDITION.** `PlanPhase.OnUnlock`
+  fires once, when the approved `submit_plan` executes; its error fails the
+  unlock and the phase stays planning, so a run is never executing ahead of
+  its durable record (the failed write surfaces as a submit_plan tool error;
+  the model resubmits and the review repeats). Neither weaker signal
+  survives scrutiny: the approval ledger records approvals whose execution
+  then failed (argument validation, say), and the tool's output text can be
+  rewritten by a tool-output guardrail.
+
 ---
 
 ### 2.13 Background tasks ✅
@@ -1587,6 +1644,69 @@ deterministic execution mode comes first, because replaying a
 nondeterministic run replays into different behavior; and the payload must be
 trimmed — `RunState` carries every raw response, and a per-turn copy of that
 grows quadratically.
+
+### 5.10 Non-Responses backends adapt at the model boundary
+
+The canonical item and event format stays the Responses wire format (§5.5)
+even when the backend speaks something else. An adapter translates in both
+directions **inside its own package** — `models/anthropic` for the Messages
+API — so the runner, sessions, run state and the server never learn a second
+format. `models/modelkit` (root module) holds the shared halves: the input
+walker, item/event synthesizers that stamp round-trippable raw JSON, and the
+feature-rejection helper.
+
+The runner's consumption contract, which every `agents.Model` implementation
+in this repository must satisfy (enforced by `modelkit/conformancetest`; both
+in-repo providers run it):
+
+- **Output items** are canonical items whose `RawJSON()` is non-empty wire
+  JSON — `agents.OutputToInput` and session persistence depend on it. The
+  types the runner models are `message` / `reasoning` / `function_call`;
+  anything else rides through as `UnknownOutputItem`.
+- **Stream vocabulary** is `response.*` only. The first event is
+  `response.created`; each finished item gets one `response.output_item.done`
+  (in order); the terminal event is `response.completed` or
+  `response.incomplete` — reason `max_output_tokens` is the one recoverable
+  truncation (§2.7e). Text streams as `response.output_text.delta`, raw
+  reasoning text as `response.reasoning_text.delta`. These names are
+  load-bearing: the agents-server UI renders exactly these events.
+- **Usage** is Responses semantics: `InputTokens` is the TOTAL input count,
+  cache reads and writes included; `CachedTokens` / `CacheWriteTokens` are
+  informational subsets. A backend that reports uncached input separately
+  (Anthropic) adds the parts.
+- **Unsupported request features fail loudly** — a `*agents.UserError` naming
+  the feature (`modelkit.Reject`), never a silently dropped setting.
+- **Continuity blobs** (thinking signatures, redacted reasoning) ride in the
+  reasoning item's `encrypted_content` — the one canonical slot that survives
+  `OutputToInput` and session storage. A reasoning item without one is
+  dropped on replay to a backend that requires signatures.
+
+Anthropic-specific mappings recorded with the adapter: mid-history
+system/developer messages travel as `mid_conv_system` blocks in system turns
+(the Messages API has no plain `system` role for input text; top-of-run
+instructions use the top-level `system` parameter); `thinking` ↔ `reasoning`,
+with the blob in `encrypted_content` carrying an adapter prefix
+(`thinking_signature:` / `redacted_thinking:`) — a blob without a recognized
+prefix is another provider's reasoning and is dropped on replay rather than
+sent as a bogus signature; `stop_reason: max_tokens` →
+`incomplete`/`max_output_tokens`; `stop_reason: refusal` → ONE canonical
+refusal message and nothing else (the response's text, else
+`stop_details.explanation`, else a fixed line — never empty): the Messages
+API reports refusal out-of-band, and a refused response's partially
+generated `tool_use` blocks must not survive into items the runner would
+execute before it ever looks for the refusal — so `ModelRefusalError` and
+`model_refusal` handlers fire exactly as on any backend (a streamed
+refusal's mid-stream `item.done` events may still show text/tool items;
+the terminal rebuild is what the runner reads);
+`model_context_window_exceeded` → an error carrying that marker (§2.5g);
+`Reasoning.Effort` → thinking budgets (minimal 1024 / low 4096 / medium
+16384 / high 32768) with `MaxTokens` defaulting to 8192 (grown to
+budget + 8192 when the budget would not fit under it), and thinking rejects
+`Temperature`/`TopP`/forced tool choice up front; prompt caching is the
+request-level `cache_control` marker, on by default
+(`Provider.WithPromptCaching(false)` opts out). `models/anthropic` is a
+submodule per §5.7 — it carries the anthropic-sdk-go dependency; `modelkit`
+adds none, so it stays in root.
 
 ---
 
