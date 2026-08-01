@@ -1,13 +1,14 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { fc } from '@/lib/form';
+import { fc, seg } from '@/lib/form';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
+import { PROVIDERS, providerMeta } from '@/lib/providers';
 
 interface Setting { key: string; value: string }
-interface ProviderRoute { id: string; prefix: string; api_key: string; base_url: string }
+interface ProviderRoute { id: string; prefix: string; provider_type?: string; api_key: string; base_url: string }
 
 interface SettingDef {
   key: string;
@@ -20,8 +21,11 @@ interface SettingDef {
 const DEFAULT_KEYS: SettingDef[] = [
   { key: 'proxy_url', label: 'Proxy URL', placeholder: 'http://127.0.0.1:7890 or socks5://127.0.0.1:1080', description: 'All outbound API and MCP HTTP requests will be routed through this proxy.' },
   { key: 'system_prompt', label: 'System prompt', placeholder: 'Optional instructions prepended to all agents', multiline: true },
+  { key: 'openai_api_key', label: 'OpenAI API key (fallback)', placeholder: 'sk-... (******** keeps the stored key)', description: 'Used by agents and fallback-model entries on the OpenAI provider that have no API key of their own.' },
+  { key: 'anthropic_api_key', label: 'Anthropic API key (fallback)', placeholder: 'sk-ant-... (******** keeps the stored key)', description: 'Used by agents and fallback-model entries on the Anthropic provider that have no API key of their own.' },
   { key: 'brave_api_key', label: 'Brave Search API key', placeholder: 'BSA-xxxxxxxx', description: 'When set, a brave_search tool is injected into all agents. Get a key at brave.com/search/api.' },
   { key: 'trace_retention_days', label: 'Trace retention (days)', placeholder: 'e.g. 30 — empty disables pruning', description: 'Trace events older than this many days are pruned daily. Leave empty (or 0) to keep everything.' },
+  { key: 'trace_include_sensitive_data', label: 'Trace sensitive data', placeholder: 'true (default) or false', description: 'Set to false to keep prompts, outputs and tool arguments out of stored traces — spans then carry only timing and usage metadata (the trace panel\'s Replay has nothing to seed from). Applies to new runs.' },
 ];
 
 export function SettingsPanel() {
@@ -110,8 +114,8 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
   );
 }
 
-interface RouteDraft { prefix: string; api_key: string; base_url: string }
-const EMPTY_ROUTE: RouteDraft = { prefix: '', api_key: '', base_url: '' };
+interface RouteDraft { prefix: string; provider_type?: string; api_key: string; base_url: string }
+const EMPTY_ROUTE: RouteDraft = { prefix: '', provider_type: '', api_key: '', base_url: '' };
 
 function RouteForm({ initial, onSave, onCancel, onDelete }: {
   initial?: RouteDraft;
@@ -127,10 +131,12 @@ function RouteForm({ initial, onSave, onCancel, onDelete }: {
         <TextInput
           value={draft.prefix}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, prefix: e.target.value }))}
-          placeholder="e.g. groq"
+          placeholder="e.g. groq or anthropic"
           block
         />
       ))}
+      {seg('Provider', providerMeta(draft.provider_type).value, PROVIDERS.map(p => [p.value, p.label] as const),
+        v => setDraft(d => ({ ...d, provider_type: v })), 'Which API protocol this route speaks')}
       {fc('API Key', (
         <TextInput
           value={draft.api_key}
@@ -178,6 +184,7 @@ function ProviderRoutesSection() {
             <div className="resource-row-main">
               <div className="resource-row-head">
                 <span className="resource-row-title">{r.prefix}/</span>
+                {r.provider_type && r.provider_type !== 'openai' && <span className="resource-row-sub">{r.provider_type}</span>}
               </div>
               {r.base_url && <div className="resource-row-sub">{r.base_url}</div>}
             </div>

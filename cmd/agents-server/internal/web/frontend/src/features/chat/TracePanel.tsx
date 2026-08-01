@@ -1,11 +1,14 @@
 import './trace.css';
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Button, Checkbox, CounterLabel, Dialog, Flash, Link, Select, Textarea, TextInput } from '@primer/react';
+import { useState, useEffect, useMemo, useRef, useCallback, type ChangeEvent } from 'react';
+import { Button, Checkbox, CounterLabel, Dialog, Flash, Link, SegmentedControl, Select, SelectPanel, Textarea, TextInput } from '@primer/react';
+import type { SelectPanelItemInput } from '@primer/react';
 import { api } from '@/lib/api';
+import { diffLines } from '@/lib/diff';
+import { providerMeta } from '@/lib/providers';
 import {
   PulseIcon, ToolsIcon, ArrowSwitchIcon, DiamondIcon,
   DependabotIcon, CpuIcon, ShieldCheckIcon, ChevronRightIcon,
-  CommentIcon,
+  CommentIcon, TriangleDownIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
@@ -50,8 +53,10 @@ function itemText(item: PayloadRecord): string {
   const content = item.content;
   if (typeof content === 'string' && content) return content;
   if (Array.isArray(content)) {
+    // Refusal parts carry their text in `refusal`, not `text` — without
+    // this, an Anthropic refusal in the trace renders as raw JSON.
     const texts = content
-      .map(p => (p && typeof p === 'object' ? (p as PayloadRecord).text : null))
+      .map(p => (p && typeof p === 'object' ? ((p as PayloadRecord).text ?? (p as PayloadRecord).refusal) : null))
       .filter((t): t is string => typeof t === 'string' && t !== '');
     if (texts.length > 0) return texts.join('\n');
   }
@@ -132,6 +137,9 @@ function FunctionPayload({ data, indent }: { data: PayloadRecord; indent: number
 interface AgentOption {
   id: string | number;
   name: string;
+  model?: string;
+  model_settings?: string;
+  provider?: { provider_type?: string };
 }
 
 // itemsForDisplay renders a list of response items with the shared
@@ -146,9 +154,50 @@ function ResponseItems({ items, prefix }: { items: PayloadRecord[]; prefix: stri
   );
 }
 
+// One completed replay run: the response plus the request knobs that
+// produced it, so attempts remain comparable after the form moved on.
+interface ReplayAttempt {
+  output: PayloadRecord[];
+  usage?: PayloadRecord;
+  durationMs?: number;
+  ttftMs?: number;
+  model: string;
+  settings: string;
+}
+
+// The bridge's fixed local tool names (staticLocalToolNames + the task
+// manager's trio). MCP tools are recognized by their "<server>__" prefix
+// instead, so this list only has to track the bridge's own tools.
+const BUILTIN_TOOL_NAMES = new Set([
+  'exec_command', 'read_file', 'write_file', 'list_files', 'apply_patch',
+  'brave_search', 'spawn_task', 'task_status', 'task_stop',
+  // Workflow tools injected by plan_mode / todo_list agents.
+  'submit_plan', 'todo_write',
+]);
+
+// toolGroup buckets a traced tool by provenance for the tools picker.
+function toolGroup(name: string): string {
+  if (name === 'read_skill_file') return 'Skills';
+  if (BUILTIN_TOOL_NAMES.has(name)) return 'Built-in';
+  const sep = name.indexOf('__');
+  if (sep > 0) return 'MCP: ' + name.slice(0, sep);
+  return 'Other';
+}
+
+// comparableText projects response items into diffable lines: message text
+// and tool calls. Reasoning items are skipped — they vary run to run by
+// design and would drown the diff in noise.
+function comparableText(items: PayloadRecord[]): string {
+  return items
+    .filter(it => it.type !== 'reasoning')
+    .map(it => itemText(it))
+    .filter(Boolean)
+    .join('\n');
+}
+
 // ReplayDialog is a two-pane playground for one traced model call: the left
 // pane edits the request (instructions, settings, input items — seeded from
-// the trace), the right pane shows the replay result next to the original
+// the trace), the right pane shows the replay attempts next to the original
 // response. Requests go through POST /playground/generate (no session, no
 // run, tools are schema-only and never executed).
 function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => void }) {
@@ -161,12 +210,106 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
     return s && Object.keys(s).length > 0 ? JSON.stringify(s, null, 2) : '';
   });
   const [items, setItems] = useState(() => JSON.stringify(Array.isArray(data.input) ? data.input : [], null, 2));
-  const [includeTools, setIncludeTools] = useState(true);
+  // Which tools go into the replay, keyed by name — the traced set by
+  // default, individually toggleable from the grouped picker (which also
+  // offers the agent's current tools beyond the trace, unselected).
+  const [enabledTools, setEnabledTools] = useState<Set<string>>(
+    () => new Set(payloadItems(data.tools).map(t => String(t.name || '')).filter(Boolean)),
+  );
+  const [agentTools, setAgentTools] = useState<PayloadRecord[]>([]);
+  const [includeHandoffs, setIncludeHandoffs] = useState(true);
+  const [includeSchema, setIncludeSchema] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ output: PayloadRecord[]; usage?: PayloadRecord; duration_ms?: number } | null>(null);
+  const [attempts, setAttempts] = useState<ReplayAttempt[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [view, setView] = useState<'output' | 'diff'>('output');
+  const [itemsView, setItemsView] = useState<'list' | 'json'>('list');
+  const [streamText, setStreamText] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
+  // Closing the dialog mid-run tears the model call down with it.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const tools = useMemo(() => payloadItems(data.tools), [data.tools]);
+  const tracedNames = useMemo(
+    () => new Set(tools.map(t => String(t.name || '')).filter(Boolean)),
+    [tools],
+  );
+  // The agent's CURRENT tool surface — offered by the picker beyond the
+  // traced set, for what-if replays (would the model have called this?).
+  useEffect(() => {
+    if (!agentId) { setAgentTools([]); return; }
+    let stale = false;
+    (api.agents.tools(agentId) as Promise<PayloadRecord[]>)
+      .then(list => { if (!stale) setAgentTools(list || []); })
+      .catch(() => { if (!stale) setAgentTools([]); });
+    return () => { stale = true; };
+  }, [agentId]);
+  // Traced tools first (their traced schema wins on a name collision), then
+  // the agent's extras.
+  const allTools = useMemo(() => {
+    const out = [...tools];
+    for (const t of agentTools) {
+      const n = String(t.name || '');
+      if (n && !tracedNames.has(n)) out.push(t);
+    }
+    return out;
+  }, [tools, agentTools, tracedNames]);
+  // Per-category rows for the three pickers, name only — descriptions made
+  // every row two lines tall and the list a chore to scan. MCP keeps a group
+  // per server inside its panel.
+  const pickerData = useMemo(() => {
+    const builtin: SelectPanelItemInput[] = [];
+    const mcp: SelectPanelItemInput[] = [];
+    const skills: SelectPanelItemInput[] = [];
+    for (const t of allTools) {
+      const n = String(t.name || '');
+      if (!n) continue;
+      const item: SelectPanelItemInput = {
+        id: n,
+        text: n,
+        trailingVisual: tracedNames.has(n) ? undefined : <span className="trace-replay-nottraced">not traced</span>,
+      };
+      const g = toolGroup(n);
+      if (g === 'Skills') skills.push(item);
+      else if (g.startsWith('MCP: ')) { item.groupId = g.slice(5); mcp.push(item); }
+      else builtin.push(item);
+    }
+    const mcpGroups = [...new Set(mcp.map(i => String(i.groupId)))].sort()
+      .map(g => ({ groupId: g, header: { title: g, variant: 'filled' as const } }));
+    return { builtin, mcp, skills, mcpGroups };
+  }, [allTools, tracedNames]);
+  // A panel reports its own full selection; swap exactly that slice of the
+  // shared enabled-set so the other panels' choices survive.
+  const applyPanelSelection = useCallback((panelItems: SelectPanelItemInput[], sel: SelectPanelItemInput[]) => {
+    setEnabledTools(prev => {
+      const next = new Set(prev);
+      for (const i of panelItems) next.delete(String(i.id));
+      for (const i of sel) next.add(String(i.id));
+      return next;
+    });
+  }, []);
+  // Handoffs are part of the tool surface the model saw; replayed as
+  // schema-only tools. Older traces recorded only the names — those replay
+  // with an empty parameter schema.
+  const handoffs = useMemo(() => payloadItems(data.handoffs), [data.handoffs]);
+  const handoffTools = useMemo(() => handoffs.map(h => ({
+    name: String(h.tool_name || ''),
+    description: typeof h.description === 'string' && h.description
+      ? h.description
+      : 'Handoff to ' + String(h.agent_name || 'agent'),
+    parameters: h.parameters && typeof h.parameters === 'object' ? h.parameters : undefined,
+  })).filter(t => t.name), [handoffs]);
+  const outputSchema = useMemo(() => {
+    const s = data.output_schema && typeof data.output_schema === 'object' ? data.output_schema as PayloadRecord : null;
+    if (!s || !s.schema || typeof s.schema !== 'object') return null;
+    return {
+      name: typeof s.name === 'string' ? s.name : undefined,
+      schema: s.schema as Record<string, unknown>,
+      strict: s.strict === true,
+    };
+  }, [data.output_schema]);
   const originalOutput = useMemo(() => payloadItems(data.output), [data.output]);
 
   // Both editors validate as you type; Run stays disabled while either is broken.
@@ -194,39 +337,84 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
   useEffect(() => {
     api.agents.list().then((list: AgentOption[]) => {
       setAgents(list || []);
+      // Initial selection keeps the TRACED model and settings — replay means
+      // the traced request. Only an explicit agent switch reseeds them.
       const match = (list || []).find(a => a.name === data.name);
       setAgentId(String(match ? match.id : (list && list[0] ? list[0].id : '')));
     }).catch(() => {});
   }, [data.name]);
 
+  const selectedAgent = useMemo(() => agents.find(a => String(a.id) === agentId), [agents, agentId]);
+  // Switching agents reseeds model + settings from that agent's config, so
+  // the knobs and JSON reflect what would actually run.
+  const applyAgent = (id: string) => {
+    setAgentId(id);
+    const a = agents.find(x => String(x.id) === id);
+    if (!a) return;
+    setModel(a.model || '');
+    const ms = (a.model_settings || '').trim();
+    if (!ms) { setSettingsText(''); return; }
+    try { setSettingsText(JSON.stringify(JSON.parse(ms), null, 2)); } catch { setSettingsText(ms); }
+  };
+
   const run = async () => {
     if (!itemsParsed.value) return;
     setError('');
-    setResult(null);
+    setStreamText('');
+    setStreamReasoning('');
     setBusy(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const sentTools = [
+      ...allTools.filter(t => enabledTools.has(String(t.name || ''))),
+      ...(includeHandoffs ? handoffTools : []),
+    ];
     try {
-      const res = await api.playground.generate({
+      const res = await api.playground.generateStream({
         agent_config_id: agentId,
         model: model.trim() || undefined,
         system_instructions: instructions,
         input_items: itemsParsed.value,
         model_settings: settingsParsed.value,
-        tools: includeTools && tools.length > 0 ? tools : undefined,
-      });
-      setResult({ output: payloadItems(res.output), usage: res.usage, duration_ms: res.duration_ms });
+        tools: sentTools.length > 0 ? sentTools : undefined,
+        output_schema: includeSchema && outputSchema ? outputSchema : undefined,
+      }, {
+        onDelta: t => setStreamText(prev => prev + t),
+        onReasoning: t => setStreamReasoning(prev => prev + t),
+      }, ac.signal);
+      // `busy` serializes runs, so the closure's length is the new index.
+      setAttempts(prev => [...prev, {
+        output: payloadItems(res.output),
+        usage: res.usage,
+        durationMs: res.duration_ms,
+        ttftMs: res.ttft_ms,
+        model: model.trim(),
+        settings: settingsText.trim(),
+      }]);
+      setSelected(attempts.length);
     } catch (e) {
-      setError((e as Error).message);
+      // A user cancel is not an error worth flashing.
+      if (!ac.signal.aborted) setError((e as Error).message);
     }
+    abortRef.current = null;
+    setStreamText('');
+    setStreamReasoning('');
     setBusy(false);
   };
 
-  const usage = result && result.usage ? result.usage : null;
-  const replayMeta = result
+  const attempt = attempts[selected] || null;
+  const usage = attempt && attempt.usage ? attempt.usage : null;
+  const replayMeta = attempt
     ? [
-        result.duration_ms !== undefined ? result.duration_ms + 'ms' : null,
+        attempt.durationMs !== undefined ? attempt.durationMs + 'ms' : null,
+        attempt.ttftMs !== undefined && attempt.ttftMs >= 0 ? 'ttft ' + attempt.ttftMs + 'ms' : null,
         usage ? '↑' + Number(usage.input_tokens || 0) + ' ↓' + Number(usage.output_tokens || 0) + ' tok' : null,
       ].filter(Boolean).join(' · ')
     : '';
+  const diff = useMemo(() => {
+    if (view !== 'diff' || !attempt) return null;
+    return diffLines(comparableText(originalOutput), comparableText(attempt.output));
+  }, [view, attempt, originalOutput]);
 
   return (
     <Dialog
@@ -234,8 +422,10 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
       onClose={onClose}
       // Primer's named sizes cap out well below what a request/response
       // editor needs; explicit style wins over both (same as SettingsDialog).
+      // BOTH axes are capped: an uncapped 100vh height with a fixed width cap
+      // turned the dialog into a tall narrow slab on large displays.
       height="large"
-      style={{ width: 'min(1200px, calc(100vw - 48px))', height: 'calc(100vh - 96px)' }}
+      style={{ width: 'min(1440px, calc(100vw - 48px))', height: 'min(900px, calc(100vh - 96px))' }}
       // The scroll wrapper between dialog and body is not a flex container,
       // so the body must claim the height explicitly for the panes to fill.
       renderBody={({ children }) => (
@@ -244,24 +434,44 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
     >
       <div className="trace-replay">
         <div className="trace-replay-toolbar">
-          <Select value={agentId} onChange={e => setAgentId(e.target.value)} className="trace-replay-agent">
+          <Select value={agentId} onChange={e => applyAgent(e.target.value)} className="trace-replay-agent">
             {agents.map(a => <Select.Option key={a.id} value={String(a.id)}>{a.name}</Select.Option>)}
           </Select>
           <TextInput value={model} onChange={e => setModel(e.target.value)} placeholder="model (agent default)" className="trace-replay-model" />
-          {tools.length > 0 && (
+          <SettingsKnobs
+            parsed={settingsParsed.error ? null : (settingsParsed.value || {})}
+            onChange={s => setSettingsText(Object.keys(s).length > 0 ? JSON.stringify(s, null, 2) : '')}
+            effortOptions={providerMeta(selectedAgent?.provider?.provider_type).effortOptions}
+          />
+          <ToolPicker label="Built-in" items={pickerData.builtin} enabled={enabledTools} onSelect={applyPanelSelection} />
+          <ToolPicker label="MCP" items={pickerData.mcp} groupMetadata={pickerData.mcpGroups} enabled={enabledTools} onSelect={applyPanelSelection} />
+          <ToolPicker label="Skills" items={pickerData.skills} enabled={enabledTools} onSelect={applyPanelSelection} />
+          {handoffTools.length > 0 && (
             <label className="trace-replay-tools-toggle">
-              <Checkbox checked={includeTools} onChange={e => setIncludeTools(e.target.checked)} />
-              {'Tools (' + tools.length + ')'}
+              <Checkbox checked={includeHandoffs} onChange={e => setIncludeHandoffs(e.target.checked)} />
+              {'Handoffs (' + handoffTools.length + ')'}
             </label>
           )}
-          <Button
-            variant="primary"
-            onClick={() => void run()}
-            disabled={busy || !agentId || !!itemsParsed.error || !!settingsParsed.error}
-            className="trace-replay-run"
-          >
-            {busy ? 'Running…' : 'Run'}
-          </Button>
+          {outputSchema && (
+            <label className="trace-replay-tools-toggle" title="Replay with the traced structured-output schema">
+              <Checkbox checked={includeSchema} onChange={e => setIncludeSchema(e.target.checked)} />
+              Schema
+            </label>
+          )}
+          {busy ? (
+            <Button variant="danger" onClick={() => abortRef.current?.abort()} className="trace-replay-run">
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={() => void run()}
+              disabled={!agentId || !!itemsParsed.error || !!settingsParsed.error}
+              className="trace-replay-run"
+            >
+              Run
+            </Button>
+          )}
         </div>
         <div className="trace-replay-cols">
           <div className="trace-replay-col">
@@ -281,17 +491,39 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
               {itemsParsed.error
                 ? <span className="trace-replay-invalid">{itemsParsed.error}</span>
                 : <span className="trace-replay-hint">{(itemsParsed.value ? itemsParsed.value.length : 0) + ' items'}</span>}
-              <Link
-                as="button"
-                className="trace-replay-format"
-                onClick={() => { if (itemsParsed.value) setItems(JSON.stringify(itemsParsed.value, null, 2)); }}
-              >
-                Format
-              </Link>
+              <SegmentedControl aria-label="Input items view" size="small" className="trace-replay-itemsview" onChange={i => setItemsView(i === 0 ? 'list' : 'json')}>
+                <SegmentedControl.Button selected={itemsView === 'list'}>List</SegmentedControl.Button>
+                <SegmentedControl.Button selected={itemsView === 'json'}>JSON</SegmentedControl.Button>
+              </SegmentedControl>
+              {itemsView === 'json' && (
+                <Link
+                  as="button"
+                  className="trace-replay-format"
+                  style={{ marginLeft: 0 }}
+                  onClick={() => { if (itemsParsed.value) setItems(JSON.stringify(itemsParsed.value, null, 2)); }}
+                >
+                  Format
+                </Link>
+              )}
             </div>
-            <div className="trace-replay-fill">
-              <Textarea value={items} onChange={e => setItems(e.target.value)} block resize="none" />
-            </div>
+            {itemsView === 'json' ? (
+              <div className="trace-replay-fill">
+                <Textarea value={items} onChange={e => setItems(e.target.value)} block resize="none" />
+              </div>
+            ) : (
+              <div className="trace-replay-fill">
+                <div className="trace-replay-outbox trace-payload-list">
+                  {itemsParsed.error
+                    ? <div className="trace-empty">Invalid JSON — fix it in the JSON view.</div>
+                    : (itemsParsed.value || []).length === 0
+                      ? <div className="trace-empty">No input items.</div>
+                      : (itemsParsed.value || []).map((it, i) => {
+                        const item = (it && typeof it === 'object' ? it : { value: it }) as PayloadRecord;
+                        return <PayloadItem key={'in-' + i} tag={itemTag(item)} text={itemText(item)} full={JSON.stringify(item, null, 2)} />;
+                      })}
+                </div>
+              </div>
+            )}
           </div>
           <div className="trace-replay-col">
             {error && <Flash variant="danger" className="trace-replay-error">{error}</Flash>}
@@ -299,12 +531,49 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
               Replay response
               {replayMeta && <span className="trace-replay-hint">{replayMeta}</span>}
             </div>
+            {attempts.length > 0 && (
+              <div className="trace-replay-resultbar">
+                <SegmentedControl aria-label="Attempt" size="small" onChange={i => setSelected(i)}>
+                  {attempts.map((a, i) => (
+                    <SegmentedControl.Button
+                      key={i}
+                      selected={i === selected}
+                      title={[a.model && 'model: ' + a.model, a.settings && 'settings: ' + a.settings].filter(Boolean).join('\n') || undefined}
+                    >
+                      {String(i + 1)}
+                    </SegmentedControl.Button>
+                  ))}
+                </SegmentedControl>
+                <SegmentedControl aria-label="View" size="small" className="trace-replay-viewseg" onChange={i => setView(i === 0 ? 'output' : 'diff')}>
+                  <SegmentedControl.Button selected={view === 'output'}>Output</SegmentedControl.Button>
+                  <SegmentedControl.Button selected={view === 'diff'}>Diff</SegmentedControl.Button>
+                </SegmentedControl>
+              </div>
+            )}
             <div className="trace-replay-outbox trace-payload-list">
-              {busy
-                ? <div className="trace-empty">Running…</div>
-                : result
-                  ? <ResponseItems items={result.output} prefix="rp-" />
-                  : <div className="trace-empty">Edit the request on the left, then Run.</div>}
+              {busy ? (
+                <div className="trace-replay-live">
+                  {streamReasoning && <pre className="trace-replay-live-reasoning">{streamReasoning}</pre>}
+                  {streamText
+                    ? <pre className="trace-replay-live-text">{streamText}</pre>
+                    : !streamReasoning && <div className="trace-empty">Waiting for the first token…</div>}
+                </div>
+              ) : !attempt ? (
+                <div className="trace-empty">Edit the request on the left, then Run.</div>
+              ) : view === 'diff' && diff ? (
+                <div className="trace-replay-diff">
+                  {diff.length === 0 || diff.every(d => d.type === 'same')
+                    ? <div className="trace-empty">Identical to the original response.</div>
+                    : diff.map((d, i) => (
+                      <div key={i} className={'trace-diff-line trace-diff-' + d.type}>
+                        <span className="trace-diff-sign">{d.type === 'add' ? '+' : d.type === 'del' ? '-' : ' '}</span>
+                        {d.text}
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <ResponseItems items={attempt.output} prefix={'rp' + selected + '-'} />
+              )}
             </div>
             <div className="trace-replay-sec">Original response</div>
             <div className="trace-replay-outbox trace-payload-list">
@@ -316,6 +585,112 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
         </div>
       </div>
     </Dialog>
+  );
+}
+
+// ToolPicker is one tool category's SelectPanel — name-only rows, optional
+// per-server groups — anchored on a "<label> n/N" button. Selection lives in
+// the parent's single enabled-set shared by all pickers; a panel reports its
+// full selection and the parent swaps that slice. Renders nothing when the
+// category is empty.
+function ToolPicker({ label, items, groupMetadata, enabled, onSelect }: {
+  label: string;
+  items: SelectPanelItemInput[];
+  groupMetadata?: { groupId: string; header: { title: string; variant: 'filled' } }[];
+  enabled: Set<string>;
+  onSelect: (panelItems: SelectPanelItemInput[], sel: SelectPanelItemInput[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const selected = useMemo(() => items.filter(i => enabled.has(String(i.id))), [items, enabled]);
+  const filtered = useMemo(() => {
+    const f = filter.trim().toLowerCase();
+    return f ? items.filter(i => String(i.text).toLowerCase().includes(f)) : items;
+  }, [items, filter]);
+  if (items.length === 0) return null;
+  return (
+    <SelectPanel
+      title={label + ' tools'}
+      subtitle="Schema-only — never executed."
+      renderAnchor={({ children: _children, ...anchorProps }) => (
+        <Button trailingAction={TriangleDownIcon} {...anchorProps}>
+          {label + ' ' + selected.length + '/' + items.length}
+        </Button>
+      )}
+      open={open}
+      onOpenChange={setOpen}
+      items={filtered}
+      selected={selected}
+      onSelectedChange={(sel: SelectPanelItemInput[]) => onSelect(items, sel)}
+      onFilterChange={setFilter}
+      groupMetadata={groupMetadata}
+      showSelectAll
+      placeholderText="Filter"
+      overlayProps={{ width: 'medium' }}
+    />
+  );
+}
+
+// SettingsKnobs lifts the common sampling parameters out of the raw settings
+// JSON. The JSON text stays the single source of truth: knobs render from the
+// parsed value and every knob edit re-serializes the whole object, so the two
+// can never disagree. Invalid JSON disables the knobs until it parses again.
+// effortOptions comes from the selected agent's provider (the backends accept
+// different effort levels); a stored value outside the list stays visible.
+function SettingsKnobs({ parsed, onChange, effortOptions }: {
+  parsed: Record<string, unknown> | null;
+  onChange: (s: Record<string, unknown>) => void;
+  effortOptions: ReadonlyArray<readonly [string, string]>;
+}) {
+  const disabled = parsed === null;
+  const s = parsed || {};
+  const reasoning = s.reasoning && typeof s.reasoning === 'object' ? s.reasoning as Record<string, unknown> : null;
+  const effort = reasoning && typeof reasoning.effort === 'string' ? reasoning.effort : '';
+  const num = (v: unknown): string => (typeof v === 'number' ? String(v) : '');
+  const set = (mut: (next: Record<string, unknown>) => void): void => {
+    const next = { ...s };
+    mut(next);
+    onChange(next);
+  };
+  const setNum = (key: string) => (e: ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    set(next => {
+      if (v === '') delete next[key];
+      else next[key] = Number(v);
+    });
+  };
+  const setEffort = (e: ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    set(next => {
+      const r = { ...(reasoning || {}) };
+      if (v === '') delete r.effort;
+      else r.effort = v;
+      if (Object.keys(r).length === 0) delete next.reasoning;
+      else next.reasoning = r;
+    });
+  };
+  return (
+    <>
+      <label className="trace-replay-knob">
+        temp
+        <TextInput type="number" step={0.1} min={0} max={2} value={num(s.temperature)} onChange={setNum('temperature')} disabled={disabled} aria-label="temperature" />
+      </label>
+      <label className="trace-replay-knob">
+        top_p
+        <TextInput type="number" step={0.05} min={0} max={1} value={num(s.top_p)} onChange={setNum('top_p')} disabled={disabled} aria-label="top_p" />
+      </label>
+      <label className="trace-replay-knob">
+        max tok
+        <TextInput type="number" step={1} min={1} value={num(s.max_tokens)} onChange={setNum('max_tokens')} disabled={disabled} aria-label="max tokens" />
+      </label>
+      <label className="trace-replay-knob">
+        effort
+        <Select value={effort} onChange={setEffort} disabled={disabled} aria-label="reasoning effort">
+          {(effortOptions.some(([v]) => v === effort) ? effortOptions : [...effortOptions, [effort, effort] as const])
+            .map(([v, label]) => <Select.Option key={v || 'unset'} value={v}>{v === '' ? '' : label}</Select.Option>)}
+        </Select>
+      </label>
+    </>
   );
 }
 

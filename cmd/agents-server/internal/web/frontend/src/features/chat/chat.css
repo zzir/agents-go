@@ -543,6 +543,36 @@
   margin-top: 10px;
 }
 
+/* submit_plan review: the plan renders as prose, not JSON */
+.ToolCallCard-plan { margin: 0; font-size: 13px; }
+
+/* todo_write checklist */
+.ToolCallCard-todos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ToolCallCard-todo {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--fgColor-default);
+}
+.ToolCallCard-todo-icon {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+.ToolCallCard-todo--completed { color: var(--fgColor-muted); text-decoration: line-through; }
+.ToolCallCard-todo--completed .ToolCallCard-todo-icon { color: var(--fgColor-success); }
+.ToolCallCard-todo--in_progress { font-weight: 600; }
+.ToolCallCard-todo--in_progress .ToolCallCard-todo-icon { color: var(--fgColor-accent); }
+.ToolCallCard-todo--pending .ToolCallCard-todo-icon { color: var(--fgColor-muted); }
+
 /* Error card — content styles (shell is Disclosure with variant=danger) */
 .error-card { margin: var(--base-size-8) 0; }
 .error-card-body { color: var(--fgColor-danger); }

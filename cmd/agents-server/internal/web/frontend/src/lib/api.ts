@@ -100,7 +100,13 @@ export const api = {
     fork: (id: string | number, messageId?: number, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
     pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
-  agents: crud('/agents'),
+  agents: {
+    ...crud('/agents'),
+    // The agent's CURRENT tool surface as schema-only definitions — what the
+    // bridge would hand the model right now (sandbox tools excluded). Backs
+    // the Replay dialog's tool picker.
+    tools: (id: string | number) => request(`/agents/${id}/tools`),
+  },
   mcpServers: {
     ...crud('/mcp-servers'),
     connect: (id: string | number) => request(`/mcp-servers/${id}/connect`, { method: 'POST' }),
@@ -116,8 +122,67 @@ export const api = {
       input_items: unknown[];
       model_settings?: Record<string, unknown>;
       tools?: unknown[];
+      output_schema?: { name?: string; schema: Record<string, unknown>; strict?: boolean };
     }) =>
       request('/playground/generate', { method: 'POST', body: JSON.stringify(body) }),
+    // generateStream is the SSE variant: onDelta/onReasoning fire per text
+    // chunk, the returned promise resolves with the terminal `done` payload
+    // (output, usage, duration_ms, ttft_ms). Abort via `signal` cancels the
+    // model call server-side (the request context tears it down).
+    generateStream: async (
+      body: Record<string, unknown>,
+      handlers: { onDelta?: (text: string) => void; onReasoning?: (text: string) => void },
+      signal?: AbortSignal,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ): Promise<any> => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const t = getToken();
+      if (t) headers['Authorization'] = `Bearer ${t}`;
+      const res = await fetch(`${BASE}/playground/generate`, {
+        method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }), signal,
+      });
+      if (res.status === 401) {
+        clearToken();
+        window.dispatchEvent(new Event('auth:logout'));
+        throw new Error('unauthorized');
+      }
+      if (!res.ok || !res.body) {
+        const b = await res.json().catch(() => ({} as { error?: { message?: string } }));
+        throw new Error(b.error?.message || res.statusText);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let done: any = null;
+      for (;;) {
+        const { value, done: eof } = await reader.read();
+        if (eof) break;
+        buf += decoder.decode(value, { stream: true });
+        for (;;) {
+          const sep = buf.indexOf('\n\n');
+          if (sep < 0) break;
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          let event = '';
+          let data = '';
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event: ')) event = line.slice(7).trim();
+            else if (line.startsWith('data: ')) data += line.slice(6);
+          }
+          if (!event || !data) continue;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let parsed: any;
+          try { parsed = JSON.parse(data); } catch { continue; }
+          if (event === 'delta') handlers.onDelta?.(String(parsed.text ?? ''));
+          else if (event === 'reasoning') handlers.onReasoning?.(String(parsed.text ?? ''));
+          else if (event === 'done') done = parsed;
+          else if (event === 'error') throw new Error(String(parsed.message || 'model call failed'));
+        }
+      }
+      if (!done) throw new Error('stream ended unexpectedly');
+      return done;
+    },
   },
   settings: {
     list: () => request('/settings'),
@@ -138,6 +203,9 @@ export const api = {
     list: () => request('/guardrails'),
   },
   providerRoutes: crud('/provider-routes'),
+  providerTypes: {
+    list: () => request('/provider-types'),
+  },
   tasks: {
     stop: (id: string | number, graceful = false) => request(`/tasks/${id}/stop`, { method: 'POST', body: JSON.stringify({ graceful }) }),
   },

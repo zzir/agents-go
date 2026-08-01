@@ -211,6 +211,9 @@
   align-items: center;
   gap: var(--base-size-8, 8px);
   flex-shrink: 0;
+  /* Everything parameterizing the call lives on this row (model, sampling
+     knobs, tool surface); it wraps rather than overflowing when narrow. */
+  flex-wrap: wrap;
 }
 .trace-replay-agent {
   min-width: 140px;
@@ -316,6 +319,99 @@
   padding: var(--base-size-4, 4px);
 }
 
+/* Common sampling parameters, inline in the toolbar next to the model —
+   they parameterize the same call. Label + control on one line; the toolbar
+   wraps as a whole when the dialog narrows. */
+.trace-replay-knob {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.trace-replay-knob input {
+  font-size: 12px;
+}
+.trace-replay-knob > span {
+  width: 76px;
+  min-width: 76px;
+}
+.trace-replay-knob select {
+  font-size: 12px;
+}
+
+/* The picker rows mark tools absent from the traced request */
+.trace-replay-nottraced {
+  font-size: 11px;
+  color: var(--fgColor-muted);
+}
+
+/* Input items List view: the outbox fills the column like the textarea does,
+   keeping the shared payload grid (the generic fill child rule would force
+   display:flex and break the tag column alignment). */
+.trace-replay-fill > .trace-replay-outbox {
+  display: grid;
+  overflow-y: auto;
+}
+.trace-replay-itemsview {
+  margin-left: auto;
+}
+
+/* Attempt switcher + Output/Diff toggle above the replay output */
+.trace-replay-resultbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8, 8px);
+  flex-shrink: 0;
+}
+
+/* Live stream while a replay runs */
+.trace-replay-live {
+  padding: var(--base-size-4, 4px);
+}
+.trace-replay-live pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+}
+.trace-replay-live-reasoning {
+  color: var(--fgColor-muted);
+  font-style: italic;
+  margin-bottom: var(--base-size-8, 8px);
+}
+
+/* Replay vs original diff */
+.trace-replay-diff {
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+}
+.trace-diff-line {
+  display: flex;
+  gap: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0 4px;
+}
+.trace-diff-sign {
+  flex-shrink: 0;
+  user-select: none;
+  width: 1ch;
+}
+.trace-diff-add {
+  background: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15));
+  color: var(--fgColor-default);
+}
+.trace-diff-del {
+  background: var(--bgColor-danger-muted, rgba(207, 34, 46, 0.1));
+  color: var(--fgColor-muted);
+  text-decoration: line-through;
+}
+
 /* Failed spans: red name, error tag, and the expanded error message */
 .trace-span-failed {
   color: var(--fgColor-danger);
@@ -418,7 +514,8 @@
 }
 .trace-payload-list > .trace-empty,
 .trace-payload-list > .trace-payload-preview,
-.trace-payload-list > .trace-section-label {
+.trace-payload-list > .trace-section-label,
+.trace-payload-list > .trace-empty {
   grid-column: 1 / -1;
 }
 /* Role variants for payload tags, following Primer Label colors */

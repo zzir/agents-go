@@ -374,6 +374,15 @@ a:hover {
     color: var(--fgColor-muted);
 }
 
+/* A long model@base_url line truncates with an ellipsis instead of wrapping —
+   the row height stays stable however narrow the panel gets. */
+.resource-row-meta > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .resource-row-sub {
     margin-top: 4px;
     font-size: 11px;
@@ -394,27 +403,22 @@ a:hover {
     display: none;
 }
 
-.form-group > .FormControl,
-.advanced-section > .FormControl {
-    margin-bottom: var(--base-size-16);
-}
-
-.form-group > .FormControl:last-child,
-.advanced-section > .FormControl:last-child {
-    margin-bottom: 0;
-}
-
-.form-group {
-    margin-top: var(--base-size-24);
-    padding-top: var(--base-size-24);
-    border-top: 1px solid var(--borderColor-muted);
+/* Every direct child of a group gets breathing room, not just FormControls —
+   JSON fields, checkbox groups and standalone captions were rendering flush
+   against their neighbors. Adjacent margins collapse, so this composes with
+   the title's margin-bottom instead of stacking onto it. */
+.form-group > * + *,
+.advanced-section > * + * {
+    margin-top: var(--base-size-16);
 }
 
 .form-group-title {
-    font-size: var(--base-text-size-sm);
+    font-size: var(--base-text-size-xs);
     font-weight: 600;
-    color: var(--fgColor-default);
-    margin-bottom: var(--base-size-8);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fgColor-muted);
+    margin-bottom: var(--base-size-12);
 }
 
 /* Status row (dot + text + action) */
@@ -457,11 +461,12 @@ a:hover {
 
 /* Advanced disclosure */
 .advanced-toggle {
-    display: inline-flex;
+    display: flex;
+    width: 100%;
     align-items: center;
     gap: var(--base-size-4);
-    margin-top: var(--base-size-16);
-    padding: var(--base-size-4) 0;
+    margin-top: var(--base-size-28);
+    padding: var(--base-size-16) 0 var(--base-size-4);
     font-size: var(--base-text-size-xs);
     font-weight: 600;
     color: var(--fgColor-muted);
@@ -469,6 +474,7 @@ a:hover {
     user-select: none;
     background: none;
     border: none;
+    border-top: 1px solid var(--borderColor-muted);
 }
 
 .advanced-toggle:hover {

@@ -1,25 +1,26 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, TextInput, Textarea, Label, FormControl, Checkbox, SegmentedControl, Select, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Textarea, Label, FormControl, Checkbox, SegmentedControl, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
-import { fc } from '@/lib/form';
+import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { ChevronRightIcon } from '@primer/octicons-react';
 import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
+import { PROVIDERS, providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
 
 // The agent-config REST payload nests these scalar settings under JSON group
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
   provider: ['provider_type', 'auth_mode', 'api_key', 'base_url'],
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'plan_mode', 'todo_list'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
-  session: ['use_previous_response_id', 'prompt_id', 'prompt_version', 'history_limit'],
+  session: ['prompt_id', 'prompt_version', 'history_limit'],
   approval: ['approve_tools'],
-  compaction: ['compaction_enabled', 'compaction_threshold', 'compaction_window', 'compaction_model', 'compaction_prompt'],
+  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt'],
 };
 
 function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -54,6 +55,8 @@ interface AgentFormData {
   max_turns: number;
   handoff_description: string;
   disable_tool_choice_reset: boolean;
+  plan_mode: boolean;
+  todo_list: boolean;
   stop_at_tools: string;
   retry_enabled: boolean;
   retry_policy: string;
@@ -61,7 +64,6 @@ interface AgentFormData {
   guardrails: string;
   output_schema: string;
   error_handlers: string;
-  use_previous_response_id: boolean;
   prompt_id: string;
   prompt_version: string;
   history_limit: number;
@@ -71,7 +73,7 @@ interface AgentFormData {
   reasoning_item_id_policy: string;
   approve_tools: string;
   compaction_enabled: boolean;
-  compaction_threshold: number;
+  compaction_threshold_tokens: number;
   compaction_window: number;
   compaction_model: string;
   compaction_prompt: string;
@@ -92,7 +94,7 @@ interface Agent {
   name: string;
   model: string;
   // Provider settings are nested under the provider group in the API response.
-  provider?: { base_url?: string; auth_mode?: string };
+  provider?: { provider_type?: string; base_url?: string; auth_mode?: string };
   instructions: string;
   handoffs: string;
   tools: string;
@@ -110,9 +112,10 @@ interface AgentFormProps {
   mcpServers?: McpServer[];
   skills?: Skill[];
   allAgents?: Agent[];
+  providerTypes?: ProviderTypeInfo[];
 }
 
-function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, allAgents }: AgentFormProps) {
+function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, allAgents, providerTypes }: AgentFormProps) {
   const initHandoffs = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
   };
@@ -130,37 +133,62 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   const parseModelSettings = (): Record<string, unknown> => {
     try { return JSON.parse((initial && initial.model_settings) || '{}'); } catch { return {}; }
   };
-  const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown> };
+  const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
   const [form, setForm] = useState<AgentFormData>({
     name: '', instructions: '', model: 'gpt-5.5',
     provider_type: '', auth_mode: '', api_key: '', base_url: '',
     max_turns: 0, handoff_description: '',
-    disable_tool_choice_reset: false, stop_at_tools: '',
+    disable_tool_choice_reset: false, plan_mode: false, todo_list: false, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
     fallback_models: '',
     guardrails: '', output_schema: '', error_handlers: '',
-    use_previous_response_id: false,
     prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
     tool_not_found_behavior: '', reasoning_item_id_policy: '', approve_tools: '',
-    compaction_enabled: false, compaction_threshold: 0,
+    compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
     ...flattenConfig(initial as Record<string, unknown> | undefined),
   });
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
   const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
   const [extraBody, setExtraBody] = useState(initMs.extra_body ? JSON.stringify(initMs.extra_body) : '');
+  const [temperature, setTemperature] = useState(initMs.temperature !== undefined ? String(initMs.temperature) : '');
+  const [topP, setTopP] = useState(initMs.top_p !== undefined ? String(initMs.top_p) : '');
+  const [maxTokens, setMaxTokens] = useState(initMs.max_tokens !== undefined ? String(initMs.max_tokens) : '');
   // model_settings keys the form has no controls for (prompt_cache_options,
   // verbosity, metadata, …) can be set through the API. The save handler
   // rebuilds model_settings from the form, so anything not carried over here
   // would be silently dropped on the next UI save.
-  const msFormKeys = ['reasoning', 'service_tier', 'extra_body'];
+  const msFormKeys = ['reasoning', 'service_tier', 'extra_body', 'temperature', 'top_p', 'max_tokens'];
   const preservedMs = Object.fromEntries(Object.entries(parseModelSettings()).filter(([k]) => !msFormKeys.includes(k)));
   const [selectedHandoffs, setSelectedHandoffs] = useState<(string | number)[]>(initHandoffs);
   const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
+  // Wording comes from the static table; machine facts (auth modes,
+  // unsupported features) come from the server's provider registry, with a
+  // static assumption as the pre-fetch fallback so controls don't flicker.
+  const meta = providerMeta(form.provider_type);
+  const authModesFor = (value: string | undefined): string[] =>
+    providerFacts(providerTypes, value)?.auth_modes ?? (providerMeta(value).type === 'openai' ? ['chatgpt_login'] : []);
+  const supportsChatGPT = authModesFor(form.provider_type).includes('chatgpt_login');
+  const unsupported = providerFacts(providerTypes, form.provider_type)?.unsupported ?? [];
+  // A masked key or a base URL saved under a DIFFERENT backend is the trap to
+  // warn about: the field looks configured, but the credential belongs to the
+  // provider this agent was switched away from.
+  // The loaded config is the NESTED REST shape — provider_type lives under
+  // the provider group, so it must be read through flattenConfig, and both
+  // sides go through providerMeta so an explicitly stored "openai" compares
+  // equal to the form's '' default.
+  const initialProvider = (flattenConfig(initial as Record<string, unknown> | undefined).provider_type as string) || '';
+  const providerChanged = initial !== undefined && providerMeta(form.provider_type).type !== providerMeta(initialProvider).type;
+  const staleKeyHint = providerChanged && form.api_key === '********'
+    ? 'This stored key was saved for the previously selected provider — replace it, clear it, or switch back'
+    : 'Stored keys show as ******** — leave the mask to keep the current key, clear the field to remove it';
+  const unsupportedHint = unsupported.length > 0
+    ? `Fail loudly on this provider — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
+    : 'Which backend this agent calls';
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id);
   const toggleHandoff = (id: string | number) => {
     setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -203,32 +231,25 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   return (
     <Stack gap="normal">
       {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
-      {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} placeholder="gpt-5.5" block />)}
-      {fc('Reasoning effort', <Select value={reasoningEffort} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReasoningEffort(e.target.value)}>
-        <Select.Option value="">Not set</Select.Option>
-        <Select.Option value="low">Low</Select.Option>
-        <Select.Option value="medium">Medium</Select.Option>
-        <Select.Option value="high">High</Select.Option>
-        <Select.Option value="xhigh">Extra High</Select.Option>
-      </Select>)}
-      {fc('Service tier', <Select value={serviceTier} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setServiceTier(e.target.value)}>
-        <Select.Option value="">Not set</Select.Option>
-        <Select.Option value="auto">Auto</Select.Option>
-        <Select.Option value="default">Default</Select.Option>
-        <Select.Option value="flex">Flex</Select.Option>
-        <Select.Option value="priority">Priority</Select.Option>
-      </Select>)}
 
-      <JsonField label="Extra body (JSON)" value={extraBody} onChange={setExtraBody} placeholder='{"enable_thinking": true, "thinking_budget": 1024}' caption="Provider-specific parameters injected into every API request" />
-      {Object.keys(preservedMs).length > 0 && (
-        <span style={{ color: 'var(--fgColor-muted)', fontSize: 'var(--text-body-size-small)' }}>
-          Set via API, preserved on save: {Object.keys(preservedMs).sort().join(', ')}
-        </span>
-      )}
-
+      {/* The backend comes first: it decides the model placeholder, the auth
+          modes, and which of the settings below even apply. */}
       <div className="form-group">
         <div className="form-group-title">Provider</div>
-        {fc('Auth mode', <SegmentedControl aria-label="Auth mode" size="small">
+        {seg('Backend', meta.value, PROVIDERS.map(p => [p.value, p.label] as const), v => {
+          // An auth mode the new backend doesn't offer is cleared so the save
+          // is not rejected for a control that is no longer shown. An
+          // untouched default model name follows the backend, a customized
+          // one is the user's and stays.
+          setForm(prev => {
+            const next = { ...prev, provider_type: v };
+            if (prev.auth_mode && !authModesFor(v).includes(prev.auth_mode)) next.auth_mode = '';
+            if (prev.model === providerMeta(prev.provider_type).defaultModel) next.model = providerMeta(v).defaultModel;
+            return next;
+          });
+        }, unsupportedHint)}
+
+        {supportsChatGPT && fc('Auth mode', <SegmentedControl aria-label="Auth mode" size="small">
           <SegmentedControl.Button
             selected={form.auth_mode !== 'chatgpt_login'}
             onClick={() => set('auth_mode', '')}
@@ -239,18 +260,67 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           >ChatGPT Subscribe</SegmentedControl.Button>
         </SegmentedControl>, 'Choose authentication method')}
 
-        {form.auth_mode !== 'chatgpt_login' && <>
-          {fc('API key', <TextInput value={form.api_key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('api_key', e.target.value)} placeholder="sk-..." type="password" block />, 'Stored keys show as ******** — leave the mask to keep the current key, clear the field to remove it')}
-          {fc('Base URL', <TextInput value={form.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('base_url', e.target.value)} placeholder="https://api.openai.com/v1 (leave empty for default)" block />)}
+        {(!supportsChatGPT || form.auth_mode !== 'chatgpt_login') && <>
+          {fc('API key', <TextInput value={form.api_key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('api_key', e.target.value)} placeholder={meta.keyPlaceholder} type="password" block />, staleKeyHint)}
+          {fc('Base URL', <TextInput value={form.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('base_url', e.target.value)} placeholder={meta.baseURLPlaceholder} block />, providerChanged && form.base_url ? 'Saved for the previously selected provider — make sure it applies to this backend' : undefined)}
         </>}
 
-        {form.auth_mode === 'chatgpt_login' &&
+        {supportsChatGPT && form.auth_mode === 'chatgpt_login' &&
           fc('Base URL override', <TextInput value={form.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('base_url', e.target.value)} placeholder="Leave empty for ChatGPT default" block />, 'Only change if you know what you\'re doing')
         }
       </div>
 
       <div className="form-group">
-        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={5} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
+        <div className="form-group-title">Model</div>
+        {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} placeholder={meta.modelPlaceholder} block />)}
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            {fc('Temperature', <TextInput type="number" step={0.1} min={0} max={2} value={temperature} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTemperature(e.target.value)} block />)}
+          </div>
+          <div style={{ flex: 1 }}>
+            {fc('Top-p', <TextInput type="number" step={0.05} min={0} max={1} value={topP} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTopP(e.target.value)} block />)}
+          </div>
+          <div style={{ flex: 1 }}>
+            {fc('Max tokens', <TextInput type="number" step={1} min={1} value={maxTokens} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxTokens(e.target.value)} block />)}
+          </div>
+        </div>
+        {/* A stored effort the current backend doesn't offer stays visible as
+            its own extra option — never a hidden value the form would drop. */}
+        {seg('Reasoning effort',
+          reasoningEffort,
+          meta.effortOptions.some(([v]) => v === reasoningEffort) ? meta.effortOptions : [...meta.effortOptions, [reasoningEffort, reasoningEffort] as const],
+          setReasoningEffort, meta.effortHint)}
+        {/* Hidden when the backend has no service tiers AND nothing is stored:
+            a control that can only produce a failing value is noise. A stored
+            value stays visible with its warning, so it is never a hidden trap. */}
+        {(serviceTier !== '' || !unsupported.includes('service_tier')) &&
+          seg('Service tier', serviceTier, [['', 'Not set'], ['auto', 'Auto'], ['default', 'Default'], ['flex', 'Flex'], ['priority', 'Priority']], setServiceTier,
+            unsupported.includes('service_tier') ? 'Not supported by this provider — a set value fails runs' : undefined)}
+        <JsonField label="Extra body (JSON)" value={extraBody} onChange={setExtraBody} placeholder='{"enable_thinking": true, "thinking_budget": 1024}' caption="Provider-specific parameters injected into every API request" />
+        {Object.keys(preservedMs).length > 0 && (
+          <span style={{ color: 'var(--fgColor-muted)', fontSize: 'var(--text-body-size-small)' }}>
+            Set via API, preserved on save: {Object.keys(preservedMs).sort().join(', ')}
+          </span>
+        )}
+      </div>
+
+      <div className="form-group">
+        <div className="form-group-title">Instructions</div>
+        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={5} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
+      </div>
+
+      <div className="form-group">
+        <div className="form-group-title">Workflow</div>
+        <FormControl>
+          <Checkbox checked={form.plan_mode || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('plan_mode', e.target.checked)} />
+          <FormControl.Label>Plan mode</FormControl.Label>
+          <FormControl.Caption>Each run starts read-only: the agent explores, submits a plan for your approval, and only an approved plan unlocks the full toolset</FormControl.Caption>
+        </FormControl>
+        <FormControl>
+          <Checkbox checked={form.todo_list || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('todo_list', e.target.checked)} />
+          <FormControl.Label>Todo list</FormControl.Label>
+          <FormControl.Caption>The agent keeps a working todo list; the chat renders it as a live checklist</FormControl.Caption>
+        </FormControl>
       </div>
 
       {mcpServers && mcpServers.length > 0 && <div className="form-group">
@@ -315,6 +385,40 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         <div className="FormControl-caption">Select which installed skills this agent can use</div>
       </div>}
 
+      <div className="form-group">
+        <div className="form-group-title">Handoffs</div>
+        {handoffTargets.length > 0 && <>
+          <div className="form-checkbox-group">
+            {handoffTargets.map(a => (
+              <FormControl key={a.id}>
+                <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
+                <FormControl.Label>{a.name}</FormControl.Label>
+                <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
+              </FormControl>
+            ))}
+          </div>
+          <div className="FormControl-caption">Select which agents this agent can hand off to</div>
+        </>}
+        {handoffTargets.length === 0 && <div className="FormControl-caption">Create other agents to enable handoffs</div>}
+        {seg('Handoff input filter', form.handoff_input_filter || '', [['', 'None (default)'], ['nest_history', 'Nest handoff history']], v => set('handoff_input_filter', v))}
+        {fc('Handoff description', <TextInput value={form.handoff_description || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('handoff_description', e.target.value)} placeholder="Description when this agent is a handoff target" block />)}
+      </div>
+
+      <div className="form-group">
+        <div className="form-group-title">Compaction</div>
+        <FormControl>
+          <Checkbox checked={form.compaction_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_enabled', e.target.checked)} />
+          <FormControl.Label>Enable compaction</FormControl.Label>
+          <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
+        </FormControl>
+        {form.compaction_enabled && <>
+          {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
+          {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
+          {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
+          {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={3} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
+        </>}
+      </div>
+
       <button type="button" className="advanced-toggle" aria-expanded={showAdvanced} onClick={() => setShowAdvanced(!showAdvanced)}>
         <ChevronRightIcon size={12} />
         Advanced
@@ -326,14 +430,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
           {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
           {fc('Stop at tools', <TextInput value={form.stop_at_tools || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('stop_at_tools', e.target.value)} placeholder="tool1, tool2" block />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
-          {fc('Tool not found behavior', <Select value={form.tool_not_found_behavior || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('tool_not_found_behavior', e.target.value)}>
-            <Select.Option value="">Error (default)</Select.Option>
-            <Select.Option value="return_to_model">Return to Model</Select.Option>
-          </Select>)}
-          {fc('Reasoning item ID policy', <Select value={form.reasoning_item_id_policy || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('reasoning_item_id_policy', e.target.value)}>
-            <Select.Option value="">Preserve (default)</Select.Option>
-            <Select.Option value="omit">Omit</Select.Option>
-          </Select>, 'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
+          {seg('Tool not found behavior', form.tool_not_found_behavior || '', [['', 'Error (default)'], ['return_to_model', 'Return to model']], v => set('tool_not_found_behavior', v))}
+          {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
+            'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
           <div className="form-checkbox-group">
             <FormControl>
               <Checkbox checked={form.disable_tool_choice_reset || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_tool_choice_reset', e.target.checked)} />
@@ -341,28 +440,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
               <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
             </FormControl>
           </div>
-        </div>
-
-        <div className="form-group">
-          <div className="form-group-title">Handoffs</div>
-          {handoffTargets.length > 0 && <>
-            <div className="form-checkbox-group">
-              {handoffTargets.map(a => (
-                <FormControl key={a.id}>
-                  <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
-                  <FormControl.Label>{a.name}</FormControl.Label>
-                  <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
-                </FormControl>
-              ))}
-            </div>
-            <div className="FormControl-caption">Select which agents this agent can hand off to</div>
-          </>}
-          {handoffTargets.length === 0 && <div className="FormControl-caption">Create other agents to enable handoffs</div>}
-          {fc('Handoff input filter', <Select value={form.handoff_input_filter || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('handoff_input_filter', e.target.value)}>
-            <Select.Option value="">None (default)</Select.Option>
-            <Select.Option value="nest_history">Nest Handoff History</Select.Option>
-          </Select>)}
-          {fc('Handoff description', <TextInput value={form.handoff_description || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('handoff_description', e.target.value)} placeholder="Description when this agent is a handoff target" block />)}
         </div>
 
         <div className="form-group">
@@ -374,7 +451,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           </FormControl>
           {form.retry_enabled &&
             <JsonField label="Retry policy (JSON)" value={form.retry_policy || ''} onChange={v => set('retry_policy', v)} placeholder='{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}' caption="Empty = SDK defaults" />}
-          <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-...","base_url":""}]' caption="JSON array of {model, api_key, base_url}" />
+          <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-..."},{"model":"claude-opus-5","provider_type":"anthropic","api_key":"sk-ant-..."}]' caption='JSON array of {model, provider_type, api_key, base_url} — provider_type is "openai" (default) or "anthropic"' />
         </div>
 
         <div className="form-group">
@@ -387,21 +464,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         <div className="form-group">
           <div className="form-group-title">Approvals</div>
           <JsonField label="Approve tools (HITL)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["tool_name1","tool_name2"]' caption='JSON array of tool names requiring human approval before execution. Use ["*"] for all tools.' />
-        </div>
-
-        <div className="form-group">
-          <div className="form-group-title">Compaction</div>
-          <FormControl>
-            <Checkbox checked={form.compaction_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_enabled', e.target.checked)} />
-            <FormControl.Label>Enable compaction</FormControl.Label>
-            <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
-          </FormControl>
-          {form.compaction_enabled && <>
-            {fc('Threshold', <TextInput block type="number" min={0} value={String(form.compaction_threshold || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold', parseInt(e.target.value) || 0)} />, 'Item count that triggers compaction (0 = default 20)')}
-            {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
-            {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
-            {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={3} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
-          </>}
         </div>
 
         <div className="form-group">
@@ -420,6 +482,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           if (reasoningEffort) reasoning.effort = reasoningEffort; else delete reasoning.effort;
           if (Object.keys(reasoning).length > 0) ms.reasoning = reasoning;
           if (serviceTier) ms.service_tier = serviceTier;
+          for (const [label, raw, key] of [['Temperature', temperature, 'temperature'], ['Top-p', topP, 'top_p'], ['Max tokens', maxTokens, 'max_tokens']] as const) {
+            if (raw.trim() === '') continue;
+            const n = Number(raw);
+            if (Number.isNaN(n)) { toast.error(label + ' is not a number — fix or clear it before saving'); return; }
+            ms[key] = n;
+          }
           if (extraBody.trim()) {
             // Block the save on malformed JSON — silently dropping the field
             // would lose the user's input without any feedback.
@@ -427,10 +495,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
             catch { toast.error('Extra body is not valid JSON — fix or clear it before saving'); return; }
           }
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
-          // use_previous_response_id is rejected by the server (incompatible
-          // with server-side session storage); always send false so legacy
-          // configs that still carry the flag are cleaned up on their next save.
-          const flatPayload = { ...form, use_previous_response_id: false, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
+          // auth_mode is normalized at save too, not only in the provider
+          // onChange: a legacy row with an auth mode its backend doesn't offer
+          // would otherwise be rejected by a control the form no longer shows.
+          const auth_mode = form.auth_mode && authModesFor(form.provider_type).includes(form.auth_mode) ? form.auth_mode : '';
+          const flatPayload = { ...form, auth_mode, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
           onSave(nestConfig(flatPayload) as unknown as AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string });
         }} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
@@ -445,6 +514,7 @@ export function AgentConfigPanel() {
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
+  const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
   const [signingIn, setSigningIn] = useState<Record<string | number, boolean>>({});
   const pollRef = useRef<Record<string | number, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>({});
 
@@ -530,8 +600,8 @@ export function AgentConfigPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
 
-      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} />}
-      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} />}
+      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} />}
+      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} />}
 
       {!adding && !editing && <div className="Box">
         {agents.map(a => {
@@ -539,12 +609,14 @@ export function AgentConfigPanel() {
           const loggedIn = isChatGPT && !!a.chatgpt_logged_in;
           const mcp = mcpCount(a.tools);
           const skl = skillCount(a.skills);
+          const pmeta = providerMeta(a.provider?.provider_type);
           return (
             <div key={a.id} className="Box-row">
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   {isChatGPT && <span className="form-status-dot" style={{ background: loggedIn ? 'var(--fgColor-success)' : 'var(--fgColor-muted)' }} />}
                   <span className="resource-row-title">{a.name}</span>
+                  <Label variant={pmeta.badgeVariant}>{pmeta.badge}</Label>
                   {isChatGPT && <Label variant={loggedIn ? 'success' : 'secondary'}>ChatGPT</Label>}
                   {mcp > 0 && <Label variant="accent">{'MCP·' + mcp}</Label>}
                   {skl > 0 && <Label variant="done">{'Skills·' + skl}</Label>}

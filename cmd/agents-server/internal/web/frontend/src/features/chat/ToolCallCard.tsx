@@ -1,5 +1,5 @@
 import { Button, Label } from '@primer/react';
-import { ToolsIcon, StackIcon } from '@primer/octicons-react';
+import { ToolsIcon, StackIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
@@ -21,12 +21,18 @@ interface ToolCallCardProps {
   onReject?: (id: string) => void;
 }
 
-type ArgBody = { kind: 'patch' | 'command' | 'json'; text: string };
+interface TodoRow { content: string; status: string }
+
+type ArgBody =
+  | { kind: 'patch' | 'command' | 'json' | 'markdown'; text: string }
+  | { kind: 'todos'; text: string; todos: TodoRow[] };
 
 // primaryArg picks the meaningful content to show for a tool call. For the tools
 // an operator actually reviews at approval time we surface the raw field with
 // real newlines instead of an escaped-JSON blob: apply_patch → the patch,
-// exec_command → the shell command. Everything else falls back to pretty JSON.
+// exec_command → the shell command, submit_plan → the plan as markdown (its
+// approval card IS the plan review), todo_write → a checklist. Everything else
+// falls back to pretty JSON.
 function primaryArg(toolName: string, args: string): ArgBody {
   try {
     const parsed = JSON.parse(args);
@@ -36,6 +42,15 @@ function primaryArg(toolName: string, args: string): ArgBody {
     if (toolName === 'exec_command' && typeof parsed.cmd === 'string') {
       const cmd = parsed.workdir ? `cd ${parsed.workdir} && ${parsed.cmd}` : parsed.cmd;
       return { kind: 'command', text: cmd };
+    }
+    if (toolName === 'submit_plan' && typeof parsed.plan === 'string') {
+      return { kind: 'markdown', text: parsed.plan };
+    }
+    if (toolName === 'todo_write' && Array.isArray(parsed.todos)) {
+      const todos = (parsed.todos as Array<{ content?: string; status?: string }>)
+        .filter(td => td && typeof td.content === 'string')
+        .map(td => ({ content: td.content as string, status: td.status || 'pending' }));
+      return { kind: 'todos', text: '', todos };
     }
     return { kind: 'json', text: JSON.stringify(parsed, null, 2) };
   } catch {
@@ -83,6 +98,13 @@ function argSummary(toolName: string, args: string): { text: string; mono: boole
         return { text: typeof p.path === 'string' && p.path ? p.path : 'working dir', mono: true };
       case 'brave_search':
         return typeof p.query === 'string' && p.query ? { text: p.query, mono: false } : null;
+      case 'todo_write': {
+        const todos = Array.isArray(p.todos) ? p.todos : [];
+        const done = todos.filter((td: { status?: string }) => td?.status === 'completed').length;
+        return todos.length ? { text: `${done}/${todos.length} done`, mono: false } : null;
+      }
+      case 'submit_plan':
+        return typeof p.plan === 'string' && p.plan ? { text: p.plan.split('\n')[0], mono: false } : null;
       case 'multi_tool_use.parallel': {
         const uses = Array.isArray(p.tool_uses) ? p.tool_uses : [];
         const names = uses
@@ -170,6 +192,9 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
   // it uses the same hljs theme (and dark mode) as every other code block.
   const diffText = body.kind === 'patch' ? diffPreview(body.text, multiFile) : '';
   const diffHtml = useAsyncMarkdown(diffText ? '```diff\n' + diffText + '\n```' : '');
+  // A submitted plan is markdown by instruction; the approval card is the
+  // review surface, so it renders like an answer, not like JSON.
+  const planHtml = useAsyncMarkdown(body.kind === 'markdown' ? body.text : '');
 
   const pendingApproval = !!needs_approval && !status;
   const isRunning = !!live && !pendingApproval && !output && status !== 'completed' && status !== 'rejected';
@@ -221,10 +246,28 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       variant="done"
       label={headerLabel}
       forceOpen={pendingApproval || (!output && !!progress) || undefined}
+      // The checklist IS the information; a collapsed "3/5 done" hides the
+      // items the user tracks progress by.
+      defaultOpen={body.kind === 'todos'}
       className="ToolCallCard"
     >
       {body.kind === 'patch' ? (
         <div className="ToolCallCard-diff markdown-body" dangerouslySetInnerHTML={{ __html: diffHtml }} />
+      ) : body.kind === 'markdown' ? (
+        <div className="ToolCallCard-plan markdown-body" dangerouslySetInnerHTML={{ __html: planHtml }} />
+      ) : body.kind === 'todos' ? (
+        <ul className="ToolCallCard-todos">
+          {body.todos.map((td, i) => (
+            <li key={i} className={'ToolCallCard-todo ToolCallCard-todo--' + td.status}>
+              <span className="ToolCallCard-todo-icon">
+                {td.status === 'completed' ? <CheckIcon size={14} />
+                  : td.status === 'in_progress' ? <DotFillIcon size={14} />
+                  : <CircleIcon size={12} />}
+              </span>
+              {td.content}
+            </li>
+          ))}
+        </ul>
       ) : (
         <pre>{body.text}</pre>
       )}
@@ -265,7 +308,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
             </>
           ) : (
             <Button size="small" variant="primary" onClick={() => onApprove && onApprove(tool_call_id, 'once')}>
-              Approve
+              {tool_name === 'submit_plan' ? 'Approve plan' : 'Approve'}
             </Button>
           )}
           <Button size="small" variant="danger" onClick={() => onReject && onReject(tool_call_id)}>
