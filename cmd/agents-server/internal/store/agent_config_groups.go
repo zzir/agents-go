@@ -35,6 +35,13 @@ type BehaviorGroup struct {
 	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
 	// turns) or "omit" (strip them).
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
+	// PlanMode has each run start read-only: the agent explores, submits a
+	// plan through submit_plan (an approval pause — the review), and only an
+	// approved plan unlocks the full toolset for the rest of the run.
+	PlanMode bool `json:"plan_mode,omitempty"`
+	// TodoList gives the agent a todo_write tool and a preamble telling it to
+	// keep a working list; the chat renders the calls as a checklist.
+	TodoList bool `json:"todo_list,omitempty"`
 }
 
 // ResilienceGroup holds model retry/fallback settings.
@@ -53,11 +60,16 @@ type GuardrailGroup struct {
 	OutputSchema string `json:"output_schema,omitempty"`
 }
 
-// SessionGroup holds session/prompt-chaining settings.
+// SessionGroup holds session/prompt settings.
+//
+// use_previous_response_id is deliberately ABSENT: agents-server always
+// persists history in a server-side session, which the SDK refuses to combine
+// with previous-response chaining. The field spent its life as a dead switch
+// (stored, surfaced, then rejected at build); a legacy row whose session JSON
+// still carries the key simply decodes past it.
 type SessionGroup struct {
-	UsePreviousResponseID bool   `json:"use_previous_response_id,omitempty"`
-	PromptID              string `json:"prompt_id,omitempty"`
-	PromptVersion         string `json:"prompt_version,omitempty"`
+	PromptID      string `json:"prompt_id,omitempty"`
+	PromptVersion string `json:"prompt_version,omitempty"`
 	// HistoryLimit caps how many recent session items each turn loads (0 = all).
 	HistoryLimit int `json:"history_limit,omitempty"`
 }
@@ -69,8 +81,12 @@ type ApprovalGroup struct {
 
 // CompactionGroup holds server-side session-compaction settings.
 type CompactionGroup struct {
-	Enabled   bool   `json:"compaction_enabled,omitempty"`
-	Threshold int    `json:"compaction_threshold,omitempty"`
+	Enabled bool `json:"compaction_enabled,omitempty"`
+	// Threshold is in TOKENS. The key is compaction_threshold_tokens — a NEW
+	// name, deliberately: the old compaction_threshold counted ENTRIES, and
+	// reinterpreting a stored 20 as 20 tokens would compact on every turn.
+	// Legacy rows decode past the old key and fall back to the default.
+	Threshold int    `json:"compaction_threshold_tokens,omitempty"`
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`
 	Prompt    string `json:"compaction_prompt,omitempty"`

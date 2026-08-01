@@ -57,8 +57,8 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "model is required")
 		return false
 	}
-	if ac.Session.UsePreviousResponseID {
-		badRequest(c, "use_previous_response_id is not supported: agents-server always persists conversation history in a server-side session, which cannot be combined with previous-response chaining — disable use_previous_response_id")
+	if err := bridge.ValidateProviderSelection(ac); err != nil {
+		badRequest(c, err.Error())
 		return false
 	}
 	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.ToolsJSON); err != nil {
@@ -106,7 +106,7 @@ func (h *AgentConfigHandler) List(c *gin.Context) {
 // Create persists a new agent configuration from the request body.
 //
 //	@Summary		Create agent
-//	@Description	Secret fields (api_key, fallback_models[].api_key) are write-only: responses mask them with ********; sending the mask back keeps the stored value, "" clears it. use_previous_response_id is rejected (incompatible with the server-side session store), as are tool selections whose statically known tool names would collide.
+//	@Description	Secret fields (api_key, fallback_models[].api_key) are write-only: responses mask them with ********; sending the mask back keeps the stored value, "" clears it. Tool selections whose statically known tool names would collide are rejected.
 //	@Tags			agents
 //	@Accept			json
 //	@Produce		json
@@ -166,7 +166,7 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 // Masked secret fields keep their stored values.
 //
 //	@Summary		Update agent
-//	@Description	Full replace. Secret fields are write-only: send back the ******** mask to keep the stored value, "" to clear it. use_previous_response_id is rejected (incompatible with the server-side session store), as are tool selections whose statically known tool names would collide.
+//	@Description	Full replace. Secret fields are write-only: send back the ******** mask to keep the stored value, "" to clear it; a mask kept across a provider_type or base_url change is rejected (the stored key belongs to the previous destination). Tool selections whose statically known tool names would collide are rejected.
 //	@Tags			agents
 //	@Accept			json
 //	@Produce		json
@@ -199,15 +199,36 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	var prevKey, prevFallback string
+	var prevKey, prevFallback, prevProvider, prevBaseURL string
 	if prev != nil {
 		prevKey, prevFallback = prev.Provider.APIKey, prev.Resilience.FallbackModels
+		prevProvider, prevBaseURL = prev.Provider.ProviderType, prev.Provider.BaseURL
+	}
+	// A masked key means "keep the stored one" — which only makes sense for
+	// the DESTINATION it was stored for. Restoring it after the provider or
+	// the endpoint changed would send one backend's real credential to
+	// another (two OpenAI-compatible endpoints differ only in base_url);
+	// refuse instead.
+	if ac.Provider.APIKey == SecretMask && prevKey != "" &&
+		credentialTargetChanged(prevProvider, prevBaseURL, ac.Provider.ProviderType, ac.Provider.BaseURL) {
+		badRequest(c, "provider_type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
+		return
 	}
 	ac.Provider.APIKey = resolveSecret(ac.Provider.APIKey, prevKey)
 	ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prevFallback)
 	if err := h.store.Update(ctx, id, &ac); err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
+	}
+	// Update excludes the chatgpt_token column, so a config that moves OFF
+	// chatgpt_login would otherwise keep a stranded token the UI can no longer
+	// revoke (the disconnect button renders for chatgpt_login agents only).
+	// Clearing an already-empty token is a no-op.
+	if ac.Provider.AuthMode != "chatgpt_login" {
+		if err := h.store.ClearChatGPTToken(ctx, id); err != nil {
+			internalError(c, err)
+			return
+		}
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {

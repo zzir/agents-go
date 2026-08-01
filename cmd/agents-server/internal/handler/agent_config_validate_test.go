@@ -68,35 +68,24 @@ func TestAgentConfigRejectsEmptyModel(t *testing.T) {
 	}
 }
 
-// use_previous_response_id cannot be combined with the server's always-on
-// session persistence, so saving it is rejected with a message that names the
-// field — on create and on update.
-func TestAgentConfigRejectsUsePreviousResponseID(t *testing.T) {
+// use_previous_response_id was removed end to end; a client still sending the
+// stale key is simply ignored (unknown JSON field), not rejected — legacy
+// callers keep working.
+func TestAgentConfigIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 	engine, _ := newAgentEngine(t)
 
-	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o","session":{"use_previous_response_id":true}}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("create: got %d, want 400 (body %s)", w.Code, w.Body.String())
-	}
-	if msg := errMessage(t, w.Body.Bytes()); !strings.Contains(msg, "use_previous_response_id") {
-		t.Errorf("error should name the field: %q", msg)
-	}
-
-	// A clean create then an update flipping the flag on: also rejected.
-	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o"}`)
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o","session":{"use_previous_response_id":true,"history_limit":3}}`)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("create: got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("create with stale key: got %d, want 201 (body %s)", w.Code, w.Body.String())
 	}
 	var created struct {
-		ID string `json:"id"`
+		Session struct {
+			HistoryLimit int `json:"history_limit"`
+		} `json:"session"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a","model":"gpt-4o","session":{"use_previous_response_id":true}}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("update: got %d, want 400 (body %s)", w.Code, w.Body.String())
-	}
-	if msg := errMessage(t, w.Body.Bytes()); !strings.Contains(msg, "use_previous_response_id") {
-		t.Errorf("error should name the field: %q", msg)
+	if created.Session.HistoryLimit != 3 {
+		t.Errorf("history_limit = %d, want 3 — the rest of the session group must still bind", created.Session.HistoryLimit)
 	}
 }
 

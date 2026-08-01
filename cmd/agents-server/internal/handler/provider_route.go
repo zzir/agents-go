@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -41,9 +42,26 @@ func (h *ProviderRouteHandler) List(c *gin.Context) {
 }
 
 type providerRouteReq struct {
-	Prefix  string `json:"prefix"`
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
+	Prefix string `json:"prefix"`
+	// ProviderType selects the backend ("openai" / "anthropic"); empty is openai.
+	ProviderType string `json:"provider_type"`
+	APIKey       string `json:"api_key"`
+	BaseURL      string `json:"base_url"`
+}
+
+// validate rejects a structurally bad route request. The provider check backs
+// the same set the bridge builds from, so a bad value fails at save time, not
+// as a mystery run on the wrong backend.
+func (req *providerRouteReq) validate(c *gin.Context) bool {
+	if req.Prefix == "" {
+		badRequest(c, "prefix is required")
+		return false
+	}
+	if err := bridge.ValidateProviderType(req.ProviderType); err != nil {
+		badRequest(c, "provider_type: "+err.Error())
+		return false
+	}
+	return true
 }
 
 // Get responds with the provider route identified by the id path parameter,
@@ -87,14 +105,14 @@ func (h *ProviderRouteHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if req.Prefix == "" {
-		badRequest(c, "prefix is required")
+	if !req.validate(c) {
 		return
 	}
 	pr := &store.ProviderRoute{
-		Prefix:  req.Prefix,
-		APIKey:  resolveSecret(req.APIKey, ""),
-		BaseURL: req.BaseURL,
+		Prefix:       req.Prefix,
+		ProviderType: req.ProviderType,
+		APIKey:       resolveSecret(req.APIKey, ""),
+		BaseURL:      req.BaseURL,
 	}
 	if err := h.store.Create(c.Request.Context(), pr); err != nil {
 		saveError(c, err) // duplicate prefix -> 409
@@ -126,8 +144,7 @@ func (h *ProviderRouteHandler) Update(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if req.Prefix == "" {
-		badRequest(c, "prefix is required")
+	if !req.validate(c) {
 		return
 	}
 	ctx := c.Request.Context()
@@ -140,14 +157,23 @@ func (h *ProviderRouteHandler) Update(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	var prevKey string
+	var prevKey, prevProvider, prevBaseURL string
 	if prev != nil {
-		prevKey = prev.APIKey
+		prevKey, prevProvider, prevBaseURL = prev.APIKey, prev.ProviderType, prev.BaseURL
+	}
+	// Same rule as the agent handler: a masked key only round-trips to the
+	// destination it was stored for — a changed provider OR endpoint would
+	// send the previous backend's real credential to another.
+	if req.APIKey == SecretMask && prevKey != "" &&
+		credentialTargetChanged(prevProvider, prevBaseURL, req.ProviderType, req.BaseURL) {
+		badRequest(c, "provider_type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
+		return
 	}
 	pr := &store.ProviderRoute{
-		Prefix:  req.Prefix,
-		APIKey:  resolveSecret(req.APIKey, prevKey),
-		BaseURL: req.BaseURL,
+		Prefix:       req.Prefix,
+		ProviderType: req.ProviderType,
+		APIKey:       resolveSecret(req.APIKey, prevKey),
+		BaseURL:      req.BaseURL,
 	}
 	if err := h.store.Update(ctx, id, pr); err != nil {
 		saveError(c, err) // duplicate prefix -> 409, not-found -> 404

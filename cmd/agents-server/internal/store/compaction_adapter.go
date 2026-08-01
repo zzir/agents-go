@@ -27,8 +27,14 @@ type CompactionNotifier struct {
 // them, so the agents-server UI can still show what was folded away.
 type CompactionAdapter struct {
 	*EntryStore
-	summaryModel  agents.Model
-	threshold     int
+	summaryModel agents.Model
+	// threshold is in TOKENS: a pass fires when the active history sizes past
+	// it. Entry counts said nothing about context pressure — twenty short
+	// turns are a few thousand tokens, twenty tool dumps can be a hundred
+	// times that.
+	threshold int
+	// windowSize stays in ENTRIES: the kept tail needs pairing-safe cutting,
+	// which is an entry-boundary concern, not a token one.
 	windowSize    int
 	summaryPrompt string
 	notify        CompactionNotifier
@@ -39,7 +45,8 @@ var (
 	_ agents.CompactionAware = (*CompactionAdapter)(nil)
 )
 
-// NewCompactionAdapter wraps store with soft-delete compaction.
+// NewCompactionAdapter wraps store with soft-delete compaction. threshold is
+// in tokens (0 = default 50k), windowSize in entries (0 = default 10).
 func NewCompactionAdapter(
 	store *EntryStore,
 	summaryModel agents.Model,
@@ -48,7 +55,7 @@ func NewCompactionAdapter(
 	notify CompactionNotifier,
 ) *CompactionAdapter {
 	if threshold <= 0 {
-		threshold = 20
+		threshold = 50000
 	}
 	if windowSize <= 0 {
 		windowSize = 10
@@ -79,7 +86,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
 	}
 
-	if !args.Force && len(active)-ca.windowSize < ca.threshold {
+	if !args.Force && activeTokens(active) < ca.threshold {
 		return nil
 	}
 
@@ -221,6 +228,35 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		ca.notify.OnDone(beforeCount, afterCount)
 	}
 	return nil
+}
+
+// activeTokens sizes the non-compacted history in tokens. The most recent
+// entry carrying real usage prices everything up to and including itself —
+// exactly one entry per response carries usage, and its call's input covered
+// the history before it (session_entry.go: "a reader estimating how large it
+// has grown reads the most recent one"). Entries after it, which no call has
+// priced yet, are byte-estimated. With no usage anywhere (a fresh or
+// never-successful session) everything is estimated.
+func activeTokens(active []entryRow) int {
+	est := compaction.CharEstimator{}
+	entries := make([]agents.SessionEntry, len(active))
+	last := -1
+	for i := range active {
+		if json.Unmarshal([]byte(active[i].Entry), &entries[i]) != nil {
+			continue
+		}
+		if entries[i].Usage != nil && entries[i].Usage.TotalTokens > 0 {
+			last = i
+		}
+	}
+	total := 0
+	if last >= 0 {
+		total = int(entries[last].Usage.TotalTokens)
+	}
+	for i := last + 1; i < len(entries); i++ {
+		total += est.Estimate(entries[i])
+	}
+	return total
 }
 
 // estimateFold sizes the context on either side of the pass, so the checkpoint

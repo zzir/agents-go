@@ -9,15 +9,16 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/openai/openai-go/v3/option"
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	openaiProvider "github.com/zzir/agents-go/models/openai"
 	"github.com/zzir/agents-go/skills"
 	"github.com/zzir/agents-go/tools/bravesearch"
 )
@@ -50,21 +51,43 @@ type AgentDeps struct {
 
 // BuildResult contains the built agent and its resolved model provider.
 type BuildResult struct {
-	Agent                 *agents.Agent
-	Provider              agents.ModelProvider
-	MaxTurns              int
-	UsePreviousResponseID bool
-	HandoffInputFilter    string
-	MaxToolConcurrency    int
-	ToolNotFoundBehavior  string
+	Agent                *agents.Agent
+	Provider             agents.ModelProvider
+	MaxTurns             int
+	HandoffInputFilter   string
+	MaxToolConcurrency   int
+	ToolNotFoundBehavior string
+	// ProviderType is the normalized backend selector this agent was built
+	// for ("openai" / "anthropic"). Handoff wiring uses it to refuse a
+	// keyless target that would silently inherit a different backend.
+	ProviderType string
 	// ErrorHandlers are the run-level recovery handlers built from the
 	// top-level config's error_handlers field (zero value when unconfigured).
-	ErrorHandlers       agents.RunErrorHandlers
-	CompactionEnabled   bool
+	ErrorHandlers     agents.RunErrorHandlers
+	CompactionEnabled bool
+	// CompactionThreshold is in tokens, CompactionWindow in entries — see
+	// store.NewCompactionAdapter for the defaults and the sizing rule.
 	CompactionThreshold int
 	CompactionWindow    int
-	CompactionModel     string
-	CompactionPrompt    string
+
+	// TraceIncludeSensitive gates whether generation spans record request and
+	// response content (the global trace_include_sensitive_data setting).
+	// nil = the SDK default (include). With it off, traces keep only
+	// timing/usage metadata — and the trace panel's Replay has nothing to
+	// seed from, by design.
+	TraceIncludeSensitive *bool
+
+	// PlanMode / TodoList mirror behavior.plan_mode / behavior.todo_list —
+	// whether the entry agent was rewritten for the plan / todo workflow.
+	PlanMode bool
+	TodoList bool
+	// PlanPhase is set when the agent was built in plan mode: the run starts
+	// read-only and the approved submit_plan unlocks it. A resume that
+	// already executed submit_plan in this run calls Unlock() so the rebuilt
+	// run continues executing instead of demanding a second plan.
+	PlanPhase        *middleware.PlanPhase
+	CompactionModel  string
+	CompactionPrompt string
 
 	// HistoryLimit caps how many recent session items each turn loads (0 = all).
 	HistoryLimit int
@@ -110,6 +133,9 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		cache: make(map[string]*BuildResult),
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
+	if err == nil {
+		result.TraceIncludeSensitive = sensitiveTraceSetting(ctx, deps.Settings)
+	}
 	if err == nil && !taskRun && deps.TaskManager != nil {
 		// The session id reaches the tools through the run context, not the
 		// model: otherwise one conversation could spawn tasks onto another.
@@ -140,14 +166,22 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		result.RunGuardrails = result.Agent.Guardrails
 		result.Agent.Guardrails = nil
 	}
-	// Safety net for configs saved before the API started rejecting the flag:
-	// agents-server always runs with a persisted session, and the SDK refuses
-	// Session + UsePreviousResponseID. Only the top-level config's flag is ever
-	// forwarded to RunOptions, so handoff targets are not checked here.
-	if result.UsePreviousResponseID {
-		return nil, fmt.Errorf(
-			"agent %q has use_previous_response_id enabled, which is incompatible with the server's session storage — edit the agent and disable use_previous_response_id",
-			result.Agent.Name)
+	// Plan/todo rewrite the ENTRY agent, at BUILD time rather than via
+	// RunOptions.Middlewares: the server resumes runs by deserializing state
+	// against a registry rebuilt from this function, and a rewrite that only
+	// happened inside Run would leave the rebuilt agent without
+	// submit_plan/todo_write — the approved call would fail with "tool not
+	// found on agent" (the same hazard buildAgentRegistry documents for
+	// sandbox tools). Last, so the gates also cover the task tools appended
+	// above. Task runs are excluded: nobody sits on the other side of a
+	// background task's plan review.
+	if !taskRun && result.Agent != nil {
+		if result.TodoList {
+			result.Agent = middleware.Todo{}.Apply(result.Agent)
+		}
+		if result.PlanMode {
+			result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
+		}
 	}
 	return result, nil
 }
@@ -195,7 +229,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		DisableToolChoiceReset: ac.Behavior.DisableToolChoiceReset,
 	}
 	result.MaxTurns = ac.Behavior.MaxTurns
-	result.UsePreviousResponseID = ac.Session.UsePreviousResponseID
+	result.PlanMode = ac.Behavior.PlanMode
+	result.TodoList = ac.Behavior.TodoList
 	result.HandoffInputFilter = ac.Behavior.HandoffInputFilter
 	result.MaxToolConcurrency = ac.Behavior.MaxToolConcurrency
 	result.ToolNotFoundBehavior = ac.Behavior.ToolNotFoundBehavior
@@ -267,10 +302,20 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	}
 
 	// Provider + retry/fallback decorators
+	if err := ValidateProviderSelection(ac); err != nil {
+		return nil, fmt.Errorf("agent %q: %w", ac.Name, err)
+	}
+	def, err := providerDefFor(ac.Provider.ProviderType)
+	if err != nil {
+		return nil, err // unreachable after validation; fail loud, never default
+	}
 	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
+	result.ProviderType = def.Type
 	apiKey := ac.Provider.APIKey
 	var chatgptCreds *ChatGPTCredentials
-	if ac.Provider.AuthMode == "chatgpt_login" && deps.ChatGPTOAuth != nil {
+	// Validation limits chatgpt_login to backends that list it, so no
+	// provider check is needed here.
+	if ac.Provider.AuthMode == authModeChatGPTLogin && deps.ChatGPTOAuth != nil {
 		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, configID); err == nil {
 			apiKey = creds.AccessToken
 			chatgptCreds = creds
@@ -280,19 +325,27 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		}
 	}
 	if apiKey == "" {
-		apiKey = settingValue(ctx, deps.Settings, "openai_api_key")
+		// The global per-provider fallback key (derived into
+		// handler.secretSettingKeys from the same registry).
+		apiKey = settingValue(ctx, deps.Settings, def.SettingKey)
 	}
 	if apiKey != "" {
 		ac.Provider.APIKey = apiKey
 		if chatgptCreds != nil && ac.Provider.BaseURL == "" {
 			ac.Provider.BaseURL = ChatGPTBaseURL
 		}
-		provider := buildProviderFromConfig(ac, chatgptCreds, proxyClient)
+		provider := def.BuildAgent(ac, chatgptCreds, proxyClient)
 		if ac.Resilience.RetryEnabled {
 			provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 		}
 		if len(spec.FallbackModels) > 0 {
-			provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient)
+			provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient, func(providerType string) string {
+				fdef, ferr := providerDefFor(providerType)
+				if ferr != nil {
+					return ""
+				}
+				return settingValue(ctx, deps.Settings, fdef.SettingKey)
+			})
 		}
 		result.Provider = provider
 	}
@@ -393,6 +446,19 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 				}
 				return nil, fmt.Errorf("agent %q handoff %q: %w", ac.Name, hID, err)
 			}
+			// A keyless target has no provider of its own and would resolve
+			// through the RUN's provider at handoff time. Same backend, that
+			// is credential sharing; a different backend would silently send
+			// the target's model name to the wrong API — refuse it instead.
+			if hResult.Provider == nil && hResult.ProviderType != result.ProviderType {
+				targetKey := hResult.ProviderType + "_api_key"
+				if tdef, terr := providerDefFor(hResult.ProviderType); terr == nil {
+					targetKey = tdef.SettingKey
+				}
+				return nil, fmt.Errorf(
+					"agent %q handoff %q: target uses provider_type %q but has no API key, so it would inherit this agent's %q provider — give the target its own api_key or set the global %s",
+					ac.Name, hID, hResult.ProviderType, result.ProviderType, targetKey)
+			}
 			if hResult.Provider != nil && hResult.Agent.Model != "" && hResult.Agent.ModelImpl == nil {
 				m, merr := hResult.Provider.GetModel(hResult.Agent.Model)
 				if merr != nil {
@@ -488,22 +554,25 @@ func settingValue(ctx context.Context, settings *store.SettingStore, key string)
 	return s.Value
 }
 
-func buildProviderFromConfig(ac *store.AgentConfig, chatgptCreds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
-	var opts []option.RequestOption
-	if ac.Provider.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(ac.Provider.APIKey))
+// sensitiveTraceSetting reads the global trace_include_sensitive_data setting
+// as the tri-state the SDK expects: nil (unset / unparsable) defers to the SDK
+// default of including everything; an explicit false keeps prompts, outputs
+// and tool arguments out of stored traces.
+func sensitiveTraceSetting(ctx context.Context, settings *store.SettingStore) *bool {
+	raw := strings.TrimSpace(settingValue(ctx, settings, "trace_include_sensitive_data"))
+	if raw == "" {
+		return nil
 	}
-	if ac.Provider.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(ac.Provider.BaseURL))
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
 	}
-	if chatgptCreds != nil {
-		opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(chatgptCreds.AccountID)))
-	}
-	if proxyClient != nil {
-		opts = append(opts, option.WithHTTPClient(proxyClient))
-	}
-	return openaiProvider.NewProvider(opts...)
+	return &v
 }
+
+// Provider selection — validation, construction, auth modes, setting keys —
+// lives in the registry (provider_registry.go); nothing here should switch on
+// a provider type.
 
 func newChatGPTMiddleware(accountID string) option.Middleware {
 	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
@@ -539,6 +608,10 @@ type fallbackEntry struct {
 	Model   string `json:"model"`
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url"`
+	// Provider selects the backend ("openai" / "anthropic"); empty is openai.
+	// The JSON key is provider_type, matching the agent config group and
+	// provider routes — one spelling across all three selector surfaces.
+	Provider string `json:"provider_type"`
 }
 
 // fixedModelProvider pins a provider to one model name, ignoring the name the
@@ -556,21 +629,24 @@ func (f fixedModelProvider) GetModel(string) (agents.Model, error) {
 
 // wrapFallbackProvider chains one fixed-model provider per decoded fallback
 // entry behind primary. The entries are decoded up front (DecodeAgentSpec), so
-// this is pure construction — callers gate it on len(entries) > 0.
-func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client) agents.ModelProvider {
+// this is pure construction — callers gate it on len(entries) > 0. keyFor
+// resolves the global per-provider fallback key ("openai_api_key" /
+// "anthropic_api_key") for entries that carry none of their own, the same
+// courtesy the main agent gets.
+func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client, keyFor func(providerType string) string) agents.ModelProvider {
 	var fallbacks []agents.ModelProvider
 	for _, e := range entries {
-		var opts []option.RequestOption
-		if e.APIKey != "" {
-			opts = append(opts, option.WithAPIKey(e.APIKey))
+		apiKey := e.APIKey
+		if apiKey == "" && keyFor != nil {
+			apiKey = keyFor(e.Provider)
 		}
-		if e.BaseURL != "" {
-			opts = append(opts, option.WithBaseURL(e.BaseURL))
+		fp, err := buildPlainProvider(e.Provider, apiKey, e.BaseURL, proxyClient)
+		if err != nil {
+			// Unreachable through normal flow — DecodeAgentSpec validates every
+			// entry's provider — and an unbuildable entry must not become an
+			// OpenAI default, so it is left out of the chain.
+			continue
 		}
-		if proxyClient != nil {
-			opts = append(opts, option.WithHTTPClient(proxyClient))
-		}
-		var fp agents.ModelProvider = openaiProvider.NewProvider(opts...)
 		if e.Model != "" {
 			fp = fixedModelProvider{inner: fp, model: e.Model}
 		}
@@ -585,23 +661,33 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 		return fallback
 	}
 	routes, err := deps.ProviderRoutes.List(ctx)
-	if err != nil || len(routes) == 0 {
+	if err != nil {
+		// Loud, because the silent version was observed: an unreadable table
+		// (e.g. a pre-provider_type database) would otherwise disable ALL
+		// routing with no signal, and every prefixed model name would fall to
+		// the agent's own provider.
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("provider routes unavailable; prefix routing disabled for this run")
+		return fallback
+	}
+	if len(routes) == 0 {
 		return fallback
 	}
 	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
 	routeMap := make(map[string]agents.ModelProvider, len(routes))
 	for _, r := range routes {
-		var opts []option.RequestOption
-		if r.APIKey != "" {
-			opts = append(opts, option.WithAPIKey(r.APIKey))
+		// The save path validates provider_type, but a row can predate the
+		// validation or bypass the API. An unregistered value must not default
+		// to OpenAI — the silent wrong-backend case — so the route is skipped
+		// loudly instead.
+		fp, err := buildPlainProvider(r.ProviderType, r.APIKey, r.BaseURL, proxyClient)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Str("prefix", r.Prefix).Msg("provider route skipped: invalid provider_type")
+			continue
 		}
-		if r.BaseURL != "" {
-			opts = append(opts, option.WithBaseURL(r.BaseURL))
-		}
-		if proxyClient != nil {
-			opts = append(opts, option.WithHTTPClient(proxyClient))
-		}
-		routeMap[r.Prefix] = openaiProvider.NewProvider(opts...)
+		routeMap[r.Prefix] = fp
+	}
+	if len(routeMap) == 0 {
+		return fallback
 	}
 	router := agents.NewRouterProvider(routeMap)
 	if fallback != nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -110,10 +111,10 @@ func userInputText(items []agents.TResponseInputItem) string {
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID string, taskRun bool) (map[string]*agents.Agent, error) {
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID string, taskRun bool) (map[string]*agents.Agent, *BuildResult, error) {
 	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, taskRun)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	registry := map[string]*agents.Agent{}
 	var walk func(a *agents.Agent)
@@ -135,7 +136,65 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxI
 		}
 	}
 	walk(built.Agent)
-	return registry, nil
+	return registry, built, nil
+}
+
+// planUnlockPersistTimeout bounds the marker write. The hook must be
+// detached from the run's cancellation (a client disconnect must not decide
+// whether the mark lands) but NOT unbounded: the SQLite pool is a single
+// connection, and an unbounded wait on it would wedge submit_plan — and the
+// run's own cancel — behind whatever holds the connection.
+const planUnlockPersistTimeout = 10 * time.Second
+
+// armPlanUnlock makes persisting the plan_unlocked annotation the
+// PRECONDITION of the phase's first unlock: the hook's error fails the
+// unlock, so the run is never executing ahead of its durable record — a
+// failed write surfaces as a submit_plan tool error and the review repeats.
+func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore) {
+	if phase == nil {
+		return
+	}
+	phase.OnUnlock(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), planUnlockPersistTimeout)
+		defer cancel()
+		entry := agents.NewAnnotationEntry(
+			agents.ItemDisplay{Kind: store.PlanUnlockedKind},
+			agents.Source{Type: agents.SourceTool, ID: middleware.PlanToolName},
+		)
+		if err := sa.Append(ctx, entry); err != nil {
+			return fmt.Errorf("persisting the plan-unlock record: %w", err)
+		}
+		return nil
+	})
+}
+
+// restorePlanPhase puts a rebuilt plan-mode run back into the phase its
+// durable record says it is in, and arms marker persistence for the unlock
+// this resume may perform. A marker READ failure is an error, not a warning:
+// nothing has been claimed yet, so failing here leaves the pending approval
+// intact for a retry — silently resuming in the planning phase would strip a
+// mid-execution run of its write tools.
+func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sessionID, runID string) error {
+	if phase == nil {
+		return nil
+	}
+	ref, err := store.RefFor(ctx, r.db, sessionID)
+	if err != nil {
+		return fmt.Errorf("resolving session for plan phase: %w", err)
+	}
+	sa := store.NewEntryStoreFor(r.db, ref)
+	sa.SetRunID(runID)
+	unlocked, err := sa.RunHasAnnotation(ctx, runID, store.PlanUnlockedKind)
+	if err != nil {
+		return fmt.Errorf("reading plan-unlock marker: %w", err)
+	}
+	if unlocked {
+		// No hook is armed yet, so this cannot fail — arming AFTER is also
+		// what keeps a replayed unlock from writing a second marker.
+		_ = phase.Unlock()
+	}
+	armPlanUnlock(phase, sa)
+	return nil
 }
 
 // ResolveApproval applies an approve/reject decision to the pending tool call
@@ -183,13 +242,23 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// skip its reclaim; refuse rather than guess.
 		return "", pending.SessionID, err
 	}
-	registry, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, taskMeta != nil)
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, taskMeta != nil)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
 	state, err := agents.RunStateFromJSON([]byte(pending.State), registry)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("restoring run state: %w", err)
+	}
+	// A plan-mode rebuild starts in the planning phase, but this run may have
+	// moved past it: without the unlock, a pause AFTER the plan phase ended
+	// (an exec_command approval, say) would resume into a run whose write
+	// tools had vanished again. The durable truth is the plan_unlocked
+	// annotation, written the moment the approved submit_plan EXECUTED. A
+	// failed read aborts the resolve — the pending approval is still
+	// unclaimed at this point, so the decision simply retries.
+	if err := r.restorePlanPhase(ctx, rebuilt.PlanPhase, pending.SessionID, pending.RunID); err != nil {
+		return "", pending.SessionID, err
 	}
 
 	item := findApprovalItem(state, toolCallID)

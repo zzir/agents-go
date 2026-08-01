@@ -106,6 +106,36 @@ func (s *EntryStore) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
 
+// PlanUnlockedKind marks the annotation entry recording that a plan-mode
+// run's approved submit_plan actually EXECUTED — the durable "plan phase is
+// over" mark a resume consults. Neither the approval ledger (an approved call
+// can still fail argument validation and never execute) nor the tool's output
+// text (rewritable by a guardrail) can stand in for it. The kind is unknown
+// to the timeline renderer, so the entry never displays; annotations never
+// reach the model.
+const PlanUnlockedKind = "plan_unlocked"
+
+// RunHasAnnotation reports whether the run persisted an annotation entry with
+// the given display kind.
+func (s *EntryStore) RunHasAnnotation(ctx context.Context, runID, kind string) (bool, error) {
+	var rows []entryRow
+	if err := s.scoped(s.db.NewSelect().Model(&rows)).
+		Where("run_id = ?", runID).
+		Scan(ctx); err != nil {
+		return false, fmt.Errorf("scanning run %s entries: %w", runID, err)
+	}
+	for i := range rows {
+		var e agents.SessionEntry
+		if json.Unmarshal([]byte(rows[i].Entry), &e) != nil {
+			continue
+		}
+		if e.Kind == agents.EntryKindAnnotation && e.Display != nil && e.Display.Kind == kind {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // RefFor resolves the generation currently answering to a session id.
 //
 // Only "there is no such session" is absence; a cancelled context or an

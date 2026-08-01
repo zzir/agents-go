@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -30,6 +31,26 @@ func resolveSecret(incoming, prev string) string {
 		return prev
 	}
 	return incoming
+}
+
+// normalizeEndpoint canonicalizes a base_url for CREDENTIAL IDENTITY
+// comparison — trailing-slash and whitespace variants of the same endpoint
+// must not read as a change. It deliberately does no more than that: a
+// too-eager normalization that equated two genuinely different endpoints
+// would restore a key across them, and false "changed" positives merely ask
+// the user to re-enter the key.
+func normalizeEndpoint(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
+}
+
+// credentialTargetChanged reports whether a stored api_key's DESTINATION —
+// the (provider_type, base_url) pair — differs between the stored row and
+// the incoming update. A masked key must not round-trip across it: the mask
+// means "keep the key I stored", and the key was stored for that
+// destination, not for wherever the config points now.
+func credentialTargetChanged(prevProvider, prevBaseURL, newProvider, newBaseURL string) bool {
+	return bridge.NormalizeProviderType(prevProvider) != bridge.NormalizeProviderType(newProvider) ||
+		normalizeEndpoint(prevBaseURL) != normalizeEndpoint(newBaseURL)
 }
 
 // maskFallbackModels masks the api_key of every entry in a fallback-models
@@ -61,8 +82,14 @@ func maskFallbackModels(raw string) string {
 }
 
 // restoreFallbackModels resolves masked api_keys in an incoming
-// fallback-models array against the previously stored one, matching entries
-// by model name first and by position second.
+// fallback-models array against the previously stored one. An entry's key is
+// restored ONLY from a stored entry with the same (normalized provider_type,
+// normalized base_url, model) — never across providers OR endpoints, and
+// never by position: any looser match hands one backend's real credential to
+// another after the entry is edited (two same-provider entries pointed at
+// different OpenAI-compatible endpoints are different credentials). A mask
+// with no such match resolves to "" (the entry falls back to the global
+// per-provider key), which is the safe direction.
 func restoreFallbackModels(incoming, prev string) string {
 	if incoming == "" || !strings.Contains(incoming, SecretMask) {
 		return incoming
@@ -73,25 +100,31 @@ func restoreFallbackModels(incoming, prev string) string {
 	}
 	var old []map[string]any
 	_ = json.Unmarshal([]byte(prev), &old)
-	prevKey := func(i int, model string) string {
-		for _, o := range old {
-			if om, _ := o["model"].(string); om == model {
-				if k, ok := o["api_key"].(string); ok {
-					return k
-				}
-			}
-		}
-		if i < len(old) {
-			if k, ok := old[i]["api_key"].(string); ok {
-				return k
-			}
-		}
-		return ""
+	entryIdentity := func(e map[string]any) string {
+		p, _ := e["provider_type"].(string)
+		u, _ := e["base_url"].(string)
+		m, _ := e["model"].(string)
+		return bridge.NormalizeProviderType(p) + "\x00" + normalizeEndpoint(u) + "\x00" + m
 	}
-	for i, e := range in {
+	// Keys queue PER IDENTITY and are consumed in order: two same-identity
+	// entries (key rotation against one endpoint) each keep their own key
+	// instead of both collapsing onto the first.
+	prevKeys := map[string][]string{}
+	for _, o := range old {
+		if k, ok := o["api_key"].(string); ok {
+			id := entryIdentity(o)
+			prevKeys[id] = append(prevKeys[id], k)
+		}
+	}
+	for _, e := range in {
 		if s, ok := e["api_key"].(string); ok && s == SecretMask {
-			model, _ := e["model"].(string)
-			e["api_key"] = prevKey(i, model)
+			id := entryIdentity(e)
+			if q := prevKeys[id]; len(q) > 0 {
+				e["api_key"] = q[0]
+				prevKeys[id] = q[1:]
+			} else {
+				e["api_key"] = ""
+			}
 		}
 	}
 	out, err := json.Marshal(in)
@@ -235,7 +268,13 @@ func sanitizeAgentConfig(ac *store.AgentConfig) {
 // masked on read and sentinel-resolved on write.
 var secretSettingKeys = map[string]bool{
 	"brave_api_key": true,
-	// Fallback provider key used when an agent has no api_key of its own
-	// (read in bridge.buildAgentFromConfig).
-	"openai_api_key": true,
+}
+
+// The per-provider global fallback keys ("openai_api_key", …) are derived
+// from the provider registry, so a new backend cannot add a key setting and
+// forget to mask it.
+func init() {
+	for _, p := range bridge.ProviderTypes() {
+		secretSettingKeys[p.SettingKey] = true
+	}
 }

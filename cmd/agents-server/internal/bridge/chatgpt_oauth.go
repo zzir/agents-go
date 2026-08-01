@@ -7,11 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -102,7 +104,15 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, agentConfigID string) (*C
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
-	if _, err := o.agents.Get(ctx, agentConfigID); err != nil {
+	ac, err := o.agents.Get(ctx, agentConfigID)
+	if err != nil {
+		return nil, err
+	}
+	// An agent whose backend does not offer chatgpt_login can never use the
+	// token, so completing the flow would only strand a credential in the
+	// database with no UI path to revoke it — the disconnect button renders
+	// for chatgpt_login agents only.
+	if err := chatGPTLoginAvailable(ac); err != nil {
 		return nil, err
 	}
 
@@ -380,7 +390,33 @@ type chatgptTokens struct {
 	ExpiresAt    int64  `json:"expires_at,omitempty"`
 }
 
+// ErrChatGPTLoginUnavailable marks a login attempt this agent's configuration
+// can never use — a client error the handler maps to 400, not a server fault.
+var ErrChatGPTLoginUnavailable = errors.New("chatgpt login unavailable")
+
+// chatGPTLoginAvailable reports whether the agent's backend offers
+// chatgpt_login. It gates BOTH ends of the OAuth flow: StartLogin, and
+// saveTokens — the config can change during the authorize window, and a token
+// persisted onto an agent that cannot use it has no UI path to revoke it.
+func chatGPTLoginAvailable(ac *store.AgentConfig) error {
+	def, err := providerDefFor(ac.Provider.ProviderType)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrChatGPTLoginUnavailable, err)
+	}
+	if !slices.Contains(def.AuthModes, authModeChatGPTLogin) {
+		return fmt.Errorf("%w: not offered by the %s provider — switch provider_type or use an API key", ErrChatGPTLoginUnavailable, def.Type)
+	}
+	return nil
+}
+
 func (o *ChatGPTOAuth) saveTokens(ctx context.Context, agentConfigID string, tok *chatgptTokens) error {
+	ac, err := o.agents.Get(ctx, agentConfigID)
+	if err != nil {
+		return err
+	}
+	if err := chatGPTLoginAvailable(ac); err != nil {
+		return err
+	}
 	data, _ := json.Marshal(tok)
 	return o.agents.SaveChatGPTToken(ctx, agentConfigID, string(data))
 }

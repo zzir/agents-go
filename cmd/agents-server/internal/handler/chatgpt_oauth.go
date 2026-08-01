@@ -40,6 +40,12 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 			notFound(c)
 			return
 		}
+		// A backend that doesn't offer chatgpt_login is the caller's
+		// configuration problem, not a server fault.
+		if errors.Is(err, bridge.ErrChatGPTLoginUnavailable) {
+			badRequest(c, err.Error())
+			return
+		}
 		// The message is actionable local detail (e.g. callback port in use).
 		abortError(c, http.StatusInternalServerError, CodeInternal, err.Error())
 		return

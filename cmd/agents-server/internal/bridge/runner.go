@@ -16,6 +16,7 @@ import (
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/tracing"
 )
 
 // EventSink receives protocol envelopes emitted during a streamed run.
@@ -64,6 +65,42 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 
 // sessionSettingsFor returns the run-level SessionSettings for a history-item
 // cap, or nil to leave the full history loaded (limit <= 0).
+// runOptionsFor assembles the RunOptions shared by the fresh-run and resume
+// paths. One constructor, deliberately: a resume continues the same run and
+// must carry the same policies, and two hand-maintained literals are exactly
+// how the resume path once dropped HandoffInputFilter and
+// ToolNotFoundBehavior. runContext is the Context value (the exec_command
+// approval gate reads a trusted session id from it).
+func runOptionsFor(built *BuildResult, session *agents.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any) agents.RunOptions {
+	opts := agents.RunOptions{
+		Context: runContext,
+		Conversation: agents.ConversationOptions{
+			Session:  session,
+			Settings: sessionSettingsFor(built.HistoryLimit),
+		},
+		Exec: agents.ExecOptions{
+			MaxTurns:              built.MaxTurns,
+			MaxToolConcurrency:    built.MaxToolConcurrency,
+			ErrorHandlers:         built.ErrorHandlers,
+			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
+			ToolNotFoundBehavior:  agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior),
+			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
+			// Context overflow → forced compaction pass → retry the turn. Only
+			// bites when the session is compaction-aware (the agent has
+			// compaction enabled); otherwise recovery finds nothing to shrink
+			// and the overflow reports as before (spec §2.5g).
+			Overflow: agents.OverflowPolicy{MaxRetries: 2},
+		},
+		Guardrails: built.RunGuardrails,
+		Model:      agents.ModelOptions{Provider: provider},
+		Observe:    agents.ObserveOptions{Tracer: tracer, IncludeSensitiveData: built.TraceIncludeSensitive},
+	}
+	if built.HandoffInputFilter == "nest_history" {
+		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
+	}
+	return opts
+}
+
 func sessionSettingsFor(limit int) *agents.SessionSettings {
 	if limit > 0 {
 		return &agents.SessionSettings{Limit: limit}
@@ -303,33 +340,14 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	sa := store.NewEntryStoreFor(r.db, sessionRef)
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
+	// The plan phase's first unlock (the approved submit_plan executing)
+	// persists its durable marker through this run's store.
+	armPlanUnlock(built.PlanPhase, sa)
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
-	opts := agents.RunOptions{
-		// exec_command's approval gate reads a session id from here.
-		Context: trustSessionID(sessionID, task),
-		Conversation: agents.ConversationOptions{
-			Session:               runSession,
-			UsePreviousResponseID: built.UsePreviousResponseID,
-		},
-		Exec: agents.ExecOptions{
-			MaxTurns:           built.MaxTurns,
-			MaxToolConcurrency: built.MaxToolConcurrency,
-			ErrorHandlers:      built.ErrorHandlers,
-		},
-		Model:   agents.ModelOptions{Provider: provider},
-		Observe: agents.ObserveOptions{Tracer: tracer},
-	}
-	if built.HandoffInputFilter == "nest_history" {
-		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
-	}
-	opts.Conversation.Settings = sessionSettingsFor(built.HistoryLimit)
-	opts.Exec.ReasoningItemIDPolicy = built.ReasoningItemIDPolicy
-	opts.Guardrails = built.RunGuardrails
-	opts.Exec.ToolNotFoundBehavior = agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior)
-	opts.Exec.ShouldStopAfterTurn = stopAtTools(built.StopAtTools)
+	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task))
 
 	// Name the session in parallel with the run — the title needs only the user's
 	// first message, not the answer, so it need not wait for the run to finish.
@@ -502,28 +520,13 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	// live to the client instead of surfacing only in the terminal
 	// run.output — a resume that silently swallowed its middle turns is what
 	// made approved runs "jump" to their final answer.
-	stream, ctrl := agents.ResumeRun(ctx, state, agents.RunOptions{
-		Guardrails: built.RunGuardrails,
-		// exec_command's approval gate reads a session id from here.
-		Context: trustSessionID(sessionID, task),
-		Conversation: agents.ConversationOptions{
-			Session:               resumeSession,
-			UsePreviousResponseID: built.UsePreviousResponseID,
-			Settings:              sessionSettingsFor(built.HistoryLimit),
-		},
-		Exec: agents.ExecOptions{
-			MaxTurns:           built.MaxTurns,
-			MaxToolConcurrency: built.MaxToolConcurrency,
-			ErrorHandlers:      built.ErrorHandlers,
-			// A resume continues the same run, so it carries the same stop
-			// policy: without it an approved run would sail past the tool it
-			// was configured to stop at.
-			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
-			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
-		},
-		Model:   agents.ModelOptions{Provider: provider},
-		Observe: agents.ObserveOptions{Tracer: tracer},
-	})
+	//
+	// Same constructor as the fresh run ON PURPOSE: a resume continues the
+	// same run and must carry the same policies. Two hand-kept literals are
+	// how this path silently dropped HandoffInputFilter and
+	// ToolNotFoundBehavior while the fresh path had them.
+	stream, ctrl := agents.ResumeRun(ctx, state,
+		runOptionsFor(built, resumeSession, provider, tracer, trustSessionID(sessionID, task)))
 	r.hub.setControl(runID, ctrl)
 	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
 	if err != nil {

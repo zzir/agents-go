@@ -229,17 +229,20 @@ type Setting struct {
 	Value string `bun:"value"     json:"value"`
 }
 
-// ProviderRoute maps a model-name prefix to the API key and base URL used to
-// reach that provider.
+// ProviderRoute maps a model-name prefix to the backend, API key and base URL
+// used to reach that provider.
 type ProviderRoute struct {
 	bun.BaseModel `bun:"table:provider_routes,alias:pr"`
 
-	ID        string    `bun:"id,pk"              json:"id"`
-	Prefix    string    `bun:"prefix,notnull"     json:"prefix"`
-	APIKey    string    `bun:"api_key"            json:"api_key,omitempty"`
-	BaseURL   string    `bun:"base_url"           json:"base_url,omitempty"`
-	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+	ID     string `bun:"id,pk"          json:"id"`
+	Prefix string `bun:"prefix,notnull" json:"prefix"`
+	// ProviderType selects the backend ("openai" / "anthropic"); empty is
+	// openai.
+	ProviderType string    `bun:"provider_type"      json:"provider_type,omitempty"`
+	APIKey       string    `bun:"api_key"            json:"api_key,omitempty"`
+	BaseURL      string    `bun:"base_url"           json:"base_url,omitempty"`
+	CreatedAt    time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt    time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // TraceEvent is one persisted tracing record (a trace or span) for a session run.

@@ -318,3 +318,45 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 		t.Fatalf("want 3 rows (2 compacted + checkpoint), got %d", len(after))
 	}
 }
+
+// The trigger is token-based: real usage on the newest priced entry plus a
+// byte estimate of everything after it. Below the threshold nothing happens —
+// no summary call, no checkpoint — regardless of how many entries there are.
+func TestCompactionAdapterTokenTrigger(t *testing.T) {
+	db := newTestDB(t)
+	sessionID := NewID()
+	sa := NewEntryStore(db, sessionID)
+	sa.SetRunID("r1")
+	sa.SetModel("m1")
+
+	// Six tiny entries: many by count, small by tokens.
+	priced := rawEntry(t, assistantItemJSON)
+	priced.Usage = &agents.RequestUsage{InputTokens: 90, OutputTokens: 10, TotalTokens: 100}
+	seed(t, sa,
+		rawEntry(t, userItemJSON),
+		priced, // the newest priced entry: history so far = 100 tokens
+		rawEntry(t, userItemJSON),
+		rawEntry(t, assistantItemJSON),
+		rawEntry(t, userItemJSON),
+		rawEntry(t, assistantItemJSON),
+	)
+
+	model := &summaryFakeModel{summary: "sum"}
+	// 100 (usage) + ~4 small tails ≈ well under 10k: must not fire.
+	ca := NewCompactionAdapter(sa, model, 10000, 2, "", CompactionNotifier{})
+	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
+		t.Fatalf("RunCompaction: %v", err)
+	}
+	if model.calls != 0 {
+		t.Fatalf("below-threshold pass must not summarize; got %d calls", model.calls)
+	}
+
+	// Same history, threshold below the priced size: must fire.
+	ca = NewCompactionAdapter(sa, model, 90, 2, "", CompactionNotifier{})
+	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
+		t.Fatalf("RunCompaction: %v", err)
+	}
+	if model.calls != 1 {
+		t.Fatalf("above-threshold pass must summarize once; got %d calls", model.calls)
+	}
+}

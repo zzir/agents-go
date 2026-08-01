@@ -202,8 +202,24 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		}
 	}
 	if ac.Resilience.FallbackModels != "" {
-		if err := json.Unmarshal([]byte(ac.Resilience.FallbackModels), &spec.FallbackModels); err != nil {
-			return nil, fmt.Errorf("fallback_models is not valid JSON: %w", err)
+		// Unknown keys are rejected, not ignored: a misspelled selector
+		// ("provider" for "provider_type") would otherwise silently run the
+		// entry on the default backend — the exact failure provider_type
+		// validation exists to prevent.
+		dec := json.NewDecoder(strings.NewReader(ac.Resilience.FallbackModels))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&spec.FallbackModels); err != nil {
+			return nil, fmt.Errorf("fallback_models is invalid: %w", err)
+		}
+		// Decode stops after the first JSON value (unlike Unmarshal); trailing
+		// content is a malformed config, not something to silently drop.
+		if dec.More() {
+			return nil, fmt.Errorf("fallback_models is invalid: trailing data after the JSON array")
+		}
+		for i, e := range spec.FallbackModels {
+			if err := ValidateProviderType(e.Provider); err != nil {
+				return nil, fmt.Errorf("fallback_models[%d].provider_type: %w", i, err)
+			}
 		}
 	}
 
