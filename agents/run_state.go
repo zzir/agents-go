@@ -188,6 +188,14 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 			resumeStream(ctx, nil, opts, ctrl, rawEvents, yield)
 		})
 	}
+	// Seed the queue from the paused state BEFORE the control reaches the
+	// caller — not lazily when ranging begins. The control is legal to use
+	// before ranging, and a Steer enqueued in that window would otherwise be
+	// sequenced AHEAD of the pre-pause backlog the lazy restore then appends:
+	// delivery order would invert to "new, then old" when the old input was
+	// said first. (restore seeds once per control; middleware re-entries of
+	// the stream body are no-ops either way.)
+	ctrl.restore(state.PendingInput)
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
 			resumeStream(ctx, state, *in.Opts, ctrl, rawEvents, yield)
@@ -232,9 +240,6 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	if opts.Exec.ReasoningItemIDPolicy == ReasoningItemIDPreserve {
 		opts.Exec.ReasoningItemIDPolicy = state.ReasoningItemIDPolicy
 	}
-	// Input queued before the pause is delivered by this resume.
-	ctrl.restore(state.PendingInput)
-
 	rc := NewRunContext(opts.Context)
 	if state.Approvals != nil {
 		rc.Approvals = state.Approvals

@@ -1259,8 +1259,16 @@ was ending:
   completed. A failed or abandoned attempt rolls its take back into the
   queue at its arrival position, so a retrying middleware's next attempt
   delivers exactly what the failed one never made durable: nothing lost,
-  nothing doubled. `RunState.PendingInput` seeds a resumed control once; the
-  transaction, not reseeding, is what makes input survive retries.
+  nothing doubled. A commit fires only against a home that actually holds the
+  take: a session write that persisted **past** it (never one that merely
+  preceded it), or — at an interruption — a persist that succeeded, after
+  which the RunState's item log is the durable home.
+- **`RunState.PendingInput` seeds a resumed control once, before `ResumeRun`
+  returns it** — not lazily when ranging begins. The control is legal to use
+  before ranging, and a lazily-seeded backlog would sequence AFTER input
+  enqueued in that window, delivering "new, then old" when the old input was
+  said first. The transaction, not reseeding, is what makes input survive
+  retries.
 - **A follow-up continues the same run**, rather than starting a new one, so
   the trace, the usage total and the session stay one thing.
 - **Injected input becomes a run item** with `Source{Type: SourceUser}`. That

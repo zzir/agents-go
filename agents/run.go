@@ -666,13 +666,19 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			// same run, so the trace, the usage total and the session stay one
 			// thing rather than three loosely related ones.
 			if extra := r.ctrl.takeContinuation(); len(extra) > 0 {
-				if err := r.persistSessionItems(ctx); err != nil {
-					return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
-				}
+				// Append the take BEFORE persisting, so the write that closes
+				// this exchange also covers the injected input — the boundary
+				// check in persistSessionItems then commits the take only once
+				// a write has genuinely persisted past it. Persisting first
+				// committed the take against a write that predated it, and a
+				// failure later in the run could no longer roll it back.
 				injected := injectedInput(currentAgent, extra)
 				generatedItems = append(generatedItems, injected...)
 				r.sessionItems = append(r.sessionItems, injected...)
 				r.injectedUpTo = len(r.sessionItems)
+				if err := r.persistSessionItems(ctx); err != nil {
+					return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
+				}
 				for _, it := range injected {
 					if !r.emitItem(it) {
 						return nil, errConsumerStopped
@@ -737,12 +743,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			continue
 		case stepInterruption:
-			// Injections taken this turn were consumed by the interrupted
-			// turn's model call and ride in the state's item log
-			// (SessionItems), which resume persists — that log, not
-			// PendingInput, is their durable home now. Committing here keeps a
-			// resume from delivering them a second time via restore.
-			r.ctrl.commitInjected()
 			// Persist the completed part of this turn before pausing. The pending
 			// tool calls have no outputs yet, so persistSessionItems holds them
 			// back (they would break replay); they save with their outputs once
@@ -750,6 +750,14 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if err := r.persistSessionItems(ctx); err != nil {
 				return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 			}
+			// Injections taken this turn were consumed by the interrupted
+			// turn's model call and ride in the state's item log
+			// (SessionItems), which resume persists — that log, not
+			// PendingInput, is their durable home now. Committed only AFTER
+			// the persist above succeeds: a failed persist fails the attempt
+			// before any RunState exists, and the rollback in finishStream
+			// must still find the take to redeliver it on a retry.
+			r.ctrl.commitInjected()
 			// Snapshot any nested states already cached on the run context under the
 			// mutex that guards them (run_context.go's nestedMu contract): a
 			// timed-out tool can leave an orphan goroutine that still calls

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -307,5 +308,144 @@ func TestInjection_PendingExcludesInFlight(t *testing.T) {
 	ctrl.commitInjected()
 	if !ctrl.Pending().Empty() {
 		t.Fatal("committed input still reported as pending")
+	}
+}
+
+// appendFailingStorage fails Append when any entry in the batch contains the
+// marker text, simulating a storage failure at a chosen persistence boundary.
+type appendFailingStorage struct {
+	SessionStorage
+	failOn string
+}
+
+func (s *appendFailingStorage) Append(ctx context.Context, entries ...SessionEntry) error {
+	for _, e := range entries {
+		if strings.Contains(string(e.Item), s.failOn) {
+			return errors.New("storage refused the batch")
+		}
+	}
+	return s.SessionStorage.Append(ctx, entries...)
+}
+
+// A continuation take (follow-up/late steer at the final-output boundary) is
+// committed only by a write that actually covers it. When that persist fails,
+// the take must roll back into the queue — committing it against the write
+// that merely preceded it would make a retrying attempt lose the input.
+func TestContinuationTake_RollsBackWhenItsPersistFails(t *testing.T) {
+	storage := &appendFailingStorage{SessionStorage: NewInMemoryStorage("test"), failOn: "about tomorrow"}
+	sess := NewSession(storage)
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(messageOutput(t, "first answer")),
+		modelResp(messageOutput(t, "never reached")),
+	}}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: sess},
+	})
+	if err := ctrl.FollowUp("and what about tomorrow?"); err != nil {
+		t.Fatal(err)
+	}
+	var runErr error
+	for _, err := range stream {
+		if err != nil {
+			runErr = err
+		}
+	}
+	if runErr == nil {
+		t.Fatal("the failing persist should have failed the run")
+	}
+	if p := ctrl.Pending(); len(p.FollowUp) == 0 {
+		t.Error("the follow-up was consumed by the failed attempt and never rolled back")
+	}
+}
+
+// An injection riding into a turn that pauses for approval is committed only
+// once the pause's persist has succeeded (its durable home is then the
+// RunState's item log). A persist failure fails the attempt before any
+// RunState exists, so the take must roll back for the retry.
+func TestInterruptionTake_RollsBackWhenPersistFails(t *testing.T) {
+	probe := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "ok", nil
+	})
+	danger := NewFunctionTool("delete_db", "dangerous", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "deleted", nil
+	})
+	danger.NeedsApproval = true
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "probe", "call_1", `{}`)),
+		modelResp(functionCallOutput(t, "delete_db", "call_2", `{}`)),
+	}}
+	agent := &Agent{Name: "a", Tools: []Tool{probe, danger}, ModelImpl: model}
+	storage := &appendFailingStorage{SessionStorage: NewInMemoryStorage("test"), failOn: "please also"}
+	sess := NewSession(storage)
+
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: sess},
+	})
+	// Taken at the save point after turn 1, so it rides into the turn that
+	// pauses; its batch is the one the pause's persist writes — and refuses.
+	if err := ctrl.Steer("please also check the backups"); err != nil {
+		t.Fatal(err)
+	}
+	var runErr error
+	for _, err := range stream {
+		if err != nil {
+			runErr = err
+		}
+	}
+	if runErr == nil {
+		t.Fatal("the failing persist should have failed the run")
+	}
+	if p := ctrl.Pending(); len(p.Steer) == 0 {
+		t.Error("the steer was consumed by the failed pause and never rolled back")
+	}
+}
+
+// Input queued on a resumed control before ranging begins must deliver AFTER
+// the pre-pause backlog — the old input was said first, and restore seeds the
+// queue before the control reaches the caller.
+func TestResume_PreRangeSteerOrdersAfterRestoredBacklog(t *testing.T) {
+	var ran bool
+	agent := approvalAgentAndModel(t, &ran)
+	model := agent.ModelImpl.(*fakeModel)
+
+	stream, ctrl := Run(context.Background(), agent, "delete it", RunOptions{})
+	// Said while the run was working; the pause arrives before any save point,
+	// so it travels in RunState.PendingInput.
+	if err := ctrl.Steer("said before the pause"); err != nil {
+		t.Fatal(err)
+	}
+	var res *RunResult
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done, ok := ev.(*RunCompletedEvent); ok {
+			res = done.Result
+		}
+	}
+	if res == nil || res.State == nil || len(res.Interruptions) != 1 {
+		t.Fatal("expected an interrupted run with state")
+	}
+
+	res.State.Approve(res.Interruptions[0], false)
+	stream2, ctrl2 := ResumeRun(context.Background(), res.State, RunOptions{})
+	// Before ranging begins — legal, and it must order after the backlog.
+	if err := ctrl2.Steer("said after the resume"); err != nil {
+		t.Fatal(err)
+	}
+	for _, err := range stream2 {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	in := inputTexts(model.lastReq.Input)
+	i, j := strings.Index(in, "said before the pause"), strings.Index(in, "said after the resume")
+	if i < 0 || j < 0 {
+		t.Fatalf("both steers must reach the model: %s", in)
+	}
+	if i > j {
+		t.Errorf("pre-pause input delivered after the post-resume one: %s", in)
 	}
 }
