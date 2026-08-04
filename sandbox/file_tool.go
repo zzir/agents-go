@@ -48,6 +48,8 @@ func fileToolError(op, reqPath string, err error) string {
 		kind = "file exceeds read limit"
 	case errors.Is(err, ErrNoWorkDir):
 		kind = "no persistent working directory configured"
+	case errors.Is(err, ErrOutsideWorkDir):
+		kind = "outside the working directory"
 	case errors.Is(err, fs.ErrNotExist):
 		kind = "not found"
 	case errors.Is(err, fs.ErrPermission):
@@ -79,7 +81,7 @@ func FileTools(sb Sandbox, cfg FileToolConfig) []agents.Tool {
 }
 
 type readFileArgs struct {
-	Path string `json:"path" jsonschema:"file path to read (absolute or relative to the working directory)"`
+	Path string `json:"path" jsonschema:"file path to read (absolute, or relative to the working directory)"`
 }
 
 // ReadFileTool returns a tool that reads a file from the sandbox. The file
@@ -102,7 +104,7 @@ func ReadFileTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
 }
 
 type writeFileArgs struct {
-	Path    string `json:"path"    jsonschema:"file path to write (absolute or relative to the working directory)"`
+	Path    string `json:"path"    jsonschema:"file path to write (absolute, or relative to the working directory)"`
 	Content string `json:"content" jsonschema:"file content to write"`
 }
 

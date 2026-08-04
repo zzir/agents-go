@@ -175,6 +175,8 @@ sandbox.FileToolConfig{
 
 File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
 
+**Path resolution follows shell semantics, the same view `exec_command` has** ([spec §5.14](spec.md)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The sandbox, not the working directory, is the isolation boundary; the file tools do not pretend to a narrower view than exec already has. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
+
 `ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 
 ## The Sandbox interface

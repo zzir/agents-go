@@ -14,7 +14,6 @@ package docker
 import (
 	"archive/tar"
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -569,12 +568,16 @@ func shellQuote(s string) string {
 // with sandbox.ErrReadLimitExceeded instead of being loaded into host memory.
 func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir != "" {
+		rel, err := rootRel(p)
+		if err != nil {
+			return nil, err
+		}
 		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return nil, err
 		}
 		defer root.Close()
-		f, err := root.Open(rootRel(p))
+		f, err := root.Open(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -589,7 +592,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		fullPath := path.Join(workDir, path.Clean("/"+p))
+		fullPath := containerPath(p)
 		result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{
 			SourcePath: fullPath,
 		})
@@ -609,12 +612,15 @@ func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 // WriteFile implements sandbox.Sandbox.
 func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error {
 	if s.opts.WorkDir != "" {
+		rel, err := rootRel(p)
+		if err != nil {
+			return err
+		}
 		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		rel := rootRel(p)
 		if dir := filepath.Dir(rel); dir != "." {
 			if err := root.MkdirAll(dir, 0o755); err != nil {
 				return err
@@ -630,12 +636,13 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 		if err != nil {
 			return err
 		}
-		cleanPath := path.Clean("/" + p)[1:]
-		tarball, terr := buildTar(map[string]string{cleanPath: string(content)})
+		// The tar is built with root-relative names and extracted at "/", so an
+		// absolute in-container path works the same as a workdir-relative one.
+		tarball, terr := buildTar(map[string]string{containerPath(p)[1:]: string(content)})
 		if terr != nil {
 			return terr
 		}
-		if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: workDir, Content: tarball}); err != nil {
+		if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/", Content: tarball}); err != nil {
 			return fmt.Errorf("docker sandbox: write file: %w", err)
 		}
 		return nil
@@ -644,9 +651,9 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 }
 
 // exclusiveCreateScripts builds the in-container shell scripts for an atomic
-// exclusive-create of cleanPath via a temp hard link. Every in-container path is
-// "./"-prefixed so a leading-dash filename (e.g. "-f") is treated as a path, not
-// an option, by mkdir/ln/rm — shellQuote stops shell expansion, not option
+// exclusive-create of fullPath (absolute in-container) via a temp hard link.
+// Absolute paths start with "/", so mkdir/ln/rm can never mistake one for an
+// option (e.g. a "-f" filename) — shellQuote stops shell expansion, not option
 // parsing. The temp file has a Go-generated unpredictable name (not a shell
 // glob), so we never touch a user file. Returns:
 //   - create: write tmp from b64, then hard-link it onto the target. ln fails
@@ -655,12 +662,10 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 //     target that ln may have published (same inode as tmp), then drop tmp,
 //     propagating any rm failure to the exit code.
 //   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
-func exclusiveCreateScripts(cleanPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
-	dir := path.Dir(cleanPath)
-	dir = cmp.Or(dir, ".")
-	target := shellQuote("./" + cleanPath)
-	dirQ := shellQuote("./" + dir)
-	tmpQ := shellQuote("./" + tmpPath)
+func exclusiveCreateScripts(fullPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
+	target := shellQuote(fullPath)
+	dirQ := shellQuote(path.Dir(fullPath))
+	tmpQ := shellQuote(tmpPath)
 	create = "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
 	cleanup = "rc=0; if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + " || rc=1; fi; rm -f " + tmpQ + " || rc=1; exit $rc"
 	rmTmp = "rm -f " + tmpQ
@@ -673,12 +678,15 @@ func exclusiveCreateScripts(cleanPath, tmpPath, b64 string) (create, cleanup, rm
 // is created first so adding into a new directory works.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	if s.opts.WorkDir != "" {
+		rel, err := rootRel(p)
+		if err != nil {
+			return err
+		}
 		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		rel := rootRel(p)
 		if dir := filepath.Dir(rel); dir != "." {
 			if err := root.MkdirAll(dir, 0o755); err != nil {
 				return err
@@ -703,19 +711,17 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		if err := s.ensureImage(ctx); err != nil {
 			return err
 		}
-		cleanPath := path.Clean("/" + p)[1:]
-		if cleanPath == "" {
+		full := containerPath(p)
+		if full == "/" {
 			return fmt.Errorf("docker sandbox: invalid file path %q", p)
 		}
 		b64 := base64.StdEncoding.EncodeToString(content)
-		dir := path.Dir(cleanPath)
-		dir = cmp.Or(dir, ".")
 		buf := make([]byte, 8)
 		if _, err := rand.Read(buf); err != nil {
 			return err
 		}
-		tmpPath := path.Join(dir, ".ap."+hex.EncodeToString(buf))
-		createScript, cleanupScript, rmTmpScript := exclusiveCreateScripts(cleanPath, tmpPath, b64)
+		tmpPath := path.Join(path.Dir(full), ".ap."+hex.EncodeToString(buf))
+		createScript, cleanupScript, rmTmpScript := exclusiveCreateScripts(full, tmpPath, b64)
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", createScript}})
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancelCleanup()
@@ -753,19 +759,19 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 // RemoveFile implements sandbox.Sandbox.
 func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 	if s.opts.WorkDir != "" {
+		rel, err := rootRel(p)
+		if err != nil {
+			return err
+		}
 		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		return root.Remove(rootRel(p))
+		return root.Remove(rel)
 	}
 	if s.opts.Persistent {
-		clean := path.Clean("/" + p)[1:]
-		if clean == "" {
-			return fmt.Errorf("docker sandbox: invalid file path %q", p)
-		}
-		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"rm", "--", clean}})
+		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"rm", "--", containerPath(p)}})
 		if err != nil {
 			return err
 		}
@@ -780,26 +786,30 @@ func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 // Rename implements sandbox.Sandbox.
 func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 	if s.opts.WorkDir != "" {
+		from, err := rootRel(oldPath)
+		if err != nil {
+			return err
+		}
+		to, err := rootRel(newPath)
+		if err != nil {
+			return err
+		}
 		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		to := rootRel(newPath)
 		if dir := filepath.Dir(to); dir != "." {
 			if err := root.MkdirAll(dir, 0o755); err != nil {
 				return err
 			}
 		}
-		return root.Rename(rootRel(oldPath), to)
+		return root.Rename(from, to)
 	}
 	if s.opts.Persistent {
-		oc := path.Clean("/" + oldPath)[1:]
-		nc := path.Clean("/" + newPath)[1:]
-		if oc == "" || nc == "" {
-			return fmt.Errorf("docker sandbox: invalid rename %q -> %q", oldPath, newPath)
-		}
-		if parent := path.Dir(nc); parent != "." {
+		oc := containerPath(oldPath)
+		nc := containerPath(newPath)
+		if parent := path.Dir(nc); parent != "/" {
 			if res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
 				return err
 			} else if res.ExitCode != 0 {
@@ -821,12 +831,16 @@ func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 // ListDir implements sandbox.Sandbox.
 func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, error) {
 	if s.opts.WorkDir != "" {
+		rel, err := rootRel(p)
+		if err != nil {
+			return nil, err
+		}
 		root, err := os.OpenRoot(s.opts.WorkDir)
 		if err != nil {
 			return nil, err
 		}
 		defer root.Close()
-		f, err := root.Open(rootRel(p))
+		f, err := root.Open(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -855,7 +869,7 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 		if err := s.ensureImage(ctx); err != nil {
 			return nil, err
 		}
-		dir := path.Join(workDir, path.Clean("/"+p))
+		dir := containerPath(p)
 		// NUL-terminate each record instead of newline: a filename may contain
 		// a newline (or a tab), which would otherwise split into a phantom
 		// entry or corrupt the next line. The name is the final \t-field, so a
@@ -880,17 +894,43 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 	return nil, sandbox.ErrNoWorkDir
 }
 
-// rootRel converts a sandbox-relative path — which may carry a leading slash or
-// ".." components — into a clean path relative to an os.Root. Cleaning as if
-// rooted at "/" neutralizes any ".." that would escape, and the leading
-// separator is then stripped because os.Root rejects rooted names. An empty or
-// root-only path becomes ".", i.e. the bind-mounted working directory itself.
-func rootRel(p string) string {
-	rel := strings.TrimPrefix(filepath.Clean("/"+p), string(filepath.Separator))
-	if rel == "" {
-		return "."
+// containerPath maps a model-supplied path onto the container filesystem with
+// shell semantics, mirroring exec (whose cwd is the working directory): an
+// absolute path is used as-is, a relative one resolves under workDir. The
+// container itself is the isolation boundary — exec already reaches the whole
+// container filesystem — so persistent-mode file operations share exec's view
+// rather than pretending to a narrower one.
+func containerPath(p string) string {
+	if path.IsAbs(p) {
+		return path.Clean(p)
 	}
-	return rel
+	return path.Join(workDir, p)
+}
+
+// rootRel maps a model-supplied path into a name relative to the os.Root
+// opened on the bind-mounted working directory. Bind-mount mode is the one
+// place the file tools do NOT share exec's view: they run on the HOST side of
+// the mount, where the container's isolation cannot cover them, so everything
+// must stay inside WorkDir. A relative path passes through — os.Root itself
+// rejects any ".." or symlink escape — and an absolute path must lie under
+// the in-container mount point (/workspace, the only view the model ever
+// sees) and is translated to its host-side name. Anything else is refused
+// with sandbox.ErrOutsideWorkDir rather than silently re-rooted.
+func rootRel(p string) (string, error) {
+	if !path.IsAbs(p) {
+		if p == "" {
+			return ".", nil
+		}
+		return filepath.FromSlash(p), nil
+	}
+	clean := path.Clean(p)
+	if clean == workDir {
+		return ".", nil
+	}
+	if rest, ok := strings.CutPrefix(clean, workDir+"/"); ok {
+		return filepath.FromSlash(rest), nil
+	}
+	return "", fmt.Errorf("docker sandbox: %q is outside the working directory %s: %w", p, workDir, sandbox.ErrOutsideWorkDir)
 }
 
 // parseFindEntries parses the NUL-separated output of the persistent-mode

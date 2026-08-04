@@ -153,6 +153,18 @@ func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, 
 	return s.exec(ctx, req, stdout, stderr)
 }
 
+// resolve maps a model-supplied path onto the host filesystem with shell
+// semantics, mirroring exec: an absolute path is used as-is, a relative one
+// resolves under WorkDir. LocalSandbox performs no isolation — exec already
+// runs unrestricted on the host — so the file tools share exec's view rather
+// than pretending to a narrower one.
+func (s *LocalSandbox) resolve(p string) string {
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(s.opts.WorkDir, p)
+}
+
 // ReadFile reads a file relative to the sandbox working directory. Files
 // larger than LocalOptions.MaxReadFileBytes (default DefaultMaxReadFileBytes)
 // fail with ErrReadLimitExceeded.
@@ -160,7 +172,7 @@ func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir
 	}
-	f, err := os.Open(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	f, err := os.Open(s.resolve(p))
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +185,7 @@ func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) er
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	full := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
+	full := s.resolve(p)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
@@ -186,7 +198,7 @@ func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []by
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	full := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p))
+	full := s.resolve(p)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
@@ -211,7 +223,7 @@ func (s *LocalSandbox) RemoveFile(_ context.Context, p string) error {
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	return os.Remove(filepath.Join(s.opts.WorkDir, filepath.Clean("/"+p)))
+	return os.Remove(s.resolve(p))
 }
 
 // Rename moves a file within the sandbox working directory, creating the
@@ -220,8 +232,8 @@ func (s *LocalSandbox) Rename(_ context.Context, oldPath, newPath string) error 
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir
 	}
-	from := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+oldPath))
-	to := filepath.Join(s.opts.WorkDir, filepath.Clean("/"+newPath))
+	from := s.resolve(oldPath)
+	to := s.resolve(newPath)
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}
@@ -233,11 +245,7 @@ func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) 
 	if s.opts.WorkDir == "" {
 		return nil, ErrNoWorkDir
 	}
-	target := s.opts.WorkDir
-	if p != "" && p != "." {
-		target = filepath.Join(target, filepath.Clean("/"+p))
-	}
-	entries, err := os.ReadDir(target)
+	entries, err := os.ReadDir(s.resolve(p))
 	if err != nil {
 		return nil, err
 	}

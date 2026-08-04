@@ -207,3 +207,23 @@ func newTestPEMKey(t *testing.T) []byte {
 	}
 	return pem.EncodeToMemory(block)
 }
+
+// The file tools share exec's path view (shell semantics, cd WorkDir): a
+// relative path resolves under WorkDir, an absolute path — like the ones the
+// model learns from pwd/ls output and echoes back — is used as-is, never
+// re-rooted into a doubled prefix.
+func TestResolveWorkDirPaths(t *testing.T) {
+	s := &Sandbox{opts: Options{WorkDir: "/workspace/agents-go"}}
+	cases := map[string]string{
+		"agents/agent.go":                      "/workspace/agents-go/agents/agent.go",
+		"/workspace/agents-go/agents/agent.go": "/workspace/agents-go/agents/agent.go",
+		"/etc/passwd":                          "/etc/passwd",
+		"":                                     "/workspace/agents-go",
+		"sub/../agent.go":                      "/workspace/agents-go/agent.go",
+	}
+	for in, want := range cases {
+		if got := s.resolve(in); got != want {
+			t.Errorf("resolve(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

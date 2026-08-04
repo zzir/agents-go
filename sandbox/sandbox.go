@@ -173,6 +173,14 @@ type DirEntry struct {
 // has no persistent working directory.
 var ErrNoWorkDir = errors.New("sandbox: no persistent working directory configured")
 
+// ErrOutsideWorkDir is returned (wrapped) by file operations that refuse a
+// path outside the sandbox working directory. Only a backend whose file
+// operations run on a DIFFERENT filesystem than exec enforces this — the
+// docker bind-mount mode, where they run on the host side of the mount and
+// the container's isolation cannot cover them. Everywhere else the file tools
+// share exec's view of the filesystem and the error does not arise.
+var ErrOutsideWorkDir = errors.New("sandbox: path outside the working directory")
+
 // ExecStreamer is optionally implemented by Sandbox backends that support
 // streaming command output. Output is written to stdout/stderr as it arrives;
 // the returned ExecResult contains ExitCode and TimedOut but its Stdout and

@@ -1815,6 +1815,30 @@ dedicated-field approach could never be complete. A `ConversationID` set via
 `ModifyRunOptions` is still cleared when a paused nested run resumes (the
 serialized state already carries the conversation).
 
+### 5.14 Sandbox file tools share exec's path view
+
+The sandbox file operations (`ReadFile`, `WriteFile`, `CreateExclusive`,
+`ListDir`, `RemoveFile`, `Rename`) resolve paths with **shell semantics,
+identical to `exec_command`**: a relative path resolves under the working
+directory, an absolute path is used as-is. The isolation boundary is the
+sandbox itself, not the working directory — for local, ssh and
+docker-persistent, exec already reaches everything on that filesystem, so
+pinning the file tools inside `WorkDir` adds no protection; it only creates a
+second path universe. The model learns real absolute paths from exec output
+(`pwd`, `ls`, `git status`) and echoes them into the file tools, so the two
+surfaces sharing one view is what makes those calls work. (An earlier
+workdir-rooted "virtual chroot" design was dropped for exactly that failure:
+absolute paths got re-joined under `WorkDir` and read as "not found".)
+
+**The one exception is docker bind-mount mode**, where file operations run on
+the *host* side of the mount while exec runs inside the container — the
+container's isolation does not cover them. There they are confined to
+`WorkDir` via `os.Root` (which also polices `..` and symlink escapes);
+absolute paths must lie under the in-container mount point (`/workspace`, the
+only view the model ever sees) and are translated to their host-side names,
+and anything else fails with `sandbox.ErrOutsideWorkDir` — an explicit
+"outside the working directory" to the model, never a silent re-rooting.
+
 ---
 
 ## 6. Open questions

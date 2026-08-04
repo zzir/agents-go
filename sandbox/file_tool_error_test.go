@@ -92,3 +92,13 @@ func TestFileToolError_UnknownErrorIsGeneric(t *testing.T) {
 		t.Errorf("fileToolError = %q, want %q", got, want)
 	}
 }
+
+// ErrOutsideWorkDir (docker bind-mount refusing a host-side path) renders as a
+// stable error kind without echoing backend detail.
+func TestFileToolError_OutsideWorkDir(t *testing.T) {
+	got := fileToolError("read", "/etc/passwd", ErrOutsideWorkDir)
+	want := "error: read /etc/passwd: outside the working directory"
+	if got != want {
+		t.Errorf("fileToolError = %q, want %q", got, want)
+	}
+}

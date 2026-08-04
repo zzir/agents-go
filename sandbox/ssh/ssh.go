@@ -266,6 +266,18 @@ func (s *Sandbox) exec(ctx context.Context, req sandbox.ExecRequest, stdout, std
 	}
 }
 
+// resolve maps a model-supplied path onto the remote filesystem with shell
+// semantics, mirroring exec (cd WorkDir && ...): an absolute path is used
+// as-is, a relative one resolves under WorkDir. The SSH backend provides no
+// isolation — exec already reaches everything the SSH user can — so the file
+// tools share exec's view rather than pretending to a narrower one.
+func (s *Sandbox) resolve(p string) string {
+	if path.IsAbs(p) {
+		return path.Clean(p)
+	}
+	return path.Join(s.opts.WorkDir, p)
+}
+
 // ReadFile implements sandbox.Sandbox. Files larger than
 // Options.MaxReadFileBytes (default sandbox.DefaultMaxReadFileBytes) fail
 // with sandbox.ErrReadLimitExceeded instead of being loaded into local memory.
@@ -273,7 +285,7 @@ func (s *Sandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
 	if s.opts.WorkDir == "" {
 		return nil, sandbox.ErrNoWorkDir
 	}
-	f, err := s.sftp.Open(path.Join(s.opts.WorkDir, path.Clean("/"+p)))
+	f, err := s.sftp.Open(s.resolve(p))
 	if err != nil {
 		return nil, err
 	}
@@ -286,11 +298,7 @@ func (s *Sandbox) WriteFile(_ context.Context, p string, content []byte) error {
 	if s.opts.WorkDir == "" {
 		return sandbox.ErrNoWorkDir
 	}
-	clean := path.Clean("/" + p)[1:]
-	if clean == "" {
-		return fmt.Errorf("ssh sandbox: invalid file path %q", p)
-	}
-	full := path.Join(s.opts.WorkDir, clean)
+	full := s.resolve(p)
 	if parent := path.Dir(full); parent != "." {
 		if err := s.sftp.MkdirAll(parent); err != nil {
 			return fmt.Errorf("ssh sandbox: mkdir %s: %w", parent, err)
@@ -313,11 +321,7 @@ func (s *Sandbox) CreateExclusive(_ context.Context, p string, content []byte) e
 	if s.opts.WorkDir == "" {
 		return sandbox.ErrNoWorkDir
 	}
-	clean := path.Clean("/" + p)[1:]
-	if clean == "" {
-		return fmt.Errorf("ssh sandbox: invalid file path %q", p)
-	}
-	full := path.Join(s.opts.WorkDir, clean)
+	full := s.resolve(p)
 	if parent := path.Dir(full); parent != "." {
 		if err := s.sftp.MkdirAll(parent); err != nil {
 			return fmt.Errorf("ssh sandbox: mkdir %s: %w", parent, err)
@@ -350,11 +354,7 @@ func (s *Sandbox) RemoveFile(_ context.Context, p string) error {
 	if s.opts.WorkDir == "" {
 		return sandbox.ErrNoWorkDir
 	}
-	clean := path.Clean("/" + p)[1:]
-	if clean == "" {
-		return fmt.Errorf("ssh sandbox: invalid file path %q", p)
-	}
-	return s.sftp.Remove(path.Join(s.opts.WorkDir, clean))
+	return s.sftp.Remove(s.resolve(p))
 }
 
 // Rename implements sandbox.Sandbox.
@@ -362,18 +362,13 @@ func (s *Sandbox) Rename(_ context.Context, oldPath, newPath string) error {
 	if s.opts.WorkDir == "" {
 		return sandbox.ErrNoWorkDir
 	}
-	oc := path.Clean("/" + oldPath)[1:]
-	nc := path.Clean("/" + newPath)[1:]
-	if oc == "" || nc == "" {
-		return fmt.Errorf("ssh sandbox: invalid rename %q -> %q", oldPath, newPath)
-	}
-	to := path.Join(s.opts.WorkDir, nc)
+	to := s.resolve(newPath)
 	if parent := path.Dir(to); parent != "." {
 		if err := s.sftp.MkdirAll(parent); err != nil {
 			return fmt.Errorf("ssh sandbox: mkdir %s: %w", parent, err)
 		}
 	}
-	return s.sftp.Rename(path.Join(s.opts.WorkDir, oc), to)
+	return s.sftp.Rename(s.resolve(oldPath), to)
 }
 
 // ListDir implements sandbox.Sandbox.
@@ -381,11 +376,7 @@ func (s *Sandbox) ListDir(_ context.Context, p string) ([]sandbox.DirEntry, erro
 	if s.opts.WorkDir == "" {
 		return nil, sandbox.ErrNoWorkDir
 	}
-	target := s.opts.WorkDir
-	if p != "" && p != "." {
-		target = path.Join(target, path.Clean("/"+p))
-	}
-	entries, err := s.sftp.ReadDir(target)
+	entries, err := s.sftp.ReadDir(s.resolve(p))
 	if err != nil {
 		return nil, err
 	}

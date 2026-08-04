@@ -122,7 +122,7 @@ func TestParseFindEntries_Empty(t *testing.T) {
 // TestBindMount_LeadingDashName verifies a filename starting with "-" is treated
 // as a path, not an option: CreateExclusive works on "-f" in bind-mount mode
 // (os.Root uses it as a name). The persistent-shell path guards the same case by
-// prefixing every in-container path with "./".
+// resolving every in-container path to an absolute one (leading "/").
 func TestBindMount_LeadingDashName(t *testing.T) {
 	work := t.TempDir()
 	s := &Sandbox{opts: Options{WorkDir: work}}
@@ -142,28 +142,86 @@ func TestBindMount_LeadingDashName(t *testing.T) {
 	}
 }
 
-// TestExclusiveCreateScripts_LeadingDashPrefixed locks the persistent-mode fix:
-// every in-container path is "./"-prefixed so a leading-dash filename is treated
-// as a path, not an option, by mkdir/ln/rm. The persistent Docker path has no
-// daemon-free integration test, so this asserts the prefixing on the pure script
-// builder directly — deleting the "./" in exclusiveCreateScripts fails this test.
-func TestExclusiveCreateScripts_LeadingDashPrefixed(t *testing.T) {
-	create, cleanup, rmTmp := exclusiveCreateScripts("-f", ".ap.dead", "aGk=")
-	if !strings.Contains(create, "./-f") {
-		t.Errorf("create: target not ./-prefixed: %q", create)
+// TestExclusiveCreateScripts_LeadingDashSafe locks the persistent-mode
+// leading-dash defense: paths reach the script builder as absolute
+// in-container paths (leading "/"), so mkdir/ln/rm can never parse one as an
+// option. The persistent Docker path has no daemon-free integration test, so
+// this asserts on the pure script builder directly.
+func TestExclusiveCreateScripts_LeadingDashSafe(t *testing.T) {
+	create, cleanup, rmTmp := exclusiveCreateScripts("/workspace/-f", "/workspace/.ap.dead", "aGk=")
+	for name, script := range map[string]string{"create": create, "cleanup": cleanup, "rmTmp": rmTmp} {
+		for tok := range strings.FieldsSeq(script) {
+			if strings.HasPrefix(tok, "'-") {
+				t.Errorf("%s: quoted argument starts with a dash: %q in %q", name, tok, script)
+			}
+		}
 	}
-	if !strings.Contains(cleanup, "./-f") {
-		t.Errorf("cleanup: target not ./-prefixed: %q", cleanup)
+	if !strings.Contains(create, "'/workspace/-f'") {
+		t.Errorf("create: target not quoted absolute: %q", create)
 	}
-	if !strings.Contains(create, "./.ap.dead") {
-		t.Errorf("create: tmp not ./-prefixed: %q", create)
+	if !strings.Contains(rmTmp, "'/workspace/.ap.dead'") {
+		t.Errorf("rmTmp: tmp not quoted absolute: %q", rmTmp)
 	}
-	if !strings.Contains(rmTmp, "./.ap.dead") {
-		t.Errorf("rmTmp: tmp not ./-prefixed: %q", rmTmp)
+}
+
+// rootRel confines bind-mount file operations — which run on the HOST side of
+// the mount — to the working directory: relative paths pass through for
+// os.Root to police, absolute paths must lie under the in-container mount
+// point (/workspace) and are translated, anything else is refused.
+func TestRootRel(t *testing.T) {
+	ok := map[string]string{
+		"a/b":            filepath.FromSlash("a/b"),
+		"../escape":      filepath.FromSlash("../escape"), // os.Root rejects it downstream
+		"/workspace/a/b": filepath.FromSlash("a/b"),
+		"/workspace":     ".",
+		"":               ".",
 	}
-	// A nested leading-dash directory is prefixed in the mkdir target too.
-	createN, _, _ := exclusiveCreateScripts("-d/f", "-d/.ap.x", "aGk=")
-	if !strings.Contains(createN, "./-d/f") {
-		t.Errorf("nested: target not ./-prefixed: %q", createN)
+	for in, want := range ok {
+		got, err := rootRel(in)
+		if err != nil || got != want {
+			t.Errorf("rootRel(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"/", "/etc/passwd", "/workspacex/f"} {
+		if got, err := rootRel(in); !errors.Is(err, sandbox.ErrOutsideWorkDir) {
+			t.Errorf("rootRel(%q) = %q, %v; want ErrOutsideWorkDir", in, got, err)
+		}
+	}
+}
+
+// The model sees the working directory as /workspace (the in-container mount
+// point) and echoes absolute paths from exec output back into the file tools;
+// in bind-mount mode those must land on the same host file as their relative
+// form. Host side only — no Docker daemon needed.
+func TestBindMount_AbsolutePathsUnderMountPoint(t *testing.T) {
+	ctx := context.Background()
+	work := t.TempDir()
+	s := &Sandbox{opts: Options{WorkDir: work}}
+
+	if err := s.WriteFile(ctx, "/workspace/sub/a.txt", []byte("hi")); err != nil {
+		t.Fatalf("WriteFile(/workspace/...): %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(work, "sub", "a.txt")); err != nil || string(got) != "hi" {
+		t.Fatalf("host file = %q, %v; want %q", got, err, "hi")
+	}
+	data, err := s.ReadFile(ctx, "/workspace/sub/a.txt")
+	if err != nil || string(data) != "hi" {
+		t.Fatalf("ReadFile(/workspace/...) = %q, %v; want %q", data, err, "hi")
+	}
+	if data, err = s.ReadFile(ctx, "sub/a.txt"); err != nil || string(data) != "hi" {
+		t.Fatalf("ReadFile(relative) = %q, %v; want %q", data, err, "hi")
+	}
+	entries, err := s.ListDir(ctx, "/workspace/sub")
+	if err != nil || len(entries) != 1 || entries[0].Name != "a.txt" {
+		t.Fatalf("ListDir(/workspace/sub) = %v, %v; want one entry a.txt", entries, err)
+	}
+
+	// Absolute paths outside the mount point would land on the HOST filesystem,
+	// which the container's isolation does not cover — refused, not re-rooted.
+	if _, err := s.ReadFile(ctx, "/etc/passwd"); !errors.Is(err, sandbox.ErrOutsideWorkDir) {
+		t.Fatalf("ReadFile(/etc/passwd) = %v; want ErrOutsideWorkDir", err)
+	}
+	if err := s.WriteFile(ctx, "/tmp/x", []byte("x")); !errors.Is(err, sandbox.ErrOutsideWorkDir) {
+		t.Fatalf("WriteFile(/tmp/x) = %v; want ErrOutsideWorkDir", err)
 	}
 }
