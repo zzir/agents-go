@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/models/modelkit"
 )
 
 // ResponsesModel calls a model through the OpenAI Responses API. It implements
@@ -113,32 +114,9 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 		// WithJSONSet interprets the key as an sjson path, so escape its
 		// special characters to set a literal top-level key (Python's
 		// extra_body semantics).
-		opts = append(opts, option.WithJSONSet(escapeJSONPath(k), v))
+		opts = append(opts, option.WithJSONSet(modelkit.EscapeJSONPath(k), v))
 	}
 	return opts
-}
-
-// escapeJSONPath escapes sjson path metacharacters so WithJSONSet treats k as a
-// single literal top-level key rather than a path expression. A leading ':' is
-// sjson's "force string key" marker — it is stripped from the key during path
-// parsing — so it is escaped too, otherwise an ExtraBody key like ":k" would be
-// silently renamed to "k".
-func escapeJSONPath(k string) string {
-	var b strings.Builder
-	for i, r := range k {
-		switch r {
-		case '.', '*', '?', '|', '#', '@', '\\':
-			b.WriteByte('\\')
-		case ':':
-			// Only a leading ':' is special to sjson (force-string-key); a colon
-			// anywhere else is an ordinary key character.
-			if i == 0 {
-				b.WriteByte('\\')
-			}
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 // GetResponse implements agents.Model.

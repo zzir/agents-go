@@ -71,7 +71,7 @@ func singleUse(stream RunStream) RunStream {
 	var consumed atomic.Bool
 	return func(yield func(StreamEvent, error) bool) {
 		if !consumed.CompareAndSwap(false, true) {
-			yield(nil, newUserError("run stream already consumed: a RunStream is single-use, and ranging it again would re-execute the run"))
+			yield(nil, NewUserError("run stream already consumed: a RunStream is single-use, and ranging it again would re-execute the run"))
 			return
 		}
 		stream(yield)
@@ -717,7 +717,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					// resending the full filtered input duplicates the server's
 					// stored items). Fail fast, matching Python's UserError.
 					if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
-						err := newUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
+						err := NewUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
 						return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
 					}
 					filtered, ferr := applyHandoffInputFilter(filter, originalInput, generatedItems)

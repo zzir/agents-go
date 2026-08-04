@@ -183,15 +183,11 @@ type ModelBehaviorError struct {
 	AgentsError
 }
 
-func newModelBehaviorError(format string, args ...any) *ModelBehaviorError {
-	return &ModelBehaviorError{AgentsError{Code: CodeModelBehavior, Message: fmt.Sprintf(format, args...)}}
-}
-
 // NewModelBehaviorError constructs a *ModelBehaviorError with a formatted
 // message. It is exported so provider packages (e.g. models/openai) can classify
 // terminal model failures without importing an unexported constructor.
 func NewModelBehaviorError(format string, args ...any) *ModelBehaviorError {
-	return newModelBehaviorError(format, args...)
+	return &ModelBehaviorError{AgentsError{Code: CodeModelBehavior, Message: fmt.Sprintf(format, args...)}}
 }
 
 // ModelRefusalError indicates the model refused to produce output.
@@ -205,28 +201,14 @@ type UserError struct {
 	AgentsError
 }
 
-func newUserError(format string, args ...any) *UserError {
-	return &UserError{AgentsError{Code: CodeUserError, Message: fmt.Sprintf(format, args...)}}
-}
-
 // NewUserError constructs a *UserError with a formatted message. It is exported
 // so provider packages (e.g. models/openai) can report incorrect SDK usage.
 func NewUserError(format string, args ...any) *UserError {
-	return newUserError(format, args...)
+	return &UserError{AgentsError{Code: CodeUserError, Message: fmt.Sprintf(format, args...)}}
 }
 
 // ToolTimeoutError is returned when a tool invocation exceeds its timeout.
 type ToolTimeoutError struct {
 	AgentsError
 	ToolName string
-}
-
-// asAgentsError finds the embedded AgentsError of any SDK error type in err's
-// chain (unwrapping fmt.Errorf %w wrapping), so RunErrorDetails can be attached.
-func asAgentsError(err error, target **AgentsError) bool {
-	if c, ok := errors.AsType[agentsErrorCarrier](err); ok {
-		*target = c.base()
-		return true
-	}
-	return false
 }

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -31,10 +32,10 @@ func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, 
 	id := opts.ID
 	if id == "" {
 		r.nextID++
-		id = "sess-" + time.Now().UTC().Format("20060102150405") + "-" + itoa(r.nextID)
+		id = "sess-" + time.Now().UTC().Format("20060102150405") + "-" + strconv.Itoa(r.nextID)
 	}
 	if _, exists := r.sessions[id]; exists {
-		return nil, newUserError("session %q already exists", id)
+		return nil, NewUserError("session %q already exists", id)
 	}
 	st := NewInMemoryStorage(id)
 	st.SetTitle(opts.Title)
@@ -102,21 +103,6 @@ func (r *InMemoryRepo) Delete(_ context.Context, id string) error {
 		}
 	}
 	return nil
-}
-
-// itoa is strconv.Itoa without the import, for the id fallback.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }
 
 var _ SessionRepo = (*InMemoryRepo)(nil)

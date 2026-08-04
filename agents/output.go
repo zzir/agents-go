@@ -51,7 +51,7 @@ func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) Out
 		normalized, err := ensureStrictSchemaCopy(schema)
 		if err != nil {
 			s.schema = nil
-			s.schemaErr = newUserError("dynamic output schema %q: strict schema normalization failed: %v", name, err)
+			s.schemaErr = NewUserError("dynamic output schema %q: strict schema normalization failed: %v", name, err)
 		} else {
 			s.schema = normalized
 		}

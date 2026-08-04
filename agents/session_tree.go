@@ -131,13 +131,13 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 		return err
 	}
 	if target == nil {
-		return newUserError("branch: no entry %q in this session", entryID)
+		return NewUserError("branch: no entry %q in this session", entryID)
 	}
 	if target.Kind == EntryKindLeaf {
 		// A leaf move is a pointer, not a place: the walk excludes it from the
 		// tree, so a branch "to" one resolves the tip to an id that is not a
 		// node and the session reads as having no active branch.
-		return newUserError("branch: entry %q is a branch move, not an entry to branch to", entryID)
+		return NewUserError("branch: entry %q is a branch move, not an entry to branch to", entryID)
 	}
 	leaf, err := NewLeafEntry(entryID)
 	if err != nil {

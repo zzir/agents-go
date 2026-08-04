@@ -13,14 +13,14 @@ opts.Log = agents.LogConfig{Logger: slog.Default()}
 |---|---|
 | `Logger` | Where records go. Nil disables SDK logging entirely |
 | `SensitiveData` | Include conversation content — prompts, tool arguments. Off by default |
-| `Level` | Override the minimum level for SDK records only |
 
-Most of what the SDK has to say is `Debug`. `Level` exists so a caller can have
-that without turning `Debug` on for their whole application:
+The logger's own handler sets the level floor. Most of what the SDK has to say
+is `Debug`, so hand it a dedicated logger whose handler enables `Debug` to see
+it without turning `Debug` on for your whole application:
 
 ```go
-debug := slog.LevelDebug
-opts.Log = agents.LogConfig{Logger: myLogger, Level: &debug}
+h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+opts.Log = agents.LogConfig{Logger: slog.New(h)}
 ```
 
 ## Sensitive data is a separate decision
@@ -39,12 +39,14 @@ level=DEBUG msg="calling model" component=run agent=support turn=2 input_items=7
 With `SensitiveData: true` the same record also carries `instructions=…` and
 tool `arguments=…`.
 
-Use the same marker in your own tools:
+Use the same marker in your own tools. Outside the SDK's opt-in filter — on
+your own `slog.Logger` — a `Sensitive` attribute renders as `«redacted»`, never
+the value, so marking is safe by default:
 
 ```go
 log.LogAttrs(ctx, slog.LevelDebug, "querying",
 	slog.String("table", name),
-	agents.Sensitive("filter", userFilter))
+	agents.Sensitive("filter", userFilter)) // renders filter=«redacted» here
 ```
 
 ## What gets logged

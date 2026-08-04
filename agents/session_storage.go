@@ -308,7 +308,7 @@ type ItemPopper interface {
 func (s *Session) PopEntry(ctx context.Context) (*SessionEntry, error) {
 	p, ok := s.storage.(EntryPopper)
 	if !ok {
-		return nil, newUserError("session storage %T cannot pop entries", s.storage)
+		return nil, NewUserError("session storage %T cannot pop entries", s.storage)
 	}
 	return p.PopEntry(ctx)
 }
@@ -319,7 +319,7 @@ func (s *Session) PopEntry(ctx context.Context) (*SessionEntry, error) {
 func (s *Session) PopItem(ctx context.Context) (*SessionEntry, error) {
 	p, ok := s.storage.(ItemPopper)
 	if !ok {
-		return nil, newUserError("session storage %T cannot pop items", s.storage)
+		return nil, NewUserError("session storage %T cannot pop items", s.storage)
 	}
 	return p.PopItem(ctx)
 }

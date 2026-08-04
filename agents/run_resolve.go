@@ -19,7 +19,7 @@ func (r *runner) resolveModel(agent *Agent) (Model, error) {
 	if r.opts.Model.Provider != nil {
 		return r.opts.Model.Provider.GetModel(agent.Model)
 	}
-	return nil, newUserError("no model available: set Agent.ModelImpl, RunOptions.Model.Override, or RunOptions.Model.Provider")
+	return nil, NewUserError("no model available: set Agent.ModelImpl, RunOptions.Model.Override, or RunOptions.Model.Provider")
 }
 
 // resolveSettings merges the run-level settings override over the agent's own.
@@ -81,7 +81,7 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 			continue
 		}
 		if seen[name] {
-			return nil, newUserError("duplicate tool name %q on agent %q: tool names must be unique across Agent.Tools and MCP server tools", name, agent.Name)
+			return nil, NewUserError("duplicate tool name %q on agent %q: tool names must be unique across Agent.Tools and MCP server tools", name, agent.Name)
 		}
 		seen[name] = true
 	}

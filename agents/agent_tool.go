@@ -206,16 +206,16 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				switch {
 				case validate != nil:
 					if uerr := validate(argsJSON); uerr != nil {
-						return ToolResult{}, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
+						return ToolResult{}, NewModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
 					}
 				case cfg.InputBuilder == nil && !info.structured:
 					var args agentToolInput
 					if uerr := json.Unmarshal([]byte(argsJSON), &args); uerr != nil {
-						return ToolResult{}, newModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
+						return ToolResult{}, NewModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
 					}
 				default:
 					if !json.Valid([]byte(argsJSON)) {
-						return ToolResult{}, newModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
+						return ToolResult{}, NewModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
 					}
 				}
 				input, ierr := resolveAgentToolInput(argsJSON, info, cfg.InputBuilder)

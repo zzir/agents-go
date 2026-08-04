@@ -156,14 +156,14 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []TResponseInputItem)
 func validateServerState(opts RunOptions) error {
 	if opts.Conversation.ConversationID != "" {
 		if opts.Conversation.UsePreviousResponseID {
-			return newUserError("ConversationID cannot be combined with UsePreviousResponseID")
+			return NewUserError("ConversationID cannot be combined with UsePreviousResponseID")
 		}
 		if opts.Conversation.Session != nil {
-			return newUserError("ConversationID cannot be combined with a local Session")
+			return NewUserError("ConversationID cannot be combined with a local Session")
 		}
 	}
 	if opts.Conversation.UsePreviousResponseID && opts.Conversation.Session != nil {
-		return newUserError("UsePreviousResponseID cannot be combined with a local Session")
+		return NewUserError("UsePreviousResponseID cannot be combined with a local Session")
 	}
 	return nil
 }
@@ -176,8 +176,8 @@ func normalizeInput(input any) ([]TResponseInputItem, error) {
 	case []TResponseInputItem:
 		return v, nil
 	case nil:
-		return nil, newUserError("run input must not be nil")
+		return nil, NewUserError("run input must not be nil")
 	default:
-		return nil, newUserError("unsupported run input type %T (want string or []TResponseInputItem)", input)
+		return nil, NewUserError("unsupported run input type %T (want string or []TResponseInputItem)", input)
 	}
 }

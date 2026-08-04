@@ -12,6 +12,11 @@ import (
 // production output; a caller who wants records asks for them.
 type LogConfig struct {
 	// Logger receives the records. Nil disables SDK logging entirely.
+	//
+	// The logger's own handler sets the level floor. Most of what the SDK says
+	// is Debug, so hand it a dedicated logger whose handler enables Debug —
+	// slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level:
+	// slog.LevelDebug})) — to see it without enabling Debug application-wide.
 	Logger *slog.Logger
 
 	// SensitiveData includes attributes marked with Sensitive: prompts, tool
@@ -22,11 +27,6 @@ type LogConfig struct {
 	// The one that leaks a conversation into a log aggregator has to be made on
 	// purpose.
 	SensitiveData bool
-
-	// Level, when non-nil, overrides the logger's own minimum level for SDK
-	// records. Most of what the SDK has to say is Debug, and a caller usually
-	// wants that without turning Debug on for their whole application.
-	Level *slog.Level
 }
 
 // sensitiveKey marks an attribute as carrying conversation content. It is a
@@ -34,10 +34,12 @@ type LogConfig struct {
 // broken silently and a type does not.
 type sensitiveValue struct{ v any }
 
-// LogValue implements slog.LogValuer so a sensitive attribute that somehow
-// reaches an unfiltered handler still renders, rather than printing a Go
-// struct.
-func (s sensitiveValue) LogValue() slog.Value { return slog.AnyValue(s.v) }
+// LogValue implements slog.LogValuer so a sensitive attribute that reaches a
+// handler WITHOUT going through the SDK's opt-in filter renders as a redaction
+// marker, never the value. The only path that reveals the value is
+// LogConfig.SensitiveData, which unwraps before the handler sees it — so
+// passing a Sensitive attribute to your own slog.Logger is safe by default.
+func (s sensitiveValue) LogValue() slog.Value { return slog.StringValue("«redacted»") }
 
 // Sensitive marks a log attribute as conversation content, dropped unless
 // LogConfig.SensitiveData is set.
@@ -53,8 +55,6 @@ func Sensitive(key string, value any) slog.Attr {
 type runLogger struct {
 	log       *slog.Logger
 	sensitive bool
-	level     slog.Level
-	hasLevel  bool
 }
 
 // newRunLogger builds the logger for a run. A nil Logger yields one that does
@@ -63,11 +63,7 @@ func newRunLogger(cfg LogConfig) *runLogger {
 	if cfg.Logger == nil {
 		return &runLogger{}
 	}
-	l := &runLogger{log: cfg.Logger, sensitive: cfg.SensitiveData}
-	if cfg.Level != nil {
-		l.level, l.hasLevel = *cfg.Level, true
-	}
-	return l
+	return &runLogger{log: cfg.Logger, sensitive: cfg.SensitiveData}
 }
 
 // component returns a logger tagged with the subsystem emitting the record, so
@@ -115,13 +111,7 @@ func (l *runLogger) Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 // enabled reports whether a record at this level would be emitted. Call sites
 // that would have to build an expensive attribute check it first.
 func (l *runLogger) enabled(ctx context.Context, level slog.Level) bool {
-	if l == nil || l.log == nil {
-		return false
-	}
-	if l.hasLevel && level < l.level {
-		return false
-	}
-	return l.log.Enabled(ctx, level)
+	return l != nil && l.log != nil && l.log.Enabled(ctx, level)
 }
 
 func (l *runLogger) emit(ctx context.Context, level slog.Level, msg string, attrs []slog.Attr) {

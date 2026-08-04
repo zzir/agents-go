@@ -278,17 +278,18 @@ func runOne(ctx context.Context, rc *RunContext, g Guardrail, p GuardrailPayload
 	return g.Run(ctx, rc, p)
 }
 
-// runGuardrailsConcurrent runs n guardrails concurrently and fails fast. It
-// returns (nil, nil) when n == 0. Otherwise it spawns one goroutine per index
-// i in [0,n): each calls run(i) — whose closure recovers a panic into an error —
-// and delivers its outcome on a buffered channel sized n, so every goroutine can
-// exit even after this function returns — none leaks. A collection loop returns
-// the first error, or the tripwire error from the first result for which tripped
-// reports true; the context passed to run is canceled on any early return so the
-// remaining guardrails can stop promptly. When all pass it returns every result
-// in completion order.
-func runGuardrailsConcurrent[R any](ctx context.Context, n int, run func(ctx context.Context, i int) (R, error), tripped func(R) (bool, error)) ([]R, error) {
-	if n == 0 {
+// runStageConcurrent runs every guardrail covering stage concurrently against
+// the same payload, failing fast on the first tripwire or error; the context
+// passed to still-running guardrails is canceled on any early return so they
+// can stop promptly. A guardrail panic is reported as that guardrail's error.
+// When all pass it returns every result in completion order.
+//
+// Replace decisions are returned to the caller in the results; it is the
+// caller's job to apply the substitution, because what "replace" means differs
+// per stage.
+func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
+	sel := selectStage(guardrails, p.Stage)
+	if len(sel) == 0 {
 		return nil, nil
 	}
 	// Canceled on early return so still-running guardrails can stop promptly.
@@ -296,50 +297,16 @@ func runGuardrailsConcurrent[R any](ctx context.Context, n int, run func(ctx con
 	defer cancel()
 
 	type outcome struct {
-		result R
+		result GuardrailResult
 		err    error
 	}
-	// Buffered to n: every goroutine can deliver its outcome and exit even when
-	// this function has already returned, so none leaks.
-	done := make(chan outcome, n)
-	for i := range n {
+	// Buffered to len(sel): every goroutine can deliver its outcome and exit
+	// even when this function has already returned, so none leaks.
+	done := make(chan outcome, len(sel))
+	for _, g := range sel {
 		go func() {
-			res, err := run(gctx, i)
-			done <- outcome{result: res, err: err}
-		}()
-	}
-	results := make([]R, 0, n)
-	for range n {
-		oc := <-done
-		if oc.err != nil {
-			return results, oc.err
-		}
-		results = append(results, oc.result)
-		if trip, err := tripped(oc.result); err != nil {
-			return results, err
-		} else if trip {
-			// tripped reported true but returned no error: unreachable given the
-			// closures below always pair a true with an error.
-			return results, nil
-		}
-	}
-	return results, nil
-}
-
-// runStageConcurrent runs every guardrail covering stage concurrently against
-// the same payload, failing fast on the first tripwire or error. A guardrail
-// panic is reported as that guardrail's error.
-//
-// Replace decisions are returned to the caller in the results; it is the
-// caller's job to apply the substitution, because what "replace" means differs
-// per stage.
-func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
-	sel := selectStage(guardrails, p.Stage)
-	return runGuardrailsConcurrent(ctx, len(sel),
-		func(gctx context.Context, i int) (GuardrailResult, error) {
-			g := sel[i]
 			d, err := runOne(gctx, rc, g, p)
-			return GuardrailResult{
+			done <- outcome{result: GuardrailResult{
 				Guardrail:  g,
 				Stage:      p.Stage,
 				Decision:   d,
@@ -348,15 +315,21 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 				ToolName:   p.ToolName,
 				ToolCallID: p.ToolCallID,
 				Arguments:  p.Arguments,
-			}, err
-		},
-		func(res GuardrailResult) (bool, error) {
-			if res.Decision.Action != GuardrailTrip {
-				return false, nil
-			}
-			return true, newTripwireError(res)
-		},
-	)
+			}, err: err}
+		}()
+	}
+	results := make([]GuardrailResult, 0, len(sel))
+	for range sel {
+		oc := <-done
+		if oc.err != nil {
+			return results, oc.err
+		}
+		results = append(results, oc.result)
+		if oc.result.Decision.Action == GuardrailTrip {
+			return results, newTripwireError(oc.result)
+		}
+	}
+	return results, nil
 }
 
 // inputReplacement reports the substituted run input when a StageInput

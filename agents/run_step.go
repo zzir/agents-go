@@ -145,7 +145,7 @@ func processModelResponse(
 					pr.UnknownTools = append(pr.UnknownTools, call)
 					continue
 				}
-				return nil, newModelBehaviorError("tool %q not found on agent %q", fc.Name, agent.Name)
+				return nil, NewModelBehaviorError("tool %q not found on agent %q", fc.Name, agent.Name)
 			}
 			pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
 			pr.Functions = append(pr.Functions, toolRunFunction{Tool: ft, Call: call})
@@ -368,7 +368,7 @@ func (r *runner) executeToolsAndSideEffects(
 					var err error
 					final, err = outputSchema.ValidateJSON(text)
 					if err != nil {
-						mbErr := newModelBehaviorError("failed to parse structured output: %v", err)
+						mbErr := NewModelBehaviorError("failed to parse structured output: %v", err)
 						rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 							originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 						if herr != nil {
@@ -386,7 +386,7 @@ func (r *runner) executeToolsAndSideEffects(
 					// No final text for a structured output type: recover via the
 					// handler, or run the model again (never a hard failure —
 					// Python parity).
-					mbErr := newModelBehaviorError("model returned no final output for the structured output type")
+					mbErr := NewModelBehaviorError("model returned no final output for the structured output type")
 					rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {

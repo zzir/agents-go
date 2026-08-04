@@ -2,13 +2,13 @@ package agentstest
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"iter"
 	"strings"
 	"sync"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/models/modelkit"
 )
 
 // Turn is one scripted model response: the items it produces, its usage, and
@@ -200,42 +200,40 @@ func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) i
 var _ agents.Model = (*FakeModel)(nil)
 
 // --- stream event construction ---------------------------------------------
+//
+// Events are synthesized by the modelkit builders (the same ones adapters
+// use), wrapped in this package's panic contract.
 
-func rawEvent(payload string) agents.TResponseStreamEvent {
-	var ev agents.TResponseStreamEvent
-	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-		panic(fmt.Sprintf("agentstest: invalid stream event JSON: %v\n%s", err, payload))
+func mustEvent(ev agents.TResponseStreamEvent, err error) agents.TResponseStreamEvent {
+	if err != nil {
+		panic(fmt.Sprintf("agentstest: %v", err))
 	}
 	return ev
 }
 
 func outputItemDoneEvent(index int, item agents.TResponseOutputItem) agents.TResponseStreamEvent {
-	return rawEvent(fmt.Sprintf(
-		`{"type":"response.output_item.done","sequence_number":0,"output_index":%d,"item":%s}`,
-		index, item.RawJSON()))
+	return mustEvent(modelkit.OutputItemDoneEvent(index, item))
 }
 
 func completedEvent(items []agents.TResponseOutputItem, respID string, u agents.RequestUsage) agents.TResponseStreamEvent {
-	raws := make([]json.RawMessage, 0, len(items))
-	for i := range items {
-		raws = append(raws, json.RawMessage(items[i].RawJSON()))
-	}
-	out, err := json.Marshal(raws)
-	if err != nil {
-		panic(err)
-	}
 	if u == (agents.RequestUsage{}) {
 		u = defaultTurnUsage
 	}
 	if u == zeroTurnUsage {
 		u = agents.RequestUsage{}
 	}
-	return rawEvent(fmt.Sprintf(
-		`{"type":"response.completed","sequence_number":0,"response":{"id":%s,"output":%s,`+
-			`"usage":{"input_tokens":%d,"output_tokens":%d,"total_tokens":%d,`+
-			`"input_tokens_details":{"cached_tokens":%d},"output_tokens_details":{"reasoning_tokens":%d}}}}`,
-		quote(respID), out, u.InputTokens, u.OutputTokens, u.TotalTokens,
-		u.InputTokensDetails.CachedTokens, u.OutputTokensDetails.ReasoningTokens))
+	return mustEvent(modelkit.CompletedEvent(modelkit.FinalResponse{
+		ID:     respID,
+		Output: items,
+		Usage: modelkit.ResponseUsage{
+			InputTokens:      u.InputTokens,
+			OutputTokens:     u.OutputTokens,
+			TotalTokens:      u.TotalTokens,
+			CachedTokens:     u.InputTokensDetails.CachedTokens,
+			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
+			ReasoningTokens:  u.OutputTokensDetails.ReasoningTokens,
+		},
+	}))
 }
 
 // textDeltaEvents produces per-rune output_text deltas for a message item so
@@ -256,10 +254,7 @@ func textDeltaEvents(index int, item agents.TResponseOutputItem) []agents.TRespo
 	itemID := item.ID
 	events := make([]agents.TResponseStreamEvent, 0, len([]rune(text.String()))+1)
 	for _, r := range text.String() {
-		events = append(events, rawEvent(fmt.Sprintf(
-			`{"type":"response.output_text.delta","sequence_number":0,"item_id":%s,`+
-				`"output_index":%d,"content_index":0,"delta":%s,"logprobs":[]}`,
-			quote(itemID), index, quote(string(r)))))
+		events = append(events, mustEvent(modelkit.OutputTextDeltaEvent(itemID, index, string(r))))
 	}
 	return events
 }

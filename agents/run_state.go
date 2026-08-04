@@ -211,7 +211,7 @@ func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *r
 // nil runner means the failure predates one existing.
 func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) (*runner, *RunResult, error) {
 	if state == nil {
-		return nil, nil, newUserError("ResumeRun: state must not be nil")
+		return nil, nil, NewUserError("ResumeRun: state must not be nil")
 	}
 	if err := validateServerState(opts); err != nil {
 		return nil, nil, err
@@ -695,7 +695,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		return nil, fmt.Errorf("decoding run state: %w", err)
 	}
 	if in.SchemaVersion != RunStateSchemaVersion {
-		return nil, newUserError("unsupported run state schema version %q (want %q)", in.SchemaVersion, RunStateSchemaVersion)
+		return nil, NewUserError("unsupported run state schema version %q (want %q)", in.SchemaVersion, RunStateSchemaVersion)
 	}
 	lookup := func(name string) *Agent { return registry[name] }
 
@@ -716,7 +716,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		usagePending: in.UsagePending == nil || *in.UsagePending,
 	}
 	if st.CurrentAgent == nil {
-		return nil, newUserError("run state references unknown agent %q; add it to the registry", in.CurrentAgent)
+		return nil, NewUserError("run state references unknown agent %q; add it to the registry", in.CurrentAgent)
 	}
 	if st.Usage == nil {
 		st.Usage = NewUsage()

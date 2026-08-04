@@ -72,7 +72,7 @@ func newOutputType[T any](strict bool) OutputSchema {
 		// Defer surfacing the error: this keeps OutputType usable in a struct
 		// literal without error handling. The runner checks schemaError before
 		// the first model call so the broken schema is never sent to the API.
-		s.schemaErr = newUserError("output schema for %s: %v", t, err)
+		s.schemaErr = NewUserError("output schema for %s: %v", t, err)
 		s.schema = nil
 	}
 	return s

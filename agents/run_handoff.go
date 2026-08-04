@@ -31,14 +31,14 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 		return nil, verr
 	}
 	if run.Handoff.OnInvoke == nil {
-		return nil, newUserError("handoff %q has no OnInvoke", run.Handoff.ToolName)
+		return nil, NewUserError("handoff %q has no OnInvoke", run.Handoff.ToolName)
 	}
 	target, err := run.Handoff.OnInvoke(ctx, r.rc, run.Call.Arguments)
 	if err != nil {
 		return nil, fmt.Errorf("handoff %q failed: %w", run.Handoff.ToolName, err)
 	}
 	if target == nil {
-		return nil, newModelBehaviorError("handoff %q returned a nil agent", run.Handoff.ToolName)
+		return nil, NewModelBehaviorError("handoff %q returned a nil agent", run.Handoff.ToolName)
 	}
 	if run.Handoff.OnHandoff != nil {
 		if err := run.Handoff.OnHandoff(ctx, r.rc, run.Call.Arguments); err != nil {
@@ -92,6 +92,3 @@ func lastMessageItem(items []RunItem) *MessageOutputItem {
 	}
 	return nil
 }
-
-// toolOwnGuardrails returns whatever guardrails a tool declares, from a field
-// or from a decorator — the runner does not need to know which.

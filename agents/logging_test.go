@@ -104,22 +104,18 @@ func TestLogging_SensitiveDataIsOptIn(t *testing.T) {
 	}
 }
 
-// Most of what the SDK says is Debug; a caller usually wants that without
-// turning Debug on for their whole application.
-func TestLogging_LevelOverride(t *testing.T) {
+// A Sensitive attribute handed to a plain slog.Logger — outside the SDK's
+// opt-in filter — must render redacted, never the value. The only reveal path
+// is LogConfig.SensitiveData.
+func TestLogging_SensitiveRedactsOutsideTheFilter(t *testing.T) {
 	log, buf := capture(t)
-	info := slog.LevelInfo
-	if _, err := RunSync(context.Background(), simpleAgent(t, "hi"), "go", RunOptions{
-		Log: LogConfig{Logger: log, Level: &info},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	log.LogAttrs(context.Background(), slog.LevelInfo, "own record", Sensitive("secret", "SECRET-VALUE"))
 	out := buf.String()
-	if !strings.Contains(out, "run started") {
-		t.Errorf("info records were dropped:\n%s", out)
+	if strings.Contains(out, "SECRET-VALUE") {
+		t.Errorf("a Sensitive attribute leaked through an unfiltered handler:\n%s", out)
 	}
-	if strings.Contains(out, "calling model") {
-		t.Errorf("debug records survived an Info level override:\n%s", out)
+	if !strings.Contains(out, "redacted") {
+		t.Errorf("expected a redaction marker:\n%s", out)
 	}
 }
 

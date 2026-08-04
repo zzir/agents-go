@@ -97,7 +97,7 @@ func (r *runner) firstTurnInputGuardrails(
 				// server and cannot be rewritten from here. Proceeding
 				// would send the original while claiming otherwise —
 				// fail instead.
-				rerr := newUserError(
+				rerr := NewUserError(
 					"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace")
 				gspan.SetError(rerr.Error(), nil)
 				gspan.Finish()
@@ -231,7 +231,7 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 			// otherwise. Fail rather than pretend.
 			span.Finish()
 			out.resp = nil
-			out.guardErr = newUserError(
+			out.guardErr = NewUserError(
 				"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace")
 			return out
 		}

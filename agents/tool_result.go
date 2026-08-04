@@ -139,11 +139,11 @@ func normalizeDetails(details map[string]any) (map[string]any, error) {
 	}
 	raw, err := json.Marshal(details)
 	if err != nil {
-		return nil, newUserError("ToolResult.Details is not JSON-serializable: %v", err)
+		return nil, NewUserError("ToolResult.Details is not JSON-serializable: %v", err)
 	}
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, newUserError("ToolResult.Details did not survive a JSON round-trip: %v", err)
+		return nil, NewUserError("ToolResult.Details did not survive a JSON round-trip: %v", err)
 	}
 	return out, nil
 }

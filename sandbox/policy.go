@@ -3,6 +3,7 @@ package sandbox
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -89,7 +90,7 @@ func (p *Policy) Check(cmd string) error {
 	}
 	for i, re := range p.deny {
 		if re.MatchString(cmd) {
-			return &PolicyError{Command: cmd, Reason: "denied by pattern " + strconvQuote(p.Deny[i])}
+			return &PolicyError{Command: cmd, Reason: "denied by pattern " + strconv.Quote(p.Deny[i])}
 		}
 	}
 	return nil
@@ -113,5 +114,3 @@ type PolicyError struct {
 func (e *PolicyError) Error() string {
 	return fmt.Sprintf("command refused by policy (%s): %s", e.Reason, e.Command)
 }
-
-func strconvQuote(s string) string { return `"` + s + `"` }

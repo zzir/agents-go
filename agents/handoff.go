@@ -65,16 +65,16 @@ func validateHandoffInput(h *Handoff, argsJSON string) error {
 	}
 	trimmed := strings.TrimSpace(argsJSON)
 	if trimmed == "" || trimmed == "null" {
-		return newModelBehaviorError("Handoff function expected non-null input, but got None")
+		return NewModelBehaviorError("Handoff function expected non-null input, but got None")
 	}
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
-		return newModelBehaviorError("invalid JSON for handoff %q input: %v", h.ToolName, err)
+		return NewModelBehaviorError("invalid JSON for handoff %q input: %v", h.ToolName, err)
 	}
 	for _, k := range required {
 		key, _ := k.(string)
 		if _, present := probe[key]; !present {
-			return newModelBehaviorError("handoff %q input missing required key %q", h.ToolName, key)
+			return NewModelBehaviorError("handoff %q input missing required key %q", h.ToolName, key)
 		}
 	}
 	return nil

@@ -115,12 +115,12 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 	var parsed any
 	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
 		return &toolArgumentsJSONError{
-			mbe:   newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err),
+			mbe:   NewModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err),
 			cause: err,
 		}
 	}
 	if _, ok := parsed.(map[string]any); !ok {
-		return newModelBehaviorError("Invalid JSON input for tool %s: expected a JSON object", toolName)
+		return NewModelBehaviorError("Invalid JSON input for tool %s: expected a JSON object", toolName)
 	}
 	// Fill in what the schema documents as a default before validating, so a
 	// schema that advertises one and a tool that receives a zero value stop
@@ -131,10 +131,10 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 	// holding a string where the schema said integer, reached the tool as a
 	// zero value it had no way to notice.
 	if err := v.Validate(filled); err != nil {
-		return newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
+		return NewModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
 	}
 	if err := json.Unmarshal(filled, dst); err != nil {
-		return newModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
+		return NewModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
 	}
 	return nil
 }

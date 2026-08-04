@@ -192,7 +192,7 @@ func New(cfg Config) *Manager {
 	}
 	log := cfg.Logger
 	if log == nil {
-		log = slog.New(discardHandler{})
+		log = slog.New(slog.DiscardHandler)
 	}
 	return &Manager{cfg: cfg, log: log.With(slog.String("component", "tasks")), waiters: map[string][]chan struct{}{}}
 }

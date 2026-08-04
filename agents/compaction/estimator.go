@@ -1,6 +1,8 @@
 package compaction
 
 import (
+	"bytes"
+
 	"github.com/zzir/agents-go/agents"
 )
 
@@ -73,20 +75,7 @@ func contentChars(raw []byte) int {
 	chars := len(raw)
 	// Every image part replaces its JSON with the fixed image cost.
 	for _, marker := range [][]byte{[]byte(`"input_image"`), []byte(`"image_url"`)} {
-		chars += imageChars * countOccurrences(raw, marker)
+		chars += imageChars * bytes.Count(raw, marker)
 	}
 	return chars
-}
-
-func countOccurrences(haystack, needle []byte) int {
-	n, i := 0, 0
-	for i+len(needle) <= len(haystack) {
-		if string(haystack[i:i+len(needle)]) == string(needle) {
-			n++
-			i += len(needle)
-			continue
-		}
-		i++
-	}
-	return n
 }

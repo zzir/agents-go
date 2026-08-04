@@ -1311,7 +1311,8 @@ A `Diagnostic` records trouble a run went through **and survived**.
 
 - The failures worth recording are the ones that do *not* fail the run: three
   retries, a fallback to a slower model, a compaction pass that gave up, a
-  recovered tool panic. None of them reach an error return, so without this
+  recovered tool panic, a tool timeout a `FailureErrorFunction` converted into
+  model-visible output. None of them reach an error return, so without this
   they live only in a log nobody kept, and "why was that answer bad" becomes
   unanswerable after the fact.
 - They land on `RunResult.Diagnostics`, on `RunErrorDetails.Diagnostics` when
@@ -1336,12 +1337,17 @@ A `Diagnostic` records trouble a run went through **and survived**.
   conversation content are marked and dropped unless `SensitiveData` is set;
   the record still appears without them. "Log what the SDK is doing" and "log
   what the user said" are different decisions, and only one of them puts a
-  conversation into a log aggregator.
+  conversation into a log aggregator. Outside that opt-in filter, a
+  `Sensitive` attribute renders as a redaction marker — its `LogValue` never
+  reveals the value, so handing one to your own unfiltered `slog.Logger` is
+  safe by default.
 - **Every record carries `component`**, so SDK chatter is filterable by origin
   without each call site repeating the attribute.
-- `Level` overrides the minimum level **for SDK records only**. Most of what the
-  SDK says is `Debug`, and a caller usually wants it without enabling `Debug`
-  application-wide.
+- **The logger's handler sets the level floor.** Most of what the SDK says is
+  `Debug`; hand it a dedicated logger whose handler enables Debug to see it
+  without enabling Debug application-wide. (A `Level` override field existed
+  and was removed: it ANDed with the handler's own gate, so it could only
+  tighten — the loosening its doc promised was impossible.)
 - Logging and tracing are configured separately, as are their sensitive-data
   switches: exporting spans and writing log lines are different exposures.
 

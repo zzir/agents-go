@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -488,11 +489,9 @@ func (r *Repo) Delete(_ context.Context, id string) error {
 }
 
 func sortByUpdatedDesc(md []agents.SessionMetadata) {
-	for i := 1; i < len(md); i++ {
-		for j := i; j > 0 && md[j].UpdatedAt.After(md[j-1].UpdatedAt); j-- {
-			md[j], md[j-1] = md[j-1], md[j]
-		}
-	}
+	slices.SortStableFunc(md, func(a, b agents.SessionMetadata) int {
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
 }
 
 var _ agents.SessionRepo = (*Repo)(nil)

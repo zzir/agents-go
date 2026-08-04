@@ -231,6 +231,14 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 						"tool": run.Call.Name, "call_id": run.Call.CallID,
 					})
 				}
+				// A timeout is recorded whether or not a FailureErrorFunction
+				// converts it into model-visible output below — trouble that
+				// was survived is exactly what diagnostics exist for.
+				if te, ok := errors.AsType[*ToolTimeoutError](err); ok {
+					RecordDiagnostic(ctx, DiagToolTimeout, te, map[string]any{
+						"tool": run.Call.Name, "call_id": run.Call.CallID,
+					})
+				}
 				// Tool errors routinely embed the call arguments, so the span
 				// error is gated like input/output (Python parity:
 				// get_trace_tool_error / REDACTED_TOOL_ERROR_MESSAGE).
@@ -467,7 +475,7 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 func invokeTool(ctx context.Context, tool Tool, tc *ToolContext, argsJSON string) (ToolResult, error) {
 	invoker, ok := ToolAs[InvokableTool](tool)
 	if !ok {
-		return ToolResult{}, newUserError("tool %q cannot be invoked", tool.ToolName())
+		return ToolResult{}, NewUserError("tool %q cannot be invoked", tool.ToolName())
 	}
 	timeout := time.Duration(0)
 	if tt, ok := ToolAs[TimeoutTool](tool); ok {

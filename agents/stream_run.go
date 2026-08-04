@@ -97,7 +97,7 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 		// No response.completed event arrived: the stream ended early or with a
 		// terminal failure event. Surfacing this is essential — fabricating an
 		// empty response would make a failed run "succeed" with empty output.
-		return nil, newModelBehaviorError("model stream ended without a completed response")
+		return nil, NewModelBehaviorError("model stream ended without a completed response")
 	}
 	// Some backends (e.g. ChatGPT with store=false) return an empty Output
 	// array in the completed event. Fall back to output assembled from

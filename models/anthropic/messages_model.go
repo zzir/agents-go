@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"strings"
 
 	ant "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -164,28 +163,9 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 		// WithJSONSet interprets the key as an sjson path; escape its
 		// metacharacters so k is a literal top-level key (same contract as the
 		// OpenAI provider's ExtraBody).
-		opts = append(opts, option.WithJSONSet(escapeJSONPath(k), v))
+		opts = append(opts, option.WithJSONSet(modelkit.EscapeJSONPath(k), v))
 	}
 	return opts
-}
-
-// escapeJSONPath escapes sjson path metacharacters so WithJSONSet treats k as
-// a single literal top-level key. A leading ':' is sjson's force-string-key
-// marker and is escaped too.
-func escapeJSONPath(k string) string {
-	var b strings.Builder
-	for i, r := range k {
-		switch r {
-		case '.', '*', '?', '|', '#', '@', '\\':
-			b.WriteByte('\\')
-		case ':':
-			if i == 0 {
-				b.WriteByte('\\')
-			}
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 // GetResponse implements agents.Model.

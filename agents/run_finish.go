@@ -120,10 +120,8 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 		GuardrailResults: r.snapshotGuardrailResults(),
 		Diagnostics:      r.diagnostics.All(),
 	}
-	var ae *AgentsError
-	if asAgentsError(err, &ae) {
+	if ae, ok := AsAgentsError(err); ok {
 		ae.Details = details
-		return err
 	}
 	return err
 }

@@ -54,4 +54,3 @@ func TestForkSession_EmptySource(t *testing.T) {
 		t.Fatalf("got %d items, want 0 (dst should be cleared)", len(got))
 	}
 }
-

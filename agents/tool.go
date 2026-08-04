@@ -138,7 +138,7 @@ var _ Tool = (*FunctionTool)(nil)
 // Invoke implements InvokableTool.
 func (t *FunctionTool) Invoke(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
 	if t.OnInvoke == nil {
-		return ToolResult{}, newUserError("function tool %q has no OnInvoke", t.Name)
+		return ToolResult{}, NewUserError("function tool %q has no OnInvoke", t.Name)
 	}
 	return t.OnInvoke(ctx, tc, argsJSON)
 }
