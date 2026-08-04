@@ -16,7 +16,7 @@ import (
 // --- retry -----------------------------------------------------------
 
 func TestMCP_RunWithRetries_SucceedsAfterFailures(t *testing.T) {
-	s := newServer("t", Options{MaxRetryAttempts: 3, RetryBackoffBase: time.Millisecond})
+	s, _ := newServer("t", Options{MaxRetryAttempts: 3, RetryBackoffBase: time.Millisecond})
 	calls := 0
 	err := s.runWithRetries(context.Background(), func() error {
 		calls++
@@ -34,7 +34,7 @@ func TestMCP_RunWithRetries_SucceedsAfterFailures(t *testing.T) {
 }
 
 func TestMCP_RunWithRetries_NoRetriesByDefault(t *testing.T) {
-	s := newServer("t", Options{})
+	s, _ := newServer("t", Options{})
 	calls := 0
 	err := s.runWithRetries(context.Background(), func() error {
 		calls++
@@ -49,7 +49,7 @@ func TestMCP_RunWithRetries_NoRetriesByDefault(t *testing.T) {
 }
 
 func TestMCP_RunWithRetries_Infinite(t *testing.T) {
-	s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
+	s, _ := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
 	calls := 0
 	err := s.runWithRetries(context.Background(), func() error {
 		calls++
@@ -64,7 +64,7 @@ func TestMCP_RunWithRetries_Infinite(t *testing.T) {
 }
 
 func TestMCP_RunWithRetries_ContextCancel(t *testing.T) {
-	s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: 50 * time.Millisecond})
+	s, _ := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: 50 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := s.runWithRetries(ctx, func() error { return errors.New("boom") })
@@ -76,7 +76,7 @@ func TestMCP_RunWithRetries_ContextCancel(t *testing.T) {
 // --- name prefixing / truncation / dedup -----------------------------
 
 func TestMCP_ExposedNames_PlainPrefix(t *testing.T) {
-	s := newServer("srv", Options{ToolNamePrefix: "gh_"})
+	s, _ := newServer("srv", Options{ToolNamePrefix: "gh_"})
 	names := s.exposedNames([]*mcpsdk.Tool{{Name: "a"}, {Name: "b"}})
 	if names[0] != "gh_a" || names[1] != "gh_b" {
 		t.Fatalf("plain prefix wrong: %v", names)
@@ -84,7 +84,7 @@ func TestMCP_ExposedNames_PlainPrefix(t *testing.T) {
 }
 
 func TestMCP_ExposedNames_ServerPrefix(t *testing.T) {
-	s := newServer("srv", Options{IncludeServerInToolNames: true})
+	s, _ := newServer("srv", Options{IncludeServerInToolNames: true})
 	names := s.exposedNames([]*mcpsdk.Tool{{Name: "echo"}})
 	if names[0] != "mcp_srv__echo" {
 		t.Fatalf("server prefix wrong: %v", names)
@@ -92,7 +92,7 @@ func TestMCP_ExposedNames_ServerPrefix(t *testing.T) {
 }
 
 func TestMCP_ExposedNames_Truncation(t *testing.T) {
-	s := newServer("srv", Options{IncludeServerInToolNames: true})
+	s, _ := newServer("srv", Options{IncludeServerInToolNames: true})
 	long := strings.Repeat("x", 80)
 	names := s.exposedNames([]*mcpsdk.Tool{{Name: long}})
 	if len(names[0]) > mcpToolNameMaxLength {
@@ -105,7 +105,7 @@ func TestMCP_ExposedNames_Truncation(t *testing.T) {
 }
 
 func TestMCP_ExposedNames_CollisionDedup(t *testing.T) {
-	s := newServer("srv", Options{IncludeServerInToolNames: true})
+	s, _ := newServer("srv", Options{IncludeServerInToolNames: true})
 	// Both sanitize to the same base name "mcp_srv__foo_bar" and must be
 	// disambiguated with distinct hash suffixes.
 	names := s.exposedNames([]*mcpsdk.Tool{{Name: "foo.bar"}, {Name: "foo_bar"}})
@@ -213,7 +213,7 @@ func TestMCP_ToolMeta(t *testing.T) {
 
 func TestMCP_DynamicRequireApproval(t *testing.T) {
 	server := startServer(t, Options{
-		RequireApprovalFunc: func(_ context.Context, _ *agents.RunContext, agent *agents.Agent, tool string) bool {
+		RequireApproval: func(_ context.Context, _ *agents.RunContext, agent *agents.Agent, tool string) bool {
 			return agent.Name == "needs" && tool == "echo"
 		},
 	}, nil)
@@ -236,6 +236,15 @@ func TestMCP_DynamicRequireApproval(t *testing.T) {
 	ft2 := tools2[0].(*agents.FunctionTool)
 	if need, _ := ft2.NeedsApprovalFunc(context.Background(), rc, "", ""); need {
 		t.Fatal("agent 'other' should not require approval")
+	}
+}
+
+// --- naming options are mutually exclusive ---------------------------
+
+func TestMCP_NamingOptionsMutuallyExclusive(t *testing.T) {
+	_, err := newServer("s", Options{ToolNamePrefix: "p_", IncludeServerInToolNames: true})
+	if err == nil {
+		t.Fatal("expected error for ToolNamePrefix + IncludeServerInToolNames")
 	}
 }
 

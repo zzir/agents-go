@@ -62,28 +62,25 @@ type Options struct {
 
 	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_") to
 	// avoid collisions when multiple servers expose same-named tools. The server
-	// is still called with the original name. Ignored when
-	// IncludeServerInToolNames is set.
+	// is still called with the original name. Setting it together with
+	// IncludeServerInToolNames is a configuration error, reported by the
+	// constructor.
 	ToolNamePrefix string
 
 	// IncludeServerInToolNames auto-prefixes every exposed tool name with the
 	// server name (mcp_{server}__{tool}), truncating names longer than 64
 	// characters with a sha1 suffix and disambiguating any resulting collisions.
-	// The server is still called with the original name. When set it takes
-	// precedence over ToolNamePrefix. A rename or truncation is logged via
-	// slog.Default so an auto-renamed tool is never silently capped.
+	// The server is still called with the original name. A rename or truncation
+	// is reported via Logger when one is set; nil stays silent (spec §2.11c).
 	IncludeServerInToolNames bool
 
-	// RequireApproval, when set, marks an exposed MCP tool as needing human
-	// approval (HITL) whenever it returns true for the tool's original name.
-	RequireApproval func(toolName string) bool
-
-	// RequireApprovalFunc, when set, decides per call whether an exposed MCP tool
-	// needs human approval, receiving the run context, the current agent, and the
-	// tool's original name. It is wired to the core per-call approval mechanism
-	// and takes precedence over RequireApproval. The current agent is captured per
-	// ListTools call, matching the Python SDK.
-	RequireApprovalFunc func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
+	// RequireApproval, when set, decides per call whether an exposed MCP tool
+	// needs human approval (HITL), receiving the run context, the current agent
+	// (captured per ListTools call, matching the Python SDK) and the tool's
+	// original (unprefixed) name. For the common static case use ApproveTools:
+	//
+	//	mcp.Options{RequireApproval: mcp.ApproveTools("write_file")}
+	RequireApproval func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
 
 	// ToolMetaResolver, when set, produces MCP request metadata (_meta) attached
 	// to each call_tool request, receiving the run context, the tool's original
@@ -140,7 +137,12 @@ type cachedTool struct {
 	tool         agents.Tool
 }
 
-func newServer(name string, opts Options) *Server {
+func newServer(name string, opts Options) (*Server, error) {
+	// Both naming schemes rewrite the same exposed name; silently picking one
+	// would hide a configuration mistake, so refuse the combination outright.
+	if opts.ToolNamePrefix != "" && opts.IncludeServerInToolNames {
+		return nil, fmt.Errorf("mcp server %q: ToolNamePrefix and IncludeServerInToolNames are mutually exclusive", name)
+	}
 	s := &Server{name: name, opts: opts, allowed: map[string]bool{}, blocked: map[string]bool{}}
 	for _, t := range opts.AllowedTools {
 		s.allowed[t] = true
@@ -148,7 +150,7 @@ func newServer(name string, opts Options) *Server {
 	for _, t := range opts.BlockedTools {
 		s.blocked[t] = true
 	}
-	return s
+	return s, nil
 }
 
 func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
@@ -175,7 +177,10 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 // NewWithTransport connects to an MCP server over an arbitrary transport. Use
 // it for custom transports or in-process testing (mcpsdk.NewInMemoryTransports).
 func NewWithTransport(ctx context.Context, name string, transport mcpsdk.Transport, opts Options) (*Server, error) {
-	s := newServer(name, opts)
+	s, err := newServer(name, opts)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.connect(ctx, transport); err != nil {
 		return nil, err
 	}
@@ -185,7 +190,10 @@ func NewWithTransport(ctx context.Context, name string, transport mcpsdk.Transpo
 // NewStdioServer launches an MCP server subprocess and connects over stdio.
 // cmd is the command to run (e.g. exec.Command("npx", "-y", "server")).
 func NewStdioServer(ctx context.Context, name string, cmd *exec.Cmd, opts Options) (*Server, error) {
-	s := newServer(name, opts)
+	s, err := newServer(name, opts)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.connect(ctx, &mcpsdk.CommandTransport{Command: cmd}); err != nil {
 		return nil, err
 	}
@@ -195,7 +203,10 @@ func NewStdioServer(ctx context.Context, name string, cmd *exec.Cmd, opts Option
 // NewStreamableHTTPServer connects to an MCP server over the streamable HTTP
 // transport at endpoint.
 func NewStreamableHTTPServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
-	s := newServer(name, opts)
+	s, err := newServer(name, opts)
+	if err != nil {
+		return nil, err
+	}
 	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint}
 	if opts.OAuthHandler != nil {
 		transport.OAuthHandler = opts.OAuthHandler
@@ -212,7 +223,10 @@ func NewStreamableHTTPServer(ctx context.Context, name, endpoint string, opts Op
 // (revision 2025-03-26); use [NewStreamableHTTPServer] for new servers. This is
 // kept for servers that only expose a legacy SSE endpoint.
 func NewSSEServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
-	s := newServer(name, opts)
+	s, err := newServer(name, opts)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.connect(ctx, &mcpsdk.SSEClientTransport{Endpoint: endpoint}); err != nil {
 		return nil, err
 	}
@@ -270,12 +284,12 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 	return tools, nil
 }
 
-// bindApproval returns the tool to expose for this ListTools call, wiring the
-// dynamic RequireApprovalFunc (if set) with the current agent captured per call
-// — matching the Python SDK, which re-binds the approval closure to the current
-// agent each turn. The cached base tool is left untouched.
+// bindApproval returns the tool to expose for this ListTools call, wiring
+// RequireApproval (if set) with the current agent captured per call — matching
+// the Python SDK, which re-binds the approval closure to the current agent
+// each turn. The cached base tool is left untouched.
 func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
-	if s.opts.RequireApprovalFunc == nil {
+	if s.opts.RequireApproval == nil {
 		return ct.tool
 	}
 	ft, ok := ct.tool.(*agents.FunctionTool)
@@ -284,11 +298,24 @@ func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
 	}
 	clone := *ft
 	name := ct.originalName
-	fn := s.opts.RequireApprovalFunc
+	fn := s.opts.RequireApproval
 	clone.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, _ string, _ string) (bool, error) {
 		return fn(ctx, rc, agent, name), nil
 	}
 	return &clone
+}
+
+// ApproveTools returns a RequireApproval predicate that marks exactly the
+// named tools (by their original, unprefixed names) as requiring human
+// approval — the common static case.
+func ApproveTools(names ...string) func(context.Context, *agents.RunContext, *agents.Agent, string) bool {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return func(_ context.Context, _ *agents.RunContext, _ *agents.Agent, toolName string) bool {
+		return set[toolName]
+	}
 }
 
 // maxToolListPages bounds a tools/list pagination walk; a server with more
@@ -510,9 +537,6 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			}
 			return out, nil
 		},
-	}
-	if s.opts.RequireApproval != nil && s.opts.RequireApproval(originalName) {
-		tool.NeedsApproval = true
 	}
 	return tool
 }

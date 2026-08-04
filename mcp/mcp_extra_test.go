@@ -79,14 +79,18 @@ func TestMCP_ToolNamePrefix(t *testing.T) {
 func TestMCP_RequireApproval(t *testing.T) {
 	ctx := context.Background()
 	server := startServer(t, Options{
-		RequireApproval: func(name string) bool { return name == "echo" },
+		RequireApproval: ApproveTools("echo"),
 	}, nil)
 	rc, ag := rcAg()
 	tools, err := server.ListTools(ctx, rc, ag)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ft := tools[0].(*agents.FunctionTool); !ft.NeedsApproval {
+	ft := tools[0].(*agents.FunctionTool)
+	if ft.NeedsApprovalFunc == nil {
+		t.Fatal("expected NeedsApprovalFunc wired for ApproveTools")
+	}
+	if need, _ := ft.NeedsApprovalFunc(ctx, rc, "", ""); !need {
 		t.Error("echo should require approval")
 	}
 }
