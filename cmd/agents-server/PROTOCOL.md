@@ -10,7 +10,8 @@
 >
 > The live protocol is defined by
 > [`internal/protocol/messages.go`](internal/protocol/messages.go), mirrored in
-> `web/src/lib/protocol.ts`. Neither may diverge from the other at any point.
+> [`internal/web/frontend/src/lib/protocol.ts`](internal/web/frontend/src/lib/protocol.ts).
+> Neither may diverge from the other at any point.
 
 ---
 
@@ -197,35 +198,43 @@ something and it must not vanish.
 
 ---
 
-## F6 · Runs report a phase
+## F6 · Runs report a phase — **dropped** (2026-08-04)
 
-**Frozen:** `run.phase` — `{run_id, phase}` where phase is one of
-`model` | `tools` | `guardrails` | `compaction` | `waiting_approval`.
-
-The UI shows what a run is *doing* during a long silence. Purely advisory;
-a client may ignore it. It is also a tracing span attribute.
+Was: a `run.phase` event fed by `RunControl.Phase()`. Never implemented, and
+the SDK-side introspection trio it depended on was removed with zero
+consumers: the UI already derives what a run is doing from the stream's own
+events (`run.agent_start`, `run.tool_call`, deltas), which carry strictly more
+information than a phase enum. A future need re-proposes it against a concrete
+renderer.
 
 ---
 
 ## F7 · History reads are cursor-paginated
 
 **Frozen:** history is fetched by cursor, not offset —
-`GET /api/v1/sessions/{id}/entries?after=<seq>&limit=N`, returning
-`{entries: [...], next_cursor: "<seq>"}`.
+`GET /api/v1/sessions/{id}/messages?limit=N&before_id=<id>`: without `limit`
+all entries oldest-first; with it, the newest `limit` entries (still
+oldest-first), paging **backwards** by passing the smallest received row id as
+`before_id`.
 
-`seq` is storage-assigned and monotonic per session, so a cursor
-stays valid across concurrent appends. Offset pagination cannot promise that.
+The cursor is the storage-assigned, per-session-monotonic row id, so it stays
+valid across concurrent appends — offset pagination cannot promise that.
+(Revised 2026-08-04: the shape shipped as a backwards `before_id` cursor on
+`/messages` with no `next_cursor` — a chat UI pages history backwards from the
+tail — replacing the forward `?after=<seq>` draft recorded here earlier.)
 
 ---
 
 ## F8 · Sessions are trees
 
-**Frozen:** an entry carries `parent_id`; a session carries a `leaf_id`.
-Switching branches is `PATCH /api/v1/sessions/{id} {leaf_id}` — a **persistent**
-operation, not a client-side view state.
+**Frozen:** an entry carries `parent_id`; a session carries a leaf. Switching
+branches is `POST /api/v1/sessions/{id}/branch {entry_id}` — a **persistent**
+operation, not a client-side view state. (Revised 2026-08-04: shipped as its
+own POST taking the branch-point `entry_id` rather than a `PATCH {leaf_id}` —
+`PATCH /sessions/{id}` stays the rename/pin surface.)
 
-`GET .../entries` returns the path from the current leaf to the root, in order.
-Forking returns a new session id whose entries share ancestry.
+`GET .../messages` returns the path from the current leaf to the root, in
+order. Forking returns a new session id whose entries share ancestry.
 
 ---
 
@@ -241,9 +250,9 @@ Forking returns a new session id whose entries share ancestry.
 | F8 session trees | ✅ |
 | F1 delta entry ids | 🚧 |
 | F2 `run.entry` | 🚧 |
-| F6 phase | 🚧 |
+| F6 phase | ✖ dropped |
 
-F1, F2 and F6 travel together: they replace per-delta text with per-entry
+F1 and F2 travel together: they replace per-delta text with per-entry
 snapshots, which is a protocol change whose payoff is on the client — roughly
 half of the streaming reducer's transforms become a replace-by-id. The half
 that would NOT go away is the reconciliation between a REST history fetch and

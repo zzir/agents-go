@@ -33,7 +33,7 @@ The most common fields:
 | `Tools` | Function tools the model may call ([Tools](tools.md)) |
 | `MCPServers` | MCP servers whose tools are exposed to the agent ([MCP](mcp.md)) |
 | `Handoffs` | Agents this agent can delegate to ([Handoffs](handoffs.md)) |
-| `InputGuardrails` / `OutputGuardrails` | Validation that can stop the run ([Guardrails](guardrails.md)) |
+| `Guardrails` | Validation that can stop the run, one list across all stages ([Guardrails](guardrails.md)) |
 | `OutputType` | Structured output schema (below) |
 | `OnStart` / `OnEnd` | Callbacks around this agent's turn |
 

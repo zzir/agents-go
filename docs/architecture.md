@@ -132,18 +132,22 @@ states the rule that follows from it — a bare type assertion is a bug.
 
 ## Module boundaries
 
-The repository is a Go workspace of seven modules. **A submodule exists only to
-keep a heavy dependency out of the core.** Anything dependency-free stays in the
-root module, no matter how peripheral it feels.
+The repository is a Go workspace of ten modules (two of them example modules
+with their own heavy deps). **A submodule exists only to keep a heavy
+dependency out of the core.** Anything dependency-free stays in the root
+module, no matter how peripheral it feels — `models/modelkit` is the standing
+example: shared adapter plumbing, stdlib-only, so it lives in root.
 
 | Module | Exists because of |
 |---|---|
-| root | — the SDK |
+| root | — the SDK (including `models/openai` and `models/modelkit`) |
+| `models/anthropic` | the anthropic-sdk-go client |
 | `sandbox/docker`, `sandbox/ssh` | the Docker and SSH client libraries |
 | `sessions` | the SQL drivers |
 | `skills` | the YAML parser |
 | `tracing/otel` | the OpenTelemetry SDK |
 | `cmd/agents-server` | a web application, not a library |
+| `examples/otel`, `examples/anthropic` | example programs needing those same heavy deps |
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix
 cannot hide a missing `go.mod` require.

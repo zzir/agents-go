@@ -336,8 +336,9 @@ Secret fields are masked on read — see [Secret handling](#secret-handling): th
 `provider.api_key` and each `resilience.fallback_models[].api_key`.
 
 The ChatGPT OAuth routes are a per-agent capability (previously under `/chatgpt/*`
-with an `?agent_config_id=` query parameter). The browser OAuth redirect lands at
-`GET /api/v1/chatgpt/oauth/callback`.
+with an `?agent_config_id=` query parameter). The browser OAuth redirect lands on
+a temporary listener at the fixed ChatGPT port (localhost:1455), not on an API
+route.
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
@@ -536,12 +537,8 @@ itself runs over [`/ws/terminal`](#terminal-endpoint--get-wsterminal).
 ### ChatGPT OAuth
 
 Login, logout, and status are per-agent, under the agent resource — see
-[Agents](#agents--apiv1agents). The browser OAuth redirect callback is the only
-top-level route:
-
-| Method | Path                      | Description                           |
-|--------|---------------------------|---------------------------------------|
-| GET    | `/chatgpt/oauth/callback` | OAuth redirect callback (auth-exempt) |
+[Agents](#agents--apiv1agents). The browser OAuth redirect lands on a temporary
+listener at the fixed ChatGPT port (localhost:1455), not on an API route.
 
 ### Secret handling
 
@@ -967,11 +964,10 @@ mechanism.
   approval-gated call without a human round-trip. Per-TOOL binding — "only this
   tool's arguments go through this guardrail" — is a separate thing the SDK
   does not model; it would need a `Stages`-like selector keyed by tool name.
-- **Renderer hints on tool-call cards.** A tool declares how its result should
-  be shown via `ToolResult.Display.Renderer` ("terminal", "diff", "table"), and
-  the server already carries it through to the client as `display.renderer`.
-  The card ignores it: live progress renders as a `<pre>` regardless, and a
-  finished result as plain text. Consuming it — a terminal view for shell
-  output, a diff view for a patch — is the remaining half of the streaming
-  partial-results work. `ToolResult.CustomData` (SDK-only metadata that never
-  reaches the model) is likewise carried and unused.
+- **Renderer hints on tool-call cards.** PROTOCOL.md F4 reserves a
+  `display.renderer` hint ("terminal", "diff", "table") on the structured
+  display projection. The card does not consume any such hint today: live
+  progress renders as a `<pre>` regardless, and a finished result as plain
+  text. Wiring a renderer field end to end (SDK `ToolResult.Display` is a
+  plain string today) — a terminal view for shell output, a diff view for a
+  patch — is the remaining half of the streaming partial-results work.

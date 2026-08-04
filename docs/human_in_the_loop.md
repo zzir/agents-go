@@ -15,7 +15,7 @@ deleteRepo.NeedsApproval = true
 Or decide per call from the arguments:
 
 ```go
-deleteRepo.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, argsJSON string) (bool, error) {
+deleteRepo.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
 	return strings.Contains(argsJSON, `"prod"`), nil // only prod deletions need approval
 }
 ```
@@ -61,7 +61,7 @@ By default a tool's [input guardrails](guardrails.md#placement-decides-scope) ru
 
 ```go
 res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
-	PreApprovalToolInputGuardrails: true,
+	Exec: agents.ExecOptions{PreApprovalToolInputGuardrails: true},
 	// ...
 })
 ```

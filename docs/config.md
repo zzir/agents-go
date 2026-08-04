@@ -39,7 +39,7 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{Model: agents.Mo
 
 ## Default model
 
-The provider defaults to `gpt-4o` when an agent does not set `Agent.Model`. Override it once for all agents:
+There is no built-in default model: an agent that sets no `Agent.Model` fails with a `UserError` unless the provider was given a default. Configure one for all agents with:
 
 ```go
 provider := openai.NewProvider().WithDefaultModel("gpt-4o-mini")
@@ -78,4 +78,4 @@ Tracing is opt-in: build a `*tracing.Tracer` and pass it in `RunOptions.Observe.
 
 ## Debugging and logging
 
-The SDK itself does not log. Failures surface as Go errors with typed wrappers (`*agents.MaxTurnsError`, `*agents.ModelBehaviorError`, guardrail tripwire errors, …) that you can match with `errors.As`; partial run state is attached as `RunErrorDetails`. See [Results](results.md#errors).
+The SDK is silent by default and never writes to `slog.Default()`; opt in to its structured logging with `RunOptions.Log` — see [Logging](logging.md). Failures surface as Go errors with typed wrappers (`*agents.MaxTurnsError`, `*agents.ModelBehaviorError`, guardrail tripwire errors, …) that you can match with `errors.As`; partial run state is attached as `RunErrorDetails`. See [Results](results.md#errors).

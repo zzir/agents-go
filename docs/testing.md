@@ -129,6 +129,7 @@ test that stubs out the run loop is testing the stub.
   function is an ordinary Go function; you do not need a run to exercise it.
 - **Testing against the real API?** Use a real provider and mark the test so it
   can be skipped without a key. Keep those few and separate from the fast suite.
-- **Writing a `Model` implementation?** Test it against the provider's wire
-  format, not against this. `FakeModel` is a consumer of the `Model` interface,
-  not a conformance suite for it.
+- **Writing a `Model` implementation?** Run it through
+  `modelkit/conformancetest` — the golden matrix every in-repo backend passes —
+  plus tests against the provider's wire format. `FakeModel` is a consumer of
+  the `Model` interface, not a conformance suite for it.

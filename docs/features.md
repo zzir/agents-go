@@ -11,8 +11,9 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 | Capability | API |
 |---|---|
 | Agents | `agents.Agent{...}` |
-| Run (blocking) | `agents.Run(ctx, agent, input, opts)` |
-| Streaming | `agents.Run(...)` returns a `RunStream` (`iter.Seq2`) + `RunControl`; `agents.RunSync(...)` for the result alone |
+| Run (blocking) | `agents.RunSync(ctx, agent, input, opts)` |
+| Streaming | `agents.Run(...)` returns a `RunStream` (`iter.Seq2`) + `RunControl` |
+| Model backends | `openai.NewProvider()` (Responses API, native) · `anthropic.NewProvider()` (Messages API, translated — separate module) |
 | Function tools | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
 | Structured output | `agents.OutputType[T]()` |
 | Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |
@@ -71,11 +72,14 @@ Core module path: `github.com/zzir/agents-go`.
 |---|---|
 | `agents` | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
 | `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
+| `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
 | `memory` | `FileSession` (JSONL file store, zero dependencies) |
 | `tracing` | Traces, spans, processors and exporters |
 | `mcp` | Model Context Protocol client |
 | `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
 | `tools/bravesearch` | Brave Search web-search tool |
+| `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
+| `tracing/otel` | **separate module** — OpenTelemetry exporter for the vendor-neutral tracing core |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
 | `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |

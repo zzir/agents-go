@@ -2,7 +2,7 @@
 
 Run agents with one of three entry points:
 
-- `agents.Run(ctx, agent, input, opts)` — runs the loop to completion, returns a `*RunResult`
+- `agents.RunSync(ctx, agent, input, opts)` — runs the loop to completion, returns a `*RunResult`
 - `agents.Run(ctx, agent, input, opts)` — the same loop as a stream you range, plus a control handle ([Streaming](streaming.md))
 - `agents.ResumeRun(ctx, state, opts)` — continues a run paused for tool approval ([Human-in-the-loop](human_in_the_loop.md))
 
@@ -27,37 +27,31 @@ If the number of turns exceeds the budget, the run fails with `*agents.MaxTurnsE
 
 ## Run options
 
+`RunOptions` is grouped by what each field configures — the groups are not cosmetic; `Conversation` in particular collects options that constrain each other:
+
 ```go
 type RunOptions struct {
-	MaxTurns              int              // turn budget; 0 means DefaultMaxTurns (10)
-	Context               any              // your app data, threaded through tools/guardrails/hooks
-	RunContext            *RunContext      // use an existing run context instead
-	ModelProvider         ModelProvider    // resolves agent model names (required unless ModelImpl/Model set)
-	Model                 Model            // run-level model override for every agent
-	ModelSettings         *ModelSettings   // run-level settings merged over each agent's own
-	CallModelInputFilter  CallModelInputFilter // edit instructions/input just before each model call
-	MaxToolConcurrency    int              // cap parallel function tools per turn; 0 = unlimited
-	ToolNotFoundBehavior  ToolNotFoundBehavior // unknown tool call: abort (default) or return error to model
-	HandoffInputFilter    func(HandoffInputData) HandoffInputData // default filter for handoffs without their own
-	ErrorHandlers         RunErrorHandlers // recover from max-turns/refusal/invalid-output failures (below)
-	Middlewares           []RunMiddleware  // wrap the run, outermost first
-	Session               Session          // conversation persistence (docs: Sessions)
-	SessionInputCallback  SessionInputCallback // combine stored history with new input (docs: Sessions)
-	SessionSettings       *SessionSettings // how the run reads the Session, e.g. Limit (docs: Sessions)
-	ReasoningItemIDPolicy ReasoningItemIDPolicy // keep (default) or omit reasoning-item ids on replay
-	Tracer                *tracing.Tracer  // opt-in tracing (docs: Tracing)
-	UsePreviousResponseID bool             // server-managed conversation state (below)
-	ConversationID        string           // attach to a server-side OpenAI conversation (below)
+	Model        ModelOptions        // Provider / Override / Settings / InputFilter
+	Conversation ConversationOptions // Session, server-managed state, projectors
+	Exec         ExecOptions         // MaxTurns, tool policies, error handlers, injection points
+	Compaction   CompactionOptions   // shrink context as the conversation grows (docs: Sessions)
+	Guardrails   []Guardrail         // run-level guardrails, before each agent's own
+	Middlewares  []RunMiddleware     // wrap the run, outermost first
+	Observe      ObserveOptions      // opt-in tracing (docs: Tracing)
+	Log          LogConfig           // the SDK's own structured logging (docs: Logging)
+	Context      any                 // your app data, threaded through tools/guardrails/hooks
 }
 ```
 
-A few control knobs worth calling out:
+The commonly reached-for knobs, by group:
 
-- **`CallModelInputFilter`** runs just before each model call to edit the system instructions and input items actually sent (e.g. trim tokens, inject context). It does not change what a [session](sessions.md) saves. It does not fire on a HITL-resumed turn.
-- **`MaxToolConcurrency`** bounds how many of a turn's function tools run at once (they otherwise all run in parallel) — useful against downstream rate limits.
-- **`ToolNotFoundBehavior`** defaults to `ToolNotFoundError` (a hallucinated tool name aborts the run). Set `ToolNotFoundReturnToModel` to instead feed an error back as the tool output so the model can correct itself.
-- **`HandoffInputFilter`** applies to any handoff that doesn't set its own `Handoff.InputFilter` — e.g. `agents.NestHandoffHistory(...)` to fold prior history across every handoff ([Handoffs](handoffs.md#nesting-handoff-history)).
-- **`SessionInputCallback`** and **`SessionSettings`** tune how a [session](sessions.md#combining-history-with-new-input) is read: the callback decides how stored history is combined with the new input, and `SessionSettings{Limit}` caps how many recent items are loaded. Both are ignored without a `Session`.
+- **`Model.Provider`** resolves agent model names (required unless every agent sets `ModelImpl`, or `Model.Override` is set); **`Model.Settings`** is a run-level `*ModelSettings` merged over each agent's own; **`Model.InputFilter`** (a `CallModelInputFilter`) runs just before each model call to edit the system instructions and input items actually sent (e.g. trim tokens, inject context). It does not change what a [session](sessions.md) saves, and does not fire on a HITL-resumed turn.
+- **`Conversation.Session`** supplies and persists history; **`Conversation.Settings`** (`*SessionSettings`, e.g. `Limit`) caps how much of it a run loads; **`Conversation.UsePreviousResponseID`** / **`Conversation.ConversationID`** are the server-managed alternatives ([below](#conversations--chat-threads)); **`Conversation.Projectors`** overrides what entry kinds the model reads ([Sessions](sessions.md#projection-what-the-model-reads)).
+- **`Exec.MaxTurns`** is the turn budget (0 means `DefaultMaxTurns`, 10); exceeding it fails the run unless an error handler recovers it.
+- **`Exec.MaxToolConcurrency`** bounds how many of a turn's function tools run at once (they otherwise all run in parallel) — useful against downstream rate limits.
+- **`Exec.ToolNotFoundBehavior`** defaults to `ToolNotFoundError` (a hallucinated tool name aborts the run). Set `ToolNotFoundReturnToModel` to instead feed an error back as the tool output so the model can correct itself.
+- **`Exec.HandoffInputFilter`** applies to any handoff that doesn't set its own `Handoff.InputFilter` — e.g. `agents.NestHandoffHistory(...)` to fold prior history across every handoff ([Handoffs](handoffs.md#nesting-handoff-history)).
+- **`Exec.ErrorHandlers`** recovers max-turns/refusal/invalid-output failures with a fallback final output ([below](#error-handlers)); **`Exec.PrepareNextTurn`** / **`Exec.ShouldStopAfterTurn`** reshape or stop the run at turn boundaries; **`Exec.Overflow`** turns a context-overflow failure into compact-and-retry ([Sessions](sessions.md)).
 - **`ReasoningItemIDPolicy`** controls whether reasoning-item ids survive when run items are converted back into model input on later turns. `ReasoningItemIDPreserve` (the default) keeps them; `ReasoningItemIDOmit` strips them — useful for `store=false` runs whose server-side ids are no longer valid and that rely on encrypted content. The choice is persisted across HITL interruptions in `RunState`.
 
 ## Conversations / chat threads
@@ -373,14 +367,16 @@ A handler receives the error and a `RunErrorData` snapshot (input, items so far,
 
 ```go
 res, err := agents.RunSync(ctx, agent, "Analyze this long transcript", agents.RunOptions{
-	ModelProvider: provider,
-	MaxTurns:      3,
-	ErrorHandlers: agents.RunErrorHandlers{
-		MaxTurns: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
-			return &agents.RunErrorHandlerResult{
-				FinalOutput:        "I couldn't finish within the turn limit. Please narrow the request.",
-				ExcludeFromHistory: true,
-			}, nil
+	Model: agents.ModelOptions{Provider: provider},
+	Exec: agents.ExecOptions{
+		MaxTurns: 3,
+		ErrorHandlers: agents.RunErrorHandlers{
+			MaxTurns: func(ctx context.Context, in agents.RunErrorHandlerInput) (*agents.RunErrorHandlerResult, error) {
+				return &agents.RunErrorHandlerResult{
+					FinalOutput:        "I couldn't finish within the turn limit. Please narrow the request.",
+					ExcludeFromHistory: true,
+				}, nil
+			},
 		},
 	},
 })

@@ -20,7 +20,7 @@ For what this SDK deliberately does not provide (and why), read
 |---|---|
 | `Agent(name=..., instructions=...)` | `&agents.Agent{Name: ..., Instructions: agents.StaticInstructions(...)}` |
 | `instructions=` callable | `agents.InstructionsFunc(func(ctx, rc, agent) (string, error))` |
-| `Runner.run` / `Runner.run_sync` | `agents.Run(ctx, agent, input, opts)` (Go has no sync/async split) |
+| `Runner.run` / `Runner.run_sync` | `agents.RunSync(ctx, agent, input, opts)` (Go has no sync/async split) |
 | `Runner.run_streamed` | `agents.Run(ctx, agent, input, opts)` → `(RunStream, RunControl)`. `agents.RunSync` is the non-streaming counterpart of `Runner.run` |
 | `run_config` / `Runner.run(...)` kwargs | `agents.RunOptions{...}` |
 | `@function_tool` decorator | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
@@ -30,7 +30,7 @@ For what this SDK deliberately does not provide (and why), read
 | `result.final_output_as(T)` | `agents.FinalOutputAs[T](res)` |
 | `handoff(agent)` / `agent.handoffs` | `agents.HandoffTo(agent)` / `Agent.Handoffs` |
 | `agent.as_tool(...)` | `agent.AsTool(agents.AgentToolConfig{...})` |
-| `@input_guardrail` / `@output_guardrail` | `agents.InputGuardrail{Name, Run}` / `agents.OutputGuardrail{Name, Run}` struct values, or `agents.NewInputGuardrail(name, fn)` / `agents.NewOutputGuardrail(name, fn)` simplified constructors |
+| `@input_guardrail` / `@output_guardrail` | one `agents.Guardrail` type across all stages: `agents.NewInputGuardrail(name, fn)` / `agents.NewOutputGuardrail(name, fn)` |
 | `RunContextWrapper[T]` | `*agents.RunContext` with `Context any` (type-assert back) |
 | `SQLiteSession` | `memory.FileSession` (JSONL file; same `Session` interface) |
 | `reset_tool_choice=True` (default) | `DisableToolChoiceReset` (zero value = Python's default behavior) |
@@ -51,7 +51,7 @@ For what this SDK deliberately does not provide (and why), read
 
 **Errors instead of exceptions.** Every failure is a returned `error`. SDK error types embed `AgentsError`; `errors.As` matches concrete types even through `%w` wrapping, and `agents.AsAgentsError` extracts the embedded base (with `RunErrorDetails`) generically.
 
-**Concurrency is explicit.** Tools requested in one turn run concurrently via goroutines (Python interleaves on the event loop). Hooks and shared context values must be goroutine-safe. Streaming uses `iter.Seq2` (`for event, err := range sr.Events()`) instead of `async for`, and there is no `run_sync` because `Run` is already synchronous.
+**Concurrency is explicit.** Tools requested in one turn run concurrently via goroutines (Python interleaves on the event loop). Hooks and shared context values must be goroutine-safe. Streaming uses `iter.Seq2` (`for event, err := range stream`) instead of `async for`, and a run executes on the consumer's goroutine — ranging the stream advances the loop.
 
 **Sealed interfaces instead of unions.** `Tool`, `StreamEvent` and `RunItem` are closed interfaces you type-switch on, mirroring Python's `Union` types.
 

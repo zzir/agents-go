@@ -192,7 +192,7 @@ Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction
 
 ## Choosing an implementation
 
-The built-ins sit on a spectrum from "zero dependencies" to "full database". They all satisfy the same interface, so you can switch later:
+The built-ins sit on a spectrum from "zero dependencies" to "full database". They are all `SessionStorage` backends behind the same `agents.Session` semantics layer (`InMemorySession` is the pre-wrapped convenience), so you can switch later:
 
 | Implementation | Storage | Dependencies | Module | Use when |
 |---|---|---|---|---|
@@ -509,7 +509,11 @@ for _, e := range entries {
 One session = one conversation. Key sessions by conversation ID:
 
 ```go
-func sessionFor(userID, threadID string) (agents.Session, error) {
-	return memory.NewFileSession("sessions", userID+"-"+threadID)
+func sessionFor(userID, threadID string) (*agents.Session, error) {
+	storage, err := memory.NewFileSession("sessions", userID+"-"+threadID)
+	if err != nil {
+		return nil, err
+	}
+	return agents.NewSession(storage), nil
 }
 ```
