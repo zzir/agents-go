@@ -389,6 +389,13 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if spec.fresh {
 		// The plan phase's first unlock (the approved submit_plan executing)
 		// persists its durable marker through this run's store.
+		//
+		// Fresh-only is NOT a gap: a resume executes the agent rehydrated from
+		// the RunState registry — the ResolveApproval build — so the phase that
+		// can unlock there is rebuilt.PlanPhase, and restorePlanPhase armed it
+		// (and restored its durable lock state) before the resume launched.
+		// THIS build's phase hangs off an agent the resume never runs; arming
+		// it would arm a spectator.
 		armPlanUnlock(built.PlanPhase, sa)
 	}
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
