@@ -419,7 +419,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 		// so it can recover, matching the SDK-wide default; without this every
 		// MCP error would abort the whole run.
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
-		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
+		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			// Always send an "arguments" object — an empty {} rather than an
 			// omitted field — matching the Python SDK, which passes an empty
 			// dict; some servers reject calls with no arguments key.
