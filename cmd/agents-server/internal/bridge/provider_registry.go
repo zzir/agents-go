@@ -45,13 +45,11 @@ type providerDef struct {
 	// AuthModes lists auth_mode values beyond "" (API key) this backend
 	// accepts. Validation rejects any other combination.
 	AuthModes []string
-	// Build constructs the plain provider — the routes / fallback-entries path.
-	Build func(apiKey, baseURL string, proxyClient *http.Client) agents.ModelProvider
-	// BuildAgent constructs the primary agent provider, with provider-specific
-	// extras (openai: the ChatGPT OAuth middleware). creds is nil unless the
-	// agent is chatgpt_login-authenticated, which validation limits to
-	// backends listing that auth mode.
-	BuildAgent func(ac *store.AgentConfig, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider
+	// Build constructs the provider. creds is nil except for a
+	// chatgpt_login-authenticated agent (which validation limits to backends
+	// listing that auth mode); backends without that auth mode ignore it. The
+	// routes / fallback-entries path always passes nil.
+	Build func(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider
 	// Capabilities is the adapter's own unsupported-feature declaration,
 	// served to config UIs via ProviderTypes.
 	Capabilities modelkit.Capabilities
@@ -59,46 +57,32 @@ type providerDef struct {
 
 var providerDefs = []providerDef{
 	{
-		Type:       ProviderTypeOpenAI,
-		SettingKey: "openai_api_key",
-		AuthModes:  []string{authModeChatGPTLogin},
-		Build:      newOpenAIModelProvider,
-		BuildAgent: func(ac *store.AgentConfig, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
-			var opts []option.RequestOption
-			if ac.Provider.APIKey != "" {
-				opts = append(opts, option.WithAPIKey(ac.Provider.APIKey))
-			}
-			if ac.Provider.BaseURL != "" {
-				opts = append(opts, option.WithBaseURL(ac.Provider.BaseURL))
-			}
-			if creds != nil {
-				opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(creds.AccountID)))
-			}
-			if proxyClient != nil {
-				opts = append(opts, option.WithHTTPClient(proxyClient))
-			}
-			return openaiProvider.NewProvider(opts...)
-		},
+		Type:         ProviderTypeOpenAI,
+		SettingKey:   "openai_api_key",
+		AuthModes:    []string{authModeChatGPTLogin},
+		Build:        newOpenAIModelProvider,
 		Capabilities: openaiProvider.Capabilities(),
 	},
 	{
 		Type:       ProviderTypeAnthropic,
 		SettingKey: "anthropic_api_key",
-		Build:      newAnthropicModelProvider,
-		BuildAgent: func(ac *store.AgentConfig, _ *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
-			return newAnthropicModelProvider(ac.Provider.APIKey, ac.Provider.BaseURL, proxyClient)
+		Build: func(apiKey, baseURL string, _ *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
+			return newAnthropicModelProvider(apiKey, baseURL, proxyClient)
 		},
 		Capabilities: anthropicProvider.Capabilities(),
 	},
 }
 
-func newOpenAIModelProvider(apiKey, baseURL string, proxyClient *http.Client) agents.ModelProvider {
+func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
 	var opts []option.RequestOption
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	if creds != nil {
+		opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(creds.AccountID)))
 	}
 	if proxyClient != nil {
 		opts = append(opts, option.WithHTTPClient(proxyClient))
@@ -158,7 +142,7 @@ func buildPlainProvider(providerType, apiKey, baseURL string, proxyClient *http.
 	if err != nil {
 		return nil, err
 	}
-	return def.Build(apiKey, baseURL, proxyClient), nil
+	return def.Build(apiKey, baseURL, nil, proxyClient), nil
 }
 
 // ValidateProviderType rejects a provider selector outside the registry. It

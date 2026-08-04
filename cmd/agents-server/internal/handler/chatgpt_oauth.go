@@ -53,12 +53,6 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// Callback is a placeholder; the real callback is handled by the temporary
-// server on the fixed ChatGPT OAuth port.
-func (h *ChatGPTOAuthHandler) Callback(c *gin.Context) {
-	c.String(http.StatusOK, "Callback handled by temporary server on port 1455")
-}
-
 // chatgptStatusResp is the Status response.
 type chatgptStatusResp struct {
 	LoggedIn bool `json:"logged_in"`

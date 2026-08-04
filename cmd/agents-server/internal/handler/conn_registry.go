@@ -67,7 +67,7 @@ func (r *ConnRegistry) AttachAll(runID string) {
 // attach subscribes one connection to runID from seq 0; a run already gone
 // from the hub (finished + GC'd between listing and attaching) is skipped.
 func (r *ConnRegistry) attach(conn *server.WSConn, subs *connSubs, runID string) {
-	if subID, ok := r.hub.Subscribe(runID, 0, wsSink(conn)); ok {
-		subs.add(runID, subID)
+	if cancel, ok := r.hub.Subscribe(runID, 0, wsSink(conn)); ok {
+		subs.add(runID, cancel)
 	}
 }

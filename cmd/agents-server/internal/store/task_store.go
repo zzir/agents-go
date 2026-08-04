@@ -226,18 +226,6 @@ func (s *TaskStore) DeleteByID(ctx context.Context, id string) error {
 	return nil
 }
 
-// ChildSessionIDs returns the hidden child-session ids of every task, used to
-// filter task transcripts out of the chat session list.
-func (s *TaskStore) ChildSessionIDs(ctx context.Context) ([]string, error) {
-	var ids []string
-	if err := s.db.NewSelect().Model((*Task)(nil)).
-		Column("child_session_id").
-		Scan(ctx, &ids); err != nil {
-		return nil, fmt.Errorf("listing task sessions: %w", err)
-	}
-	return ids, nil
-}
-
 // FailOrphans marks every task still recorded as working as failed. Called
 // once at startup: task runs do not survive a process restart, and their
 // terminal status is written by the run goroutine — a row stuck at "working"

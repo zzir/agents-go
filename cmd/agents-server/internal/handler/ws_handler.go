@@ -47,25 +47,25 @@ func wsSink(conn *server.WSConn) bridge.EventSink {
 	}
 }
 
-// connSubs tracks a connection's live hub subscriptions so they can all be
-// detached when the socket closes.
+// connSubs tracks a connection's live hub subscriptions — each held as the
+// cancel closure SubscribeSeq returned — so they can all be detached when the
+// socket closes.
 type connSubs struct {
-	hub  *bridge.RunHub
 	mu   sync.Mutex
-	subs map[string]int // runID -> subscriber id
+	subs map[string]func() // runID -> detach
 }
 
 // add records the connection's subscription for runID, detaching any previous
 // subscription to the same run first so re-subscribing (reconnect with a new
 // from_seq, approval resume) never leaves a duplicate hub sink delivering
 // every event twice.
-func (cs *connSubs) add(runID string, subID int) {
+func (cs *connSubs) add(runID string, cancel func()) {
 	cs.mu.Lock()
-	prev, had := cs.subs[runID]
-	cs.subs[runID] = subID
+	prev := cs.subs[runID]
+	cs.subs[runID] = cancel
 	cs.mu.Unlock()
-	if had && prev != subID {
-		cs.hub.Unsubscribe(runID, prev)
+	if prev != nil {
+		prev()
 	}
 }
 
@@ -80,10 +80,10 @@ func (cs *connSubs) has(runID string) bool {
 func (cs *connSubs) closeAll() {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	for runID, subID := range cs.subs {
-		cs.hub.Unsubscribe(runID, subID)
+	for _, cancel := range cs.subs {
+		cancel()
 	}
-	cs.subs = map[string]int{}
+	cs.subs = map[string]func(){}
 }
 
 // Handle reads and dispatches WebSocket messages on conn until the connection closes.
@@ -92,7 +92,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 	// Drain outbound events through a bounded queue + writer goroutine so a
 	// slow client can't back-pressure the hub/run goroutines that publish them.
 	conn.StartWriter()
-	subs := &connSubs{hub: h.runner.Hub(), subs: map[string]int{}}
+	subs := &connSubs{subs: map[string]func(){}}
 	defer subs.closeAll()
 	// Join the broadcast bus: attach to every in-flight run (with replay) now,
 	// and let AttachAll pick this connection up for runs started later.
@@ -129,7 +129,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 			}
 			h.subscribe(conn, subs, msg.RunID, msg.FromSeq)
 
-		case "tool.approve":
+		case protocol.EventToolApprove:
 			var msg protocol.ToolApprove
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
 				log.Error().Err(err).Msg("unmarshal tool.approve")
@@ -137,7 +137,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 			}
 			go h.resolve(conn, msg.ToolCallID, true, bridge.ParseApprovalScope(msg.Scope), "")
 
-		case "tool.reject":
+		case protocol.EventToolReject:
 			var msg protocol.ToolReject
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
 				log.Error().Err(err).Msg("unmarshal tool.reject")
@@ -157,13 +157,13 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				h.runner.CancelRun(msg.RunID)
 			}
 
-		case protocol.EventRunSteer, protocol.EventRunNextTurn, protocol.EventRunFollowUp:
+		case protocol.EventRunInject:
 			var msg protocol.RunInject
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
 				log.Error().Err(err).Str("type", env.Type).Msg("unmarshal run injection")
 				continue
 			}
-			h.inject(conn, env.Type, msg)
+			h.inject(conn, msg)
 
 		default:
 			log.Warn().Str("type", env.Type).Msg("unknown ws message type")
@@ -174,14 +174,14 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 // subscribe attaches conn to runID's event stream (replaying from fromSeq),
 // tracking the subscription on subs for cleanup.
 func (h *WSHandler) subscribe(conn *server.WSConn, subs *connSubs, runID string, fromSeq int) {
-	subID, ok := h.runner.Hub().Subscribe(runID, fromSeq, wsSink(conn))
+	cancel, ok := h.runner.Hub().Subscribe(runID, fromSeq, wsSink(conn))
 	if !ok {
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
 			RunID: runID, Code: protocol.CodeRunNotFound, Message: "run not found or expired",
 		})})
 		return
 	}
-	subs.add(runID, subID)
+	subs.add(runID, cancel)
 }
 
 func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate) {
@@ -240,15 +240,16 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-// inject delivers client input to a live run through one of the three queues.
+// inject delivers client input to a live run through the queue the message
+// names.
 //
 // A run that has already finished is reported rather than ignored: the user
 // typed something and it went nowhere, which they need to know — the client
 // turns it into a new run or shows it as undelivered.
-func (h *WSHandler) inject(conn *server.WSConn, queue string, msg protocol.RunInject) {
-	delivered, err := h.runner.Hub().Inject(msg.RunID, queue, msg.Input)
+func (h *WSHandler) inject(conn *server.WSConn, msg protocol.RunInject) {
+	delivered, err := h.runner.Hub().Inject(msg.RunID, msg.Queue, msg.Input)
 	if err != nil {
-		zerolog.Ctx(conn.Context()).Error().Err(err).Str("type", queue).Msg("run injection")
+		zerolog.Ctx(conn.Context()).Error().Err(err).Str("queue", msg.Queue).Msg("run injection")
 	}
 	if delivered && err == nil {
 		return

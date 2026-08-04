@@ -87,7 +87,7 @@ const (
 func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStore(db, sessionID)
+	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		userItemJSON,      // 0 — only this one may be compacted
 		callItemJSON,      // 1 ┐ pair straddling the count-based split (msgSplit=2)
@@ -162,7 +162,7 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStore(db, sessionID)
+	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		userItemJSON,      // 0 — compacted
 		"",                // 1 — annotation, follows row 0 onto the compact side
@@ -198,7 +198,7 @@ func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStore(db, sessionID)
+	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		callItemJSON,   // 0 ┐ splitting anywhere inside is unsafe,
 		outputItemJSON, // 1 ┘ and an empty prefix means nothing to summarize
@@ -231,7 +231,7 @@ func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStore(db, sessionID)
+	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		userItemJSON, assistantItemJSON, userItemJSON, // 0..2 — compacted
 		assistantItemJSON, userItemJSON, // 3..4 — kept window
@@ -272,7 +272,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStore(db, sessionID)
+	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
 	rows := loadRows(t, db, sessionID)
 	ids := []int64{rows[0].ID, rows[1].ID}
@@ -325,7 +325,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 func TestCompactionAdapterTokenTrigger(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStore(db, sessionID)
+	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
 	sa.SetRunID("r1")
 	sa.SetModel("m1")
 

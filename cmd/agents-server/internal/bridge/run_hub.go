@@ -192,8 +192,6 @@ type runRecord struct {
 	fanout *agents.Fanout[*protocol.Envelope]
 
 	mu      sync.Mutex
-	subs    map[int]func()
-	nextSub int
 	endedAt time.Time
 }
 
@@ -368,7 +366,6 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 		cancel: seg.cancel,
 		done:   seg.done,
-		subs:   make(map[int]func()),
 		fanout: newRunFanout(),
 	}
 	h.runs[runID] = rec
@@ -428,7 +425,6 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
 			cancel: seg.cancel,
 			done:   seg.done,
-			subs:   make(map[int]func()),
 			fanout: newRunFanout(),
 		}
 		h.runs[runID] = rec
@@ -507,35 +503,31 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 
 // Subscribe attaches a plain sink (seq discarded) to the run's live event
 // stream. See SubscribeSeq.
-func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (int, bool) {
+func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), bool) {
 	return h.SubscribeSeq(runID, fromSeq, func(item SeqEnvelope) { sink(item.Env) })
 }
 
 // SubscribeSeq attaches sink to the run's live event stream after replaying
 // any buffered events with seq > fromSeq (pass 0 to replay everything
-// retained). It returns a subscriber id for Unsubscribe and whether the run
-// exists.
+// retained). It returns the detach function — Go's cancel-closure idiom, the
+// same shape the fanout itself hands back — and whether the run exists.
+// Detaching is idempotent; the fanout's Close ends every remaining subscriber
+// when the run is garbage-collected.
 //
 // The sink runs on its own goroutine, fed by the subscriber's buffer, so a slow
 // sink no longer runs on the publishing goroutine and cannot affect its peers.
 // If it falls far enough behind that its buffer overflows, it is delivered a
 // gap event naming the range it missed — the client resubscribes from LastSeq
 // rather than rendering a timeline that is quietly incomplete.
-func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (int, bool) {
+func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
 	h.mu.Unlock()
 	if rec == nil {
-		return 0, false
+		return nil, false
 	}
 
 	stream, cancel := rec.fanout.Subscribe(fromSeq)
-
-	rec.mu.Lock()
-	rec.nextSub++
-	id := rec.nextSub
-	rec.subs[id] = cancel
-	rec.mu.Unlock()
 
 	go func() {
 		for item, err := range stream {
@@ -563,24 +555,7 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (int, boo
 		}
 	}()
 
-	return id, true
-}
-
-// Unsubscribe detaches a subscriber; unknown ids are ignored.
-func (h *RunHub) Unsubscribe(runID string, subID int) {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
-	if rec == nil {
-		return
-	}
-	rec.mu.Lock()
-	cancel := rec.subs[subID]
-	delete(rec.subs, subID)
-	rec.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
+	return cancel, true
 }
 
 // finish marks a run terminal: interrupted when it paused for approval,
@@ -682,11 +657,11 @@ func (h *RunHub) Inject(runID, queue string, input any) (bool, error) {
 		return false, nil
 	}
 	switch queue {
-	case protocol.EventRunSteer:
+	case protocol.InjectQueueSteer:
 		return true, ctrl.Steer(input)
-	case protocol.EventRunNextTurn:
+	case protocol.InjectQueueNextTurn:
 		return true, ctrl.NextTurn(input)
-	case protocol.EventRunFollowUp:
+	case protocol.InjectQueueFollowUp:
 		return true, ctrl.FollowUp(input)
 	default:
 		return false, fmt.Errorf("unknown injection queue %q", queue)

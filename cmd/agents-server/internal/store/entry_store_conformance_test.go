@@ -20,6 +20,6 @@ func TestEntryStoreConformance(t *testing.T) {
 		if err := store.CreateSchema(context.Background(), db); err != nil {
 			t.Fatal(err)
 		}
-		return store.NewEntryStore(db, store.NewID())
+		return store.NewEntryStoreFor(db, agents.Direct(store.NewID()))
 	})
 }

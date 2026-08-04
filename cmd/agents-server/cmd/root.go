@@ -158,96 +158,24 @@ func run(_ *cobra.Command, _ []string) error {
 	log.Info().Str("token", token).Msg("auth token")
 
 	srv := server.New(log, token)
-	srv.RegisterRoutes(server.Routes{
-		SessionList:     sessionHandler.List,
-		SessionCreate:   sessionHandler.Create,
-		SessionGet:      sessionHandler.Get,
-		SessionPatch:    sessionHandler.Patch,
-		SessionDelete:   sessionHandler.Delete,
-		SessionMessages: sessionHandler.Messages,
-		SessionFork:     sessionHandler.Fork,
-		SessionBranch:   sessionHandler.Branch,
-		WSHandler:       wsHandler.Handle,
-
-		TerminalWSHandler: terminalHandler.Handle,
-
-		RunCreate: runHandler.Create,
-		RunGet:    runHandler.Get,
-		RunCancel: runHandler.Cancel,
-		RunEvents: runHandler.Events,
-
-		ApprovalListBySession: approvalHandler.ListBySession,
-		TaskListBySession:     taskHandler.ListBySession,
-		TaskStop:              taskHandler.Stop,
-		ApprovalApprove:       approvalHandler.Approve,
-		ApprovalReject:        approvalHandler.Reject,
-
-		AgentList:   agentConfigHandler.List,
-		AgentCreate: agentConfigHandler.Create,
-		AgentGet:    agentConfigHandler.Get,
-		AgentUpdate: agentConfigHandler.Update,
-		AgentDelete: agentConfigHandler.Delete,
-		// The tool surface is assembled by BuildFullAgent, which lives with
-		// the playground handler's deps — not a CRUD concern.
-		AgentTools: playgroundHandler.AgentTools,
-
-		McpServerList:          mcpServerHandler.List,
-		McpServerCreate:        mcpServerHandler.Create,
-		McpServerGet:           mcpServerHandler.Get,
-		McpServerUpdate:        mcpServerHandler.Update,
-		McpServerDelete:        mcpServerHandler.Delete,
-		McpServerConnect:       mcpServerHandler.Connect,
-		McpServerClearOAuth:    mcpServerHandler.ClearOAuth,
-		McpServerTools:         mcpServerHandler.Tools,
-		McpServerOAuthCallback: mcpServerHandler.OAuthCallback,
-
-		MemoryList:   memoryHandler.List,
-		MemoryCreate: memoryHandler.Create,
-		MemoryGet:    memoryHandler.Get,
-		MemoryUpdate: memoryHandler.Update,
-		MemoryDelete: memoryHandler.Delete,
-
-		SettingList:   settingHandler.List,
-		SettingGet:    settingHandler.Get,
-		SettingSet:    settingHandler.Set,
-		SettingDelete: settingHandler.Delete,
-
-		SkillList:       skillHandler.List,
-		SkillGet:        skillHandler.Get,
-		SkillRepoClone:  skillHandler.Clone,
-		SkillRepoSync:   skillHandler.Sync,
-		SkillRepoDelete: skillHandler.Delete,
-
-		ProviderRouteList:   providerRouteHandler.List,
-		ProviderRouteCreate: providerRouteHandler.Create,
-		ProviderRouteGet:    providerRouteHandler.Get,
-		ProviderRouteUpdate: providerRouteHandler.Update,
-		ProviderRouteDelete: providerRouteHandler.Delete,
-
-		ProviderTypeList: handler.ProviderTypeList,
-
-		GuardrailList:   guardrailHandler.List,
-		GuardrailCreate: guardrailHandler.Create,
-		GuardrailGet:    guardrailHandler.Get,
-		GuardrailUpdate: guardrailHandler.Update,
-		GuardrailDelete: guardrailHandler.Delete,
-
-		SandboxList:   sandboxHandler.List,
-		SandboxCreate: sandboxHandler.Create,
-		SandboxGet:    sandboxHandler.Get,
-		SandboxUpdate: sandboxHandler.Update,
-		SandboxDelete: sandboxHandler.Delete,
-		SandboxTest:   sandboxHandler.Test,
-
-		TraceListBySession: traceHandler.ListBySession,
-
-		PlaygroundGenerate: playgroundHandler.Generate,
-
-		ChatGPTLogin:    chatgptOAuthHandler.Login,
-		ChatGPTCallback: chatgptOAuthHandler.Callback,
-		ChatGPTStatus:   chatgptOAuthHandler.Status,
-		ChatGPTLogout:   chatgptOAuthHandler.Logout,
-	})
+	srv.RegisterAPI(handler.Handlers{
+		Sessions:       sessionHandler,
+		Runs:           runHandler,
+		Approvals:      approvalHandler,
+		Tasks:          taskHandler,
+		Agents:         agentConfigHandler,
+		McpServers:     mcpServerHandler,
+		Memories:       memoryHandler,
+		Settings:       settingHandler,
+		Skills:         skillHandler,
+		ProviderRoutes: providerRouteHandler,
+		Guardrails:     guardrailHandler,
+		Sandboxes:      sandboxHandler,
+		Traces:         traceHandler,
+		Playground:     playgroundHandler,
+		ChatGPT:        chatgptOAuthHandler,
+	}.Register)
+	srv.RegisterWS(wsHandler.Handle, terminalHandler.Handle)
 
 	srv.ServeHealth(buildVersion)
 	srv.ServeOpenAPI(docs.SpecYAML)

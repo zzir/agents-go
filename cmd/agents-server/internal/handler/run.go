@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 // RunHandler exposes the REST surface for starting and observing agent runs.
@@ -83,49 +82,18 @@ func (h *RunHandler) Create(c *gin.Context) {
 // createAndWait starts a run and blocks until it terminates, collecting the
 // final output (or error / interruption) to return synchronously.
 func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq) {
-	type outcome struct {
-		final       string
-		code        string
-		msg         string
-		interrupted bool
-	}
-	done := make(chan outcome, 1)
-	report := func(o outcome) {
-		select {
-		case done <- o:
-		default:
-		}
-	}
-	sink := func(env *protocol.Envelope) {
-		switch env.Type {
-		case protocol.EventRunOutput:
-			var p protocol.RunOutput
-			_ = json.Unmarshal(env.Payload, &p)
-			report(outcome{final: p.FinalOutput})
-		case protocol.EventRunError:
-			var p protocol.RunError
-			_ = json.Unmarshal(env.Payload, &p)
-			report(outcome{code: p.Code, msg: p.Message})
-		case protocol.EventRunCancelled:
-			report(outcome{code: "cancelled", msg: "run cancelled"})
-		case protocol.EventRunInterrupted:
-			report(outcome{interrupted: true})
-		}
-	}
-
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.Input, nil)
+	// StartRun's onDone delivers the typed outcome directly — no need to
+	// subscribe to our own broadcast and decode the envelopes this process
+	// just marshaled. Buffered so the callback never blocks if the client
+	// hangs up first.
+	done := make(chan *bridge.RunResult, 1)
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.Input, func(res *bridge.RunResult) {
+		done <- res
+	})
 	if err != nil {
 		h.startError(c, err)
 		return
 	}
-	// Subscribe from 0 so a terminal event that fired before we attached is
-	// still replayed from the buffer.
-	subID, ok := h.runner.Hub().Subscribe(runID, 0, sink)
-	if !ok {
-		internalError(c, io.ErrUnexpectedEOF)
-		return
-	}
-	defer h.runner.Hub().Unsubscribe(runID, subID)
 
 	select {
 	case <-c.Request.Context().Done():
@@ -133,16 +101,18 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 		return
 	case res := <-done:
 		switch {
-		case res.interrupted:
+		case res.Interrupted:
 			// The run paused for tool approval: waiting any longer would
 			// hang until a human acts. Report the state; the caller lists
 			// GET /sessions/{id}/approvals and decides, which resumes the
 			// run under the same run id.
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunInterrupted)})
-		case res.code != "":
-			abortError(c, http.StatusBadGateway, CodeUpstream, res.msg)
+		case res.Cancelled:
+			abortError(c, http.StatusBadGateway, CodeUpstream, "run cancelled")
+		case res.ErrCode != "":
+			abortError(c, http.StatusBadGateway, CodeUpstream, res.ErrMessage)
 		default:
-			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunCompleted), "final_output": res.final})
+			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunCompleted), "final_output": res.FinalText})
 		}
 	}
 }
@@ -278,12 +248,12 @@ func (h *RunHandler) Events(c *gin.Context) {
 		}
 	}
 
-	subID, ok := h.runner.Hub().SubscribeSeq(runID, fromSeq, sink)
+	cancel, ok := h.runner.Hub().SubscribeSeq(runID, fromSeq, sink)
 	if !ok {
 		notFound(c)
 		return
 	}
-	defer h.runner.Hub().Unsubscribe(runID, subID)
+	defer cancel()
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")

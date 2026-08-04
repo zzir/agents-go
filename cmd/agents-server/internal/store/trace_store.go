@@ -27,22 +27,6 @@ func (s *TraceStore) Insert(ctx context.Context, ev *TraceEvent) error {
 	return nil
 }
 
-// InsertBatch stores multiple trace events in one insert, stamping their
-// created_at; it is a no-op when events is empty.
-func (s *TraceStore) InsertBatch(ctx context.Context, events []TraceEvent) error {
-	if len(events) == 0 {
-		return nil
-	}
-	now := time.Now().UTC()
-	for i := range events {
-		events[i].CreatedAt = now
-	}
-	if _, err := s.db.NewInsert().Model(&events).Exec(ctx); err != nil {
-		return fmt.Errorf("batch inserting trace events: %w", err)
-	}
-	return nil
-}
-
 // ListBySession returns trace events for sessionID ordered oldest first.
 // limit > 0 selects the newest `limit` rows (optionally only those with
 // id < beforeID); limit <= 0 returns everything.

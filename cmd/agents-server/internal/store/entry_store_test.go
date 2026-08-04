@@ -55,7 +55,7 @@ func quoteJSON(s string) string {
 func TestEntryStoreReplayPolicy(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 	s.SetRunID("r1")
 	s.SetModel("model-a")
 
@@ -107,7 +107,7 @@ func TestEntryStoreReplayPolicy(t *testing.T) {
 func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 	s.SetRunID("r1")
 
 	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"get_weather","arguments":"{\"city\":\"sf\"}"}`)
@@ -149,7 +149,7 @@ func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"text","text":"最终回答"}],"status":"completed"}`))
 
 	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
@@ -167,7 +167,7 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 
 	seed(t, s, userEntry(t, "old question"))
 	seed(t, s, rawEntry(t, `{"type":"function_call_output","call_id":"c1","output":"kept output"}`))
@@ -213,7 +213,7 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 
 	seed(t, s, userEntry(t, "old question"))
 	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
@@ -259,7 +259,7 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 	s.SetRunID("r1")
 
 	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`)
@@ -311,7 +311,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 
 	seed(t, s, userEntry(t, "question"))
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first"}]}`, agents.Source{}))
@@ -400,7 +400,7 @@ func TestEntryStorePopItem(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	s := NewEntryStore(db, sid)
+	s := NewEntryStoreFor(db, agents.Direct(sid))
 
 	// Empty session -> (nil, nil), not an error.
 	got, err := s.PopItem(ctx)
@@ -466,7 +466,7 @@ func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	s := NewEntryStore(db, sid)
+	s := NewEntryStoreFor(db, agents.Direct(sid))
 
 	seed(t, s, userEntry(t, "folded question"), userEntry(t, "kept answer"))
 	stored, err := s.Entries(ctx, agents.Cursor{})
@@ -629,7 +629,7 @@ func TestForkSessionMissingSource(t *testing.T) {
 	db := newTestDB(t)
 	dst := &Session{ID: NewID(), Name: "fork"}
 
-	s := NewEntryStore(db, "nonexistent-src")
+	s := NewEntryStoreFor(db, agents.Direct("nonexistent-src"))
 	if _, err := s.ForkSession(ctx, dst, refOf(t, db, "nonexistent-src"), 0, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound for a missing source, got %v", err)
 	}
@@ -644,7 +644,7 @@ func TestPopEntryRollsBackOnUndecodableRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	s := NewEntryStore(db, sid)
+	s := NewEntryStoreFor(db, agents.Direct(sid))
 
 	seed(t, s, userEntry(t, "keep me"))
 	// A newer row with non-empty but undecodable entry JSON.

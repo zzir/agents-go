@@ -175,10 +175,14 @@ type RunResult struct {
 	AgentConfigID string
 	SandboxID     string
 	// ErrCode/ErrMessage describe a failed run (mirroring the run.error event)
-	// so terminal bookkeeping — a task row's failure reason above all — does
-	// not depend on having watched the event stream.
-	ErrCode       string
-	ErrMessage    string
+	// so terminal bookkeeping — a task row's failure reason above all, and the
+	// synchronous REST path's response — does not depend on having watched the
+	// event stream.
+	ErrCode    string
+	ErrMessage string
+	// Cancelled mirrors the run.cancelled event: the run ended by request, so
+	// it carries neither a final output nor an error.
+	Cancelled     bool
 	Interrupted   bool
 	Interruptions []*agents.ToolApprovalItem
 	SDKState      *agents.RunState
@@ -212,16 +216,24 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 	if r.OnRunAttach != nil {
 		r.OnRunAttach(runID)
 	}
+	r.launchSegment(seg, runID, sessionID, onDone, func() *RunResult {
+		return r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
+	})
+	return runID, nil
+}
+
+// launchSegment runs one segment's exec in the background with the shared
+// teardown ordering. finalize is the segment's exclusive teardown: it cancels
+// the segment's context (no leaked child of the hub root) and closes its own
+// done gate (never a resume's fresh gate, so no double-close); it runs last so
+// the session-delete wait only unblocks after every write lands. The pending
+// approval is persisted BEFORE finish releases the session slot: a task
+// completing in between would see "no live run, no approvals" and auto-wake a
+// parent that is actually paused on a decision.
+func (r *Runner) launchSegment(seg *runSegment, runID, sessionID string, onDone func(*RunResult), exec func() *RunResult) {
 	go func() {
-		// finalize is this segment's exclusive teardown: it cancels the segment's
-		// context (no leaked child of the hub root,) and closes its own done
-		// gate (never a resume's fresh gate, so no double-close,). It runs last
-		// so the session-delete wait only unblocks after every write below lands.
 		defer seg.finalize()
-		result := r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
-		// Persist a pending approval BEFORE finish releases the session slot:
-		// a task completing in between would see "no live run, no approvals"
-		// and auto-wake a parent that is actually paused on a decision.
+		result := exec()
 		r.afterRun(runID, result)
 		r.hub.finish(runID, result.Interrupted)
 		r.postRun(runID, sessionID, result)
@@ -229,7 +241,6 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, inpu
 			onDone(result)
 		}
 	}()
-	return runID, nil
 }
 
 // afterRun persists an interrupted run's approval state so it survives a
@@ -244,9 +255,31 @@ func (r *Runner) afterRun(runID string, result *RunResult) {
 	}
 }
 
-// runStreamed executes one run segment to completion, publishing events to
-// the hub, and returns its outcome.
-func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, input string) *RunResult {
+// segmentSpec is what differs between a fresh run segment and a resume
+// continuation; execStreamed holds everything they share. One pipeline,
+// deliberately: the two used to be hand-maintained mirrors, and this file's
+// history shows exactly how that drifts — the resume path once silently
+// dropped HandoffInputFilter and ToolNotFoundBehavior while the fresh path had
+// them, and its failure path needed an annotation "mirrors runStreamed's
+// partial-turn save" to stay in sync.
+type segmentSpec struct {
+	// input is the user text announced in run.started and persisted when the
+	// segment fails before the SDK's own per-turn save.
+	input string
+	// failCode is the fallback error code for a failed stream drain.
+	failCode string
+	// fresh gates the fresh-run extras: the session pre-check, the
+	// run.agent_start announcement, arming the plan-phase unlock, and title
+	// generation. A resume reopens a run that already did all four.
+	fresh bool
+	// start launches the SDK run — agents.Run for a fresh segment,
+	// agents.ResumeRun for a continuation.
+	start func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl)
+}
+
+// execStreamed executes one run segment — fresh or resumed — to completion,
+// publishing events to the hub, and returns its outcome.
+func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID string, spec segmentSpec) *RunResult {
 	log := zerolog.Ctx(ctx)
 
 	sendEvent := func(typ string, payload any) {
@@ -258,14 +291,17 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		r.hub.publish(runID, env)
 	}
 
-	// From the hub record, not a second store lookup: register already
+	// From the hub record, not a second store lookup: register/resume already
 	// resolved it (and refused the run if it could not), so this cannot fail
 	// and cannot disagree with what the run was registered as.
 	var task *TaskMeta
 	if info, ok := r.hub.Info(runID); ok {
 		task = info.Task
 	}
-	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: input}
+	// A resumed segment re-announces the original prompt so a late-joining
+	// browser (attached at resume) can render the user bubble; earlier
+	// subscribers dedup it against the bubble they already show.
+	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: spec.input}
 	if task != nil {
 		started.ParentSessionID = task.ParentSessionID
 		started.ParentRunID = task.ParentRunID
@@ -284,50 +320,60 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		return res
 	}
 
+	// failTurn persists the user's prompt and why the segment stopped, then
+	// reports it. Persisting matters on both paths: a fresh run may fail before
+	// the SDK's per-turn save (the reload the client runs on run.error would
+	// otherwise erase the prompt), and a failed resume has consumed the
+	// pending-approval row as its claim, so without this the turn's fate would
+	// vanish from durable state. The guardrail name/stage ride along so a
+	// reload rebuilds the "Blocked by guardrail X" card, not a generic error.
+	failTurn := func(model, code string, err error, partialReasoning, partialText string) *RunResult {
+		if isCancellation(ctx, err) {
+			r.savePartialTurn(sessionID, runID, model, spec.input, "cancelled", "", partialReasoning, partialText, "", "")
+			sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
+			res := mkResult()
+			res.Cancelled = true
+			return res
+		}
+		gerr := runErrorFor(runID, err, code)
+		r.savePartialTurn(sessionID, runID, model, spec.input, "error", err.Error(), partialReasoning, partialText, gerr.Guardrail, gerr.Stage)
+		sendEvent(protocol.EventRunError, gerr)
+		return mkErrResult(gerr.Code, err.Error())
+	}
+
 	// Refuse to run against a session that doesn't exist — otherwise the run
-	// would write orphaned messages under an arbitrary session id.
-	if _, err := r.Deps.Sessions.Get(ctx, sessionID); err != nil {
-		sendEvent(protocol.EventRunError, protocol.RunError{
-			RunID:   runID,
-			Code:    protocol.CodeSessionNotFound,
-			Message: "session not found: " + sessionID,
-		})
-		return mkErrResult(protocol.CodeSessionNotFound, "session not found: "+sessionID)
+	// would write orphaned messages under an arbitrary session id. (No
+	// partial-turn save here: there is no session to save into.)
+	if spec.fresh {
+		if _, err := r.Deps.Sessions.Get(ctx, sessionID); err != nil {
+			sendEvent(protocol.EventRunError, protocol.RunError{
+				RunID:   runID,
+				Code:    protocol.CodeSessionNotFound,
+				Message: "session not found: " + sessionID,
+			})
+			return mkErrResult(protocol.CodeSessionNotFound, "session not found: "+sessionID)
+		}
 	}
 
 	// Build fully configured agent from DB config. Task runs never get the
 	// task tools themselves: one level of spawning, no recursive fan-out.
 	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, task != nil)
 	if err != nil {
-		// Persist the prompt + error so the user's message and the failure survive
-		// the reload the client runs on run.error (the run never reached the SDK's
-		// per-turn save). Mirrors the post-start error path below.
-		r.savePartialTurn(sessionID, runID, "", input, "error", err.Error(), "", "", "", "")
-		sendEvent(protocol.EventRunError, protocol.RunError{
-			RunID:   runID,
-			Code:    protocol.CodeConfigError,
-			Message: err.Error(),
-		})
-		return mkErrResult(protocol.CodeConfigError, err.Error())
+		return failTurn("", protocol.CodeConfigError, err, "", "")
 	}
 
 	agent := built.Agent
 	provider := built.Provider
 	if provider == nil {
-		const msg = "no API key configured for this agent"
-		r.savePartialTurn(sessionID, runID, agent.Model, input, "error", msg, "", "", "", "")
-		sendEvent(protocol.EventRunError, protocol.RunError{
-			RunID:   runID,
-			Code:    protocol.CodeConfigError,
-			Message: msg,
-		})
-		return mkErrResult(protocol.CodeConfigError, msg)
+		return failTurn(agent.Model, protocol.CodeConfigError, errors.New("no API key configured for this agent"), "", "")
 	}
 
 	// Wrap with router provider if routes exist
 	provider = BuildRouterProvider(ctx, r.Deps, provider)
 
-	sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
+	if spec.fresh {
+		sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
+	}
 
 	sessionRef, refErr := store.RefFor(ctx, r.db, sessionID)
 	if refErr != nil {
@@ -340,9 +386,11 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	sa := store.NewEntryStoreFor(r.db, sessionRef)
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
-	// The plan phase's first unlock (the approved submit_plan executing)
-	// persists its durable marker through this run's store.
-	armPlanUnlock(built.PlanPhase, sa)
+	if spec.fresh {
+		// The plan phase's first unlock (the approved submit_plan executing)
+		// persists its durable marker through this run's store.
+		armPlanUnlock(built.PlanPhase, sa)
+	}
 	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
@@ -351,20 +399,14 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 	// Name the session in parallel with the run — the title needs only the user's
 	// first message, not the answer, so it need not wait for the run to finish.
-	// Task sessions are pre-named from the task label and hidden, so skip them.
-	if task == nil {
-		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, input, provider, sendEvent)
+	// Task sessions are pre-named from the task label and hidden, so skip them;
+	// a resume never needs it (the original run already fired it at its start,
+	// even for an approval-gated first turn, which pauses before finishing).
+	if spec.fresh && task == nil {
+		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, spec.input, provider, sendEvent)
 	}
 
-	// An empty input means "continue from where the session's branch now
-	// points" — what regenerating does after switching back to the user's
-	// message. Passing "" through would append an empty user turn, so the run
-	// gets an empty ITEM LIST instead: nothing to add, history to answer.
-	var runInput any = input
-	if input == "" {
-		runInput = []agents.TResponseInputItem{}
-	}
-	stream, ctrl := agents.Run(ctx, agent, runInput, opts)
+	stream, ctrl := spec.start(ctx, agent, opts)
 	r.hub.setControl(runID, ctrl)
 	// The stream carries both halves of the outcome: the run's result as its
 	// terminal event, or a terminal error. There is no second place to consult
@@ -372,21 +414,32 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	// cancellation race could drop it from one and leave it only in the other.
 	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
 	if err != nil {
-		if isCancellation(ctx, err) {
-			r.savePartialTurn(sessionID, runID, agent.Model, input, "cancelled", "", streamedReasoning, streamedText, "", "")
-			sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
-		} else {
-			// Persist the guardrail name/stage alongside the error so a reload
-			// rebuilds the "Blocked by guardrail X" card, not a generic error.
-			gerr := runErrorFor(runID, err, "stream_error")
-			r.savePartialTurn(sessionID, runID, agent.Model, input, "error", err.Error(), streamedReasoning, streamedText, gerr.Guardrail, gerr.Stage)
-			sendEvent(protocol.EventRunError, gerr)
-			return mkErrResult(gerr.Code, err.Error())
-		}
-		return mkResult()
+		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}
 
 	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
+}
+
+// runStreamed executes one fresh run segment to completion, publishing events
+// to the hub, and returns its outcome.
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, input string) *RunResult {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, segmentSpec{
+		input:    input,
+		failCode: "stream_error",
+		fresh:    true,
+		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
+			// An empty input means "continue from where the session's branch
+			// now points" — what regenerating does after switching back to the
+			// user's message. Passing "" through would append an empty user
+			// turn, so the run gets an empty ITEM LIST instead: nothing to
+			// add, history to answer.
+			var runInput any = input
+			if input == "" {
+				runInput = []agents.TResponseInputItem{}
+			}
+			return agents.Run(ctx, agent, runInput, opts)
+		},
+	})
 }
 
 // ResumeRun registers a continuation of a paused run (after HITL
@@ -410,133 +463,29 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 	if r.OnRunAttach != nil {
 		r.OnRunAttach(runID)
 	}
-	go func() {
-		// See startRunWithID: this segment owns its teardown, so a later resume
-		// swapping in a fresh gate can never collide with this goroutine's close.
-		defer seg.finalize()
-		result := r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
-		// Same ordering rationale as StartRun: approval row before slot release.
-		r.afterRun(runID, result)
-		r.hub.finish(runID, result.Interrupted)
-		r.postRun(runID, sessionID, result)
-		if onDone != nil {
-			onDone(result)
-		}
-	}()
+	r.launchSegment(seg, runID, sessionID, onDone, func() *RunResult {
+		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
+	})
 	return runID, nil
 }
 
 // resumeStreamed continues an interrupted run to completion under its
 // original run id, publishing events to the (reopened) hub run, and returns
 // its outcome.
+//
+// It streams through the same execStreamed pipeline as a fresh run ON
+// PURPOSE: the resumed segment's events (the approved tool's output, every
+// later turn's text and tool calls) go live to the client instead of
+// surfacing only in the terminal run.output, and a resume continues the same
+// run so it must carry the same policies.
 func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string) *RunResult {
-	log := zerolog.Ctx(ctx)
-
-	sendEvent := func(typ string, payload any) {
-		env, err := protocol.NewEnvelope(typ, payload)
-		if err != nil {
-			log.Error().Err(err).Str("type", typ).Msg("marshal event")
-			return
-		}
-		r.hub.publish(runID, env)
-	}
-
-	mkResult := func() *RunResult {
-		return &RunResult{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
-	}
-	mkErrResult := func(code, msg string) *RunResult {
-		res := mkResult()
-		res.ErrCode, res.ErrMessage = code, msg
-		return res
-	}
-
-	// From the hub record; resume already resolved it (see startRun).
-	var task *TaskMeta
-	if info, ok := r.hub.Info(runID); ok {
-		task = info.Task
-	}
-	// The resumed segment re-announces the original prompt so a late-joining
-	// browser (attached at resume) can render the user bubble; earlier
-	// subscribers dedup it against the bubble they already show.
-	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: userInputText(state.UserInput)}
-	if task != nil {
-		started.ParentSessionID = task.ParentSessionID
-		started.ParentRunID = task.ParentRunID
-		started.TaskID = task.TaskID
-		started.ToolCallID = task.ToolCallID
-		started.Label = task.Label
-	}
-	sendEvent(protocol.EventRunStarted, started)
-
-	// Any failed continuation must persist the user's prompt (and the error):
-	// the pending-approval row was consumed as the resume's claim and the SDK
-	// saves the turn only on success — without this, a failed resume would
-	// lose the whole turn from durable state. Mirrors runStreamed's
-	// partial-turn save, including the in-flight turn's streamed text/reasoning.
-	failTurn := func(model, code string, err error, partialReasoning, partialText string) *RunResult {
-		// The original run persisted the prompt and its completed turns under this
-		// same run id before pausing, so a failed resume only annotates why it
-		// stopped — cancelled or errored, mirroring runStreamed.
-		if isCancellation(ctx, err) {
-			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "cancelled", "", partialReasoning, partialText, "", "")
-			sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
-		} else {
-			gerr := runErrorFor(runID, err, code)
-			r.savePartialTurn(sessionID, runID, model, userInputText(state.UserInput), "error", err.Error(), partialReasoning, partialText, gerr.Guardrail, gerr.Stage)
-			sendEvent(protocol.EventRunError, gerr)
-			return mkErrResult(gerr.Code, err.Error())
-		}
-		return mkResult()
-	}
-
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, task != nil)
-	if err != nil {
-		return failTurn("", "config_error", err, "", "")
-	}
-	provider := built.Provider
-	if provider == nil {
-		return failTurn(built.Agent.Model, "config_error", errors.New("no API key configured for this agent"), "", "")
-	}
-
-	provider = BuildRouterProvider(ctx, r.Deps, provider)
-
-	resumeRef, refErr := store.RefFor(ctx, r.db, sessionID)
-	if refErr != nil {
-		const msg = "cannot resolve this session's history"
-		sendEvent(protocol.EventRunError, protocol.RunError{
-			RunID: runID, Code: protocol.CodeSessionNotFound, Message: msg,
-		})
-		return mkErrResult(protocol.CodeSessionNotFound, msg)
-	}
-	resumeSA := store.NewEntryStoreFor(r.db, resumeRef)
-	resumeSA.SetRunID(runID)
-	resumeSA.SetModel(built.Agent.Model)
-	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
-
-	resumeSession := wrapCompaction(resumeSA, built, provider, sendEvent, runID)
-
-	// Stream the continuation like a fresh run: the resumed segment's events
-	// (the approved tool's output, every later turn's text and tool calls) go
-	// live to the client instead of surfacing only in the terminal
-	// run.output — a resume that silently swallowed its middle turns is what
-	// made approved runs "jump" to their final answer.
-	//
-	// Same constructor as the fresh run ON PURPOSE: a resume continues the
-	// same run and must carry the same policies. Two hand-kept literals are
-	// how this path silently dropped HandoffInputFilter and
-	// ToolNotFoundBehavior while the fresh path had them.
-	stream, ctrl := agents.ResumeRun(ctx, state,
-		runOptionsFor(built, resumeSession, provider, tracer, trustSessionID(sessionID, task)))
-	r.hub.setControl(runID, ctrl)
-	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
-	if err != nil {
-		return failTurn(built.Agent.Model, "resume_error", err, streamedReasoning, streamedText)
-	}
-
-	// Title generation is not triggered here: the original run already fired it
-	// in parallel at its start (even for an approval-gated first turn, which
-	// pauses before finishing), so a resume never needs to.
-	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, segmentSpec{
+		input:    userInputText(state.UserInput),
+		failCode: "resume_error",
+		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
+			return agents.ResumeRun(ctx, state, opts)
+		},
+	})
 }
 
 func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunResult {

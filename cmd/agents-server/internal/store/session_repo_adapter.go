@@ -17,27 +17,12 @@ import (
 type SessionRepoAdapter struct {
 	sessions *SessionStore
 	entries  func(ref agents.SessionRef) agents.SessionStorage
-	// agentConfigID is the config a task session is bound to. It is set per
-	// create by the caller through WithAgentConfig, since the SDK's
-	// CreateOptions has nowhere to carry it.
-	agentConfigID string
 }
 
 // NewSessionRepoAdapter wraps the session store. entries builds the storage for
 // one session's history.
 func NewSessionRepoAdapter(sessions *SessionStore, entries func(ref agents.SessionRef) agents.SessionStorage) *SessionRepoAdapter {
 	return &SessionRepoAdapter{sessions: sessions, entries: entries}
-}
-
-// WithAgentConfig returns a view that binds newly created sessions to a config.
-//
-// It is a copy rather than a setter because a Manager holds one repo for the
-// life of the process and two concurrent spawns would otherwise race over the
-// field.
-func (a *SessionRepoAdapter) WithAgentConfig(id string) *SessionRepoAdapter {
-	cp := *a
-	cp.agentConfigID = id
-	return &cp
 }
 
 // Create implements agents.SessionRepo.
@@ -47,9 +32,8 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts agents.CreateOptio
 		id = NewID()
 	}
 	row := &Session{
-		ID:            id,
-		Name:          opts.Title,
-		AgentConfigID: a.agentConfigID,
+		ID:   id,
+		Name: opts.Title,
 		// Hidden sessions are the task transcripts: they are excluded from the
 		// chat list by the task-session filter the list query already applies.
 		Hidden: opts.Hidden,

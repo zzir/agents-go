@@ -28,7 +28,7 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 	// A subscriber attaching mid-run replays the buffered events, then sees
 	// live ones.
 	sink := newAsyncSink()
-	subID, ok := h.Subscribe("run1", 0, sink.plain)
+	cancelSub, ok := h.Subscribe("run1", 0, sink.plain)
 	if !ok {
 		t.Fatal("subscribe failed")
 	}
@@ -64,7 +64,7 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 		t.Fatalf("from_seq replay wrong: %v", after)
 	}
 
-	h.Unsubscribe("run1", subID)
+	cancelSub()
 	h.publish("run1", env("run.step"))
 	// Give a delivery that must NOT happen a chance to happen.
 	time.Sleep(50 * time.Millisecond)
@@ -477,9 +477,9 @@ func TestInjectRoutesToTheRightQueue(t *testing.T) {
 		queue string
 		got   *[]any
 	}{
-		{protocol.EventRunSteer, &ctrl.steer},
-		{protocol.EventRunNextTurn, &ctrl.nextTurn},
-		{protocol.EventRunFollowUp, &ctrl.followUp},
+		{protocol.InjectQueueSteer, &ctrl.steer},
+		{protocol.InjectQueueNextTurn, &ctrl.nextTurn},
+		{protocol.InjectQueueFollowUp, &ctrl.followUp},
 	} {
 		delivered, err := h.Inject("r1", tc.queue, "hello")
 		if err != nil || !delivered {
@@ -495,14 +495,14 @@ func TestInjectRoutesToTheRightQueue(t *testing.T) {
 // the user typed something and it must not vanish.
 func TestInjectReportsNoLiveRun(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if delivered, err := h.Inject("nope", protocol.EventRunSteer, "hi"); delivered || err != nil {
+	if delivered, err := h.Inject("nope", protocol.InjectQueueSteer, "hi"); delivered || err != nil {
 		t.Errorf("delivered=%v err=%v, want (false, nil) for an unknown run", delivered, err)
 	}
 	if _, _, err := h.register("r1", "s1", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// Registered but no control installed yet.
-	if delivered, _ := h.Inject("r1", protocol.EventRunSteer, "hi"); delivered {
+	if delivered, _ := h.Inject("r1", protocol.InjectQueueSteer, "hi"); delivered {
 		t.Error("delivered to a run that has not started")
 	}
 }

@@ -62,11 +62,6 @@ type EntryStore struct {
 	model string
 }
 
-// NewEntryStore returns storage for one session.
-func NewEntryStore(db *bun.DB, sessionID string) *EntryStore {
-	return &EntryStore{db: db, ref: agents.Direct(sessionID)}
-}
-
 // NewEntryStoreFor returns storage addressed by ref. A repo builds one from the
 // session row it has already read, so the generation is never resolved a second
 // time — between two lookups an id can be deleted and recreated, and the handle
@@ -95,9 +90,6 @@ func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (agents.Sessi
 func (s *EntryStore) forRef(ref agents.SessionRef) *EntryStore {
 	return &EntryStore{db: s.db, ref: ref, runID: s.runID, model: s.model}
 }
-
-// Ref reports what this handle addresses.
-func (s *EntryStore) Ref() agents.SessionRef { return s.ref }
 
 // scoped narrows a query to this session. Every read and write of entry rows
 // goes through it: that is what makes the generation part of the address rather
@@ -548,12 +540,6 @@ func relinkIn(ctx context.Context, tx bun.Tx, ref agents.SessionRef, plan agents
 		}
 	}
 	return nil
-}
-
-// AllEntries returns the session's entries INCLUDING compacted ones, for a UI
-// that shows what a compaction folded away.
-func (s *EntryStore) AllEntries(ctx context.Context) ([]agents.SessionEntry, error) {
-	return s.load(ctx, true)
 }
 
 var (

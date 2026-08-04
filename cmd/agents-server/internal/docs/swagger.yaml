@@ -146,8 +146,6 @@ components:
             $ref: '#/components/schemas/agents.ContextManagement'
           type: array
           uniqueItems: false
-        frequency_penalty:
-          type: number
         max_tokens:
           description: MaxTokens is the maximum number of output tokens to generate.
           type: integer
@@ -161,8 +159,6 @@ components:
             ParallelToolCalls controls whether the model may emit multiple tool calls
             in a single turn. nil defers to the provider default.
           type: boolean
-        presence_penalty:
-          type: number
         prompt_cache_key:
           description: |-
             PromptCacheKey is forwarded as the Responses API prompt_cache_key to

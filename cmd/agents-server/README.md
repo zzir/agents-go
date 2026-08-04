@@ -609,9 +609,7 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 | `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?}`                                              |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
-| `run.steer`     | Inject input into the live run, changing course inside the current exchange — `{run_id, input}`                 |
-| `run.next_turn` | Inject input consumed at the next turn boundary — `{run_id, input}`                                             |
-| `run.follow_up` | Queue input that starts a new exchange once the current one finishes — `{run_id, input}`                        |
+| `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
 | `tool.approve`  | Approve a pending tool call — `{tool_call_id}`                                                                  |
 | `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
 

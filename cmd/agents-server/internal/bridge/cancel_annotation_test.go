@@ -28,7 +28,7 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 // matches — the entry-model equivalent of the old (kind, role) row count.
 func countDisplays(t *testing.T, db *bun.DB, sid string, kind agents.EntryKind, display string) int {
 	t.Helper()
-	entries, err := mustStore(t, db, sid).AllEntries(context.Background())
+	entries, err := mustStore(t, db, sid).Entries(context.Background(), agents.Cursor{})
 	if err != nil {
 		t.Fatalf("load entries: %v", err)
 	}

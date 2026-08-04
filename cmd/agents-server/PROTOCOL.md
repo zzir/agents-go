@@ -171,23 +171,24 @@ know — the timeline was quietly incomplete.
 
 ## F5 · Uplink gains the three queue semantics
 
-`RunControl` has three ways to inject into a live run. They are
-distinct semantics, not one endpoint with a mode flag.
+`RunControl` has three ways to inject into a live run. They are distinct
+semantics; one uplink message names which the client means.
 
-**Frozen:**
+**Frozen:** `run.inject` `{run_id, queue, input}`, where `queue` is one of:
 
-| type | Meaning |
+| queue | Meaning |
 |---|---|
-| `run.steer` | Inject into the **current** turn — the model sees it before its next step |
-| `run.follow_up` | Queue for **after** the current run ends; starts a new run automatically |
-| `run.next_turn` | Inject at the **next turn boundary** of the current run |
+| `steer` | Inject into the **current** turn — the model sees it before its next step |
+| `follow_up` | Queue for **after** the current run ends; starts a new run automatically |
+| `next_turn` | Inject at the **next turn boundary** of the current run |
 
-All three: `{run_id, input}`. `run.cancel` keeps its existing
-`mode: ""|"abort"|"graceful"`.
+`run.cancel` keeps its existing `mode: ""|"abort"|"graceful"`.
 
-**Implemented** (step 24). The SDK side is `RunControl.Steer` / `NextTurn` /
-`FollowUp`; the hub routes by envelope type rather than a mode field, because
-these are three intentions and the client says which one it means.
+**Implemented** (step 24; revised 2026-08-04). The SDK side is
+`RunControl.Steer` / `NextTurn` / `FollowUp`. This originally shipped as three
+envelope types (`run.steer` / `run.next_turn` / `run.follow_up`); with zero UI
+producers they were collapsed to one message with a queue field — three wire
+types bought nothing over one discriminated payload.
 
 Delivery is confirmed by silence: a run that is no longer accepting input
 answers `run.error` with `run_not_found`. Input the run never consumed is

@@ -12,7 +12,7 @@ import (
 func TestGetEntriesPagination(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStore(db, "s1")
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
 	s.SetRunID("r1")
 
 	for i := range 5 {

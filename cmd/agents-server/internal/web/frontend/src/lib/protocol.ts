@@ -10,12 +10,11 @@ export const EV = {
   runCreate: 'run.create',
   runCancel: 'run.cancel',
   runSubscribe: 'run.subscribe',
-  // The three injection queues — distinct semantics, not one endpoint with a
-  // mode: steer changes course inside the run that is going, next_turn rides
-  // along with a turn it was taking anyway, follow_up starts the next exchange.
-  runSteer: 'run.steer',
-  runNextTurn: 'run.next_turn',
-  runFollowUp: 'run.follow_up',
+  // Inject input into a live run; the payload's queue field ('steer' |
+  // 'next_turn' | 'follow_up') names the semantics: steer changes course
+  // inside the run that is going, next_turn rides along with a turn it was
+  // taking anyway, follow_up starts the next exchange.
+  runInject: 'run.inject',
   toolApprove: 'tool.approve',
   toolReject: 'tool.reject',
 

@@ -25,7 +25,7 @@ func TestProviderRegistryInvariants(t *testing.T) {
 		if !strings.HasSuffix(d.SettingKey, "_api_key") {
 			t.Errorf("%s: SettingKey %q must end in _api_key (masked as a secret by convention)", d.Type, d.SettingKey)
 		}
-		if d.Build == nil || d.BuildAgent == nil {
+		if d.Build == nil {
 			t.Errorf("%s: nil constructor", d.Type)
 		}
 	}

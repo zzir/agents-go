@@ -31,7 +31,7 @@ func countPlanMarkers(t *testing.T, sa *store.EntryStore, ref agents.SessionRef)
 func TestPlanUnlockMarkerPersistence(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := store.NewID()
-	sa := store.NewEntryStore(db, sessionID)
+	sa := store.NewEntryStoreFor(db, agents.Direct(sessionID))
 	sa.SetRunID("r1")
 
 	phase := &middleware.PlanPhase{}
@@ -55,7 +55,7 @@ func TestPlanUnlockMarkerPersistence(t *testing.T) {
 
 	// A failed write fails the unlock and the phase stays planning.
 	db2 := newTestDB(t)
-	sa2 := store.NewEntryStore(db2, store.NewID())
+	sa2 := store.NewEntryStoreFor(db2, agents.Direct(store.NewID()))
 	sa2.SetRunID("r2")
 	if err := db2.Close(); err != nil {
 		t.Fatalf("close db: %v", err)

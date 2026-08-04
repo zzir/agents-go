@@ -334,7 +334,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		if chatgptCreds != nil && ac.Provider.BaseURL == "" {
 			ac.Provider.BaseURL = ChatGPTBaseURL
 		}
-		provider := def.BuildAgent(ac, chatgptCreds, proxyClient)
+		provider := def.Build(ac.Provider.APIKey, ac.Provider.BaseURL, chatgptCreds, proxyClient)
 		if ac.Resilience.RetryEnabled {
 			provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 		}
