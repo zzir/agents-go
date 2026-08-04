@@ -21,8 +21,10 @@ type AgentToolInputBuilderOptions struct {
 	// Summary is a human-readable summary of the parameters schema; empty when
 	// the schema is too complex to summarize.
 	Summary string
-	// JSONSchema is the full parameters schema when
-	// AgentToolConfig.IncludeInputSchema is set; nil otherwise.
+	// JSONSchema is the full parameters schema when the tool has structured
+	// parameters (AgentAsTool); nil otherwise. Whether it appears in the
+	// rendered input is the builder's call: DefaultAgentToolInputBuilder
+	// renders the Summary, AgentToolInputWithSchema renders this.
 	JSONSchema map[string]any
 }
 
@@ -43,15 +45,14 @@ type agentToolSchemaInfo struct {
 	jsonSchema map[string]any
 }
 
-// buildStructuredSchemaInfo derives the schema summary (and, when requested,
-// the full schema) used by the default structured-input rendering. Mirrors
-// Python's build_structured_input_schema_info.
-func buildStructuredSchemaInfo(schema map[string]any, includeJSONSchema bool) agentToolSchemaInfo {
-	info := agentToolSchemaInfo{structured: true, summary: summarizeJSONSchema(schema)}
-	if includeJSONSchema {
-		info.jsonSchema = schema
+// buildStructuredSchemaInfo derives the schema summary and full schema handed
+// to the input builder. Mirrors Python's build_structured_input_schema_info.
+func buildStructuredSchemaInfo(schema map[string]any) agentToolSchemaInfo {
+	return agentToolSchemaInfo{
+		structured: true,
+		summary:    summarizeJSONSchema(schema),
+		jsonSchema: schema,
 	}
-	return info
 }
 
 // resolveAgentToolInput turns the model's JSON arguments into the nested run's
@@ -80,10 +81,31 @@ func resolveAgentToolInput(argsJSON string, info agentToolSchemaInfo, builder Ag
 }
 
 // DefaultAgentToolInputBuilder is the default rendering for structured agent
-// tool input: a preamble, the arguments as a fenced JSON block, and either the
-// full schema (when IncludeInputSchema is set) or its summary. Mirrors
-// Python's default_tool_input_builder.
+// tool input: a preamble, the arguments as a fenced JSON block, and the compact
+// schema summary when one exists. Mirrors Python's default_tool_input_builder.
+// To attach the full JSON Schema instead, set AgentToolInputWithSchema as the
+// InputBuilder.
 func DefaultAgentToolInputBuilder(opts AgentToolInputBuilderOptions) (string, error) {
+	return renderAgentToolInput(opts, false)
+}
+
+// AgentToolInputWithSchema renders like DefaultAgentToolInputBuilder but
+// attaches the full parameters JSON Schema in place of the summary — the
+// counterpart of Python's include_input_schema. Set it as
+// AgentToolConfig.InputBuilder when the nested agent needs the exact shape of
+// its input:
+//
+//	AgentAsTool[searchParams](sub, agents.AgentToolConfig{
+//		InputBuilder: agents.AgentToolInputWithSchema,
+//	})
+func AgentToolInputWithSchema(opts AgentToolInputBuilderOptions) (string, error) {
+	return renderAgentToolInput(opts, true)
+}
+
+// renderAgentToolInput is the shared rendering behind the two builders:
+// preamble, fenced JSON arguments, then the full schema (fullSchema, when one
+// is available) or the summary.
+func renderAgentToolInput(opts AgentToolInputBuilderOptions, fullSchema bool) (string, error) {
 	sections := []string{agentToolStructuredInputPreamble, "## Structured Input Data:", ""}
 
 	var pretty bytes.Buffer
@@ -93,7 +115,7 @@ func DefaultAgentToolInputBuilder(opts AgentToolInputBuilderOptions) (string, er
 	}
 	sections = append(sections, "```", pretty.String(), "```", "")
 
-	if opts.JSONSchema != nil {
+	if fullSchema && opts.JSONSchema != nil {
 		b, err := json.MarshalIndent(opts.JSONSchema, "", "  ")
 		if err != nil {
 			return "", fmt.Errorf("rendering input schema: %w", err)

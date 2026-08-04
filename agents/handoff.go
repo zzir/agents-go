@@ -25,12 +25,11 @@ type Handoff struct {
 	ToolDescription string
 	// InputJSONSchema is the JSON Schema for the (optional) handoff input.
 	InputJSONSchema map[string]any
-	// StrictJSONSchema toggles strict-mode validation of the handoff input.
-	// Prefer true (the Python SDK defaults its strict_json_schema to True and
-	// always emits a strict schema). Because a Go bool zero value is false, a
-	// hand-built Handoff{} that omits this field gets a NON-strict schema — set it
-	// explicitly. HandoffTo already sets it true.
-	StrictJSONSchema bool
+	// NonStrictSchema opts the handoff input out of strict-mode schema
+	// validation, for schemas strict mode cannot express. The zero value is
+	// strict — matching the Python SDK's strict_json_schema=True default —
+	// which is why the field is spelled as an opt-out.
+	NonStrictSchema bool
 	// AgentName is the name of the target agent, used for tracing.
 	AgentName string
 
@@ -102,11 +101,10 @@ func HandoffTo(target *Agent) Handoff {
 		desc += " " + target.HandoffDescription
 	}
 	return Handoff{
-		ToolName:         transformToolName("transfer_to_" + target.Name),
-		ToolDescription:  desc,
-		InputJSONSchema:  emptyStrictSchema(),
-		StrictJSONSchema: true,
-		AgentName:        target.Name,
+		ToolName:        transformToolName("transfer_to_" + target.Name),
+		ToolDescription: desc,
+		InputJSONSchema: emptyStrictSchema(),
+		AgentName:       target.Name,
 		OnInvoke: func(context.Context, *RunContext, string) (*Agent, error) {
 			return target, nil
 		},

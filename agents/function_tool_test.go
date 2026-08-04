@@ -203,23 +203,14 @@ func TestSchemaForType_RoundTripsToJSON(t *testing.T) {
 // A tool built from an unusable schema (here an interface{} field, which
 // has no strict-mode schema) fails the run with a *UserError before the model
 // is ever called — not only when the model happens to invoke it.
-func TestNewFunctionTool_BrokenSchemaFailsBeforeModelCall(t *testing.T) {
-	type badArgs struct {
-		Anything any `json:"anything"`
-	}
-	tool := NewFunctionTool("bad", "unusable",
-		func(ctx context.Context, tc *ToolContext, args badArgs) (string, error) {
+func TestNewFunctionTool_NonStructArgsPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected construction panic for non-struct args type")
+		}
+	}()
+	NewFunctionTool("bad", "unusable",
+		func(ctx context.Context, tc *ToolContext, args string) (string, error) {
 			return "ran", nil
 		})
-	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "hi"))}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
-
-	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
-	var ue *UserError
-	if !errors.As(err, &ue) {
-		t.Fatalf("err = %v, want *UserError for the broken tool schema", err)
-	}
-	if model.calls != 0 {
-		t.Errorf("model was called %d times; a broken tool schema must fail before any model call", model.calls)
-	}
 }

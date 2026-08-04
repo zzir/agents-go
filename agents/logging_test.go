@@ -172,3 +172,22 @@ func TestNoPackageLevelSlogCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A nested agent-as-tool run inherits the parent's log configuration, for the
+// same reason it inherits the tracer: the part of the workflow hardest to see
+// into must not be the part that goes silent.
+func TestLogging_NestedAgentToolInheritsLogger(t *testing.T) {
+	log, buf := capture(t)
+	sub := &Agent{Name: "specialist", ModelImpl: &fakeModel{responses: []*ModelResponse{
+		modelResp(messageOutput(t, "nested answer")),
+	}}}
+	tool := sub.AsTool(AgentToolConfig{Name: "specialist"})
+	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
+
+	if _, err := RunSync(context.Background(), orch, "go", RunOptions{Log: LogConfig{Logger: log}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "agent=specialist") {
+		t.Errorf("nested run left no log records; the parent logger was not inherited:\n%s", buf.String())
+	}
+}

@@ -3,8 +3,6 @@ package agents
 import (
 	"context"
 	"errors"
-	"reflect"
-	"sync"
 	"time"
 )
 
@@ -22,18 +20,6 @@ type Tool interface {
 	isTool()
 }
 
-// FunctionToolResult is the outcome of invoking a function tool.
-type FunctionToolResult struct {
-	// ToolName is the name of the tool that produced this result.
-	ToolName string
-	// Output is the value returned by the tool function. It is serialized to a
-	// string when sent back to the model.
-	Output any
-	// CustomData is the SDK-only data produced by the tool's
-	// CustomDataExtractor, if any. It is never sent to the model.
-	CustomData map[string]any
-}
-
 // FunctionTool is a tool backed by a Go function. The model is shown the tool's
 // name, description and JSON-schema parameters; when the model calls the tool,
 // OnInvoke is run with the raw JSON arguments.
@@ -48,7 +34,12 @@ type FunctionTool struct {
 	Description string
 	// ParamsJSONSchema is the JSON Schema for the tool's arguments object.
 	ParamsJSONSchema map[string]any
-	// Strict toggles OpenAI strict-mode schema validation.
+	// Strict reports whether ParamsJSONSchema is the strict-shaped schema
+	// (every field required, unknown properties forbidden) and toggles OpenAI
+	// strict-mode validation on the API side. It DESCRIBES the schema; setting
+	// it after construction re-derives nothing — the advertised schema and the
+	// local argument validator keep their built shape. To relax a
+	// NewFunctionTool-built tool use NonStrict, which regenerates both.
 	Strict bool
 	// OnInvoke runs the tool. argsJSON is the raw JSON arguments string emitted
 	// by the model.
@@ -91,46 +82,34 @@ type FunctionTool struct {
 	// DefaultToolErrorFunction; set this field to nil to make tool errors fatal.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
-	// constructionErr records a schema/argument-type failure detected when the
-	// tool was built (see failedFunctionTool). The runner surfaces it before the
-	// first model call — the tool is never sent to the model with a broken
-	// schema — instead of only when the model happens to call it.
-	constructionErr error
+	// validator is the compiled form of ParamsJSONSchema, used to validate
+	// model-sent arguments before they are decoded. Constructors set it
+	// together with ParamsJSONSchema so the two cannot drift; a hand-built
+	// literal leaves it nil and validates in its own OnInvoke.
+	validator *schemaValidator
 
-	// replaced caches the validator compiled for a caller-replaced
-	// ParamsJSONSchema, so "compiled once per tool" holds for replacements too
-	// instead of recompiling on every call. A pointer slot rather than inline
-	// state: FunctionTool values are copied (the MCP bridge clones one per
-	// exposed name), and an inline mutex would make every copy a vet error.
-	// Constructors fill it; a hand-built literal leaves it nil and pays the
-	// per-call compile, which is correct, just slower.
-	replaced *replacedCache
+	// regen rebuilds the schema and validator for a given strictness. Only
+	// NewFunctionTool installs it — the closure carries the argument type,
+	// which is how NonStrict can re-reflect without a type parameter.
+	regen func(strict bool) (map[string]any, *schemaValidator)
 }
 
-// replacedCache is the compiled-validator slot for a replaced schema, keyed by
-// map identity: replacing the map invalidates it; mutating the map in place is
-// invisible.
-type replacedCache struct {
-	mu  sync.Mutex
-	ptr uintptr
-	v   *schemaValidator
-}
-
-// replacedValidator returns the validator for the tool's current (replaced)
-// ParamsJSONSchema, compiling it at most once per distinct schema map.
-func (t *FunctionTool) replacedValidator() *schemaValidator {
-	c := t.replaced
-	if c == nil {
-		return newSchemaValidator(t.ParamsJSONSchema)
+// NonStrict relaxes the tool's schema: fields whose json tag carries
+// ",omitempty" stop being required, in both the schema advertised to the model
+// and the local validation of incoming arguments. It returns the tool for
+// chaining:
+//
+//	t := agents.NewFunctionTool("get_weather", "look up weather", weatherFn).NonStrict()
+//
+// Configure it before the tool is first used in a run. On a tool that was not
+// built by NewFunctionTool it only clears Strict; the schema stays the
+// caller's.
+func (t *FunctionTool) NonStrict() *FunctionTool {
+	if t.regen != nil {
+		t.ParamsJSONSchema, t.validator = t.regen(false)
 	}
-	ptr := reflect.ValueOf(t.ParamsJSONSchema).Pointer()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.v == nil || c.ptr != ptr {
-		c.v = newSchemaValidator(t.ParamsJSONSchema)
-		c.ptr = ptr
-	}
-	return c.v
+	t.Strict = false
+	return t
 }
 
 // DefaultToolErrorFunction is the default FailureErrorFunction: it returns a

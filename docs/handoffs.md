@@ -28,11 +28,10 @@ type escalationInput struct {
 schema, _ := agents.SchemaFor[escalationInput](true)
 
 h := agents.Handoff{
-	ToolName:         "escalate_to_human_review",
-	ToolDescription:  "Escalate the conversation for human review.",
-	InputJSONSchema:  schema,
-	StrictJSONSchema: true,
-	AgentName:        escalation.Name,
+	ToolName:        "escalate_to_human_review",
+	ToolDescription: "Escalate the conversation for human review.",
+	InputJSONSchema: schema,
+	AgentName:       escalation.Name,
 	OnInvoke: func(ctx context.Context, rc *agents.RunContext, argsJSON string) (*agents.Agent, error) {
 		return escalation, nil // may pick a target dynamically
 	},
@@ -45,15 +44,14 @@ h := agents.Handoff{
 }
 ```
 
-> Set `StrictJSONSchema: true` on a hand-built `Handoff` as shown above. The Python
-> SDK defaults it to `True` and always emits a strict schema, but a Go bool zero
-> value is `false`, so omitting the field sends a non-strict schema. `HandoffTo`
-> already sets it for you.
+> A hand-built `Handoff` is strict by default — the zero value of
+> `NonStrictSchema` matches the Python SDK's `strict_json_schema=True`. Set
+> `NonStrictSchema: true` only for a schema strict mode cannot express.
 
 | Field | Purpose |
 |---|---|
 | `ToolName` / `ToolDescription` | What the model sees |
-| `InputJSONSchema` / `StrictJSONSchema` | Optional typed handoff input (set `StrictJSONSchema: true`) |
+| `InputJSONSchema` / `NonStrictSchema` | Optional typed handoff input (strict by default) |
 | `OnInvoke` | Returns the agent to switch to (required) |
 | `OnHandoff` | Side-effect callback when the handoff fires (e.g. prefetch data) |
 | `InputFilter` | Rewrites the conversation the next agent sees (below) |

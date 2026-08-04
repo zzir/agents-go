@@ -43,14 +43,6 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error) {
 	out := make([]Tool, 0, len(agent.Tools))
 	for _, t := range agent.Tools {
-		// A tool built from an unusable schema/argument type is never sent to
-		// the model — fail the run now with a *UserError instead of letting the
-		// model call it and receive a schema error. Construction errors are
-		// deferred so constructors stay single-valued, so the runner surfaces
-		// them here.
-		if ft, ok := ToolAs[*FunctionTool](t); ok && ft.constructionErr != nil {
-			return nil, newUserError("tool %q: %v", ft.Name, ft.constructionErr)
-		}
 		if e, ok := ToolAs[EnableableTool](t); ok {
 			enabled, err := e.IsToolEnabled(ctx, r.rc, agent)
 			if err != nil {

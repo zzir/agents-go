@@ -85,6 +85,17 @@ func TestAgentToolOnStreamHandlerPanicDoesNotFailCall(t *testing.T) {
 	if res.FinalOutputString() != "orch done" {
 		t.Errorf("final = %q", res.FinalOutputString())
 	}
+	// Survived, but not silently: the panic is recorded on the parent run's
+	// diagnostics, attributed to the handler.
+	var recorded bool
+	for _, d := range res.Diagnostics {
+		if d.Type == DiagToolPanic && d.Details["source"] == "on_stream_handler" {
+			recorded = true
+		}
+	}
+	if !recorded {
+		t.Errorf("handler panic left no diagnostic: %+v", res.Diagnostics)
+	}
 }
 
 func TestAgentToolSessionPassthrough(t *testing.T) {
@@ -92,7 +103,9 @@ func TestAgentToolSessionPassthrough(t *testing.T) {
 	sub := &Agent{Name: "specialist", ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "nested answer")),
 	}}}
-	tool := sub.AsTool(AgentToolConfig{Name: "specialist", Session: sess})
+	tool := sub.AsTool(AgentToolConfig{Name: "specialist", ModifyRunOptions: func(o *RunOptions) {
+		o.Conversation.Session = sess
+	}})
 	orch := orchestratorCalling(t, tool, "specialist", `{"input":"remember me"}`)
 
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
@@ -346,7 +359,7 @@ func TestAgentAsToolStructuredWithoutDescriptions(t *testing.T) {
 func TestAgentAsToolIncludeInputSchema(t *testing.T) {
 	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
 	sub := &Agent{Name: "searcher", ModelImpl: subModel}
-	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search", IncludeInputSchema: true})
+	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search", InputBuilder: AgentToolInputWithSchema})
 
 	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {

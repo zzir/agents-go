@@ -3,7 +3,6 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -106,23 +105,6 @@ func (v *schemaValidator) ApplyDefaults(raw []byte) []byte {
 		return raw
 	}
 	return out
-}
-
-// sameSchema reports whether two schema maps are the same object, which is the
-// cheap check for "did a caller replace this after construction".
-//
-// Deep equality would be the general answer and the wrong trade: it runs on
-// every tool call to detect something that happens at most once, at setup.
-func sameSchema(a, b map[string]any) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	// Identity, not equality: two non-empty maps are "the same schema" when
-	// they are the same map.
-	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 }
 
 // relaxAdditionalProperties returns a copy of schema with every

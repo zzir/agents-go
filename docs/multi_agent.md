@@ -50,24 +50,34 @@ orchestrator := &agents.Agent{
 | Field | Purpose |
 |---|---|
 | `Name` / `Description` | What the calling model sees (name defaults to the sanitized agent name) |
-| `MaxTurns` | Turn budget for the nested run (0 = default) |
 | `CustomOutputExtractor` | Derive the tool's string result from the nested `*RunResult` (its `AgentToolInvocation` identifies the originating call) |
 | `IsEnabled` | Hide the tool from the model per run |
 | `NeedsApproval` / `NeedsApprovalFunc` | Make the agent tool itself a human-approval gate |
 | `FailureErrorFunction` | Override how a failed nested run is rendered back to the model |
-| `Hooks` | Lifecycle callbacks for the nested run (never inherited from the parent) |
-| `Session` / `ConversationID` | Give the nested run conversation state of its own — one strategy at a time, like a top-level run |
-| `ModifyRunOptions` | Adjust the computed nested `RunOptions` (Python's `run_config` override) |
+| `ModifyRunOptions` | Configure the nested run's `RunOptions` — session, turn budget, conversation, model, guardrails (Python's `run_config` override) |
 | `OnStream` | Stream the nested run's events to a callback (see below) |
-| `InputBuilder` / `IncludeInputSchema` | Control how structured arguments render into the nested input |
+| `InputBuilder` | Control how structured arguments render into the nested input (`agents.AgentToolInputWithSchema` attaches the full schema) |
+
+The config configures the **tool surface**; everything about the nested run
+itself goes through `ModifyRunOptions`:
+
+```go
+sub.AsTool(agents.AgentToolConfig{
+	Name: "specialist",
+	ModifyRunOptions: func(o *agents.RunOptions) {
+		o.Conversation.Session = sess // conversation state of its own
+		o.Exec.MaxTurns = 5           // nested turn budget
+	},
+})
+```
 
 **Streaming a nested run.** Setting `OnStream` switches the nested run to streaming: every event (raw model deltas, run items, agent updates) is delivered as an `AgentToolStreamEvent` carrying the current nested agent and the originating tool call. Events dispatch from a background goroutine so a slow callback never stalls the run; a panic in the callback is recovered, and a canceled parent does not wait for the callback backlog.
 
-**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewFunctionTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct, mirroring Python's `TypeAdapter` validation. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `IncludeInputSchema` — or through your own `InputBuilder`.
+**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewFunctionTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct, mirroring Python's `TypeAdapter` validation. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
 
-The nested run inherits the parent's model provider, model override, model settings and tracer through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
+The nested run inherits the parent's model provider, model override, model settings, tracer and log configuration through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace and its log records carry the sub-agent's name; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 
-**State isolation.** The nested run never inherits the parent run's conversation state: the sub-agent sees only the input the orchestrator passes, and nothing it does is written to the parent's `Session`. To give the nested run state of its own, set `AgentToolConfig.Session` or `ConversationID` explicitly (one strategy at a time, same as a top-level run); to share client-side history with the parent, pass the same `Session` to both. Python's `previous_response_id` option has no Go counterpart ([differences](migration_from_python.md)).
+**State isolation.** The nested run never inherits the parent run's conversation state: the sub-agent sees only the input the orchestrator passes, and nothing it does is written to the parent's `Session`. To give the nested run state of its own, set a session or conversation via `ModifyRunOptions` (one strategy at a time, same as a top-level run); to share client-side history with the parent, pass the parent's `Session` there. Python's `previous_response_id` option has no Go counterpart ([differences](migration_from_python.md)).
 
 Without a `CustomOutputExtractor`, the tool result is the nested run's final output — as a string for plain-text agents, or the JSON payload for structured ones. When the final output is empty, it falls back to the last non-empty assistant message, then the last non-empty string tool output (matching Python's `as_tool` extraction).
 

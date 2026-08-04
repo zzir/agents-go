@@ -38,19 +38,20 @@ agent.Tools = []agents.Tool{runQuery}
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
 - The `ctx` is the run's context (cancellation propagates into tools).
-- `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). The same `*ToolContext` is passed to the `OnToolStart` / `OnToolEnd` [lifecycle hooks](running_agents.md#turn-hooks), so a hook sees exactly which call it is bracketing.
+- `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). To observe or gate the call from outside the tool, use tool-stage [guardrails](guardrails.md) — they bracket execution with the same call identity in their payload.
 - Tools requested in the same model turn run **concurrently**; share state through the context value only if it is goroutine-safe.
 
 This replaces Python's `@function_tool` decorator: compile-time generics instead of signature inspection, struct tags instead of docstrings.
 
 ### Strict mode
 
-Strict schema mode is on by default and the reflected schema is rewritten to the strict subset OpenAI requires (`additionalProperties:false`, all properties required, …). Disable per tool when you need schema features strict mode forbids:
+Strict schema mode is on by default and the reflected schema is rewritten to the strict subset OpenAI requires (`additionalProperties:false`, all properties required, …). Chain `NonStrict()` when the model should be allowed to omit fields whose json tag carries `,omitempty` — it relaxes the advertised schema and the local argument validation together:
 
 ```go
-t := agents.NewFunctionTool("lookup", "…", fn)
-t.Strict = false
+t := agents.NewFunctionTool("lookup", "…", fn).NonStrict()
 ```
+
+`NewFunctionTool` panics if the argument type cannot be reflected into a schema (not a struct, or a field no schema can express) — a deterministic programmer error, surfaced at construction like `regexp.MustCompile`. For schemas that are runtime data, `NewRawFunctionTool` returns an error instead.
 
 ### Error handling
 

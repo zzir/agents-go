@@ -136,8 +136,7 @@ func handoffWithRequiredInput(target *Agent) Handoff {
 			"required":             []any{"reason"},
 			"additionalProperties": false,
 		},
-		StrictJSONSchema: true,
-		AgentName:        target.Name,
+		AgentName: target.Name,
 		OnInvoke: func(context.Context, *RunContext, string) (*Agent, error) {
 			return target, nil
 		},

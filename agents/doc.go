@@ -6,6 +6,22 @@
 // Behavior is specified in docs/spec.md, not inherited; docs/architecture.md
 // explains how the pieces compose.
 //
+// The package is layered. An agent and a run are the whole floor:
+//
+//	agent := &agents.Agent{
+//		Name:         "assistant",
+//		Instructions: agents.StaticInstructions("Be brief."),
+//	}
+//	res, err := agents.RunSync(ctx, agent, "hello", agents.RunOptions{
+//		Model: agents.ModelOptions{Provider: openai.NewProvider()},
+//	})
+//
+// Everything after that is an opt-in layer: tools when the model should act,
+// a session when the conversation must persist, guardrails and approval when
+// the stakes rise, middleware and tracing when runs need policy and
+// observability. The sections below are ordered that way — each one builds on
+// the previous but none is required by it.
+//
 // # Running
 //
 // An [Agent] is a plain struct pairing a model with instructions, tools,
@@ -24,7 +40,8 @@
 // # Tools
 //
 // [NewFunctionTool] builds a tool from a typed Go function; the argument
-// struct is reflected into a strict JSON schema shown to the model. Every
+// struct is reflected into a strict JSON schema shown to the model (chain
+// [FunctionTool.NonStrict] to relax it). Every
 // tool executes locally — the [Tool] interface is sealed, and provider-hosted
 // tools are deliberately not modeled. Optional capabilities (approval,
 // enablement, deferral, streamed progress) are side interfaces discovered

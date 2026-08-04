@@ -233,16 +233,25 @@ func TestNewFunctionTool_NonStrictAllowsOmittedOptional(t *testing.T) {
 		t.Fatal("strict: expected missing-required-key error for omitted optional field")
 	}
 
-	// Non-strict: omitting the ",omitempty" field must now be accepted — before
-	// the fix the closure kept validating against the all-required strict schema
-	// and the relaxed tool was unusable.
-	tool.Strict = false
+	// NonStrict relaxes both sides at once: the omitted ",omitempty" field is
+	// accepted by local validation, and the advertised schema stops listing it
+	// as required.
+	tool.NonStrict()
 	out, err := tool.OnInvoke(context.Background(), tc, `{"city":"Paris"}`)
 	if err != nil {
 		t.Fatalf("non-strict: omitted optional field should be accepted, got %v", err)
 	}
 	if out.ModelOutput() != "Paris" {
 		t.Errorf("out = %v, want Paris", out)
+	}
+	if tool.Strict {
+		t.Error("NonStrict must clear Strict")
+	}
+	required, _ := tool.ParamsJSONSchema["required"].([]any)
+	for _, k := range required {
+		if k == "units" {
+			t.Error("NonStrict must drop optional fields from the advertised required list")
+		}
 	}
 
 	// A genuinely required field is still enforced in non-strict mode.
@@ -266,20 +275,19 @@ func TestStrict_TypelessPropertyErrors(t *testing.T) {
 	}
 }
 
-func TestNewFunctionTool_TypelessAnyFieldFailsAtConstruction(t *testing.T) {
+func TestNewFunctionTool_TypelessAnyFieldPanics(t *testing.T) {
 	type badArgs struct {
 		Data any `json:"data" jsonschema:"some data"`
 	}
-	tool := NewFunctionTool("bad", "",
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected construction panic for a tagged any field (typeless schema)")
+		}
+	}()
+	NewFunctionTool("bad", "",
 		func(ctx context.Context, tc *ToolContext, a badArgs) (string, error) {
 			return "ran", nil
 		})
-	if tool.constructionErr == nil {
-		t.Fatal("expected constructionErr for a tagged any field (typeless schema)")
-	}
-	if _, err := tool.OnInvoke(context.Background(), &ToolContext{}, `{"data":1}`); err == nil {
-		t.Fatal("a broken-schema tool must error on invoke")
-	}
 }
 
 func TestStrict_TypedAndCombinatorPropertiesStillValid(t *testing.T) {
