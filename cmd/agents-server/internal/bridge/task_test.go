@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
+	sdktasks "github.com/zzir/agents-go/agents/tasks"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -63,11 +64,18 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := runner.SpawnTask(withTaskToolCallID(ctx, "call-42"), parent.ID, "worker", "audit the code", "audit")
+	// Spawn through the SDK manager — the same path the spawn_task tool takes.
+	info, err := runner.Tasks().Spawn(ctx, sdktasks.SpawnRequest{
+		ParentSessionID: parent.ID,
+		AgentName:       "worker",
+		Input:           "audit the code",
+		Label:           "audit",
+		ToolCallID:      "call-42",
+	})
 	if err != nil {
-		t.Fatalf("SpawnTask: %v", err)
+		t.Fatalf("Spawn: %v", err)
 	}
-	if info.Status != protocol.TaskWorking || info.TaskID == "" {
+	if string(info.Status) != protocol.TaskWorking || info.TaskID == "" {
 		t.Fatalf("info = %+v", info)
 	}
 

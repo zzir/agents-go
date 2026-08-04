@@ -123,22 +123,6 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 	}, nil
 }
 
-// taskToolCallIDFrom pulls the spawning tool call id out of the tool context.
-// SpawnTask is invoked from a FunctionTool, whose ctx carries no call id — the
-// ToolContext does; the tool passes it via context because the TaskSpawner
-// interface stays SDK-agnostic.
-func taskToolCallIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(taskToolCallIDKey{}).(string)
-	return id
-}
-
-type taskToolCallIDKey struct{}
-
-// withTaskToolCallID tags ctx with the spawning tool call id.
-func withTaskToolCallID(ctx context.Context, callID string) context.Context {
-	return context.WithValue(ctx, taskToolCallIDKey{}, callID)
-}
-
 // trustSessionID picks the session id the exec_command trust gate scopes to:
 // a task run inherits its parent chat session's command trust (decision: a
 // spawned task shares the parent's sandbox and its approvals).
@@ -149,72 +133,17 @@ func trustSessionID(sessionID string, task *TaskMeta) string {
 	return sessionID
 }
 
-// SpawnTask implements TaskSpawner by delegating to the SDK's task manager.
-//
-// Everything that used to live here — creating the child session, the row, the
-// rollback on a half-finished spawn, the concurrency and depth caps — is in
-// agents/tasks now. What is left is the shape this server's REST API returns.
-func (r *Runner) SpawnTask(ctx context.Context, parentSessionID, agentName, input, label string) (*TaskInfo, error) {
-	if r.tasks == nil {
-		return nil, fmt.Errorf("spawn_task: tasks are not configured")
-	}
-	info, err := r.tasks.Spawn(ctx, tasks.SpawnRequest{
-		ParentSessionID: parentSessionID,
-		AgentName:       agentName,
-		Input:           input,
-		Label:           label,
-		// The spawning call id comes through the tool context, not the model.
-		ToolCallID: taskToolCallIDFrom(ctx),
-	})
-	if err != nil {
-		var limit tasks.ErrTaskLimit
-		if errors.As(err, &limit) {
-			return nil, ErrTaskLimit{Limit: limit.Limit}
-		}
-		return nil, err
-	}
-	return taskInfoFrom(info), nil
-}
-
-// TaskStatus implements TaskSpawner.
-//
-// The live hub still overlays the status of a running task: the row says
-// "working" for the whole run, while the hub knows whether it is mid-turn or
-// paused on an approval, and that difference is what the model is asking about.
-func (r *Runner) TaskStatus(ctx context.Context, taskID string, waitSeconds int) (*TaskInfo, error) {
-	if r.tasks == nil {
-		return nil, fmt.Errorf("task_status: tasks are not configured")
-	}
-	info, err := r.tasks.Status(ctx, taskID, time.Duration(waitSeconds)*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	out := taskInfoFrom(info)
-	if !isTerminalTaskStatus(out.Status) {
-		// Overlay the live run's view, but ONLY its non-terminal states. The
-		// row is the truth for a terminal one: the hub finishes a run before
-		// the row lands, and reporting "completed" in that window would hand
-		// the model a status whose result is not readable yet.
-		if task, err := r.Deps.Tasks.Get(ctx, taskID); err == nil {
-			if hub, live := r.hub.Info(task.RunID); live {
-				if hs := TaskStatusFor(hub.Status); !isTerminalTaskStatus(hs) {
-					out.Status = hs
-				}
-			}
-		}
-	}
-	return out, nil
-}
-
-// StopTask implements TaskSpawner.
+// StopTask cancels a background task on behalf of the REST stop endpoint,
+// with the same status-aware semantics as the model-facing task_stop tool.
+// (The model-facing spawn/status/stop path itself is the SDK's task manager
+// tools, wired in buildAgent — not methods here.)
 func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_stop: tasks are not configured")
 	}
 	info, err := r.tasks.Stop(r.hub.rootCtx, taskID, graceful)
 	if err != nil {
-		var final tasks.ErrAlreadyFinal
-		if errors.As(err, &final) {
+		if final, ok := errors.AsType[tasks.ErrAlreadyFinal](err); ok {
 			return nil, &TaskFinalError{Status: string(final.Status)}
 		}
 		return nil, err
