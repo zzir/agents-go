@@ -43,6 +43,12 @@ mgr := tasks.New(tasks.Config{
 agent.Tools = append(agent.Tools, mgr.Tools(nil)...)
 ```
 
+If your host assigns runs identifiers, wrap each run's context with
+`tasks.WithParentRunID(ctx, runID)` before starting it: `spawn_task` stamps
+that id onto the task (`Task.ParentRunID`), which is what lets a UI tie the
+task — and the wake-up run its completion triggers — back to the spawning
+run's trace. Display-only; skip it if you have no run ids.
+
 Then call the Manager at three moments:
 
 ```go

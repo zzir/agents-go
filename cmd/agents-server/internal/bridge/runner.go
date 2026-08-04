@@ -281,6 +281,10 @@ type segmentSpec struct {
 // publishing events to the hub, and returns its outcome.
 func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID string, spec segmentSpec) *RunResult {
 	log := zerolog.Ctx(ctx)
+	// Fresh and resumed segments both pass here: stamp the run id so a
+	// spawn_task inside the run records which run spawned it — that is what
+	// lets the trace panel nest the task's wake-up run under this one.
+	ctx = tasks.WithParentRunID(ctx, runID)
 
 	sendEvent := func(typ string, payload any) {
 		env, err := protocol.NewEnvelope(typ, payload)

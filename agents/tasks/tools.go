@@ -17,6 +17,24 @@ import (
 // would let one conversation spawn tasks onto another.
 type SessionIDFrom func(rc *agents.RunContext) string
 
+// parentRunKey carries the host's identifier for the currently executing run
+// (see WithParentRunID).
+type parentRunKey struct{}
+
+// WithParentRunID tags ctx with the host's identifier for the run that is
+// executing. spawn_task stamps it onto the task it creates
+// (Task.ParentRunID), which is what lets a host UI tie the task — and the
+// wake-up run its completion later triggers — back to the spawning run's
+// trace. Display-only; a host without run identifiers can skip it.
+func WithParentRunID(ctx context.Context, runID string) context.Context {
+	return context.WithValue(ctx, parentRunKey{}, runID)
+}
+
+func parentRunIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(parentRunKey{}).(string)
+	return id
+}
+
 // DefaultSessionID reads a plain string context value, which is what a host
 // that has nothing else to carry will use.
 func DefaultSessionID(rc *agents.RunContext) string {
@@ -74,6 +92,9 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []agents.Tool {
 				// The spawning call id lets the task's later state changes
 				// reach the card this call produced, long after the turn ended.
 				ToolCallID: tc.ToolCallID,
+				// The host's id for the executing run (WithParentRunID), so
+				// the task ties back to the spawning run's trace.
+				ParentRunID: parentRunIDFrom(ctx),
 			})
 			if err != nil {
 				return agents.ToolResult{}, err

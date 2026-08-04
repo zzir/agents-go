@@ -124,3 +124,22 @@ func stringOf(r agents.ToolResult) string {
 	}
 	return ""
 }
+
+// The host tags the executing run's id on the context; spawn stamps it onto
+// the task so a UI can nest the task's wake-up run under the spawning run.
+func TestTools_SpawnRecordsTheParentRun(t *testing.T) {
+	h := newHarness(t)
+	inv, ok := agents.ToolAs[agents.InvokableTool](toolNamed(h.m.Tools(nil), "spawn_task"))
+	if !ok {
+		t.Fatal("spawn_task is not invokable")
+	}
+	tc := &agents.ToolContext{RunContext: agents.NewRunContext("parent"), ToolCallID: "call-1"}
+	ctx := WithParentRunID(context.Background(), "run-42")
+	if _, err := inv.Invoke(ctx, tc, `{"agent_name":"worker","input":"do it","label":"job"}`); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := h.store.ListNonTerminal(context.Background(), "parent")
+	if len(live) != 1 || live[0].ParentRunID != "run-42" {
+		t.Errorf("task = %+v, want ParentRunID run-42 recorded", live)
+	}
+}
