@@ -204,7 +204,7 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 	// only on cancellation, since the deferred cancel cannot run
 	// while this read blocks. Cancel them and leave; their
 	// verdict is about a turn nobody will read.
-	if r.consumerStopped || errors.Is(err, errConsumerStopped) {
+	if r.consumerStopped.Load() || errors.Is(err, errConsumerStopped) {
 		race.stop()
 		modelCancel()
 		span.Finish()
@@ -213,7 +213,13 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 	}
 	// The guardrails always finish — a tripwire cancelled the call,
 	// completion just outlasted it — so honor a verdict still in
-	// flight before trusting the model outcome.
+	// flight before trusting the model outcome. A call that failed on
+	// its own is done deciding, though: cancel the race first, so a
+	// slow guardrail cannot hold an already-failed run open. A verdict
+	// already delivered still wins below; stop is idempotent.
+	if err != nil {
+		race.stop()
+	}
 	g := <-relay
 	modelCancel()
 	r.recordGuardrailResults(g.results...)
@@ -234,7 +240,11 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 		// result see the replacement.
 		out.original = repl
 	}
-	if g.err != nil {
+	// A guardrail verdict outranks the model outcome it raced — but a
+	// cancellation error after the model already failed is not a verdict,
+	// it is the race.stop() above being honored. Reporting it would mask
+	// the model's own error behind "context canceled".
+	if g.err != nil && (err == nil || !errors.Is(g.err, context.Canceled)) {
 		span.SetError(g.err.Error(), nil)
 		span.Finish()
 		out.resp = nil

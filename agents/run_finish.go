@@ -2,6 +2,17 @@ package agents
 
 import "context"
 
+// usageSnapshot returns a detached copy of the run's usage accumulator for
+// anything handed to the caller — a RunResult, a RunState, error details. The
+// live accumulator keeps changing (parallel agent-as-tool runs fold in, a
+// resumed run keeps adding), so what escapes the runner is always a copy of
+// its own: reading it needs no synchronization, and a later resume can never
+// mutate a result the caller already holds.
+func (r *runner) usageSnapshot() *Usage {
+	u := r.rc.Usage.Snapshot()
+	return &u
+}
+
 // finishRun is the final-output tail shared by the normal completion path and
 // a max-turns recovery. Order: the agent-end hook fires FIRST (matching Python;
 // before output guardrails — a tripped
@@ -52,7 +63,7 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 		RawResponses:     raw,
 		FinalOutput:      finalOutput,
 		LastAgent:        agent,
-		Usage:            r.rc.Usage,
+		Usage:            r.usageSnapshot(),
 		GuardrailResults: r.snapshotGuardrailResults(),
 		Diagnostics:      r.diagnostics.All(),
 		// A run can also reach its final output on the very turn the stop was
@@ -106,7 +117,7 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 		NewItems:         newItems,
 		RawResponses:     raw,
 		LastAgent:        last,
-		Usage:            r.rc.Usage,
+		Usage:            r.usageSnapshot(),
 		GuardrailResults: r.snapshotGuardrailResults(),
 		Diagnostics:      r.diagnostics.All(),
 	}

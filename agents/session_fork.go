@@ -40,17 +40,13 @@ func ForkSessionAt(ctx context.Context, src, dst *Session, entryID string) error
 }
 
 func writeFork(ctx context.Context, dst *Session, path []SessionEntry) error {
-	if err := dst.Clear(ctx); err != nil {
-		return fmt.Errorf("fork: clearing destination session: %w", err)
-	}
-	if len(path) == 0 {
-		return nil
-	}
 	// Ids and parent links are the conversation's and travel with it; the
 	// destination allocates the sequence numbers, since a cursor position
-	// belongs to the session it pages.
-	if err := dst.Append(ctx, path...); err != nil {
-		return fmt.Errorf("fork: writing to destination session: %w", err)
+	// belongs to the session it pages. One replace instead of clear-then-append
+	// so a storage that can swap atomically (AtomicReplacer) never shows a
+	// cleared-but-unfilled dst when a failure lands mid-write.
+	if err := ReplaceStorageEntries(ctx, dst.storage, path...); err != nil {
+		return fmt.Errorf("fork: writing destination session: %w", err)
 	}
 	return nil
 }

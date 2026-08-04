@@ -23,13 +23,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	// A negative value (MaxTurnsUnlimited) disables the budget; it passes
 	// through here and the turn check skips it.
 
-	rc := opts.RunContext
-	if rc == nil {
-		rc = NewRunContext(opts.Context)
-	}
-	if rc.Usage == nil {
-		rc.Usage = NewUsage()
-	}
+	rc := NewRunContext(opts.Context)
 	rc.inheritedOpts = &opts
 
 	userInput, err := normalizeInput(input)
@@ -125,6 +119,11 @@ type loopSeed struct {
 	// iteration re-processes instead of calling the model.
 	pendingResponse *ModelResponse
 
+	// cursor, on a resume, is the pause-time server-conversation cursor, so
+	// the resumed run keeps sending deltas. Zero for a fresh run and for
+	// locally-managed history.
+	cursor serverCursor
+
 	startTurn int
 }
 
@@ -151,6 +150,7 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []TResponseInputItem)
 	seed.generatedItems = append([]RunItem{}, r.resume.GeneratedItems...)
 	seed.rawResponses = append([]*ModelResponse{}, r.resume.RawResponses...)
 	seed.pendingResponse = r.resume.InterruptedResponse
+	seed.cursor = r.resume.cursor
 	sessionSeed := r.resume.SessionItems
 	if sessionSeed == nil {
 		sessionSeed = r.resume.GeneratedItems

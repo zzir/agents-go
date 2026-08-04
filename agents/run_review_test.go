@@ -229,28 +229,42 @@ func TestAbandonedStreamDoesNotWaitForRacingGuardrail(t *testing.T) {
 	}
 }
 
-// A pause's queued input survives a retried resume exactly once. Appending it
-// per attempt delivered the human's steer twice when the failed attempt had
-// not consumed it; seeding it only once lost it entirely when the failed
-// attempt had.
-func TestRestoreSeedsPendingInputPerQueueState(t *testing.T) {
+// A pause's queued input survives retried attempts exactly once. Delivery is
+// transactional: taking moves input in flight, a failed attempt rolls it
+// back, a durable one commits — the transaction, not reseeding, is what makes
+// a retry deliver input neither zero times nor twice. restore itself seeds
+// once per control.
+func TestRestore_TransactionalDeliveryAcrossRetries(t *testing.T) {
 	ctrl := newRunControl()
 	pending := PendingInput{Steer: InputItemsFromText("USE STAGING")}
 
-	// Attempt 1 restores and does NOT consume: a second restore must not
-	// duplicate what is still queued.
+	// Seeding is once per control: a retried attempt's second restore must
+	// not duplicate what is still queued.
 	ctrl.restore(pending)
 	ctrl.restore(pending)
 	if got := len(ctrl.Pending().Steer); got != 1 {
 		t.Fatalf("queued steer = %d, want 1 — a retry duplicated the human's input", got)
 	}
 
-	// The attempt consumes it and fails; the next attempt must get it back.
+	// Attempt 1 consumes and fails: the rollback returns the steer, and the
+	// next attempt's restore stays a no-op — nothing lost, nothing doubled.
 	if got := len(ctrl.takeTurnInput()); got != 1 {
 		t.Fatal("taking the turn input did not drain the steer")
 	}
+	ctrl.rollbackInjected()
 	ctrl.restore(pending)
 	if got := len(ctrl.Pending().Steer); got != 1 {
-		t.Fatalf("queued steer = %d after a consumed-then-failed attempt, want 1 — the steer was lost", got)
+		t.Fatalf("queued steer = %d after a failed attempt, want 1 — the steer was lost", got)
+	}
+
+	// Attempt 2 consumes and delivers: after the commit a restore must not
+	// resurrect input whose durable home already exists.
+	if got := len(ctrl.takeTurnInput()); got != 1 {
+		t.Fatal("second take did not drain the rolled-back steer")
+	}
+	ctrl.commitInjected()
+	ctrl.restore(pending)
+	if got := len(ctrl.Pending().Steer); got != 0 {
+		t.Fatalf("queued steer = %d after delivery, want 0 — a reseed doubled delivered input", got)
 	}
 }

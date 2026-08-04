@@ -133,13 +133,20 @@ func (r *runner) emit(event StreamEvent) bool {
 	// corrupt the consumer's range loop.
 	r.emitMu.Lock()
 	defer r.emitMu.Unlock()
-	if r.consumerStopped {
+	if r.consumerStopped.Load() {
 		// Another goroutine already saw the consumer leave; calling yield again
 		// after it returned false is undefined.
 		return false
 	}
 	if !r.yield(event, nil) {
-		r.consumerStopped = true
+		r.consumerStopped.Store(true)
+		// Tell everything riding the run's context — the model call the loop
+		// is streaming, the tool batch it is waiting on — to stop now: the
+		// loop only observes the flag at emit points, and a batch in
+		// g.Wait() has none.
+		if r.cancelRun != nil {
+			r.cancelRun(errConsumerStopped)
+		}
 		return false
 	}
 	return true

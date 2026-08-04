@@ -157,13 +157,19 @@ ctrl.FollowUp("now summarize it for a customer")      // and then do this
 `FollowUp` continues the same run rather than starting a new one, so the trace,
 the usage total and the session stay one thing.
 
+Injections reach the model **in the order they were made**, across all three
+methods, and delivery is transactional: input consumed by an attempt that then
+fails (a middleware retry, a failed resume) is returned to the queue and
+delivered by the next attempt — nothing lost, nothing doubled.
+
 Injected input is recorded as the user's, so a reopened session shows what was
 actually said rather than an answer to a question nobody asked. Whatever a run
 did not consume — a `NextTurn` that arrived as the run was ending — is reported
 by `ctrl.Pending()` instead of vanishing.
 
 Input queued before a run pauses for [approval](human_in_the_loop.md) rides
-along in `RunState.PendingInput` and is delivered on resume.
+along in `RunState.PendingInput` — across `RunState` serialization too — and
+is delivered on resume.
 
 ## Turn hooks
 

@@ -306,12 +306,13 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 		d.IsError = true
 	}
 	if len(other.Extra) > 0 {
-		if d.Extra == nil {
-			d.Extra = make(map[string]any, len(other.Extra))
-		}
-		for k, v := range other.Extra {
-			d.Extra[k] = v
-		}
+		// Copy-on-write: d's map may be shared with a stored entry (readers
+		// hand out shallow copies), and merging happens on the read path —
+		// writing into the existing map would edit storage from a read.
+		m := make(map[string]any, len(d.Extra)+len(other.Extra))
+		maps.Copy(m, d.Extra)
+		maps.Copy(m, other.Extra)
+		d.Extra = m
 	}
 }
 

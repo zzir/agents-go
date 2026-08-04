@@ -18,7 +18,11 @@ type RunContext struct {
 	// Context is the arbitrary user value threaded through the run. It is never
 	// inspected by the SDK.
 	Context any
-	// Usage accumulates token usage across every model call in the run.
+	// Usage accumulates token usage across every model call in the run. It is
+	// LIVE while the run executes — parallel agent-as-tool runs fold their
+	// usage in concurrently — so mid-run readers (a budget check inside a
+	// tool, a streaming consumer) must go through Usage.Snapshot rather than
+	// the bare counter fields. Results hand out detached copies instead.
 	Usage *Usage
 	// Approvals tracks human-in-the-loop tool approval decisions.
 	Approvals *ApprovalStore

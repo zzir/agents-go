@@ -66,12 +66,9 @@ type RunOptions struct {
 	Log LogConfig
 
 	// Context is arbitrary user data threaded through tools, guardrails and
-	// hooks via RunContext.Context. Ignored if RunContext is set.
+	// hooks via RunContext.Context. It is the single way user data enters a
+	// run; the run wraps it in a fresh RunContext of its own.
 	Context any
-
-	// RunContext, when set, is used directly (and its Usage is accumulated into).
-	// Otherwise a new one wrapping Context is created.
-	RunContext *RunContext
 
 	// parentTrace, when set, makes the run record its spans into an existing
 	// trace instead of starting (and finishing) its own. Set internally for

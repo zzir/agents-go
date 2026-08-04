@@ -60,20 +60,28 @@ The accumulating `*Usage` lives on the [run context](context.md), so tools and h
 ```go
 budgetCheck := agents.NewFunctionTool("expensive_op", "…",
 	func(ctx context.Context, tc *agents.ToolContext, args opArgs) (string, error) {
-		if tc.RunContext.Usage.TotalTokens > 100_000 {
+		if tc.RunContext.Usage.Snapshot().TotalTokens > 100_000 {
 			return "", errors.New("token budget exceeded")
 		}
 		return run(args)
 	})
 ```
 
-With a shared `RunContext` (`RunOptions.RunContext`), usage even accumulates across several runs:
+`RunContext.Usage` is the run's **live** accumulator — parallel agent-as-tool
+calls fold their usage in concurrently — so mid-run readers go through
+`Snapshot()`. A `RunResult.Usage` is a detached copy taken when the result was
+built; reading it directly is always safe.
+
+Across several runs, sum each result's `Usage` — every run owns a fresh
+`RunContext`, so there is no shared accumulator to thread through:
 
 ```go
-rc := agents.NewRunContext(myAppData)
-agents.Run(ctx, a1, in1, agents.RunOptions{RunContext: rc, Model: agents.ModelOptions{Provider: p}})
-agents.Run(ctx, a2, in2, agents.RunOptions{RunContext: rc, Model: agents.ModelOptions{Provider: p}})
-fmt.Println("combined tokens:", rc.Usage.TotalTokens)
+r1, _ := agents.RunSync(ctx, a1, in1, agents.RunOptions{Model: agents.ModelOptions{Provider: p}})
+r2, _ := agents.RunSync(ctx, a2, in2, agents.RunOptions{Model: agents.ModelOptions{Provider: p}})
+total := agents.NewUsage()
+total.Add(r1.Usage)
+total.Add(r2.Usage)
+fmt.Println("combined tokens:", total.TotalTokens)
 ```
 
 For raw per-call data, `RunResult.RawResponses` carries each `ModelResponse`

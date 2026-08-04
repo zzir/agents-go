@@ -55,6 +55,13 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		r.log.Debug(ctx, "turn persisted", slog.Int("entries", len(toSave)))
 	}
 	r.persistedSessionItems = end
+	// Injected input taken from the control is delivered once a write has
+	// persisted past its position — not before: a safe boundary that stopped
+	// short of it (a dangling call pair) leaves it in flight for the next
+	// write, or for a rollback if the attempt fails first.
+	if r.persistedSessionItems >= r.injectedUpTo {
+		r.ctrl.commitInjected()
+	}
 	return nil
 }
 

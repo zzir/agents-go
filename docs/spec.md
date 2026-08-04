@@ -47,13 +47,16 @@ from upstream.
 
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
   the loop; abandoning it stops the run where it stands. There is no producer
-  goroutine to leak and no context that must be cancelled on early exit. The
-  helpers a turn does spawn — racing input guardrails above all — are
-  CANCELLED by the abandonment rather than waited for: waiting on one parked
-  the consumer's `break` for its full duration, and forever for a guardrail
-  that returns only when cancelled. (One narrow exception to "the consumer's
-  goroutine": a tool streaming progress yields from its own goroutine —
-  [§2.7g](#27g-tool-progress-).)
+  goroutine to leak and no context that must be cancelled on early exit.
+  The moment `emit` observes the departure it cancels the RUN'S OWN context
+  root, so everything the turn has in flight — the model call, the tool batch
+  the loop is blocked on, racing input guardrails — is told to stop rather
+  than completing into a run nobody reads. Waiting instead parked the
+  consumer's `break` for the work's full duration, and forever for a guardrail
+  that returns only when cancelled; a tool that ignores its context still runs
+  to completion, but its result is discarded. (One narrow exception to "the
+  consumer's goroutine": a tool streaming progress yields from its own
+  goroutine — [§2.7g](#27g-tool-progress-).)
 - **A `RunStream` is single-use.** Ranging it a second time yields a
   `*UserError` instead of anything else: the run body lives inside the
   iterator, so a second range would re-execute it — model billed again, tools
@@ -114,6 +117,17 @@ for turn := 1; ; turn++ {
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
 4. The model produced a final output → see [§2.3](#23-deciding-the-final-output-).
 
+**A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
+wire format — the pending injected input, the disclosed deferred tools, the
+server-conversation cursor included — pinned by a full-field round-trip test
+(`RunStateSchemaVersion` 1.4). The in-process resume passing the live pointer
+must never be the only path that works; the serialized surface IS the
+contract. The cursor in particular rides along so a resumed run keeps sending
+deltas: the resumed turn re-processes a response the restored cursor already
+accounts for and does not advance it — re-deriving the cursor there marked
+pre-pause sibling tool outputs as already served, and a server-managed
+conversation never received them.
+
 ### 2.1b Items ✅
 
 Every `RunItem` reports two things beyond its payload:
@@ -170,7 +184,10 @@ reordered.
 - Tool concurrency is capped by `MaxToolConcurrency` (0 = unlimited). ✅
 - A panicking tool is recovered and routed through that tool's error path. ✅
 - When several tools fail, the error surfaced to the run is the one with the
-  **lowest call index** — never whichever goroutine finished first. ✅
+  **lowest call index among non-cancellation errors** — never whichever
+  goroutine finished first, and never a sibling's `context.Canceled` echo of
+  the failure that cancelled it. Cancellation surfaces only when it is all
+  there is (the consumer abandoned the run mid-batch). ✅
 - A tool declaring `SequentialTool` forces the whole batch to run serially. ✅
 
 ### 2.3 Deciding the final output ✅
@@ -346,6 +363,10 @@ a reader's view. A display settled after its turn ended is expressed as an
 - **An update whose target is missing is ignored, not an error.** The target may
   have been folded away by compaction, and failing an entire read over a stale
   pointer would make history unloadable.
+- **Folding is a projection: it never writes through to storage.** ✅ Readers
+  get shallow copies whose `Display` (and its `Extra` map) is shared with the
+  stored entry, so the fold copies what it merges instead of editing in
+  place — a read must never change what the next read returns.
 
 A server-managed conversation (`openai.ConversationsSession`) can hold only
 items; other kinds are dropped on write, because failing a run over a UI
@@ -427,7 +448,9 @@ An entry names its parent, so a session is a walk rather than a pile.
 
 **Fork extracts a branch; branch moves within one session.** ✅ A fork carries
 entry ids across unchanged, so an update entry naming one still finds its
-target.
+target. The destination is written through `ReplaceStorageEntries`, so a
+storage that can swap atomically (`AtomicReplacer`) never shows a
+cleared-but-unfilled fork target when a failure lands mid-write.
 
 ### 2.5e Session lifecycles ✅
 
@@ -771,6 +794,12 @@ that tool only.
 - A non-`Blocking` input guardrail runs concurrently with the model call. A
   tripwire **cancels the in-flight model call**: it is not billed and produces no
   response event.
+- The cancellation runs the other way too: **a model call that fails on its
+  own cancels the racing guardrails** instead of waiting them out — a slow
+  LLM-based guardrail must not hold an already-failed run open. A verdict
+  already delivered still wins; the guardrails' own cancellation error does
+  not (it is the stop being honored, and reporting it would mask the model's
+  error behind `context canceled`).
 - A panicking guardrail is recovered into an error that aborts the run — it never
   crashes the process.
 - Every consulted guardrail produces a result, allowing decisions included, so
@@ -998,8 +1027,10 @@ A tool marked `WithDeferred` is withheld from the model until some
   never disclose anything.
 - **Disclosure is cumulative** for the rest of the run. Withdrawing a tool after
   one use would surprise a model that had just been told it existed.
-- **It survives a resume** (`RunState.DisclosedTools`). Re-hiding would look,
-  from the model's side, like a tool taken away mid-conversation.
+- **It survives a resume** (`RunState.DisclosedTools`), a serialized
+  cross-process one included ([§2.1](#21-the-run-loop-): a `RunState`
+  round-trips whole). Re-hiding would look, from the model's side, like a tool
+  taken away mid-conversation.
 - **It does not override `IsEnabled`.** Disclosure opens a door; it does not
   force one.
 - **Naming an unknown tool is ignored.** A tool should not be able to fail a run
@@ -1083,7 +1114,8 @@ an activated environment survive between calls.
 |---|---|
 | **Usage** | Folded into the parent run's `Usage` |
 | **Trace** | Nested spans join the parent trace, parented by the function span that triggered them |
-| **Session** | **Not** shared with the parent by default; set `AgentToolConfig.Session` to opt in |
+| **Logging** | The parent's `LogConfig` is inherited, like the tracer — the nested run must not be the silent part of the workflow. Records carry the agent name, so parent and nested lines stay tellable apart |
+| **Session** | **Not** shared with the parent; give the nested run state of its own (or the parent's `Session`, explicitly) via `AgentToolConfig.ModifyRunOptions` |
 | **Interruptions** | Propagate upward as the parent's own; nested `RunState` is cached on the parent `RunState` keyed by call id |
 | **Guardrail results** | The nested run runs its own guardrails; results stay on the nested result and are **not** merged into the parent `RunResult` |
 
@@ -1203,10 +1235,10 @@ consumer on its own, so per-subscriber buffering is needed either way.
 `Run` returns a `RunControl` alongside the stream. It is safe to use from
 another goroutine, including before ranging begins.
 
-Beyond `StopAfterTurn`, `Phase`, `CurrentAgent` and `CurrentTurn`, it has three
-**injection queues**. They are separate queues rather than one with a mode tag
-because they are consumed at different points and only two of them may extend a
-run that was ending:
+Beyond `StopAfterTurn`, `Phase`, `CurrentAgent` and `CurrentTurn`, it has
+three **injection methods** feeding one arrival-ordered queue; the two
+consumption points filter by kind, and only two kinds may extend a run that
+was ending:
 
 | | Consumed at | Extends a finishing run |
 |---|---|---|
@@ -1214,6 +1246,18 @@ run that was ending:
 | `NextTurn` | the save point only | no — it rides along with a turn the run was taking anyway |
 | `FollowUp` | the final output | yes — the exchange lands, then the next one starts |
 
+- **One queue, arrival order.** Injections reach the model in the order they
+  were made, across kinds — two messages from the same caller can invert
+  meaning if replayed out of order ("do X", then "actually, don't"). The
+  kinds are consumption filters, not separate queues.
+- **Delivery is transactional.** Taking input moves it in flight; it counts
+  as delivered once it lands in a persisted turn, in a serialized
+  `RunState`'s item log, or — for a run with no session — in an attempt that
+  completed. A failed or abandoned attempt rolls its take back into the
+  queue at its arrival position, so a retrying middleware's next attempt
+  delivers exactly what the failed one never made durable: nothing lost,
+  nothing doubled. `RunState.PendingInput` seeds a resumed control once; the
+  transaction, not reseeding, is what makes input survive retries.
 - **A follow-up continues the same run**, rather than starting a new one, so
   the trace, the usage total and the session stay one thing.
 - **Injected input becomes a run item** with `Source{Type: SourceUser}`. That
@@ -1224,9 +1268,12 @@ run that was ending:
 - **Nothing is silently dropped.** `Pending()` reports what a run did not
   consume, which is how a caller learns a `NextTurn` arrived too late.
 - **Queued input survives an interruption**: `RunState.PendingInput` carries
-  it, so a steer sent while a human was deciding on an approval is delivered on
-  resume. That is precisely when someone is looking at the run and saying
-  something about it.
+  it — across serialization too ([§2.1](#21-the-run-loop-)) — so a steer sent
+  while a human was deciding on an approval is delivered on resume. That is
+  precisely when someone is looking at the run and saying something about it.
+  The wire shape stays the three lists, which does not record cross-kind
+  arrival order — an accepted loss at the pause boundary, not worth a schema
+  bump.
 
 ### 2.11e Span coverage ✅
 
@@ -1494,11 +1541,13 @@ Defaults that callers may depend on:
 | Setting | Default | Note |
 |---|---|---|
 | `MaxTurns` | 10 | `MaxTurnsUnlimited` (-1) disables it |
-| Strict schemas | on | `FunctionTool.Strict = false` relaxes both the advertised schema and local validation |
+| Strict schemas | on | Chaining `NonStrict()` relaxes both the advertised schema and local validation, atomically |
+| Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
+| `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
 
 ---
 
@@ -1707,6 +1756,47 @@ request-level `cache_control` marker, on by default
 (`Provider.WithPromptCaching(false)` opts out). `models/anthropic` is a
 submodule per §5.7 — it carries the anthropic-sdk-go dependency; `modelkit`
 adds none, so it stays in root.
+
+### 5.11 Construction errors split by data provenance
+
+A constructor whose failure can only be a programmer error **panics**; a
+constructor whose input is runtime data **returns an error**.
+
+`NewFunctionTool` and `AgentAsTool` derive their schema from a Go type: for a
+given type the outcome is deterministic, so a failure (non-struct args, a field
+no schema can express) is a bug that any test constructing the agent surfaces
+immediately — the `regexp.MustCompile` precedent. They panic, which also keeps
+constructors chainable inside `Agent{Tools: []Tool{...}}` literals.
+`NewRawFunctionTool` takes a schema that is data (loaded from a database or
+config), so a bad schema is an expected input, not a bug: it returns
+`(*FunctionTool, error)`.
+
+The earlier design — returning a tool that errors on every invocation, surfaced
+by the runner before the first model call — deferred a deterministic bug to
+runtime and cost a field (`constructionErr`) plus a runner check. Rejected.
+
+### 5.12 One user-context entry point
+
+`RunOptions.Context` is the only way user data enters a run; every run wraps it
+in a fresh `RunContext`. There is no field to inject a pre-built `RunContext`:
+nothing in the SDK needed it (nested runs share the parent's `Context` value
+and fresh accumulators), and cross-run usage totals are sums over each
+`RunResult.Usage`. Two fields expressing one concept was the cost; a run owning
+its `RunContext` outright is what the guarantee "a run's accumulators start
+empty" rests on.
+
+### 5.13 AgentToolConfig configures the tool, ModifyRunOptions the run
+
+`AgentToolConfig` holds only what has no `RunOptions` counterpart: the tool's
+name, description, visibility, approval gate, error rendering, output
+extraction, streaming callback and input rendering. Everything about the
+nested run itself — session, turn budget, conversation, model, guardrails —
+goes through the single `ModifyRunOptions` channel. Mirror fields
+(`MaxTurns`, `Session`, `ConversationID`) were removed: each was a second
+spelling of a `RunOptions` field, and the escape hatch's existence proved the
+dedicated-field approach could never be complete. A `ConversationID` set via
+`ModifyRunOptions` is still cleared when a paused nested run resumes (the
+serialized state already carries the conversation).
 
 ---
 

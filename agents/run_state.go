@@ -20,9 +20,10 @@ import (
 // (see RunStateFromJSON; recorded in docs/migration_from_python.md). The list below
 // is why each version bumped, not a promise of cross-version compatibility: 1.1
 // replaced the per-call approval maps with per-tool entries, 1.2 added the nested
-// agent-as-tool states and the reasoning-item id policy, and 1.3 added the
-// guardrail-result slices (input, output, tool input/output).
-const RunStateSchemaVersion = "1.3"
+// agent-as-tool states and the reasoning-item id policy, 1.3 added the
+// guardrail-result slices (input, output, tool input/output), and 1.4 added the
+// pending injected input, the disclosed deferred tools and the server cursor.
+const RunStateSchemaVersion = "1.4"
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
 // approval. Obtain one from RunResult.State, record approvals/rejections via
@@ -38,8 +39,11 @@ type RunState struct {
 	InterruptedResponse *ModelResponse
 	Interruptions       []*ToolApprovalItem
 	Approvals           *ApprovalStore
-	Usage               *Usage
-	CurrentTurn         int
+	// Usage is a detached copy of the usage accumulated up to the pause; a
+	// resumed run adopts it and keeps adding, without touching the RunResult
+	// the pause also returned.
+	Usage       *Usage
+	CurrentTurn int
 
 	// MaxTurns is the turn budget of the interrupted run. ResumeRun always
 	// continues under it (ignoring RunOptions.Exec.MaxTurns, matching Python), so a
@@ -76,13 +80,13 @@ type RunState struct {
 	// resumed run does not re-hide a tool the model has already been told
 	// about — which would look, from the model's side, like the tool was taken
 	// away mid-conversation.
-	DisclosedTools []string `json:"disclosed_tools,omitzero"`
+	DisclosedTools []string
 
 	// PendingInput carries input queued through RunControl that the run had not
 	// consumed when it paused. Without it, a steer sent while the caller was
 	// deciding on an approval would be lost at exactly the moment it mattered
 	// most — the human is looking at the run and saying something about it.
-	PendingInput PendingInput `json:"pending_input,omitzero"`
+	PendingInput PendingInput
 
 	// ReasoningItemIDPolicy carries the interrupted run's reasoning-item id
 	// policy so a resumed run keeps stripping (or preserving) reasoning ids even
@@ -96,6 +100,13 @@ type RunState struct {
 	// is their only source. Serialized lossily: the guardrail's live Run func
 	// does not round-trip, so a decoded result carries a name-only stub.
 	GuardrailResults []GuardrailResult
+
+	// cursor is the server-managed-conversation cursor at the pause: what the
+	// server already holds, so a resumed run keeps sending deltas. Without it a
+	// resume re-sent the full history to a conversation that already has it —
+	// duplicating server-side items in ConversationID mode and restarting the
+	// response chain in previous_response_id mode.
+	cursor serverCursor
 
 	// nestedToolStates carries the paused RunState of any agent-as-tool nested
 	// run, keyed by the parent tool call id, so ResumeRun continues the nested
@@ -119,6 +130,11 @@ type RunState struct {
 
 // Approve records approval for a pending tool call. Pass always=true to approve
 // every future call to the same tool.
+//
+// Concurrent Approve/Reject calls are safe once Approvals is non-nil, which
+// every state the SDK produces (a paused run, RunStateFromJSON) guarantees.
+// The lazy init below only serves a hand-constructed zero value, and is not
+// synchronized — such a state must be seeded from one goroutine first.
 func (s *RunState) Approve(item *ToolApprovalItem, always bool) {
 	if s.Approvals == nil {
 		s.Approvals = NewApprovalStore()
@@ -128,7 +144,7 @@ func (s *RunState) Approve(item *ToolApprovalItem, always bool) {
 
 // Reject records rejection for a pending tool call. message, if non-empty, is
 // sent back to the model in place of the tool output. Pass always=true to reject
-// every future call to the same tool.
+// every future call to the same tool. Concurrency: see Approve.
 func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 	if s.Approvals == nil {
 		s.Approvals = NewApprovalStore()
@@ -165,9 +181,11 @@ func ResumeRunSync(ctx context.Context, state *RunState, opts RunOptions) (*RunR
 
 // resumeWithMiddleware is ResumeRun's counterpart of withMiddleware.
 func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
-	if len(opts.Middlewares) == 0 {
+	if state == nil {
+		// Let resumeStream report the nil-state error on the stream; reading
+		// state fields below would panic before any middleware could see it.
 		return singleUse(func(yield func(StreamEvent, error) bool) {
-			resumeStream(ctx, state, opts, ctrl, rawEvents, yield)
+			resumeStream(ctx, nil, opts, ctrl, rawEvents, yield)
 		})
 	}
 	base := func(ctx context.Context, in RunInput) RunStream {
@@ -175,14 +193,7 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 			resumeStream(ctx, state, *in.Opts, ctrl, rawEvents, yield)
 		}
 	}
-	return singleUse(func(yield func(StreamEvent, error) bool) {
-		in := RunInput{Agent: state.CurrentAgent, Input: state.OriginalInput, Opts: &opts}
-		for ev, ierr := range chainMiddleware(base, opts.Middlewares)(ctx, in) {
-			if !yield(ev, ierr) {
-				return
-			}
-		}
-	})
+	return runViaMiddleware(ctx, state.CurrentAgent, state.OriginalInput, opts, base)
 }
 
 func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
@@ -224,10 +235,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// Input queued before the pause is delivered by this resume.
 	ctrl.restore(state.PendingInput)
 
-	rc := opts.RunContext
-	if rc == nil {
-		rc = NewRunContext(opts.Context)
-	}
+	rc := NewRunContext(opts.Context)
 	if state.Approvals != nil {
 		rc.Approvals = state.Approvals
 	}
@@ -292,6 +300,11 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	}
 	rc.activeTrace = r.trace
 	ctx = WithDiagnostics(ctx, r.diagnostics)
+	// Same cancellation root a fresh run installs (see runStream): emit
+	// cancels it when the consumer stops ranging mid-resume.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	r.cancelRun = cancel
 	res, err := r.loop(ctx, state.CurrentAgent, state.OriginalInput)
 	if err == nil && res != nil && res.State != nil {
 		// The resumed run interrupted again: carry the effective budget on the
@@ -359,6 +372,9 @@ type serialRunState struct {
 	SessionItems          []serialItem                   `json:"session_items,omitempty"`
 	PersistedSessionItems int                            `json:"persisted_session_items,omitempty"`
 	ToolsUsed             []string                       `json:"tools_used,omitempty"`
+	DisclosedTools        []string                       `json:"disclosed_tools,omitempty"`
+	PendingInput          *serialPendingInput            `json:"pending_input,omitempty"`
+	ServerCursor          *serialServerCursor            `json:"server_cursor,omitempty"`
 	ModelResponses        []serialResponse               `json:"model_responses"`
 	InterruptedResponse   *serialResponse                `json:"interrupted_response"`
 	Interruptions         []serialInterruption           `json:"interruptions"`
@@ -378,6 +394,22 @@ type serialRunState struct {
 	// Guardrail results accumulated before the pause (schema ≥ 1.3), serialized
 	// lossily as name + output payload — the live guardrail func is not restored.
 	GuardrailResults []serialGuardrailResult `json:"guardrail_results,omitempty"`
+}
+
+// serialPendingInput is the persisted form of RunState.PendingInput: one item
+// list per RunControl queue.
+type serialPendingInput struct {
+	Steer    []json.RawMessage `json:"steer,omitempty"`
+	NextTurn []json.RawMessage `json:"next_turn,omitempty"`
+	FollowUp []json.RawMessage `json:"follow_up,omitempty"`
+}
+
+// serialServerCursor is the persisted form of the run's server-conversation
+// cursor (serverCursor).
+type serialServerCursor struct {
+	ResponseID         string `json:"response_id,omitempty"`
+	ItemCount          int    `json:"item_count,omitempty"`
+	ConversationActive bool   `json:"conversation_active,omitempty"`
 }
 
 // serialGuardrailResult is the persisted form of a guardrail result at any
@@ -488,6 +520,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		MaxTurns:              s.MaxTurns,
 		PersistedSessionItems: s.PersistedSessionItems,
 		ToolsUsed:             s.ToolsUsed,
+		DisclosedTools:        s.DisclosedTools,
 		Usage:                 s.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyToString(s.ReasoningItemIDPolicy),
 		GuardrailResults:      toSerialGuardrailResults(s.GuardrailResults),
@@ -495,6 +528,13 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 	}
 	if s.CurrentAgent != nil {
 		out.CurrentAgent = s.CurrentAgent.Name
+	}
+	if s.cursor != (serverCursor{}) {
+		out.ServerCursor = &serialServerCursor{
+			ResponseID:         s.cursor.responseID,
+			ItemCount:          s.cursor.itemCount,
+			ConversationActive: s.cursor.conversationActive,
+		}
 	}
 	// Serialize nested agent-as-tool states recursively: each nested *RunState
 	// round-trips through its own MarshalJSON, so a cross-process resume rebuilds
@@ -509,21 +549,26 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 			out.NestedToolStates[callID] = raw
 		}
 	}
-	for i := range s.OriginalInput {
-		raw, err := json.Marshal(s.OriginalInput[i])
-		if err != nil {
-			return nil, err
-		}
-		out.OriginalInput = append(out.OriginalInput, raw)
-	}
-	for i := range s.UserInput {
-		raw, err := json.Marshal(s.UserInput[i])
-		if err != nil {
-			return nil, err
-		}
-		out.UserInput = append(out.UserInput, raw)
-	}
 	var err error
+	if out.OriginalInput, err = marshalInputItems(s.OriginalInput); err != nil {
+		return nil, err
+	}
+	if out.UserInput, err = marshalInputItems(s.UserInput); err != nil {
+		return nil, err
+	}
+	if !s.PendingInput.Empty() {
+		p := &serialPendingInput{}
+		if p.Steer, err = marshalInputItems(s.PendingInput.Steer); err != nil {
+			return nil, err
+		}
+		if p.NextTurn, err = marshalInputItems(s.PendingInput.NextTurn); err != nil {
+			return nil, err
+		}
+		if p.FollowUp, err = marshalInputItems(s.PendingInput.FollowUp); err != nil {
+			return nil, err
+		}
+		out.PendingInput = p
+	}
 	if out.GeneratedItems, err = serializeItems(s.GeneratedItems); err != nil {
 		return nil, err
 	}
@@ -570,6 +615,33 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		s.Approvals.mu.Unlock()
 	}
 	return json.Marshal(out)
+}
+
+// marshalInputItems and unmarshalInputItems round-trip a Responses input-item
+// list, one raw message per item. Every item list on the state (original
+// input, user input, the pending-input queues) serializes through them.
+func marshalInputItems(items []TResponseInputItem) ([]json.RawMessage, error) {
+	var out []json.RawMessage
+	for i := range items {
+		raw, err := json.Marshal(items[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
+func unmarshalInputItems(raw []json.RawMessage) ([]TResponseInputItem, error) {
+	var out []TResponseInputItem
+	for _, r := range raw {
+		item, err := UnmarshalInputItem(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 // serializeItems converts RunItems to their serialized input-item form.
@@ -633,6 +705,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		MaxTurns:              in.MaxTurns,
 		PersistedSessionItems: in.PersistedSessionItems,
 		ToolsUsed:             in.ToolsUsed,
+		DisclosedTools:        in.DisclosedTools,
 		Usage:                 in.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyFromString(in.ReasoningItemIDPolicy),
 		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),
@@ -648,22 +721,32 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	if st.Usage == nil {
 		st.Usage = NewUsage()
 	}
+	if in.ServerCursor != nil {
+		st.cursor = serverCursor{
+			responseID:         in.ServerCursor.ResponseID,
+			itemCount:          in.ServerCursor.ItemCount,
+			conversationActive: in.ServerCursor.ConversationActive,
+		}
+	}
 
-	for _, raw := range in.OriginalInput {
-		item, err := UnmarshalInputItem(raw)
-		if err != nil {
-			return nil, err
-		}
-		st.OriginalInput = append(st.OriginalInput, item)
-	}
-	for _, raw := range in.UserInput {
-		item, err := UnmarshalInputItem(raw)
-		if err != nil {
-			return nil, err
-		}
-		st.UserInput = append(st.UserInput, item)
-	}
 	var err error
+	if st.OriginalInput, err = unmarshalInputItems(in.OriginalInput); err != nil {
+		return nil, err
+	}
+	if st.UserInput, err = unmarshalInputItems(in.UserInput); err != nil {
+		return nil, err
+	}
+	if in.PendingInput != nil {
+		if st.PendingInput.Steer, err = unmarshalInputItems(in.PendingInput.Steer); err != nil {
+			return nil, err
+		}
+		if st.PendingInput.NextTurn, err = unmarshalInputItems(in.PendingInput.NextTurn); err != nil {
+			return nil, err
+		}
+		if st.PendingInput.FollowUp, err = unmarshalInputItems(in.PendingInput.FollowUp); err != nil {
+			return nil, err
+		}
+	}
 	if st.GeneratedItems, err = deserializeItems(in.GeneratedItems, lookup); err != nil {
 		return nil, err
 	}

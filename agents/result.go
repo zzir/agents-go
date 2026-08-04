@@ -21,7 +21,10 @@ type RunResult struct {
 	FinalOutput any
 	// LastAgent is the agent that produced the final output (after any handoffs).
 	LastAgent *Agent
-	// Usage is the aggregated token usage across the run.
+	// Usage is the aggregated token usage across the run — a detached copy
+	// taken when the result was built, never the run's live accumulator, so
+	// reading its fields needs no synchronization and a later resume cannot
+	// change a result already returned.
 	Usage *Usage
 	// GuardrailResults holds every guardrail result produced during the run,
 	// across all stages and including allowing decisions, so callers can read

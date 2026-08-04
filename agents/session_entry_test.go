@@ -127,6 +127,44 @@ func TestFoldUpdates_UpdateMayPrecedeItsTarget(t *testing.T) {
 	}
 }
 
+// Folding is a projection: it must never edit what storage holds. The stored
+// entry's Display (and its Extra map) is shared with what readers get back —
+// storage hands out shallow copies — so the merge has to copy, not write
+// through. This used to fail exactly when the target already had Extra and an
+// update brought more.
+func TestFoldUpdates_DoesNotWriteThroughToStorage(t *testing.T) {
+	st := NewInMemoryStorage("s")
+	target := SessionEntry{
+		ID:      "e1",
+		Kind:    EntryKindItem,
+		Display: &ItemDisplay{Kind: DisplayToolCall, CallID: "c1", Extra: map[string]any{"pct": float64(40)}},
+	}
+	update, err := NewUpdateEntry("e1", ItemDisplay{Extra: map[string]any{"pct": float64(100), "done": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Append(context.Background(), target, update); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := st.Entries(context.Background(), Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	folded := FoldUpdates(read)
+	if len(folded) != 1 || folded[0].Display.Extra["pct"] != float64(100) {
+		t.Fatalf("fold did not apply: %+v", folded)
+	}
+
+	again, err := st.Entries(context.Background(), Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := again[0].Display.Extra; len(got) != 1 || got["pct"] != float64(40) {
+		t.Errorf("a read-side fold modified storage: Extra = %v, want the original {pct: 40}", got)
+	}
+}
+
 // An update whose target is gone is ignored, not an error: compaction may have
 // folded the target away, and failing a whole read over a stale pointer would
 // make history unloadable.

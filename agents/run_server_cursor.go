@@ -46,14 +46,14 @@ func (r *runner) buildTurnInput(cur serverCursor, originalInput []TResponseInput
 // advance moves the cursor past a completed turn: the server now has
 // everything sent this turn plus the model's own output items, while
 // synthesized items (tool outputs) stay past the cursor, pending for the next
-// call. On a resumed turn the interrupted response's items were already
-// recorded before the run paused, so only this turn's tool outputs pend.
-// A no-op for locally-managed history.
-func (cur *serverCursor) advance(opts ConversationOptions, resp *ModelResponse, resumedTurn bool, lenBeforeStep, modelItems int) {
+// call. A no-op for locally-managed history.
+//
+// It is NOT called for a resumed turn: that turn re-processes the interrupted
+// response, which the pause-time cursor (restored from the RunState) already
+// accounts for. Advancing there would mark the tool outputs completed before
+// the pause as already-served, and the server would never receive them.
+func (cur *serverCursor) advance(opts ConversationOptions, resp *ModelResponse, lenBeforeStep, modelItems int) {
 	served := lenBeforeStep + modelItems
-	if resumedTurn {
-		served = lenBeforeStep
-	}
 	if opts.UsePreviousResponseID && resp.ResponseID != "" {
 		cur.responseID = resp.ResponseID
 		cur.itemCount = served

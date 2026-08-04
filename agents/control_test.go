@@ -247,3 +247,65 @@ func TestPendingInput_SurvivesAnInterruption(t *testing.T) {
 		t.Errorf("the steer did not survive the pause: %s", inputTexts(model.lastReq.Input))
 	}
 }
+
+// Injections reach the model in arrival order across kinds. The three-queue
+// design replayed all steer before all next-turn regardless of arrival; for
+// two messages from the same caller that reordering could invert meaning
+// ("do X", then "actually, don't").
+func TestInjection_ArrivalOrderAcrossKinds(t *testing.T) {
+	ctrl := newRunControl()
+	if err := ctrl.NextTurn("first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Steer("second"); err != nil {
+		t.Fatal(err)
+	}
+	if got := inputTexts(ctrl.takeTurnInput()); got != "first|second|" {
+		t.Fatalf("takeTurnInput order = %q, want arrival order %q", got, "first|second|")
+	}
+}
+
+// A rollback returns in-flight input to its arrival position, not to the
+// front: an early follow-up already queued stays ahead of a later steer that
+// a failed attempt consumed.
+func TestInjection_RollbackMergesByArrival(t *testing.T) {
+	ctrl := newRunControl()
+	if err := ctrl.FollowUp("early"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Steer("late"); err != nil {
+		t.Fatal(err)
+	}
+	// The save point takes only the steer; the follow-up is not its kind.
+	if got := inputTexts(ctrl.takeTurnInput()); got != "late|" {
+		t.Fatalf("takeTurnInput = %q, want %q", got, "late|")
+	}
+	ctrl.rollbackInjected()
+	// After the failed attempt's rollback the continuation point sees both,
+	// back in arrival order.
+	if got := inputTexts(ctrl.takeContinuation()); got != "early|late|" {
+		t.Fatalf("takeContinuation after rollback = %q, want %q", got, "early|late|")
+	}
+}
+
+// Pending reports what is queued, not what an attempt holds in flight; a
+// rollback puts it back, a commit settles it for good.
+func TestInjection_PendingExcludesInFlight(t *testing.T) {
+	ctrl := newRunControl()
+	if err := ctrl.Steer("x"); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.takeTurnInput()
+	if !ctrl.Pending().Empty() {
+		t.Fatal("in-flight input still reported as pending")
+	}
+	ctrl.rollbackInjected()
+	if got := len(ctrl.Pending().Steer); got != 1 {
+		t.Fatalf("rolled-back steer not pending again, got %d", got)
+	}
+	ctrl.takeTurnInput()
+	ctrl.commitInjected()
+	if !ctrl.Pending().Empty() {
+		t.Fatal("committed input still reported as pending")
+	}
+}

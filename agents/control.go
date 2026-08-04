@@ -110,6 +110,25 @@ func (p PendingInput) Empty() bool {
 	return len(p.Steer) == 0 && len(p.NextTurn) == 0 && len(p.FollowUp) == 0
 }
 
+// injectKind tags a queued injection with the RunControl method that queued
+// it, which decides where it may be consumed: steer and next-turn at the save
+// point, steer and follow-up at the final output.
+type injectKind uint8
+
+const (
+	injectSteer injectKind = iota
+	injectNextTurn
+	injectFollowUp
+)
+
+// pendingEntry is one queued injection: what arrived, through which method,
+// and when relative to its neighbors.
+type pendingEntry struct {
+	kind  injectKind
+	items []TResponseInputItem
+	seq   uint64
+}
+
 // runControl is the concrete RunControl. It is created before the run starts —
 // the caller holds it from the moment Run returns and may read it before
 // ranging — so every field is written by the run loop and read concurrently.
@@ -121,13 +140,22 @@ type runControl struct {
 	currentAgent *Agent
 	currentTurn  int
 
-	// The three injection queues. They are separate rather than one queue with
-	// a mode tag because they are consumed at different points: steer and
-	// next-turn at the save point, follow-up at the final output, and only
-	// steer and follow-up may extend a run that was ending.
-	steer    []TResponseInputItem
-	nextTurn []TResponseInputItem
-	followUp []TResponseInputItem
+	// pending is the injection queue: one ordered list, each entry tagged with
+	// the method that queued it. One queue rather than three keeps arrival
+	// order across kinds — two messages from the same caller must reach the
+	// model in the order they were said — while the consumption points filter
+	// by kind.
+	//
+	// inFlight holds entries the current attempt has taken but not yet made
+	// durable. Delivery is transactional: a session write that covers the
+	// injected items (or a completed attempt, or a RunState carrying them in
+	// its item log) commits the set; a failed attempt rolls it back into
+	// pending, so a retry delivers exactly what the failed attempt never
+	// landed — nothing lost, nothing doubled.
+	pending  []pendingEntry
+	inFlight []pendingEntry
+	seq      uint64 // arrival stamp; keeps rollback merges in arrival order
+	restored bool   // a paused run's PendingInput seeds the queue once per control
 }
 
 func newRunControl() *runControl { return &runControl{} }
@@ -167,15 +195,15 @@ func (c *runControl) setCurrent(agent *Agent, turn int) {
 }
 
 // Steer implements RunControl.
-func (c *runControl) Steer(input any) error { return c.enqueue(&c.steer, input) }
+func (c *runControl) Steer(input any) error { return c.enqueue(injectSteer, input) }
 
 // NextTurn implements RunControl.
-func (c *runControl) NextTurn(input any) error { return c.enqueue(&c.nextTurn, input) }
+func (c *runControl) NextTurn(input any) error { return c.enqueue(injectNextTurn, input) }
 
 // FollowUp implements RunControl.
-func (c *runControl) FollowUp(input any) error { return c.enqueue(&c.followUp, input) }
+func (c *runControl) FollowUp(input any) error { return c.enqueue(injectFollowUp, input) }
 
-func (c *runControl) enqueue(q *[]TResponseInputItem, input any) error {
+func (c *runControl) enqueue(kind injectKind, input any) error {
 	items, err := normalizeInput(input)
 	if err != nil {
 		return err
@@ -184,7 +212,8 @@ func (c *runControl) enqueue(q *[]TResponseInputItem, input any) error {
 		return nil
 	}
 	c.mu.Lock()
-	*q = append(*q, items...)
+	c.seq++
+	c.pending = append(c.pending, pendingEntry{kind: kind, items: items, seq: c.seq})
 	c.mu.Unlock()
 	return nil
 }
@@ -193,29 +222,24 @@ func (c *runControl) enqueue(q *[]TResponseInputItem, input any) error {
 func (c *runControl) Pending() PendingInput {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return PendingInput{
-		Steer:    append([]TResponseInputItem(nil), c.steer...),
-		NextTurn: append([]TResponseInputItem(nil), c.nextTurn...),
-		FollowUp: append([]TResponseInputItem(nil), c.followUp...),
+	var p PendingInput
+	for _, e := range c.pending {
+		switch e.kind {
+		case injectSteer:
+			p.Steer = append(p.Steer, e.items...)
+		case injectNextTurn:
+			p.NextTurn = append(p.NextTurn, e.items...)
+		case injectFollowUp:
+			p.FollowUp = append(p.FollowUp, e.items...)
+		}
 	}
+	return p
 }
 
-// takeTurnInput drains what the save point delivers: steer first, then
-// next-turn, so an urgent correction is read before a passenger message.
+// takeTurnInput drains what the save point delivers — steer and next-turn
+// input, in arrival order — into the in-flight set.
 func (c *runControl) takeTurnInput() []TResponseInputItem {
-	if c == nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.steer) == 0 && len(c.nextTurn) == 0 {
-		return nil
-	}
-	out := make([]TResponseInputItem, 0, len(c.steer)+len(c.nextTurn))
-	out = append(out, c.steer...)
-	out = append(out, c.nextTurn...)
-	c.steer, c.nextTurn = nil, nil
-	return out
+	return c.take(func(k injectKind) bool { return k == injectSteer || k == injectNextTurn })
 }
 
 // takeContinuation drains what may extend a run that reached its final output:
@@ -225,46 +249,109 @@ func (c *runControl) takeTurnInput() []TResponseInputItem {
 // going to take anyway; making it force one would erase the only difference
 // between it and Steer.
 func (c *runControl) takeContinuation() []TResponseInputItem {
+	return c.take(func(k injectKind) bool { return k == injectSteer || k == injectFollowUp })
+}
+
+// take moves every pending entry the consumption point accepts to the
+// in-flight set and returns their items flattened in arrival order; entries
+// of other kinds keep their queue positions. The move is not yet delivery —
+// commitInjected and rollbackInjected settle what happened to the attempt the
+// items were handed to.
+func (c *runControl) take(want func(injectKind) bool) []TResponseInputItem {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.steer) == 0 && len(c.followUp) == 0 {
-		return nil
+	var out []TResponseInputItem
+	keep := c.pending[:0]
+	for _, e := range c.pending {
+		if want(e.kind) {
+			c.inFlight = append(c.inFlight, e)
+			out = append(out, e.items...)
+			continue
+		}
+		keep = append(keep, e)
 	}
-	out := make([]TResponseInputItem, 0, len(c.steer)+len(c.followUp))
-	out = append(out, c.steer...)
-	out = append(out, c.followUp...)
-	c.steer, c.followUp = nil, nil
+	c.pending = keep
 	return out
 }
 
-// restore seeds the queues from a paused run's state, so input that arrived
+// commitInjected marks every in-flight injection delivered. It is called once
+// the items have a durable home: a session write that covers them succeeded,
+// the attempt completed, or a RunState carrying them in its item log was
+// built. After a commit no retry re-delivers them.
+func (c *runControl) commitInjected() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.inFlight = nil
+	c.mu.Unlock()
+}
+
+// rollbackInjected returns in-flight injections to the queue, merged back in
+// arrival order, so the next attempt — a middleware retrying the run, or a
+// retried resume — delivers what the failed attempt consumed but never made
+// durable. The per-queue-state reseeding heuristic this replaces had to guess
+// whether a failed attempt had consumed; the rollback knows.
+func (c *runControl) rollbackInjected() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.inFlight) == 0 {
+		return
+	}
+	merged := make([]pendingEntry, 0, len(c.inFlight)+len(c.pending))
+	i, j := 0, 0
+	for i < len(c.inFlight) && j < len(c.pending) {
+		if c.inFlight[i].seq < c.pending[j].seq {
+			merged = append(merged, c.inFlight[i])
+			i++
+		} else {
+			merged = append(merged, c.pending[j])
+			j++
+		}
+	}
+	merged = append(merged, c.inFlight[i:]...)
+	merged = append(merged, c.pending[j:]...)
+	c.pending, c.inFlight = merged, nil
+}
+
+// restore seeds the queue from a paused run's state, so input that arrived
 // while a human was deciding on an approval is delivered when the run resumes
 // rather than lost.
 //
-// A middleware that retries a resume re-enters this with the same control, so
-// the seeding is per QUEUE STATE rather than once per control or once per
-// attempt. Both extremes were wrong: appending every attempt delivered the
-// human's steer to the model twice when the failed attempt had not consumed
-// it, and seeding only once lost it entirely when the failed attempt had. A
-// queue that still holds the previous attempt's copy is left alone; an empty
-// one — which is what consuming leaves behind, since taking drains — is
-// seeded again.
+// It seeds once per control. Retried attempts need no second seeding: an
+// attempt that failed after consuming has its injections rolled back into the
+// queue, and one that delivered them has committed — the transaction, not a
+// reseed, is what makes input survive a retry exactly once. PendingInput
+// keeps the three-list wire shape, so cross-kind arrival order is not
+// preserved across a pause; within a live queue it is.
 func (c *runControl) restore(p PendingInput) {
 	if c == nil || p.Empty() {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.steer) == 0 {
-		c.steer = append(c.steer, p.Steer...)
+	if c.restored {
+		return
 	}
-	if len(c.nextTurn) == 0 {
-		c.nextTurn = append(c.nextTurn, p.NextTurn...)
-	}
-	if len(c.followUp) == 0 {
-		c.followUp = append(c.followUp, p.FollowUp...)
+	c.restored = true
+	for _, s := range []struct {
+		kind  injectKind
+		items []TResponseInputItem
+	}{
+		{injectSteer, p.Steer},
+		{injectNextTurn, p.NextTurn},
+		{injectFollowUp, p.FollowUp},
+	} {
+		if len(s.items) == 0 {
+			continue
+		}
+		c.seq++
+		c.pending = append(c.pending, pendingEntry{kind: s.kind, items: s.items, seq: c.seq})
 	}
 }

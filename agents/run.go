@@ -88,12 +88,14 @@ func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOption
 			runStream(ctx, in.Agent, in.Input, *in.Opts, ctrl, rawEvents, yield)
 		}
 	}
-	if len(opts.Middlewares) == 0 {
-		return singleUse(func(yield func(StreamEvent, error) bool) {
-			runStream(ctx, agent, input, opts, ctrl, rawEvents, yield)
-		})
-	}
+	return runViaMiddleware(ctx, agent, input, opts, base)
+}
 
+// runViaMiddleware is the one pipeline both entry points (fresh runs and
+// resumes) share: normalize the input once, wrap base in the middleware chain
+// — chainMiddleware of an empty list is base itself, so the no-middleware case
+// needs no separate branch — and hand the result out as a single-use stream.
+func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, base RunFunc) RunStream {
 	return singleUse(func(yield func(StreamEvent, error) bool) {
 		items, err := normalizeInput(input)
 		if err != nil {
@@ -125,6 +127,13 @@ func runStream(ctx context.Context, agent *Agent, input any, opts RunOptions, ct
 	// The sink rides on the context so code far from the loop — a model
 	// decorator, a custom tool — can report trouble it recovered from.
 	ctx = WithDiagnostics(ctx, r.diagnostics)
+	// The run's own cancellation root: emit cancels it (cause
+	// errConsumerStopped) when the consumer stops ranging, so in-flight work
+	// stops instead of completing into a run nobody reads. The deferred
+	// cancel also reels in anything a timed-out tool left running.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	r.cancelRun = cancel
 	res, err := r.loop(ctx, agent, modelInput)
 	r.finishStream(res, err)
 }
@@ -134,7 +143,16 @@ func runStream(ctx context.Context, agent *Agent, input any, opts RunOptions, ct
 // is nobody listening.
 func (r *runner) finishStream(res *RunResult, err error) {
 	r.ctrl.setPhase(PhaseIdle)
-	if r.consumerStopped || errors.Is(err, errConsumerStopped) {
+	// Settle the injection transaction by how the attempt ended: a completed
+	// attempt delivered whatever it took (the session-less case, where no
+	// persist ever commits); a failed or abandoned one returns its take so a
+	// retrying middleware's next attempt delivers it instead of losing it.
+	if err != nil || r.consumerStopped.Load() {
+		r.ctrl.rollbackInjected()
+	} else {
+		r.ctrl.commitInjected()
+	}
+	if r.consumerStopped.Load() || errors.Is(err, errConsumerStopped) {
 		return
 	}
 	if err != nil {
@@ -175,8 +193,18 @@ type runner struct {
 	rawEvents bool
 
 	// consumerStopped is set by emit when the consumer stopped ranging. The
-	// loop checks it wherever it checks for cancellation.
-	consumerStopped bool
+	// loop checks it wherever it checks for cancellation. Atomic because the
+	// writer may be a tool goroutine (a progress emit under emitMu) while the
+	// loop reads it lock-free — including after a timed-out tool left an
+	// orphan goroutine behind.
+	consumerStopped atomic.Bool
+
+	// cancelRun cancels the run's context; emit calls it when the consumer
+	// stops ranging, so work the loop is blocked on — an in-flight model call,
+	// a running tool batch — is told to stop instead of completing into a run
+	// nobody reads (spec §2.0: an abandoned stream stops the run where it
+	// stands). The cause is errConsumerStopped.
+	cancelRun context.CancelCauseFunc
 
 	// sessionItems accumulates every generated item for session persistence.
 	// Unlike the loop's generatedItems it is never reset by a handoff input
@@ -226,6 +254,12 @@ type runner struct {
 	// double-bills and double-fires its side effects, and a non-idempotent one
 	// can trip on input it already passed.
 	inputGuardrailsRan bool
+
+	// injectedUpTo is the sessionItems length just after the latest injected
+	// input was appended. A session write is allowed to commit the in-flight
+	// injections only once it has persisted past this point — a persist whose
+	// safe boundary stopped short of them must not mark them delivered.
+	injectedUpTo int
 
 	// disclosed names the deferred tools a ToolResult has opened up. It is
 	// carried on RunState so a resumed run does not re-hide a tool the model
@@ -290,8 +324,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 	// cursor tracks what a server-managed conversation already holds
 	// (previous_response_id chaining, or a server-side conversation id), so
-	// each turn sends only the delta.
-	var cursor serverCursor
+	// each turn sends only the delta. A resume restores the pause-time cursor
+	// from the RunState.
+	cursor := seed.cursor
 
 	// pending holds a snapshot supplied by PrepareNextTurn at the last save
 	// point, to be used instead of resolving the next turn from the agent.
@@ -334,7 +369,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				NewItems:         r.sessionItems,
 				RawResponses:     rawResponses,
 				LastAgent:        currentAgent,
-				Usage:            r.rc.Usage,
+				Usage:            r.usageSnapshot(),
 				GuardrailResults: r.snapshotGuardrailResults(),
 				Diagnostics:      r.diagnostics.All(),
 				StoppedEarly:     true,
@@ -623,8 +658,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 		// Advance the server cursor past this turn: the server now has
 		// everything sent plus the model's own output items; synthesized items
-		// (tool outputs) remain pending for the next call.
-		cursor.advance(r.opts.Conversation, resp, resumedTurn, lenBeforeStep, len(processed.NewItems))
+		// (tool outputs) remain pending for the next call. A resumed turn
+		// re-processes a response the restored cursor already accounts for, so
+		// it must not advance — the pre-pause tool outputs are still pending.
+		if !resumedTurn {
+			cursor.advance(r.opts.Conversation, resp, lenBeforeStep, len(processed.NewItems))
+		}
 
 		switch step.NextStep {
 		case stepFinalOutput:
@@ -640,6 +679,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				injected := injectedInput(currentAgent, extra)
 				generatedItems = append(generatedItems, injected...)
 				r.sessionItems = append(r.sessionItems, injected...)
+				r.injectedUpTo = len(r.sessionItems)
 				for _, it := range injected {
 					if !r.emitItem(it) {
 						return nil, errConsumerStopped
@@ -704,6 +744,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			}
 			continue
 		case stepInterruption:
+			// Injections taken this turn were consumed by the interrupted
+			// turn's model call and ride in the state's item log
+			// (SessionItems), which resume persists — that log, not
+			// PendingInput, is their durable home now. Committing here keeps a
+			// resume from delivering them a second time via restore.
+			r.ctrl.commitInjected()
 			// Persist the completed part of this turn before pausing. The pending
 			// tool calls have no outputs yet, so persistSessionItems holds them
 			// back (they would break replay); they save with their outputs once
@@ -729,13 +775,14 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				InterruptedResponse:   resp,
 				Interruptions:         step.Interruptions,
 				Approvals:             r.rc.Approvals,
-				Usage:                 r.rc.Usage,
+				Usage:                 r.usageSnapshot(),
 				CurrentTurn:           turn,
 				MaxTurns:              r.maxTurns,
 				ToolsUsed:             toolsUsedList(r.toolsUsedBy),
 				PendingInput:          r.ctrl.Pending(),
 				DisclosedTools:        sortedKeys(r.disclosed),
 				ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
+				cursor:                cursor,
 				// Carry the guardrail results accumulated so far so a resumed run's
 				// RunResult still reports them: first-turn input guardrails are not
 				// re-run on resume (Python parity), so this is their only source.
@@ -756,7 +803,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				NewItems:         r.sessionItems,
 				RawResponses:     rawResponses,
 				LastAgent:        currentAgent,
-				Usage:            r.rc.Usage,
+				Usage:            r.usageSnapshot(),
 				GuardrailResults: r.snapshotGuardrailResults(),
 				Diagnostics:      r.diagnostics.All(),
 				Interruptions:    step.Interruptions,
@@ -790,6 +837,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			if len(sp.Injected) > 0 {
 				generatedItems = append(generatedItems, sp.Injected...)
 				r.sessionItems = append(r.sessionItems, sp.Injected...)
+				r.injectedUpTo = len(r.sessionItems)
 				for _, it := range sp.Injected {
 					if !r.emitItem(it) {
 						return nil, errConsumerStopped
