@@ -392,6 +392,18 @@ function assemble(
         turn!.parts.push({ type: 'thinking', content: e.content });
         continue;
       }
+      case DISPLAY.message: {
+        // Assistant prose. Matching the display kind (not the role) keeps it
+        // rendering as markdown text even when provenance maps the role
+        // elsewhere: a failed run's partial text (an annotation) and an
+        // error-handler fallback answer both used to arrive as role "system"
+        // and got squeezed into a single-line system chip.
+        if (!e.content) continue;
+        ensureTurn();
+        anchor(e);
+        turn!.parts.push({ type: 'text', content: e.content });
+        continue;
+      }
     }
     if (e.role === 'system' && e.content) {
       finishTurn();

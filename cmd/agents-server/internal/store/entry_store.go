@@ -676,6 +676,12 @@ func roleOf(e agents.SessionEntry) string {
 		return "compaction"
 	case agents.SourceErrorHandler, agents.SourceGuardrail:
 		return "system"
+	case agents.SourceModel:
+		// The zero source: the model's own output. A failed run's streamed
+		// text/reasoning saved by savePartialTurn carries it on ANNOTATION
+		// entries, which must not fall through to the annotation → "system"
+		// default below — that renders the model's prose as a system chip.
+		return "assistant"
 	}
 	if e.Kind == agents.EntryKindAnnotation {
 		return "system"

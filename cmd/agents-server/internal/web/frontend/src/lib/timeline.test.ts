@@ -110,6 +110,21 @@ describe('stream/replay isomorphism', () => {
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
   });
 
+  it('failed turn: partial text renders as prose whatever role the server sent', () => {
+    // A mid-stream provider failure (e.g. content inspection): savePartialTurn
+    // wrote the streamed text as an annotation. Older servers mapped its role
+    // to "system" — the display kind, not the role, decides it is prose; it
+    // must never collapse into a single-line system chip.
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'annotation', role: 'system', content: '核实完毕 **增补**', display: { kind: 'message', text: '核实完毕 **增补**' } },
+      { id: 2, run_id: RUN, kind: 'annotation', role: 'system', content: 'stream failed', display: { kind: 'error', text: 'stream failed' } },
+    ];
+    expect(partsOf(buildTimeline(rows))).toEqual([
+      { type: 'text', content: '核实完毕 **增补**' },
+      { type: 'error', content: 'stream failed', guardrail: undefined, stage: undefined },
+    ]);
+  });
+
   it('documented difference: handoff parts are live-only', () => {
     let live = ensureLiveTurn([], RUN)!;
     live = appendHandoffPart(live, 'triage → coder')!;

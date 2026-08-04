@@ -161,6 +161,26 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	}
 }
 
+// A failed run's streamed text is saved as a SourceModel ANNOTATION
+// (savePartialTurn); it is the model's prose and must read back as assistant,
+// not fall through to the annotation → "system" default and render as a chip.
+func TestPartialTextAnnotationReadsBackAsAssistant(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	seed(t, s, agents.NewAnnotationEntry(
+		agents.ItemDisplay{Kind: agents.DisplayMessage, Text: "partial answer"},
+		agents.Source{Type: agents.SourceModel}))
+
+	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	if err != nil {
+		t.Fatalf("get entries: %v", err)
+	}
+	if len(views) != 1 || views[0].Role != "assistant" || views[0].Content != "partial answer" {
+		t.Fatalf("partial-text annotation projected wrong: %+v", views)
+	}
+}
+
 // A compaction checkpoint names what it folded; the projection drops those
 // entries, renders the summary up front, and reads the kept turns from the
 // session itself — the checkpoint carries no copy of them.
