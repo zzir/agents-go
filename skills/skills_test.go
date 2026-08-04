@@ -59,14 +59,8 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("order = %s, %s", got[0].Name, got[1].Name)
 	}
 	pdf := got[1]
-	if pdf.Description == "" || pdf.License != "Apache-2.0" {
+	if pdf.Description == "" {
 		t.Errorf("pdf fields = %+v", pdf)
-	}
-	if pdf.Metadata["author"] != "example-org" || pdf.Metadata["version"] != "1.0" {
-		t.Errorf("metadata = %v", pdf.Metadata)
-	}
-	if len(pdf.AllowedTools) != 2 || pdf.AllowedTools[0] != "read_skill_file" {
-		t.Errorf("allowed-tools = %v", pdf.AllowedTools)
 	}
 	if pdf.Path != filepath.Join("pdf-processing", "SKILL.md") {
 		t.Errorf("path = %q", pdf.Path)

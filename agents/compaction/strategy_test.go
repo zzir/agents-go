@@ -134,37 +134,6 @@ func TestTruncationStrategy_KeepsSystemContent(t *testing.T) {
 	}
 }
 
-// Turns, not groups: "keep the last exchange" must survive an exchange that ran
-// many tools, which counting groups would not.
-func TestSlidingWindow_CountsTurnsNotGroups(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
-		user(t, "first"),
-		assistant(t, "a1"),
-		user(t, "second"),
-		call(t, "c1", "f"), output(t, "c1", "1"),
-		call(t, "c2", "g"), output(t, "c2", "2"),
-		call(t, "c3", "h"), output(t, "c3", "3"),
-		assistant(t, "a2"),
-	})
-	idx := NewIndex(entries, nil)
-
-	s := &SlidingWindowStrategy{Trigger: Always(), MinimumPreservedTurns: 1}
-	if _, err := s.Compact(context.Background(), idx); err != nil {
-		t.Fatal(err)
-	}
-
-	got := projected(t, idx)
-	if strings.Contains(got, `"first"`) {
-		t.Error("the older turn survived a 1-turn window")
-	}
-	// The whole recent turn is intact, tools and all.
-	for _, want := range []string{"second", "a2"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the preserved turn lost %q:\n%s", want, got)
-		}
-	}
-}
-
 // Order is the design: fold tool output before dropping content, because the
 // first is free and the second is not.
 func TestPipeline_TriesTheCheapThingFirst(t *testing.T) {
@@ -173,7 +142,7 @@ func TestPipeline_TriesTheCheapThingFirst(t *testing.T) {
 
 	// A budget that the tool folding alone can satisfy.
 	p := &PipelineStrategy{Strategies: []Strategy{
-		&ToolResultStrategy{Trigger: TokensExceed(tokens / 2), Target: TokensBelow(tokens / 3), MinimumPreservedGroups: 2},
+		&ToolResultStrategy{Trigger: TokensExceed(tokens / 2), Target: func(idx *Index) bool { return idx.ContextTokens() < tokens/3 }, MinimumPreservedGroups: 2},
 		&TruncationStrategy{Trigger: TokensExceed(tokens), MinimumPreservedGroups: 2},
 	}}
 	if _, err := p.Compact(context.Background(), idx); err != nil {
@@ -225,16 +194,11 @@ func TestTriggers(t *testing.T) {
 		trigger Trigger
 		want    bool
 	}{
-		"always":             {Always(), true},
-		"never":              {Never(), false},
-		"tokens above":       {TokensExceed(0), true},
-		"tokens below":       {TokensExceed(1 << 30), false},
-		"has tools":          {HasToolCalls(), true},
-		"turns exceed":       {TurnsExceed(1), true},
-		"all":                {All(Always(), Always()), true},
-		"all with one false": {All(Always(), Never()), false},
-		"any":                {Any(Never(), Always()), true},
-		"not":                {Not(Never()), true},
+		"always":       {Always(), true},
+		"never":        {Never(), false},
+		"tokens above": {TokensExceed(0), true},
+		"tokens below": {TokensExceed(1 << 30), false},
+		"any":          {Any(Never(), Always()), true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -251,9 +215,8 @@ func TestTriggers(t *testing.T) {
 // A strategy whose trigger does not fire leaves the index alone.
 func TestStrategies_RespectTheirTrigger(t *testing.T) {
 	for name, s := range map[string]Strategy{
-		"tool_result":    &ToolResultStrategy{Trigger: Never()},
-		"truncation":     &TruncationStrategy{Trigger: Never()},
-		"sliding_window": &SlidingWindowStrategy{Trigger: Never()},
+		"tool_result": &ToolResultStrategy{Trigger: Never()},
+		"truncation":  &TruncationStrategy{Trigger: Never()},
 	} {
 		t.Run(name, func(t *testing.T) {
 			idx := NewIndex(conversation(t), nil)

@@ -197,7 +197,6 @@ type savePointResult struct {
 func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointResult, error) {
 	var out savePointResult
 
-	r.ctrl.setPhase(PhasePersisting)
 	if err := r.persistSessionItems(ctx); err != nil {
 		return out, err
 	}
@@ -215,7 +214,6 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 
 	// Compact mid-run. A run that calls thirty tools overruns its context
 	// window long before the run-level pass would look.
-	r.ctrl.setPhase(PhaseCompaction)
 	compacted, did, err := r.recompactAtSavePoint(ctx)
 	if err != nil {
 		return out, err

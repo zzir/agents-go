@@ -3,7 +3,6 @@ package compaction
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
@@ -251,64 +250,6 @@ func (s *TruncationStrategy) Compact(_ context.Context, idx *Index) (bool, error
 		}
 		g.Excluded = true
 		g.ExcludeReason = "truncation"
-		changed = true
-	}
-	return changed, nil
-}
-
-// SlidingWindowStrategy keeps the most recent turns and drops older ones.
-//
-// It differs from truncation by counting TURNS rather than groups: "keep the
-// last three exchanges" survives a turn that ran twelve tools, where "keep the
-// last three groups" would throw most of that exchange away.
-type SlidingWindowStrategy struct {
-	Trigger Trigger
-	Target  Trigger
-	// MinimumPreservedTurns is how many recent turns to keep. Defaults to 2.
-	MinimumPreservedTurns int
-	PreserveSystem        *bool
-}
-
-// Compact implements Strategy.
-func (s *SlidingWindowStrategy) Compact(_ context.Context, idx *Index) (bool, error) {
-	if !fires(s.Trigger, idx) {
-		return false, nil
-	}
-	keep := s.MinimumPreservedTurns
-	if keep <= 0 {
-		keep = 2
-	}
-	keepSystem := s.PreserveSystem == nil || *s.PreserveSystem
-
-	// Find the turn boundary to keep from.
-	var turns []int
-	seen := map[int]bool{}
-	for _, g := range idx.Groups {
-		if g.TurnIndex == nil || seen[*g.TurnIndex] {
-			continue
-		}
-		seen[*g.TurnIndex] = true
-		turns = append(turns, *g.TurnIndex)
-	}
-	sort.Ints(turns)
-	if len(turns) <= keep {
-		return false, nil
-	}
-	cutoff := turns[len(turns)-keep]
-
-	changed := false
-	for _, g := range idx.Groups {
-		if g.Excluded || reachedTarget(s.Target, s.Trigger, idx) {
-			continue
-		}
-		if keepSystem && g.Kind == GroupSystem {
-			continue
-		}
-		if g.TurnIndex == nil || *g.TurnIndex >= cutoff {
-			continue
-		}
-		g.Excluded = true
-		g.ExcludeReason = "sliding_window"
 		changed = true
 	}
 	return changed, nil

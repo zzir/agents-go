@@ -14,8 +14,6 @@ type Feature string
 const (
 	FeatureTemperature          Feature = "temperature"
 	FeatureTopP                 Feature = "top_p"
-	FeatureFrequencyPenalty     Feature = "frequency_penalty"
-	FeaturePresencePenalty      Feature = "presence_penalty"
 	FeatureToolChoice           Feature = "tool_choice"
 	FeatureParallelToolCalls    Feature = "parallel_tool_calls"
 	FeatureTruncation           Feature = "truncation"
@@ -44,8 +42,6 @@ const (
 var featureSet = map[Feature]func(agents.ModelRequest) bool{
 	FeatureTemperature:       func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.Temperature != nil },
 	FeatureTopP:              func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.TopP != nil },
-	FeatureFrequencyPenalty:  func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.FrequencyPenalty != nil },
-	FeaturePresencePenalty:   func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.PresencePenalty != nil },
 	FeatureToolChoice:        func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.ToolChoice != "" },
 	FeatureParallelToolCalls: func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.ParallelToolCalls != nil },
 	FeatureTruncation:        func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.Truncation != "" },
@@ -94,8 +90,6 @@ func Reject(provider string, req agents.ModelRequest, unsupported ...Feature) er
 // cannot serve. It exists so a hosting layer (e.g. a config UI) can surface
 // limits before a run fails; the enforced truth remains Reject at call time.
 type Capabilities struct {
-	// Provider is the provider's short name, e.g. "anthropic".
-	Provider string
 	// Unsupported lists the features Reject is called with.
 	Unsupported []Feature
 }

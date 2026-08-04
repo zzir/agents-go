@@ -244,14 +244,8 @@ func TestDetectContextOverflow(t *testing.T) {
 		{errors.New("429 rate limit"), false},
 		{nil, false},
 	} {
-		if got := DetectContextOverflow(tc.err, nil); got != tc.want {
+		if got := DetectContextOverflow(tc.err); got != tc.want {
 			t.Errorf("DetectContextOverflow(%v) = %v, want %v", tc.err, got, tc.want)
 		}
-	}
-	// A truncated response is a different problem with a different fix: its
-	// input fit, and compacting the input does not raise the output cap.
-	truncated := &ModelResponse{Status: "incomplete", IncompleteReason: "max_output_tokens"}
-	if DetectContextOverflow(nil, truncated) {
-		t.Error("a truncated response was classified as a context overflow")
 	}
 }

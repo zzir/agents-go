@@ -269,7 +269,7 @@ func (idx *Index) Counts() Counts {
 // estimated size (their replacement, which now stands in, added back) —
 // imprecise, but the point is movement: a number exclusion cannot lower keeps
 // every threshold trigger firing all the way to the preserve floor, and
-// Target/TokensBelow can never be reached. Exclusions from earlier passes are
+// a tokens-below Target can never be reached. Exclusions from earlier passes are
 // settled by Update once a newer call has priced them in, and are not
 // subtracted twice.
 //

@@ -130,20 +130,22 @@ ranging.
   cleanly before the next turn, with no error and a nil `FinalOutput`. **This is
   the one that leaves the session consistent**: breaking out of the range loop
   stops mid-turn, and cancelling the context does the same, harder.
-- `ctrl.Phase()` reports what the run is doing right now (`model`, `tools`,
-  `guardrails`, `persisting`, `compaction`, `idle`). Advisory — useful for a
-  progress indicator during a long silence.
-- `ctrl.CurrentAgent()` / `ctrl.CurrentTurn()` report who is handling the turn
-  in progress and which turn it is (nil / 0 before the first turn).
 - `ctrl.Steer(...)` / `ctrl.NextTurn(...)` / `ctrl.FollowUp(...)` put input into
   a run that is already going — see
   [Steering a run in flight](running_agents.md#steering-a-run-in-flight).
 
+Progress — which agent is up, which turn it is, what the run is doing — is read
+from the stream's own events (`AgentUpdatedStreamEvent`, `RunItemStreamEvent`),
+not from the control handle:
+
 ```go
+turns := 0
 for event, err := range stream {
 	if err != nil { log.Fatal(err) }
-	if ctrl.CurrentTurn() >= maxUserTurns {
-		ctrl.StopAfterTurn() // let this turn finish, then stop
+	if _, ok := event.(*agents.AgentUpdatedStreamEvent); ok {
+		if turns++; turns >= maxUserTurns {
+			ctrl.StopAfterTurn() // let this turn finish, then stop
+		}
 	}
 	// … handle event …
 }

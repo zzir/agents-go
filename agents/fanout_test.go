@@ -3,7 +3,6 @@ package agents
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -243,14 +242,8 @@ func TestFanoutCancel(t *testing.T) {
 	stream, cancel := f.Subscribe(0)
 
 	f.Publish(1)
-	if f.Subscribers() != 1 {
-		t.Fatalf("Subscribers = %d, want 1", f.Subscribers())
-	}
 	cancel()
 	cancel() // idempotent — must not panic
-	if f.Subscribers() != 0 {
-		t.Errorf("Subscribers = %d after cancel, want 0", f.Subscribers())
-	}
 
 	// The cancelled stream ends rather than hanging.
 	done := make(chan struct{})
@@ -297,25 +290,6 @@ func TestFanoutCancelDuringPublishIsSafe(t *testing.T) {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		t.Fatal("concurrent subscribe/cancel/publish deadlocked")
-	}
-}
-
-// OnDrop is observation only; it must see every drop the subscriber is later
-// told about.
-func TestFanoutOnDrop(t *testing.T) {
-	var drops atomic.Int64
-	f := NewFanout[int](FanoutOptions{
-		Subscriber: 2,
-		OnDrop:     func(int, int) { drops.Add(1) },
-	})
-	_, cancel := f.Subscribe(0)
-	defer cancel()
-
-	for i := 1; i <= 10; i++ {
-		f.Publish(i)
-	}
-	if got := drops.Load(); got != 8 {
-		t.Errorf("OnDrop fired %d times, want 8 (10 published, 2 buffered)", got)
 	}
 }
 

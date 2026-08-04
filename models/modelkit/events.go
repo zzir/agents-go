@@ -7,9 +7,9 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// EventFromJSON decodes canonical wire JSON into a stream event, stamping the
+// eventFromJSON decodes canonical wire JSON into a stream event, stamping the
 // raw bytes exactly as OutputItemFromJSON does for items.
-func EventFromJSON(raw []byte) (agents.TResponseStreamEvent, error) {
+func eventFromJSON(raw []byte) (agents.TResponseStreamEvent, error) {
 	var ev agents.TResponseStreamEvent
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		return ev, fmt.Errorf("modelkit: decoding stream event: %w", err)
@@ -23,7 +23,7 @@ func marshalEvent(payload any) (agents.TResponseStreamEvent, error) {
 	if err != nil {
 		return agents.TResponseStreamEvent{}, err
 	}
-	return EventFromJSON(raw)
+	return eventFromJSON(raw)
 }
 
 // Sequence numbers are not part of the adapter contract: the runner and the

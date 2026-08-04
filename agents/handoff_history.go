@@ -1,7 +1,6 @@
 package agents
 
 import (
-	"cmp"
 	"strconv"
 	"strings"
 
@@ -32,17 +31,10 @@ type HandoffHistoryMapper func(transcript []TResponseInputItem) []TResponseInput
 type NestHistoryOptions struct {
 	// Mapper folds the transcript into the target agent's input. Defaults to a
 	// mapper that emits one assistant message wrapping the transcript in the
-	// start/end markers.
+	// fixed "<CONVERSATION HISTORY>" markers. Flattening only recognizes that
+	// default summary shape; a custom Mapper still works, but its summaries are
+	// treated as opaque messages by later handoffs (no flattening).
 	Mapper HandoffHistoryMapper
-	// StartMarker and EndMarker wrap the summary body so a subsequent handoff can
-	// flatten it back into a transcript instead of nesting summaries. They default
-	// to "<CONVERSATION HISTORY>" and "</CONVERSATION HISTORY>". Flattening only
-	// recognizes the default summary shape: an assistant message that starts with
-	// the same fixed lead-in line summaryMessage emits and wraps its body in these
-	// markers. A custom Mapper that deviates from that shape still works, but its
-	// summaries are treated as opaque messages by later handoffs (no flattening).
-	StartMarker string
-	EndMarker   string
 }
 
 // NestHandoffHistory returns a Handoff InputFilter that summarizes the prior
@@ -58,36 +50,25 @@ type NestHistoryOptions struct {
 // Like every InputFilter it only changes what the target agent sees; it does not
 // alter what is saved to the session.
 func NestHandoffHistory(opts NestHistoryOptions) func(HandoffInputData) HandoffInputData {
-	start := opts.StartMarker
-	start = cmp.Or(start, defaultHistoryStartMarker)
-	end := opts.EndMarker
-	end = cmp.Or(end, defaultHistoryEndMarker)
 	mapper := opts.Mapper
 	if mapper == nil {
 		mapper = func(transcript []TResponseInputItem) []TResponseInputItem {
-			return []TResponseInputItem{summaryMessage(transcript, start, end)}
+			return []TResponseInputItem{summaryMessage(transcript)}
 		}
 	}
 	return func(data HandoffInputData) HandoffInputData {
-		transcript := flattenNestedHistory(data.InputHistory, start, end)
+		transcript := flattenNestedHistory(data.InputHistory)
 		return HandoffInputData{InputHistory: mapper(transcript)}
 	}
 }
 
-// DefaultHandoffHistoryMapper folds a transcript into a single assistant message
-// using the default markers. It is the mapper NestHandoffHistory uses when none
-// is supplied, exported so callers can reuse or wrap it.
-func DefaultHandoffHistoryMapper(transcript []TResponseInputItem) []TResponseInputItem {
-	return []TResponseInputItem{summaryMessage(transcript, defaultHistoryStartMarker, defaultHistoryEndMarker)}
-}
-
 // summaryMessage renders the transcript as a numbered, marker-wrapped assistant
 // message. Each transcript item is one compact JSON line.
-func summaryMessage(transcript []TResponseInputItem, start, end string) TResponseInputItem {
+func summaryMessage(transcript []TResponseInputItem) TResponseInputItem {
 	lines := make([]string, 0, len(transcript)+4)
 	lines = append(lines,
 		historySummaryLeadIn,
-		start,
+		defaultHistoryStartMarker,
 	)
 	if len(transcript) == 0 {
 		lines = append(lines, historyEmptyPlaceholder)
@@ -100,16 +81,16 @@ func summaryMessage(transcript []TResponseInputItem, start, end string) TRespons
 			lines = append(lines, strconv.Itoa(i+1)+". "+string(data))
 		}
 	}
-	lines = append(lines, end)
+	lines = append(lines, defaultHistoryEndMarker)
 	return responses.ResponseInputItemParamOfMessage(strings.Join(lines, "\n"), responses.EasyInputMessageRoleAssistant)
 }
 
 // flattenNestedHistory expands any prior nested-history summary message back into
 // its underlying transcript, leaving all other items untouched.
-func flattenNestedHistory(items []TResponseInputItem, start, end string) []TResponseInputItem {
+func flattenNestedHistory(items []TResponseInputItem) []TResponseInputItem {
 	out := make([]TResponseInputItem, 0, len(items))
 	for _, item := range items {
-		if nested, ok := extractNestedTranscript(item, start, end); ok {
+		if nested, ok := extractNestedTranscript(item); ok {
 			out = append(out, nested...)
 			continue
 		}
@@ -126,7 +107,7 @@ func flattenNestedHistory(items []TResponseInputItem, start, end string) []TResp
 // else — in particular a user message quoting the markers — is left untouched;
 // expanding arbitrary marker-bearing text would let conversation content
 // inject or silently delete history.
-func extractNestedTranscript(item TResponseInputItem, start, end string) ([]TResponseInputItem, bool) {
+func extractNestedTranscript(item TResponseInputItem) ([]TResponseInputItem, bool) {
 	m := item.OfMessage
 	if m == nil || m.Role != responses.EasyInputMessageRoleAssistant {
 		return nil, false
@@ -135,12 +116,12 @@ func extractNestedTranscript(item TResponseInputItem, start, end string) ([]TRes
 	if !strings.HasPrefix(content, historySummaryLeadIn) {
 		return nil, false
 	}
-	si := strings.Index(content, start)
-	ei := strings.LastIndex(content, end)
+	si := strings.Index(content, defaultHistoryStartMarker)
+	ei := strings.LastIndex(content, defaultHistoryEndMarker)
 	if si == -1 || ei == -1 || ei <= si {
 		return nil, false
 	}
-	body := content[si+len(start) : ei]
+	body := content[si+len(defaultHistoryStartMarker) : ei]
 	var parsed []TResponseInputItem
 	sawUnparsable := false
 	for line := range strings.SplitSeq(body, "\n") {

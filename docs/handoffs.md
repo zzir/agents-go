@@ -82,10 +82,9 @@ h := agents.HandoffTo(billing)
 h.InputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 ```
 
-The default folds the transcript into a single assistant message wrapped in `<CONVERSATION HISTORY>` markers. On a later handoff the filter **flattens** any earlier summary back into its transcript before re-folding, so a chain of handoffs yields one flat summary rather than a summary-of-summaries. Customize via `NestHistoryOptions`:
+The default folds the transcript into a single assistant message wrapped in fixed `<CONVERSATION HISTORY>` markers. On a later handoff the filter **flattens** any earlier summary back into its transcript before re-folding, so a chain of handoffs yields one flat summary rather than a summary-of-summaries. Customize via `NestHistoryOptions`:
 
-- `Mapper` — a `HandoffHistoryMapper` that folds the transcript your own way (e.g. call an LLM for a real summary instead of the default JSON-per-line transcript).
-- `StartMarker` / `EndMarker` — override the wrapper markers (a custom `Mapper` must reuse them for flattening to work).
+- `Mapper` — a `HandoffHistoryMapper` that folds the transcript your own way (e.g. call an LLM for a real summary instead of the default JSON-per-line transcript). Only the default summary shape is flattened by later handoffs; a custom mapper's summaries are treated as opaque messages.
 
 The transcript is serialized one JSON item per line, which round-trips through `UnmarshalInputItem` when flattened — Go uses this in place of Python's looser text format for reliable nesting.
 

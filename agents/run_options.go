@@ -113,13 +113,6 @@ type ConversationOptions struct {
 	// saved after the run completes.
 	Session *Session
 
-	// SessionInputCallback customizes how stored session history is combined with
-	// the run's new input. Nil (the default) appends new input to history; a
-	// custom callback may reorder, filter or fold history. Only genuinely new
-	// items are persisted back to the session. Ignored without a Session — the
-	// counterpart of Python's RunConfig.session_input_callback.
-	InputCallback SessionInputCallback
-
 	// SessionSettings overrides how the run reads the Session (e.g. how many
 	// recent items to load). Non-zero fields take precedence over a Session-level
 	// default. Ignored without a Session — the counterpart of Python's

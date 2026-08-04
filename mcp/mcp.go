@@ -1,19 +1,14 @@
 // Package mcp provides a Model Context Protocol (MCP) client that exposes a
 // server's tools to an agent. It implements agents.MCPServer over the official
-// modelcontextprotocol/go-sdk, supporting stdio and streamable HTTP transports
-// (plus the deprecated SSE transport).
+// modelcontextprotocol/go-sdk, supporting stdio and streamable HTTP transports.
 package mcp
 
 import (
 	"cmp"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os/exec"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -41,12 +36,6 @@ type Options struct {
 	ClientName    string
 	ClientVersion string
 
-	// Logger reports what this client did to a server's tools — a name
-	// truncated or disambiguated to fit the SDK's limits, which changes what
-	// the model is told the tool is called. Nil is silent: the SDK does not
-	// write to slog.Default() on its own (spec §2.11c).
-	Logger *slog.Logger
-
 	// CacheToolsList caches the server's tool list after the first fetch so a
 	// multi-turn run does not re-issue list_tools every turn. The cache is
 	// invalidated automatically when the server sends a tools/list_changed
@@ -62,17 +51,8 @@ type Options struct {
 
 	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_") to
 	// avoid collisions when multiple servers expose same-named tools. The server
-	// is still called with the original name. Setting it together with
-	// IncludeServerInToolNames is a configuration error, reported by the
-	// constructor.
+	// is still called with the original name.
 	ToolNamePrefix string
-
-	// IncludeServerInToolNames auto-prefixes every exposed tool name with the
-	// server name (mcp_{server}__{tool}), truncating names longer than 64
-	// characters with a sha1 suffix and disambiguating any resulting collisions.
-	// The server is still called with the original name. A rename or truncation
-	// is reported via Logger when one is set; nil stays silent (spec §2.11c).
-	IncludeServerInToolNames bool
 
 	// RequireApproval, when set, decides per call whether an exposed MCP tool
 	// needs human approval (HITL), receiving the run context, the current agent
@@ -81,12 +61,6 @@ type Options struct {
 	//
 	//	mcp.Options{RequireApproval: mcp.ApproveTools("write_file")}
 	RequireApproval func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
-
-	// ToolMetaResolver, when set, produces MCP request metadata (_meta) attached
-	// to each call_tool request, receiving the run context, the tool's original
-	// name, and the decoded arguments. Values it returns are overridden, per key,
-	// by a tool's own static _meta, matching the Python SDK's merge order.
-	ToolMetaResolver func(ctx context.Context, rc *agents.RunContext, toolName string, args map[string]any) (map[string]any, error)
 
 	// MaxRetryAttempts is the number of times to retry a failed list_tools or
 	// call_tool request. 0 (default) means no retries; -1 retries indefinitely.
@@ -137,12 +111,7 @@ type cachedTool struct {
 	tool         agents.Tool
 }
 
-func newServer(name string, opts Options) (*Server, error) {
-	// Both naming schemes rewrite the same exposed name; silently picking one
-	// would hide a configuration mistake, so refuse the combination outright.
-	if opts.ToolNamePrefix != "" && opts.IncludeServerInToolNames {
-		return nil, fmt.Errorf("mcp server %q: ToolNamePrefix and IncludeServerInToolNames are mutually exclusive", name)
-	}
+func newServer(name string, opts Options) *Server {
 	s := &Server{name: name, opts: opts, allowed: map[string]bool{}, blocked: map[string]bool{}}
 	for _, t := range opts.AllowedTools {
 		s.allowed[t] = true
@@ -150,7 +119,7 @@ func newServer(name string, opts Options) (*Server, error) {
 	for _, t := range opts.BlockedTools {
 		s.blocked[t] = true
 	}
-	return s, nil
+	return s
 }
 
 func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
@@ -177,10 +146,7 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 // NewWithTransport connects to an MCP server over an arbitrary transport. Use
 // it for custom transports or in-process testing (mcpsdk.NewInMemoryTransports).
 func NewWithTransport(ctx context.Context, name string, transport mcpsdk.Transport, opts Options) (*Server, error) {
-	s, err := newServer(name, opts)
-	if err != nil {
-		return nil, err
-	}
+	s := newServer(name, opts)
 	if err := s.connect(ctx, transport); err != nil {
 		return nil, err
 	}
@@ -190,10 +156,7 @@ func NewWithTransport(ctx context.Context, name string, transport mcpsdk.Transpo
 // NewStdioServer launches an MCP server subprocess and connects over stdio.
 // cmd is the command to run (e.g. exec.Command("npx", "-y", "server")).
 func NewStdioServer(ctx context.Context, name string, cmd *exec.Cmd, opts Options) (*Server, error) {
-	s, err := newServer(name, opts)
-	if err != nil {
-		return nil, err
-	}
+	s := newServer(name, opts)
 	if err := s.connect(ctx, &mcpsdk.CommandTransport{Command: cmd}); err != nil {
 		return nil, err
 	}
@@ -203,31 +166,12 @@ func NewStdioServer(ctx context.Context, name string, cmd *exec.Cmd, opts Option
 // NewStreamableHTTPServer connects to an MCP server over the streamable HTTP
 // transport at endpoint.
 func NewStreamableHTTPServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
-	s, err := newServer(name, opts)
-	if err != nil {
-		return nil, err
-	}
+	s := newServer(name, opts)
 	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint}
 	if opts.OAuthHandler != nil {
 		transport.OAuthHandler = opts.OAuthHandler
 	}
 	if err := s.connect(ctx, transport); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-// NewSSEServer connects to an MCP server over the SSE transport at endpoint.
-//
-// Deprecated: the MCP spec replaced the HTTP+SSE transport with streamable HTTP
-// (revision 2025-03-26); use [NewStreamableHTTPServer] for new servers. This is
-// kept for servers that only expose a legacy SSE endpoint.
-func NewSSEServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
-	s, err := newServer(name, opts)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.connect(ctx, &mcpsdk.SSEClientTransport{Endpoint: endpoint}); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -494,14 +438,10 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
 			if err := validateRequiredArgs(s.name, originalName, required, args); err != nil {
 				return agents.ToolResult{}, err
 			}
-			meta, err := s.resolveMeta(ctx, tc, originalName, args, staticMeta)
-			if err != nil {
-				return agents.ToolResult{}, err
-			}
 			// The server is always called with the original (unprefixed) name.
 			params := &mcpsdk.CallToolParams{Name: originalName, Arguments: args}
-			if meta != nil {
-				params.Meta = meta
+			if len(staticMeta) > 0 {
+				params.Meta = mcpsdk.Meta(staticMeta)
 			}
 			span, ctx := tracing.StartSpanFrom(ctx, "mcp.call_tool", tracing.SpanTypeMCP, map[string]any{
 				"server": s.name, "tool": originalName,
@@ -552,37 +492,6 @@ func stringifyMCPOutput(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
-}
-
-// resolveMeta computes the _meta to send with a call_tool request: the resolver's
-// output (if any) merged under the tool's static _meta (static wins per key).
-func (s *Server) resolveMeta(ctx context.Context, tc *agents.ToolContext, toolName string, args, staticMeta map[string]any) (mcpsdk.Meta, error) {
-	var resolved map[string]any
-	if s.opts.ToolMetaResolver != nil {
-		var rc *agents.RunContext
-		if tc != nil {
-			rc = tc.RunContext
-		}
-		var err error
-		resolved, err = s.opts.ToolMetaResolver(ctx, rc, toolName, args)
-		if err != nil {
-			return nil, fmt.Errorf("mcp tool %q: resolving _meta: %w", toolName, err)
-		}
-	}
-	if resolved == nil && len(staticMeta) == 0 {
-		return nil, nil
-	}
-	merged := make(mcpsdk.Meta, len(resolved)+len(staticMeta))
-	for k, v := range resolved {
-		merged[k] = v
-	}
-	for k, v := range staticMeta {
-		merged[k] = v
-	}
-	if len(merged) == 0 {
-		return nil, nil
-	}
-	return merged, nil
 }
 
 // validateRequiredArgs reports a *agents.UserError when any schema-required
@@ -638,122 +547,14 @@ func resolveToolDescription(mt *mcpsdk.Tool) string {
 	return ""
 }
 
-const (
-	mcpToolNameMaxLength = 64
-	mcpToolHashLength    = 8
-)
-
-// exposedNames computes the public name for each listed tool. Without
-// IncludeServerInToolNames it is the ToolNamePrefix + original name; with it,
-// names are auto-prefixed mcp_{server}__{tool}, truncated to 64 characters with a
-// sha1 suffix, and disambiguated on collision — mirroring the Python SDK's
-// _build_prefixed_tool_name_overrides. Truncated or disambiguated names are
-// logged so an auto-rename is never silent.
+// exposedNames computes the public name for each listed tool: the
+// ToolNamePrefix (possibly empty) + the original name.
 func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
 	names := make([]string, len(tools))
-	if !s.opts.IncludeServerInToolNames {
-		for i, mt := range tools {
-			names[i] = s.opts.ToolNamePrefix + mt.Name
-		}
-		return names
-	}
-
-	baseNames := make([]string, len(tools))
-	baseCounts := map[string]int{}
 	for i, mt := range tools {
-		baseNames[i] = buildPrefixedBaseName(s.name, mt.Name)
-		baseCounts[baseNames[i]]++
-	}
-
-	type candidate struct {
-		index       int
-		base, seed  string
-		initialName string
-	}
-	cands := make([]candidate, len(tools))
-	for i, mt := range tools {
-		base := baseNames[i]
-		seed := s.name + "\x00" + mt.Name
-		forceHash := baseCounts[base] > 1
-		cands[i] = candidate{index: i, base: base, seed: seed, initialName: shortenToolName(base, seed, forceHash)}
-	}
-
-	// Allocate names in a deterministic order (initial name, seed, index) so a
-	// collision is resolved the same way regardless of the server's tool order.
-	slices.SortStableFunc(cands, func(a, b candidate) int {
-		return cmp.Or(
-			cmp.Compare(a.initialName, b.initialName),
-			cmp.Compare(a.seed, b.seed),
-			cmp.Compare(a.index, b.index),
-		)
-	})
-
-	used := map[string]bool{}
-	for _, c := range cands {
-		public := c.initialName
-		for collision := 1; used[public]; collision++ {
-			public = shortenToolName(c.base, fmt.Sprintf("%s\x00%d", c.seed, collision), true)
-		}
-		used[public] = true
-		names[c.index] = public
-	}
-
-	if s.opts.Logger != nil {
-		for i, mt := range tools {
-			if names[i] != baseNames[i] {
-				s.opts.Logger.Info("mcp: tool name truncated or disambiguated",
-					"server", s.name, "tool", mt.Name, "exposed_name", names[i])
-			}
-		}
+		names[i] = s.opts.ToolNamePrefix + mt.Name
 	}
 	return names
-}
-
-func buildPrefixedBaseName(server, tool string) string {
-	return "mcp_" + safeToolNamePart(server, "server") + "__" + safeToolNamePart(tool, "tool")
-}
-
-// safeToolNamePart keeps ASCII alphanumerics, '_' and '-', replacing anything
-// else with '_', then trims leading/trailing '_'/'-'. An empty result falls back
-// to fallback. Mirrors the Python SDK's _safe_tool_name_part.
-func safeToolNamePart(value, fallback string) string {
-	var b strings.Builder
-	for _, r := range value {
-		if isASCIIAlnum(r) || r == '_' || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	safe := strings.Trim(b.String(), "_-")
-	if safe == "" {
-		return fallback
-	}
-	return safe
-}
-
-func isASCIIAlnum(r rune) bool {
-	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-}
-
-// shortenToolName caps a prefixed tool name at 64 characters, appending a sha1
-// suffix derived from seed when the name is too long or forceHash is set.
-// Mirrors the Python SDK's _shorten_tool_name.
-func shortenToolName(base, seed string, forceHash bool) string {
-	if !forceHash && len(base) <= mcpToolNameMaxLength {
-		return base
-	}
-	sum := sha1.Sum([]byte(seed))
-	hashSuffix := hex.EncodeToString(sum[:])[:mcpToolHashLength]
-	suffix := "_" + hashSuffix
-	stemLen := mcpToolNameMaxLength - len(suffix)
-	stem := base
-	if len(stem) > stemLen {
-		stem = stem[:stemLen]
-	}
-	stem = strings.TrimRight(stem, "_-")
-	stem = cmp.Or(stem, "mcp")
-	return stem + suffix
 }
 
 // schemaToMap normalizes the MCP input schema (an any) into a map[string]any.
@@ -880,38 +681,9 @@ func jsonTextPart(c mcpsdk.Content) agents.ToolOutputText {
 	return agents.ToolOutputText{Text: ""}
 }
 
-// ListPrompts returns the prompt templates the server exposes. A prompt can be
-// turned into agent instructions via GetPrompt. params may be nil.
-func (s *Server) ListPrompts(ctx context.Context, params *mcpsdk.ListPromptsParams) (*mcpsdk.ListPromptsResult, error) {
-	if s.session == nil {
-		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
-	}
-	return s.session.ListPrompts(ctx, params)
-}
-
-// GetPrompt fetches a prompt by name with the given arguments. The returned
-// messages can seed an agent's instructions or input.
-func (s *Server) GetPrompt(ctx context.Context, params *mcpsdk.GetPromptParams) (*mcpsdk.GetPromptResult, error) {
-	if s.session == nil {
-		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
-	}
-	return s.session.GetPrompt(ctx, params)
-}
-
-// ListResources returns the resources the server exposes. params may be nil.
-func (s *Server) ListResources(ctx context.Context, params *mcpsdk.ListResourcesParams) (*mcpsdk.ListResourcesResult, error) {
-	if s.session == nil {
-		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
-	}
-	return s.session.ListResources(ctx, params)
-}
-
-// ReadResource reads a resource by URI.
-func (s *Server) ReadResource(ctx context.Context, params *mcpsdk.ReadResourceParams) (*mcpsdk.ReadResourceResult, error) {
-	if s.session == nil {
-		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
-	}
-	return s.session.ReadResource(ctx, params)
-}
+// Session exposes the underlying MCP client session, for protocol surface this
+// package does not adapt — prompts, resources, and whatever the SDK grows
+// next. It is nil until the server is connected.
+func (s *Server) Session() *mcpsdk.ClientSession { return s.session }
 
 var _ agents.MCPServer = (*Server)(nil)

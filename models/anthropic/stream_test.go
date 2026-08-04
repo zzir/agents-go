@@ -63,7 +63,7 @@ func TestStreamContextWindowExceededSurfacesOverflowError(t *testing.T) {
 	if streamErr == nil {
 		t.Fatal("expected an error for stop_reason model_context_window_exceeded")
 	}
-	if !agents.DetectContextOverflow(streamErr, nil) {
+	if !agents.DetectContextOverflow(streamErr) {
 		t.Fatalf("the overflow detector must recognize it: %v", streamErr)
 	}
 }

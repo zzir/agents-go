@@ -5,24 +5,6 @@ import (
 	"iter"
 )
 
-// ModelTracing controls whether and how a model call is traced.
-type ModelTracing int
-
-const (
-	// ModelTracingDisabled disables tracing entirely.
-	ModelTracingDisabled ModelTracing = iota
-	// ModelTracingEnabled enables tracing with full input/output data.
-	ModelTracingEnabled
-	// ModelTracingEnabledWithoutData enables tracing but omits inputs/outputs.
-	ModelTracingEnabledWithoutData
-)
-
-// IsDisabled reports whether tracing is off.
-func (t ModelTracing) IsDisabled() bool { return t == ModelTracingDisabled }
-
-// IncludeData reports whether request/response data should be recorded.
-func (t ModelTracing) IncludeData() bool { return t == ModelTracingEnabled }
-
 // ModelRequest bundles the parameters for a single model call. It replaces the
 // long positional argument list of the Python SDK's Model.get_response with a
 // struct whose zero values are sensible defaults.
@@ -41,8 +23,6 @@ type ModelRequest struct {
 	OutputSchema OutputSchema
 	// Handoffs are the handoffs available to the model.
 	Handoffs []Handoff
-	// Tracing controls tracing for this call.
-	Tracing ModelTracing
 	// PreviousResponseID chains to a prior response (Responses API only).
 	PreviousResponseID string
 	// ConversationID references a stored conversation, if any.

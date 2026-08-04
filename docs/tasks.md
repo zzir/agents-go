@@ -113,18 +113,9 @@ Task "check links" (c3d4) failed. Result: 3 dead links
 ```
 
 It is a **user-role entry**: the model reads it verbatim, which is the point —
-it is news the model has to act on. A UI should render it as a notification card
-rather than a user bubble, using `ParseNotification` rather than its own regex:
-
-```go
-if n, ok := tasks.ParseNotification(text); ok {
-	renderTaskCards(n.Tasks)
-}
-```
-
-Formatting and parsing live together on purpose. This used to be a regex in a
-frontend, which meant the wire format was defined in one language and re-derived
-in another — and a change to the wording silently broke rendering.
+it is news the model has to act on. A UI should detect the
+`tasks.NotificationPrefix` and render the message as a notification card rather
+than a user bubble.
 
 The notification carries the **summary**, not the result: a task returning ten
 thousand words must not paste them into the parent's context to say it is done.

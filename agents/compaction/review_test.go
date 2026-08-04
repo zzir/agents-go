@@ -64,7 +64,7 @@ func TestCheckpointRefusesAnotherSessionsPass(t *testing.T) {
 // carries measured usage: the measurement predates the exclusion, so the
 // excluded group is subtracted at its estimate. A number exclusion cannot
 // move keeps every trigger firing to the preserve floor and makes
-// Target/TokensBelow unreachable.
+// a tokens-below Target unreachable.
 func TestContextTokensFallWithExclusions(t *testing.T) {
 	entries := []agents.SessionEntry{
 		userWithID(t, "e1", "an old question with plenty of text in it"),

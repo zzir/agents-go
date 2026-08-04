@@ -61,12 +61,6 @@ type FanoutOptions struct {
 	// late or reattach after a disconnect. Zero disables replay: such a
 	// subscriber sees only what is published from then on.
 	Replay int
-
-	// OnDrop, when set, is called each time an item is dropped for a
-	// subscriber. It runs on the publishing goroutine, so it must not block —
-	// it is for metrics and logging, not recovery. Recovery is the
-	// subscriber's job, via GapError.
-	OnDrop func(subscriber int, seq int)
 }
 
 // Buffer sizes chosen to be generous rather than tuned: dropping is a
@@ -189,13 +183,13 @@ func (f *Fanout[T]) Publish(v T) {
 	// Delivery happens outside mu (but still under pubMu) so Subscribe and
 	// Close stay responsive while events flow.
 	for _, s := range subs {
-		s.deliver(item, f.opts.OnDrop)
+		s.deliver(item)
 	}
 }
 
 // deliver enqueues item, folding in any gap accumulated since this subscriber's
 // last successful delivery.
-func (s *subscriber[T]) deliver(item Seq[T], onDrop func(int, int)) {
+func (s *subscriber[T]) deliver(item Seq[T]) {
 	// A subscriber that detached between Publish's snapshot and now needs
 	// nothing more; dropping into its buffer would be harmless but pointless.
 	select {
@@ -221,9 +215,6 @@ func (s *subscriber[T]) deliver(item Seq[T], onDrop func(int, int)) {
 		s.mu.Lock()
 		s.dropped++
 		s.mu.Unlock()
-		if onDrop != nil {
-			onDrop(s.id, item.Seq)
-		}
 	}
 }
 
@@ -300,7 +291,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	f.mu.Unlock()
 
 	for _, item := range backlog {
-		s.deliver(item, f.opts.OnDrop)
+		s.deliver(item)
 	}
 
 	var once sync.Once
@@ -416,13 +407,6 @@ func (f *Fanout[T]) LastSeq() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.seq
-}
-
-// Subscribers reports how many subscribers are currently attached.
-func (f *Fanout[T]) Subscribers() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.subs)
 }
 
 func emptyStream[T any](func(Seq[T], error) bool) {}

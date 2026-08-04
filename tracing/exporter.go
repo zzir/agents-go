@@ -14,13 +14,6 @@ type Item interface {
 	isTraceItem()
 }
 
-// NoopExporter discards all items. It is the default when tracing is enabled
-// without a configured destination.
-type NoopExporter struct{}
-
-// Export implements Exporter.
-func (NoopExporter) Export([]Item) {}
-
 // FuncExporter adapts a function to the Exporter interface, convenient for tests
 // and custom sinks.
 type FuncExporter func(items []Item)

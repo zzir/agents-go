@@ -142,7 +142,6 @@ func runStream(ctx context.Context, agent *Agent, input any, opts RunOptions, ct
 // already stopped is told nothing further — yield has returned false, so there
 // is nobody listening.
 func (r *runner) finishStream(res *RunResult, err error) {
-	r.ctrl.setPhase(PhaseIdle)
 	// Settle the injection transaction by how the attempt ended: a completed
 	// attempt delivered whatever it took (the session-less case, where no
 	// persist ever commits); a failed or abandoned one returns its take so a
@@ -354,7 +353,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 
 	// Announce the starting agent before the first turn, for both fresh and
 	// resumed runs.
-	r.ctrl.setCurrent(currentAgent, startTurn)
 	if !r.emit(&AgentUpdatedStreamEvent{NewAgent: currentAgent}) {
 		return nil, errConsumerStopped
 	}
@@ -401,9 +399,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// Publish the live turn/agent for RunControl (guarded by a mutex; the
-		// run loop and the caller race).
-		r.ctrl.setCurrent(currentAgent, turn)
 		r.log.Debug(ctx, "turn started", slog.Int("turn", turn), slog.String("agent", currentAgent.Name))
 
 		if shouldRunStartHooks {
@@ -528,11 +523,9 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				Tools:              tools,
 				OutputSchema:       outputSchema,
 				Handoffs:           handoffs,
-				Tracing:            ModelTracingDisabled,
 				PreviousResponseID: prevID,
 				ConversationID:     r.opts.Conversation.ConversationID,
 			}
-			r.ctrl.setPhase(PhaseModelCall)
 			r.log.Debug(ctx, "calling model",
 				slog.Int("turn", turn),
 				slog.Int("input_items", len(modelInput)),
@@ -572,7 +565,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				// The context did not fit. Compaction predicts; this reacts,
 				// because the prediction is an estimate against a window the
 				// provider never states exactly.
-				if r.opts.Exec.Overflow.isOverflow(err, resp) && overflowRetries < r.opts.Exec.Overflow.MaxRetries {
+				if r.opts.Exec.Overflow.isOverflow(err) && overflowRetries < r.opts.Exec.Overflow.MaxRetries {
 					if compacted, ok := r.recoverOverflow(ctx, err); ok {
 						overflowRetries++
 						originalInput = compacted

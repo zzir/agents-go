@@ -405,7 +405,7 @@ func TestContextWindowExceededFeedsOverflowPolicy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if !agents.DetectContextOverflow(err, nil) {
+	if !agents.DetectContextOverflow(err) {
 		t.Fatalf("the overflow detector must recognize the error: %v", err)
 	}
 }

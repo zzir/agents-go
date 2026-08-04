@@ -21,24 +21,9 @@ func ForkSession(ctx context.Context, src, dst *Session) error {
 	return writeFork(ctx, dst, path)
 }
 
-// ForkSessionAt extracts the branch up to and including entryID, producing a
-// point-in-time fork — "start over from here".
-//
-// entryID must be on the source's active branch. Choose it on a paired-item
-// boundary: cutting between a function_call and its output leaves a dangling
-// call, which the API rejects on the next run.
-func ForkSessionAt(ctx context.Context, src, dst *Session, entryID string) error {
-	all, err := src.Entries(ctx, Cursor{})
-	if err != nil {
-		return fmt.Errorf("fork: reading source session: %w", err)
-	}
-	path := PathToLeaf(all, entryID)
-	if len(path) == 0 {
-		return newUserError("fork: entry %q is not on the source session's history", entryID)
-	}
-	return writeFork(ctx, dst, path)
-}
-
+// A point-in-time fork — "start over from here" — is the composition of the
+// exported pieces: PathToLeaf(entries, entryID) to cut the branch, then
+// ReplaceStorageEntries on the destination.
 func writeFork(ctx context.Context, dst *Session, path []SessionEntry) error {
 	// Ids and parent links are the conversation's and travel with it; the
 	// destination allocates the sequence numbers, since a cursor position

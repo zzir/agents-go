@@ -19,10 +19,6 @@ type OverflowPolicy struct {
 	// MaxRetries bounds "compact, then try this turn again". Zero disables the
 	// behavior and the overflow error is returned as-is.
 	MaxRetries int
-
-	// Detect classifies a failed model call as a context overflow. Nil uses
-	// DetectContextOverflow.
-	Detect func(err error, resp *ModelResponse) bool
 }
 
 // DetectContextOverflow reports whether a failed model call was the context
@@ -31,14 +27,13 @@ type OverflowPolicy struct {
 // It matches on the message rather than a typed error because that is all the
 // provider gives: a context overflow arrives as a 400 with prose in it. The
 // alternative — treating every 400 as an overflow — would compact and retry
-// after a malformed request, hiding a bug behind a shrinking conversation.
-func DetectContextOverflow(err error, _ *ModelResponse) bool {
-	// The response is part of the signature because a detector may need it —
-	// a backend that reports overflow in the body rather than as an error. The
-	// default does not: a response that ARRIVED is not an overflow, and a
-	// truncated one is a different problem with a different fix (spec §2.7e),
-	// since its input fit and compacting the input does not raise the output
-	// cap that cut it off.
+// after a malformed request, hiding a bug behind a shrinking conversation. A
+// response that ARRIVED is never an overflow: a truncated one is a different
+// problem with a different fix (spec §2.7e), since its input fit and
+// compacting the input does not raise the output cap that cut it off. A
+// backend that reports overflow in the body surfaces it as an error carrying
+// one of these markers (the anthropic adapter does).
+func DetectContextOverflow(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -63,16 +58,9 @@ func DetectContextOverflow(err error, _ *ModelResponse) bool {
 	return false
 }
 
-// isOverflow applies the policy's detector.
-func (p OverflowPolicy) isOverflow(err error, resp *ModelResponse) bool {
-	if p.MaxRetries <= 0 {
-		return false
-	}
-	detect := p.Detect
-	if detect == nil {
-		detect = DetectContextOverflow
-	}
-	return detect(err, resp)
+// isOverflow reports whether the policy is on and the error is an overflow.
+func (p OverflowPolicy) isOverflow(err error) bool {
+	return p.MaxRetries > 0 && DetectContextOverflow(err)
 }
 
 // recoverOverflow compacts and reports whether the turn is worth retrying.

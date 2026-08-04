@@ -86,7 +86,7 @@ func drain(seq iter.Seq2[*TResponseStreamEvent, error]) (int, error) {
 
 // noSleepPolicy makes retry backoff instant in tests.
 func noSleepPolicy(p RetryPolicy) RetryPolicy {
-	p.Sleep = func(context.Context, time.Duration) error { return nil }
+	p.sleep = func(context.Context, time.Duration) error { return nil }
 	return p
 }
 
@@ -301,17 +301,6 @@ func TestRouterProvider_NoMatchNoFallbackErrors(t *testing.T) {
 	r := NewRouterProvider(map[string]ModelProvider{"groq": &stubProvider{}})
 	if _, err := r.GetModel("unknown/model"); err == nil {
 		t.Fatal("expected error for unmatched prefix without fallback")
-	}
-}
-
-func TestRouterProvider_CustomSeparator(t *testing.T) {
-	groq := &stubProvider{model: &scriptedModel{}}
-	r := NewRouterProvider(map[string]ModelProvider{"groq": groq}).WithSeparator(":")
-	if _, err := r.GetModel("groq:llama"); err != nil {
-		t.Fatal(err)
-	}
-	if groq.gotModel != "llama" {
-		t.Errorf("got %q, want llama", groq.gotModel)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 // --- retry -----------------------------------------------------------
 
 func TestMCP_RunWithRetries_SucceedsAfterFailures(t *testing.T) {
-	s, _ := newServer("t", Options{MaxRetryAttempts: 3, RetryBackoffBase: time.Millisecond})
+	s := newServer("t", Options{MaxRetryAttempts: 3, RetryBackoffBase: time.Millisecond})
 	calls := 0
 	err := s.runWithRetries(context.Background(), func() error {
 		calls++
@@ -34,7 +34,7 @@ func TestMCP_RunWithRetries_SucceedsAfterFailures(t *testing.T) {
 }
 
 func TestMCP_RunWithRetries_NoRetriesByDefault(t *testing.T) {
-	s, _ := newServer("t", Options{})
+	s := newServer("t", Options{})
 	calls := 0
 	err := s.runWithRetries(context.Background(), func() error {
 		calls++
@@ -49,7 +49,7 @@ func TestMCP_RunWithRetries_NoRetriesByDefault(t *testing.T) {
 }
 
 func TestMCP_RunWithRetries_Infinite(t *testing.T) {
-	s, _ := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
+	s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
 	calls := 0
 	err := s.runWithRetries(context.Background(), func() error {
 		calls++
@@ -64,7 +64,7 @@ func TestMCP_RunWithRetries_Infinite(t *testing.T) {
 }
 
 func TestMCP_RunWithRetries_ContextCancel(t *testing.T) {
-	s, _ := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: 50 * time.Millisecond})
+	s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: 50 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := s.runWithRetries(ctx, func() error { return errors.New("boom") })
@@ -76,46 +76,10 @@ func TestMCP_RunWithRetries_ContextCancel(t *testing.T) {
 // --- name prefixing / truncation / dedup -----------------------------
 
 func TestMCP_ExposedNames_PlainPrefix(t *testing.T) {
-	s, _ := newServer("srv", Options{ToolNamePrefix: "gh_"})
+	s := newServer("srv", Options{ToolNamePrefix: "gh_"})
 	names := s.exposedNames([]*mcpsdk.Tool{{Name: "a"}, {Name: "b"}})
 	if names[0] != "gh_a" || names[1] != "gh_b" {
 		t.Fatalf("plain prefix wrong: %v", names)
-	}
-}
-
-func TestMCP_ExposedNames_ServerPrefix(t *testing.T) {
-	s, _ := newServer("srv", Options{IncludeServerInToolNames: true})
-	names := s.exposedNames([]*mcpsdk.Tool{{Name: "echo"}})
-	if names[0] != "mcp_srv__echo" {
-		t.Fatalf("server prefix wrong: %v", names)
-	}
-}
-
-func TestMCP_ExposedNames_Truncation(t *testing.T) {
-	s, _ := newServer("srv", Options{IncludeServerInToolNames: true})
-	long := strings.Repeat("x", 80)
-	names := s.exposedNames([]*mcpsdk.Tool{{Name: long}})
-	if len(names[0]) > mcpToolNameMaxLength {
-		t.Fatalf("name not truncated: len=%d", len(names[0]))
-	}
-	// Truncated names carry an "_<8 hex>" sha1 suffix.
-	if idx := strings.LastIndexByte(names[0], '_'); idx < 0 || len(names[0])-idx-1 != mcpToolHashLength {
-		t.Fatalf("expected sha1 suffix, got %q", names[0])
-	}
-}
-
-func TestMCP_ExposedNames_CollisionDedup(t *testing.T) {
-	s, _ := newServer("srv", Options{IncludeServerInToolNames: true})
-	// Both sanitize to the same base name "mcp_srv__foo_bar" and must be
-	// disambiguated with distinct hash suffixes.
-	names := s.exposedNames([]*mcpsdk.Tool{{Name: "foo.bar"}, {Name: "foo_bar"}})
-	if names[0] == names[1] {
-		t.Fatalf("collision not disambiguated: %v", names)
-	}
-	for _, n := range names {
-		if len(n) > mcpToolNameMaxLength {
-			t.Fatalf("deduped name too long: %q", n)
-		}
 	}
 }
 
@@ -163,15 +127,11 @@ func TestValidateRequiredArgs(t *testing.T) {
 // --- tool _meta ------------------------------------------------------
 
 func TestMCP_ToolMeta(t *testing.T) {
-	// The metaEcho tool returns whatever _meta it received, as JSON text.
-	server := startServer(t, Options{
-		ToolMetaResolver: func(_ context.Context, _ *agents.RunContext, tool string, _ map[string]any) (map[string]any, error) {
-			return map[string]any{"from": "resolver", "tool": tool, "shared": "resolver"}, nil
-		},
-	}, func(srv *mcpsdk.Server) {
+	// The metaEcho tool returns whatever _meta it received, as JSON text; a
+	// tool's own static _meta must travel with every call_tool request.
+	server := startServer(t, Options{}, func(srv *mcpsdk.Server) {
 		mcpsdk.AddTool(srv, &mcpsdk.Tool{
 			Name: "meta_echo",
-			// A static _meta on the tool overrides the resolver on key collisions.
 			Meta: mcpsdk.Meta{"static": true, "shared": "static"},
 		}, func(_ context.Context, req *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, any, error) {
 			b, _ := json.Marshal(map[string]any(req.Params.Meta))
@@ -201,11 +161,8 @@ func TestMCP_ToolMeta(t *testing.T) {
 	if err := json.Unmarshal([]byte(out.ModelOutput().(string)), &got); err != nil {
 		t.Fatalf("meta not JSON: %v (%v)", err, out)
 	}
-	if got["from"] != "resolver" || got["static"] != true {
-		t.Fatalf("merged meta missing entries: %v", got)
-	}
-	if got["shared"] != "static" {
-		t.Fatalf("static _meta should override resolver on collision, got %v", got["shared"])
+	if got["static"] != true || got["shared"] != "static" {
+		t.Fatalf("static _meta did not reach the server: %v", got)
 	}
 }
 
@@ -236,15 +193,6 @@ func TestMCP_DynamicRequireApproval(t *testing.T) {
 	ft2 := tools2[0].(*agents.FunctionTool)
 	if need, _ := ft2.NeedsApprovalFunc(context.Background(), rc, "", ""); need {
 		t.Fatal("agent 'other' should not require approval")
-	}
-}
-
-// --- naming options are mutually exclusive ---------------------------
-
-func TestMCP_NamingOptionsMutuallyExclusive(t *testing.T) {
-	_, err := newServer("s", Options{ToolNamePrefix: "p_", IncludeServerInToolNames: true})
-	if err == nil {
-		t.Fatal("expected error for ToolNamePrefix + IncludeServerInToolNames")
 	}
 }
 

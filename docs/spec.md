@@ -1235,7 +1235,10 @@ consumer on its own, so per-subscriber buffering is needed either way.
 `Run` returns a `RunControl` alongside the stream. It is safe to use from
 another goroutine, including before ranging begins.
 
-Beyond `StopAfterTurn`, `Phase`, `CurrentAgent` and `CurrentTurn`, it has
+RunControl is stop + injection + pending, nothing more. An introspection trio
+(`Phase`/`CurrentAgent`/`CurrentTurn`) shipped here for a while and was removed
+with zero consumers: every real host renders progress from the stream's own
+events, which carry strictly more information. Beyond `StopAfterTurn`, it has
 three **injection methods** feeding one arrival-ordered queue; the two
 consumption points filter by kind, and only two kinds may extend a run that
 was ending:

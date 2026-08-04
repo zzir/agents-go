@@ -42,13 +42,14 @@ var nameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // Skill is a parsed SKILL.md: its frontmatter metadata and on-disk location. The
 // Markdown body is not loaded here — the model reads it via ReadFileTool during
 // activation (progressive disclosure).
+//
+// Only the fields something consumes are parsed: Name and Description feed the
+// index the model reads, Dir/Path feed ReadFileTool. Other frontmatter keys
+// (license, compatibility, metadata, allowed-tools) are ignored — parsing them
+// into fields nothing reads would imply an enforcement that does not exist.
 type Skill struct {
-	Name          string
-	Description   string
-	License       string
-	Compatibility string
-	Metadata      map[string]string
-	AllowedTools  []string
+	Name        string
+	Description string
 	// Dir and Path are relative to the skills root passed to Load, so Path is
 	// exactly what the model passes to ReadFileTool (e.g. "pdf/SKILL.md").
 	Dir  string
@@ -56,12 +57,8 @@ type Skill struct {
 }
 
 type frontmatter struct {
-	Name          string            `yaml:"name"`
-	Description   string            `yaml:"description"`
-	License       string            `yaml:"license"`
-	Compatibility string            `yaml:"compatibility"`
-	Metadata      map[string]string `yaml:"metadata"`
-	AllowedTools  string            `yaml:"allowed-tools"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
 }
 
 // buildSkill parses a SKILL.md's content into a Skill, validating that its
@@ -77,14 +74,10 @@ func buildSkill(relDir string, data []byte) (Skill, error) {
 		return Skill{}, err
 	}
 	return Skill{
-		Name:          fm.Name,
-		Description:   fm.Description,
-		License:       fm.License,
-		Compatibility: fm.Compatibility,
-		Metadata:      fm.Metadata,
-		AllowedTools:  strings.Fields(fm.AllowedTools),
-		Dir:           relDir,
-		Path:          path.Join(relDir, "SKILL.md"),
+		Name:        fm.Name,
+		Description: fm.Description,
+		Dir:         relDir,
+		Path:        path.Join(relDir, "SKILL.md"),
 	}, nil
 }
 
@@ -203,9 +196,6 @@ func validate(fm frontmatter, dirName string) error {
 	}
 	if len(fm.Description) > 1024 {
 		return fmt.Errorf("description exceeds 1024 characters")
-	}
-	if len(fm.Compatibility) > 500 {
-		return fmt.Errorf("compatibility exceeds 500 characters")
 	}
 	return nil
 }

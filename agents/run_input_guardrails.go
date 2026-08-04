@@ -81,7 +81,6 @@ func (r *runner) firstTurnInputGuardrails(
 
 	// Sequential (blocking) guardrails: a tripwire prevents the model call.
 	if len(sequential) > 0 {
-		r.ctrl.setPhase(PhaseGuardrails)
 		gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
 		res, gerr := runStageConcurrent(ctx, r.rc, sequential,
 			GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: out.original})

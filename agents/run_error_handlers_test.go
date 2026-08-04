@@ -355,8 +355,8 @@ func TestErrorHandlers_MaxTurns_DeclineKeepsError(t *testing.T) {
 		},
 	}}}
 	_, err := RunSync(context.Background(), agent, "go", opts)
-	if !errors.Is(err, ErrMaxTurns) {
-		t.Fatalf("error = %v, want ErrMaxTurns", err)
+	if CodeOf(err) != CodeMaxTurns {
+		t.Fatalf("error = %v, want CodeMaxTurns", err)
 	}
 }
 

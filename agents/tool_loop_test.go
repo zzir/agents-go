@@ -143,8 +143,8 @@ func TestToolLoop_FinalTurnIsOptIn(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c2", `{}`)),
 	}}}
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 2}})
-	if !errors.Is(err, ErrMaxTurns) {
-		t.Errorf("err = %v, want ErrMaxTurns", err)
+	if CodeOf(err) != CodeMaxTurns {
+		t.Errorf("err = %v, want CodeMaxTurns", err)
 	}
 }
 

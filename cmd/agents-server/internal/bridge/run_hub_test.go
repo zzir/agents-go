@@ -444,9 +444,6 @@ func (c *fakeControl) StopAfterTurn() {
 		c.onStop()
 	}
 }
-func (c *fakeControl) Phase() agents.RunPhase       { return agents.PhaseIdle }
-func (c *fakeControl) CurrentAgent() *agents.Agent  { return nil }
-func (c *fakeControl) CurrentTurn() int             { return 0 }
 func (c *fakeControl) Pending() agents.PendingInput { return agents.PendingInput{} }
 
 func (c *fakeControl) Steer(in any) error { c.steer = append(c.steer, in); return c.queueErr() }

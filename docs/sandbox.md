@@ -76,24 +76,6 @@ Requires a backend with interactive terminal support (Docker, SSH).
 Off by default, because a held-open shell is a resource with a lifetime and a
 caller that never closes one leaks it.
 
-## Telling the agent what it is working with
-
-```go
-agent.Instructions = sandbox.EnvironmentInstructions(ctx, sb, agent.Instructions)
-```
-
-One probe reports the OS, shell, working directory and which common tools are
-present, appended to the agent's own instructions. Without it a model opens with
-`uname -a`, then `which go`, then discovers halfway through that the tool it
-planned around is missing — each of those a turn.
-
-It is **one** command rather than one per fact (a round trip into a container or
-over SSH costs far more than the shell does), probed **once** at construction
-(the environment does not change between turns), and rendered in a fixed order
-so identical environments produce identical prompts — a prompt that reorders
-between runs defeats prompt caching for nothing. A probe that fails contributes
-nothing rather than failing the agent.
-
 ## Quickstart
 
 ```go

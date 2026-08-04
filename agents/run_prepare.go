@@ -58,9 +58,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	}
 	rc.activeTrace = r.trace
 
-	// With a session, prepend stored history to the model input. A
-	// SessionInputCallback may instead reorder or fold history; when it does,
-	// only the genuinely new items are persisted (r.userInput is narrowed).
+	// With a session, prepend stored history to the model input.
 	modelInput := userInput
 	if opts.Conversation.Session != nil {
 		// Read the active branch minus what compaction folded, then project:
@@ -80,19 +78,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
-		if opts.Conversation.InputCallback != nil {
-			combined, cerr := opts.Conversation.InputCallback(history, userInput)
-			if cerr != nil {
-				return nil, nil, nil, cerr
-			}
-			// Persistence diffs against the raw combined so the callback's chosen
-			// new items are saved intact, but the model input is scrubbed just like
-			// the default branch below: a callback that folds history can carry a
-			// dangling tool call or a duplicate that would otherwise 400 at the
-			// Responses API.
-			r.userInput = sessionAppendedItems(history, userInput, combined)
-			modelInput = normalizeStoredInput(combined)
-		} else if len(history) > 0 {
+		if len(history) > 0 {
 			modelInput = make([]TResponseInputItem, 0, len(history)+len(userInput))
 			modelInput = append(modelInput, history...)
 			modelInput = append(modelInput, userInput...)

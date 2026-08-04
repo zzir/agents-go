@@ -422,9 +422,9 @@ func TestNotify_BatchesEveryPendingTask(t *testing.T) {
 	if len(wakes) != 1 {
 		t.Fatalf("%d wake-ups, want 1 carrying both", len(wakes))
 	}
-	n, ok := ParseNotification(wakes[0].Input)
-	if !ok || len(n.Tasks) != 2 {
-		t.Fatalf("parsed %+v, want two tasks", n)
+	input := wakes[0].Input
+	if !strings.Contains(input, "("+a.TaskID+")") || !strings.Contains(input, "("+b.TaskID+")") {
+		t.Fatalf("wake input %q, want both task ids", input)
 	}
 }
 

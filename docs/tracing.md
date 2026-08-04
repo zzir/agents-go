@@ -90,8 +90,7 @@ Tracer  ──►  Processor (when spans start/end)  ──►  Exporter (where 
 - **`tracing.NewTracer(proc)`** — hands trace/span lifecycle events to a `Processor`. A nil tracer (or processor) is a no-op, so library code never needs nil checks.
 - **`tracing.NewBatchProcessor(exporter, opts)`** — buffers items and flushes them on a background goroutine. Options: `MaxBatchSize` (128), `FlushInterval` (5s), `MaxQueueSize` (8192, overflow dropped and counted — see `Dropped()`). **Call `Shutdown(ctx)` before exit** to flush; traces are exported at start (so a crash cannot orphan all spans) and spans at finish.
 - **Exporters**: `ConsoleExporter` (human-readable lines), `CollectingExporter`
-  (tests), `NoopExporter`, or any `func(items []tracing.Item)` as
-  `FuncExporter`.
+  (tests), or any `func(items []tracing.Item)` as `FuncExporter`.
 
 ```go
 // Anything that takes a batch is an exporter.

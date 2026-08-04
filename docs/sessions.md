@@ -413,20 +413,7 @@ res, _ := agents.RunSync(ctx, agent, correctedQuestion, agents.RunOptions{Conver
 
 ## Combining history with new input
 
-By default a run loads the session's stored history and appends the new input to it. Two `RunOptions` knobs (both the counterparts of Python's `RunConfig` fields) adjust this:
-
-- **`SessionInputCallback`** — a `func(history, newInput []agents.TResponseInputItem) ([]agents.TResponseInputItem, error)` that returns the exact item list sent to the model, so it can reorder, filter, or fold history rather than plain-append. Only the **genuinely new** items — those not carried over from history — are persisted back to the session, so a callback that re-emits old items does not duplicate them. Returning an error aborts the run.
-
-  ```go
-  agents.Run(ctx, agent, input, agents.RunOptions{
-      Conversation: agents.ConversationOptions{
-          Session: sess,
-          InputCallback: func(history, newInput []agents.TResponseInputItem) ([]agents.TResponseInputItem, error) {
-              return append(summarize(history), newInput...), nil
-          },
-      },
-  })
-  ```
+A run loads the session's stored history and appends the new input to it. What the model reads out of that history is shaped by [projection](#projection-what-the-model-reads) and [compaction](#run-level-compaction), not by rewriting the load; one knob adjusts how much is loaded:
 
 - **`SessionSettings{Limit}`** — caps how many of the most recent items are loaded at run start (`0`, the default, loads the full history). An explicit `RunOptions.Conversation.Settings` wins; otherwise a `Session` may supply its own default by implementing the optional `SessionSettingsAware` capability:
 
@@ -489,19 +476,20 @@ in the *same* one. Reach for a fork when the two conversations should be listed
 and managed separately, and for [branching](#branching) when they are two
 answers to the same question.
 
-`ForkSession` clones an entire conversation; `ForkSessionAt` copies the history
-up to and including one entry. Both take `*Session`, so any combination of
-source and destination backends works — fork a SQLite session into an in-memory
-one, for instance:
+`ForkSession` clones a conversation's active branch. It takes `*Session`, so
+any combination of source and destination backends works — fork a SQLite
+session into an in-memory one, for instance:
 
 ```go
-// Full clone — dst becomes an exact copy of src.
+// Full clone — dst becomes an exact copy of src's active branch.
 dst := agents.NewInMemorySession()
 agents.ForkSession(ctx, src, dst)
 
-// Branch point — branch gets everything up to and including that entry.
-branch := agents.NewInMemorySession()
-agents.ForkSessionAt(ctx, src, branch, "sess-1-e5")
+// Point-in-time fork — compose the exported pieces: cut the branch at an
+// entry, then replace the destination's contents with it.
+entries, _ := src.Entries(ctx, agents.Cursor{})
+path := agents.PathToLeaf(entries, "sess-1-e5")
+agents.ReplaceStorageEntries(ctx, branch.Storage(), path...)
 ```
 
 The fork point is an **entry id**, not a position. Positions shift when

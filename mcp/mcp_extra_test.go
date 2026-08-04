@@ -171,14 +171,14 @@ func TestMCP_PromptsAndResources(t *testing.T) {
 			})
 	})
 
-	prompts, err := server.ListPrompts(ctx, nil)
+	prompts, err := server.Session().ListPrompts(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(prompts.Prompts) != 1 || prompts.Prompts[0].Name != "greet" {
 		t.Errorf("prompts = %+v", prompts.Prompts)
 	}
-	gp, err := server.GetPrompt(ctx, &mcpsdk.GetPromptParams{Name: "greet"})
+	gp, err := server.Session().GetPrompt(ctx, &mcpsdk.GetPromptParams{Name: "greet"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,14 +186,14 @@ func TestMCP_PromptsAndResources(t *testing.T) {
 		t.Errorf("prompt messages = %d, want 1", len(gp.Messages))
 	}
 
-	resources, err := server.ListResources(ctx, nil)
+	resources, err := server.Session().ListResources(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(resources.Resources) != 1 {
 		t.Errorf("resources = %d, want 1", len(resources.Resources))
 	}
-	rr, err := server.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file:///doc.txt"})
+	rr, err := server.Session().ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file:///doc.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}

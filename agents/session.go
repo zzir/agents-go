@@ -18,26 +18,12 @@ import (
 // store ended up projecting compaction summaries in a different order than
 // another.
 type Session struct {
-	storage    SessionStorage
-	projectors map[EntryKind]EntryProjector
-}
-
-// SessionOption configures a Session.
-type SessionOption func(*Session)
-
-// WithProjectors overrides how entry kinds become model input for this session.
-// A run's RunOptions.Conversation.Projectors takes precedence over these.
-func WithProjectors(p map[EntryKind]EntryProjector) SessionOption {
-	return func(s *Session) { s.projectors = p }
+	storage SessionStorage
 }
 
 // NewSession wraps storage as a session.
-func NewSession(storage SessionStorage, opts ...SessionOption) *Session {
-	s := &Session{storage: storage}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
+func NewSession(storage SessionStorage) *Session {
+	return &Session{storage: storage}
 }
 
 // NewInMemorySession returns a session backed by in-memory storage, for tests
@@ -89,7 +75,7 @@ func (s *Session) ContextItems(ctx context.Context, cur Cursor) ([]TResponseInpu
 	if err != nil {
 		return nil, err
 	}
-	return ProjectEntries(entries, s.projectors)
+	return ProjectEntries(entries, nil)
 }
 
 // Append records entries.
@@ -192,14 +178,6 @@ type SessionSettings struct {
 	Limit int
 }
 
-// SessionInputCallback combines a session's stored history with the run's new
-// input into the item list sent to the model. Returning an error aborts the run.
-// It is the Go counterpart of Python's SessionInputCallback: the default (nil)
-// simply appends new input to history, while a custom callback may reorder,
-// filter or fold history. Only items that are genuinely new — not carried over
-// from history — are persisted back to the session.
-type SessionInputCallback func(history, newInput []TResponseInputItem) ([]TResponseInputItem, error)
-
 // resolveSessionLimit resolves how many of the most recent entries a run loads.
 // Zero means no limit.
 func resolveSessionLimit(override *SessionSettings) int {
@@ -207,59 +185,6 @@ func resolveSessionLimit(override *SessionSettings) int {
 		return override.Limit
 	}
 	return 0
-}
-
-// sessionAppendedItems returns the subset of a SessionInputCallback's output
-// that should be persisted to the session: the genuinely new items, excluding
-// those carried over from history. It mirrors Python's content-frequency diffing
-// in session_persistence.prepare_input_with_session — new input is preferred over
-// history, and items matching neither (produced by the callback) are treated as
-// new. Go lacks Python's object identity, so it diffs purely by serialized
-// content.
-func sessionAppendedItems(history, newInput, combined []TResponseInputItem) []TResponseInputItem {
-	historyCounts := fingerprintCounts(history)
-	newCounts := fingerprintCounts(newInput)
-	var appended []TResponseInputItem
-	for _, item := range combined {
-		key := fingerprintInputItem(item)
-		if key == "" {
-			// Unfingerprintable: cannot match history, treat as new.
-			appended = append(appended, item)
-			continue
-		}
-		if newCounts[key] > 0 {
-			newCounts[key]--
-			appended = append(appended, item)
-			continue
-		}
-		if historyCounts[key] > 0 {
-			historyCounts[key]--
-			continue
-		}
-		appended = append(appended, item)
-	}
-	return appended
-}
-
-// fingerprintInputItem returns a stable content key for an input item, or "" if
-// it cannot be serialized.
-func fingerprintInputItem(item TResponseInputItem) string {
-	b, err := MarshalInputItem(item)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-// fingerprintCounts builds a multiset of input-item fingerprints.
-func fingerprintCounts(items []TResponseInputItem) map[string]int {
-	counts := make(map[string]int, len(items))
-	for _, it := range items {
-		if key := fingerprintInputItem(it); key != "" {
-			counts[key]++
-		}
-	}
-	return counts
 }
 
 // CompactionArgs carry the context a CompactionAwareSession needs to decide
@@ -288,27 +213,6 @@ type CompactionArgs struct {
 // stored, and the semantics layer above has nothing to decide about it.
 type CompactionAware interface {
 	RunCompaction(ctx context.Context, args CompactionArgs) error
-}
-
-// MarshalEntries serializes entries to JSON, suitable for database storage.
-func MarshalEntries(entries []SessionEntry) ([]byte, error) {
-	if entries == nil {
-		entries = []SessionEntry{}
-	}
-	return json.Marshal(entries)
-}
-
-// UnmarshalEntries decodes entries produced by MarshalEntries. It tolerates
-// nil, empty and "null" input by returning a nil slice.
-func UnmarshalEntries(data []byte) ([]SessionEntry, error) {
-	if len(data) == 0 || string(data) == "null" {
-		return nil, nil
-	}
-	var entries []SessionEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("unmarshal session entries: %w", err)
-	}
-	return entries, nil
 }
 
 // MarshalItems serializes a slice of input items to JSON, suitable for database

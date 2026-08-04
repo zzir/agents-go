@@ -158,7 +158,6 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 		Settings:           settings,
 		Tools:              tools,
 		OutputSchema:       outputSchema,
-		Tracing:            agents.ModelTracingDisabled,
 	}
 
 	if req.Stream {

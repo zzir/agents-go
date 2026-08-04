@@ -248,7 +248,6 @@ func (r *runner) executeToolsAndSideEffects(
 		})
 		executed = truncatedCallResults(agent, toRun)
 	} else {
-		r.ctrl.setPhase(PhaseToolExecution)
 		executed, err = r.runFunctionTools(ctx, agent, toRun)
 		if err != nil {
 			return nil, err

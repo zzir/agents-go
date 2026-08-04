@@ -32,7 +32,6 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 		// guardrail, and it ran under whatever phase the turn last set —
 		// "model" or "tools" — which is exactly the misreport Phase exists to
 		// prevent.
-		r.ctrl.setPhase(PhaseGuardrails)
 		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
 		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
 			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})

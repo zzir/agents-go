@@ -41,7 +41,7 @@ func TestRetryStopsOnOversizedServerHint(t *testing.T) {
 		MaxDelay:    30 * time.Second,
 		RetryIf:     func(error) bool { attempts++; return true },
 		RetryAfter:  func(error) (time.Duration, bool) { return 3 * time.Hour, true },
-		Sleep:       func(context.Context, time.Duration) error { slept++; return nil },
+		sleep:       func(context.Context, time.Duration) error { slept++; return nil },
 	}
 	_, err := NewRetryModel(model, policy).GetResponse(context.Background(), ModelRequest{})
 
@@ -72,7 +72,7 @@ func TestRetryHonorsServerHintWithinCap(t *testing.T) {
 		MaxDelay:    30 * time.Second,
 		RetryIf:     func(error) bool { return true },
 		RetryAfter:  func(error) (time.Duration, bool) { return 2 * time.Second, true },
-		Sleep:       func(_ context.Context, d time.Duration) error { delays = append(delays, d); return nil },
+		sleep:       func(_ context.Context, d time.Duration) error { delays = append(delays, d); return nil },
 	}
 	if _, err := NewRetryModel(model, policy).GetResponse(context.Background(), ModelRequest{}); err == nil {
 		t.Fatal("want an error")

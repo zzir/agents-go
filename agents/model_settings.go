@@ -132,16 +132,14 @@ type Reasoning struct {
 }
 
 // ModelSettings holds optional model configuration parameters (temperature,
-// top_p, penalties, truncation, etc). Not every model or provider supports every
-// field. All fields are optional; a nil pointer means "leave unset" so the
-// provider default applies.
+// top_p, truncation, etc). Not every model or provider supports every field.
+// All fields are optional; a nil pointer means "leave unset" so the provider
+// default applies.
 //
 // It is the Go counterpart of the Python SDK's ModelSettings dataclass.
 type ModelSettings struct {
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"top_p,omitempty"`
-	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
-	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
 
 	// ToolChoice controls tool selection. Empty means unset.
 	ToolChoice ToolChoice `json:"tool_choice,omitempty"`
@@ -218,12 +216,6 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	}
 	if override.TopP != nil {
 		out.TopP = override.TopP
-	}
-	if override.FrequencyPenalty != nil {
-		out.FrequencyPenalty = override.FrequencyPenalty
-	}
-	if override.PresencePenalty != nil {
-		out.PresencePenalty = override.PresencePenalty
 	}
 	if override.ToolChoice != "" {
 		out.ToolChoice = override.ToolChoice

@@ -35,7 +35,7 @@ See [Sessions](sessions.md) and [Context management](context.md).
 | Sessions | `agents.Session`, `InMemorySession`, `memory.FileSession` (JSONL), `sessions` module (SQLite/Postgres) |
 | Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
 | History compaction | `RunOptions.Compaction` + `agents/compaction` strategies (local, append-only checkpoints), `openai.CompactionSession` (server-side `responses.compact`) |
-| Session forking | `agents.ForkSession` / `ForkSessionAt` / `IndexOfItemID` |
+| Session forking | `agents.ForkSession` |
 | Server-side state | `RunOptions.Conversation.UsePreviousResponseID` / `RunOptions.Conversation.ConversationID` |
 | Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` |
 
@@ -57,7 +57,7 @@ See [Tracing](tracing.md), [MCP](mcp.md), [Sandbox agents](sandbox.md),
 | Capability | API |
 |---|---|
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor`; `RunOptions.Observe.TraceGroupID/TraceMetadata` |
-| MCP | `mcp.NewStdioServer / NewStreamableHTTPServer` (`NewSSEServer` deprecated) |
+| MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewWithTransport` |
 | Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
 | Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 | File editing | `sandbox.ApplyPatchTool` (Codex-style patches, edits through the sandbox) |

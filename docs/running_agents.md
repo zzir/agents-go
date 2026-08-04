@@ -308,7 +308,7 @@ All failures come back as Go errors. The SDK's typed errors embed `agents.Agents
 
 | Error | Meaning |
 |---|---|
-| `*MaxTurnsError` | Turn budget exhausted (`errors.Is(err, agents.ErrMaxTurns)` also works) |
+| `*MaxTurnsError` | Turn budget exhausted |
 | `*ModelBehaviorError` | The model did something invalid (unknown tool, malformed structured output, truncated stream) |
 | `*ModelRefusalError` | The model refused to respond; carries the refusal text |
 | `*UserError` | You used the SDK incorrectly (e.g. no model provider, invalid output schema) |

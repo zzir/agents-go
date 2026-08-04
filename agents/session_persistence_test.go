@@ -302,42 +302,6 @@ func TestSessionSettings_Limit(t *testing.T) {
 	}
 }
 
-// A SessionInputCallback controls the model input, and only genuinely new
-// items — not history carried through the callback — are persisted.
-func TestSessionInputCallback_DiffPersistsOnlyNew(t *testing.T) {
-	session := NewInMemorySession()
-	_ = session.AppendItems(context.Background(), InputItemsFromText("history"), Source{})
-
-	var gotHistory, gotNew []TResponseInputItem
-	cb := func(history, newInput []TResponseInputItem) ([]TResponseInputItem, error) {
-		gotHistory = history
-		gotNew = newInput
-		out := append([]TResponseInputItem{}, history...)
-		return append(out, newInput...), nil
-	}
-
-	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
-	agent := &Agent{Name: "a", ModelImpl: model}
-
-	_, err := RunSync(context.Background(), agent, "fresh", RunOptions{Conversation: ConversationOptions{Session: session, InputCallback: cb}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(gotHistory) != 1 || len(gotNew) != 1 {
-		t.Fatalf("callback saw history=%d new=%d, want 1/1", len(gotHistory), len(gotNew))
-	}
-	// The model saw history + new input.
-	if got := len(model.lastReq.Input); got != 2 {
-		t.Errorf("model input length = %d, want 2", got)
-	}
-	// The session must not re-persist the history item: it should hold exactly
-	// [history, fresh, done-message] — three items, with "history" appearing once.
-	items, _ := session.ContextItems(context.Background(), Cursor{})
-	if len(items) != 3 {
-		t.Fatalf("session length = %d, want 3 (history not re-persisted)", len(items))
-	}
-}
-
 func TestInMemorySession(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()

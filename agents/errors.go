@@ -221,15 +221,6 @@ type ToolTimeoutError struct {
 	ToolName string
 }
 
-// Sentinel errors for use with errors.Is.
-var (
-	// ErrMaxTurns matches any MaxTurnsError.
-	ErrMaxTurns = errors.New("max turns exceeded")
-)
-
-// Is lets errors.Is(err, ErrMaxTurns) match a *MaxTurnsError.
-func (e *MaxTurnsError) Is(target error) bool { return target == ErrMaxTurns }
-
 // asAgentsError finds the embedded AgentsError of any SDK error type in err's
 // chain (unwrapping fmt.Errorf %w wrapping), so RunErrorDetails can be attached.
 func asAgentsError(err error, target **AgentsError) bool {

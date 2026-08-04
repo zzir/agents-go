@@ -1,6 +1,7 @@
 package modelkit
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-go/v3/packages/param"
@@ -8,6 +9,17 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 )
+
+// textContent concatenates the text of all text-bearing parts.
+func textContent(parts []Part) string {
+	var b strings.Builder
+	for _, p := range parts {
+		if p.IsText() {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
+}
 
 func TestParseInputEasyMessages(t *testing.T) {
 	items := []agents.TResponseInputItem{
@@ -25,7 +37,7 @@ func TestParseInputEasyMessages(t *testing.T) {
 		if p.Type != "message" || p.Role != wantRoles[i] {
 			t.Fatalf("item %d: type=%q role=%q, want message/%s", i, p.Type, p.Role, wantRoles[i])
 		}
-		if got := TextContent(p.Parts); got != wantTexts[i] {
+		if got := textContent(p.Parts); got != wantTexts[i] {
 			t.Fatalf("item %d: text=%q, want %q", i, got, wantTexts[i])
 		}
 	}
@@ -60,7 +72,7 @@ func TestParseInputModelOutputRoundTrip(t *testing.T) {
 	if parsed[0].Type != "reasoning" || len(parsed[0].ContentTexts) != 1 || parsed[0].ContentTexts[0] != "hmm" || parsed[0].EncryptedContent != "sig" {
 		t.Fatalf("reasoning item parsed wrong: %+v", parsed[0])
 	}
-	if parsed[1].Type != "message" || parsed[1].Role != "assistant" || TextContent(parsed[1].Parts) != "answer" {
+	if parsed[1].Type != "message" || parsed[1].Role != "assistant" || textContent(parsed[1].Parts) != "answer" {
 		t.Fatalf("message item parsed wrong: %+v", parsed[1])
 	}
 	if parsed[2].Type != "function_call" || parsed[2].CallID != "call_1" || parsed[2].Name != "lookup" || parsed[2].Arguments != `{"q":"x"}` {
@@ -70,8 +82,8 @@ func TestParseInputModelOutputRoundTrip(t *testing.T) {
 	if got.Type != "function_call_output" || got.CallID != "call_1" {
 		t.Fatalf("function_call_output parsed wrong: %+v", got)
 	}
-	if TextContent(got.Output) != "result" {
-		t.Fatalf("output text = %q, want result", TextContent(got.Output))
+	if textContent(got.Output) != "result" {
+		t.Fatalf("output text = %q, want result", textContent(got.Output))
 	}
 }
 

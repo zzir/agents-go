@@ -43,9 +43,9 @@ type RetryPolicy struct {
 	// openai.RetryAfter.
 	RetryAfter func(error) (time.Duration, bool)
 
-	// Sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
+	// sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
 	// When nil, a real timer is used. Tests inject a fake to avoid real waits.
-	Sleep func(ctx context.Context, d time.Duration) error
+	sleep func(ctx context.Context, d time.Duration) error
 }
 
 // retryPolicyJSON is the JSON-friendly representation of RetryPolicy, using
@@ -159,8 +159,8 @@ func (p RetryPolicy) wait(ctx context.Context, attempt int, err error) error {
 			delay = d
 		}
 	}
-	if p.Sleep != nil {
-		return p.Sleep(ctx, delay)
+	if p.sleep != nil {
+		return p.sleep(ctx, delay)
 	}
 	return sleepCtx(ctx, delay)
 }

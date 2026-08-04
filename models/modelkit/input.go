@@ -3,7 +3,6 @@ package modelkit
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -58,17 +57,6 @@ func (p Part) IsText() bool {
 		return true
 	}
 	return false
-}
-
-// TextContent concatenates the text of all text-bearing parts.
-func TextContent(parts []Part) string {
-	var b strings.Builder
-	for _, p := range parts {
-		if p.IsText() {
-			b.WriteString(p.Text)
-		}
-	}
-	return b.String()
 }
 
 // itemProbe is the superset wire shape ParseInput decodes each item into.

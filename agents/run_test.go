@@ -221,8 +221,8 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected MaxTurnsError")
 	}
-	if !errors.Is(err, ErrMaxTurns) {
-		t.Errorf("error = %v, want ErrMaxTurns", err)
+	if CodeOf(err) != CodeMaxTurns {
+		t.Errorf("error = %v, want CodeMaxTurns", err)
 	}
 	var mte *MaxTurnsError
 	if !errors.As(err, &mte) {

@@ -28,9 +28,6 @@ func TestProviderRegistryInvariants(t *testing.T) {
 		if d.Build == nil || d.BuildAgent == nil {
 			t.Errorf("%s: nil constructor", d.Type)
 		}
-		if d.Capabilities.Provider != d.Type {
-			t.Errorf("%s: Capabilities.Provider = %q — the declaration must be the adapter's own", d.Type, d.Capabilities.Provider)
-		}
 	}
 }
 

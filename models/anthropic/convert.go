@@ -35,8 +35,6 @@ const (
 // priority), and guessing a mapping would silently buy a different QoS than
 // the one configured.
 var unsupportedFeatures = []modelkit.Feature{
-	modelkit.FeatureFrequencyPenalty,
-	modelkit.FeaturePresencePenalty,
 	modelkit.FeatureTruncation,
 	modelkit.FeatureVerbosity,
 	modelkit.FeatureServiceTier,
@@ -57,7 +55,7 @@ var unsupportedFeatures = []modelkit.Feature{
 // hosting layers that surface limits ahead of a run. The enforced truth is
 // the per-call rejection.
 func Capabilities() modelkit.Capabilities {
-	return modelkit.Capabilities{Provider: "anthropic", Unsupported: unsupportedFeatures}
+	return modelkit.Capabilities{Unsupported: unsupportedFeatures}
 }
 
 // DefaultMaxTokens is used when the request does not set MaxTokens. The

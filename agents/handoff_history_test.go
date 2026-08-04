@@ -44,7 +44,7 @@ func TestNestHandoffHistory_FlattensPriorSummary(t *testing.T) {
 
 	// Flatten must expand the prior summary back to its 2 turns (total 4), not
 	// keep it as one opaque summary item.
-	flat := flattenNestedHistory(second, defaultHistoryStartMarker, defaultHistoryEndMarker)
+	flat := flattenNestedHistory(second)
 	if len(flat) != 4 {
 		t.Fatalf("flattened to %d items, want 4 (summary expanded)", len(flat))
 	}
@@ -85,18 +85,6 @@ func TestNestHandoffHistory_CustomMapper(t *testing.T) {
 	}
 	if len(out) != 1 || inputItemText(out[0]) != "SUMMARY" {
 		t.Errorf("output = %v, want one SUMMARY message", out)
-	}
-}
-
-func TestNestHandoffHistory_CustomMarkers(t *testing.T) {
-	filter := NestHandoffHistory(NestHistoryOptions{StartMarker: "<<H>>", EndMarker: "<</H>>"})
-	out := filter(HandoffInputData{InputHistory: []TResponseInputItem{userMsg("x")}}).InputHistory
-	text := inputItemText(out[0])
-	if !strings.Contains(text, "<<H>>") || !strings.Contains(text, "<</H>>") {
-		t.Errorf("custom markers missing:\n%s", text)
-	}
-	if strings.Contains(text, defaultHistoryStartMarker) {
-		t.Errorf("default marker leaked:\n%s", text)
 	}
 }
 
