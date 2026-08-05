@@ -100,7 +100,7 @@ func TestToolNotFound_ReturnToModelContinues(t *testing.T) {
 	}
 	var foundErr bool
 	for _, it := range res.NewItems {
-		if out, ok := it.(*ToolCallOutputItem); ok && strings.Contains(stringifyToolOutput(out.Output), "not found") {
+		if it.Kind == ItemToolCallOutput && strings.Contains(stringifyToolOutput(it.Output), "not found") {
 			foundErr = true
 		}
 	}

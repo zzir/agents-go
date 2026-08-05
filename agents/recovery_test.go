@@ -18,7 +18,7 @@ func crashedSession(t *testing.T) *Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := EntryFromRunItem(&ToolCallItem{Raw: functionCallOutput(t, "send_email", "c1", `{}`)}, "resp_1")
+	call, err := EntryFromRunItem(NewModelItem(ItemToolCall, nil, functionCallOutput(t, "send_email", "c1", `{}`)), "resp_1")
 	if err != nil {
 		t.Fatal(err)
 	}

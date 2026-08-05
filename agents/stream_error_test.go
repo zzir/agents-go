@@ -144,7 +144,7 @@ func TestStreamedResult_HandoffEmitsToolCalled(t *testing.T) {
 		}
 		switch ie.Name {
 		case "tool_called":
-			if tc, ok := ie.Item.(*ToolCallItem); ok && tc.FunctionCall().CallID == "h1" {
+			if ie.Item.Kind == ItemToolCall && ie.Item.FunctionCall().CallID == "h1" {
 				toolCalledHandoff++
 			}
 		case "handoff_requested":

@@ -57,8 +57,8 @@ func TestToolResultReachesTheModel(t *testing.T) {
 
 	var outputs []any
 	for _, it := range res.NewItems {
-		if out, ok := it.(*agents.ToolCallOutputItem); ok {
-			outputs = append(outputs, out.Output)
+		if it.Kind == agents.ItemToolCallOutput {
+			outputs = append(outputs, it.Output)
 		}
 	}
 	if len(outputs) != 1 || outputs[0] != "sunny, 23°C in Paris" {

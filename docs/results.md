@@ -36,20 +36,20 @@ Because handoffs can route to agents with different output types, `FinalOutput` 
 
 ## New items
 
-`NewItems` is everything the run generated, in order. Each `RunItem` wraps a raw Responses API item and knows which agent produced it. Type-switch on the concrete types:
+`NewItems` is everything the run generated, in order. Each `RunItem` wraps a raw Responses API item and knows which agent produced it. Switch on `Kind`:
 
 ```go
-for _, item := range res.NewItems {
-	switch it := item.(type) {
-	case *agents.MessageOutputItem:
+for _, it := range res.NewItems {
+	switch it.Kind {
+	case agents.ItemMessage:
 		fmt.Println("assistant:", it.Text())
-	case *agents.ToolCallItem:
+	case agents.ItemToolCall:
 		fmt.Println("tool call:", it.FunctionCall().Name)
-	case *agents.ToolCallOutputItem:
+	case agents.ItemToolCallOutput:
 		fmt.Println("tool output:", it.Output)
-	case *agents.HandoffCallItem, *agents.HandoffOutputItem:
+	case agents.ItemHandoffCall, agents.ItemHandoffOutput:
 		// the model requested / completed a handoff
-	case *agents.ReasoningItem:
+	case agents.ItemReasoning:
 		// reasoning trace from a reasoning model
 	}
 }

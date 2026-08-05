@@ -208,7 +208,7 @@ type runner struct {
 	// sessionItems accumulates every generated item for session persistence.
 	// Unlike the loop's generatedItems it is never reset by a handoff input
 	// filter, so the session keeps the full conversation.
-	sessionItems []RunItem
+	sessionItems []*RunItem
 
 	// persistedSessionItems counts how many leading sessionItems have already
 	// been written to the session. The loop persists incrementally — after each

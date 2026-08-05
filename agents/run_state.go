@@ -34,7 +34,7 @@ const RunStateSchemaVersion = "1.4"
 type RunState struct {
 	CurrentAgent        *Agent
 	OriginalInput       []TResponseInputItem
-	GeneratedItems      []RunItem
+	GeneratedItems      []*RunItem
 	RawResponses        []*ModelResponse
 	InterruptedResponse *ModelResponse
 	Interruptions       []*ToolApprovalItem
@@ -59,7 +59,7 @@ type RunState struct {
 	// SessionItems is the full item log for session persistence; it differs from
 	// GeneratedItems only when a handoff input filter rewrote the conversation.
 	// Nil means it equals GeneratedItems.
-	SessionItems []RunItem
+	SessionItems []*RunItem
 
 	// PersistedSessionItems counts how many leading SessionItems the interrupted
 	// run already wrote to the session before pausing (the pending, output-less
@@ -646,7 +646,7 @@ func unmarshalInputItems(raw []json.RawMessage) ([]TResponseInputItem, error) {
 }
 
 // serializeItems converts RunItems to their serialized input-item form.
-func serializeItems(items []RunItem) ([]serialItem, error) {
+func serializeItems(items []*RunItem) ([]serialItem, error) {
 	var out []serialItem
 	for _, it := range items {
 		in, err := it.ToInputItem()
@@ -658,14 +658,14 @@ func serializeItems(items []RunItem) ([]serialItem, error) {
 			return nil, err
 		}
 		agentName := ""
-		if a := it.AgentRef(); a != nil {
-			agentName = a.Name
+		if it.Agent != nil {
+			agentName = it.Agent.Name
 		}
 		si := serialItem{
-			Type:    it.ItemType(),
+			Type:    string(it.Kind),
 			Agent:   agentName,
 			Input:   raw,
-			Source:  it.Source(),
+			Source:  it.Source,
 			Display: it.Display(),
 		}
 		out = append(out, si)
@@ -809,31 +809,24 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 }
 
 // deserializeItems rebuilds RunItems from their serialized input-item form.
-func deserializeItems(items []serialItem, lookup func(string) *Agent) ([]RunItem, error) {
-	var out []RunItem
+func deserializeItems(items []serialItem, lookup func(string) *Agent) ([]*RunItem, error) {
+	var out []*RunItem
 	for _, si := range items {
 		item, err := UnmarshalInputItem(si.Input)
 		if err != nil {
 			return nil, err
 		}
-		if si.Type == "tool_call_output" && len(si.Display.Extra) > 0 {
-			// Restore as a typed item so the SDK-only extra data stays
-			// reachable after a round-trip. Output is not serialized; only the
-			// replayed input form and the extra data survive.
-			out = append(out, &ToolCallOutputItem{
-				Agent:   lookup(si.Agent),
-				Raw:     item,
-				Extra:   si.Display.Extra,
-				IsError: si.Display.IsError,
-			})
-			continue
-		}
-		out = append(out, &rawInputRunItem{
+		disp := si.Display
+		out = append(out, &RunItem{
+			Kind:     ItemKind(si.Type),
 			Agent:    lookup(si.Agent),
-			RawInput: item,
-			Kind:     si.Type,
-			Src:      si.Source,
-			Disp:     si.Display,
+			Source:   si.Source,
+			RawInput: &item,
+			// SDK-only tool-result data survives the round-trip on the item
+			// itself; Output is not serialized — only the replayed input form.
+			Extra:   disp.Extra,
+			IsError: disp.IsError,
+			display: &disp,
 		})
 	}
 	return out, nil

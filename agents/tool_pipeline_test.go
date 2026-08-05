@@ -204,7 +204,7 @@ func TestToolInputGuardrailReject(t *testing.T) {
 	// The rejection message should appear as a tool output item.
 	var found bool
 	for _, it := range res.NewItems {
-		if o, ok := it.(*ToolCallOutputItem); ok && o.Output == "not allowed" {
+		if it.Kind == ItemToolCallOutput && it.Output == "not allowed" {
 			found = true
 		}
 	}
@@ -257,8 +257,8 @@ func TestToolError_FeedsBackToModel(t *testing.T) {
 	// The error message should appear as a tool output item.
 	var found bool
 	for _, it := range res.NewItems {
-		if o, ok := it.(*ToolCallOutputItem); ok {
-			if s, _ := o.Output.(string); strings.Contains(s, "kaboom") {
+		if it.Kind == ItemToolCallOutput {
+			if s, _ := it.Output.(string); strings.Contains(s, "kaboom") {
 				found = true
 			}
 		}

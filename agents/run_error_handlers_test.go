@@ -25,12 +25,12 @@ func textAndRefusalOutput(t *testing.T, text, refusal string) TResponseOutputIte
 	return mustOutputItem(t, raw)
 }
 
-// messageTexts collects the text of every MessageOutputItem in items.
-func messageTexts(items []RunItem) []string {
+// messageTexts collects the text of every message item in items.
+func messageTexts(items []*RunItem) []string {
 	var out []string
 	for _, it := range items {
-		if m, ok := it.(*MessageOutputItem); ok {
-			out = append(out, m.Text())
+		if it.Kind == ItemMessage {
+			out = append(out, it.Text())
 		}
 	}
 	return out
@@ -478,7 +478,8 @@ func TestErrorHandlers_Streamed_EmitsSynthesizedMessage(t *testing.T) {
 	}
 	for _, event := range events {
 		if ie, ok := event.(*RunItemStreamEvent); ok && ie.Name == "message_output_created" {
-			if m, ok := ie.Item.(*MessageOutputItem); ok {
+			if ie.Item.Kind == ItemMessage {
+				m := ie.Item
 				messageEvents = append(messageEvents, m.Text())
 			}
 		}
@@ -515,7 +516,7 @@ func TestErrorHandlers_Streamed_MaxTurnsRecovery(t *testing.T) {
 	}
 	for _, event := range events {
 		if ie, ok := event.(*RunItemStreamEvent); ok && ie.Name == "message_output_created" {
-			if m, ok := ie.Item.(*MessageOutputItem); ok && m.Text() == "budget spent" {
+			if ie.Item.Kind == ItemMessage && ie.Item.Text() == "budget spent" {
 				sawSynthesized = true
 			}
 		}

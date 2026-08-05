@@ -37,17 +37,17 @@ func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 	}
 
 	// It is kept as an item, not swallowed.
-	var found *UnknownOutputItem
+	var found *RunItem
 	for _, it := range res.NewItems {
-		if u, ok := it.(*UnknownOutputItem); ok {
-			found = u
+		if it.Kind == ItemUnknown {
+			found = it
 		}
 	}
 	if found == nil {
 		t.Fatalf("the unknown item was dropped; got %v", itemTypesOf(res.NewItems))
 	}
-	if found.ItemType() != "unknown" || found.Display().Kind != DisplayUnknown {
-		t.Errorf("ItemType/Display = %q/%q", found.ItemType(), found.Display().Kind)
+	if string(found.Kind) != "unknown" || found.Display().Kind != DisplayUnknown {
+		t.Errorf("ItemType/Display = %q/%q", string(found.Kind), found.Display().Kind)
 	}
 	if found.Display().Text != "some_future_call" {
 		t.Errorf("Display().Text = %q, want the wire type name", found.Display().Text)
@@ -132,10 +132,10 @@ func TestSource_PropagatesThroughARun(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, it := range res.NewItems {
-		kind := it.ItemType()
+		kind := string(it.Kind)
 		if w, ok := want[kind]; ok {
 			seen[kind] = true
-			if got := it.Source().Type; got != w {
+			if got := it.Source.Type; got != w {
 				t.Errorf("%s source = %q, want %q", kind, got, w)
 			}
 		}
@@ -173,16 +173,16 @@ func TestSource_ErrorHandlerFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var fallback *MessageOutputItem
+	var fallback *RunItem
 	for _, it := range res.NewItems {
-		if m, ok := it.(*MessageOutputItem); ok && m.Text() == "gave up" {
-			fallback = m
+		if it.Kind == ItemMessage && it.Text() == "gave up" {
+			fallback = it
 		}
 	}
 	if fallback == nil {
 		t.Fatalf("no fallback message; got %v", itemTypesOf(res.NewItems))
 	}
-	src := fallback.Source()
+	src := fallback.Source
 	if src.Type != SourceErrorHandler {
 		t.Errorf("fallback source = %q, want error_handler", src.Type)
 	}
@@ -232,10 +232,10 @@ func TestDisplay_ProjectsEveryItemKind(t *testing.T) {
 	}
 }
 
-func itemTypesOf(items []RunItem) []string {
+func itemTypesOf(items []*RunItem) []string {
 	out := make([]string, len(items))
 	for i, it := range items {
-		out[i] = it.ItemType()
+		out[i] = string(it.Kind)
 	}
 	return out
 }

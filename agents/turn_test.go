@@ -143,10 +143,10 @@ func TestPrepareNextTurn_ErrorFailsTheRun(t *testing.T) {
 }
 
 func TestTurnResult_ToolCallNames(t *testing.T) {
-	tr := &TurnResult{NewItems: []RunItem{
-		&ToolCallItem{Raw: functionCallOutput(t, "alpha", "c1", `{}`)},
-		&MessageOutputItem{Raw: messageOutput(t, "hi")},
-		&ToolCallItem{Raw: functionCallOutput(t, "beta", "c2", `{}`)},
+	tr := &TurnResult{NewItems: []*RunItem{
+		NewModelItem(ItemToolCall, nil, functionCallOutput(t, "alpha", "c1", `{}`)),
+		NewModelItem(ItemMessage, nil, messageOutput(t, "hi")),
+		NewModelItem(ItemToolCall, nil, functionCallOutput(t, "beta", "c2", `{}`)),
 	}}
 	got := tr.ToolCallNames()
 	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {

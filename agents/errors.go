@@ -9,7 +9,7 @@ import (
 // can inspect partial progress.
 type RunErrorDetails struct {
 	Input        []TResponseInputItem
-	NewItems     []RunItem
+	NewItems     []*RunItem
 	RawResponses []*ModelResponse
 	LastAgent    *Agent
 	Usage        *Usage

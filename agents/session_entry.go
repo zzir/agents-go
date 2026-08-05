@@ -161,23 +161,23 @@ func NewItemEntries(items []TResponseInputItem, src Source) ([]SessionEntry, err
 
 // EntryFromRunItem builds a session entry from a run item, carrying its
 // provenance, display and owning agent.
-func EntryFromRunItem(it RunItem, responseID string) (SessionEntry, error) {
+func EntryFromRunItem(it *RunItem, responseID string) (SessionEntry, error) {
 	in, err := it.ToInputItem()
 	if err != nil {
 		return SessionEntry{}, err
 	}
-	e, err := NewItemEntry(in, it.Source())
+	e, err := NewItemEntry(in, it.Source)
 	if err != nil {
 		return SessionEntry{}, err
 	}
-	if a := it.AgentRef(); a != nil {
-		e.AgentName = a.Name
+	if it.Agent != nil {
+		e.AgentName = it.Agent.Name
 	}
 	d := it.Display()
 	e.Display = &d
 	e.ResponseID = responseID
-	if out, ok := it.(*ToolCallOutputItem); ok && out.NestedUsage != nil {
-		u := out.NestedUsage.Request()
+	if it.NestedUsage != nil {
+		u := it.NestedUsage.Request()
 		e.NestedUsage = &u
 	}
 	return e, nil

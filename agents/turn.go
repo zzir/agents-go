@@ -48,7 +48,7 @@ type TurnResult struct {
 	Response *ModelResponse
 	// NewItems is everything the turn produced, in order: the model's own
 	// output items followed by any tool outputs and handoff records.
-	NewItems []RunItem
+	NewItems []*RunItem
 	// Snapshot is what the turn was resolved to before it ran.
 	Snapshot *TurnSnapshot
 }
@@ -61,8 +61,8 @@ type TurnResult struct {
 func (tr *TurnResult) ToolCallNames() []string {
 	var names []string
 	for _, it := range tr.NewItems {
-		if tc, ok := it.(*ToolCallItem); ok {
-			if name := tc.FunctionCall().Name; name != "" {
+		if it.Kind == ItemToolCall {
+			if name := it.FunctionCall().Name; name != "" {
 				names = append(names, name)
 			}
 		}
@@ -76,7 +76,7 @@ func (tr *TurnResult) ToolCallNames() []string {
 // It is called at the turn boundary — after the turn's items are persisted,
 // before the next model call — so a run that stops here has its full history
 // saved and needs no unwinding.
-func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, turn int, resp *ModelResponse, snap *TurnSnapshot, items []RunItem) (bool, any, error) {
+func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, turn int, resp *ModelResponse, snap *TurnSnapshot, items []*RunItem) (bool, any, error) {
 	hook := r.opts.Exec.ShouldStopAfterTurn
 	if hook == nil {
 		return false, nil, nil
@@ -96,15 +96,15 @@ func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, turn int, resp
 // got to write one — so falling through to the tool result is what makes the
 // result useful rather than empty. The full turn is on RunResult.NewItems for
 // anything more specific.
-func turnFinalOutput(agent *Agent, items []RunItem) any {
+func turnFinalOutput(agent *Agent, items []*RunItem) any {
 	if m := lastMessageItem(items); m != nil {
 		if text := m.Text(); text != "" {
 			return text
 		}
 	}
 	for i := len(items) - 1; i >= 0; i-- {
-		if out, ok := items[i].(*ToolCallOutputItem); ok {
-			return coerceToolFinalOutput(agent, out.Output)
+		if items[i].Kind == ItemToolCallOutput {
+			return coerceToolFinalOutput(agent, items[i].Output)
 		}
 	}
 	return ""
@@ -159,7 +159,7 @@ type savePointInput struct {
 	Agent    *Agent
 	Snapshot *TurnSnapshot
 	Response *ModelResponse
-	NewItems []RunItem
+	NewItems []*RunItem
 }
 
 // savePointResult is what the save point decided.
@@ -174,7 +174,7 @@ type savePointResult struct {
 	// resolving one from the agent.
 	NextSnapshot *TurnSnapshot
 	// Injected is caller-supplied input to add before the next model call.
-	Injected []RunItem
+	Injected []*RunItem
 }
 
 // savePoint is the turn boundary: the point at which the turn's assistant
@@ -240,15 +240,16 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 //
 // The alternative, carrying a separate "pending input" list the loop splices in
 // at call time, would need every one of those paths taught about it.
-func injectedInput(agent *Agent, items []TResponseInputItem) []RunItem {
-	out := make([]RunItem, 0, len(items))
+func injectedInput(agent *Agent, items []TResponseInputItem) []*RunItem {
+	out := make([]*RunItem, 0, len(items))
 	for _, item := range items {
-		out = append(out, &rawInputRunItem{
+		disp := ItemDisplay{Kind: DisplayMessage, Text: inputItemText(item)}
+		out = append(out, &RunItem{
+			Kind:     ItemInjectedInput,
 			Agent:    agent,
-			RawInput: item,
-			Kind:     "injected_input",
-			Src:      Source{Type: SourceUser},
-			Disp:     ItemDisplay{Kind: DisplayMessage, Text: inputItemText(item)},
+			Source:   Source{Type: SourceUser},
+			RawInput: &item,
+			display:  &disp,
 		})
 	}
 	return out

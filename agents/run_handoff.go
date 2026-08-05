@@ -11,7 +11,7 @@ const multipleHandoffsMessage = "Multiple handoffs detected, ignoring this one."
 
 // executeHandoff switches to the first requested handoff target, recording a
 // synthetic handoff output item.
-func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []toolRunHandoff, newStepItems []RunItem) (*singleStepResult, error) {
+func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []toolRunHandoff, newStepItems []*RunItem) (*singleStepResult, error) {
 	run := handoffs[0]
 	// Every handoff call the model emitted is in the conversation as a
 	// function_call; the ones we ignore still need an output item, or the next
@@ -45,12 +45,7 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 		}
 	}
 
-	outputItem := &HandoffOutputItem{
-		Agent:       from,
-		Raw:         handoffOutputInput(run.Call.CallID, target.Name),
-		SourceAgent: from,
-		TargetAgent: target,
-	}
+	outputItem := newHandoffOutputItem(from, from, target, handoffOutputInput(run.Call.CallID, target.Name))
 	newStepItems = append(newStepItems, outputItem)
 
 	h := run.Handoff
@@ -64,7 +59,7 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 
 // applyHandoffInputFilter builds the full conversation input and runs filter
 // over it, returning the filtered input for the next agent.
-func applyHandoffInputFilter(filter func(HandoffInputData) HandoffInputData, originalInput []TResponseInputItem, generated []RunItem) ([]TResponseInputItem, error) {
+func applyHandoffInputFilter(filter func(HandoffInputData) HandoffInputData, originalInput []TResponseInputItem, generated []*RunItem) ([]TResponseInputItem, error) {
 	full, err := buildModelInput(originalInput, generated)
 	if err != nil {
 		return nil, err
@@ -83,10 +78,10 @@ func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffIn
 	return r.opts.Exec.HandoffInputFilter
 }
 
-func lastMessageItem(items []RunItem) *MessageOutputItem {
+func lastMessageItem(items []*RunItem) *RunItem {
 	for i := len(items) - 1; i >= 0; i-- {
-		if m, ok := items[i].(*MessageOutputItem); ok {
-			return m
+		if items[i].Kind == ItemMessage {
+			return items[i]
 		}
 	}
 	return nil

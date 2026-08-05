@@ -39,32 +39,32 @@ func AssertScriptExhausted(tb testing.TB, m *FakeModel) {
 //
 //	want := []string{"reasoning", "tool_call", "tool_call_output", "message_output"}
 //	if got := agentstest.ItemTypes(res.NewItems); !slices.Equal(got, want) { ... }
-func ItemTypes(items []agents.RunItem) []string {
+func ItemTypes(items []*agents.RunItem) []string {
 	out := make([]string, 0, len(items))
 	for _, it := range items {
-		out = append(out, it.ItemType())
+		out = append(out, string(it.Kind))
 	}
 	return out
 }
 
 // ToolCallNames returns the name of every tool the model asked to call, in
 // order. Handoff calls are excluded — they surface as handoff items.
-func ToolCallNames(items []agents.RunItem) []string {
+func ToolCallNames(items []*agents.RunItem) []string {
 	var out []string
 	for _, it := range items {
-		if tc, ok := it.(*agents.ToolCallItem); ok {
-			out = append(out, tc.FunctionCall().Name)
+		if it.Kind == agents.ItemToolCall {
+			out = append(out, it.FunctionCall().Name)
 		}
 	}
 	return out
 }
 
 // MessageTexts returns the text of every assistant message item, in order.
-func MessageTexts(items []agents.RunItem) []string {
+func MessageTexts(items []*agents.RunItem) []string {
 	var out []string
 	for _, it := range items {
-		if m, ok := it.(*agents.MessageOutputItem); ok {
-			out = append(out, m.Text())
+		if it.Kind == agents.ItemMessage {
+			out = append(out, it.Text())
 		}
 	}
 	return out

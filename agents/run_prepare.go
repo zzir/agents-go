@@ -97,7 +97,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 type loopSeed struct {
 	agent          *Agent
 	originalInput  []TResponseInputItem
-	generatedItems []RunItem
+	generatedItems []*RunItem
 	rawResponses   []*ModelResponse
 
 	// pendingResponse, on a resume, is the interrupted response the first
@@ -123,7 +123,7 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []TResponseInputItem)
 	seed := loopSeed{
 		agent:          startAgent,
 		originalInput:  originalInput,
-		generatedItems: []RunItem{},
+		generatedItems: []*RunItem{},
 		rawResponses:   []*ModelResponse{},
 		startTurn:      1,
 	}
@@ -132,7 +132,7 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []TResponseInputItem)
 	}
 	seed.agent = r.resume.CurrentAgent
 	seed.originalInput = r.resume.OriginalInput
-	seed.generatedItems = append([]RunItem{}, r.resume.GeneratedItems...)
+	seed.generatedItems = append([]*RunItem{}, r.resume.GeneratedItems...)
 	seed.rawResponses = append([]*ModelResponse{}, r.resume.RawResponses...)
 	seed.pendingResponse = r.resume.InterruptedResponse
 	seed.cursor = r.resume.cursor
@@ -140,7 +140,7 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []TResponseInputItem)
 	if sessionSeed == nil {
 		sessionSeed = r.resume.GeneratedItems
 	}
-	r.sessionItems = append([]RunItem{}, sessionSeed...)
+	r.sessionItems = append([]*RunItem{}, sessionSeed...)
 	r.persistedSessionItems = r.resume.PersistedSessionItems
 	r.userInputSaved = true
 	if r.resume.CurrentTurn > 1 {

@@ -224,11 +224,10 @@ func TestToolNotFound_ReturnToModelText(t *testing.T) {
 	}
 	var found bool
 	for _, it := range res.NewItems {
-		out, ok := it.(*ToolCallOutputItem)
-		if !ok {
+		if it.Kind != ItemToolCallOutput {
 			continue
 		}
-		text, _ := out.Output.(string)
+		text, _ := it.Output.(string)
 		if text == "Tool 'ghost' not found." {
 			found = true
 		}

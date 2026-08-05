@@ -72,8 +72,8 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 			// working without the caller wiring OnStream. Messages only: the
 			// raw deltas belong to the nested run, and relaying them would
 			// bury the parent's own stream.
-			if m, ok := e.Item.(*MessageOutputItem); ok {
-				tc.Emit(TextResult(m.Text()).WithDetails(map[string]any{
+			if e.Item.Kind == ItemMessage {
+				tc.Emit(TextResult(e.Item.Text()).WithDetails(map[string]any{
 					"nested_agent": current.Name, "partial": true,
 				}))
 			}
@@ -164,12 +164,13 @@ func agentToolOutput(res *RunResult) string {
 		return res.FinalOutputString()
 	}
 	for i := len(res.NewItems) - 1; i >= 0; i-- {
-		switch it := res.NewItems[i].(type) {
-		case *MessageOutputItem:
+		it := res.NewItems[i]
+		switch it.Kind {
+		case ItemMessage:
 			if t := it.Text(); t != "" {
 				return t
 			}
-		case *ToolCallOutputItem:
+		case ItemToolCallOutput:
 			if s, ok := it.Output.(string); ok && s != "" {
 				return s
 			}

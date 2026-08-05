@@ -73,8 +73,8 @@ func main() {
 
 	fmt.Printf("\nagent: %s\n", final.FinalOutputString())
 	for _, it := range final.NewItems {
-		if out, ok := it.(*agents.ToolCallOutputItem); ok {
-			fmt.Printf("what the model saw: %v\n", out.Output)
+		if it.Kind == agents.ItemToolCallOutput {
+			fmt.Printf("what the model saw: %v\n", it.Output)
 		}
 	}
 }

@@ -77,7 +77,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 // output S]) — is held back until the missing outputs arrive on resume, so the
 // stored history never contains a dangling call. A turn whose calls are all
 // paired therefore persists in full.
-func safePersistBoundary(items []RunItem, start int) int {
+func safePersistBoundary(items []*RunItem, start int) int {
 	if start >= len(items) {
 		return len(items)
 	}
@@ -102,7 +102,7 @@ func safePersistBoundary(items []RunItem, start int) int {
 // is a call or an output, by inspecting its input-item form. Non-function items
 // (messages, reasoning, handoffs) report isCall=isOutput=false. Works uniformly
 // for live items and items rebuilt from serialized RunState.
-func runItemCallID(it RunItem) (callID string, isCall, isOutput bool) {
+func runItemCallID(it *RunItem) (callID string, isCall, isOutput bool) {
 	in, err := it.ToInputItem()
 	if err != nil {
 		return "", false, false
@@ -172,7 +172,7 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 // error-handler's synthesized fallback message (marked with the fake response
 // id). Such items postdate the last model response and are absent from the
 // server-side response chain that previous_response_id compaction replays.
-func endsWithLocalItem(items []RunItem) bool {
+func endsWithLocalItem(items []*RunItem) bool {
 	if len(items) == 0 {
 		return false
 	}
@@ -183,5 +183,5 @@ func endsWithLocalItem(items []RunItem) bool {
 	// This used to be a type switch that string-compared a sentinel id on
 	// messages and re-derived the answer from a kind string on restored items;
 	// provenance answers it directly, and correctly for item types added later.
-	return !items[len(items)-1].Source().IsExternal()
+	return !items[len(items)-1].Source.IsExternal()
 }

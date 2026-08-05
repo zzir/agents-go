@@ -98,7 +98,7 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, orig
 	return r.finishRun(ctx, agent, originalInput, rawResponses, rec.finalOutput)
 }
 
-func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, raw []*ModelResponse, last *Agent) error {
+func (r *runner) fail(err error, input []TResponseInputItem, items []*RunItem, raw []*ModelResponse, last *Agent) error {
 	// Mark the current agent span failed so the error is visible in traces;
 	// child spans (generation, function) set their own errors at the source.
 	r.agentSpan.SetError(err.Error(), nil)

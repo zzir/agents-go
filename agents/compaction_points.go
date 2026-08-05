@@ -171,7 +171,7 @@ func (p CompactionPoint) String() string {
 // append-only model pay off. The log is the truth; the context is a projection
 // of it, and a projection is cheap to recompute and impossible to get out of
 // step with what was stored. Trying to splice a compacted result into the
-// running []RunItem would mean converting entries the other way, which no
+// running []*RunItem would mean converting entries the other way, which no
 // folded summary survives.
 //
 // It reports ok=false when nothing applies, leaving the caller's context alone.

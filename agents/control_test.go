@@ -33,7 +33,7 @@ func TestSteer_ForcesAnotherTurn(t *testing.T) {
 			t.Fatal(err)
 		}
 		if m, ok := ev.(*RunItemStreamEvent); ok && !steered {
-			if _, isMsg := m.Item.(*MessageOutputItem); isMsg {
+			if m.Item.Kind == ItemMessage {
 				// The agent just answered; change course before it can finish.
 				if err := ctrl.Steer("actually, do it differently"); err != nil {
 					t.Fatal(err)
@@ -218,7 +218,7 @@ func TestPendingInput_SurvivesAnInterruption(t *testing.T) {
 		}
 		// Say something while the run is still going, before it pauses.
 		if it, ok := ev.(*RunItemStreamEvent); ok {
-			if _, isCall := it.Item.(*ToolCallItem); isCall {
+			if it.Item.Kind == ItemToolCall {
 				if err := ctrl.Steer("be careful with that"); err != nil {
 					t.Fatal(err)
 				}

@@ -89,7 +89,7 @@ func TestResume_SiblingToolNotReExecutedAfterNestedApproval(t *testing.T) {
 }
 
 // countToolOutputs counts function_call_output items whose call id matches.
-func countToolOutputs(items []RunItem, callID string) int {
+func countToolOutputs(items []*RunItem, callID string) int {
 	n := 0
 	for _, it := range items {
 		if id, _, isOutput := runItemCallID(it); isOutput && id == callID {
@@ -103,13 +103,15 @@ func countToolOutputs(items []RunItem, callID string) int {
 // a stored function_call without its matching function_call_output, even when a
 // completed sibling's output is ordered after a still-pending (interrupted) call.
 func TestSafePersistBoundary(t *testing.T) {
-	call := func(callID string) RunItem { return &ToolCallItem{Raw: functionCallOutput(t, "t", callID, `{}`)} }
-	out := func(callID string) RunItem { return newFunctionCallOutputItem(nil, callID, "out") }
-	msg := func() RunItem { return &MessageOutputItem{Raw: messageOutput(t, "hi")} }
+	call := func(callID string) *RunItem {
+		return NewModelItem(ItemToolCall, nil, functionCallOutput(t, "t", callID, `{}`))
+	}
+	out := func(callID string) *RunItem { return newFunctionCallOutputItem(nil, callID, "out") }
+	msg := func() *RunItem { return NewModelItem(ItemMessage, nil, messageOutput(t, "hi")) }
 
 	cases := []struct {
 		name  string
-		items []RunItem
+		items []*RunItem
 		start int
 		want  int
 	}{
@@ -118,27 +120,27 @@ func TestSafePersistBoundary(t *testing.T) {
 			// own call must be held back too — the stored history must never keep
 			// S's call without S's output.
 			name:  "completed sibling output after interrupted call",
-			items: []RunItem{call("S"), call("A"), out("S")},
+			items: []*RunItem{call("S"), call("A"), out("S")},
 			want:  0,
 		},
 		{
 			name:  "all calls paired persists in full",
-			items: []RunItem{call("S"), out("S"), call("T"), out("T")},
+			items: []*RunItem{call("S"), out("S"), call("T"), out("T")},
 			want:  4,
 		},
 		{
 			name:  "trailing interrupted call held back",
-			items: []RunItem{call("S"), out("S"), call("A")},
+			items: []*RunItem{call("S"), out("S"), call("A")},
 			want:  2,
 		},
 		{
 			name:  "message-only persists",
-			items: []RunItem{msg()},
+			items: []*RunItem{msg()},
 			want:  1,
 		},
 		{
 			name:  "start past end",
-			items: []RunItem{call("S")},
+			items: []*RunItem{call("S")},
 			start: 1,
 			want:  1,
 		},
@@ -155,7 +157,7 @@ func TestSafePersistBoundary(t *testing.T) {
 	}
 }
 
-func assertNoDanglingCall(t *testing.T, items []RunItem) {
+func assertNoDanglingCall(t *testing.T, items []*RunItem) {
 	t.Helper()
 	haveOutput := map[string]bool{}
 	for _, it := range items {

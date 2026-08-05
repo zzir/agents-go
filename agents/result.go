@@ -11,7 +11,7 @@ type RunResult struct {
 	Input []TResponseInputItem
 	// NewItems are all items generated during the run (messages, tool calls,
 	// tool outputs, handoffs, reasoning).
-	NewItems []RunItem
+	NewItems []*RunItem
 	// RawResponses are the raw model responses, in order.
 	RawResponses []*ModelResponse
 	// FinalOutput is the final output value. For plain-text agents it is a
@@ -136,11 +136,10 @@ func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 func (r *RunResult) NestedUsage() RequestUsage {
 	var total RequestUsage
 	for _, it := range r.NewItems {
-		out, ok := it.(*ToolCallOutputItem)
-		if !ok || out.NestedUsage == nil {
+		if it.Kind != ItemToolCallOutput || it.NestedUsage == nil {
 			continue
 		}
-		u := out.NestedUsage.Request()
+		u := it.NestedUsage.Request()
 		total.InputTokens += u.InputTokens
 		total.OutputTokens += u.OutputTokens
 		total.TotalTokens += u.TotalTokens

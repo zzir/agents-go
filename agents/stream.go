@@ -25,7 +25,7 @@ type RunItemStreamEvent struct {
 	// Name is the event name, e.g. "message_output_created", "tool_called",
 	// "tool_output", "handoff_requested", "handoff_occured", "reasoning_item_created".
 	Name string
-	Item RunItem
+	Item *RunItem
 }
 
 func (*RunItemStreamEvent) streamEvent() {}
@@ -156,30 +156,31 @@ func (r *runner) emit(event StreamEvent) bool {
 // tool_called event wrapping the underlying function call, so a handoff
 // surfaces as BOTH tool_called and handoff_requested — matching the model's own
 // view, where the handoff is a tool call.
-func (r *runner) emitItem(it RunItem) bool {
-	if hc, ok := it.(*HandoffCallItem); ok {
-		if !r.emit(&RunItemStreamEvent{Name: "tool_called", Item: &ToolCallItem{Agent: hc.Agent, Raw: hc.Raw}}) {
+func (r *runner) emitItem(it *RunItem) bool {
+	if it.Kind == ItemHandoffCall {
+		wrapped := &RunItem{Kind: ItemToolCall, Agent: it.Agent, Raw: it.Raw}
+		if !r.emit(&RunItemStreamEvent{Name: "tool_called", Item: wrapped}) {
 			return false
 		}
 	}
 	return r.emit(&RunItemStreamEvent{Name: runItemEventName(it), Item: it})
 }
 
-// runItemEventName maps a RunItem to its stream event name.
-func runItemEventName(item RunItem) string {
-	switch item.(type) {
-	case *MessageOutputItem:
+// runItemEventName maps an item kind to its stream event name.
+func runItemEventName(item *RunItem) string {
+	switch item.Kind {
+	case ItemMessage:
 		return "message_output_created"
-	case *ToolCallItem:
+	case ItemToolCall:
 		return "tool_called"
-	case *ToolCallOutputItem:
+	case ItemToolCallOutput:
 		return "tool_output"
-	case *HandoffCallItem:
+	case ItemHandoffCall:
 		return "handoff_requested"
-	case *HandoffOutputItem:
+	case ItemHandoffOutput:
 		// (sic) — the misspelling is the wire name consumers already match on.
 		return "handoff_occured"
-	case *ReasoningItem:
+	case ItemReasoning:
 		return "reasoning_item_created"
 	default:
 		return "unknown"

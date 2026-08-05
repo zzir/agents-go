@@ -14,7 +14,7 @@ type RunErrorData struct {
 	// and any handoff input filter was applied).
 	Input []TResponseInputItem
 	// NewItems are the items generated so far.
-	NewItems []RunItem
+	NewItems []*RunItem
 	// History is Input followed by Output: the full conversation as the next
 	// model call would have seen it.
 	History []TResponseInputItem
@@ -79,7 +79,7 @@ type RunErrorHandlers struct {
 // buildRunErrorData snapshots the run for a handler invocation. Items that
 // cannot convert to input form are skipped from History/Output, never raised as
 // an error — this runs on a path that is already failing.
-func buildRunErrorData(input []TResponseInputItem, newItems []RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
+func buildRunErrorData(input []TResponseInputItem, newItems []*RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
 	output := make([]TResponseInputItem, 0, len(newItems))
 	for _, it := range newItems {
 		in, err := it.ToInputItem()
@@ -106,7 +106,7 @@ func buildRunErrorData(input []TResponseInputItem, newItems []RunItem, raw []*Mo
 // assistant message carrying it.
 type errorRecovery struct {
 	finalOutput any
-	message     *MessageOutputItem // nil when ExcludeFromHistory was set
+	message     *RunItem // nil when ExcludeFromHistory was set
 }
 
 // resolveErrorRecovery invokes handler for cause and converts its result into
@@ -121,7 +121,7 @@ func (r *runner) resolveErrorRecovery(
 	cause error,
 	agent *Agent,
 	input []TResponseInputItem,
-	newItems []RunItem,
+	newItems []*RunItem,
 	raw []*ModelResponse,
 ) (*errorRecovery, error) {
 	if handler == nil {
@@ -227,7 +227,7 @@ func formatFinalOutputText(agent *Agent, v any) string {
 // mark it as synthesized, which meant every consumer that cared had to know
 // that string. Provenance is Source's job now, and the item is genuinely
 // id-less: there is no server-side response to point at.
-func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*MessageOutputItem, error) {
+func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*RunItem, error) {
 	payload := map[string]any{
 		"type":   "message",
 		"role":   "assistant",
@@ -246,9 +246,7 @@ func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*Messa
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return nil, err
 	}
-	return &MessageOutputItem{
-		Agent: agent,
-		Raw:   item,
-		Src:   Source{Type: SourceErrorHandler, ID: handlerKind},
-	}, nil
+	it := NewModelItem(ItemMessage, agent, item)
+	it.Source = Source{Type: SourceErrorHandler, ID: handlerKind}
+	return it, nil
 }

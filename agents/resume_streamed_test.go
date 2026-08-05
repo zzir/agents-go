@@ -22,12 +22,10 @@ func collectItemEvents(t *testing.T, stream RunStream) ([]string, *RunResult) {
 			continue
 		}
 		name := ie.Name
-		switch it := ie.Item.(type) {
-		case *ToolCallItem:
-			name += ":" + it.FunctionCall().CallID
-		case *ToolCallOutputItem:
-			if fco := it.Raw.OfFunctionCallOutput; fco != nil {
-				name += ":" + fco.CallID
+		switch ie.Item.Kind {
+		case ItemToolCall, ItemToolCallOutput:
+			if id := ie.Item.CallID(); id != "" {
+				name += ":" + id
 			}
 		}
 		names = append(names, name)

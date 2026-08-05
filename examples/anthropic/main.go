@@ -48,7 +48,8 @@ func main() {
 				fmt.Print(e.Data.AsResponseOutputTextDelta().Delta)
 			}
 		case *agents.RunItemStreamEvent:
-			if tc, ok := e.Item.(*agents.ToolCallItem); ok {
+			if e.Item.Kind == agents.ItemToolCall {
+				tc := e.Item
 				fmt.Println("tool call:", tc.FunctionCall().Name)
 			}
 		case *agents.RunCompletedEvent:

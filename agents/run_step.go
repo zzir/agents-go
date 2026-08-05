@@ -19,7 +19,7 @@ const (
 // singleStepResult is the outcome of processing one model response and running
 // any resulting tools/handoffs.
 type singleStepResult struct {
-	NewStepItems  []RunItem
+	NewStepItems  []*RunItem
 	NextStep      nextStepKind
 	FinalOutput   any
 	NewAgent      *Agent
@@ -87,7 +87,7 @@ func (b ToolNotFoundBehavior) String() string {
 
 // processedResponse is the classified content of a model response.
 type processedResponse struct {
-	NewItems     []RunItem
+	NewItems     []*RunItem
 	Functions    []toolRunFunction
 	Handoffs     []toolRunHandoff
 	ToolsUsed    []string
@@ -122,15 +122,15 @@ func processModelResponse(
 	for _, output := range resp.Output {
 		switch output.Type {
 		case "message":
-			pr.NewItems = append(pr.NewItems, &MessageOutputItem{Agent: agent, Raw: output})
+			pr.NewItems = append(pr.NewItems, NewModelItem(ItemMessage, agent, output))
 		case "reasoning":
-			pr.NewItems = append(pr.NewItems, &ReasoningItem{Agent: agent, Raw: output})
+			pr.NewItems = append(pr.NewItems, NewModelItem(ItemReasoning, agent, output))
 		case "function_call":
 			fc := output.AsFunctionCall()
 			call := functionCall{CallID: fc.CallID, Name: fc.Name, Arguments: fc.Arguments, Raw: output}
 			pr.ToolsUsed = append(pr.ToolsUsed, fc.Name)
 			if h, ok := handoffMap[fc.Name]; ok {
-				pr.NewItems = append(pr.NewItems, &HandoffCallItem{Agent: agent, Raw: output})
+				pr.NewItems = append(pr.NewItems, NewModelItem(ItemHandoffCall, agent, output))
 				pr.Handoffs = append(pr.Handoffs, toolRunHandoff{Handoff: h, Call: call})
 				continue
 			}
@@ -139,13 +139,13 @@ func processModelResponse(
 				if toolNotFound == ToolNotFoundReturnToModel {
 					// Record the call and let executeToolsAndSideEffects synthesize
 					// an error output, so the model can correct itself next turn.
-					pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
+					pr.NewItems = append(pr.NewItems, NewModelItem(ItemToolCall, agent, output))
 					pr.UnknownTools = append(pr.UnknownTools, call)
 					continue
 				}
 				return nil, NewModelBehaviorError("tool %q not found on agent %q", fc.Name, agent.Name)
 			}
-			pr.NewItems = append(pr.NewItems, &ToolCallItem{Agent: agent, Raw: output})
+			pr.NewItems = append(pr.NewItems, NewModelItem(ItemToolCall, agent, output))
 			pr.Functions = append(pr.Functions, toolRunFunction{Tool: ft, Call: call})
 		default:
 			// An item type this SDK does not model. Keeping it is not optional:
@@ -155,7 +155,7 @@ func processModelResponse(
 			//
 			// UnknownOutputItem carries the bytes through untouched. It used to
 			// be silently discarded here.
-			pr.NewItems = append(pr.NewItems, &UnknownOutputItem{Agent: agent, Raw: output})
+			pr.NewItems = append(pr.NewItems, NewModelItem(ItemUnknown, agent, output))
 		}
 	}
 	return pr, nil
@@ -175,10 +175,10 @@ func (r *runner) executeToolsAndSideEffects(
 	outputSchema OutputSchema,
 	resumed bool,
 	originalInput []TResponseInputItem,
-	preStepItems []RunItem,
+	preStepItems []*RunItem,
 	resp *ModelResponse,
 ) (*singleStepResult, error) {
-	newStepItems := make([]RunItem, 0, len(pr.NewItems))
+	newStepItems := make([]*RunItem, 0, len(pr.NewItems))
 	if !resumed {
 		newStepItems = append(newStepItems, pr.NewItems...)
 	}
@@ -337,7 +337,7 @@ func (r *runner) executeToolsAndSideEffects(
 				// A refusal fails the run (recoverable via
 				// ErrorHandlers.ModelRefusal), taking precedence over any text
 				// or structured content in the same message.
-				if refusal := extractMessageRefusal(lastMessage.Raw); refusal != "" {
+				if refusal := extractMessageRefusal(*lastMessage.Raw); refusal != "" {
 					refErr := &ModelRefusalError{
 						AgentsError: AgentsError{Code: CodeModelRefusal, Message: "model refused to respond: " + refusal},
 						Refusal:     refusal,
@@ -444,7 +444,7 @@ func orderToolResults(calls []toolRunFunction, executed, rejected []functionTool
 // (a duplicate call id the Responses API rejects). Its output was recorded
 // before the pause, so dropping the call is safe. Mirrors
 // openai-agents-python 3229/3259.
-func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []RunItem) []toolRunFunction {
+func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []*RunItem) []toolRunFunction {
 	if len(functions) == 0 {
 		return functions
 	}
@@ -469,8 +469,8 @@ func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []RunItem
 
 // concatRunItems returns a fresh slice of pre followed by post, for the
 // RunErrorData snapshot handed to error handlers.
-func concatRunItems(pre, post []RunItem) []RunItem {
-	out := make([]RunItem, 0, len(pre)+len(post))
+func concatRunItems(pre, post []*RunItem) []*RunItem {
+	out := make([]*RunItem, 0, len(pre)+len(post))
 	out = append(out, pre...)
 	out = append(out, post...)
 	return out

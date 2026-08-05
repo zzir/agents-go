@@ -10,24 +10,24 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-func messageItem(t *testing.T, contentJSON string) *agents.MessageOutputItem {
+func messageItem(t *testing.T, contentJSON string) *agents.RunItem {
 	t.Helper()
 	var item responses.ResponseOutputItemUnion
 	raw := `{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":` + contentJSON + `}`
 	if err := json.Unmarshal([]byte(raw), &item); err != nil {
 		t.Fatal(err)
 	}
-	return &agents.MessageOutputItem{Raw: item}
+	return agents.NewModelItem(agents.ItemMessage, nil, item)
 }
 
-func toolCallItem(t *testing.T, name, callID string) *agents.ToolCallItem {
+func toolCallItem(t *testing.T, name, callID string) *agents.RunItem {
 	t.Helper()
 	var item responses.ResponseOutputItemUnion
 	raw := `{"type":"function_call","id":"fc_1","call_id":"` + callID + `","name":"` + name + `","arguments":"{}","status":"completed"}`
 	if err := json.Unmarshal([]byte(raw), &item); err != nil {
 		t.Fatal(err)
 	}
-	return &agents.ToolCallItem{Raw: item}
+	return agents.NewModelItem(agents.ItemToolCall, nil, item)
 }
 
 // A handoff now surfaces as a tool_called event (wrapping the transfer_to_X
@@ -99,14 +99,14 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 	}
 }
 
-func reasoningItem(t *testing.T, bodyJSON string) *agents.ReasoningItem {
+func reasoningItem(t *testing.T, bodyJSON string) *agents.RunItem {
 	t.Helper()
 	var item responses.ResponseOutputItemUnion
 	raw := `{"type":"reasoning","id":"rs_1",` + bodyJSON + `}`
 	if err := json.Unmarshal([]byte(raw), &item); err != nil {
 		t.Fatal(err)
 	}
-	return &agents.ReasoningItem{Raw: item}
+	return agents.NewModelItem(agents.ItemReasoning, nil, item)
 }
 
 // handleStreamEvent must bridge reasoning_item_created into run.reasoning_item

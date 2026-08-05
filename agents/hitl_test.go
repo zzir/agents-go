@@ -84,7 +84,7 @@ func TestHITL_InterruptThenReject(t *testing.T) {
 	// The rejection message should appear as a tool output.
 	var found bool
 	for _, it := range res2.NewItems {
-		if o, ok := it.(*ToolCallOutputItem); ok && o.Output == "denied by policy" {
+		if it.Kind == ItemToolCallOutput && it.Output == "denied by policy" {
 			found = true
 		}
 	}

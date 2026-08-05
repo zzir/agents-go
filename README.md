@@ -112,8 +112,8 @@ for event, err := range stream {
 	if err != nil { panic(err) }
 	switch e := event.(type) {
 	case *agents.RunItemStreamEvent:
-		if msg, ok := e.Item.(*agents.MessageOutputItem); ok {
-			fmt.Println(msg.Text())
+		if e.Item.Kind == agents.ItemMessage {
+			fmt.Println(e.Item.Text())
 		}
 	case *agents.RunCompletedEvent:
 		fmt.Println("done:", e.Result.FinalOutputString())

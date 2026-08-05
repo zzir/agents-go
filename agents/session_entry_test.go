@@ -294,9 +294,7 @@ func TestCompactionCheckpointProjection(t *testing.T) {
 // which is the case for anything reporting on a call afterwards, since the
 // entry id is assigned by storage at a moment the amender may not have reached.
 func TestUpdateEntry_TargetsACallID(t *testing.T) {
-	call, err := EntryFromRunItem(&ToolCallItem{
-		Raw: functionCallOutput(t, "spawn_task", "call-9", `{}`),
-	}, "resp_1")
+	call, err := EntryFromRunItem(NewModelItem(ItemToolCall, nil, functionCallOutput(t, "spawn_task", "call-9", `{}`)), "resp_1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,9 +326,7 @@ func TestUpdateEntry_TargetsACallID(t *testing.T) {
 // An update naming a call nothing holds amends nothing, rather than attaching
 // itself to whatever happened to be nearby.
 func TestUpdateEntry_UnknownCallIDIsIgnored(t *testing.T) {
-	call, err := EntryFromRunItem(&ToolCallItem{
-		Raw: functionCallOutput(t, "probe", "call-1", `{}`),
-	}, "r")
+	call, err := EntryFromRunItem(NewModelItem(ItemToolCall, nil, functionCallOutput(t, "probe", "call-1", `{}`)), "r")
 	if err != nil {
 		t.Fatal(err)
 	}

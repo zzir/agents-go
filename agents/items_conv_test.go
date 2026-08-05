@@ -127,7 +127,7 @@ func TestReasoningItem_Text(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.raw), &item); err != nil {
 				t.Fatal(err)
 			}
-			if got := (&ReasoningItem{Raw: item}).Text(); got != tc.want {
+			if got := (&RunItem{Kind: ItemReasoning, Raw: &item}).Text(); got != tc.want {
 				t.Errorf("Text() = %q, want %q", got, tc.want)
 			}
 		})

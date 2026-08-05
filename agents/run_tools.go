@@ -20,7 +20,7 @@ import (
 // state (keyed by this call's id) so the parent run can pause and later resume.
 type functionToolResult struct {
 	tool                *FunctionTool
-	outputItem          *ToolCallOutputItem
+	outputItem          *RunItem
 	output              any
 	callID              string
 	nestedInterruptions []*ToolApprovalItem

@@ -843,23 +843,23 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			// that previewed it. Interim messages between tool calls only exist
 			// as deltas plus this event — resumed segments and backends that
 			// stream no deltas rely on it entirely.
-			if mo, ok := e.Item.(*agents.MessageOutputItem); ok {
-				if text := mo.Text(); text != "" {
-					send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: mo.Raw.ID})
+			if e.Item.Kind == agents.ItemMessage {
+				if text := e.Item.Text(); text != "" {
+					send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
 				}
 			}
 		case "reasoning_item_created":
 			// The completed thinking block, authoritative over the run.reasoning
 			// deltas that previewed it — and the only thinking signal when the
 			// backend streams no reasoning deltas or the segment was resumed.
-			if ri, ok := e.Item.(*agents.ReasoningItem); ok {
-				if text := ri.Text(); text != "" {
-					send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: ri.Raw.ID})
+			if e.Item.Kind == agents.ItemReasoning {
+				if text := e.Item.Text(); text != "" {
+					send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
 				}
 			}
 		case "tool_called":
-			if tc, ok := e.Item.(*agents.ToolCallItem); ok {
-				fc := tc.FunctionCall()
+			if e.Item.Kind == agents.ItemToolCall {
+				fc := e.Item.FunctionCall()
 				// The SDK emits tool_called for a handoff too (wrapping the
 				// transfer_to_X call); it has no tool_output, so a run.tool_call
 				// here would leave a tool card spinning forever. run.handoff already
@@ -875,30 +875,26 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 				})
 			}
 		case "tool_output":
-			if to, ok := e.Item.(*agents.ToolCallOutputItem); ok {
-				callID := ""
-				if fco := to.Raw.OfFunctionCallOutput; fco != nil {
-					callID = fco.CallID
-				}
+			if e.Item.Kind == agents.ItemToolCallOutput {
 				send(protocol.EventRunToolResult, protocol.RunToolResult{
 					RunID:      runID,
-					ToolCallID: callID,
-					Output:     fmt.Sprintf("%v", to.Output),
+					ToolCallID: e.Item.CallID(),
+					Output:     fmt.Sprintf("%v", e.Item.Output),
 				})
 			}
 		case "handoff_requested":
-			if hc, ok := e.Item.(*agents.HandoffCallItem); ok {
+			if e.Item.Kind == agents.ItemHandoffCall && e.Item.Agent != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
 					RunID: runID,
-					From:  hc.AgentRef().Name,
+					From:  e.Item.Agent.Name,
 				})
 			}
 		case "handoff_occured":
-			if ho, ok := e.Item.(*agents.HandoffOutputItem); ok {
+			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
 					RunID: runID,
-					From:  ho.SourceAgent.Name,
-					To:    ho.TargetAgent.Name,
+					From:  e.Item.HandoffFrom.Name,
+					To:    e.Item.HandoffTo.Name,
 				})
 			}
 		}
@@ -942,4 +938,13 @@ func stopAtTools(names []string) func(context.Context, *agents.TurnResult) (bool
 		}
 		return false, nil
 	}
+}
+
+// rawItemID returns the model-assigned id of the item's raw form, or "" when
+// the item carries none (a rebuilt or synthesized item).
+func rawItemID(it *agents.RunItem) string {
+	if it.Raw == nil {
+		return ""
+	}
+	return it.Raw.ID
 }

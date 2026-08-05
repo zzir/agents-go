@@ -130,9 +130,23 @@ conversation never received them.
 
 ### 2.1b Items ✅
 
-Every `RunItem` reports two things beyond its payload:
+**`RunItem` is one struct with a `Kind`, not an interface.** The kinds are a
+closed set the runner produces — message, tool call, tool output, handoff
+call/output, reasoning, injected input, unknown — and a caller cannot add one,
+which is the definition of a union, not of a polymorphic seam. As an interface
+it took seven near-identical implementations (five were `{Agent, Raw}` plus a
+tag) restating six methods each, and serialization still had to flatten them:
+a stored `RunState` holds `{type, agent, input, source, display}`, and reading
+it back required an eighth, unexported implementation whose only job was to
+carry those fields. The struct IS that shape, live and stored.
 
-- **`Source()` — who produced it.** The zero value is the model.
+Consumers switch on `Kind` and must treat an unrecognized kind as opaque —
+render it via `Display()`, never fail — so the set can grow without breaking
+them.
+
+Beyond its payload, every item reports two things:
+
+- **`Source` — who produced it.** The zero value is the model.
   `IsExternal()` separates what came from outside the SDK (the model, the
   caller) from what the runner synthesized (a tool output, a handoff
   acknowledgement, an error handler's fallback). The runner uses it to decide
@@ -149,10 +163,12 @@ Every `RunItem` reports two things beyond its payload:
   `ItemDisplay` free to gain fields without breaking anyone.
 
 Both survive `RunState` serialization, so a resumed run reports the same
-provenance and renders the same timeline as before the pause.
+provenance and renders the same timeline as before the pause. A rebuilt item
+carries its replayed input form (`RawInput`) and stored display; `Raw` is nil —
+a resume replays history from input items, which is all it needs.
 
 **An unknown output item is kept, never dropped.** ✅ A model output type this
-SDK does not model becomes an `UnknownOutputItem` carrying the original bytes,
+SDK does not model becomes an `ItemUnknown` run item carrying the original bytes,
 and goes back on the wire byte for byte on the next turn. Dropping it is not
 "ignoring a feature" — the next turn resends a history the model does not
 recognize as its own.
@@ -998,7 +1014,7 @@ A response the provider marks `status="incomplete"` with reason
 - A backend that returns **no response id** still has its usage recorded, on
   the batch's last entry.
 - **Nested usage is separate.** `SessionEntry.NestedUsage` and
-  `ToolCallOutputItem.NestedUsage` hold what a tool spent on model calls of its
+  `RunItem.NestedUsage` hold what a tool spent on model calls of its
   own. It is not merged into `Usage`, because the two answer different
   questions: a nested run's tokens were spent on a different conversation, and
   counting them as context would make this one look larger than anything ever
@@ -1783,7 +1799,7 @@ in-repo providers run it):
 - **Output items** are canonical items whose `RawJSON()` is non-empty wire
   JSON — `agents.OutputToInput` and session persistence depend on it. The
   types the runner models are `message` / `reasoning` / `function_call`;
-  anything else rides through as `UnknownOutputItem`.
+  anything else rides through as an `ItemUnknown` run item.
 - **Stream vocabulary** is `response.*` only. The first event is
   `response.created`; each finished item gets one `response.output_item.done`
   (in order); the terminal event is `response.completed` or
@@ -1965,23 +1981,6 @@ When a new case comes up that this document does not answer, add it here with
 the options under consideration. Implementing it means moving it out of this
 section and into §2 in the same change.
 
-### 6.1 `RunItem` is a closed union of seven near-identical types
-
-`RunItem` is sealed by `isRunItem()`, so it is a closed union, not a
-polymorphic seam: nothing outside the package can implement it. The seven
-members are all `{Agent, Raw}` plus at most a few fields, and each restates six
-methods — 42 method bodies, most of them one line. `ItemType()` returns a
-string constant, which is a hand-written tag. Serialization already fights the
-shape: `rawInputRunItem` exists as an eighth, fake member so a resumed
-`RunState` has something to rebuild into.
-
-Options: a struct with a `Kind` field (methods become functions, the fake
-member disappears); keep the interface and accept the restatement.
-
-Measured, so the trade is not guesswork: outside tests, the concrete types are
-asserted 7 times, `case *MessageOutputItem` appears twice, and `Display()` is
-called twice.
-
 ### 6.2 Two parallel error classifications
 
 Errors carry both an exception-style hierarchy (`AgentsError` embedded into six
@@ -2011,8 +2010,8 @@ Options: carry a `*RunResult` on the error; keep both and document the split.
 largest package in the repo. The session/entry layer (`session_*.go`) and the
 run loop (`run_*.go`) are only weakly coupled and could separate.
 
-This is deliberately last: [§6.1](#61-runitem-is-a-closed-union-of-seven-near-identical-types)
-and [§6.2](#62-two-parallel-error-classifications) both delete files, and
+This is deliberately last: [§6.2](#62-two-parallel-error-classifications) and
+[§6.3](#63-runerrordetails-duplicates-runresult) both delete code, and
 splitting first would move the same code twice.
 
 ---

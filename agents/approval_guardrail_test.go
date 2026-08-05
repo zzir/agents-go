@@ -130,7 +130,7 @@ func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
 	}
 	var found bool
 	for _, it := range res.NewItems {
-		if o, ok := it.(*ToolCallOutputItem); ok && o.Output == "blocked by policy" {
+		if it.Kind == ItemToolCallOutput && it.Output == "blocked by policy" {
 			found = true
 		}
 	}
@@ -240,10 +240,10 @@ func detailsAgent(t *testing.T, result func() (ToolResult, error)) *Agent {
 	return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 }
 
-func findToolOutput(items []RunItem) *ToolCallOutputItem {
+func findToolOutput(items []*RunItem) *RunItem {
 	for _, it := range items {
-		if o, ok := it.(*ToolCallOutputItem); ok {
-			return o
+		if it.Kind == ItemToolCallOutput {
+			return it
 		}
 	}
 	return nil
@@ -387,7 +387,7 @@ func TestDetails_SurviveRunStateRoundTrip(t *testing.T) {
 	if got := out.Display().Extra["k"]; got != "v" {
 		t.Errorf("Display().Extra = %v, want the extractor's data", got)
 	}
-	if src := out.Source(); src.Type != SourceTool {
+	if src := out.Source; src.Type != SourceTool {
 		t.Errorf("restored tool output source = %v, want tool", src)
 	}
 

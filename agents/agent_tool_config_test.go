@@ -190,7 +190,8 @@ func TestAgentToolInheritsRunLevelInputGuardrails(t *testing.T) {
 func lastToolOutputText(t *testing.T, res *RunResult) string {
 	t.Helper()
 	for i := len(res.NewItems) - 1; i >= 0; i-- {
-		if it, ok := res.NewItems[i].(*ToolCallOutputItem); ok {
+		if res.NewItems[i].Kind == ItemToolCallOutput {
+			it := res.NewItems[i]
 			if s, ok := it.Output.(string); ok {
 				return s
 			}
