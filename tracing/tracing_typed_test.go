@@ -48,3 +48,39 @@ func TestTypedSpanConstructors(t *testing.T) {
 		t.Errorf("untyped span Type = %q, want empty", u.Span.Type)
 	}
 }
+
+// Both span constructors copy the caller's data, so whether a map may still be
+// touched afterwards does not depend on which one was used.
+func TestStartTypedSpan_CopiesCallerData(t *testing.T) {
+	tr := NewTracer(&captureProc{}).StartTrace("wf")
+	defer tr.Finish()
+
+	data := map[string]any{"server": "fs"}
+	sp := tr.StartSpan("mcp", "").StartTypedSpan("list_tools", "mcp_tools", data)
+	data["server"] = "changed"
+
+	if got := sp.Span.Data["server"]; got != "fs" {
+		t.Errorf("Data[\"server\"] = %v, want the value at start", got)
+	}
+}
+
+// A finished span belongs to the processor, whose exporter goroutine reads its
+// Data map; a late Set is dropped rather than raced.
+func TestSpanHandle_IgnoresWritesAfterFinish(t *testing.T) {
+	tr := NewTracer(&captureProc{}).StartTrace("wf")
+	defer tr.Finish()
+
+	sp := tr.StartGenerationSpan("gpt-4o", "")
+	sp.Set("response_id", "resp_1")
+	sp.Finish()
+
+	sp.Set("response_id", "resp_2")
+	sp.SetError("too late", nil)
+
+	if got := sp.Span.Data["response_id"]; got != "resp_1" {
+		t.Errorf("Data[\"response_id\"] = %v, want the value set before Finish", got)
+	}
+	if sp.Span.Error != nil {
+		t.Errorf("Error = %+v, want none: it was recorded after Finish", sp.Span.Error)
+	}
+}

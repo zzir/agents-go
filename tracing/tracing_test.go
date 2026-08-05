@@ -3,6 +3,7 @@ package tracing
 import (
 	"context"
 	"regexp"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -148,6 +149,40 @@ func TestBatchProcessor_DropsWhenQueueFull(t *testing.T) {
 	}
 	if p.Dropped() != 7 {
 		t.Errorf("expected 7 dropped (10 - queue 3), got %d", p.Dropped())
+	}
+}
+
+// Dropping is the one thing a host cannot notice on its own — nothing in the
+// SDK reads Dropped, and the SDK does not log — so OnDrop must fire.
+func TestBatchProcessor_OnDropReportsEveryDrop(t *testing.T) {
+	var mu sync.Mutex
+	var totals []int
+	p := NewBatchProcessor(&CollectingExporter{}, BatchProcessorOptions{
+		FlushInterval: time.Hour, MaxQueueSize: 1, MaxBatchSize: 100,
+		OnDrop: func(dropped int) {
+			mu.Lock()
+			defer mu.Unlock()
+			totals = append(totals, dropped)
+		},
+	})
+
+	for range 3 {
+		p.OnSpanEnd(&Span{SpanID: "s"})
+	}
+	mu.Lock()
+	got := slices.Clone(totals)
+	mu.Unlock()
+	if !slices.Equal(got, []int{1, 2}) {
+		t.Errorf("OnDrop saw %v, want the running total for each of the 2 drops", got)
+	}
+
+	// A span that arrives once the exporter is gone is dropped too, and says so.
+	p.Shutdown(context.Background())
+	p.OnSpanEnd(&Span{SpanID: "late"})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(totals) != 3 || totals[2] != 3 {
+		t.Errorf("OnDrop saw %v, want a third drop after shutdown", totals)
 	}
 }
 

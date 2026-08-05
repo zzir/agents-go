@@ -112,10 +112,12 @@ func NewAgentServer(a *agents.Agent, runOpts agents.RunOptions, opts ServeOption
 	if a == nil {
 		return nil, fmt.Errorf("mcp: NewAgentServer requires an agent")
 	}
-	opts = opts.withDefaults()
-	if opts.Name == "agents-go" && a.Name != "" {
+	// The agent names the server when the caller did not — before withDefaults,
+	// so a caller who explicitly asks for the default name keeps it.
+	if opts.Name == "" {
 		opts.Name = a.Name
 	}
+	opts = opts.withDefaults()
 
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    opts.Name,

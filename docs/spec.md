@@ -1493,6 +1493,15 @@ was ending:
 - `StartSpanFrom` returns a **usable no-op handle** without a trace, so an
   instrumented call site never branches and an uninstrumented-context caller
   behaves exactly as before.
+- **A finished span belongs to the processor.** `Set` and `SetError` after
+  `Finish` are ignored, not applied: from that moment the background exporter
+  reads the span, so a late write would be a data race rather than a
+  correction.
+- **A dropped span is announced through `BatchProcessorOptions.OnDrop`.** The
+  processor's queue is bounded, so telemetry is lost under load and after
+  `Shutdown`; the SDK does not write to `slog.Default()` on its own
+  ([§2.11c](#211c-logging-)), which leaves a host-installed callback as the
+  only channel that can say so. `Dropped()` remains the cumulative counter.
 - The runner installs the generation span as parent for the model call (retries
   nest under it) and the function span for a tool invocation (MCP and sandbox
   work nests under the call that caused it).

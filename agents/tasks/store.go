@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 )
@@ -279,11 +280,8 @@ func (s *InMemoryStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tasks, id)
-	for i, v := range s.order {
-		if v == id {
-			s.order = append(s.order[:i], s.order[i+1:]...)
-			break
-		}
+	if i := slices.Index(s.order, id); i >= 0 {
+		s.order = slices.Delete(s.order, i, i+1)
 	}
 	return nil
 }

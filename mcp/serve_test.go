@@ -157,6 +157,29 @@ func TestServeAgent_ExposesOneAskTool(t *testing.T) {
 	}
 }
 
+// The agent names the server only when the caller did not: "agents-go" is the
+// default, and a default a caller may legitimately ask for cannot double as
+// "nothing was set".
+func TestServeAgent_NamesTheServer(t *testing.T) {
+	agent := &agents.Agent{Name: "Research Bot", ModelImpl: &scriptedModel{text: "hi"}}
+
+	for _, tc := range []struct {
+		asked, want string
+	}{
+		{asked: "", want: "Research Bot"},
+		{asked: "agents-go", want: "agents-go"},
+		{asked: "editor-tools", want: "editor-tools"},
+	} {
+		srv, err := mcp.NewAgentServer(agent, agents.RunOptions{}, mcp.ServeOptions{Name: tc.asked})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := connect(t, srv).InitializeResult().ServerInfo.Name; got != tc.want {
+			t.Errorf("ServeOptions{Name: %q} served as %q, want %q", tc.asked, got, tc.want)
+		}
+	}
+}
+
 func TestServeAgent_RunFailureIsAResult(t *testing.T) {
 	ctx := context.Background()
 	agent := &agents.Agent{Name: "a", ModelImpl: &scriptedModel{err: errors.New("provider down")}}

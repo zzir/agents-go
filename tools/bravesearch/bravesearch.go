@@ -11,6 +11,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,31 +58,25 @@ type Options struct {
 // New returns a function tool named "brave_search". It returns an error if no
 // API key is available (neither Options.APIKey nor BRAVE_API_KEY is set).
 func New(opts Options) (*agents.Tool, error) {
-	apiKey := opts.APIKey
-	if apiKey == "" {
-		apiKey = os.Getenv("BRAVE_API_KEY")
-	}
-	if apiKey == "" {
+	opts.APIKey = cmp.Or(opts.APIKey, os.Getenv("BRAVE_API_KEY"))
+	if opts.APIKey == "" {
 		return nil, fmt.Errorf("bravesearch: no API key (set Options.APIKey or BRAVE_API_KEY)")
 	}
 
-	count := opts.Count
 	switch {
-	case count <= 0:
-		count = 5
-	case count > 20:
-		count = 20
+	case opts.Count <= 0:
+		opts.Count = 5
+	case opts.Count > 20:
+		opts.Count = 20
 	}
 
-	endpoint := opts.Endpoint
-	endpoint = cmp.Or(endpoint, defaultEndpoint)
+	opts.Endpoint = cmp.Or(opts.Endpoint, defaultEndpoint)
 
-	client := opts.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+	if opts.HTTPClient == nil {
+		opts.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	c := &caller{client: client, endpoint: endpoint, apiKey: apiKey, count: count, opts: opts}
+	c := &caller{opts: opts}
 	return agents.NewTool("brave_search",
 		"Search the web with the Brave Search API and return the top results (title, URL, description).",
 		c.run), nil
@@ -91,28 +86,26 @@ type searchArgs struct {
 	Query string `json:"query" jsonschema:"the web search query"`
 }
 
-// caller holds the resolved configuration for one tool instance.
+// caller holds the configuration for one tool instance. New resolves every
+// default into the Options value, so this is the single source of truth for
+// what a request carries.
 type caller struct {
-	client   *http.Client
-	endpoint string
-	apiKey   string
-	count    int
-	opts     Options
+	opts Options
 }
 
 func (c *caller) run(ctx context.Context, _ *agents.ToolContext, args searchArgs) (string, error) {
 	query := strings.TrimSpace(args.Query)
 	if query == "" {
-		return "", fmt.Errorf("query must not be empty")
+		return "", errors.New("bravesearch: query must not be empty")
 	}
 
-	u, err := url.Parse(c.endpoint)
+	u, err := url.Parse(c.opts.Endpoint)
 	if err != nil {
 		return "", fmt.Errorf("bravesearch: bad endpoint: %w", err)
 	}
 	qs := u.Query()
 	qs.Set("q", query)
-	qs.Set("count", strconv.Itoa(c.count))
+	qs.Set("count", strconv.Itoa(c.opts.Count))
 	if c.opts.Country != "" {
 		qs.Set("country", c.opts.Country)
 	}
@@ -132,9 +125,9 @@ func (c *caller) run(ctx context.Context, _ *agents.ToolContext, args searchArgs
 		return "", err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", c.apiKey)
+	req.Header.Set("X-Subscription-Token", c.opts.APIKey)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.opts.HTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("bravesearch: request failed: %w", err)
 	}

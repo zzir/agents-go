@@ -129,7 +129,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 				// the model should hear the terminal state rather than an error
 				// it might retry.
 				var final ErrAlreadyFinal
-				if info != nil && asAlreadyFinal(err, &final) {
+				if info != nil && errors.As(err, &final) {
 					r := taskResult(info)
 					r.IsError = true
 					return r, nil
@@ -173,8 +173,4 @@ func describe(info *Info) string {
 		out += "\nresult: " + info.Summary
 	}
 	return out
-}
-
-func asAlreadyFinal(err error, target *ErrAlreadyFinal) bool {
-	return errors.As(err, target)
 }

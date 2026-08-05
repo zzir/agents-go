@@ -13,9 +13,19 @@ type BatchProcessorOptions struct {
 	MaxBatchSize int
 	// FlushInterval is how often the background goroutine flushes. Default 5s.
 	FlushInterval time.Duration
-	// MaxQueueSize bounds the buffer; items beyond it are dropped (and counted).
+	// MaxQueueSize bounds the buffer; items beyond it are dropped and counted.
 	// Default 8192.
 	MaxQueueSize int
+	// OnDrop, when set, is called every time an item is dropped, with the
+	// running total. Losing telemetry is otherwise silent: Dropped is a counter
+	// nobody is obliged to read, and the SDK never writes to slog.Default() of
+	// its own accord (spec §2.11c), so this is the host's one chance to hear
+	// about it.
+	//
+	// It runs on the goroutine that finished the span, outside the processor's
+	// lock, so under concurrent drops the totals can arrive out of order. What
+	// it must not be is slow: whatever drops one item usually drops thousands.
+	OnDrop func(dropped int)
 }
 
 // BatchProcessor buffers finished traces and spans and exports them in batches
@@ -64,7 +74,11 @@ func (p *BatchProcessor) enqueue(item Item) {
 	p.mu.Lock()
 	if p.shutdown || len(p.queue) >= p.opts.MaxQueueSize {
 		p.dropped++
+		dropped := p.dropped
 		p.mu.Unlock()
+		if p.opts.OnDrop != nil {
+			p.opts.OnDrop(dropped)
+		}
 		return
 	}
 	p.queue = append(p.queue, item)
@@ -134,7 +148,8 @@ func (p *BatchProcessor) ForceFlush() { p.flush() }
 // the context is cancelled first, it returns without waiting for the goroutine.
 // Items arriving after Shutdown are dropped, and counted: telemetry that
 // arrives once the exporter is gone has nowhere to go, and blocking a caller
-// on a shut-down processor would be worse than losing a span.
+// on a shut-down processor would be worse than losing a span. Those drops
+// reach OnDrop like any other.
 func (p *BatchProcessor) Shutdown(ctx context.Context) {
 	p.mu.Lock()
 	p.shutdown = true

@@ -328,3 +328,17 @@ func TestResultOutput_StructuredContentScalarIsUsed(t *testing.T) {
 		t.Errorf("output = %q, want the structured scalar \"42\"", got)
 	}
 }
+
+// A client's Tool carries the server's schema as a map the SDK decoded and
+// still owns; filling in the "properties" OpenAI requires must not write back
+// into it.
+func TestSchemaToMap_LeavesTheInputAlone(t *testing.T) {
+	orig := map[string]any{"type": "object"}
+	got := schemaToMap(orig)
+	if _, ok := orig["properties"]; ok {
+		t.Errorf("the input schema was mutated: %v", orig)
+	}
+	if _, ok := got["properties"]; !ok {
+		t.Errorf("schema = %v, want a properties key", got)
+	}
+}

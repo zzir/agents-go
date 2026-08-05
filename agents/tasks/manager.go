@@ -96,8 +96,10 @@ type Manager struct {
 	cfg Config
 	log *slog.Logger
 
-	// waiters wakes task_status callers when a task finishes, so a wait costs
-	// one blocked goroutine rather than a polling loop.
+	// waiters wakes task_status callers the moment this Manager finalizes a
+	// task. It makes the wait prompt rather than authoritative: another process
+	// can be the writer, so awaitFinish also re-reads the store on a short
+	// timer.
 	mu      sync.Mutex
 	waiters map[string][]chan struct{}
 

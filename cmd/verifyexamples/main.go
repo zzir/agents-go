@@ -17,12 +17,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -45,6 +48,12 @@ var skips = map[string]string{
 const perExample = 60 * time.Second
 
 func main() {
+	os.Exit(run())
+}
+
+// run is main's body, returning the exit code rather than calling os.Exit, so
+// that the signal handler installed below is released on every path out.
+func run() int {
 	verbose := flag.Bool("v", false, "print each example's output")
 	flag.Parse()
 
@@ -60,6 +69,13 @@ func main() {
 	if len(names) == 0 {
 		fail("no examples found under %s/examples", root)
 	}
+
+	// Each example runs in its own process group (see setProcessGroup), so the
+	// terminal no longer delivers Ctrl-C to it along with us. Cancelling on the
+	// signal ourselves is what still takes the group down, instead of leaving
+	// the example behind as an orphan.
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
+	defer stop()
 
 	var failed, skipped, ran int
 	for _, name := range names {
@@ -81,8 +97,15 @@ func main() {
 			}
 			responses.ServeHTTP(w, r)
 		}))
-		out, err := runExample(root, name, srv.URL)
+		out, err := runExample(ctx, root, name, srv.URL)
 		srv.Close()
+		if ctx.Err() != nil {
+			// We killed this one ourselves, so its exit status says nothing
+			// about the example — and every example after it would report the
+			// same. Stop here rather than manufacture a wall of failures.
+			fmt.Printf("\ninterrupted while running %s\n", name)
+			return 1
+		}
 		if err != nil {
 			fmt.Printf("FAIL %-16s %v\n", name, err)
 			fmt.Printf("     ---- output ----\n%s\n", indent(out))
@@ -98,19 +121,23 @@ func main() {
 
 	fmt.Printf("\n%d ran, %d skipped, %d failed\n", ran, skipped, failed)
 	if failed > 0 {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func runExample(root, name, baseURL string) (string, error) {
+func runExample(ctx context.Context, root, name, baseURL string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, perExample)
+	defer cancel()
+
 	// An example with its own go.mod (one that needs a dependency the core must
 	// not carry) runs from its own directory. Skipping those would quietly
 	// shrink coverage exactly where the wiring is most unusual.
 	dir := filepath.Join(root, "examples", name)
-	cmd := exec.Command("go", "run", ".")
+	cmd := exec.CommandContext(ctx, "go", "run", ".")
 	cmd.Dir = dir
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
-		cmd = exec.Command("go", "run", "./examples/"+name)
+		cmd = exec.CommandContext(ctx, "go", "run", "./examples/"+name)
 		cmd.Dir = root
 	}
 	cmd.Env = append(os.Environ(),
@@ -131,22 +158,18 @@ func runExample(root, name, baseURL string) (string, error) {
 		"ANTHROPIC_AUTH_TOKEN=",
 	)
 
-	done := make(chan struct{})
-	var out []byte
-	var runErr error
-	go func() {
-		out, runErr = cmd.CombinedOutput()
-		close(done)
-	}()
+	// `go run` compiles and then execs the example as its own child, so killing
+	// the timed-out process alone leaves the example itself running — and a
+	// hanging example is precisely what this tool is here to catch. The group
+	// dies together instead; WaitDelay bounds the wait in case something still
+	// holds the output pipe.
+	setProcessGroup(cmd)
+	cmd.WaitDelay = 5 * time.Second
 
-	select {
-	case <-done:
-	case <-time.After(perExample):
-		_ = cmd.Process.Kill()
-		<-done
+	out, runErr := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return string(out), fmt.Errorf("timed out after %s", perExample)
 	}
-
 	if runErr != nil {
 		return string(out), fmt.Errorf("exited non-zero: %w", runErr)
 	}

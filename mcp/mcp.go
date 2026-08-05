@@ -531,9 +531,14 @@ func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
 }
 
 // schemaToMap normalizes the MCP input schema (an any) into a map[string]any.
+// The result is always a map this package owns: the schema travels on the
+// go-sdk's own tool object, and the "properties" fill-in below must not write
+// back into it.
 func schemaToMap(schema any) map[string]any {
 	m, ok := schema.(map[string]any)
-	if !ok {
+	if ok {
+		m = deepCopySchema(m)
+	} else {
 		// Round-trip through JSON for other representations (e.g. json.RawMessage).
 		raw, err := json.Marshal(schema)
 		if err != nil {

@@ -149,9 +149,11 @@ func (h *SpanHandle) StartSpan(name string) *SpanHandle {
 	return &SpanHandle{Span: sp, tracer: h.tracer}
 }
 
-// Set attaches a key/value to the span's data.
+// Set attaches a key/value to the span's data. It is ignored after Finish:
+// the finished Span belongs to the processor, and writing to it would race the
+// background export that reads it.
 func (h *SpanHandle) Set(key string, value any) {
-	if h == nil || h.Span == nil {
+	if h == nil || h.Span == nil || h.finished.Load() {
 		return
 	}
 	if h.Span.Data == nil {
@@ -160,9 +162,9 @@ func (h *SpanHandle) Set(key string, value any) {
 	h.Span.Data[key] = value
 }
 
-// SetError records an error on the span.
+// SetError records an error on the span. Like Set, it is ignored after Finish.
 func (h *SpanHandle) SetError(message string, data map[string]any) {
-	if h == nil || h.Span == nil {
+	if h == nil || h.Span == nil || h.finished.Load() {
 		return
 	}
 	h.Span.Error = &SpanError{Message: message, Data: data}
@@ -187,9 +189,8 @@ func (h *SpanHandle) StartTypedSpan(name, spanType string, data map[string]any) 
 	if h == nil || h.tracer == nil || h.Span == nil {
 		return &SpanHandle{}
 	}
-	if data == nil {
-		data = map[string]any{}
-	}
+	d := map[string]any{}
+	maps.Copy(d, data)
 	sp := &Span{
 		TraceID:   h.Span.TraceID,
 		SpanID:    NewSpanID(),
@@ -197,7 +198,7 @@ func (h *SpanHandle) StartTypedSpan(name, spanType string, data map[string]any) 
 		Name:      name,
 		Type:      spanType,
 		StartedAt: Now(),
-		Data:      data,
+		Data:      d,
 	}
 	h.tracer.proc.OnSpanStart(sp)
 	return &SpanHandle{Span: sp, tracer: h.tracer}
