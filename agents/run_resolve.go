@@ -42,7 +42,12 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 // and augmented with the tools exposed by the agent's MCP servers.
 func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*FunctionTool, error) {
 	out := make([]*FunctionTool, 0, len(agent.Tools))
-	for _, t := range agent.Tools {
+	for i, t := range agent.Tools {
+		// A nil entry is a construction bug (a conditional append gone wrong);
+		// name it instead of panicking on the first field read.
+		if t == nil {
+			return nil, NewUserError("agent %q: Tools[%d] is nil", agent.Name, i)
+		}
 		enabled, err := t.enabled(ctx, r.rc, agent)
 		if err != nil {
 			return nil, err
