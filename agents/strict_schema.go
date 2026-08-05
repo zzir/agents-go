@@ -1,9 +1,11 @@
 package agents
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -244,6 +246,17 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 	}
 
 	return nil
+}
+
+// sortAnyStrings sorts a slice of any whose elements are strings, in place.
+// It keeps generated "required" lists deterministic (Go's json.Marshal already
+// sorts map keys, so this keeps required aligned with properties).
+func sortAnyStrings(s []any) {
+	slices.SortFunc(s, func(a, b any) int {
+		as, _ := a.(string)
+		bs, _ := b.(string)
+		return cmp.Compare(as, bs)
+	})
 }
 
 func resolveRef(root map[string]any, ref string) (map[string]any, error) {

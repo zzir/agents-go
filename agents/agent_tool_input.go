@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -152,11 +153,7 @@ func summarizeJSONSchema(schema map[string]any) string {
 	description, _ := schema["description"].(string)
 	hasDescription := description != ""
 
-	names := make([]string, 0, len(props))
-	for name := range props {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(props))
 
 	var lines []string
 	if description != "" {

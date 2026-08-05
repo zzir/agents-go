@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 )
 
 // nextStepKind enumerates what the runner should do after a single turn.
@@ -343,7 +344,7 @@ func (r *runner) executeToolsAndSideEffects(
 				if refusal := lastMessage.refusal(); refusal != "" {
 					refErr := &ModelRefusalError{Refusal: refusal}
 					rec, herr := r.resolveErrorRecovery(ctx, "model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr, agent,
-						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
+						originalInput, slices.Concat(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {
 						return nil, herr
 					}
@@ -364,7 +365,7 @@ func (r *runner) executeToolsAndSideEffects(
 					if err != nil {
 						mbErr := NewModelBehaviorError("failed to parse structured output: %v", err)
 						rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
-							originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
+							originalInput, slices.Concat(preStepItems, newStepItems), []*ModelResponse{resp})
 						if herr != nil {
 							return nil, herr
 						}
@@ -381,7 +382,7 @@ func (r *runner) executeToolsAndSideEffects(
 					// handler, or run the model again — never a hard failure.
 					mbErr := NewModelBehaviorError("model returned no final output for the structured output type")
 					rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
-						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
+						originalInput, slices.Concat(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {
 						return nil, herr
 					}
@@ -464,15 +465,6 @@ func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []*RunIte
 		}
 		out = append(out, f)
 	}
-	return out
-}
-
-// concatRunItems returns a fresh slice of pre followed by post, for the
-// RunErrorData snapshot handed to error handlers.
-func concatRunItems(pre, post []*RunItem) []*RunItem {
-	out := make([]*RunItem, 0, len(pre)+len(post))
-	out = append(out, pre...)
-	out = append(out, post...)
 	return out
 }
 

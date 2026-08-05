@@ -294,15 +294,12 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 		s.deliver(item)
 	}
 
-	var once sync.Once
-	cancel := func() {
-		once.Do(func() {
-			f.mu.Lock()
-			delete(f.subs, s.id)
-			f.mu.Unlock()
-			close(s.done)
-		})
-	}
+	cancel := sync.OnceFunc(func() {
+		f.mu.Lock()
+		delete(f.subs, s.id)
+		f.mu.Unlock()
+		close(s.done)
+	})
 
 	// emitFinalGap reports drops that never got a later delivery to ride out
 	// on. Without it the last stretch of loss is silent, and a consumer cannot

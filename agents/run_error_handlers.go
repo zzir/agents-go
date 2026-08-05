@@ -13,7 +13,8 @@ type RunErrorData struct {
 	// Input is the run's original input (after session history was prepended
 	// and any handoff input filter was applied).
 	Input []InputItem
-	// NewItems are the items generated so far.
+	// NewItems are the items generated so far. It is nil when the run failed
+	// before generating anything.
 	NewItems []*RunItem
 	// History is Input followed by Output: the full conversation as the next
 	// model call would have seen it.

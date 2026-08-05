@@ -1,9 +1,6 @@
 package agents
 
-import (
-	"fmt"
-	"sort"
-)
+import "fmt"
 
 // ToolLoopPolicy bounds the tool loop.
 //
@@ -143,18 +140,4 @@ func (r *runner) discloseTools(results []functionToolResult) {
 			r.disclosed[name] = true
 		}
 	}
-}
-
-// sortedKeys returns a set's members in a stable order, so serialized state
-// does not churn between otherwise identical runs.
-func sortedKeys(m map[string]bool) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

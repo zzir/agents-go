@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -51,8 +50,8 @@ Keep the list current; it is how your progress is tracked.`
 type Todo struct {
 	// Instructions overrides the todo preamble (empty = DefaultTodoInstructions).
 	Instructions string
-	// OnUpdate fires after each accepted todo_write with a copy of the full
-	// current list. Optional.
+	// OnUpdate fires after each accepted todo_write with the full current
+	// list, which the middleware does not retain. Optional.
 	OnUpdate func(ctx context.Context, items []TodoItem)
 }
 
@@ -75,10 +74,6 @@ func (td Todo) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput)
 // resume rebuilds the agent from a registry, which must carry todo_write for
 // the paused state's calls to dispatch).
 func (td Todo) Apply(agent *agents.Agent) *agents.Agent {
-	// Per-apply list; a mutex because tools may run concurrently within a turn.
-	var mu sync.Mutex
-	var items []TodoItem
-
 	out := agent.Clone()
 	tool := agents.NewTool(TodoToolName,
 		"Replace your todo list. Send the COMPLETE list every time — items you omit are dropped.",
@@ -101,13 +96,10 @@ func (td Todo) Apply(agent *agents.Agent) *agents.Agent {
 				next = append(next, TodoItem{Content: it.Content, Status: status})
 				counts[status]++
 			}
-			mu.Lock()
-			items = next
-			snapshot := make([]TodoItem, len(items))
-			copy(snapshot, items)
-			mu.Unlock()
 			if td.OnUpdate != nil {
-				td.OnUpdate(ctx, snapshot)
+				// next is this call's own slice, so the hook gets a list
+				// nothing else holds — no copy needed.
+				td.OnUpdate(ctx, next)
 			}
 			return fmt.Sprintf("Todo list updated: %d items (%d completed, %d in progress, %d pending).",
 				len(next), counts[TodoCompleted], counts[TodoInProgress], counts[TodoPending]), nil

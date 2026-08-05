@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // fakeModel is a scripted Model for testing the runner without a real API. Each
@@ -520,5 +522,69 @@ func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 	case <-model.cancelled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("model call was not cancelled by the tripwire")
+	}
+}
+
+// storeRecordingStorage is an in-memory storage that also records the
+// CompactionArgs the runner hands it.
+type storeRecordingStorage struct {
+	*session.InMemoryStorage
+	args []session.CompactionArgs
+}
+
+func (s *storeRecordingStorage) RunCompaction(_ context.Context, args session.CompactionArgs) error {
+	s.args = append(s.args, args)
+	return nil
+}
+
+// Compaction is told the Store setting the last model call actually carried.
+// A turn hook can replace the whole snapshot, so re-resolving it from the agent
+// would report store=true for a response the provider was told not to keep, and
+// a self-compacting storage would compact against a response id the server does
+// not hold.
+func TestCompaction_StoreComesFromTheRequestNotTheAgent(t *testing.T) {
+	tool := NewTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "ok", nil
+	})
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
+		modelResp(messageOutput(t, "done")),
+	}}
+	stored := true
+	agent := &Agent{
+		Name:          "a",
+		Tools:         []*Tool{tool},
+		ModelImpl:     model,
+		ModelSettings: &ModelSettings{Store: &stored},
+	}
+
+	storage := &storeRecordingStorage{InMemoryStorage: session.NewInMemoryStorage("test")}
+	notStored := false
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: session.NewSession(storage)},
+		Exec: ExecOptions{PrepareNextTurn: func(_ context.Context, tr *TurnResult) (*TurnSnapshot, error) {
+			next := *tr.Snapshot
+			next.Settings = &ModelSettings{Store: &notStored}
+			return &next, nil
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := model.lastReq.Settings
+	if s == nil || s.Store == nil {
+		t.Fatal("the last request carried no Store setting, want the prepared false")
+	}
+	if *s.Store {
+		t.Fatal("the last request's Store = true, want the prepared false")
+	}
+	if len(storage.args) != 1 {
+		t.Fatalf("RunCompaction calls = %d, want 1", len(storage.args))
+	}
+	switch got := storage.args[0].Store; {
+	case got == nil:
+		t.Error("compaction Store is unset, want the false the request carried")
+	case *got:
+		t.Error("compaction Store = true, want the false the request carried")
 	}
 }

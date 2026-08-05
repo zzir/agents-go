@@ -36,7 +36,8 @@ type Evaluator func(ctx context.Context, res *agents.RunResult) (Evaluation, err
 // Each attempt streams through, so a caller watching the run sees the rejected
 // answers and the feedback, not a long silence followed by the accepted one.
 type Loop struct {
-	// Evaluate judges each attempt. Required.
+	// Evaluate judges each attempt. A nil evaluator accepts the first
+	// attempt, which makes the middleware a pass-through.
 	Evaluate Evaluator
 	// MaxAttempts bounds the loop. Zero means 3 — an evaluator that never
 	// accepts would otherwise run forever on the caller's budget.

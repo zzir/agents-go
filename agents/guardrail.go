@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"slices"
 )
 
 // GuardrailStage identifies where in a run a guardrail is consulted.
@@ -135,12 +136,7 @@ type Guardrail struct {
 
 // Covers reports whether the guardrail participates in the given stage.
 func (g Guardrail) Covers(stage GuardrailStage) bool {
-	for _, s := range g.Stages {
-		if s == stage {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(g.Stages, stage)
 }
 
 // resolvedName returns the guardrail's Name, falling back to a stable label

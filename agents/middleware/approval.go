@@ -54,7 +54,8 @@ func AllowTools(names ...string) ApprovalPolicy {
 // call in the batch: an interruption is per-turn, and approving half of one
 // while a human decides the rest would run tools the human has not seen yet.
 type Approval struct {
-	// Policy decides. Required.
+	// Policy decides. A nil policy settles nothing, so every interruption
+	// reaches the caller as if the middleware were not there.
 	Policy ApprovalPolicy
 	// MaxResumes bounds how many times the middleware resumes one run. Zero
 	// means 25 — a policy that keeps approving a tool that keeps being called

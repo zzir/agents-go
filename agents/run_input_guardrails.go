@@ -11,6 +11,13 @@ import (
 // Blocking guardrails gate the model call, non-blocking ones race it. The
 // semantics live in spec.md §2.6; the loop in run.go only sequences the two.
 
+// errServerManagedReplace is what a Replace verdict gets when the conversation
+// is server-managed: the history it would rewrite lives on the server, so both
+// the blocking and the racing path have to fail rather than claim a
+// replacement that reaches nothing.
+const errServerManagedReplace = "input guardrail replacement cannot apply: the conversation is server-managed " +
+	"and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace"
+
 // inputGuardOutcome carries the parallel input guardrails' collected results and
 // tripwire/error off their goroutine, so the main loop can both honor the
 // tripwire and record every result on the RunResult.
@@ -97,8 +104,7 @@ func (r *runner) firstTurnInputGuardrails(
 				// server and cannot be rewritten from here. Proceeding
 				// would send the original while claiming otherwise —
 				// fail instead.
-				rerr := NewUserError(
-					"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace")
+				rerr := NewUserError(errServerManagedReplace)
 				gspan.SetError(rerr.Error(), nil)
 				gspan.Finish()
 				return out, rerr
@@ -229,8 +235,7 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 			// otherwise. Fail rather than pretend.
 			span.Finish()
 			out.resp = nil
-			out.guardErr = NewUserError(
-				"input guardrail replacement cannot apply: the conversation is server-managed and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace")
+			out.guardErr = NewUserError(errServerManagedReplace)
 			return out
 		}
 		// Too late for the call it raced; later turns and the

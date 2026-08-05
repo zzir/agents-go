@@ -117,9 +117,10 @@ func agentOutputSchema(agent *Agent) OutputSchema {
 	return PlainTextOutput()
 }
 
-// toolsUsedList returns the agent names in a tool-use tracker as a slice, for
-// carrying the tool_choice reset across an interrupt/resume in RunState.
-func toolsUsedList(m map[string]bool) []string {
+// sortedKeys returns a set's members in a stable order, so serialized state
+// (the tool-use tracker and the disclosed-tool set both ride along in RunState)
+// does not churn between otherwise identical runs.
+func sortedKeys(m map[string]bool) []string {
 	if len(m) == 0 {
 		return nil
 	}

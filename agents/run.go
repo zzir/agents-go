@@ -591,7 +591,15 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			slog.Int64("input_tokens", usageOr(resp.Usage).InputTokens),
 			slog.Int64("output_tokens", usageOr(resp.Usage).OutputTokens))
 		r.lastResponseID = resp.ResponseID
-		r.lastStore = r.resolveSettings(currentAgent).Store
+		// Read the settings the REQUEST carried, not the agent's: a turn hook
+		// can replace the whole snapshot, and re-resolving would report a
+		// Store the call never used — compaction would then treat an unstored
+		// response id as one the server still holds.
+		if snapshot.Settings != nil {
+			r.lastStore = snapshot.Settings.Store
+		} else {
+			r.lastStore = nil
+		}
 		if !resumedTurn {
 			r.lastUsage = resp.Usage
 			r.usagePending = true
@@ -778,7 +786,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 				Usage:                 r.usageSnapshot(),
 				CurrentTurn:           turn,
 				MaxTurns:              r.maxTurns,
-				ToolsUsed:             toolsUsedList(r.toolsUsedBy),
+				ToolsUsed:             sortedKeys(r.toolsUsedBy),
 				PendingInput:          r.ctrl.Pending(),
 				DisclosedTools:        sortedKeys(r.disclosed),
 				ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
