@@ -2,7 +2,9 @@ package anthropic
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,6 +139,33 @@ func TestStreamOutOfOrderBlockStops(t *testing.T) {
 	}
 	if enc := final.Output[0].AsReasoning().EncryptedContent; enc != signaturePrefix+"sig-x" {
 		t.Errorf("encrypted_content = %q, want prefixed signature", enc)
+	}
+}
+
+// A stream that ends cleanly without message_stop was severed at an event
+// boundary (an idle gateway timeout sending a clean FIN): the SSE layer sees a
+// normal EOF, but the response is cut off. It must surface as a retryable
+// truncation, not a silent end the runner then reports unretryably.
+func TestStreamEndsWithoutMessageStopIsRetryableTruncation(t *testing.T) {
+	model := sseModel(t, sseEvents(
+		`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
+	))
+	var streamErr error
+	for _, err := range model.StreamResponse(context.Background(), agents.ModelRequest{
+		Input: agents.InputItemsFromText("hi"),
+	}) {
+		if err != nil {
+			streamErr = err
+			break
+		}
+	}
+	if !errors.Is(streamErr, io.ErrUnexpectedEOF) {
+		t.Fatalf("err = %v, want an io.ErrUnexpectedEOF wrap", streamErr)
+	}
+	if !RetryableError(streamErr) {
+		t.Fatal("a truncated stream must classify as retryable")
 	}
 }
 

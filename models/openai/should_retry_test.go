@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -47,6 +49,23 @@ func TestRetryableErrorHonorsShouldRetryHeader(t *testing.T) {
 	// No Response at all must not panic.
 	if RetryableError(&oai.Error{StatusCode: 500}) != true {
 		t.Error("a 500 with no response should still be retryable")
+	}
+}
+
+// An SSE stream severed mid-event by a gateway or proxy surfaces as
+// io.ErrUnexpectedEOF wrapped by the adapter's "openai responses stream"
+// prefix — a transport failure, retryable. A bare io.EOF is deliberately NOT
+// classified: a clean EOF is not an error signal by itself, and the adapter
+// owns turning "clean end without a terminal event" into a retryable
+// truncation (modelkit.TruncatedStreamError, which wraps io.ErrUnexpectedEOF
+// and lands in the first case).
+func TestRetryableErrorUnexpectedEOF(t *testing.T) {
+	severed := fmt.Errorf("openai responses stream: %w", io.ErrUnexpectedEOF)
+	if !RetryableError(severed) {
+		t.Error("mid-stream unexpected EOF should be retryable")
+	}
+	if RetryableError(fmt.Errorf("openai responses stream: %w", io.EOF)) {
+		t.Error("a bare EOF wrap must not classify as retryable on its own")
 	}
 }
 

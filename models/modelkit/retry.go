@@ -3,6 +3,7 @@ package modelkit
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -30,7 +31,9 @@ type UnwrapAPIError func(err error) (statusCode int, header http.Header, ok bool
 // classification. Then 408 (request timeout), 409 (conflict), 429 (rate
 // limit) and any 5xx are transient; other 4xx client errors will not succeed
 // on retry. Errors the unwrap does not recognize are retryable only when they
-// are network-level transport failures (net.Error).
+// are network-level transport failures: net.Error, or io.ErrUnexpectedEOF —
+// an SSE stream whose connection a gateway or proxy severed mid-flight, which
+// reaches here as a plain io error rather than a net.Error.
 func RetryableError(err error, unwrap UnwrapAPIError) bool {
 	if err == nil {
 		return false
@@ -53,6 +56,9 @@ func RetryableError(err error, unwrap UnwrapAPIError) bool {
 			return true
 		}
 		return status >= 500 && status <= 599
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr)

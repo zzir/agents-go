@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -171,6 +172,275 @@ func TestRetryModel_StreamDoesNotRetryAfterEmitting(t *testing.T) {
 	}
 	if inner.calls != 1 {
 		t.Errorf("calls = %d, want 1", inner.calls)
+	}
+}
+
+// typedStreamModel yields events with the given types per attempt, then errors
+// (nil = clean finish) — for tests that exercise the lifecycle/output split.
+type typedStreamModel struct {
+	steps []typedStreamStep
+	calls int
+}
+
+type typedStreamStep struct {
+	types []string
+	err   error
+}
+
+func (m *typedStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+	return &ModelResponse{}, nil
+}
+
+func (m *typedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
+	return func(yield func(*TResponseStreamEvent, error) bool) {
+		i := m.calls
+		m.calls++
+		var st typedStreamStep
+		if i < len(m.steps) {
+			st = m.steps[i]
+		}
+		for _, typ := range st.types {
+			if !yield(&TResponseStreamEvent{Type: typ}, nil) {
+				return
+			}
+		}
+		if st.err != nil {
+			yield(nil, st.err)
+		}
+	}
+}
+
+// drainTypes consumes a stream, returning the event types seen in order and
+// the terminal error.
+func drainTypes(seq iter.Seq2[*TResponseStreamEvent, error]) ([]string, error) {
+	var types []string
+	var gotErr error
+	for ev, err := range seq {
+		if err != nil {
+			gotErr = err
+			break
+		}
+		types = append(types, ev.Type)
+	}
+	return types, gotErr
+}
+
+func TestRetryModel_StreamRetriesAfterLifecyclePreamble(t *testing.T) {
+	// The stream died after response.created/in_progress — nothing generated
+	// yet, so the attempt is retried. The abandoned attempt's preamble was
+	// held back and dropped: the consumer sees ONE coherent response, not two
+	// response.created.
+	inner := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.in_progress"}, err: errBoom},
+		{types: []string{"response.created", "response.output_text.delta"}},
+	}}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 3}))
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	want := []string{"response.created", "response.output_text.delta"}
+	if !slices.Equal(types, want) {
+		t.Errorf("types = %v, want %v (abandoned preamble dropped)", types, want)
+	}
+	if inner.calls != 2 {
+		t.Errorf("calls = %d, want 2", inner.calls)
+	}
+}
+
+func TestRetryModel_StreamDoesNotRetryAfterOutputEvent(t *testing.T) {
+	inner := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.output_item.added"}, err: errBoom},
+		{types: []string{"response.created"}},
+	}}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 3}))
+	events, gotErr := drain(m.StreamResponse(context.Background(), ModelRequest{}))
+	if !errors.Is(gotErr, errBoom) {
+		t.Fatalf("err = %v, want errBoom", gotErr)
+	}
+	if events != 2 || inner.calls != 1 {
+		t.Errorf("events=%d calls=%d, want 2/1 (committed after output)", events, inner.calls)
+	}
+}
+
+func TestRetryModel_StreamFlushesPreambleOnTerminalFailure(t *testing.T) {
+	// Every attempt died during the preamble. The last attempt's preamble is
+	// the stream's final word: delivered ahead of the error, so the consumer
+	// sees what arrived rather than nothing.
+	inner := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created"}, err: errBoom},
+		{types: []string{"response.created", "response.in_progress"}, err: errBoom},
+	}}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 2}))
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if !errors.Is(gotErr, errBoom) {
+		t.Fatalf("err = %v, want errBoom", gotErr)
+	}
+	want := []string{"response.created", "response.in_progress"}
+	if !slices.Equal(types, want) {
+		t.Errorf("types = %v, want %v (last attempt's preamble only)", types, want)
+	}
+}
+
+func TestRetryModel_StreamFlushesPreambleOnCleanAllPreambleFinish(t *testing.T) {
+	// A stream that finishes cleanly having produced only preamble still
+	// delivers it — held-back events must not vanish on success.
+	inner := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created"}},
+	}}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 3}))
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	if !slices.Equal(types, []string{"response.created"}) {
+		t.Errorf("types = %v, want [response.created]", types)
+	}
+}
+
+// nilEventStreamModel yields (nil, nil) then one output event — the input that
+// used to panic the decorators' ev.Type access (the runner tolerates nil, so
+// the decorators must too).
+type nilEventStreamModel struct{ calls int }
+
+func (m *nilEventStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+	return &ModelResponse{}, nil
+}
+
+func (m *nilEventStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
+	return func(yield func(*TResponseStreamEvent, error) bool) {
+		m.calls++
+		if !yield(nil, nil) {
+			return
+		}
+		yield(&TResponseStreamEvent{Type: "response.output_text.delta"}, nil)
+	}
+}
+
+func TestRetryModel_StreamToleratesNilEvent(t *testing.T) {
+	inner := &nilEventStreamModel{}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 2}))
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	if !slices.Equal(types, []string{"response.output_text.delta"}) {
+		t.Errorf("types = %v, want the output event only (nil dropped)", types)
+	}
+}
+
+func TestFallbackModel_StreamToleratesNilEvent(t *testing.T) {
+	inner := &nilEventStreamModel{}
+	m := NewFallbackModel(inner)
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	if !slices.Equal(types, []string{"response.output_text.delta"}) {
+		t.Errorf("types = %v, want the output event only (nil dropped)", types)
+	}
+}
+
+func TestRetryModel_StreamRetriesAfterTerminalFailureEvent(t *testing.T) {
+	// response.failed carries no model output — replacing an attempt that ends
+	// in it is the whole point of retrying. The failed attempt's events
+	// (preamble AND the failure event) are dropped.
+	inner := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.failed"}, err: errBoom},
+		{types: []string{"response.created", "response.output_text.delta"}},
+	}}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 2}))
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	want := []string{"response.created", "response.output_text.delta"}
+	if !slices.Equal(types, want) {
+		t.Errorf("types = %v, want %v (failed attempt dropped)", types, want)
+	}
+	if inner.calls != 2 {
+		t.Errorf("calls = %d, want 2", inner.calls)
+	}
+}
+
+func TestRetryModel_StreamFlushesFailureEventOnTerminalFailure(t *testing.T) {
+	// No retry follows: the attempt's held-back events — preamble and the
+	// failure event — are the stream's last word, delivered ahead of the error.
+	inner := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.failed"}, err: errBoom},
+	}}
+	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 1}))
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if !errors.Is(gotErr, errBoom) {
+		t.Fatalf("err = %v, want errBoom", gotErr)
+	}
+	want := []string{"response.created", "response.failed"}
+	if !slices.Equal(types, want) {
+		t.Errorf("types = %v, want %v", types, want)
+	}
+}
+
+func TestFallbackModel_StreamAdvancesOnTerminalFailureEvent(t *testing.T) {
+	// The streaming chain must advance on a response.failed like the blocking
+	// chain advances on the error it becomes — same failure, same fallback.
+	primary := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.failed"}, err: errBoom},
+	}}
+	backup := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.output_text.delta"}},
+	}}
+	m := NewFallbackModel(primary, backup)
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	want := []string{"response.created", "response.output_text.delta"}
+	if !slices.Equal(types, want) {
+		t.Errorf("types = %v, want %v (failed backend dropped)", types, want)
+	}
+	if backup.calls != 1 {
+		t.Errorf("backup.calls = %d, want 1", backup.calls)
+	}
+}
+
+func TestFallbackModel_StreamNoDiagnosticWhenConsumerStopsMidFlush(t *testing.T) {
+	// The backup finishes cleanly with only held-back events; the consumer
+	// stops during the flush. An abandoned run records no fallback diagnostic.
+	primary := &typedStreamModel{steps: []typedStreamStep{{err: errBoom}}}
+	backup := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created"}},
+	}}
+	sink := &DiagnosticSink{}
+	ctx := WithDiagnostics(context.Background(), sink)
+	for range NewFallbackModel(primary, backup).StreamResponse(ctx, ModelRequest{}) {
+		break
+	}
+	if ds, _ := sink.TakeSince(0); len(ds) != 0 {
+		t.Fatalf("diagnostics = %v, want none (consumer abandoned the run)", ds)
+	}
+}
+
+func TestFallbackModel_StreamFallsBackAfterLifecyclePreamble(t *testing.T) {
+	// Same rule as retry: preamble does not commit the backend. The abandoned
+	// primary's preamble is dropped, and the consumer sees only the backup's
+	// single coherent response.
+	primary := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created"}, err: errBoom},
+	}}
+	backup := &typedStreamModel{steps: []typedStreamStep{
+		{types: []string{"response.created", "response.output_text.delta"}},
+	}}
+	m := NewFallbackModel(primary, backup)
+	types, gotErr := drainTypes(m.StreamResponse(context.Background(), ModelRequest{}))
+	if gotErr != nil {
+		t.Fatalf("err = %v, want nil", gotErr)
+	}
+	want := []string{"response.created", "response.output_text.delta"}
+	if !slices.Equal(types, want) {
+		t.Errorf("types = %v, want %v (primary preamble dropped)", types, want)
+	}
+	if backup.calls != 1 {
+		t.Errorf("backup.calls = %d, want 1", backup.calls)
 	}
 }
 

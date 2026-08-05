@@ -3,9 +3,23 @@ package modelkit
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/zzir/agents-go/agents"
 )
+
+// TruncatedStreamError builds the error an adapter must surface when the
+// event stream ends cleanly — no transport error — but no terminal event ever
+// arrived: a gateway or proxy closed the connection at an event boundary, so
+// the transport looks like a normal EOF while the response is in fact cut
+// off. Sinking it into "the stream just ended" would make the runner report a
+// vague "ended without a completed response" that nothing classifies as
+// retryable; this error wraps io.ErrUnexpectedEOF, which RetryableError
+// treats as a transport failure, so a retry decorator gets to run the
+// request again. prefix names the adapter ("openai responses stream", ...).
+func TruncatedStreamError(prefix string) error {
+	return fmt.Errorf("%s: ended without a terminal event: %w", prefix, io.ErrUnexpectedEOF)
+}
 
 // eventFromJSON decodes canonical wire JSON into a stream event, stamping the
 // raw bytes exactly as OutputItemFromJSON does for items.

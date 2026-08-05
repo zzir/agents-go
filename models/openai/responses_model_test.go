@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
@@ -293,5 +298,88 @@ func TestBuildParams_GeneratedFunctionToolSchema(t *testing.T) {
 	}
 	if ft["strict"] != true {
 		t.Errorf("strict = %v", ft["strict"])
+	}
+}
+
+// A stream that ends cleanly without a terminal event was severed at an event
+// boundary (an idle gateway timeout sending a clean FIN): the SSE layer sees a
+// normal EOF, but no response.completed ever arrived. It must surface as a
+// retryable truncation, not a silent end the runner then reports unretryably.
+func TestStreamResponseEndsWithoutTerminalEventIsRetryableTruncation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.created\n"+
+			`data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_1"}}`+"\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
+	model, err := provider.GetModel("gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawCreated := false
+	var streamErr error
+	for ev, serr := range model.StreamResponse(context.Background(), agents.ModelRequest{
+		Input: agents.InputItemsFromText("hi"),
+	}) {
+		if serr != nil {
+			streamErr = serr
+			break
+		}
+		if ev.Type == "response.created" {
+			sawCreated = true
+		}
+	}
+	if !sawCreated {
+		t.Fatal("the created event must still be delivered before the error")
+	}
+	if !errors.Is(streamErr, io.ErrUnexpectedEOF) {
+		t.Fatalf("err = %v, want an io.ErrUnexpectedEOF wrap", streamErr)
+	}
+	if !RetryableError(streamErr) {
+		t.Fatal("a truncated stream must classify as retryable")
+	}
+}
+
+// A transport error AFTER response.completed must not fail the call: the
+// response is complete and already delivered, and failing it now would throw
+// away a valid result over a connection with nothing left to say (same rule
+// as the Anthropic adapter).
+func TestStreamResponseTrailingTransportErrorAfterCompletedIsIgnored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.created\n"+
+			`data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_1"}}`+"\n\n"+
+			"event: response.completed\n"+
+			`data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_1","status":"completed","output":[]}}`+"\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic(http.ErrAbortHandler) // sever the connection instead of closing cleanly
+	}))
+	t.Cleanup(srv.Close)
+	provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
+	model, err := provider.GetModel("gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawCompleted := false
+	var streamErr error
+	for ev, serr := range model.StreamResponse(context.Background(), agents.ModelRequest{
+		Input: agents.InputItemsFromText("hi"),
+	}) {
+		if serr != nil {
+			streamErr = serr
+			break
+		}
+		if ev.Type == "response.completed" {
+			sawCompleted = true
+		}
+	}
+	if !sawCompleted {
+		t.Fatal("the completed event must be delivered")
+	}
+	if streamErr != nil {
+		t.Fatalf("err = %v, want nil (terminal event already delivered)", streamErr)
 	}
 }

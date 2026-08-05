@@ -142,12 +142,20 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 	// A transport error AFTER the terminal event is not surfaced: the response
 	// is already complete and delivered, and failing the call now would throw
 	// it away over a connection that had nothing left to say.
-	if err := stream.Err(); err != nil && !terminalSent {
-		yield(nil, fmt.Errorf("anthropic messages stream: %w", err))
+	if terminalSent {
+		return
 	}
-	// A stream that ended without message_stop emitted no terminal event; the
-	// runner reports that as "stream ended without a completed response",
-	// which is exactly what happened.
+	if err := stream.Err(); err != nil {
+		yield(nil, fmt.Errorf("anthropic messages stream: %w", err))
+		return
+	}
+	// The SSE layer reports a clean end but message_stop never arrived: the
+	// connection was severed at an event boundary and the response is cut
+	// off. Surfaced retryably (modelkit.TruncatedStreamError wraps
+	// io.ErrUnexpectedEOF) instead of ending the stream silently, which would
+	// leave the runner to report a vague, unretryable "ended without a
+	// completed response".
+	yield(nil, modelkit.TruncatedStreamError("anthropic messages stream"))
 }
 
 // blockItemID synthesizes a stable item id for blocks the API leaves

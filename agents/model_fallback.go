@@ -24,7 +24,7 @@ type FallbackModel struct {
 //	NewFallbackModel(NewRetryModel(primary, p), NewRetryModel(backup, p))
 //
 // For streaming, a model can only be skipped if it failed before emitting any
-// event; once a token is produced the chain commits to that model.
+// output event; once a token is produced the chain commits to that model.
 func NewFallbackModel(primary Model, fallbacks ...Model) *FallbackModel {
 	models := make([]Model, 0, len(fallbacks)+1)
 	models = append(models, primary)
@@ -70,24 +70,28 @@ func (m *FallbackModel) GetResponse(ctx context.Context, req ModelRequest) (*Mod
 }
 
 // StreamResponse implements Model. A backend can only be swapped before its
-// first event is emitted; after that, a mid-stream error is surfaced as-is.
+// first output event; events carrying no model output — lifecycle preamble
+// (response.created / in_progress / queued) and terminal-failure events
+// (error / response.error / response.failed) — are held back, not delivered,
+// until output commits the backend (deliverStreamAttempt, the same rule as
+// NewRetryModel), so the chain advances on a response.failed exactly like the
+// blocking path and the consumer never sees an abandoned backend's events.
+// After output, a mid-stream error is surfaced as-is.
 func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
 	return func(yield func(*TResponseStreamEvent, error) bool) {
 		var errs []error
 		for i, inner := range m.models {
-			producedAny := false
-			var streamErr error
-			for ev, err := range inner.StreamResponse(ctx, req) {
-				if err != nil {
-					streamErr = err
-					break
-				}
-				producedAny = true
-				if !yield(ev, nil) {
+			a := deliverStreamAttempt(inner.StreamResponse(ctx, req), yield)
+			if a.stopped {
+				return
+			}
+			if a.err == nil {
+				// Clean finish. An all-pending stream still delivers what was
+				// held back rather than vanishing. A consumer that stops
+				// mid-flush has abandoned the run — no diagnostic either.
+				if !flushStreamEvents(a.pending, yield) {
 					return
 				}
-			}
-			if streamErr == nil {
 				if i > 0 {
 					RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
 						"used_index": i, "models": len(m.models), "streaming": true,
@@ -95,11 +99,17 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 				}
 				return
 			}
-			errs = append(errs, streamErr)
-			if producedAny || i == len(m.models)-1 || !m.shouldFallback(streamErr) {
+			errs = append(errs, a.err)
+			if a.committed || i == len(m.models)-1 || !m.shouldFallback(a.err) {
+				if !a.committed && !flushStreamEvents(a.pending, yield) {
+					// No further backend follows: the held-back events are
+					// this stream's last word, delivered ahead of the error.
+					return
+				}
 				yield(nil, errors.Join(errs...))
 				return
 			}
+			// a.pending is dropped: the next backend opens its own response.
 		}
 	}
 }

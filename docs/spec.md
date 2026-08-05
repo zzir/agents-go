@@ -1859,6 +1859,49 @@ failed) response. Compose it **innermost**, directly on the backend it
 adapts: decorators above it (retry, fallback, routing) then see a severed
 stream as an ordinary `GetResponse` error and handle it normally.
 
+### 5.16 A severed stream retries only before output, with the preamble held back
+
+Three rules govern a stream that dies before its terminal event:
+
+- **Classification**: `modelkit.RetryableError` treats `io.ErrUnexpectedEOF`
+  as a transport failure (retryable), alongside `net.Error` — a gateway or
+  proxy severed the connection mid-event.
+- **Truncation is an adapter obligation.** A connection severed *at* an event
+  boundary looks like a clean EOF to the SSE layer — no transport error, the
+  stream just ends. An adapter must not let that pass as a normal finish:
+  when the stream ends cleanly without a terminal event
+  (`response.completed` / length-`incomplete`; `message_stop` on Anthropic),
+  it surfaces `modelkit.TruncatedStreamError`, which wraps
+  `io.ErrUnexpectedEOF` so the classification above applies. Without this the
+  failure would fall through to the runner's "ended without a completed
+  response" — accurate, but unretryable. (The runner keeps that check as the
+  last line of defense for models that don't.) Symmetrically, a transport
+  error AFTER the terminal event is not surfaced: the response is complete
+  and delivered, and failing the call then would throw away a valid result
+  over a connection with nothing left to say.
+- **Commit window, with pre-commit events held back**: `NewRetryModel` and
+  `NewFallbackModel` may replace a broken attempt only while nothing has been
+  **generated**. Two event classes carry nothing the model generated:
+  lifecycle preamble (`response.created`, `response.in_progress`,
+  `response.queued`), which arrives the moment the connection opens, and
+  terminal-failure events (`error`, `response.error`, `response.failed`) —
+  replacing an attempt that ends in one of those is the whole point, and the
+  streaming chain must advance on a `response.failed` exactly like the
+  blocking chain advances on the error it becomes. (`response.incomplete` is
+  NOT in this class: a length-truncated response is output that arrived, and
+  committing on it is what stops a retry from throwing it away.) Once
+  delivered, though, such an event would commit the consumer to a response a
+  second attempt then duplicates — so the decorators buffer them
+  (`deliverStreamAttempt`): an abandoned attempt's pending events are dropped
+  and the consumer sees exactly one coherent response, with a `model_retry`
+  span and a `DiagModelRetry` diagnostic as the only trace of the failed
+  attempt. Pending events are flushed when the attempt turns out to be the
+  stream's last word — the first output event commits it (from there, errors
+  pass through, recorded as `DiagStreamError`), and a clean all-pending
+  finish or a terminal failure delivers them before the verdict. A nil event
+  neither commits nor buffers (dropped, as the runner does), and a consumer
+  that stops mid-flush ends everything — no further events, no diagnostics.
+
 ---
 
 ## 6. Open questions

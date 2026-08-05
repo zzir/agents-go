@@ -185,9 +185,10 @@ type retryModel struct {
 	policy RetryPolicy
 }
 
-// NewRetryModel wraps inner so that failing GetResponse calls (and StreamResponse
-// calls that fail before emitting any event) are retried per policy. It is a
-// provider-agnostic Model decorator; compose it with NewFallbackModel.
+// NewRetryModel wraps inner so that failing GetResponse calls (and
+// StreamResponse calls that fail before any output event) are retried per
+// policy. It is a provider-agnostic Model decorator; compose it with
+// NewFallbackModel.
 func NewRetryModel(inner Model, policy RetryPolicy) Model {
 	return &retryModel{inner: inner, policy: policy}
 }
@@ -219,47 +220,56 @@ func (m *retryModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelR
 	return nil, lastErr
 }
 
-// StreamResponse retries only when the inner stream fails before yielding any
-// event. Once a token has been emitted it cannot be un-sent, so a later error is
-// passed straight through.
+// StreamResponse retries only while the inner stream has yielded no output.
+// Events carrying no model output — lifecycle preamble (response.created /
+// in_progress / queued) and terminal-failure events (error / response.error /
+// response.failed) — are held back, not delivered, until the first output
+// event commits the attempt (deliverStreamAttempt), so a stream that dies
+// early is retried like a failed connection and the consumer never sees the
+// abandoned attempt's events. Once output has been emitted it cannot be
+// un-sent: the attempt is committed and a later error is passed straight
+// through.
 func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
 	return func(yield func(*TResponseStreamEvent, error) bool) {
 		retryIf := m.policy.retryIf()
 		maxAttempts := m.policy.maxAttempts()
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			producedAny := false
-			var streamErr error
-			for ev, err := range m.inner.StreamResponse(ctx, req) {
-				if err != nil {
-					streamErr = err
-					break
-				}
-				producedAny = true
-				if !yield(ev, nil) {
+			a := deliverStreamAttempt(m.inner.StreamResponse(ctx, req), yield)
+			if a.stopped {
+				return
+			}
+			if a.err == nil {
+				// Clean finish. An all-pending stream (no output at all) still
+				// delivers what was held back rather than vanishing. Nothing
+				// follows the flush, so a consumer stopping mid-flush needs no
+				// handling here — anything added after it must check the bool
+				// (see the fallback's clean-finish branch).
+				flushStreamEvents(a.pending, yield)
+				return
+			}
+			if a.committed || attempt == maxAttempts || !retryIf(a.err) {
+				if a.committed {
+					// A stream that broke after emitting output cannot be
+					// retried — the tokens are already out. Record it so a
+					// truncated answer is explainable rather than merely odd.
+					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{"attempt": attempt})
+				} else if !flushStreamEvents(a.pending, yield) {
+					// No further attempt follows: the held-back events are
+					// this stream's last word, delivered ahead of the error.
 					return
 				}
-			}
-			if streamErr == nil {
+				yield(nil, a.err)
 				return
 			}
-			if producedAny || attempt == maxAttempts || !retryIf(streamErr) {
-				if producedAny {
-					// A stream that broke after emitting cannot be retried —
-					// the tokens are already out. Record it so a truncated
-					// answer is explainable rather than merely odd.
-					RecordDiagnostic(ctx, DiagStreamError, streamErr, map[string]any{"attempt": attempt})
-				}
-				yield(nil, streamErr)
-				return
-			}
-			RecordDiagnostic(ctx, DiagModelRetry, streamErr, map[string]any{
+			RecordDiagnostic(ctx, DiagModelRetry, a.err, map[string]any{
 				"attempt": attempt, "max_attempts": maxAttempts, "streaming": true,
 			})
-			retrySpan(ctx, attempt, maxAttempts, true, streamErr)
-			if werr := m.policy.wait(ctx, attempt, streamErr); werr != nil {
+			retrySpan(ctx, attempt, maxAttempts, true, a.err)
+			if werr := m.policy.wait(ctx, attempt, a.err); werr != nil {
 				yield(nil, werr)
 				return
 			}
+			// a.pending is dropped: the next attempt opens its own response.
 		}
 	}
 }

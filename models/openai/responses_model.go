@@ -179,6 +179,7 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 		}
 		stream := m.client.NewStreaming(ctx, params, requestOptions(req.Settings)...)
 		defer stream.Close()
+		sawTerminal := false
 		for stream.Next() {
 			event := stream.Current()
 			if !yield(&event, nil) {
@@ -210,11 +211,27 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 				}
 				yield(nil, responseTerminalFailure(event.Type, string(r.Status), "", "", r.IncompleteDetails.Reason))
 				return
+			case "response.completed":
+				sawTerminal = true
 			}
+		}
+		if sawTerminal {
+			// A transport error AFTER the terminal event is not surfaced
+			// (same rule as the Anthropic adapter): the response is already
+			// complete and delivered, and failing the call now would throw it
+			// away over a connection that had nothing left to say.
+			return
 		}
 		if err := stream.Err(); err != nil {
 			yield(nil, fmt.Errorf("openai responses stream: %w", err))
+			return
 		}
+		// The SSE layer reports a clean end: a connection severed at an
+		// event boundary looks like a normal EOF, but no terminal event
+		// ever arrived — the response was cut off. Surfaced retryably
+		// (modelkit.TruncatedStreamError wraps io.ErrUnexpectedEOF) so a
+		// retry decorator can run the request again.
+		yield(nil, modelkit.TruncatedStreamError("openai responses stream"))
 	}
 }
 
