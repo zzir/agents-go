@@ -189,6 +189,71 @@ func TestInjectedInput_IsSavedToTheSession(t *testing.T) {
 	}
 }
 
+// Injected input reaches the stream under its own event name. "unknown" is
+// reserved for an item type this build does not model, and a consumer that
+// matches on the name — agents-server's bridge does — could not tell an
+// injection from one of those otherwise.
+func TestInjectedInput_StreamEventIsNamed(t *testing.T) {
+	probe := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "ok", nil
+	})
+	cases := []struct {
+		name      string
+		tools     []*Tool
+		responses []*ModelResponse
+		inject    func(RunControl) error
+		text      string
+	}{
+		{
+			// Drained at the save point of a turn the run was taking anyway.
+			name:  "next turn",
+			tools: []*Tool{probe},
+			responses: []*ModelResponse{
+				modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
+				modelResp(messageOutput(t, "done")),
+			},
+			inject: func(c RunControl) error { return c.NextTurn("mention the weather") },
+			text:   "mention the weather",
+		},
+		{
+			// Drained as a continuation, after the run would have finished.
+			name: "follow up",
+			responses: []*ModelResponse{
+				modelResp(messageOutput(t, "first answer")),
+				modelResp(messageOutput(t, "second answer")),
+			},
+			inject: func(c RunControl) error { return c.FollowUp("and what about tomorrow?") },
+			text:   "and what about tomorrow?",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := &Agent{Name: "a", Tools: tc.tools, ModelImpl: &fakeModel{responses: tc.responses}}
+			stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
+			if err := tc.inject(ctrl); err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for ev, err := range stream {
+				if err != nil {
+					t.Fatal(err)
+				}
+				ie, ok := ev.(*RunItemStreamEvent)
+				if !ok || ie.Item.Kind != ItemInjectedInput {
+					continue
+				}
+				names = append(names, ie.Name)
+				if got := ie.Item.Display().Text; got != tc.text {
+					t.Errorf("injected item text = %q, want %q", got, tc.text)
+				}
+			}
+			if len(names) != 1 || names[0] != "injected_input_created" {
+				t.Errorf("injected input events = %v, want one injected_input_created", names)
+			}
+		})
+	}
+}
+
 func TestPendingInput_Empty(t *testing.T) {
 	if !(PendingInput{}).Empty() {
 		t.Error("a zero PendingInput is not empty")

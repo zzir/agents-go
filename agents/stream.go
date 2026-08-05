@@ -23,7 +23,8 @@ func (*RawResponsesStreamEvent) streamEvent() {}
 // message, tool call, tool output, handoff or reasoning item).
 type RunItemStreamEvent struct {
 	// Name is the event name, e.g. "message_output_created", "tool_called",
-	// "tool_output", "handoff_requested", "handoff_occured", "reasoning_item_created".
+	// "tool_output", "handoff_requested", "handoff_occured",
+	// "reasoning_item_created", "injected_input_created".
 	Name string
 	Item *RunItem
 }
@@ -182,7 +183,12 @@ func runItemEventName(item *RunItem) string {
 		return "handoff_occured"
 	case ItemReasoning:
 		return "reasoning_item_created"
+	case ItemInjectedInput:
+		return "injected_input_created"
 	default:
+		// "unknown" belongs to ItemUnknown alone — a wire type this build does
+		// not model. A kind the SDK does model must never borrow it: a consumer
+		// matching on the name could not tell the two apart.
 		return "unknown"
 	}
 }

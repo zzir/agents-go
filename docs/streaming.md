@@ -87,7 +87,7 @@ UI streaming. Only `Run` produces them; `RunSync` makes one blocking call.
 call, a tool result) — the right granularity for "Fetching the weather…"-style
 progress, ignoring per-token noise. Names: `message_output_created`,
 `tool_called`, `tool_output`, `handoff_requested`, `handoff_occured`,
-`reasoning_item_created`.
+`reasoning_item_created`, `injected_input_created`.
 
 A handoff surfaces as **both** `tool_called` and `handoff_requested`: the model
 called a tool, and that tool was a handoff.

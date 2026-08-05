@@ -1363,7 +1363,10 @@ was ending:
   is what makes every downstream path — the next turn's model input, the
   server-side delta cursor, the session write — treat it exactly like the input
   the run started with, instead of each one having to learn about a separate
-  pending-input list.
+  pending-input list. It reaches the stream under its own event name,
+  `injected_input_created`: `"unknown"` is reserved for `ItemUnknown` — a wire
+  type this build does not model — so a consumer that matches on the name can
+  tell the two apart.
 - **Nothing is silently dropped.** `Pending()` reports what a run did not
   consume, which is how a caller learns a `NextTurn` arrived too late.
 - **Queued input survives an interruption**: `RunState.PendingInput` carries

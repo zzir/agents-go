@@ -99,6 +99,24 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 	}
 }
 
+// Input injected into a live run is a user entry, which no server → client
+// event carries today (PROTOCOL.md F2's run.entry is the one that will).
+// run.message is the nearest-looking event and the wrong one: it would render
+// the user's own text as assistant output. So nothing goes out for it.
+func TestHandleStreamEvent_InjectedInputDropped(t *testing.T) {
+	in := agents.InputItemsFromText("also check the logs")[0]
+	ev := &agents.RunItemStreamEvent{
+		Name: "injected_input_created",
+		Item: &agents.RunItem{Kind: agents.ItemInjectedInput, RawInput: &in},
+	}
+
+	gotType := ""
+	(&Runner{}).handleStreamEvent(ev, "run_1", nil, func(typ string, _ any) { gotType = typ })
+	if gotType != "" {
+		t.Errorf("injected input emitted %q, want no event", gotType)
+	}
+}
+
 func reasoningItem(t *testing.T, bodyJSON string) *agents.RunItem {
 	t.Helper()
 	var item responses.ResponseOutputItemUnion

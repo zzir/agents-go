@@ -893,6 +893,15 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 					From:  e.Item.Agent.Name,
 				})
 			}
+		case "injected_input_created":
+			// Input injected into a live run (run.inject) is a USER entry, and
+			// no live event carries one: run.started.Input covers only the
+			// prompt a run begins with, and PROTOCOL.md F2's run.entry — the
+			// event that will — has not shipped. The client that injected it
+			// already has the text, and the SDK persists the item, so every
+			// other connection picks it up on its next history load. Named
+			// here rather than left out of the switch: the drop is a decision,
+			// and this is where run.entry lands once it ships.
 		case "handoff_occured":
 			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
