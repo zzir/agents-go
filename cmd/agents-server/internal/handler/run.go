@@ -87,8 +87,8 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	// subscribe to our own broadcast and decode the envelopes this process
 	// just marshaled. Buffered so the callback never blocks if the client
 	// hangs up first.
-	done := make(chan *bridge.RunResult, 1)
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.Input, func(res *bridge.RunResult) {
+	done := make(chan *bridge.RunOutcome, 1)
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.Input, func(res *bridge.RunOutcome) {
 		done <- res
 	})
 	if err != nil {

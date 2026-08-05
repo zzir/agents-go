@@ -126,12 +126,6 @@ func run(_ *cobra.Command, _ []string) error {
 		MaxTasks:         flagMaxTasks,
 	}
 	runner := bridge.NewRunner(ctx, db, deps)
-	// Deliver wake-ups owed from before the restart (including tasks the
-	// orphan reconciliation above just marked failed).
-	// One sweep does both halves of the restart reconciliation: tasks the
-	// process interrupted are failed — which owes their parents a wake-up —
-	// and every owed parent is then drained.
-	go runner.DrainPendingTaskNotifications(ctx)
 
 	sessionHandler := handler.NewSessionHandler(sessionStore, entryStore, traceStore, agentConfigStore).WithRunStopper(runner)
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver)
@@ -150,6 +144,16 @@ func run(_ *cobra.Command, _ []string) error {
 	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, runner)
 	taskHandler := handler.NewTaskHandler(taskStore, runner)
 	wsHandler := handler.NewWSHandler(runner)
+
+	// AFTER the handlers: NewWSHandler is what installs runner.OnRunAttach, an
+	// ordinary field with no synchronization, and this sweep starts runs on
+	// another goroutine — every restart that owes a wake-up would read the field
+	// while the main goroutine was still writing it.
+	//
+	// One sweep does both halves of the restart reconciliation: tasks the
+	// process interrupted are failed — which owes their parents a wake-up —
+	// and every owed parent is then drained.
+	go runner.DrainPendingTaskNotifications(ctx)
 
 	token := flagToken
 	if token == "" {

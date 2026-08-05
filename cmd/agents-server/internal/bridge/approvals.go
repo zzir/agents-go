@@ -45,7 +45,7 @@ func (e *ApprovalNotReadyError) Error() string {
 // pending tool calls to the store, so the approval survives a restart and can
 // be resumed from any connection. Best-effort: a persistence failure is
 // logged by the caller, and the in-memory hub still holds the live run.
-func (r *Runner) persistInterruption(result *RunResult) error {
+func (r *Runner) persistInterruption(result *RunOutcome) error {
 	if r.Deps.PendingApprovals == nil || result == nil || !result.Interrupted || result.SDKState == nil {
 		return nil
 	}
@@ -205,7 +205,7 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 // continuation terminates (e.g. to persist a further interruption).
 // It also returns the paused session's id (whenever the pending row was loaded,
 // even on a later error) so a failed decision stays attributable to its session.
-func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunResult)) (runID, sessionID string, err error) {
+func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunOutcome)) (runID, sessionID string, err error) {
 	if r.Deps.PendingApprovals == nil {
 		return "", "", errors.New("approvals are not persisted")
 	}

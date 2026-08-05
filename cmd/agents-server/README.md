@@ -932,10 +932,15 @@ When a change genuinely doesn't fit, update this list in the same PR.
     rely on the guard: give the hub an atomic status transition instead of
     adding a third compensation. A graceful stop marks the hub record before
     signalling, so its clean finish lands as `cancelled` ("stopped after the
-    current turn"), never as a completion. Cancellations consume their own wake-up debt (the user did it;
-    completed / failed are the states worth waking the parent for). Deleting a
-    session stops its run tree first (cancel + bounded wait on the done gate)
-    so no write can land after the cascade.
+    current turn"), never as a completion. A hard cancel is equally
+    unambiguous: once the run's context is cancelled, every stage that notices
+    it — including a session lookup that never got to answer — reports
+    `run.cancelled`, never a `config_error` or `session_not_found` the user did
+    not cause, and the task's status follows that event. Cancellations consume
+    their own wake-up debt (the user did it; completed / failed are the states
+    worth waking the parent for). Deleting a session stops its run tree first
+    (cancel + bounded wait on the done gate) so no write can land after the
+    cascade.
 24. **One entry in, the same entry out.** The `entries` table stores whole
     `agents.SessionEntry` JSON, with only the columns the queries need lifted
     out. The server does not re-derive a display, a role, or provenance at read

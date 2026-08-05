@@ -109,17 +109,6 @@ func (m *SandboxManager) CloseAll() {
 	}
 }
 
-// CodeTool builds a code-execution tool bound to the sandbox for the given config.
-func (m *SandboxManager) CodeTool(cfg *store.SandboxConfig) (*agents.Tool, error) {
-	sb, err := m.GetOrCreate(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return sandbox.CodeTool(sb, sandbox.CodeToolConfig{
-		RegisterCloser: m.trackCloser(cfg.ID),
-	}), nil
-}
-
 // trackCloser records a tool's shell pool under the sandbox id so Remove and
 // CloseAll release its held-open shells with the sandbox itself.
 func (m *SandboxManager) trackCloser(id string) func(io.Closer) {

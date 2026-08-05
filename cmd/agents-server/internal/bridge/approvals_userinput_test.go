@@ -89,7 +89,7 @@ func TestPersistInterruptionStoresUserInput(t *testing.T) {
 			Raw:      rawCall,
 		}},
 	}
-	result := &RunResult{
+	result := &RunOutcome{
 		RunID:       "run-1",
 		SessionID:   "sess-1",
 		Interrupted: true,

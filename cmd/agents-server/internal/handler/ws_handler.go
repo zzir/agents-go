@@ -28,6 +28,10 @@ type WSHandler struct {
 
 // NewWSHandler returns a WebSocket handler backed by the given runner and
 // wires the runner's attach hook to the connection registry.
+//
+// The hook is a plain field the run goroutines read, so this must run before
+// anything that can start a run — the caller orders the startup sweeps around
+// it (see cmd.run).
 func NewWSHandler(runner *bridge.Runner) *WSHandler {
 	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub())}
 	runner.OnRunAttach = h.registry.AttachAll

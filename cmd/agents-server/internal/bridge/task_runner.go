@@ -14,8 +14,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// taskSummaryLimit bounds the terminal summary written to the tasks row and
-
 // TaskFinalError reports a stop attempt on an already-final task — the one
 // genuinely conflict-shaped stop failure (handlers map it to 409; anything
 // else is an internal error).
@@ -154,7 +152,7 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 // postRun runs after every run segment terminates. It hands the outcome to the
 // task manager, which advances a task's state or — for an ordinary chat session
 // — drains the wake-ups that queued while it was busy.
-func (r *Runner) postRun(runID, sessionID string, result *RunResult) {
+func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	if r.tasks == nil {
 		return
 	}

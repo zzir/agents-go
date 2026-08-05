@@ -69,7 +69,7 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 		t.Fatalf("seed user item: %v", err)
 	}
 
-	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
+	runner.savePartialTurn(partialTurn{sessionID: sid, runID: rid, model: "m", userInput: "hello", annRole: "cancelled"})
 
 	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
@@ -93,7 +93,15 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "let me think about primes", "here is my parti", "", "")
+	runner.savePartialTurn(partialTurn{
+		sessionID:        sid,
+		runID:            rid,
+		model:            "m",
+		userInput:        "hello",
+		annRole:          "cancelled",
+		partialReasoning: "let me think about primes",
+		partialText:      "here is my parti",
+	})
 
 	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayReasoning); got != 1 {
 		t.Errorf("reasoning annotations = %d, want 1", got)
@@ -128,13 +136,51 @@ func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
+	runner.savePartialTurn(partialTurn{sessionID: sid, runID: rid, model: "m", userInput: "hello", annRole: "cancelled"})
 
 	if got := countDisplays(t, db, sid, session.EntryKindItem, ""); got != 1 {
 		t.Errorf("user fallback entries = %d, want 1", got)
 	}
 	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
+	}
+}
+
+// The prompt fallback asks whether THIS generation of the session already holds
+// the run's items. A session deleted and recreated under the same id is a
+// different session, and a "yes" from the generation it replaced would make the
+// save skip the prompt it is the only writer of.
+func TestSavePartialTurn_IgnoresASupersededGeneration(t *testing.T) {
+	runner, db := newBareRunner(t)
+	sid, rid := store.NewID(), store.NewID()
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	dead := mustStore(t, db, sid)
+	dead.SetRunID(rid)
+	dead.SetModel("m")
+	userItem, err := session.NewItemEntry(agents.InputItemsFromText("hello")[0], agents.Source{Type: agents.SourceUser})
+	if err != nil {
+		t.Fatalf("build user item: %v", err)
+	}
+	if err := dead.Append(context.Background(), userItem); err != nil {
+		t.Fatalf("seed the superseded generation: %v", err)
+	}
+
+	// Rotate the row's generation, leaving the entries above behind: the id now
+	// answers for a different session, as it does after a delete and a recreate
+	// under the same name.
+	if _, err := db.NewUpdate().Model((*store.Session)(nil)).
+		Set("gen = ?", store.NewID()).Where("id = ?", sid).
+		Exec(context.Background()); err != nil {
+		t.Fatalf("rotate generation: %v", err)
+	}
+
+	runner.savePartialTurn(partialTurn{sessionID: sid, runID: rid, model: "m", userInput: "hello", annRole: "cancelled"})
+
+	if got := countDisplays(t, db, sid, session.EntryKindItem, ""); got != 1 {
+		t.Errorf("user fallback entries = %d, want 1 (the live generation has no prompt of its own)", got)
 	}
 }
 
