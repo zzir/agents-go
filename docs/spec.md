@@ -120,18 +120,20 @@ for turn := 1; ; turn++ {
 **A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
 server-conversation cursor included — pinned by a full-field round-trip test
-**A `RunState` decodes across a version window, not on strict equality.** ✅
-`RunStateFromJSON` accepts the same schema major from
-`runStateOldestDecodableMinor` up to `RunStateSchemaVersion`; anything newer,
-any other major, and anything below the floor is a `*UserError` naming which
-way it missed. A minor may only ADD fields — a bump that replaces or
-reinterprets one must raise the floor to itself. See [§5.18](#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned).
+(`RunStateSchemaVersion` 1.4). The in-process resume passing the live pointer
 must never be the only path that works; the serialized surface IS the
 contract. The cursor in particular rides along so a resumed run keeps sending
 deltas: the resumed turn re-processes a response the restored cursor already
 accounts for and does not advance it — re-deriving the cursor there marked
 pre-pause sibling tool outputs as already served, and a server-managed
 conversation never received them.
+
+**A `RunState` decodes across a version window, not on strict equality.** ✅
+`RunStateFromJSON` accepts the same schema major from
+`runStateOldestDecodableMinor` up to `RunStateSchemaVersion`; anything newer,
+any other major, and anything below the floor is a `*UserError` naming which
+way it missed. A minor may only ADD fields — a bump that replaces or
+reinterprets one must raise the floor to itself. See [§5.18](#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned).
 
 ### 2.1b Items ✅
 
@@ -2137,6 +2139,10 @@ agents with the error types it reads.
 
 Session-only names are deliberately NOT aliased: code that works with stored
 history imports the package that owns it. This was the §6.4 split, taken
+after the structural collapses so the code moved once.
+
+---
+
 ### 5.18 A RunState decodes across a version window, and the window is earned
 
 `RunStateFromJSON` accepts the same schema major from
@@ -2164,8 +2170,6 @@ string. Accepting `"1.3"` would drop every recorded guardrail result from the
 older shape — and resume is the only path that carries first-turn
 input-guardrail results forward at all. The window therefore opens at the next
 purely additive bump.
-
----
 
 ---
 
