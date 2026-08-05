@@ -38,6 +38,15 @@ The zero value allows everything, and a policy whose patterns do not compile
 refuses everything — falling open would turn a configuration typo into no
 protection at all, silently.
 
+A policy filters approval noise; it is **not a security boundary**. A pattern
+matches the text of a command, and a shell spells one command in unbounded
+ways: denying `rm -rf` stops `rm -rf /` and steps aside for `rm -fr /`, for
+`rm  -rf /` with a second space, and for `eval $(echo cm0gLXJm | base64 -d)`,
+which is not the command until bash expands it. Naming a path fares no better —
+a rule denying `rm -rf /home/alice` never sees `rm -rf $HOME`. Containment comes
+from the sandbox the command executes in: choose a backend whose isolation you
+trust.
+
 ## Persistent shells
 
 By default each command runs in a fresh shell, which a model experiences as its

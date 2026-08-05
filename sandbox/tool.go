@@ -105,17 +105,25 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			cfg.RegisterCloser(sessions)
 		}
 	}
-	schema, schemaErr := agents.SchemaFor[codeToolArgs](true)
-	if schemaErr != nil {
-		return &agents.Tool{
-			Name:             cfg.Name,
-			Description:      cfg.Description,
-			ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
-			Strict:           true,
-			OnInvoke: func(context.Context, *agents.ToolContext, string) (agents.ToolResult, error) {
-				return agents.ToolResult{}, agents.Classify(agents.CodeUserError, fmt.Errorf("code tool %q: schema generation failed: %w", cfg.Name, schemaErr))
-			},
+	schema, err := agents.SchemaFor[codeToolArgs](true)
+	if err != nil {
+		// codeToolArgs is fixed at compile time, so this is a deterministic
+		// programmer error, surfaced at construction like NewTool's.
+		panic(fmt.Sprintf("sandbox: CodeTool(%q): schema generation failed: %v", cfg.Name, err))
+	}
+	// Compiled once here and shared, read-only, by both closures below: the
+	// runner executes a turn's tool calls in parallel, so a compiled form
+	// filled in on the way through would be several goroutines writing one
+	// cache. The zero Policy compiles to a check that refuses nothing.
+	compiled, policyErr := cfg.Policy.compile()
+	checkPolicy := func(cmd string) error {
+		if policyErr != nil {
+			// A policy that cannot be compiled refuses everything, as Check
+			// does — falling open would turn a configuration typo into no
+			// protection at all, silently.
+			return policyErr
 		}
+		return compiled.check(cmd)
 	}
 	// The policy veto precedes the approval gate (spec §2.7j): a command the
 	// policy refuses must never reach a human — the runner would ask, get a
@@ -126,10 +134,9 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 	needsApproval := cfg.NeedsApprovalFunc
 	if needsApproval != nil {
 		inner := needsApproval
-		policy := cfg.Policy // the zero Policy allows everything; the veto no-ops
 		needsApproval = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
 			var args codeToolArgs
-			if json.Unmarshal([]byte(argsJSON), &args) == nil && policy.Check(args.Cmd) != nil {
+			if json.Unmarshal([]byte(argsJSON), &args) == nil && checkPolicy(args.Cmd) != nil {
 				return false, nil //nolint:nilerr // the veto is deliberate: OnInvoke refuses this command as text
 			}
 			return inner(ctx, rc, argsJSON, callID)
@@ -159,7 +166,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			// Refused as TEXT, not an error: the model can pick a different
 			// command, and the reason names the rule so it is not left
 			// guessing at variations.
-			if err := cfg.Policy.Check(args.Cmd); err != nil {
+			if err := checkPolicy(args.Cmd); err != nil {
 				return agents.TextResult(err.Error()).WithDisplay("terminal").
 					WithDetails(map[string]any{"command": args.Cmd, "refused": true}), nil
 			}

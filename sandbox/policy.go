@@ -16,8 +16,22 @@ import (
 // Filtering after approval would be the opposite: it would ask, get a yes, and
 // then refuse.
 //
+// It is a filter on approval noise, NOT a security boundary. A pattern matches
+// the TEXT of a command, and a shell spells one command in unbounded ways.
+// `Deny: []string{"rm -rf"}` stops `rm -rf /`, and steps aside for `rm -fr /`,
+// for `rm  -rf /` with a second space, and for the base64 in
+// `eval $(echo cm0gLXJm | base64 -d)`, which is not the command until bash
+// expands it. Naming a path fares no better — a rule denying
+// `rm -rf /home/alice` never sees `rm -rf $HOME`. Containment comes from the
+// sandbox a command executes in: choose a backend whose isolation you trust,
+// and treat the policy as what it is, a way to keep the obvious out of a
+// person's face.
+//
 // The zero value allows everything, which keeps the sandbox's own position
 // unchanged: it attaches no policy, the caller supplies one.
+//
+// A Policy is plain configuration and is copied freely; the compiled patterns
+// live outside it, so no two copies share mutable state.
 type Policy struct {
 	// Allow, when non-empty, restricts execution to commands matching at least
 	// one pattern. Anything else is refused.
@@ -26,33 +40,65 @@ type Policy struct {
 	// a deny always wins — a policy that both allows `git .*` and denies
 	// `git push` means what it looks like it means.
 	Deny []string
-
-	allow, deny []*regexp.Regexp
-	compileErr  error
-	compiled    bool
 }
 
-// Compile prepares the patterns, reporting a bad one.
+// Compile reports a malformed pattern. It validates and nothing more — the
+// compiled form is not kept, since a Policy is configuration a caller copies
+// around freely.
 //
 // It is separate from evaluation so a malformed pattern fails when the policy
 // is configured rather than on the first command it would have stopped —
 // a policy that silently matched nothing would be worse than no policy, since
 // it looks like protection.
 func (p *Policy) Compile() error {
-	if p.compiled {
-		return p.compileErr
+	_, err := p.compile()
+	return err
+}
+
+// Empty reports whether the policy filters nothing.
+func (p *Policy) Empty() bool { return len(p.Allow) == 0 && len(p.Deny) == 0 }
+
+// Check reports why a command is refused, or nil.
+//
+// The error names the pattern that refused it. A model told only "not allowed"
+// tries variations; told which rule stopped it, it can ask for something else
+// or explain to the user why it cannot proceed.
+//
+// The patterns are compiled per call — nothing next to executing a command,
+// and the price of a Policy that is an inert value rather than a cache several
+// goroutines take turns filling. There is deliberately no exported compiled
+// form: CodeTool keeps one because it is inside the package, and no caller
+// checks often enough for the difference to be measurable.
+func (p *Policy) Check(cmd string) error {
+	if p.Empty() {
+		return nil
 	}
-	p.compiled = true
-	var err error
-	if p.allow, err = compilePatterns(p.Allow); err != nil {
-		p.compileErr = fmt.Errorf("sandbox policy: allow: %w", err)
-		return p.compileErr
+	compiled, err := p.compile()
+	if err != nil {
+		// A policy that cannot be compiled refuses everything. Falling open
+		// would turn a configuration typo into no protection at all, silently.
+		return err
 	}
-	if p.deny, err = compilePatterns(p.Deny); err != nil {
-		p.compileErr = fmt.Errorf("sandbox policy: deny: %w", err)
-		return p.compileErr
+	return compiled.check(cmd)
+}
+
+// compiledPolicy is a policy's patterns, compiled. Nothing writes to one after
+// compile returns it, which is what makes it safe to share between the tool
+// calls the runner executes in parallel.
+type compiledPolicy struct {
+	allow, deny []*regexp.Regexp
+}
+
+func (p *Policy) compile() (*compiledPolicy, error) {
+	allow, err := compilePatterns(p.Allow)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox policy: allow: %w", err)
 	}
-	return nil
+	deny, err := compilePatterns(p.Deny)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox policy: deny: %w", err)
+	}
+	return &compiledPolicy{allow: allow, deny: deny}, nil
 }
 
 func compilePatterns(pats []string) ([]*regexp.Regexp, error) {
@@ -67,30 +113,16 @@ func compilePatterns(pats []string) ([]*regexp.Regexp, error) {
 	return out, nil
 }
 
-// Empty reports whether the policy filters nothing.
-func (p *Policy) Empty() bool { return len(p.Allow) == 0 && len(p.Deny) == 0 }
-
-// Check reports why a command is refused, or nil.
-//
-// The error names the pattern that refused it. A model told only "not allowed"
-// tries variations; told which rule stopped it, it can ask for something else
-// or explain to the user why it cannot proceed.
-func (p *Policy) Check(cmd string) error {
-	if p.Empty() {
-		return nil
-	}
-	if err := p.Compile(); err != nil {
-		// A policy that cannot be compiled refuses everything. Falling open
-		// would turn a configuration typo into no protection at all, silently.
-		return err
-	}
+func (c *compiledPolicy) check(cmd string) error {
 	cmd = strings.TrimSpace(cmd)
-	if len(p.allow) > 0 && !matchesAny(p.allow, cmd) {
+	if len(c.allow) > 0 && !matchesAny(c.allow, cmd) {
 		return &PolicyError{Command: cmd, Reason: "no allow pattern matches"}
 	}
-	for i, re := range p.deny {
+	for _, re := range c.deny {
 		if re.MatchString(cmd) {
-			return &PolicyError{Command: cmd, Reason: "denied by pattern " + strconv.Quote(p.Deny[i])}
+			// re.String is the pattern as it was written, so the reason names
+			// the rule the caller configured.
+			return &PolicyError{Command: cmd, Reason: "denied by pattern " + strconv.Quote(re.String())}
 		}
 	}
 	return nil

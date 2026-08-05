@@ -1113,6 +1113,13 @@ A tool marked `Deferred: true` is withheld from the model until some
 - The zero value allows everything. **A policy whose patterns do not compile
   refuses everything** — falling open would turn a configuration typo into no
   protection at all, silently, while looking like protection.
+- **It is a filter on approval noise, not a security boundary.** A pattern
+  matches the TEXT of a command and is blind to shell semantics. Denying
+  `rm -rf` steps aside for `rm -fr /`, for `rm  -rf /` with a second space, and
+  for `eval $(echo cm0gLXJm | base64 -d)`, which is not the command until bash
+  expands it; a rule naming `rm -rf /home/alice` never sees `rm -rf $HOME`.
+  Containment is the sandbox backend's job — the policy only keeps the obvious
+  out of a person's face.
 
 ### 2.7k Persistent shells ✅
 
