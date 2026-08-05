@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"cmp"
@@ -96,7 +96,7 @@ func EntryIDFor(seq int64) string { return fmt.Sprintf("e%d", seq) }
 // a known entry keeps the identity an update entry points at — but every entry
 // gets a fresh sequence number, which is strictly greater than anything issued
 // before, so no cursor can skip what a rewrite produced.
-func PrepareAppend(entries []SessionEntry, at AppendPoint) []SessionEntry {
+func PrepareAppend(entries []Entry, at AppendPoint) []Entry {
 	// Imported entries keep their ids — a fork carries identity — and an id
 	// of the minted form e<seq> is a claim on that sequence position. Those
 	// claims join the floor: a destination whose clock trails the source's
@@ -109,7 +109,7 @@ func PrepareAppend(entries []SessionEntry, at AppendPoint) []SessionEntry {
 		}
 	}
 	seq := SeqFor(at)
-	out := make([]SessionEntry, 0, len(entries))
+	out := make([]Entry, 0, len(entries))
 	parent := at.Leaf
 	now := time.Now().UTC()
 	for _, e := range entries {
@@ -143,7 +143,7 @@ func PrepareAppend(entries []SessionEntry, at AppendPoint) []SessionEntry {
 // It is for backends that have them in hand anyway. One that would have to read
 // the whole session to call this should answer the two questions with its own
 // queries instead — LastSeq in particular is a MAX, not a count.
-func AppendPointOf(entries []SessionEntry) AppendPoint {
+func AppendPointOf(entries []Entry) AppendPoint {
 	at := AppendPoint{Leaf: LeafOf(entries)}
 	for i := range entries {
 		at.LastSeq = max(at.LastSeq, entries[i].Seq)

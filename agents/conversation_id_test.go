@@ -4,6 +4,8 @@ import (
 	"context"
 	"iter"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // recordingModel captures every ModelRequest it receives.
@@ -83,7 +85,7 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 
 func TestConversationIDRejectsSession(t *testing.T) {
 	agent := &Agent{Name: "a", Model: "m"}
-	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc", Session: NewInMemorySession()}, Model: ModelOptions{Override: &recordingModel{}}})
+	_, err := RunSync(context.Background(), agent, "hi", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc", Session: session.NewInMemorySession()}, Model: ModelOptions{Override: &recordingModel{}}})
 	if err == nil {
 		t.Fatal("expected error combining ConversationID with a Session")
 	}

@@ -20,7 +20,7 @@ components:
     agents.Diagnostic:
       properties:
         code:
-          $ref: '#/components/schemas/agents.ErrorCode'
+          $ref: '#/components/schemas/session.ErrorCode'
         details:
           additionalProperties: {}
           description: Details carries type-specific fields (attempt number, model
@@ -32,55 +32,8 @@ components:
         timestamp:
           type: string
         type:
-          $ref: '#/components/schemas/agents.DiagnosticType'
+          $ref: '#/components/schemas/session.DiagnosticType'
       type: object
-    agents.DiagnosticType:
-      enum:
-      - model_retry
-      - model_fallback
-      - stream_error
-      - tool_panic
-      - tool_timeout
-      - compaction_failed
-      - response_truncated
-      - context_overflow
-      type: string
-      x-enum-varnames:
-      - DiagModelRetry
-      - DiagModelFallback
-      - DiagStreamError
-      - DiagToolPanic
-      - DiagToolTimeout
-      - DiagCompactionFailed
-      - DiagResponseTruncated
-      - DiagContextOverflow
-    agents.ErrorCode:
-      description: Code classifies the underlying error, when there was one.
-      enum:
-      - unknown
-      - max_turns_exceeded
-      - model_behavior
-      - model_refusal
-      - user_error
-      - tool_timeout
-      - tool_loop
-      - tool_panic
-      - guardrail_tripwire
-      - sandbox_exec
-      - mcp
-      type: string
-      x-enum-varnames:
-      - CodeUnknown
-      - CodeMaxTurns
-      - CodeModelBehavior
-      - CodeModelRefusal
-      - CodeUserError
-      - CodeToolTimeout
-      - CodeToolLoop
-      - CodeToolPanic
-      - CodeGuardrailTripwire
-      - CodeSandboxExec
-      - CodeMCP
     agents.InputTokensDetails:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
@@ -273,11 +226,11 @@ components:
         input_tokens:
           type: integer
         input_tokens_details:
-          $ref: '#/components/schemas/agents.InputTokensDetails'
+          $ref: '#/components/schemas/session.InputTokensDetails'
         output_tokens:
           type: integer
         output_tokens_details:
-          $ref: '#/components/schemas/agents.OutputTokensDetails'
+          $ref: '#/components/schemas/session.OutputTokensDetails'
         total_tokens:
           type: integer
       type: object
@@ -813,6 +766,71 @@ components:
       properties:
         graceful:
           type: boolean
+      type: object
+    session.DiagnosticType:
+      enum:
+      - model_retry
+      - model_fallback
+      - stream_error
+      - tool_panic
+      - tool_timeout
+      - compaction_failed
+      - response_truncated
+      - context_overflow
+      type: string
+      x-enum-varnames:
+      - DiagModelRetry
+      - DiagModelFallback
+      - DiagStreamError
+      - DiagToolPanic
+      - DiagToolTimeout
+      - DiagCompactionFailed
+      - DiagResponseTruncated
+      - DiagContextOverflow
+    session.ErrorCode:
+      description: Code classifies the underlying error, when there was one.
+      enum:
+      - unknown
+      - max_turns_exceeded
+      - model_behavior
+      - model_refusal
+      - user_error
+      - tool_timeout
+      - tool_loop
+      - tool_panic
+      - guardrail_tripwire
+      - sandbox_exec
+      - mcp
+      type: string
+      x-enum-varnames:
+      - CodeUnknown
+      - CodeMaxTurns
+      - CodeModelBehavior
+      - CodeModelRefusal
+      - CodeUserError
+      - CodeToolTimeout
+      - CodeToolLoop
+      - CodeToolPanic
+      - CodeGuardrailTripwire
+      - CodeSandboxExec
+      - CodeMCP
+    session.InputTokensDetails:
+      description: InputTokensDetails aggregates the input token detail fields.
+      properties:
+        cache_write_tokens:
+          description: |-
+            CacheWriteTokens counts input tokens written to the prompt cache (surfaced
+            by providers that bill cache writes separately). Older serialized RunState
+            snapshots without the field decode to zero.
+          type: integer
+        cached_tokens:
+          type: integer
+      type: object
+    session.OutputTokensDetails:
+      description: OutputTokensDetails aggregates the output token detail fields.
+      properties:
+        reasoning_tokens:
+          type: integer
       type: object
     store.AgentConfig:
       properties:

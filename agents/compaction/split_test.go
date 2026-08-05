@@ -3,14 +3,14 @@ package compaction
 import (
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // The whole reason SafeSplit exists: a count-based cut lands between a tool
 // call and its output, which would make the summary request invalid and leave
 // the kept history starting on an orphaned output.
 func TestSafeSplit_NeverCutsAToolCallFromItsOutput(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "do it"),
 		call(t, "c1", "run"),
 		output(t, "c1", "done"),
@@ -35,7 +35,7 @@ func TestSafeSplit_NeverCutsAToolCallFromItsOutput(t *testing.T) {
 // separate them moves back too — a pairing the old hand-written walker needed a
 // second rule for.
 func TestSafeSplit_KeepsReasoningWithItsCall(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "do it"),
 		reasoning(t),
 		call(t, "c1", "run"),
@@ -47,7 +47,7 @@ func TestSafeSplit_KeepsReasoningWithItsCall(t *testing.T) {
 }
 
 func TestSafeSplit_Bounds(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{user(t, "a"), user(t, "b")})
+	entries := withIDs([]session.Entry{user(t, "a"), user(t, "b")})
 	if got := SafeSplit(entries, 0); got != 0 {
 		t.Errorf("SafeSplit(…, 0) = %d, want 0", got)
 	}
@@ -62,18 +62,18 @@ func TestSafeSplit_Bounds(t *testing.T) {
 // Summarizing a summary produces a paraphrase of a paraphrase; a conversation
 // that does it every pass decays.
 func TestIsSummaryOnly(t *testing.T) {
-	summary := item(t, `{"role":"system","content":`+quote(agents.SummaryMarker+` earlier`)+`}`)
+	summary := item(t, `{"role":"system","content":`+quote(session.SummaryMarker+` earlier`)+`}`)
 
-	if !IsSummaryOnly([]agents.SessionEntry{summary}) {
+	if !IsSummaryOnly([]session.Entry{summary}) {
 		t.Error("a lone summary was not recognized")
 	}
-	if IsSummaryOnly([]agents.SessionEntry{summary, user(t, "and then?")}) {
+	if IsSummaryOnly([]session.Entry{summary, user(t, "and then?")}) {
 		t.Error("a summary followed by real conversation counted as summary-only")
 	}
 	if IsSummaryOnly(nil) {
 		t.Error("an empty prefix counted as summary-only")
 	}
-	if IsSummaryOnly([]agents.SessionEntry{user(t, "hello")}) {
+	if IsSummaryOnly([]session.Entry{user(t, "hello")}) {
 		t.Error("a plain user message counted as summary-only")
 	}
 }

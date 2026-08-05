@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // fakeConversations is a minimal in-memory stand-in for the OpenAI Conversations
@@ -105,18 +106,18 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	s, fake := newTestSession(t)
 
 	// Empty AddItems is a no-op and does not create a conversation.
-	if err := agents.NewSession(s).AppendItems(ctx, nil, agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, nil, agents.Source{}); err != nil {
 		t.Fatalf("empty AddItems: %v", err)
 	}
 
-	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("world"), agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("world"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	all, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	all, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	}
 
 	// Limit returns the most recent item, oldest-first ordering preserved.
-	recent, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{Limit: -1})
+	recent, err := session.NewSession(s).ContextItems(ctx, session.Cursor{Limit: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	if !itemContains(t, poppedItem, "world") {
 		t.Fatalf("PopEntry = %v", poppedItem)
 	}
-	if remaining, _ := agents.NewSession(s).ContextItems(ctx, agents.Cursor{}); len(remaining) != 1 {
+	if remaining, _ := session.NewSession(s).ContextItems(ctx, session.Cursor{}); len(remaining) != 1 {
 		t.Fatalf("after pop len = %d, want 1", len(remaining))
 	}
 
@@ -166,7 +167,7 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 
 func itemContains(t *testing.T, item agents.InputItem, sub string) bool {
 	t.Helper()
-	b, err := agents.MarshalInputItem(item)
+	b, err := session.MarshalInputItem(item)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestConversationsSession_AddItemsBatchesAtAPILimit(t *testing.T) {
 	for i := range 45 {
 		items = append(items, agents.InputItemsFromText("msg-"+strconv.Itoa(i))...)
 	}
-	if err := agents.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -250,7 +251,7 @@ func TestConversationsSession_AddItemsSingleBatchUnderLimit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := NewConversationsSession(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
 
-	if err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("only"), agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("only"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()

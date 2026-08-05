@@ -13,14 +13,15 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
-// ConversationsSession is an agents.Session backed by the OpenAI Conversations
+// ConversationsSession is an session.Session backed by the OpenAI Conversations
 // API: history lives server-side under a conversation ID rather than in a
 // local store. The conversation is created lazily on first use unless an
 // existing ID is supplied via SetConversationID.
 //
-// Item conversion reuses agents.UnmarshalInputItem, so the common item kinds
+// Item conversion reuses session.UnmarshalInputItem, so the common item kinds
 // (messages, function calls and their outputs) round-trip; exotic server-only
 // item types may not.
 type ConversationsSession struct {
@@ -30,7 +31,7 @@ type ConversationsSession struct {
 	id string
 }
 
-var _ agents.SessionStorage = (*ConversationsSession)(nil)
+var _ session.Storage = (*ConversationsSession)(nil)
 
 // NewConversationsSession builds a ConversationsSession with its own OpenAI
 // client. Pass openai-go request options (option.WithAPIKey, option.WithBaseURL,
@@ -72,12 +73,12 @@ func (s *ConversationsSession) ensureID(ctx context.Context) (string, error) {
 	return s.id, nil
 }
 
-// Entries implements agents.SessionStorage, oldest-first. A negative cursor
+// Entries implements session.Storage, oldest-first. A negative cursor
 // limit fetches the most recent -Limit entries.
 //
 // Every entry is an item entry: the server holds Responses items and nothing
 // else, so nothing a run recorded outside the conversation itself comes back.
-func (s *ConversationsSession) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+func (s *ConversationsSession) Entries(ctx context.Context, cur session.Cursor) ([]session.Entry, error) {
 	fetch := 0
 	if cur.Limit < 0 {
 		fetch = -cur.Limit
@@ -95,33 +96,33 @@ func (s *ConversationsSession) Entries(ctx context.Context, cur agents.Cursor) (
 	for i := range entries {
 		entries[i].Seq = int64(i + 1)
 	}
-	page := agents.Cursor{AfterSeq: cur.AfterSeq}
+	page := session.Cursor{AfterSeq: cur.AfterSeq}
 	if cur.Limit > 0 {
 		// A positive limit is part of the SessionStorage contract too; it was
 		// once silently dropped, and a pager asking for 50 got the whole
 		// conversation.
 		page.Limit = cur.Limit
 	}
-	return agents.PageEntries(entries, page), nil
+	return session.PageEntries(entries, page), nil
 }
 
-// Metadata implements agents.SessionStorage. The server owns the conversation,
+// Metadata implements session.Storage. The server owns the conversation,
 // so only its id is known here.
-func (s *ConversationsSession) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+func (s *ConversationsSession) Metadata(ctx context.Context) (session.Metadata, error) {
 	id, err := s.ConversationID(ctx)
 	if err != nil {
-		return agents.SessionMetadata{}, err
+		return session.Metadata{}, err
 	}
-	return agents.SessionMetadata{ID: id}, nil
+	return session.Metadata{ID: id}, nil
 }
 
-// Entry implements agents.SessionStorage by scanning the conversation; the API
+// Entry implements session.Storage by scanning the conversation; the API
 // has no per-item fetch.
-func (s *ConversationsSession) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+func (s *ConversationsSession) Entry(ctx context.Context, id string) (*session.Entry, error) {
 	if id == "" {
 		return nil, nil
 	}
-	entries, err := s.Entries(ctx, agents.Cursor{})
+	entries, err := s.Entries(ctx, session.Cursor{})
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +139,7 @@ func (s *ConversationsSession) Entry(ctx context.Context, id string) (*agents.Se
 // whose id were left blank could never be found again through Entry, and
 // "a caller that needs an entry reads its id back" (spec §2.5e2) would be
 // unsatisfiable against this store.
-func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]agents.SessionEntry, error) {
+func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]session.Entry, error) {
 	id, err := s.lockedEnsureID(ctx)
 	if err != nil {
 		return nil, err
@@ -151,7 +152,7 @@ func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]ag
 		params.Limit = oai.Int(int64(limit))
 	}
 
-	var entries []agents.SessionEntry
+	var entries []session.Entry
 	pager := s.svc.Items.ListAutoPaging(ctx, id, params)
 	for pager.Next() {
 		raw := pager.Current()
@@ -159,7 +160,7 @@ func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]ag
 		if err != nil {
 			return nil, err
 		}
-		entry, err := agents.NewItemEntry(item, agents.Source{})
+		entry, err := session.NewItemEntry(item, agents.Source{})
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +183,7 @@ func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]ag
 // POST /conversations/{id}/items ("You may add up to 20 items at a time").
 const conversationItemsBatchLimit = 20
 
-// Append implements agents.SessionStorage.
+// Append implements session.Storage.
 //
 // **Only item entries are stored.** A server-managed conversation holds
 // Responses items; there is nowhere on the server for an annotation, a terminal
@@ -190,10 +191,10 @@ const conversationItemsBatchLimit = 20
 // Losing a UI annotation degrades a timeline; failing the run because one could
 // not be stored server-side is worse. Use a local Session when everything a run
 // records must survive.
-func (s *ConversationsSession) Append(ctx context.Context, entries ...agents.SessionEntry) error {
+func (s *ConversationsSession) Append(ctx context.Context, entries ...session.Entry) error {
 	items := make([]agents.InputItem, 0, len(entries))
 	for _, e := range entries {
-		if e.Kind != agents.EntryKindItem {
+		if e.Kind != session.EntryKindItem {
 			continue
 		}
 		item, err := e.InputItem()
@@ -312,7 +313,7 @@ func sanitizeConversationItem(item agents.InputItem) (agents.InputItem, bool, er
 	if err != nil {
 		return item, false, err
 	}
-	clean, err := agents.UnmarshalInputItem(cleanRaw)
+	clean, err := session.UnmarshalInputItem(cleanRaw)
 	if err != nil {
 		return item, false, err
 	}
@@ -324,7 +325,7 @@ func isNonEmptyString(v any) bool {
 	return ok && s != ""
 }
 
-// PopEntry implements agents.Session: it removes and returns the most recent
+// PopEntry implements session.Session: it removes and returns the most recent
 // item, or nil if the conversation is empty.
 //
 // The mutex is held across the list AND the delete: they are one removal
@@ -333,7 +334,7 @@ func isNonEmptyString(v any) bool {
 // other chose — or an append lands in between and the pop removes an item
 // that is no longer the most recent. Cross-process races are inherent to the
 // server API; the ones this SDK creates itself are not.
-func (s *ConversationsSession) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+func (s *ConversationsSession) PopEntry(ctx context.Context) (*session.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, err := s.ensureID(ctx)
@@ -361,7 +362,7 @@ func (s *ConversationsSession) PopEntry(ctx context.Context) (*agents.SessionEnt
 	if _, err := s.svc.Items.Delete(ctx, id, raw.ID); err != nil {
 		return nil, fmt.Errorf("deleting conversation item: %w", err)
 	}
-	entry, err := agents.NewItemEntry(item, agents.Source{})
+	entry, err := session.NewItemEntry(item, agents.Source{})
 	if err != nil {
 		return nil, err
 	}
@@ -369,18 +370,18 @@ func (s *ConversationsSession) PopEntry(ctx context.Context) (*agents.SessionEnt
 	return &entry, nil
 }
 
-// PopItem implements agents.ItemPopper. Every entry in a Conversations session
+// PopItem implements session.ItemPopper. Every entry in a Conversations session
 // IS a conversation item — the server holds Responses items and nothing else,
 // so there are no banners, leaf moves or checkpoints to skip past and the two
 // pops answer the same question here. A backend that can remove an entry
 // offers both (spec §2.5e2): the flat, server-held store satisfies that with
 // the trivial selection rather than the shared tree-aware one, which has no
 // tree to consult.
-func (s *ConversationsSession) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+func (s *ConversationsSession) PopItem(ctx context.Context) (*session.Entry, error) {
 	return s.PopEntry(ctx)
 }
 
-// Clear implements agents.Session by deleting the server-side conversation. A
+// Clear implements session.Session by deleting the server-side conversation. A
 // fresh conversation is created on the next use.
 func (s *ConversationsSession) Clear(ctx context.Context) error {
 	s.mu.Lock()
@@ -404,5 +405,5 @@ func (s *ConversationsSession) lockedEnsureID(ctx context.Context) (string, erro
 // conversationItemToInput converts a server conversation item back into an input
 // item, reusing the runner's robust decoder.
 func conversationItemToInput(item conversations.ConversationItemUnion) (agents.InputItem, error) {
-	return agents.UnmarshalInputItem([]byte(item.RawJSON()))
+	return session.UnmarshalInputItem([]byte(item.RawJSON()))
 }

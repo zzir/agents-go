@@ -5,18 +5,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func projected(t *testing.T, idx *Index) string {
 	t.Helper()
-	items, err := agents.ProjectEntries(idx.IncludedEntries(), nil)
+	items, err := session.ProjectEntries(idx.IncludedEntries(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var b strings.Builder
 	for _, item := range items {
-		raw, err := agents.MarshalInputItem(item)
+		raw, err := session.MarshalInputItem(item)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -26,9 +26,9 @@ func projected(t *testing.T, idx *Index) string {
 	return b.String()
 }
 
-func conversation(t *testing.T) []agents.SessionEntry {
+func conversation(t *testing.T) []session.Entry {
 	t.Helper()
-	return withIDs([]agents.SessionEntry{
+	return withIDs([]session.Entry{
 		item(t, `{"role":"system","content":"be brief"}`),
 		user(t, "read the config"),
 		call(t, "c1", "read_file"),

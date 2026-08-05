@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"testing"
@@ -45,11 +45,11 @@ func TestSeqForOnAFreshSession(t *testing.T) {
 // first one's number.
 func TestPrepareAppendNumbersWithinABatchAndAcrossOne(t *testing.T) {
 	withClock(t, 1000)
-	first := PrepareAppend([]SessionEntry{{}, {}}, AppendPoint{})
+	first := PrepareAppend([]Entry{{}, {}}, AppendPoint{})
 	if first[0].Seq != 1000 || first[1].Seq != 1001 {
 		t.Fatalf("batch seqs = %d,%d, want 1000,1001", first[0].Seq, first[1].Seq)
 	}
-	second := PrepareAppend([]SessionEntry{{}}, AppendPointOf(first))
+	second := PrepareAppend([]Entry{{}}, AppendPointOf(first))
 	if second[0].Seq != 1002 {
 		t.Fatalf("next batch in the same nanosecond = %d, want 1002", second[0].Seq)
 	}
@@ -59,7 +59,7 @@ func TestPrepareAppendNumbersWithinABatchAndAcrossOne(t *testing.T) {
 // property rather than two that have to agree.
 func TestPrepareAppendDerivesIDsFromSeq(t *testing.T) {
 	withClock(t, 1000)
-	got := PrepareAppend([]SessionEntry{{}, {}}, AppendPoint{})
+	got := PrepareAppend([]Entry{{}, {}}, AppendPoint{})
 	for i := range got {
 		if want := EntryIDFor(got[i].Seq); got[i].ID != want {
 			t.Fatalf("entry %d id = %q, want %q", i, got[i].ID, want)
@@ -74,7 +74,7 @@ func TestPrepareAppendDerivesIDsFromSeq(t *testing.T) {
 // known entry keeps the identity an update entry points at.
 func TestPrepareAppendKeepsAnExistingID(t *testing.T) {
 	withClock(t, 1000)
-	got := PrepareAppend([]SessionEntry{{ID: "carried-over"}}, AppendPoint{})
+	got := PrepareAppend([]Entry{{ID: "carried-over"}}, AppendPoint{})
 	if got[0].ID != "carried-over" {
 		t.Fatalf("id = %q, want the one it arrived with", got[0].ID)
 	}
@@ -86,7 +86,7 @@ func TestPrepareAppendKeepsAnExistingID(t *testing.T) {
 // Parent links chain within a batch and start from the append point.
 func TestPrepareAppendLinksToTheAppendPoint(t *testing.T) {
 	withClock(t, 1000)
-	got := PrepareAppend([]SessionEntry{{}, {}}, AppendPoint{Leaf: "tip"})
+	got := PrepareAppend([]Entry{{}, {}}, AppendPoint{Leaf: "tip"})
 	if got[0].ParentID != "tip" {
 		t.Fatalf("first parent = %q, want the leaf it extends", got[0].ParentID)
 	}
@@ -99,7 +99,7 @@ func TestPrepareAppendLinksToTheAppendPoint(t *testing.T) {
 // differ when entries arrive out of order, and taking the last one would hand
 // out a number the session has used.
 func TestAppendPointOfTakesTheHighestSeq(t *testing.T) {
-	at := AppendPointOf([]SessionEntry{{ID: "a", Seq: 9}, {ID: "b", Seq: 4}})
+	at := AppendPointOf([]Entry{{ID: "a", Seq: 9}, {ID: "b", Seq: 4}})
 	if at.LastSeq != 9 {
 		t.Fatalf("LastSeq = %d, want the highest", at.LastSeq)
 	}

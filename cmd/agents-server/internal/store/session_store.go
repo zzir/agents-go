@@ -9,7 +9,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // SessionStore persists sessions and cascades deletes to their messages.
@@ -28,7 +28,7 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 		// Assigned here rather than by each caller, so no path that creates a
 		// session can forget it and leave one sharing its entries with whatever
 		// held the name before.
-		gen, err := agents.NewGeneration()
+		gen, err := session.NewGeneration()
 		if err != nil {
 			return err
 		}

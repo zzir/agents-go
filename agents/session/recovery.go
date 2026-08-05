@@ -1,10 +1,12 @@
-package agents
+package session
 
 import (
 	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/openai/openai-go/v3/responses"
 )
 
 // RecoveryAction is what to do about a tool call a crashed run left without
@@ -69,7 +71,7 @@ type RecoveryReport struct {
 // NeedsRecovery reports whether anything was found.
 func (r RecoveryReport) NeedsRecovery() bool { return len(r.UnfinishedCalls) > 0 }
 
-// RecoverSession repairs a session left inconsistent by a crash.
+// Recover repairs a session left inconsistent by a crash.
 //
 // A run killed between issuing a tool call and recording its output leaves a
 // function_call with no function_call_output. The Responses API rejects that
@@ -79,7 +81,7 @@ func (r RecoveryReport) NeedsRecovery() bool { return len(r.UnfinishedCalls) > 0
 // The repair is an APPEND, like everything else: the synthesized outputs are
 // added, nothing is rewritten, and the record of what actually happened stays
 // intact.
-func RecoverSession(ctx context.Context, sess *Session, policy RecoveryPolicy) (RecoveryReport, error) {
+func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (RecoveryReport, error) {
 	var report RecoveryReport
 	if sess == nil {
 		return report, nil
@@ -101,7 +103,7 @@ func RecoverSession(ctx context.Context, sess *Session, policy RecoveryPolicy) (
 		message = defaultRecoveryMessage
 	}
 
-	var repair []SessionEntry
+	var repair []Entry
 	for _, callID := range state.PendingCallIDs {
 		name := names[callID]
 		action := policy.UnfinishedToolCall
@@ -114,13 +116,13 @@ func RecoverSession(ctx context.Context, sess *Session, policy RecoveryPolicy) (
 		case RecoverLeave:
 			// The caller is handling it.
 		default:
-			item := newFunctionCallOutputItem(nil, callID, message(name, callID))
-			item.IsError = true
-			e, err := EntryFromRunItem(item, "")
+			msg := message(name, callID)
+			raw := responses.ResponseInputItemParamOfFunctionCallOutput(callID, msg)
+			e, err := NewItemEntry(raw, Source{Type: SourceErrorHandler})
 			if err != nil {
 				return report, fmt.Errorf("recovering call %q: %w", callID, err)
 			}
-			e.Source = Source{Type: SourceErrorHandler}
+			e.Display = &Display{Kind: DisplayToolOutput, CallID: callID, Output: msg, IsError: true}
 			repair = append(repair, e)
 			report.Repaired = append(report.Repaired, callID)
 		}
@@ -145,7 +147,7 @@ func defaultRecoveryMessage(toolName, _ string) string {
 
 // toolNamesByCallID maps each recorded call id to the tool it named, so a
 // synthesized output can say which tool was interrupted.
-func toolNamesByCallID(entries []SessionEntry) map[string]string {
+func toolNamesByCallID(entries []Entry) map[string]string {
 	out := map[string]string{}
 	for _, e := range entries {
 		if e.Kind != EntryKindItem {

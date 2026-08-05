@@ -1,7 +1,7 @@
 package compaction
 
 import (
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Index is a session's entries organized into groups, plus the accounting a
@@ -19,7 +19,7 @@ type Index struct {
 }
 
 // NewIndex groups entries. A nil estimator uses CharEstimator.
-func NewIndex(entries []agents.SessionEntry, est TokenEstimator) *Index {
+func NewIndex(entries []session.Entry, est TokenEstimator) *Index {
 	if est == nil {
 		est = CharEstimator{}
 	}
@@ -35,7 +35,7 @@ func NewIndex(entries []agents.SessionEntry, est TokenEstimator) *Index {
 // session — it rebuilds from scratch rather than trying to reconcile.
 // Reconciling a rewritten history is where incremental indexes go wrong, and
 // both rebuilding and the prefix check are cheap next to a model call.
-func (idx *Index) Update(entries []agents.SessionEntry) {
+func (idx *Index) Update(entries []session.Entry) {
 	start, ok := idx.prefixMatches(entries)
 	if !ok {
 		// Not a continuation of what we hold: a different session, a branch
@@ -64,8 +64,8 @@ func (idx *Index) Update(entries []agents.SessionEntry) {
 // grouped returns every entry the index holds, in the order it grouped them.
 // The groups themselves ARE the record of what was indexed, so there is no
 // second copy to keep in step with them.
-func (idx *Index) grouped() []agents.SessionEntry {
-	out := make([]agents.SessionEntry, 0, len(idx.Groups))
+func (idx *Index) grouped() []session.Entry {
+	out := make([]session.Entry, 0, len(idx.Groups))
 	for _, g := range idx.Groups {
 		out = append(out, g.Entries...)
 	}
@@ -85,7 +85,7 @@ func (idx *Index) grouped() []agents.SessionEntry {
 // so two sessions with identical text and different token counts must not
 // share an index, or one gets the other's accounting and is compacted against
 // the wrong budget.
-func (idx *Index) prefixMatches(entries []agents.SessionEntry) (n int, ok bool) {
+func (idx *Index) prefixMatches(entries []session.Entry) (n int, ok bool) {
 	for _, g := range idx.Groups {
 		for _, have := range g.Entries {
 			if n >= len(entries) || !have.Equal(entries[n]) {
@@ -98,7 +98,7 @@ func (idx *Index) prefixMatches(entries []agents.SessionEntry) (n int, ok bool) 
 }
 
 // group folds entries into groups, appending to whatever the index already has.
-func (idx *Index) group(entries []agents.SessionEntry) {
+func (idx *Index) group(entries []session.Entry) {
 	i := 0
 	for i < len(entries) {
 		e := entries[i]
@@ -135,14 +135,14 @@ func (idx *Index) group(entries []agents.SessionEntry) {
 // appendToolCallGroup consumes a tool call and everything that belongs with it
 // — its outputs, sibling calls issued in the same turn, and any leading
 // reasoning — adds them as one group, and reports how many entries it took.
-func (idx *Index) appendToolCallGroup(entries []agents.SessionEntry, start int) int {
+func (idx *Index) appendToolCallGroup(entries []session.Entry, start int) int {
 	end := idx.toolCallGroupEnd(entries, start)
 	idx.add(GroupToolCall, entries[start:start+end])
 	return end
 }
 
 // toolCallGroupEnd finds where the group starting at start ends.
-func (idx *Index) toolCallGroupEnd(entries []agents.SessionEntry, start int) int {
+func (idx *Index) toolCallGroupEnd(entries []session.Entry, start int) int {
 	i := start
 	open := map[string]bool{}
 	sawCall := false
@@ -179,7 +179,7 @@ func (idx *Index) toolCallGroupEnd(entries []agents.SessionEntry, start int) int
 
 // nextConversational returns the index of the next entry that is part of the
 // conversation, skipping annotations and other non-context records.
-func nextConversational(entries []agents.SessionEntry, from int) int {
+func nextConversational(entries []session.Entry, from int) int {
 	for i := from; i < len(entries); i++ {
 		if kind, _, _, _ := classify(entries[i]); kind != GroupOther {
 			return i
@@ -188,8 +188,8 @@ func nextConversational(entries []agents.SessionEntry, from int) int {
 	return -1
 }
 
-func (idx *Index) add(kind GroupKind, entries []agents.SessionEntry) {
-	g := &Group{Kind: kind, Entries: append([]agents.SessionEntry(nil), entries...)}
+func (idx *Index) add(kind GroupKind, entries []session.Entry) {
+	g := &Group{Kind: kind, Entries: append([]session.Entry(nil), entries...)}
 	if kind != GroupSystem && kind != GroupOther {
 		turn := idx.turn
 		g.TurnIndex = &turn
@@ -213,8 +213,8 @@ func (idx *Index) IncludedGroups() []*Group {
 
 // IncludedEntries projects the index back to the entries that make up the
 // context, with excluded groups dropped and replaced groups substituted.
-func (idx *Index) IncludedEntries() []agents.SessionEntry {
-	var out []agents.SessionEntry
+func (idx *Index) IncludedEntries() []session.Entry {
+	var out []session.Entry
 	for _, g := range idx.Groups {
 		if g.Excluded {
 			// An excluded group may still contribute a stand-in — a folded

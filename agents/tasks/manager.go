@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Defaults chosen to fail safe rather than to be generous.
@@ -56,7 +56,7 @@ func (e ErrAlreadyFinal) Error() string { return "tasks: task already " + string
 // required.
 type Config struct {
 	Store    Store
-	Sessions agents.SessionRepo
+	Sessions session.Repo
 	Resolver AgentResolver
 	Launcher Launcher
 	// Stopper cancels a running task. Without one, Stop still finalizes the
@@ -290,7 +290,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	// written without a second round trip and a failed read cannot leave a
 	// session nothing refers to.
 	childID := m.cfg.NewID()
-	if _, err := m.cfg.Sessions.Create(ctx, agents.CreateOptions{
+	if _, err := m.cfg.Sessions.Create(ctx, session.CreateOptions{
 		ID:    childID,
 		Title: "task: " + label,
 		// Hidden: a task's transcript is not a conversation the user started,

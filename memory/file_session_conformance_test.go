@@ -4,13 +4,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agentstest"
 	"github.com/zzir/agents-go/memory"
 )
 
 func TestFileSessionConformance(t *testing.T) {
-	agentstest.StorageConformance(t, func(t *testing.T) agents.SessionStorage {
+	agentstest.StorageConformance(t, func(t *testing.T) session.Storage {
 		t.Helper()
 		fs, err := memory.OpenFileSession(filepath.Join(t.TempDir(), "s.jsonl"))
 		if err != nil {

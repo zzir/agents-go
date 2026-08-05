@@ -22,7 +22,7 @@ type taskRow struct {
 
 	ParentSessionID string `bun:"parent_session_id,notnull"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
-	// this row names (agents.SessionRef). A session id names a session, not a
+	// this row names (session.Ref). A session id names a session, not a
 	// place: deleting an id and creating it again yields a different session,
 	// and a task row that matched on the id alone attached itself to the
 	// replacement — listing a dead incarnation's tasks under the new one and

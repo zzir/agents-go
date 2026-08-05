@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // ItemKind classifies what a RunItem holds. The set is closed: the runner
@@ -271,47 +273,6 @@ func NewModelItem(kind ItemKind, agent *Agent, raw OutputItem) *RunItem {
 	return &RunItem{Kind: kind, Agent: agent, Raw: &raw}
 }
 
-// ItemDisplay is an item projected into what a renderer actually needs.
-type ItemDisplay struct {
-	// Kind is the item kind: message, tool_call, tool_output, reasoning,
-	// handoff, unknown. An unrecognized kind must fall back, not fail.
-	Kind string `json:"kind"`
-	// Renderer is a tool's requested renderer ("diff", "terminal", "table", …),
-	// from ToolResult.Display. A consumer that does not know the name falls
-	// back to plain text rather than failing.
-	Renderer string `json:"renderer,omitzero"`
-	// Text is the human-readable body: a message's text, a reasoning summary.
-	Text string `json:"text,omitzero"`
-	// CallID ties a tool call to its output.
-	CallID string `json:"call_id,omitzero"`
-	// ToolName is the tool being called, or the handoff tool.
-	ToolName string `json:"tool_name,omitzero"`
-	// Arguments is the raw JSON the model passed to the tool.
-	Arguments string `json:"arguments,omitzero"`
-	// Output is a tool result rendered as text.
-	Output string `json:"output,omitzero"`
-	// IsError marks a tool result that reports a failure.
-	IsError bool `json:"is_error,omitzero"`
-	// Extra carries whatever a tool's CustomDataExtractor produced. It is
-	// SDK-side only and never reaches the model.
-	Extra map[string]any `json:"extra,omitzero"`
-}
-
-// ItemDisplay kinds.
-const (
-	DisplayMessage    = "message"
-	DisplayToolCall   = "tool_call"
-	DisplayToolOutput = "tool_output"
-	DisplayReasoning  = "reasoning"
-	DisplayHandoff    = "handoff"
-	DisplayUnknown    = "unknown"
-	// DisplayError and DisplayCancelled are what an annotation entry renders
-	// as. They are display kinds rather than item kinds because nothing was
-	// said: they report on the run, and the model never reads them.
-	DisplayError     = "error"
-	DisplayCancelled = "cancelled"
-)
-
 // ReasoningItemIDPolicy controls whether reasoning-item ids are preserved when
 // run items are converted back into model input for a later turn. The default
 // (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them, which is
@@ -442,4 +403,28 @@ func stringifyToolOutput(output any) string {
 		// rather than silently dropping the output.
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+// EntryFromRunItem builds a session entry from a run item, carrying its
+// provenance, display and owning agent.
+func EntryFromRunItem(it *RunItem, responseID string) (session.Entry, error) {
+	in, err := it.ToInputItem()
+	if err != nil {
+		return session.Entry{}, err
+	}
+	e, err := session.NewItemEntry(in, it.Source)
+	if err != nil {
+		return session.Entry{}, err
+	}
+	if it.Agent != nil {
+		e.AgentName = it.Agent.Name
+	}
+	d := it.Display()
+	e.Display = &d
+	e.ResponseID = responseID
+	if it.NestedUsage != nil {
+		u := it.NestedUsage.Request()
+		e.NestedUsage = &u
+	}
+	return e, nil
 }

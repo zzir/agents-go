@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// SessionStorage is the physical layer: it reads and writes entries and
+// Storage is the physical layer: it reads and writes entries and
 // understands nothing about what they mean.
 //
 // Splitting it from Session is what stopped every backend from having to
@@ -15,19 +15,19 @@ import (
 // input" had to reimplement projection, compaction-awareness and settings
 // resolution, and each one drifted. A store now answers only "what is
 // recorded, in what order".
-type SessionStorage interface {
+type Storage interface {
 	// Metadata describes the session.
-	Metadata(ctx context.Context) (SessionMetadata, error)
+	Metadata(ctx context.Context) (Metadata, error)
 
 	// Append records entries in order, filling in ids and timestamps for any
 	// that lack them.
-	Append(ctx context.Context, entries ...SessionEntry) error
+	Append(ctx context.Context, entries ...Entry) error
 
 	// Entry returns one entry by id, or nil when there is none.
-	Entry(ctx context.Context, id string) (*SessionEntry, error)
+	Entry(ctx context.Context, id string) (*Entry, error)
 
 	// Entries returns entries in append order, paginated by cursor.
-	Entries(ctx context.Context, cur Cursor) ([]SessionEntry, error)
+	Entries(ctx context.Context, cur Cursor) ([]Entry, error)
 
 	// Clear removes every entry.
 	Clear(ctx context.Context) error
@@ -49,8 +49,8 @@ type Cursor struct {
 	Limit int
 }
 
-// SessionMetadata describes a session without reading its contents.
-type SessionMetadata struct {
+// Metadata describes a session without reading its contents.
+type Metadata struct {
 	ID string `json:"id"`
 	// Title is a human-facing name, when the application sets one.
 	Title string `json:"title,omitzero"`
@@ -65,13 +65,13 @@ type SessionMetadata struct {
 	EntryCount int `json:"entry_count,omitzero"`
 }
 
-// InMemoryStorage is a goroutine-safe SessionStorage for tests and short-lived
+// InMemoryStorage is a goroutine-safe Storage for tests and short-lived
 // conversations. History is lost when the process exits.
 type InMemoryStorage struct {
 	id string
 
 	mu        sync.Mutex
-	entries   []SessionEntry
+	entries   []Entry
 	seq       int64
 	createdAt time.Time
 	updatedAt time.Time
@@ -84,7 +84,7 @@ type InMemoryStorage struct {
 }
 
 // retire marks the storage as belonging to a deleted session; every later
-// write refuses with ErrSessionNotFound.
+// write refuses with ErrNotFound.
 func (s *InMemoryStorage) retire() {
 	s.mu.Lock()
 	s.retired = true
@@ -94,7 +94,7 @@ func (s *InMemoryStorage) retire() {
 // checkLive reports whether writes are still allowed. Callers hold s.mu.
 func (s *InMemoryStorage) checkLive() error {
 	if s.retired {
-		return fmt.Errorf("session %s: %w", s.id, ErrSessionNotFound)
+		return fmt.Errorf("session %s: %w", s.id, ErrNotFound)
 	}
 	return nil
 }
@@ -106,11 +106,11 @@ func NewInMemoryStorage(id string) *InMemoryStorage {
 	return &InMemoryStorage{id: id, createdAt: now, updatedAt: now}
 }
 
-// Metadata implements SessionStorage.
-func (s *InMemoryStorage) Metadata(context.Context) (SessionMetadata, error) {
+// Metadata implements Storage.
+func (s *InMemoryStorage) Metadata(context.Context) (Metadata, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return SessionMetadata{
+	return Metadata{
 		ID:         s.id,
 		Title:      s.title,
 		Hidden:     s.hidden,
@@ -120,8 +120,8 @@ func (s *InMemoryStorage) Metadata(context.Context) (SessionMetadata, error) {
 	}, nil
 }
 
-// Append implements SessionStorage.
-func (s *InMemoryStorage) Append(_ context.Context, entries ...SessionEntry) error {
+// Append implements Storage.
+func (s *InMemoryStorage) Append(_ context.Context, entries ...Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkLive(); err != nil {
@@ -136,8 +136,8 @@ func (s *InMemoryStorage) Append(_ context.Context, entries ...SessionEntry) err
 	return nil
 }
 
-// Entry implements SessionStorage.
-func (s *InMemoryStorage) Entry(_ context.Context, id string) (*SessionEntry, error) {
+// Entry implements Storage.
+func (s *InMemoryStorage) Entry(_ context.Context, id string) (*Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.entries {
@@ -149,14 +149,14 @@ func (s *InMemoryStorage) Entry(_ context.Context, id string) (*SessionEntry, er
 	return nil, nil
 }
 
-// Entries implements SessionStorage.
-func (s *InMemoryStorage) Entries(_ context.Context, cur Cursor) ([]SessionEntry, error) {
+// Entries implements Storage.
+func (s *InMemoryStorage) Entries(_ context.Context, cur Cursor) ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return PageEntries(s.entries, cur), nil
 }
 
-// Clear implements SessionStorage.
+// Clear implements Storage.
 func (s *InMemoryStorage) Clear(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,16 +169,16 @@ func (s *InMemoryStorage) Clear(context.Context) error {
 }
 
 // PopEntry implements EntryPopper.
-func (s *InMemoryStorage) PopEntry(context.Context) (*SessionEntry, error) {
+func (s *InMemoryStorage) PopEntry(context.Context) (*Entry, error) {
 	return s.pop(PopLast)
 }
 
 // PopItem implements ItemPopper.
-func (s *InMemoryStorage) PopItem(context.Context) (*SessionEntry, error) {
+func (s *InMemoryStorage) PopItem(context.Context) (*Entry, error) {
 	return s.pop(PopLastItem)
 }
 
-func (s *InMemoryStorage) pop(mode PopMode) (*SessionEntry, error) {
+func (s *InMemoryStorage) pop(mode PopMode) (*Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkLive(); err != nil {
@@ -194,7 +194,7 @@ func (s *InMemoryStorage) pop(mode PopMode) (*SessionEntry, error) {
 }
 
 // ReplaceEntries implements AtomicReplacer: the swap happens under one lock.
-func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...SessionEntry) error {
+func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkLive(); err != nil {
@@ -225,7 +225,7 @@ func (s *InMemoryStorage) SetTitle(title string) {
 }
 
 var (
-	_ SessionStorage = (*InMemoryStorage)(nil)
+	_ Storage        = (*InMemoryStorage)(nil)
 	_ AtomicReplacer = (*InMemoryStorage)(nil)
 	_ EntryPopper    = (*InMemoryStorage)(nil)
 	_ ItemPopper     = (*InMemoryStorage)(nil)
@@ -235,7 +235,7 @@ var (
 // call it so every implementation pages identically — the off-by-one between
 // "after this seq" and "from this seq" is exactly what each would otherwise
 // get subtly wrong on its own.
-func PageEntries(entries []SessionEntry, cur Cursor) []SessionEntry {
+func PageEntries(entries []Entry, cur Cursor) []Entry {
 	out := entries
 	if cur.AfterSeq > 0 {
 		i := 0
@@ -250,13 +250,13 @@ func PageEntries(entries []SessionEntry, cur Cursor) []SessionEntry {
 	case cur.Limit < 0 && -cur.Limit < len(out):
 		out = out[len(out)+cur.Limit:]
 	}
-	return append([]SessionEntry(nil), out...)
+	return append([]Entry(nil), out...)
 }
 
-// ReplaceStorageEntries swaps a store's whole history. It is Clear followed by Append
+// ReplaceEntries swaps a store's whole history. It is Clear followed by Append
 // unless the store can do better; a store that can swap atomically implements
 // AtomicReplacer so a failure mid-rewrite cannot leave the session empty.
-func ReplaceStorageEntries(ctx context.Context, s SessionStorage, entries ...SessionEntry) error {
+func ReplaceEntries(ctx context.Context, s Storage, entries ...Entry) error {
 	if r, ok := s.(AtomicReplacer); ok {
 		return r.ReplaceEntries(ctx, entries...)
 	}
@@ -266,27 +266,27 @@ func ReplaceStorageEntries(ctx context.Context, s SessionStorage, entries ...Ses
 	return s.Append(ctx, entries...)
 }
 
-// AtomicReplacer is an optional SessionStorage capability: replace the entire
+// AtomicReplacer is an optional Storage capability: replace the entire
 // history in one step. Backends that can (a file rename, a DB transaction)
 // should implement it, so a rewrite cannot leave the session empty when a
 // failure lands between clearing and re-adding.
 type AtomicReplacer interface {
-	ReplaceEntries(ctx context.Context, entries ...SessionEntry) error
+	ReplaceEntries(ctx context.Context, entries ...Entry) error
 }
 
-// EntryPopper is an optional SessionStorage capability: remove and return the
+// EntryPopper is an optional Storage capability: remove and return the
 // most recent entry.
 //
-// It is not part of SessionStorage because a run never pops — history is
+// It is not part of Storage because a run never pops — history is
 // append-only from the runner's side. Only an application undoing a turn needs
 // it, and requiring every backend to implement it would tax the ones that
 // cannot (a server-managed conversation) for a feature the run loop does not
 // use.
 type EntryPopper interface {
-	PopEntry(ctx context.Context) (*SessionEntry, error)
+	PopEntry(ctx context.Context) (*Entry, error)
 }
 
-// ItemPopper is an optional SessionStorage capability: remove and return the
+// ItemPopper is an optional Storage capability: remove and return the
 // most recent conversation ITEM, skipping past what is not one — an error
 // banner, a leaf move, an entry a compaction pass folded away.
 //
@@ -300,15 +300,15 @@ type EntryPopper interface {
 // by PlanPop rather than by each store. One interface answering both questions
 // is how the same call came to mean different things in different backends.
 type ItemPopper interface {
-	PopItem(ctx context.Context) (*SessionEntry, error)
+	PopItem(ctx context.Context) (*Entry, error)
 }
 
 // PopEntry removes and returns a session's most recent entry, when the store
 // supports it. It reports an error for one that does not.
-func (s *Session) PopEntry(ctx context.Context) (*SessionEntry, error) {
+func (s *Session) PopEntry(ctx context.Context) (*Entry, error) {
 	p, ok := s.storage.(EntryPopper)
 	if !ok {
-		return nil, NewUserError("session storage %T cannot pop entries", s.storage)
+		return nil, fmt.Errorf("session: session storage %T cannot pop entries", s.storage)
 	}
 	return p.PopEntry(ctx)
 }
@@ -316,10 +316,10 @@ func (s *Session) PopEntry(ctx context.Context) (*SessionEntry, error) {
 // PopItem removes and returns a session's most recent conversation item,
 // skipping entries that are not one. It reports an error for a store that
 // cannot.
-func (s *Session) PopItem(ctx context.Context) (*SessionEntry, error) {
+func (s *Session) PopItem(ctx context.Context) (*Entry, error) {
 	p, ok := s.storage.(ItemPopper)
 	if !ok {
-		return nil, NewUserError("session storage %T cannot pop items", s.storage)
+		return nil, fmt.Errorf("session: session storage %T cannot pop items", s.storage)
 	}
 	return p.PopItem(ctx)
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Compactor decides what a session's history should look like as model context.
@@ -18,7 +20,7 @@ import (
 // reason a Model is an interface here and an implementation elsewhere. Build
 // one with compaction.New.
 type Compactor interface {
-	Compact(ctx context.Context, entries []SessionEntry) ([]SessionEntry, error)
+	Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error)
 }
 
 // CompactionPoint is a set of moments at which a run consults its Compactor.
@@ -84,7 +86,7 @@ func (c CompactionOptions) active(point CompactionPoint) bool {
 // Server-managed conversation state needs no thought here: UsePreviousResponseID
 // and ConversationID already refuse to combine with a local Session, so a run
 // whose history the server holds has no entries for a compactor to look at.
-func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entries []SessionEntry) ([]SessionEntry, bool) {
+func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entries []session.Entry) ([]session.Entry, bool) {
 	if !r.opts.Compaction.active(point) {
 		return entries, false
 	}
@@ -94,7 +96,7 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 		// asked for is not compaction.
 		return entries, false
 	}
-	if _, ok := r.opts.Conversation.Session.Storage().(CompactionAware); ok {
+	if _, ok := r.opts.Conversation.Session.Storage().(session.CompactionAware); ok {
 		// The storage compacts itself (a server-side compact API, say).
 		// Running both would compact a history that is already shrinking under
 		// a different policy.
@@ -145,8 +147,8 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 // save point never rebuilds it and the after-run point never writes the
 // checkpoint. A custom projector may read any field, so none of them can be
 // assumed not to matter.
-func changedEntries(before, after []SessionEntry) bool {
-	return !slices.EqualFunc(before, after, SessionEntry.Equal)
+func changedEntries(before, after []session.Entry) bool {
+	return !slices.EqualFunc(before, after, session.Entry.Equal)
 }
 
 // String names the point, for traces and logs.
@@ -184,7 +186,7 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 		return nil, false, nil
 	}
 
-	cur := Cursor{Limit: -resolveSessionLimit(r.opts.Conversation.Settings)}
+	cur := session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)}
 	entries, err := sess.ContextEntries(ctx, cur)
 	if err != nil {
 		return nil, false, err
@@ -196,7 +198,7 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 		return nil, false, nil
 	}
 
-	history, err := ProjectEntries(compacted, r.opts.Conversation.Projectors)
+	history, err := session.ProjectEntries(compacted, r.opts.Conversation.Projectors)
 	if err != nil {
 		return nil, false, err
 	}
@@ -224,7 +226,7 @@ type CompactionCheckpointer interface {
 	// durably record another conversation's exclusions — and content — in
 	// this one's log. A lost checkpoint merely costs the next run one more
 	// pass; a stolen one is a cross-session leak.
-	Checkpoint(compacted []SessionEntry) (SessionEntry, bool, error)
+	Checkpoint(compacted []session.Entry) (session.Entry, bool, error)
 }
 
 // checkpointAfterRun records the run's compaction as an append-only checkpoint,
@@ -244,7 +246,7 @@ func (r *runner) checkpointAfterRun(ctx context.Context) bool {
 
 	// Compact once more over the whole persisted history: the passes during the
 	// run happened before this turn's items existed.
-	entries, err := r.opts.Conversation.Session.ContextEntries(ctx, Cursor{})
+	entries, err := r.opts.Conversation.Session.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		return false
 	}

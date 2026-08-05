@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // keepEverything excludes nothing, which makes what the index is holding
@@ -21,14 +22,14 @@ func TestCompactorReusedAcrossSessionsKeepsThemApart(t *testing.T) {
 	c := New(keepEverything{}, nil)
 	ctx := context.Background()
 
-	withID := func(id, text string) agents.SessionEntry { return userWithID(t, id, text) }
+	withID := func(id, text string) session.Entry { return userWithID(t, id, text) }
 
-	sessionA := []agents.SessionEntry{withID("e1", "a-one"), withID("e2", "a-two")}
+	sessionA := []session.Entry{withID("e1", "a-one"), withID("e2", "a-two")}
 	if _, err := c.Compact(ctx, sessionA); err != nil {
 		t.Fatal(err)
 	}
 
-	sessionB := []agents.SessionEntry{withID("e1", "b-one"), withID("e2", "b-two"), withID("e3", "b-three")}
+	sessionB := []session.Entry{withID("e1", "b-one"), withID("e2", "b-two"), withID("e3", "b-three")}
 	got, err := c.Compact(ctx, sessionB)
 	if err != nil {
 		t.Fatal(err)
@@ -47,10 +48,10 @@ func TestCompactorReusedAcrossSessionsKeepsThemApart(t *testing.T) {
 // The same guard must not cost the incremental path: a genuine continuation of
 // the same session still resumes rather than regrouping from scratch.
 func TestCompactorResumesOnATrueContinuation(t *testing.T) {
-	idx := NewIndex([]agents.SessionEntry{user(t, "one"), user(t, "two")}, nil)
+	idx := NewIndex([]session.Entry{user(t, "one"), user(t, "two")}, nil)
 	before := len(idx.Groups)
 
-	idx.Update([]agents.SessionEntry{user(t, "one"), user(t, "two"), user(t, "three")})
+	idx.Update([]session.Entry{user(t, "one"), user(t, "two"), user(t, "three")})
 	if len(idx.Groups) <= before {
 		t.Fatalf("groups went from %d to %d — the third entry was not appended", before, len(idx.Groups))
 	}
@@ -64,7 +65,7 @@ func TestCompactorResumesOnATrueContinuation(t *testing.T) {
 // reordered one, the prefix check would compare the wrong pairs and rebuild the
 // whole index on every turn — the exact cost it exists to avoid.
 func TestGroupingKeepsEveryEntryInOrder(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "weather?"),
 		reasoning(t),
 		call(t, "c1", "get_weather"),
@@ -89,17 +90,17 @@ func TestGroupingKeepsEveryEntryInOrder(t *testing.T) {
 // not share an index: ContextTokens reads Usage, so resuming onto the other's
 // would compact against a budget that was never measured on this conversation.
 func TestUpdateRebuildsWhenOnlyUsageDiffers(t *testing.T) {
-	withUsage := func(e agents.SessionEntry, in int64) agents.SessionEntry {
+	withUsage := func(e session.Entry, in int64) session.Entry {
 		e.Usage = &agents.RequestUsage{InputTokens: in, TotalTokens: in}
 		return e
 	}
-	first := []agents.SessionEntry{withUsage(userWithID(t, "e1", "hello"), 100)}
+	first := []session.Entry{withUsage(userWithID(t, "e1", "hello"), 100)}
 	idx := NewIndex(first, nil)
 	if got := idx.ContextTokens(); got != 100 {
 		t.Fatalf("first session context = %d, want 100", got)
 	}
 
-	second := []agents.SessionEntry{withUsage(userWithID(t, "e1", "hello"), 9000)}
+	second := []session.Entry{withUsage(userWithID(t, "e1", "hello"), 9000)}
 	idx.Update(second)
 	if got := idx.ContextTokens(); got != 9000 {
 		t.Fatalf("context = %d, want the second session's 9000 — the index resumed onto a foreign history", got)

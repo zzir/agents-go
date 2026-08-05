@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -26,9 +27,9 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 
 // countDisplays counts a session's entries of one kind whose display kind
 // matches — the entry-model equivalent of the old (kind, role) row count.
-func countDisplays(t *testing.T, db *bun.DB, sid string, kind agents.EntryKind, display string) int {
+func countDisplays(t *testing.T, db *bun.DB, sid string, kind session.EntryKind, display string) int {
 	t.Helper()
-	entries, err := mustStore(t, db, sid).Entries(context.Background(), agents.Cursor{})
+	entries, err := mustStore(t, db, sid).Entries(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatalf("load entries: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 	es := mustStore(t, db, sid)
 	es.SetRunID(rid)
 	es.SetModel("m")
-	userItem, err := agents.NewItemEntry(agents.InputItemsFromText("hello")[0], agents.Source{Type: agents.SourceUser})
+	userItem, err := session.NewItemEntry(agents.InputItemsFromText("hello")[0], agents.Source{Type: agents.SourceUser})
 	if err != nil {
 		t.Fatalf("build user item: %v", err)
 	}
@@ -70,11 +71,11 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
-	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 	// The prompt must not be re-inserted — still exactly one user item entry.
-	if got := countDisplays(t, db, sid, agents.EntryKindItem, ""); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindItem, ""); got != 1 {
 		t.Errorf("user item entries = %d, want 1 (no duplicate)", got)
 	}
 }
@@ -94,17 +95,17 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "let me think about primes", "here is my parti", "", "")
 
-	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayReasoning); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayReasoning); got != 1 {
 		t.Errorf("reasoning annotations = %d, want 1", got)
 	}
-	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayMessage); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayMessage); got != 1 {
 		t.Errorf("partial-text annotations = %d, want 1", got)
 	}
-	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 	// Display-only: none of these annotations may be replayed to the model.
-	items, err := agents.NewSession(mustStore(t, db, sid)).ContextItems(context.Background(), agents.Cursor{})
+	items, err := session.NewSession(mustStore(t, db, sid)).ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -129,10 +130,10 @@ func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 
 	runner.savePartialTurn(sid, rid, "m", "hello", "cancelled", "", "", "", "", "")
 
-	if got := countDisplays(t, db, sid, agents.EntryKindItem, ""); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindItem, ""); got != 1 {
 		t.Errorf("user fallback entries = %d, want 1", got)
 	}
-	if got := countDisplays(t, db, sid, agents.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
+	if got := countDisplays(t, db, sid, session.EntryKindAnnotation, agents.DisplayCancelled); got != 1 {
 		t.Errorf("cancelled annotations = %d, want 1", got)
 	}
 }

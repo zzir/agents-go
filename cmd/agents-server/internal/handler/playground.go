@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -119,7 +120,7 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 
 	items := make([]agents.InputItem, 0, len(req.InputItems))
 	for i, raw := range req.InputItems {
-		item, err := agents.UnmarshalInputItem(store.NormalizeItemJSON(raw))
+		item, err := session.UnmarshalInputItem(store.NormalizeItemJSON(raw))
 		if err != nil {
 			badRequest(c, "input item "+strconv.Itoa(i)+": "+err.Error())
 			return

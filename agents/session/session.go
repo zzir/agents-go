@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// Session is a conversation's history: a SessionStorage plus the semantics that
+// Session is a conversation's history: a Storage plus the semantics that
 // turn stored entries into what a model reads.
 //
 // It is a concrete type, not an interface. Storage varies — a file, a table, a
@@ -18,11 +18,11 @@ import (
 // store ended up projecting compaction summaries in a different order than
 // another.
 type Session struct {
-	storage SessionStorage
+	storage Storage
 }
 
 // NewSession wraps storage as a session.
-func NewSession(storage SessionStorage) *Session {
+func NewSession(storage Storage) *Session {
 	return &Session{storage: storage}
 }
 
@@ -32,10 +32,10 @@ func NewInMemorySession() *Session { return NewSession(NewInMemoryStorage("mem")
 
 // Storage exposes the underlying store, for callers that need a capability the
 // Session does not surface.
-func (s *Session) Storage() SessionStorage { return s.storage }
+func (s *Session) Storage() Storage { return s.storage }
 
 // Entries returns the session's entries in append order.
-func (s *Session) Entries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
+func (s *Session) Entries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	return s.storage.Entries(ctx, cur)
 }
 
@@ -47,7 +47,7 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]SessionEntry, erro
 // Filtering the folded entries HERE, not just at projection, is deliberate: a
 // cursor limit counts entries the model will actually see, and a Compactor fed
 // this view cannot re-include what an earlier pass already folded.
-func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntry, error) {
+func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntr
 	// activeBranchOf.
 	path := ActiveBranchOf(all)
 	if folded := FoldedEntryIDs(path); len(folded) > 0 {
-		kept := make([]SessionEntry, 0, len(path))
+		kept := make([]Entry, 0, len(path))
 		for _, e := range path {
 			if !folded[e.ID] {
 				kept = append(kept, e)
@@ -79,7 +79,7 @@ func (s *Session) ContextItems(ctx context.Context, cur Cursor) ([]InputItem, er
 }
 
 // Append records entries.
-func (s *Session) Append(ctx context.Context, entries ...SessionEntry) error {
+func (s *Session) Append(ctx context.Context, entries ...Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -99,14 +99,14 @@ func (s *Session) AppendItems(ctx context.Context, items []InputItem, src Source
 }
 
 // Entry returns one entry by id, or nil when there is none.
-func (s *Session) Entry(ctx context.Context, id string) (*SessionEntry, error) {
+func (s *Session) Entry(ctx context.Context, id string) (*Entry, error) {
 	return s.storage.Entry(ctx, id)
 }
 
 // State folds the session's entries into the state they imply — the last agent,
 // the last response id, tool calls still awaiting outputs.
 //
-// It folds the ACTIVE BRANCH (the same view RecoverSession reads), not append
+// It folds the ACTIVE BRANCH (the same view Recover reads), not append
 // order: a dangling call on an abandoned attempt is not pending — the user
 // branched away from it, and no resume can ever clear it — yet folding every
 // branch reported it forever, a stuck approval no action could dismiss.
@@ -119,34 +119,34 @@ func (s *Session) State(ctx context.Context) (DerivedState, error) {
 }
 
 // Stats summarizes the session.
-func (s *Session) Stats(ctx context.Context) (SessionStats, error) {
+func (s *Session) Stats(ctx context.Context) (Stats, error) {
 	entries, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
-		return SessionStats{}, err
+		return Stats{}, err
 	}
-	return Stats(entries), nil
+	return StatsOf(entries), nil
 }
 
 // Metadata describes the session without reading its contents.
-func (s *Session) Metadata(ctx context.Context) (SessionMetadata, error) {
+func (s *Session) Metadata(ctx context.Context) (Metadata, error) {
 	return s.storage.Metadata(ctx)
 }
 
 // Clear removes every entry.
 func (s *Session) Clear(ctx context.Context) error { return s.storage.Clear(ctx) }
 
-// ErrSessionNotFound is what a repo reports for an id it does not hold. Opening
+// ErrNotFound is what a repo reports for an id it does not hold. Opening
 // a session that does not exist must not look like opening an empty one: a run
 // would start over instead of continuing, which is worse than an error.
-var ErrSessionNotFound = errors.New("agents: session not found")
+var ErrNotFound = errors.New("agents: session not found")
 
-// SessionRepo owns session lifecycles: creating, opening, listing and deleting
+// Repo owns session lifecycles: creating, opening, listing and deleting
 // them. A backend that holds many sessions implements it once instead of every
 // caller reimplementing "which sessions exist".
-type SessionRepo interface {
+type Repo interface {
 	Create(ctx context.Context, opts CreateOptions) (*Session, error)
 	Open(ctx context.Context, id string) (*Session, error)
-	List(ctx context.Context, opts ListOptions) ([]SessionMetadata, error)
+	List(ctx context.Context, opts ListOptions) ([]Metadata, error)
 	Delete(ctx context.Context, id string) error
 }
 
@@ -170,16 +170,16 @@ type ListOptions struct {
 	Cursor Cursor
 }
 
-// SessionSettings configures how a run reads a Session.
-type SessionSettings struct {
+// Settings configures how a run reads a Session.
+type Settings struct {
 	// Limit caps how many of the most recent entries GetEntries loads at run
 	// start. Zero (the default) means no limit — the full history is loaded.
 	Limit int
 }
 
-// resolveSessionLimit resolves how many of the most recent entries a run loads.
+// ResolveLimit resolves how many of the most recent entries a run loads.
 // Zero means no limit.
-func resolveSessionLimit(override *SessionSettings) int {
+func ResolveLimit(override *Settings) int {
 	if override != nil && override.Limit > 0 {
 		return override.Limit
 	}
@@ -203,7 +203,7 @@ type CompactionArgs struct {
 	StartSpan func() *tracing.SpanHandle
 }
 
-// CompactionAware is a SessionStorage that can compact its own history — by
+// CompactionAware is a Storage that can compact its own history — by
 // summarizing older entries, or by handing them to a server-side compaction
 // API. After a run is persisted, the runner calls RunCompaction so the store can
 // shrink history that has grown large.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -65,7 +66,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		// the projection renders each checkpoint's summary in the folded
 		// history's place. An annotation or terminal entry is recorded but not
 		// sent unless Conversation.Projectors says otherwise.
-		cur := Cursor{Limit: -resolveSessionLimit(opts.Conversation.Settings)}
+		cur := session.Cursor{Limit: -session.ResolveLimit(opts.Conversation.Settings)}
 		entries, herr := opts.Conversation.Session.ContextEntries(ctx, cur)
 		if herr != nil {
 			return nil, nil, nil, herr
@@ -74,7 +75,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 		// their kinds, their turns, their usage — and projection is what turns
 		// whatever survives into model input.
 		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
-		history, herr := ProjectEntries(entries, opts.Conversation.Projectors)
+		history, herr := session.ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
 		}

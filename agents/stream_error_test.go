@@ -6,6 +6,8 @@ import (
 	"iter"
 	"sync"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // cancelStreamModel cancels the run's context as its stream starts, then yields a
@@ -193,14 +195,14 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	// persisted and before the model is reached, so a tripwire leaves the
 	// session untouched and costs nothing.
 	t.Run("blocking leaves nothing behind", func(t *testing.T) {
-		session := NewInMemorySession()
+		sess := session.NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}})
+		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}})
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
-		if items, _ := session.ContextItems(context.Background(), Cursor{}); len(items) != 0 {
-			t.Errorf("session has %d orphan items, want 0", len(items))
+		if items, _ := sess.ContextItems(context.Background(), session.Cursor{}); len(items) != 0 {
+			t.Errorf("sess has %d orphan items, want 0", len(items))
 		}
 		if model.calls != 0 {
 			t.Errorf("model was called %d times, want 0", model.calls)
@@ -212,26 +214,26 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	// That is the trade for not serializing every guardrail ahead of every
 	// model call — and why Blocking exists.
 	t.Run("racing persists the input", func(t *testing.T) {
-		session := NewInMemorySession()
+		sess := session.NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}})
+		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}})
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
-		items, _ := session.ContextItems(context.Background(), Cursor{})
+		items, _ := sess.ContextItems(context.Background(), session.Cursor{})
 		if len(items) != 1 {
-			t.Errorf("session has %d items, want the 1 user input", len(items))
+			t.Errorf("sess has %d items, want the 1 user input", len(items))
 		}
 	})
 
 	// RunSync must answer the same way — the two entry points share the loop.
 	t.Run("RunSync agrees", func(t *testing.T) {
-		session := NewInMemorySession()
+		sess := session.NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}})
+		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}})
 		tripped(t, err)
 
-		if items, _ := session.ContextItems(context.Background(), Cursor{}); len(items) != 0 {
+		if items, _ := sess.ContextItems(context.Background(), session.Cursor{}); len(items) != 0 {
 			t.Errorf("RunSync left %d orphan items where Run leaves 0", len(items))
 		}
 		if model.calls != 0 {

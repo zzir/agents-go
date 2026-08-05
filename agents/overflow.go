@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -83,13 +84,13 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, b
 		return nil, false
 	}
 	// No run-level Compactor applied (none configured, or it stood aside for a
-	// self-compacting storage). A CompactionAware storage gets a FORCED pass:
+	// self-compacting storage). A session.CompactionAware storage gets a FORCED pass:
 	// its own trigger normally decides when to compact, but an overflow is the
 	// one moment that question has already been answered — by the provider.
 	return r.recoverOverflowViaStorage(ctx)
 }
 
-// recoverOverflowViaStorage runs a forced RunCompaction on a CompactionAware
+// recoverOverflowViaStorage runs a forced RunCompaction on a session.CompactionAware
 // storage and rebuilds the turn's context from the session, reporting whether
 // the pass changed anything (an unchanged history buys no retry, same as the
 // Compactor path).
@@ -98,17 +99,17 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]InputItem, bo
 	if sess == nil {
 		return nil, false
 	}
-	cs, ok := sess.Storage().(CompactionAware)
+	cs, ok := sess.Storage().(session.CompactionAware)
 	if !ok {
 		return nil, false
 	}
-	cur := Cursor{Limit: -resolveSessionLimit(r.opts.Conversation.Settings)}
+	cur := session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)}
 	before, err := sess.ContextEntries(ctx, cur)
 	if err != nil {
 		return nil, false
 	}
 	var cspan *tracing.SpanHandle
-	cerr := cs.RunCompaction(ctx, CompactionArgs{
+	cerr := cs.RunCompaction(ctx, session.CompactionArgs{
 		Force:      true,
 		ResponseID: r.lastResponseID,
 		Store:      r.lastStore,
@@ -138,7 +139,7 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]InputItem, bo
 	if !changedEntries(before, after) {
 		return nil, false
 	}
-	history, err := ProjectEntries(after, r.opts.Conversation.Projectors)
+	history, err := session.ProjectEntries(after, r.opts.Conversation.Projectors)
 	if err != nil {
 		return nil, false
 	}

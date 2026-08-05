@@ -20,11 +20,12 @@ import (
 	"log"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func main() {
 	ctx := context.Background()
-	sess := agents.NewSession(agents.NewInMemoryStorage("demo"))
+	sess := session.NewSession(session.NewInMemoryStorage("demo"))
 
 	if err := sess.AppendItems(ctx,
 		agents.InputItemsFromText("Why did the build fail?"),
@@ -41,8 +42,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := sess.Append(ctx, agents.SessionEntry{
-		Kind:    agents.EntryKindTerminal,
+	if err := sess.Append(ctx, session.Entry{
+		Kind:    session.EntryKindTerminal,
 		Source:  agents.Source{Type: agents.SourceUser},
 		Payload: payload,
 	}); err != nil {
@@ -54,8 +55,8 @@ func main() {
 
 	// Opt it in. A projector maps one entry kind to the items it contributes;
 	// mapping a kind to nil suppresses it instead.
-	report(ctx, sess, "with terminal output projected", map[agents.EntryKind]agents.EntryProjector{
-		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.InputItem, error) {
+	report(ctx, sess, "with terminal output projected", map[session.EntryKind]session.Projector{
+		session.EntryKindTerminal: func(e session.Entry) ([]agents.InputItem, error) {
 			var t struct{ Command, Output string }
 			if err := json.Unmarshal(e.Payload, &t); err != nil {
 				return nil, err
@@ -68,17 +69,17 @@ func main() {
 	})
 }
 
-func report(ctx context.Context, sess *agents.Session, label string, projectors map[agents.EntryKind]agents.EntryProjector) {
-	entries, err := sess.ContextEntries(ctx, agents.Cursor{})
+func report(ctx context.Context, sess *session.Session, label string, projectors map[session.EntryKind]session.Projector) {
+	entries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	items, err := agents.ProjectEntries(entries, projectors)
+	items, err := session.ProjectEntries(entries, projectors)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("\n%s — %d stored entries become %d items:\n", label, len(entries), len(items))
 	for _, it := range items {
-		fmt.Printf("  %s\n", agents.ItemText(it))
+		fmt.Printf("  %s\n", session.ItemText(it))
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"log"
 
 	agents "github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/models/openai"
 )
 
@@ -17,7 +18,7 @@ func main() {
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
 	// Wrap an in-memory session; compact once 10 candidate items accumulate.
-	sess, err := openai.NewCompactionSession(agents.NewInMemorySession(), openai.CompactionOptions{
+	sess, err := openai.NewCompactionSession(session.NewInMemorySession(), openai.CompactionOptions{
 		Model:     "gpt-4.1",
 		Threshold: 10,
 	})
@@ -26,7 +27,7 @@ func main() {
 	}
 
 	agent := &agents.Agent{Name: "assistant", Model: "gpt-4o"}
-	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: agents.NewSession(sess)}, Model: agents.ModelOptions{Provider: provider}}
+	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: session.NewSession(sess)}, Model: agents.ModelOptions{Provider: provider}}
 
 	prompts := []string{
 		"My favorite color is teal.",
@@ -42,6 +43,6 @@ func main() {
 		fmt.Printf("> %s\n%s\n\n", p, res.FinalOutputString())
 	}
 
-	items, _ := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
+	items, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
 	fmt.Printf("stored items after the chat: %d (compaction keeps this bounded)\n", len(items))
 }

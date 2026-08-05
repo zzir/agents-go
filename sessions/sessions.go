@@ -1,4 +1,4 @@
-// Package sessions provides SQL-backed agents.Session implementations (SQLite
+// Package sessions provides SQL-backed session.Session implementations (SQLite
 // and PostgreSQL) built on uptrace/bun. It is a separate Go module so the
 // database driver dependencies never reach the core SDK's dependency graph —
 // callers who use only InMemorySession or memory.FileSession pay nothing for it.
@@ -24,7 +24,7 @@ import (
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/sqliteshim"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // entry is the row model: one stored session entry, ordered by the
@@ -41,10 +41,10 @@ type entry struct {
 	ID        int64  `bun:"id,pk,autoincrement"`
 	SessionID string `bun:"session_id,notnull"`
 	// Gen is the session generation these entries belong to; see
-	// agents.SessionRef. Empty is the direct scope, which is a scope like any
+	// session.Ref. Empty is the direct scope, which is a scope like any
 	// other and not a wildcard.
 	Gen string `bun:"gen,notnull"`
-	// Seq is the entry's cursor position, allocated by agents.PrepareAppend.
+	// Seq is the entry's cursor position, allocated by session.PrepareAppend.
 	//
 	// It is a column rather than the row's autoincrement id because the two are
 	// not the same number: an id is unique per TABLE and assigned on insert,
@@ -54,7 +54,7 @@ type entry struct {
 	EntryID  string `bun:"entry_id,notnull"`
 	ParentID string `bun:"parent_id"`
 	Kind     string `bun:"kind,notnull"`
-	Entry    string `bun:"entry,notnull"` // JSON of agents.SessionEntry
+	Entry    string `bun:"entry,notnull"` // JSON of session.Entry
 }
 
 // sessionRow records a session's existence and metadata, so a repo can list
@@ -72,23 +72,23 @@ type sessionRow struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
-// Session is a bun-backed agents.Session scoped to one session ID. Multiple
+// Session is a bun-backed session.Session scoped to one session ID. Multiple
 // Sessions may share a *bun.DB with different IDs.
 type Session struct {
 	db  *bun.DB
-	ref agents.SessionRef
+	ref session.Ref
 }
 
 // New wraps an existing *bun.DB as a Session for the given session ID. The
 // caller owns the db's lifecycle (and dialect). Use NewSQLite or NewPostgres for
 // the common cases. Call CreateSchema once before first use.
 func New(db *bun.DB, sessionID string) *Session {
-	return &Session{db: db, ref: agents.Direct(sessionID)}
+	return &Session{db: db, ref: session.Direct(sessionID)}
 }
 
 // forRef is New for a repo-created session, addressed by one generation of an
 // id. Every query goes through scoped, so no path can reach another one's rows.
-func forRef(db *bun.DB, ref agents.SessionRef) *Session {
+func forRef(db *bun.DB, ref session.Ref) *Session {
 	return &Session{db: db, ref: ref}
 }
 
@@ -193,12 +193,12 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	return err
 }
 
-// Entries implements agents.SessionStorage, paginating by cursor.
-func (s *Session) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+// Entries implements session.Storage, paginating by cursor.
+func (s *Session) Entries(ctx context.Context, cur session.Cursor) ([]session.Entry, error) {
 	return s.entriesIn(ctx, s.db, cur)
 }
 
-func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur agents.Cursor) ([]agents.SessionEntry, error) {
+func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur session.Cursor) ([]session.Entry, error) {
 	var rows []entry
 	q := s.scoped(db.NewSelect().Model(&rows))
 	if cur.AfterSeq > 0 {
@@ -222,7 +222,7 @@ func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur agents.Cursor) 
 	if limit < 0 {
 		slices.Reverse(rows) // most-recent-first -> oldest-first
 	}
-	out := make([]agents.SessionEntry, 0, len(rows))
+	out := make([]session.Entry, 0, len(rows))
 	for _, r := range rows {
 		e, err := decodeEntry(r)
 		if err != nil {
@@ -284,14 +284,14 @@ func (s *Session) touchIn(ctx context.Context, tx bun.Tx) error {
 		return nil
 	}
 	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
-		return fmt.Errorf("session %s: %w", s.ref.ID, agents.ErrSessionNotFound)
+		return fmt.Errorf("session %s: %w", s.ref.ID, session.ErrNotFound)
 	}
 	return nil
 }
 
-// Append implements agents.SessionStorage. The append point is read inside the
+// Append implements session.Storage. The append point is read inside the
 // same transaction as the insert — see lockForWrite for why.
-func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) error {
+func (s *Session) Append(ctx context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -314,14 +314,14 @@ func (s *Session) Append(ctx context.Context, entries ...agents.SessionEntry) er
 	})
 }
 
-// PopEntry implements agents.EntryPopper.
-func (s *Session) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
-	return s.pop(ctx, agents.PopLast)
+// PopEntry implements session.EntryPopper.
+func (s *Session) PopEntry(ctx context.Context) (*session.Entry, error) {
+	return s.pop(ctx, session.PopLast)
 }
 
-// PopItem implements agents.ItemPopper.
-func (s *Session) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
-	return s.pop(ctx, agents.PopLastItem)
+// PopItem implements session.ItemPopper.
+func (s *Session) PopItem(ctx context.Context) (*session.Entry, error) {
+	return s.pop(ctx, session.PopLastItem)
 }
 
 // pop selects the entry to remove, deletes it and applies its relinks all in
@@ -334,22 +334,22 @@ func (s *Session) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
 // touching the same database) can take the row first, in which case zero rows
 // are affected, this caller lost, and it retries against what the session
 // holds now.
-func (s *Session) pop(ctx context.Context, mode agents.PopMode) (*agents.SessionEntry, error) {
+func (s *Session) pop(ctx context.Context, mode session.PopMode) (*session.Entry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var popped *agents.SessionEntry
+		var popped *session.Entry
 		done := true
 		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := s.lockForWrite(ctx, tx); err != nil {
 				return err
 			}
-			entries, err := s.entriesIn(ctx, tx, agents.Cursor{})
+			entries, err := s.entriesIn(ctx, tx, session.Cursor{})
 			if err != nil {
 				return err
 			}
-			plan, ok := agents.PlanPop(entries, mode)
+			plan, ok := session.PlanPop(entries, mode)
 			if !ok {
 				return nil
 			}
@@ -363,7 +363,7 @@ func (s *Session) pop(ctx context.Context, mode agents.PopMode) (*agents.Session
 				done = false
 				return nil
 			}
-			byID := make(map[string]agents.SessionEntry, len(entries))
+			byID := make(map[string]session.Entry, len(entries))
 			for _, e := range entries {
 				byID[e.ID] = e
 			}
@@ -387,13 +387,13 @@ func (s *Session) pop(ctx context.Context, mode agents.PopMode) (*agents.Session
 
 // relinkIn re-points the entries a removal orphaned, on the transaction that
 // carried the delete.
-func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan agents.Removal, byID map[string]agents.SessionEntry) error {
+func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan session.Removal, byID map[string]session.Entry) error {
 	for id, parent := range plan.Relink {
 		e, ok := byID[id]
 		if !ok {
 			continue
 		}
-		if e.Kind == agents.EntryKindLeaf {
+		if e.Kind == session.EntryKindLeaf {
 			updated, lerr := e.WithLeafTarget(parent)
 			if lerr != nil {
 				continue
@@ -417,7 +417,7 @@ func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan agents.Removal, 
 	return nil
 }
 
-// Clear implements agents.Session, removing every entry for this session ID.
+// Clear implements session.Session, removing every entry for this session ID.
 // Clearing is a change like any other: it moves the session in a listing, and
 // it holds the same write lock every other entry write holds — an unlocked
 // clear interleaving with a locked append can otherwise land between the
@@ -441,7 +441,7 @@ func (s *Session) Clear(ctx context.Context) error {
 // failure mid-rewrite rolls back to the previous history instead of leaving the
 // session empty. Only this session ID's rows are touched. The high-water mark
 // is read inside the same transaction — see lockForWrite.
-func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
+func (s *Session) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := s.lockForWrite(ctx, tx); err != nil {
 			return err
@@ -453,7 +453,7 @@ func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionE
 		if err != nil {
 			return err
 		}
-		rows, err := s.encodeEntries(entries, agents.AppendPoint{LastSeq: at.LastSeq})
+		rows, err := s.encodeEntries(entries, session.AppendPoint{LastSeq: at.LastSeq})
 		if err != nil {
 			return err
 		}
@@ -473,8 +473,8 @@ func (s *Session) ReplaceEntries(ctx context.Context, entries ...agents.SessionE
 // encodeEntries prepares entries for insertion, filling in the fields the store
 // owns. A caller-supplied id is kept, so an entry re-added by a fork or a
 // replace keeps the identity an update entry points at.
-func (s *Session) encodeEntries(entries []agents.SessionEntry, at agents.AppendPoint) ([]entry, error) {
-	prepared := agents.PrepareAppend(entries, at)
+func (s *Session) encodeEntries(entries []session.Entry, at session.AppendPoint) ([]entry, error) {
+	prepared := session.PrepareAppend(entries, at)
 	rows := make([]entry, 0, len(prepared))
 	for _, e := range prepared {
 		data, err := json.Marshal(e)
@@ -501,52 +501,52 @@ func (s *Session) encodeEntries(entries []agents.SessionEntry, at agents.AppendP
 // Only the last row is read: the tip is either that entry, or — when it is a
 // leaf move — the entry it points at. Folding the whole session to learn the
 // same thing would make every append cost a full read.
-func (s *Session) appendPointIn(ctx context.Context, db bun.IDB) (agents.AppendPoint, error) {
+func (s *Session) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
 	var row entry
 	err := s.scoped(db.NewSelect().Model(&row)).
 		Order("seq DESC").Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agents.AppendPoint{}, nil
+		return session.AppendPoint{}, nil
 	}
 	if err != nil {
-		return agents.AppendPoint{}, err
+		return session.AppendPoint{}, err
 	}
 	e, derr := decodeEntry(row)
 	if derr != nil {
-		return agents.AppendPoint{}, derr
+		return session.AppendPoint{}, derr
 	}
 	// The newest row answers both questions: it carries the highest sequence
 	// number this session has issued, and the tip is either it or — when it is
 	// a leaf move — the entry it points at.
-	return agents.AppendPoint{
-		Leaf:    agents.LeafOf([]agents.SessionEntry{e}),
+	return session.AppendPoint{
+		Leaf:    session.LeafOf([]session.Entry{e}),
 		LastSeq: row.Seq,
 	}, nil
 }
 
-func decodeEntry(r entry) (agents.SessionEntry, error) {
-	var e agents.SessionEntry
+func decodeEntry(r entry) (session.Entry, error) {
+	var e session.Entry
 	if err := json.Unmarshal([]byte(r.Entry), &e); err != nil {
-		return agents.SessionEntry{}, fmt.Errorf("decoding session entry %d: %w", r.ID, err)
+		return session.Entry{}, fmt.Errorf("decoding session entry %d: %w", r.ID, err)
 	}
 	return e, nil
 }
 
 var (
-	_ agents.SessionStorage = (*Session)(nil)
-	_ agents.AtomicReplacer = (*Session)(nil)
-	_ agents.EntryPopper    = (*Session)(nil)
-	_ agents.ItemPopper     = (*Session)(nil)
+	_ session.Storage        = (*Session)(nil)
+	_ session.AtomicReplacer = (*Session)(nil)
+	_ session.EntryPopper    = (*Session)(nil)
+	_ session.ItemPopper     = (*Session)(nil)
 )
 
-// Metadata implements agents.SessionStorage. It counts rather than loading, and
+// Metadata implements session.Storage. It counts rather than loading, and
 // merges in the session row when one exists (a session created through a repo).
-func (s *Session) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+func (s *Session) Metadata(ctx context.Context) (session.Metadata, error) {
 	n, err := s.scoped(s.db.NewSelect().Model((*entry)(nil))).Count(ctx)
 	if err != nil {
-		return agents.SessionMetadata{}, err
+		return session.Metadata{}, err
 	}
-	md := agents.SessionMetadata{ID: s.ref.ID, EntryCount: n}
+	md := session.Metadata{ID: s.ref.ID, EntryCount: n}
 
 	var row sessionRow
 	err = s.db.NewSelect().Model(&row).
@@ -563,9 +563,9 @@ func (s *Session) Metadata(ctx context.Context) (agents.SessionMetadata, error) 
 	return md, nil
 }
 
-// Entry implements agents.SessionStorage with an indexed lookup rather than a
+// Entry implements session.Storage with an indexed lookup rather than a
 // scan of the session.
-func (s *Session) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+func (s *Session) Entry(ctx context.Context, id string) (*session.Entry, error) {
 	var row entry
 	err := s.scoped(s.db.NewSelect().Model(&row)).
 		Where("entry_id = ?", id).

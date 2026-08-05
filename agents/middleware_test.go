@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func simpleAgent(t *testing.T, answer string) *Agent {
@@ -67,7 +69,7 @@ func TestMiddleware_CanEditInputAndOptions(t *testing.T) {
 		t.Errorf("final = %q", res.FinalOutputString())
 	}
 
-	sent, err := MarshalItems(model.lastReq.Input)
+	sent, err := session.MarshalItems(model.lastReq.Input)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // marshalRaw renders a tool-result item's wire form for inspection.
 func marshalRaw(t *testing.T, item *RunItem) map[string]any {
 	t.Helper()
-	b, err := MarshalInputItem(*item.RawInput)
+	b, err := session.MarshalInputItem(*item.RawInput)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -89,11 +91,11 @@ func TestFunctionCallOutputMixed(t *testing.T) {
 func TestFunctionCallOutputContentRoundTrip(t *testing.T) {
 	img := ToolOutputImageFromBytes("image/png", []byte{1, 2, 3})
 	item := newFunctionCallOutputItem(&Agent{Name: "a"}, "call_1", img)
-	b, err := MarshalInputItem(*item.RawInput)
+	b, err := session.MarshalInputItem(*item.RawInput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	back, err := UnmarshalInputItem(b)
+	back, err := session.UnmarshalInputItem(b)
 	if err != nil {
 		t.Fatalf("round-trip: %v", err)
 	}

@@ -26,7 +26,7 @@ import "github.com/zzir/agents-go/agents/tasks"
 
 mgr := tasks.New(tasks.Config{
 	Store:    tasks.NewInMemoryStore(),   // or sessions.NewTaskStore(db)
-	Sessions: repo,                       // an agents.SessionRepo
+	Sessions: repo,                       // an session.Repo
 	Resolver: tasks.AgentResolverFunc(func(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
 		cfg := lookUpAgent(name)
 		return tasks.Spec{DisplayName: cfg.Name, Inherit: cfg.Snapshot()}, nil
@@ -176,7 +176,7 @@ apply it is an [update entry](sessions.md#entries-are-append-only):
 
 ```go
 OnTaskUpdate: func(ctx context.Context, t *tasks.Task) {
-	e, _ := agents.NewUpdateEntry(spawnEntryID, agents.ItemDisplay{
+	e, _ := session.NewUpdateEntry(spawnEntryID, agents.ItemDisplay{
 		Extra: map[string]any{"task_status": string(t.Status), "task_summary": t.Summary},
 	})
 	sess.Append(ctx, e)

@@ -6,26 +6,27 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // RepoUnderTest is one backend's answer to "give me an empty repo".
 type RepoUnderTest struct {
 	// Repo is the implementation being checked.
-	Repo agents.SessionRepo
+	Repo session.Repo
 
 	// Direct opens a session by id through the backend's NON-repo constructor
 	// — memory.NewFileSession, sessions.New — where the id names the storage
 	// outright. A backend without one leaves this nil and those checks skip.
 	//
 	// It is the scope a repo must never reach, in either direction.
-	Direct func(id string) (*agents.Session, error)
+	Direct func(id string) (*session.Session, error)
 }
 
 // RepoConformance holds a SessionRepo to the identity half of the entry
 // lifecycle contract in docs/spec.md §2.5e2.
 //
 // What it is really checking is that a backend addresses a session by
-// agents.SessionRef and not by its id — every one of these failed at least once
+// session.Ref and not by its id — every one of these failed at least once
 // in a backend that carried the generation as a field some code path forgot.
 func RepoConformance(t *testing.T, newRepo func(t *testing.T) RepoUnderTest) {
 	t.Helper()
@@ -47,9 +48,9 @@ var repoChecks = []struct {
 	{"DirectAndRepoDoNotShareHistory", checkDirectIsolation},
 }
 
-func repoWrite(t *testing.T, sess *agents.Session, text string) {
+func repoWrite(t *testing.T, sess *session.Session, text string) {
 	t.Helper()
-	item, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
+	item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +59,9 @@ func repoWrite(t *testing.T, sess *agents.Session, text string) {
 	}
 }
 
-func repoTexts(t *testing.T, sess *agents.Session) []string {
+func repoTexts(t *testing.T, sess *session.Session) []string {
 	t.Helper()
-	entries, err := sess.Entries(context.Background(), agents.Cursor{})
+	entries, err := sess.Entries(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatalf("entries: %v", err)
 	}
@@ -74,7 +75,7 @@ func repoTexts(t *testing.T, sess *agents.Session) []string {
 func checkCreateThenOpen(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	sess, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "x", Title: "A chat"})
+	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x", Title: "A chat"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -113,7 +114,7 @@ func checkDeleteUnknown(t *testing.T, r RepoUnderTest) {
 func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "x"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	stale, err := r.Repo.Open(ctx, "x")
@@ -124,7 +125,7 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	if err := r.Repo.Delete(ctx, "x"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	fresh, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "x"})
+	fresh, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"})
 	if err != nil {
 		t.Fatalf("recreate: %v", err)
 	}
@@ -138,12 +139,12 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	// invisible to every listing, unreachable by Delete, orphaned storage by
 	// construction (spec §2.5e2: writing and proving the destination still
 	// exists are one step).
-	item, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"from the dead"}`))
+	item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"from the dead"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	werr := stale.AppendItems(ctx, []agents.InputItem{item}, agents.Source{})
-	if werr == nil || !errors.Is(werr, agents.ErrSessionNotFound) {
+	if werr == nil || !errors.Is(werr, session.ErrNotFound) {
 		t.Fatalf("a write through a handle to a deleted session must refuse with ErrSessionNotFound, got: %v", werr)
 	}
 	if got := repoTexts(t, fresh); len(got) != 1 {
@@ -157,7 +158,7 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 func checkStaleHandleMetadata(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "x", Title: "first"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x", Title: "first"}); err != nil {
 		t.Fatal(err)
 	}
 	stale, err := r.Repo.Open(ctx, "x")
@@ -167,7 +168,7 @@ func checkStaleHandleMetadata(t *testing.T, r RepoUnderTest) {
 	if err := r.Repo.Delete(ctx, "x"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "x", Title: "second"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x", Title: "second"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +209,7 @@ func checkDeleteVsDirect(t *testing.T, r RepoUnderTest) {
 		t.Fatal(err)
 	}
 	repoWrite(t, shared, "written directly")
-	if _, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "shared"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "shared"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if err := r.Repo.Delete(ctx, "shared"); err != nil {
@@ -226,7 +227,7 @@ func checkDirectIsolation(t *testing.T, r RepoUnderTest) {
 	}
 	ctx := context.Background()
 
-	sess, err := r.Repo.Create(ctx, agents.CreateOptions{ID: "x"})
+	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

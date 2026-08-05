@@ -3,12 +3,12 @@ package compaction
 import (
 	"bytes"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // TokenEstimator sizes an entry when no provider number is available.
 type TokenEstimator interface {
-	Estimate(agents.SessionEntry) int
+	Estimate(session.Entry) int
 }
 
 // Character-count constants, taken from measurements in the pi project rather
@@ -32,10 +32,10 @@ const (
 type CharEstimator struct{}
 
 // Estimate implements TokenEstimator.
-func (CharEstimator) Estimate(e agents.SessionEntry) int {
+func (CharEstimator) Estimate(e session.Entry) int {
 	switch e.Kind {
-	case agents.EntryKindItem:
-	case agents.EntryKindCompaction:
+	case session.EntryKindItem:
+	case session.EntryKindCompaction:
 		// A checkpoint's payload holds its summary and fold stand-ins, which
 		// is what it contributes to the context. (The entries it kept are
 		// estimated as themselves; they are in the session, not in here.)

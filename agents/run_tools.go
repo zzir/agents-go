@@ -9,9 +9,9 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/zzir/agents-go/tracing"
-
 	"golang.org/x/sync/errgroup"
+
+	"github.com/zzir/agents-go/tracing"
 )
 
 // functionToolResult bundles a tool's output item with the tool and raw value.

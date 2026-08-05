@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-go/v3/responses"
-
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/mcp"

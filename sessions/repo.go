@@ -11,10 +11,10 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
-// Repo is a SQL-backed agents.SessionRepo: it owns which sessions exist,
+// Repo is a SQL-backed session.Repo: it owns which sessions exist,
 // separately from what each one holds.
 //
 // Sessions used to exist only as a side effect of having entries, which meant a
@@ -30,12 +30,12 @@ type Repo struct {
 func NewRepo(db *bun.DB) *Repo { return &Repo{db: db} }
 
 // Create records a new session and returns it.
-func (r *Repo) Create(ctx context.Context, opts agents.CreateOptions) (*agents.Session, error) {
+func (r *Repo) Create(ctx context.Context, opts session.CreateOptions) (*session.Session, error) {
 	id := opts.ID
 	if id == "" {
 		id = newSessionID()
 	}
-	gen, err := agents.NewGeneration()
+	gen, err := session.NewGeneration()
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (r *Repo) Create(ctx context.Context, opts agents.CreateOptions) (*agents.S
 	if _, err := r.db.NewInsert().Model(&row).Exec(ctx); err != nil {
 		return nil, fmt.Errorf("create session %q: %w", id, err)
 	}
-	return agents.NewSession(forRef(r.db, agents.SessionRef{ID: id, Gen: gen})), nil
+	return session.NewSession(forRef(r.db, session.Ref{ID: id, Gen: gen})), nil
 }
 
 // Open returns an existing session, or an error when there is none.
@@ -52,11 +52,11 @@ func (r *Repo) Create(ctx context.Context, opts agents.CreateOptions) (*agents.S
 // It checks rather than returning a handle to nothing: a typo in a session id
 // would otherwise look like an empty conversation, and the run would start over
 // instead of continuing.
-func (r *Repo) Open(ctx context.Context, id string) (*agents.Session, error) {
+func (r *Repo) Open(ctx context.Context, id string) (*session.Session, error) {
 	var row sessionRow
 	err := r.db.NewSelect().Model(&row).Where("id = ?", id).Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("open session %q: %w", id, agents.ErrSessionNotFound)
+		return nil, fmt.Errorf("open session %q: %w", id, session.ErrNotFound)
 	}
 	if err != nil {
 		return nil, err
@@ -64,11 +64,11 @@ func (r *Repo) Open(ctx context.Context, id string) (*agents.Session, error) {
 	// Built from the row this call already read: looking the session up a
 	// second time is a second chance for the id to be deleted and recreated in
 	// between, which would pair this row with the replacement's storage.
-	return agents.NewSession(forRef(r.db, agents.SessionRef{ID: id, Gen: row.Gen})), nil
+	return session.NewSession(forRef(r.db, session.Ref{ID: id, Gen: row.Gen})), nil
 }
 
 // List returns session metadata, newest first.
-func (r *Repo) List(ctx context.Context, opts agents.ListOptions) ([]agents.SessionMetadata, error) {
+func (r *Repo) List(ctx context.Context, opts session.ListOptions) ([]session.Metadata, error) {
 	q := r.db.NewSelect().Model((*sessionRow)(nil)).Order("updated_at DESC")
 	if !opts.IncludeHidden {
 		q = q.Where("hidden = ?", false)
@@ -80,9 +80,9 @@ func (r *Repo) List(ctx context.Context, opts agents.ListOptions) ([]agents.Sess
 	if err := q.Scan(ctx, &rows); err != nil {
 		return nil, err
 	}
-	out := make([]agents.SessionMetadata, 0, len(rows))
+	out := make([]session.Metadata, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, agents.SessionMetadata{
+		out = append(out, session.Metadata{
 			ID:        row.ID,
 			Title:     row.Title,
 			Hidden:    row.Hidden,
@@ -135,7 +135,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	})
 }
 
-var _ agents.SessionRepo = (*Repo)(nil)
+var _ session.Repo = (*Repo)(nil)
 
 func newSessionID() string {
 	// A random suffix beside the timestamp: two id-less Creates in one clock

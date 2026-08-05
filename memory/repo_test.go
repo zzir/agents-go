@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/memory"
 )
 
@@ -20,20 +21,20 @@ func TestRepo(t *testing.T) {
 
 // runRepoContract is the behavior every SessionRepo must have, whatever it is
 // backed by.
-func runRepoContract(ctx context.Context, t *testing.T, repo agents.SessionRepo) {
+func runRepoContract(ctx context.Context, t *testing.T, repo session.Repo) {
 	t.Helper()
 
-	visible, err := repo.Create(ctx, agents.CreateOptions{ID: "chat-1", Title: "A chat"})
+	visible, err := repo.Create(ctx, session.CreateOptions{ID: "chat-1", Title: "A chat"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "task-1", Hidden: true}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "task-1", Hidden: true}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Hidden sessions serve another session; a listing leaves them out so every
 	// caller stops maintaining that filter — and stops forgetting it.
-	listed, err := repo.List(ctx, agents.ListOptions{})
+	listed, err := repo.List(ctx, session.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func runRepoContract(ctx context.Context, t *testing.T, repo agents.SessionRepo)
 		t.Errorf("title = %q, want it preserved", listed[0].Title)
 	}
 
-	all, err := repo.List(ctx, agents.ListOptions{IncludeHidden: true})
+	all, err := repo.List(ctx, session.ListOptions{IncludeHidden: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func runRepoContract(ctx context.Context, t *testing.T, repo agents.SessionRepo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := reopened.ContextItems(ctx, agents.Cursor{})
+	items, err := reopened.ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,17 +76,17 @@ func runRepoContract(ctx context.Context, t *testing.T, repo agents.SessionRepo)
 
 	// Opening one that does not exist must NOT look like an empty conversation:
 	// a run would start over instead of continuing.
-	if _, err := repo.Open(ctx, "no-such-session"); !errors.Is(err, agents.ErrSessionNotFound) {
+	if _, err := repo.Open(ctx, "no-such-session"); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("Open(missing) err = %v, want ErrSessionNotFound", err)
 	}
 
 	if err := repo.Delete(ctx, "chat-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Open(ctx, "chat-1"); !errors.Is(err, agents.ErrSessionNotFound) {
+	if _, err := repo.Open(ctx, "chat-1"); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("a deleted session still opens: %v", err)
 	}
-	after, _ := repo.List(ctx, agents.ListOptions{IncludeHidden: true})
+	after, _ := repo.List(ctx, session.ListOptions{IncludeHidden: true})
 	if len(after) != 1 {
 		t.Errorf("after delete, List = %d sessions, want 1", len(after))
 	}
@@ -107,7 +108,7 @@ func TestRepoCreateRefusesADuplicateID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := repo.Create(ctx, agents.CreateOptions{ID: "dup", Title: "original"})
+	first, err := repo.Create(ctx, session.CreateOptions{ID: "dup", Title: "original"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestRepoCreateRefusesADuplicateID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "dup"}); err == nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "dup"}); err == nil {
 		t.Fatal("creating an existing session id succeeded; it would inherit the old history")
 	}
 }
@@ -130,7 +131,7 @@ func TestRepoRejectsSanitizationCollisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, err := repo.Create(ctx, agents.CreateOptions{ID: "team a"})
+	a, err := repo.Create(ctx, session.CreateOptions{ID: "team a"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestRepoRejectsSanitizationCollisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "team+a"}); err == nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "team+a"}); err == nil {
 		t.Fatal(`"team+a" was created alongside "team a"; they share one file`)
 	}
 	// Nor may the colliding name reach the existing session by another route.
@@ -160,19 +161,19 @@ func TestRepoRejectsIDWithNoFilenameForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"...", "   ", ".."} {
-		if _, err := repo.Create(context.Background(), agents.CreateOptions{ID: id}); err == nil {
+		if _, err := repo.Create(context.Background(), session.CreateOptions{ID: id}); err == nil {
 			t.Errorf("Create(%q) succeeded; it has no filename to live under", id)
 		}
 	}
 }
 
-func userEntry(t *testing.T, text string) agents.SessionEntry {
+func userEntry(t *testing.T, text string) session.Entry {
 	t.Helper()
-	it, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
+	it, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := agents.NewItemEntry(it, agents.Source{})
+	e, err := session.NewItemEntry(it, agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}

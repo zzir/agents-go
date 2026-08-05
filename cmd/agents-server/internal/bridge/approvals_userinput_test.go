@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -15,7 +16,7 @@ func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
 	// resolve to the EasyInputMessage variant, exactly as a real run's input does.
 	items := make([]agents.InputItem, 0, len(raws))
 	for _, r := range raws {
-		it, err := agents.UnmarshalInputItem([]byte(r))
+		it, err := session.UnmarshalInputItem([]byte(r))
 		if err != nil {
 			t.Fatalf("unmarshal input item %q: %v", r, err)
 		}

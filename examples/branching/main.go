@@ -18,11 +18,12 @@ import (
 	"log"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func main() {
 	ctx := context.Background()
-	sess := agents.NewSession(agents.NewInMemoryStorage("demo"))
+	sess := session.NewSession(session.NewInMemoryStorage("demo"))
 
 	say := func(src agents.SourceType, text string) {
 		items := agents.InputItemsFromText(text)
@@ -38,7 +39,7 @@ func main() {
 	say(agents.SourceModel, "Day 1: Fushimi Inari. Day 2: Arashiyama.")
 
 	// Remember where we are, then keep going down this branch.
-	entries, err := sess.ContextEntries(ctx, agents.Cursor{})
+	entries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,26 +59,26 @@ func main() {
 	show(ctx, sess, "after branching from the plan")
 
 	// The abandoned branch is still in the log — nothing was deleted.
-	all, err := sess.Entries(ctx, agents.Cursor{})
+	all, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("\nentries stored:  %d  (nothing was deleted)\n", len(all))
-	ctxEntries, err := sess.ContextEntries(ctx, agents.Cursor{})
+	ctxEntries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("entries in context: %d  (only this branch)\n", len(ctxEntries))
 }
 
-func show(ctx context.Context, sess *agents.Session, label string) {
-	items, err := sess.ContextItems(ctx, agents.Cursor{})
+func show(ctx context.Context, sess *session.Session, label string) {
+	items, err := sess.ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("\n%s — the model would be sent %d items:\n", label, len(items))
 	for _, it := range items {
-		fmt.Printf("  %s\n", firstLine(agents.ItemText(it)))
+		fmt.Printf("  %s\n", firstLine(session.ItemText(it)))
 	}
 }
 

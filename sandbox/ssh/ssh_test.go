@@ -7,8 +7,9 @@ import (
 	"net"
 	"testing"
 
-	"github.com/zzir/agents-go/sandbox"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/zzir/agents-go/sandbox"
 )
 
 func TestShellQuote(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/compaction"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -41,8 +42,8 @@ type CompactionAdapter struct {
 }
 
 var (
-	_ agents.SessionStorage  = (*CompactionAdapter)(nil)
-	_ agents.CompactionAware = (*CompactionAdapter)(nil)
+	_ session.Storage         = (*CompactionAdapter)(nil)
+	_ session.CompactionAware = (*CompactionAdapter)(nil)
 )
 
 // NewCompactionAdapter wraps store with soft-delete compaction. threshold is
@@ -60,7 +61,7 @@ func NewCompactionAdapter(
 	if windowSize <= 0 {
 		windowSize = 10
 	}
-	summaryPrompt = cmp.Or(summaryPrompt, agents.DefaultSummaryPrompt)
+	summaryPrompt = cmp.Or(summaryPrompt, session.DefaultSummaryPrompt)
 	return &CompactionAdapter{
 		EntryStore:    store,
 		summaryModel:  summaryModel,
@@ -71,10 +72,10 @@ func NewCompactionAdapter(
 	}
 }
 
-// RunCompaction implements agents.CompactionAware. It marks older entries
+// RunCompaction implements session.CompactionAware. It marks older entries
 // compacted and appends a compaction checkpoint, keeping the most recent
 // windowSize non-compacted entries intact.
-func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.CompactionArgs) error {
+func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	var active []entryRow
 	// Through scoped, like every other read: the generation is part of the
 	// address, and a select that names only the session id folds another
@@ -100,14 +101,14 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	// the row-split mapping below leaves them on the same side as their
 	// preceding convertible neighbor.
 	items := make([]agents.InputItem, 0, len(active))
-	entries := make([]agents.SessionEntry, 0, len(active))
+	entries := make([]session.Entry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
-		var e agents.SessionEntry
+		var e session.Entry
 		if json.Unmarshal([]byte(active[i].Entry), &e) != nil {
 			continue
 		}
-		if e.Kind != agents.EntryKindItem || len(e.Item) == 0 {
+		if e.Kind != session.EntryKindItem || len(e.Item) == 0 {
 			continue
 		}
 		// The summary model is generally not the model that produced these
@@ -118,14 +119,14 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 			continue
 		}
 		normalized := NormalizeItemJSON(raw)
-		item, err := agents.UnmarshalInputItem(normalized)
+		item, err := session.UnmarshalInputItem(normalized)
 		if err != nil {
 			continue
 		}
 		items = append(items, item)
 		// The grouping below reads the wire JSON, so carry it alongside rather
 		// than re-marshaling what we just decoded.
-		entries = append(entries, agents.SessionEntry{Kind: agents.EntryKindItem, Item: normalized})
+		entries = append(entries, session.Entry{Kind: session.EntryKindItem, Item: normalized})
 		itemMsgIdx = append(itemMsgIdx, i)
 	}
 
@@ -182,7 +183,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		return fmt.Errorf("compaction adapter: summarizing: %w", err)
 	}
 
-	summaryText := agents.ExtractOutputText(resp.Output)
+	summaryText := session.ExtractOutputText(resp.Output)
 	if summaryText == "" {
 		return nil
 	}
@@ -191,7 +192,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	// folded (ExcludedIDs) and carries the summary that stands in for it. The
 	// kept tail is NOT inside it — those entries stay in the session and the
 	// projection reads them from there, so a tail entry later popped is simply
-	// gone rather than living on in a copy (agents.CompactionPayload).
+	// gone rather than living on in a copy (session.CompactionPayload).
 	excluded := make([]string, 0, len(toCompact))
 	compactIDs := make([]int64, len(toCompact))
 	for i, row := range toCompact {
@@ -199,8 +200,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 		excluded = append(excluded, row.EntryID)
 	}
 	before, after := estimateFold(active, toCompact, summaryText)
-	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{
-		Summary:      agents.SummaryMarker + "\n\n" + summaryText,
+	summary, err := session.NewCompactionEntry(session.CompactionPayload{
+		Summary:      session.SummaryMarker + "\n\n" + summaryText,
 		ExcludedIDs:  excluded,
 		TokensBefore: before,
 		TokensAfter:  after,
@@ -239,7 +240,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 // never-successful session) everything is estimated.
 func activeTokens(active []entryRow) int {
 	est := compaction.CharEstimator{}
-	entries := make([]agents.SessionEntry, len(active))
+	entries := make([]session.Entry, len(active))
 	last := -1
 	for i := range active {
 		if json.Unmarshal([]byte(active[i].Entry), &entries[i]) != nil {
@@ -267,7 +268,7 @@ func activeTokens(active []entryRow) int {
 func estimateFold(active, folded []entryRow, summaryText string) (before, after int) {
 	est := compaction.CharEstimator{}
 	sizeOf := func(row entryRow) int {
-		var e agents.SessionEntry
+		var e session.Entry
 		if json.Unmarshal([]byte(row.Entry), &e) != nil {
 			return 0
 		}
@@ -291,7 +292,7 @@ func estimateFold(active, folded []entryRow, summaryText string) (before, after 
 // entries are gone (the session was deleted between loading the history and
 // this write), so it skips the checkpoint rather than orphan one in a session
 // that no longer exists.
-func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []int64, summary agents.SessionEntry) (bool, error) {
+func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []int64, summary session.Entry) (bool, error) {
 	applied := false
 	err := ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		res, err := tx.NewUpdate().Model((*entryRow)(nil)).

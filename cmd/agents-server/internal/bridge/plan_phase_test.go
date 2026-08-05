@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // countPlanMarkers counts persisted plan_unlocked annotations for a session.
-func countPlanMarkers(t *testing.T, sa *store.EntryStore, ref agents.SessionRef) int {
+func countPlanMarkers(t *testing.T, sa *store.EntryStore, ref session.Ref) int {
 	t.Helper()
 	views, err := sa.GetEntries(context.Background(), ref, 0, 0)
 	if err != nil {
@@ -31,7 +31,7 @@ func countPlanMarkers(t *testing.T, sa *store.EntryStore, ref agents.SessionRef)
 func TestPlanUnlockMarkerPersistence(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := store.NewID()
-	sa := store.NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := store.NewEntryStoreFor(db, session.Direct(sessionID))
 	sa.SetRunID("r1")
 
 	phase := &middleware.PlanPhase{}
@@ -49,13 +49,13 @@ func TestPlanUnlockMarkerPersistence(t *testing.T) {
 	if err := phase.Unlock(); err != nil {
 		t.Fatalf("idempotent unlock: %v", err)
 	}
-	if n := countPlanMarkers(t, sa, agents.SessionRef{ID: sessionID}); n != 1 {
+	if n := countPlanMarkers(t, sa, session.Ref{ID: sessionID}); n != 1 {
 		t.Fatalf("marker rows = %d, want 1", n)
 	}
 
 	// A failed write fails the unlock and the phase stays planning.
 	db2 := newTestDB(t)
-	sa2 := store.NewEntryStoreFor(db2, agents.Direct(store.NewID()))
+	sa2 := store.NewEntryStoreFor(db2, session.Direct(store.NewID()))
 	sa2.SetRunID("r2")
 	if err := db2.Close(); err != nil {
 		t.Fatalf("close db: %v", err)

@@ -1,4 +1,4 @@
-package agents
+package session
 
 import "slices"
 
@@ -24,7 +24,7 @@ const (
 // everything BEFORE the entry that was removed rather than just it.
 type Removal struct {
 	// Entry is what was removed, to hand back to the caller.
-	Entry SessionEntry
+	Entry Entry
 	// Delete is every entry id to remove. More than one when a dependent
 	// cannot be re-pointed at anything.
 	Delete []string
@@ -43,7 +43,7 @@ type Removal struct {
 // call answering both is how the same operation came to mean different things
 // in different stores. PopLast is "undo the last thing that happened";
 // PopLastItem is "undo the last thing that was said".
-func PlanPop(entries []SessionEntry, mode PopMode) (Removal, bool) {
+func PlanPop(entries []Entry, mode PopMode) (Removal, bool) {
 	target, ok := popTarget(entries, mode)
 	if !ok {
 		return Removal{}, false
@@ -52,9 +52,9 @@ func PlanPop(entries []SessionEntry, mode PopMode) (Removal, bool) {
 }
 
 // popTarget picks the entry a pop takes.
-func popTarget(entries []SessionEntry, mode PopMode) (SessionEntry, bool) {
+func popTarget(entries []Entry, mode PopMode) (Entry, bool) {
 	if len(entries) == 0 {
-		return SessionEntry{}, false
+		return Entry{}, false
 	}
 	if mode == PopLast {
 		// The newest entry, whatever it is. Nothing can be pointing at it —
@@ -83,11 +83,11 @@ func popTarget(entries []SessionEntry, mode PopMode) (SessionEntry, bool) {
 			return path[i], true
 		}
 	}
-	return SessionEntry{}, false
+	return Entry{}, false
 }
 
 // planRemoval works out what else must change when target goes.
-func planRemoval(entries []SessionEntry, target SessionEntry) Removal {
+func planRemoval(entries []Entry, target Entry) Removal {
 	r := Removal{Entry: target, Delete: []string{target.ID}}
 	for _, e := range entries {
 		if e.ID == target.ID {
@@ -128,8 +128,8 @@ func planRemoval(entries []SessionEntry, target SessionEntry) Removal {
 //
 // A store that deletes and updates rows applies Delete and Relink itself, in
 // one step — the point is that it applies BOTH.
-func ApplyRemoval(entries []SessionEntry, r Removal) []SessionEntry {
-	out := make([]SessionEntry, 0, len(entries))
+func ApplyRemoval(entries []Entry, r Removal) []Entry {
+	out := make([]Entry, 0, len(entries))
 	for _, e := range entries {
 		if slices.Contains(r.Delete, e.ID) {
 			continue

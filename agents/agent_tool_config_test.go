@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // orchestratorCalling returns an orchestrator agent whose scripted model calls
@@ -99,7 +101,7 @@ func TestAgentToolOnStreamHandlerPanicDoesNotFailCall(t *testing.T) {
 }
 
 func TestAgentToolSessionPassthrough(t *testing.T) {
-	sess := NewInMemorySession()
+	sess := session.NewInMemorySession()
 	sub := &Agent{Name: "specialist", ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "nested answer")),
 	}}}
@@ -111,7 +113,7 @@ func TestAgentToolSessionPassthrough(t *testing.T) {
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := NewSession(sess).ContextItems(context.Background(), Cursor{})
+	items, err := session.NewSession(sess).ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +162,7 @@ func TestAgentToolInheritsRunLevelInputGuardrails(t *testing.T) {
 		Run: func(_ context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
 			guardCalls++
 			for _, it := range p.Input {
-				b, _ := MarshalInputItem(it)
+				b, _ := session.MarshalInputItem(it)
 				if strings.Contains(string(b), "BLOCKED") {
 					return Trip(nil), nil
 				}
@@ -298,7 +300,7 @@ func TestAgentAsToolStructuredParams(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The nested agent receives the default structured rendering.
-	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
+	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
 	nestedInput := string(lastItem)
 	if !strings.Contains(nestedInput, "called as a tool") || !strings.Contains(nestedInput, "cats") {
 		t.Errorf("nested input = %q, want structured preamble + params", nestedInput)
@@ -347,7 +349,7 @@ func TestAgentAsToolStructuredWithoutDescriptions(t *testing.T) {
 	}
 	// No descriptions -> no schema summary, but the structured preamble and
 	// the JSON arguments must still be rendered (not raw passthrough).
-	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
+	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
 	nestedInput := string(lastItem)
 	if !strings.Contains(nestedInput, "called as a tool") || !strings.Contains(nestedInput, "cats") {
 		t.Errorf("nested input = %q, want structured preamble + params", nestedInput)
@@ -366,7 +368,7 @@ func TestAgentAsToolIncludeInputSchema(t *testing.T) {
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
+	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
 	nestedInput := string(lastItem)
 	if !strings.Contains(nestedInput, "Input JSON Schema") {
 		t.Errorf("nested input = %q, want full JSON schema section", nestedInput)
@@ -386,7 +388,7 @@ func TestAgentAsToolCustomInputBuilder(t *testing.T) {
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	lastItem, _ := MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
+	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
 	nestedInput := string(lastItem)
 	if !strings.Contains(nestedInput, "CUSTOM:") {
 		t.Errorf("nested input = %q, want custom builder output", nestedInput)

@@ -7,7 +7,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/sessions"
 )
@@ -47,10 +47,10 @@ func TestTaskRowsDoNotCrossSessionIncarnations(t *testing.T) {
 	ctx := context.Background()
 	repo, store, db := taskRepo(t)
 
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "s1"}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "s1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "child-1", Hidden: true}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "child-1", Hidden: true}); err != nil {
 		t.Fatal(err)
 	}
 	spawnedTask(t, store, "t1", "s1", "child-1")
@@ -77,7 +77,7 @@ func TestTaskRowsDoNotCrossSessionIncarnations(t *testing.T) {
 	// for a row that survives it — written concurrently with the delete, or
 	// by a host that removes a session some other way. Recreate the id and
 	// plant a row bound to the generation that is gone.
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "s1"}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "s1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.NewInsert().Table("agent_tasks").

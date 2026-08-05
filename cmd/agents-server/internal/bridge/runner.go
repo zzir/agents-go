@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -71,7 +72,7 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 // how the resume path once dropped HandoffInputFilter and
 // ToolNotFoundBehavior. runContext is the Context value (the exec_command
 // approval gate reads a trusted session id from it).
-func runOptionsFor(built *BuildResult, session *agents.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any) agents.RunOptions {
+func runOptionsFor(built *BuildResult, session *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any) agents.RunOptions {
 	opts := agents.RunOptions{
 		Context: runContext,
 		Conversation: agents.ConversationOptions{
@@ -101,9 +102,9 @@ func runOptionsFor(built *BuildResult, session *agents.Session, provider agents.
 	return opts
 }
 
-func sessionSettingsFor(limit int) *agents.SessionSettings {
+func sessionSettingsFor(limit int) *session.Settings {
 	if limit > 0 {
-		return &agents.SessionSettings{Limit: limit}
+		return &session.Settings{Limit: limit}
 	}
 	return nil
 }
@@ -111,17 +112,17 @@ func sessionSettingsFor(limit int) *agents.SessionSettings {
 // wrapCompaction wraps sa with the compaction adapter when the agent config
 // enables it. An empty summary model falls back to the agent's own model, so
 // leaving the field blank does not silently disable compaction.
-func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *agents.Session {
+func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *session.Session {
 	if !built.CompactionEnabled || provider == nil {
-		return agents.NewSession(sa)
+		return session.NewSession(sa)
 	}
 	modelName := built.CompactionModel
 	modelName = cmp.Or(modelName, built.Agent.Model)
 	summaryModel, err := provider.Model(modelName)
 	if err != nil || summaryModel == nil {
-		return agents.NewSession(sa)
+		return session.NewSession(sa)
 	}
-	return agents.NewSession(store.NewCompactionAdapter(sa, summaryModel,
+	return session.NewSession(store.NewCompactionAdapter(sa, summaryModel,
 		built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
 		compactionNotifier(send, runID),
 	))
@@ -143,7 +144,7 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	if deps.Tasks != nil {
 		r.tasks = tasks.New(tasks.Config{
 			Store: store.NewTaskAdapter(deps.Tasks),
-			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref agents.SessionRef) agents.SessionStorage {
+			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref session.Ref) session.Storage {
 				return store.NewEntryStoreFor(db, ref)
 			}),
 			Resolver:               taskResolver{r},
@@ -622,11 +623,11 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	entries := make([]agents.SessionEntry, 0, 4)
+	entries := make([]session.Entry, 0, 4)
 
 	if userInput != "" && !r.runHasPersistedItems(ctx, sessionID, runID) {
 		for _, item := range agents.InputItemsFromText(userInput) {
-			e, err := agents.NewItemEntry(item, agents.Source{Type: agents.SourceUser})
+			e, err := session.NewItemEntry(item, agents.Source{Type: agents.SourceUser})
 			if err != nil {
 				continue
 			}
@@ -638,12 +639,12 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 	// fabricated reasoning item would be rejected on replay and an abandoned
 	// turn should not enter the model's history.
 	if partialReasoning != "" {
-		entries = append(entries, agents.NewAnnotationEntry(
+		entries = append(entries, session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: agents.DisplayReasoning, Text: partialReasoning},
 			agents.Source{Type: agents.SourceModel}))
 	}
 	if partialText != "" {
-		entries = append(entries, agents.NewAnnotationEntry(
+		entries = append(entries, session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: agents.DisplayMessage, Text: partialText},
 			agents.Source{Type: agents.SourceModel}))
 	}
@@ -662,7 +663,7 @@ func (r *Runner) savePartialTurn(sessionID, runID, model, userInput, annRole, an
 		if guardrail != "" {
 			src = agents.Source{Type: agents.SourceGuardrail}
 		}
-		entries = append(entries, agents.NewAnnotationEntry(d, src))
+		entries = append(entries, session.NewAnnotationEntry(d, src))
 	}
 
 	if len(entries) == 0 {
@@ -700,7 +701,7 @@ func (r *Runner) runHasPersistedItems(ctx context.Context, sessionID, runID stri
 	exists, err := r.db.NewSelect().Table("entries").
 		Where("session_id = ?", sessionID).
 		Where("run_id = ?", runID).
-		Where("kind = ?", string(agents.EntryKindItem)).
+		Where("kind = ?", string(session.EntryKindItem)).
 		Exists(ctx)
 	if err != nil {
 		// On a query error, assume something was saved: skipping a possibly

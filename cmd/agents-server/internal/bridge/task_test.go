@@ -2,16 +2,14 @@ package bridge
 
 import (
 	"context"
-
-	"github.com/uptrace/bun"
-
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
-	sdktasks "github.com/zzir/agents-go/agents/tasks"
+	"github.com/uptrace/bun"
 
+	"github.com/zzir/agents-go/agents/session"
+	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -287,10 +285,10 @@ func hasTool(b *BuildResult, name string) bool {
 }
 
 // mustRef addresses a session the way production code does: by resolving its
-// generation. A test that reaches for agents.Direct is asking for the scope of
+// generation. A test that reaches for session.Direct is asking for the scope of
 // the constructors where an id names the storage, which a repo-created session
 // is not in.
-func mustRef(t *testing.T, db *bun.DB, id string) agents.SessionRef {
+func mustRef(t *testing.T, db *bun.DB, id string) session.Ref {
 	t.Helper()
 	ref, err := store.RefFor(context.Background(), db, id)
 	if err != nil {

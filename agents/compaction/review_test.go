@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // dropOldest excludes the first group, so a pass always has something to
@@ -32,7 +33,7 @@ func TestCheckpointRefusesAnotherSessionsPass(t *testing.T) {
 	ctx := context.Background()
 	c := New(dropOldest{}, nil)
 
-	sessionA := []agents.SessionEntry{
+	sessionA := []session.Entry{
 		userWithID(t, "e1", "a-one"), userWithID(t, "e2", "a-two"), userWithID(t, "e3", "a-three"),
 	}
 	if _, err := c.Compact(ctx, sessionA); err != nil {
@@ -40,7 +41,7 @@ func TestCheckpointRefusesAnotherSessionsPass(t *testing.T) {
 	}
 
 	// The interleaved pass: another run re-aims the shared index.
-	sessionB := []agents.SessionEntry{
+	sessionB := []session.Entry{
 		userWithID(t, "e1", "b-SECRET-one"), userWithID(t, "e2", "b-two"),
 	}
 	if _, err := c.Compact(ctx, sessionB); err != nil {
@@ -66,7 +67,7 @@ func TestCheckpointRefusesAnotherSessionsPass(t *testing.T) {
 // move keeps every trigger firing to the preserve floor and makes
 // a tokens-below Target unreachable.
 func TestContextTokensFallWithExclusions(t *testing.T) {
-	entries := []agents.SessionEntry{
+	entries := []session.Entry{
 		userWithID(t, "e1", "an old question with plenty of text in it"),
 		userWithID(t, "e2", "another old question with plenty of text"),
 		userWithID(t, "e3", "the newest question"),
@@ -90,7 +91,7 @@ func TestContextTokensFallWithExclusions(t *testing.T) {
 	// would be discounted twice.
 	next := userWithID(t, "e4", "a follow-up")
 	next.Usage = &agents.RequestUsage{InputTokens: 6_000, OutputTokens: 40, TotalTokens: 6_040}
-	idx.Update(append(append([]agents.SessionEntry{}, entries...), next))
+	idx.Update(append(append([]session.Entry{}, entries...), next))
 	settled := idx.ContextTokens()
 	if settled != 6_040 {
 		t.Fatalf("settled exclusion still subtracted: got %d, want the new measurement 6040", settled)

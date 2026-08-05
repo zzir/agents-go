@@ -117,7 +117,7 @@ type Tool struct {
 	Deferred bool
 
 	// RetrySafe declares the tool safe to run again after a crash interrupted it
-	// mid-execution. See RetrySafeNames and RecoveryPolicy.
+	// mid-execution. See RetrySafeNames and session.RecoveryPolicy.
 	//
 	// The default is unsafe, and deliberately so. A process killed between
 	// issuing a call and recording its output leaves no way to tell whether the
@@ -176,7 +176,7 @@ func (t *Tool) enabled(ctx context.Context, rc *RunContext, agent *Agent) (bool,
 	return t.IsEnabled(ctx, rc, agent)
 }
 
-// RetrySafeNames returns a predicate for RecoveryPolicy.RetrySafe from a set of
+// RetrySafeNames returns a predicate for session.RecoveryPolicy.RetrySafe from a set of
 // tools, so a caller repairing a session does not have to restate which of its
 // tools are safe to repeat.
 func RetrySafeNames(tools []*Tool) func(string) bool {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func TestMessageItemRoundTrips(t *testing.T) {
@@ -80,7 +81,7 @@ func TestReasoningItemTextAndEncrypted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := agents.MarshalInputItem(in[0])
+	raw, err := session.MarshalInputItem(in[0])
 	if err != nil {
 		t.Fatal(err)
 	}

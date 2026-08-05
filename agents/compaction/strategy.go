@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Strategy shrinks an index. It reports whether it changed anything.
@@ -99,7 +100,7 @@ func (s *ToolResultStrategy) Compact(_ context.Context, idx *Index) (bool, error
 			if err != nil {
 				return changed, err
 			}
-			g.Replacement = []agents.SessionEntry{e}
+			g.Replacement = []session.Entry{e}
 		}
 		changed = true
 	}
@@ -202,12 +203,12 @@ func dedupe(in []string) []string {
 // foldedEntry wraps folded text as a system message: the runtime is saying what
 // happened, and attributing it to the user or the assistant would put words in
 // someone's mouth.
-func foldedEntry(text string) (agents.SessionEntry, error) {
+func foldedEntry(text string) (session.Entry, error) {
 	items := agents.InputItemsFromSystemText(text)
 	if len(items) == 0 {
-		return agents.SessionEntry{}, fmt.Errorf("compaction: empty folded entry")
+		return session.Entry{}, fmt.Errorf("compaction: empty folded entry")
 	}
-	return agents.NewItemEntry(items[0], agents.Source{Type: agents.SourceCompaction})
+	return session.NewItemEntry(items[0], agents.Source{Type: agents.SourceCompaction})
 }
 
 // TruncationStrategy drops whole groups from the oldest end.

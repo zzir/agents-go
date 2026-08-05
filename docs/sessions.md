@@ -3,7 +3,7 @@
 A `Session` persists conversation history across runs, so multi-turn chat needs no manual item threading: prior items are prepended to the input before the run, and the new input plus everything the run generates is saved incrementally as the run proceeds.
 
 ```go
-sess := agents.NewInMemorySession()
+sess := session.NewInMemorySession()
 
 res1, _ := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
 // "San Francisco"
@@ -27,8 +27,8 @@ type SessionStorage interface {
 }
 
 // 2. Session — a concrete type, not an interface. Turns entries into meaning.
-sess := agents.NewSession(storage)
-sess.ContextItems(ctx, agents.Cursor{})  // what the model reads
+sess := session.NewSession(storage)
+sess.ContextItems(ctx, session.Cursor{})  // what the model reads
 sess.State(ctx)                          // last agent, pending tool calls
 sess.Stats(ctx)                          // counts and usage
 
@@ -65,8 +65,8 @@ readable.
 ## Reading: cursors, not offsets
 
 ```go
-page1, _ := sess.Entries(ctx, agents.Cursor{Limit: 50})
-page2, _ := sess.Entries(ctx, agents.Cursor{AfterSeq: page1[len(page1)-1].Seq, Limit: 50})
+page1, _ := sess.Entries(ctx, session.Cursor{Limit: 50})
+page2, _ := sess.Entries(ctx, session.Cursor{AfterSeq: page1[len(page1)-1].Seq, Limit: 50})
 ```
 
 Entries keep arriving, so an offset shifts under a concurrent append and page
@@ -101,8 +101,8 @@ A `SessionRepo` owns which sessions exist, separately from what each one holds.
 
 ```go
 repo, _ := memory.NewRepo("./sessions")          // or sessions.NewRepo(db)
-sess, _ := repo.Create(ctx, agents.CreateOptions{Title: "New chat"})
-list, _ := repo.List(ctx, agents.ListOptions{})  // hidden sessions left out
+sess, _ := repo.Create(ctx, session.CreateOptions{Title: "New chat"})
+list, _ := repo.List(ctx, session.ListOptions{})  // hidden sessions left out
 ```
 
 Two things it fixes:
@@ -114,7 +114,7 @@ Two things it fixes:
   maintaining that filter and stops forgetting it.
 
 **Opening a session that does not exist is an error**, never an empty one:
-`agents.ErrSessionNotFound`. A typo in an id would otherwise look like a fresh
+`session.ErrNotFound`. A typo in an id would otherwise look like a fresh
 conversation, and the run would start over instead of continuing.
 
 ## Optional storage capabilities
@@ -144,8 +144,8 @@ is the opposite of suppression — letting the model see terminal output:
 ```go
 agents.RunOptions{Conversation: agents.ConversationOptions{
 	Session: sess,
-	Projectors: map[agents.EntryKind]agents.EntryProjector{
-		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.InputItem, error) {
+	Projectors: map[session.EntryKind]session.Projector{
+		session.EntryKindTerminal: func(e session.Entry) ([]agents.InputItem, error) {
 			var p struct{ Command string `json:"command"` }
 			if err := json.Unmarshal(e.Payload, &p); err != nil { return nil, err }
 			return agents.InputItemsFromText("$ " + p.Command), nil
@@ -164,10 +164,10 @@ shared and read concurrently without a writer invalidating a reader's view.
 Some displays are only settled long after their turn ended — a background task
 card whose task runs for minutes while the parent turn finished in seconds. That
 is an **update entry**: a new entry naming the one it amends, folded in by
-`agents.FoldUpdates` at read time.
+`session.FoldUpdates` at read time.
 
 ```go
-upd, _ := agents.NewUpdateEntry(targetEntryID, agents.ItemDisplay{Text: "done"})
+upd, _ := session.NewUpdateEntry(targetEntryID, agents.ItemDisplay{Text: "done"})
 sess.Append(ctx, upd)
 ```
 
@@ -175,7 +175,7 @@ An amender that knows a tool **call id** but not the entry id — the ordinary
 case for anything reporting on a tool call afterwards — names the call instead:
 
 ```go
-upd, _ := agents.NewCallUpdateEntry(callID, agents.ItemDisplay{Text: "done"})
+upd, _ := session.NewCallUpdateEntry(callID, agents.ItemDisplay{Text: "done"})
 sess.Append(ctx, upd)
 ```
 
@@ -188,11 +188,11 @@ Two rules make this more than a workaround:
   have been folded away by compaction, and failing an entire read over a stale
   pointer would make history unloadable.
 
-Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction) and the entries it folds stay exactly as they were. The one path that does rewrite is `openai.CompactionSession`, because the server-side compact API returns a replacement rather than a decision; it goes through `agents.ReplaceStorageEntries`, which uses a backend's `AtomicReplacer` when it has one and only falls back to the non-atomic `Clear`+`Append` otherwise. All built-in backends implement it, which removes the window where a crash between the two calls leaves the session empty.
+Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction) and the entries it folds stay exactly as they were. The one path that does rewrite is `openai.CompactionSession`, because the server-side compact API returns a replacement rather than a decision; it goes through `session.ReplaceEntries`, which uses a backend's `AtomicReplacer` when it has one and only falls back to the non-atomic `Clear`+`Append` otherwise. All built-in backends implement it, which removes the window where a crash between the two calls leaves the session empty.
 
 ## Choosing an implementation
 
-The built-ins sit on a spectrum from "zero dependencies" to "full database". They are all `SessionStorage` backends behind the same `agents.Session` semantics layer (`InMemorySession` is the pre-wrapped convenience), so you can switch later:
+The built-ins sit on a spectrum from "zero dependencies" to "full database". They are all `SessionStorage` backends behind the same `session.Session` semantics layer (`InMemorySession` is the pre-wrapped convenience), so you can switch later:
 
 | Implementation | Storage | Dependencies | Module | Use when |
 |---|---|---|---|---|
@@ -209,7 +209,7 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 
 ### InMemorySession
 
-`agents.NewInMemorySession()` — goroutine-safe, process-lifetime history. Ideal for tests. Treat returned items as read-only (they share underlying pointers with the store).
+`session.NewInMemorySession()` — goroutine-safe, process-lifetime history. Ideal for tests. Treat returned items as read-only (they share underlying pointers with the store).
 
 ### FileSession (JSONL file)
 
@@ -263,7 +263,7 @@ agents.Run(ctx, agent, "remember my name is Ada",
 	agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
 
-`Entries`/`Append`/`PopEntry`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
+`Entries`/`Append`/`PopEntry`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `session.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
 
 Before persistence each item is **sanitized** for the Conversations API: stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
 
@@ -344,7 +344,7 @@ combine with a local `Session`.
 ```go
 import "github.com/zzir/agents-go/models/openai"
 
-base := agents.NewInMemorySession() // or memory.FileSession, sessions.New, …
+base := session.NewInMemorySession() // or memory.FileSession, sessions.New, …
 sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
 	Model:     "gpt-4.1",  // OpenAI model used for compaction (default gpt-4.1)
 	Threshold: 20,         // compact when ≥20 candidate items accumulate (default 10)
@@ -368,7 +368,7 @@ history outright, so the session is not merely untidy — it cannot be loaded at
 all, and every later attempt to continue the conversation fails the same way.
 
 ```go
-report, err := agents.RecoverSession(ctx, sess, agents.RecoveryPolicy{
+report, err := session.Recover(ctx, sess, session.RecoveryPolicy{
 	RetrySafe: agents.RetrySafeNames(agent.Tools),
 })
 if report.NeedsRecovery() {
@@ -454,7 +454,7 @@ all.
 ```go
 leaf, _ := sess.Leaf(ctx)               // the active tip
 path, _ := sess.PathEntries(ctx)        // root → leaf, the active branch only
-all, _ := sess.Entries(ctx, agents.Cursor{}) // everything, abandoned attempts included
+all, _ := sess.Entries(ctx, session.Cursor{}) // everything, abandoned attempts included
 ```
 
 `PathEntries` walks parent links from the leaf and is what the model reads;
@@ -483,14 +483,14 @@ session into an in-memory one, for instance:
 
 ```go
 // Full clone — dst becomes an exact copy of src's active branch.
-dst := agents.NewInMemorySession()
-agents.ForkSession(ctx, src, dst)
+dst := session.NewInMemorySession()
+session.Fork(ctx, src, dst)
 
 // Point-in-time fork — compose the exported pieces: cut the branch at an
 // entry, then replace the destination's contents with it.
-entries, _ := src.Entries(ctx, agents.Cursor{})
-path := agents.PathToLeaf(entries, "sess-1-e5")
-agents.ReplaceStorageEntries(ctx, branch.Storage(), path...)
+entries, _ := src.Entries(ctx, session.Cursor{})
+path := session.PathToLeaf(entries, "sess-1-e5")
+session.ReplaceEntries(ctx, branch.Storage(), path...)
 ```
 
 The fork point is an **entry id**, not a position. Positions shift when
@@ -499,7 +499,7 @@ the same entry for the life of the session. Entry ids are assigned by storage
 on append and reported by `Entries`:
 
 ```go
-entries, _ := src.Entries(ctx, agents.Cursor{})
+entries, _ := src.Entries(ctx, session.Cursor{})
 for _, e := range entries {
     fmt.Println(e.ID, e.Kind, e.Source.Type)
 }
@@ -510,11 +510,11 @@ for _, e := range entries {
 One session = one conversation. Key sessions by conversation ID:
 
 ```go
-func sessionFor(userID, threadID string) (*agents.Session, error) {
+func sessionFor(userID, threadID string) (*session.Session, error) {
 	storage, err := memory.NewFileSession("sessions", userID+"-"+threadID)
 	if err != nil {
 		return nil, err
 	}
-	return agents.NewSession(storage), nil
+	return session.NewSession(storage), nil
 }
 ```

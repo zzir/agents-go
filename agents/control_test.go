@@ -5,13 +5,15 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // inputTexts renders a model request's input for assertions.
 func inputTexts(items []InputItem) string {
 	var b strings.Builder
 	for _, it := range items {
-		b.WriteString(inputItemText(it))
+		b.WriteString(session.ItemText(it))
 		b.WriteString("|")
 	}
 	return b.String()
@@ -152,8 +154,8 @@ func TestFollowUp_ContinuesTheSameRun(t *testing.T) {
 // was actually said rather than an answer to a question nobody asked.
 func TestInjectedInput_IsSavedToTheSession(t *testing.T) {
 	ctx := context.Background()
-	storage := NewInMemoryStorage("test")
-	sess := NewSession(storage)
+	storage := session.NewInMemoryStorage("test")
+	sess := session.NewSession(storage)
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "first")),
 		modelResp(messageOutput(t, "second")),
@@ -172,7 +174,7 @@ func TestInjectedInput_IsSavedToTheSession(t *testing.T) {
 		}
 	}
 
-	entries, err := sess.Entries(ctx, Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,17 +316,17 @@ func TestInjection_PendingExcludesInFlight(t *testing.T) {
 // appendFailingStorage fails Append when any entry in the batch contains the
 // marker text, simulating a storage failure at a chosen persistence boundary.
 type appendFailingStorage struct {
-	SessionStorage
+	session.Storage
 	failOn string
 }
 
-func (s *appendFailingStorage) Append(ctx context.Context, entries ...SessionEntry) error {
+func (s *appendFailingStorage) Append(ctx context.Context, entries ...session.Entry) error {
 	for _, e := range entries {
 		if strings.Contains(string(e.Item), s.failOn) {
 			return errors.New("storage refused the batch")
 		}
 	}
-	return s.SessionStorage.Append(ctx, entries...)
+	return s.Storage.Append(ctx, entries...)
 }
 
 // A continuation take (follow-up/late steer at the final-output boundary) is
@@ -332,8 +334,8 @@ func (s *appendFailingStorage) Append(ctx context.Context, entries ...SessionEnt
 // the take must roll back into the queue — committing it against the write
 // that merely preceded it would make a retrying attempt lose the input.
 func TestContinuationTake_RollsBackWhenItsPersistFails(t *testing.T) {
-	storage := &appendFailingStorage{SessionStorage: NewInMemoryStorage("test"), failOn: "about tomorrow"}
-	sess := NewSession(storage)
+	storage := &appendFailingStorage{Storage: session.NewInMemoryStorage("test"), failOn: "about tomorrow"}
+	sess := session.NewSession(storage)
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "first answer")),
 		modelResp(messageOutput(t, "never reached")),
@@ -377,8 +379,8 @@ func TestInterruptionTake_RollsBackWhenPersistFails(t *testing.T) {
 		modelResp(functionCallOutput(t, "delete_db", "call_2", `{}`)),
 	}}
 	agent := &Agent{Name: "a", Tools: []*Tool{probe, danger}, ModelImpl: model}
-	storage := &appendFailingStorage{SessionStorage: NewInMemoryStorage("test"), failOn: "please also"}
-	sess := NewSession(storage)
+	storage := &appendFailingStorage{Storage: session.NewInMemoryStorage("test"), failOn: "please also"}
+	sess := session.NewSession(storage)
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
 		Conversation: ConversationOptions{Session: sess},

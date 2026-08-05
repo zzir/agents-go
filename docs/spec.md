@@ -392,7 +392,7 @@ annotation that could not be stored server-side is worse than losing it.
 
 A session is three layers, split along what varies:
 
-- **`SessionStorage`** reads and writes entries and understands nothing about
+- **`session.Storage`** reads and writes entries and understands nothing about
   what they mean.
 - **`Session`** is a concrete type, not an interface, that turns entries into
   the model's view. Storage varies; "how history becomes model input" does not,
@@ -421,7 +421,7 @@ still cannot replay folded history.
 
 Capabilities a store may or may not have are **optional interfaces**, not
 required methods: `AtomicReplacer`, `EntryPopper`, `CompactionAware`. Popping in
-particular is not in `SessionStorage` because a run never pops; requiring it
+particular is not in `session.Storage` because a run never pops; requiring it
 would tax stores that cannot (a server-managed conversation) for a feature the
 run loop does not use. **A wrapper that claims a capability delivers its
 contract or refuses**: delegating `AtomicReplacer` to a wrapped store without
@@ -464,7 +464,7 @@ An entry names its parent, so a session is a walk rather than a pile.
 
 **Fork extracts a branch; branch moves within one session.** ✅ A fork carries
 entry ids across unchanged, so an update entry naming one still finds its
-target. The destination is written through `ReplaceStorageEntries`, so a
+target. The destination is written through `session.ReplaceEntries`, so a
 storage that can swap atomically (`AtomicReplacer`) never shows a
 cleared-but-unfilled fork target when a failure lands mid-write.
 
@@ -510,7 +510,7 @@ next backend will answer differently.
 - **A session id names a session, not a place.** Deleting an id and creating it
   again yields a session with storage of its own. A handle to the deleted one
   can neither read what its replacement writes nor write into what it reads.
-  *Shared:* `agents.SessionRef` is the address and `agents.NewGeneration`
+  *Shared:* `session.Ref` is the address and `session.NewGeneration`
   mints the discriminator. A function that takes a ref cannot be handed a bare
   id, which is the point — carrying the generation as a field beside the id
   made every hand-built handle, every resolve-by-id and every delete-by-name a
@@ -631,7 +631,7 @@ next backend will answer differently.
 - **Selecting a row to remove and removing it.** The delete decides who gets it;
   a caller whose delete affects nothing lost the race and retries.
 - **Writing and proving the destination still exists.** A handle held across
-  its session's deletion must REFUSE the write (`ErrSessionNotFound`), inside
+  its session's deletion must REFUSE the write (`session.ErrNotFound`), inside
   the same step as the write: a quietly "isolated" write mints entries nothing
   references — invisible to every listing, unreachable by delete, orphaned
   storage by construction. Deletion itself honors the same serialization as
@@ -672,7 +672,7 @@ configuration does too (`RunOptions.Compaction`).
   valid, so a failed pass is recorded on the `compaction` span and the run
   continues with the entries it had.
 - **"Did the pass change anything" compares whole entries**, via
-  `SessionEntry.Equal`, not the count and not a chosen subset of the fields.
+  `session.Entry.Equal`, not the count and not a chosen subset of the fields.
   Same count with different content is a legal pass — one summary standing in
   for one entry — and so is same ids with a rewritten payload. Calling either a
   no-op discards it silently: the save point does not rebuild, and the
@@ -760,7 +760,7 @@ cannot otherwise survive.
 
 ### 2.5h Crash recovery ✅
 
-`RecoverSession` repairs a session a killed process left inconsistent.
+`session.Recover` repairs a session a killed process left inconsistent.
 
 - The damage is specific: a run killed between issuing a tool call and recording
   its output leaves a `function_call` with no `function_call_output`. The
@@ -1013,7 +1013,7 @@ A response the provider marks `status="incomplete"` with reason
   few entries early.
 - A backend that returns **no response id** still has its usage recorded, on
   the batch's last entry.
-- **Nested usage is separate.** `SessionEntry.NestedUsage` and
+- **Nested usage is separate.** `session.Entry.NestedUsage` and
   `RunItem.NestedUsage` hold what a tool spent on model calls of its
   own. It is not merged into `Usage`, because the two answer different
   questions: a nested run's tokens were spent on a different conversation, and
@@ -1370,7 +1370,7 @@ A `Diagnostic` records trouble a run went through **and survived**.
 - They land on `RunResult.Diagnostics` — on a failed run, reached through
   `RunError.Result` — when
   the run does fail (the error is the last straw; the diagnostics are what led
-  to it), and on `SessionEntry.Diagnostics`.
+  to it), and on `session.Entry.Diagnostics`.
 - **Each is attached to the turn it happened in**, on that batch's last entry,
   not repeated on every turn after.
 - **The sink travels on the `context.Context`**, because a `Model` receives one
@@ -1691,7 +1691,7 @@ fields are exported and a variant is a copy.
 
 Zero conversion, zero information loss — reasoning ids, `encrypted_content` and
 strict schemas all survive round-trips. The cost is that non-LLM entries need a
-`SessionEntry` wrapper to have somewhere to live.
+`session.Entry` wrapper to have somewhere to live.
 
 ### 5.5b The wire types couple our compatibility to openai-go's
 
@@ -1990,21 +1990,43 @@ Three rules govern a stream that dies before its terminal event:
 
 ---
 
+### 5.17 The session layer is its own package
+
+`agents/session` owns stored history: entries, storage, the semantics struct,
+projection, the tree, forking, recovery, and the wire codec
+(`MarshalInputItem` / `UnmarshalInputItem` — their consumers are exactly the
+storage implementations). The runner imports session; session never imports
+the runner. Its one upward need — building an entry from a live `RunItem` —
+stays in agents as `EntryFromRunItem`.
+
+Names inside dropped their `Session` prefix (`session.Entry`,
+`session.Storage`, `session.Repo`, `session.Recover`, `session.Fork`,
+`session.ErrNotFound`); `session.Session` keeps the stutter the way
+`context.Context` does, because the concept IS the package.
+
+The value types shared by both layers — `Source`, `Display`, `RequestUsage`,
+`Diagnostic`, `ErrorCode` — live in session (entries persist them) and are
+**aliased** in agents (`agents.Source = session.Source`), because they are
+equally part of the runner's surface: every `RunItem` carries a `Source`,
+every result reports `RequestUsage`. An alias is transparent — one type, two
+import paths — so neither layer's API is second-class. `ErrorCode`
+specifically: the *vocabulary* sits in session because entries and
+diagnostics persist codes; the *derivation* (`CodeOf`, `Classify`) stays in
+agents with the error types it reads.
+
+Session-only names are deliberately NOT aliased: code that works with stored
+history imports the package that owns it. This was the §6.4 split, taken
+after the structural collapses so the code moved once.
+
+---
+
 ## 6. Open questions
+
+*(none currently)*
 
 When a new case comes up that this document does not answer, add it here with
 the options under consideration. Implementing it means moving it out of this
 section and into §2 in the same change.
-
-### 6.4 `agents` is one package
-
-73 non-test files, ~15k lines, ~450 exported symbols — against 67 for the next
-largest package in the repo. The session/entry layer (`session_*.go`) and the
-run loop (`run_*.go`) are only weakly coupled and could separate.
-
-This is deliberately last: the collapses that preceded it (tools, items,
-errors) each deleted files, and splitting first would have moved the same code
-twice. It is now the only §6 entry left.
 
 ---
 

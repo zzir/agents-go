@@ -9,7 +9,7 @@ import (
 // FORMAT of an item, which the entry model does not change.
 //
 // Everything else it held — the row shape, the display derivation, the adapter
-// bridging rows to agents.SessionStorage — existed to reconstruct at read time
+// bridging rows to session.Storage — existed to reconstruct at read time
 // what the SDK already knew at write time. See entry_store.go.
 
 // adaptForeignItemJSON adapts an item produced by a different model for

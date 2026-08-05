@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -55,7 +56,7 @@ func TestCompactionCandidateCount(t *testing.T) {
 }
 
 func TestNewCompactionSessionRejects(t *testing.T) {
-	under := agents.NewInMemoryStorage("test")
+	under := session.NewInMemoryStorage("test")
 	if _, err := NewCompactionSession(under, CompactionOptions{Model: "claude-3"}); err == nil {
 		t.Error("non-OpenAI model should be rejected")
 	}
@@ -91,13 +92,13 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	under := agents.NewInMemoryStorage("test")
+	under := session.NewInMemoryStorage("test")
 	// Seed enough candidate items to clear the threshold.
 	seed := []agents.InputItem{}
 	for range 12 {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
-	if err := agents.NewSession(under).AppendItems(ctx, seed, agents.Source{}); err != nil {
+	if err := session.NewSession(under).AppendItems(ctx, seed, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,18 +108,18 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
+	if err := sess.RunCompaction(ctx, session.CompactionArgs{ResponseID: "resp_1"}); err != nil {
 		t.Fatal(err)
 	}
 
-	items, err := agents.NewSession(under).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(under).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 {
 		t.Fatalf("after compaction len = %d, want 1 (the summary)", len(items))
 	}
-	b, _ := agents.MarshalInputItem(items[0])
+	b, _ := session.MarshalInputItem(items[0])
 	if !contains(string(b), "summary") {
 		t.Errorf("compacted item = %s", b)
 	}
@@ -132,8 +133,8 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	t.Cleanup(srv.Close)
 
-	under := agents.NewInMemoryStorage("test")
-	_ = agents.NewSession(under).AppendItems(ctx, []agents.InputItem{
+	under := session.NewInMemoryStorage("test")
+	_ = session.NewSession(under).AppendItems(ctx, []agents.InputItem{
 		mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`),
 	}, agents.Source{})
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1"},
@@ -141,7 +142,7 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
+	if err := sess.RunCompaction(ctx, session.CompactionArgs{ResponseID: "resp_1"}); err != nil {
 		t.Fatal(err)
 	}
 	if called {
@@ -151,7 +152,7 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 
 func mustInput(t *testing.T, raw string) agents.InputItem {
 	t.Helper()
-	item, err := agents.UnmarshalInputItem([]byte(raw))
+	item, err := session.UnmarshalInputItem([]byte(raw))
 	if err != nil {
 		t.Fatalf("decode %q: %v", raw, err)
 	}
@@ -191,14 +192,14 @@ func newCompactStub(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func seededCompactionSession(t *testing.T, baseURL string, n int, under agents.SessionStorage) *CompactionSession {
+func seededCompactionSession(t *testing.T, baseURL string, n int, under session.Storage) *CompactionSession {
 	t.Helper()
 	ctx := t.Context()
 	seed := make([]agents.InputItem, 0, n)
 	for range n {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
-	if err := agents.NewSession(under).AppendItems(ctx, seed, agents.Source{}); err != nil {
+	if err := session.NewSession(under).AppendItems(ctx, seed, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1", Mode: CompactionModeInput},
@@ -212,11 +213,11 @@ func seededCompactionSession(t *testing.T, baseURL string, n int, under agents.S
 func TestRunCompactionStartsSpanWithCounts(t *testing.T) {
 	ctx := t.Context()
 	srv := newCompactStub(t)
-	sess := seededCompactionSession(t, srv.URL, 12, agents.NewInMemorySession())
+	sess := seededCompactionSession(t, srv.URL, 12, session.NewInMemorySession())
 
 	span := &tracing.SpanHandle{Span: &tracing.Span{Data: map[string]any{}}}
 	startCalls := 0
-	args := agents.CompactionArgs{
+	args := session.CompactionArgs{
 		ResponseID: "resp_1",
 		StartSpan: func() *tracing.SpanHandle {
 			startCalls++
@@ -241,10 +242,10 @@ func TestRunCompactionNoSpanOnNoOpPass(t *testing.T) {
 	ctx := t.Context()
 	srv := newCompactStub(t)
 	// One candidate item: far below the default threshold, so no compaction.
-	sess := seededCompactionSession(t, srv.URL, 1, agents.NewInMemorySession())
+	sess := seededCompactionSession(t, srv.URL, 1, session.NewInMemorySession())
 
 	startCalls := 0
-	args := agents.CompactionArgs{
+	args := session.CompactionArgs{
 		ResponseID: "resp_1",
 		StartSpan: func() *tracing.SpanHandle {
 			startCalls++
@@ -262,13 +263,13 @@ func TestRunCompactionNoSpanOnNoOpPass(t *testing.T) {
 func TestRunCompactionNilStartSpanIsSafe(t *testing.T) {
 	ctx := t.Context()
 	srv := newCompactStub(t)
-	under := agents.NewInMemoryStorage("test")
+	under := session.NewInMemoryStorage("test")
 	sess := seededCompactionSession(t, srv.URL, 12, under)
 
-	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
+	if err := sess.RunCompaction(ctx, session.CompactionArgs{ResponseID: "resp_1"}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := agents.NewSession(under).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(under).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +283,7 @@ func TestRunCompactionNilStartSpanIsSafe(t *testing.T) {
 // replaceRecordingSession wraps InMemorySession, counting Clear and
 // ReplaceItems calls to prove which write path compaction uses.
 type replaceRecordingSession struct {
-	*agents.InMemoryStorage
+	*session.InMemoryStorage
 	mu           sync.Mutex
 	clearCalls   int
 	replaceCalls int
@@ -295,7 +296,7 @@ func (r *replaceRecordingSession) Clear(ctx context.Context) error {
 	return r.InMemoryStorage.Clear(ctx)
 }
 
-func (r *replaceRecordingSession) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
+func (r *replaceRecordingSession) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	r.mu.Lock()
 	r.replaceCalls++
 	r.mu.Unlock()
@@ -305,10 +306,10 @@ func (r *replaceRecordingSession) ReplaceEntries(ctx context.Context, entries ..
 func TestRunCompactionUsesAtomicReplace(t *testing.T) {
 	ctx := t.Context()
 	srv := newCompactStub(t)
-	under := &replaceRecordingSession{InMemoryStorage: agents.NewInMemoryStorage("test")}
+	under := &replaceRecordingSession{InMemoryStorage: session.NewInMemoryStorage("test")}
 	sess := seededCompactionSession(t, srv.URL, 12, under)
 
-	if err := sess.RunCompaction(ctx, agents.CompactionArgs{ResponseID: "resp_1"}); err != nil {
+	if err := sess.RunCompaction(ctx, session.CompactionArgs{ResponseID: "resp_1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -322,14 +323,14 @@ func TestRunCompactionUsesAtomicReplace(t *testing.T) {
 		t.Errorf("Clear calls = %d, want 0 (history must not go through a clear+add window)", clearCalls)
 	}
 
-	items, err := agents.NewSession(under).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(under).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 {
 		t.Fatalf("after compaction len = %d, want 1", len(items))
 	}
-	b, _ := agents.MarshalInputItem(items[0])
+	b, _ := session.MarshalInputItem(items[0])
 	if !contains(string(b), "summary") {
 		t.Errorf("compacted item = %s", b)
 	}

@@ -1,8 +1,8 @@
-package agents
+package session
 
 import "testing"
 
-func mustLeaf(t *testing.T, id, target string) SessionEntry {
+func mustLeaf(t *testing.T, id, target string) Entry {
 	t.Helper()
 	e, err := NewLeafEntry(target)
 	if err != nil {
@@ -12,18 +12,18 @@ func mustLeaf(t *testing.T, id, target string) SessionEntry {
 	return e
 }
 
-func item(id, parent string, seq int64) SessionEntry {
-	return SessionEntry{ID: id, ParentID: parent, Seq: seq, Kind: EntryKindItem}
+func item(id, parent string, seq int64) Entry {
+	return Entry{ID: id, ParentID: parent, Seq: seq, Kind: EntryKindItem}
 }
 
-func ann(id, parent string, seq int64) SessionEntry {
-	return SessionEntry{ID: id, ParentID: parent, Seq: seq, Kind: EntryKindAnnotation}
+func ann(id, parent string, seq int64) Entry {
+	return Entry{ID: id, ParentID: parent, Seq: seq, Kind: EntryKindAnnotation}
 }
 
 // PopLast takes the newest entry whatever it is. Nothing can point at it — a
 // parent is always older — so it never needs a repair.
 func TestPlanPopLastTakesTheNewestEntry(t *testing.T) {
-	entries := []SessionEntry{item("a", "", 1), item("b", "a", 2), ann("c", "b", 3)}
+	entries := []Entry{item("a", "", 1), item("b", "a", 2), ann("c", "b", 3)}
 	plan, ok := PlanPop(entries, PopLast)
 	if !ok || plan.Entry.ID != "c" {
 		t.Fatalf("popped %q, want the newest entry c", plan.Entry.ID)
@@ -36,7 +36,7 @@ func TestPlanPopLastTakesTheNewestEntry(t *testing.T) {
 // PopLastItem skips what is not an item — and that is exactly when a repair is
 // needed, because what it skipped is pointing at what it takes.
 func TestPlanPopLastItemRelinksWhatItSkipped(t *testing.T) {
-	entries := []SessionEntry{item("a", "", 1), item("b", "a", 2), ann("c", "b", 3)}
+	entries := []Entry{item("a", "", 1), item("b", "a", 2), ann("c", "b", 3)}
 	plan, ok := PlanPop(entries, PopLastItem)
 	if !ok || plan.Entry.ID != "b" {
 		t.Fatalf("popped %q, want the newest item b", plan.Entry.ID)
@@ -57,7 +57,7 @@ func TestPlanPopLastItemRelinksWhatItSkipped(t *testing.T) {
 // A branch pointer at what is going moves to where the branch was before,
 // rather than being left aimed at an entry that is not there.
 func TestPlanPopRelinksALeafMove(t *testing.T) {
-	entries := []SessionEntry{item("a", "", 1), item("b", "a", 2), mustLeaf(t, "l", "b")}
+	entries := []Entry{item("a", "", 1), item("b", "a", 2), mustLeaf(t, "l", "b")}
 	plan, ok := PlanPop(entries, PopLastItem)
 	if !ok || plan.Entry.ID != "b" {
 		t.Fatalf("popped %q, want b", plan.Entry.ID)
@@ -71,7 +71,7 @@ func TestPlanPopRelinksALeafMove(t *testing.T) {
 // "My last message" is on the branch I am on. An item on an abandoned attempt
 // is already off the path and is not what anyone means.
 func TestPlanPopLastItemStaysOnTheActiveBranch(t *testing.T) {
-	entries := []SessionEntry{
+	entries := []Entry{
 		item("q", "", 1),
 		item("first", "q", 2),
 		mustLeaf(t, "l", "q"), // go back to the question
@@ -90,7 +90,7 @@ func TestPlanPopOnAnEmptySession(t *testing.T) {
 	if _, ok := PlanPop(nil, PopLast); ok {
 		t.Fatal("an empty session popped something")
 	}
-	if _, ok := PlanPop([]SessionEntry{ann("c", "", 1)}, PopLastItem); ok {
+	if _, ok := PlanPop([]Entry{ann("c", "", 1)}, PopLastItem); ok {
 		t.Fatal("a session with no items popped an item")
 	}
 }

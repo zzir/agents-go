@@ -8,6 +8,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // textContent concatenates the text of all text-bearing parts.
@@ -138,7 +139,7 @@ func toolOutputItem(t *testing.T, callID string, content []agents.ToolOutputCont
 
 func TestParseInputUnknownTypePassesThrough(t *testing.T) {
 	raw := `{"type":"web_search_call","id":"ws_1","status":"completed"}`
-	item, err := agents.UnmarshalInputItem([]byte(raw))
+	item, err := session.UnmarshalInputItem([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}

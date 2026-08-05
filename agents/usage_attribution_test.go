@@ -4,13 +4,15 @@ import (
 	"context"
 	"sync"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Exactly one entry per response carries its usage, so summing over a session's
 // entries counts each request once.
 func TestUsage_OneEntryPerResponseCarriesIt(t *testing.T) {
 	ctx := context.Background()
-	sess := NewSession(NewInMemoryStorage("test"))
+	sess := session.NewSession(session.NewInMemoryStorage("test"))
 	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
@@ -27,7 +29,7 @@ func TestUsage_OneEntryPerResponseCarriesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := sess.Entries(ctx, Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +38,7 @@ func TestUsage_OneEntryPerResponseCarriesIt(t *testing.T) {
 	for _, e := range entries {
 		if e.Usage != nil {
 			withUsage++
-			addRequestUsage(&summed, e.Usage)
+			session.AddRequestUsage(&summed, e.Usage)
 		}
 	}
 	if withUsage != 2 {
@@ -54,7 +56,7 @@ func TestUsage_OneEntryPerResponseCarriesIt(t *testing.T) {
 // nothing before it does.
 func TestUsage_LandsOnTheLastEntryOfTheResponse(t *testing.T) {
 	ctx := context.Background()
-	sess := NewSession(NewInMemoryStorage("test"))
+	sess := session.NewSession(session.NewInMemoryStorage("test"))
 	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
@@ -74,7 +76,7 @@ func TestUsage_LandsOnTheLastEntryOfTheResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := sess.Entries(ctx, Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,24 +11,25 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // seed appends entries through the store under test, which is also the only way
 // they get ids and parent links.
-func seed(t *testing.T, s *EntryStore, entries ...agents.SessionEntry) {
+func seed(t *testing.T, s *EntryStore, entries ...session.Entry) {
 	t.Helper()
 	if err := s.Append(context.Background(), entries...); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }
 
-func userEntry(t *testing.T, text string) agents.SessionEntry {
+func userEntry(t *testing.T, text string) session.Entry {
 	t.Helper()
 	return rawEntryFrom(t, `{"role":"user","content":`+quoteJSON(text)+`}`,
 		agents.Source{Type: agents.SourceUser})
 }
 
-func rawEntry(t *testing.T, raw string) agents.SessionEntry {
+func rawEntry(t *testing.T, raw string) session.Entry {
 	t.Helper()
 	return rawEntryFrom(t, raw, agents.Source{})
 }
@@ -36,9 +37,9 @@ func rawEntry(t *testing.T, raw string) agents.SessionEntry {
 // rawEntryFrom keeps the item JSON verbatim rather than round-tripping it
 // through the SDK union — which is what the store does, and what lets a shape
 // the union does not model (a vLLM "text" content part) reach the reader.
-func rawEntryFrom(_ *testing.T, raw string, src agents.Source) agents.SessionEntry {
-	return agents.SessionEntry{
-		Kind:   agents.EntryKindItem,
+func rawEntryFrom(_ *testing.T, raw string, src agents.Source) session.Entry {
+	return session.Entry{
+		Kind:   session.EntryKindItem,
 		Source: src,
 		Item:   json.RawMessage(raw),
 	}
@@ -55,7 +56,7 @@ func quoteJSON(s string) string {
 func TestEntryStoreReplayPolicy(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 	s.SetRunID("r1")
 	s.SetModel("model-a")
 
@@ -63,14 +64,14 @@ func TestEntryStoreReplayPolicy(t *testing.T) {
 		userEntry(t, "hi"),
 		rawEntry(t, `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"think"}]}`),
 		rawEntry(t, `{"type":"message","role":"assistant","id":"msg_1","content":[{"type":"output_text","text":"hello"}],"status":"completed"}`),
-		agents.NewAnnotationEntry(
+		session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
 			agents.Source{Type: agents.SourceErrorHandler},
 		),
 	)
 
 	// Same model: everything except the annotation replays, ids intact.
-	items, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestEntryStoreReplayPolicy(t *testing.T) {
 
 	// Different model: reasoning dropped, assistant id stripped.
 	s.SetModel("model-b")
-	items, err = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	items, err = session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestEntryStoreReplayPolicy(t *testing.T) {
 		t.Fatalf("foreign model: want 2 items (reasoning dropped), got %d", len(items))
 	}
 	for _, it := range items {
-		raw, err := agents.MarshalInputItem(it)
+		raw, err := session.MarshalInputItem(it)
 		if err != nil {
 			t.Fatalf("marshal replayed item: %v", err)
 		}
@@ -107,7 +108,7 @@ func TestEntryStoreReplayPolicy(t *testing.T) {
 func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 	s.SetRunID("r1")
 
 	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"get_weather","arguments":"{\"city\":\"sf\"}"}`)
@@ -118,7 +119,7 @@ func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 	call.Diagnostics = []agents.Diagnostic{{Type: agents.DiagToolTimeout, Message: "slow"}}
 	seed(t, s, userEntry(t, "weather?"), call)
 
-	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	views, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -149,10 +150,10 @@ func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"text","text":"最终回答"}],"status":"completed"}`))
 
-	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	views, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -167,12 +168,12 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 func TestPartialTextAnnotationReadsBackAsAssistant(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
-	seed(t, s, agents.NewAnnotationEntry(
+	s := NewEntryStoreFor(db, session.Direct("s1"))
+	seed(t, s, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayMessage, Text: "partial answer"},
 		agents.Source{Type: agents.SourceModel}))
 
-	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	views, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -187,16 +188,16 @@ func TestPartialTextAnnotationReadsBackAsAssistant(t *testing.T) {
 func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 
 	seed(t, s, userEntry(t, "old question"))
 	seed(t, s, rawEntry(t, `{"type":"function_call_output","call_id":"c1","output":"kept output"}`))
 	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final"}],"status":"completed"}`))
-	all, err := agents.NewSession(s).Entries(ctx, agents.Cursor{})
+	all, err := session.NewSession(s).Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatalf("entries: %v", err)
 	}
-	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+	cp, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:     "summary of older history",
 		ExcludedIDs: []string{all[0].ID},
 	})
@@ -205,14 +206,14 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	}
 	seed(t, s, cp)
 
-	items, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatalf("get items: %v", err)
 	}
 	if len(items) != 3 {
 		t.Fatalf("want 3 items (summary + 2 kept), got %d", len(items))
 	}
-	first, err := agents.MarshalInputItem(items[0])
+	first, err := session.MarshalInputItem(items[0])
 	if err != nil {
 		t.Fatalf("marshal first item: %v", err)
 	}
@@ -222,7 +223,7 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 	if strings.Contains(string(first), "old question") {
 		t.Fatalf("folded history re-sent: %s", first)
 	}
-	last, _ := agents.MarshalInputItem(items[2])
+	last, _ := session.MarshalInputItem(items[2])
 	if !strings.Contains(string(last), "final") {
 		t.Fatalf("kept items reordered, last item: %s", last)
 	}
@@ -233,10 +234,10 @@ func TestCompactionCheckpointFrontsTheSummary(t *testing.T) {
 func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 
 	seed(t, s, userEntry(t, "old question"))
-	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+	cp, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:      "summary",
 		ExcludedIDs:  []string{"s1-e1"},
 		TokensBefore: 12400,
@@ -247,7 +248,7 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	}
 	seed(t, s, cp)
 
-	views, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	views, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -279,21 +280,21 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 	s.SetRunID("r1")
 
 	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`)
 	call.Display = &agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1", ToolName: "f"}
 	seed(t, s, userEntry(t, "one"), call, userEntry(t, "two"), userEntry(t, "three"))
 	// Two update entries: rows in the table, never entries in a page.
-	if err := s.AppendCallDisplayUpdate(ctx, agents.Direct("s1"), "c1", agents.ItemDisplay{Output: "done"}); err != nil {
+	if err := s.AppendCallDisplayUpdate(ctx, session.Direct("s1"), "c1", agents.ItemDisplay{Output: "done"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if err := s.AppendCallDisplayUpdate(ctx, agents.Direct("s1"), "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
+	if err := s.AppendCallDisplayUpdate(ctx, session.Direct("s1"), "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
 		t.Fatalf("update 2: %v", err)
 	}
 
-	all, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	all, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -306,7 +307,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	}
 
 	// A limit is a count of ENTRIES. Asking for 2 must give the newest 2.
-	page, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 2)
+	page, err := s.GetEntries(ctx, session.Direct("s1"), 0, 2)
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -316,7 +317,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 
 	// Paging backwards from it reaches the beginning without skipping the call
 	// the updates were folded into.
-	older, err := s.GetEntries(ctx, agents.Direct("s1"), page[0].ID, 2)
+	older, err := s.GetEntries(ctx, session.Direct("s1"), page[0].ID, 2)
 	if err != nil {
 		t.Fatalf("get older: %v", err)
 	}
@@ -331,7 +332,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 
 	seed(t, s, userEntry(t, "question"))
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first"}]}`, agents.Source{}))
@@ -339,16 +340,16 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	// Go back to the question and answer it differently. Its id is read back,
 	// not constructed: entry ids are opaque, and a test that rebuilds one is a
 	// test of the id format.
-	stored, err := s.Entries(ctx, agents.Cursor{})
+	stored, err := s.Entries(ctx, session.Cursor{})
 	if err != nil || len(stored) != 2 {
 		t.Fatalf("seeded entries: %v %v", stored, err)
 	}
-	if err := s.Branch(ctx, agents.Direct("s1"), stored[0].ID); err != nil {
+	if err := s.Branch(ctx, session.Direct("s1"), stored[0].ID); err != nil {
 		t.Fatalf("branch: %v", err)
 	}
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}`, agents.Source{}))
 
-	views, gerr := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	views, gerr := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if gerr != nil {
 		t.Fatalf("get entries: %v", gerr)
 	}
@@ -367,14 +368,14 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	}
 
 	// The model reads only the active branch.
-	items, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatalf("context items: %v", err)
 	}
 	if len(items) != 2 {
 		t.Fatalf("want 2 items (question + second answer), got %d", len(items))
 	}
-	last, _ := agents.MarshalInputItem(items[1])
+	last, _ := session.MarshalInputItem(items[1])
 	if !strings.Contains(string(last), "second") {
 		t.Fatalf("the abandoned answer is still in context: %s", last)
 	}
@@ -390,10 +391,10 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	if firstID == "" {
 		t.Fatal("the first attempt is not in the listing")
 	}
-	if err := s.Branch(ctx, agents.Direct("s1"), firstID); err != nil {
+	if err := s.Branch(ctx, session.Direct("s1"), firstID); err != nil {
 		t.Fatalf("branch back: %v", err)
 	}
-	views, _ = s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	views, _ = s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	for _, v := range views {
 		if v.Content == "first" && !v.OnPath {
 			t.Error("switching back did not restore the first attempt")
@@ -420,7 +421,7 @@ func TestEntryStorePopItem(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	s := NewEntryStoreFor(db, agents.Direct(sid))
+	s := NewEntryStoreFor(db, session.Direct(sid))
 
 	// Empty session -> (nil, nil), not an error.
 	got, err := s.PopItem(ctx)
@@ -431,7 +432,7 @@ func TestEntryStorePopItem(t *testing.T) {
 	// Oldest -> newest: a real item, then a compacted item, then an annotation.
 	seed(t, s, userEntry(t, "hi"), userEntry(t, "folded"))
 	// By position, not by a constructed id.
-	stored, serr := s.Entries(ctx, agents.Cursor{})
+	stored, serr := s.Entries(ctx, session.Cursor{})
 	if serr != nil || len(stored) != 2 {
 		t.Fatalf("seeded entries: %v %v", stored, serr)
 	}
@@ -441,7 +442,7 @@ func TestEntryStorePopItem(t *testing.T) {
 		Exec(ctx); err != nil {
 		t.Fatalf("mark compacted: %v", err)
 	}
-	seed(t, s, agents.NewAnnotationEntry(
+	seed(t, s, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
 		agents.Source{Type: agents.SourceErrorHandler},
 	))
@@ -465,7 +466,7 @@ func TestEntryStorePopItem(t *testing.T) {
 		t.Fatalf("remaining rows = %d, want 2 (annotation + compacted untouched)", len(remaining))
 	}
 	for _, r := range remaining {
-		if r.Kind != string(agents.EntryKindAnnotation) && !r.Compacted {
+		if r.Kind != string(session.EntryKindAnnotation) && !r.Compacted {
 			t.Errorf("PopEntry deleted the wrong row; a plain item survived: %+v", r)
 		}
 	}
@@ -486,10 +487,10 @@ func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	s := NewEntryStoreFor(db, agents.Direct(sid))
+	s := NewEntryStoreFor(db, session.Direct(sid))
 
 	seed(t, s, userEntry(t, "folded question"), userEntry(t, "kept answer"))
-	stored, err := s.Entries(ctx, agents.Cursor{})
+	stored, err := s.Entries(ctx, session.Cursor{})
 	if err != nil || len(stored) != 2 {
 		t.Fatalf("seeded entries: %v %v", stored, err)
 	}
@@ -502,7 +503,7 @@ func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
 		Exec(ctx); err != nil {
 		t.Fatalf("mark compacted: %v", err)
 	}
-	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+	cp, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:     "summary",
 		ExcludedIDs: []string{stored[0].ID},
 	})
@@ -515,7 +516,7 @@ func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
-	if popped == nil || popped.Kind != agents.EntryKindCompaction {
+	if popped == nil || popped.Kind != session.EntryKindCompaction {
 		t.Fatalf("popped %+v, want the checkpoint", popped)
 	}
 
@@ -649,7 +650,7 @@ func TestForkSessionMissingSource(t *testing.T) {
 	db := newTestDB(t)
 	dst := &Session{ID: NewID(), Name: "fork"}
 
-	s := NewEntryStoreFor(db, agents.Direct("nonexistent-src"))
+	s := NewEntryStoreFor(db, session.Direct("nonexistent-src"))
 	if _, err := s.ForkSession(ctx, dst, refOf(t, db, "nonexistent-src"), 0, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound for a missing source, got %v", err)
 	}
@@ -664,13 +665,13 @@ func TestPopEntryRollsBackOnUndecodableRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sid := NewID()
-	s := NewEntryStoreFor(db, agents.Direct(sid))
+	s := NewEntryStoreFor(db, session.Direct(sid))
 
 	seed(t, s, userEntry(t, "keep me"))
 	// A newer row with non-empty but undecodable entry JSON.
 	bad := entryRow{
 		SessionID: sid, RunID: "r", EntryID: "corrupt",
-		Kind: string(agents.EntryKindItem), Entry: `{"kind":`, CreatedAt: time.Now().UTC(),
+		Kind: string(session.EntryKindItem), Entry: `{"kind":`, CreatedAt: time.Now().UTC(),
 	}
 	if _, err := db.NewInsert().Model(&bad).Exec(ctx); err != nil {
 		t.Fatalf("insert bad: %v", err)
@@ -775,13 +776,13 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 
 // refOf addresses a session the way production code does: by resolving its
 // generation, never by pasting an id where a ref goes.
-func refOf(t *testing.T, db *bun.DB, id string) agents.SessionRef {
+func refOf(t *testing.T, db *bun.DB, id string) session.Ref {
 	t.Helper()
 	ref, err := RefFor(context.Background(), db, id)
 	if err != nil {
 		// A session with no row is in the direct scope, which is where a
 		// handle built from a bare id writes.
-		return agents.Direct(id)
+		return session.Direct(id)
 	}
 	return ref
 }

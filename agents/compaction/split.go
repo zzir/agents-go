@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // SafeSplit snaps a count-based split index to the nearest group boundary at or
@@ -18,7 +18,7 @@ import (
 //
 // It returns 0 when no non-empty prefix is safe — the caller should skip rather
 // than split somewhere that corrupts the history.
-func SafeSplit(entries []agents.SessionEntry, split int) int {
+func SafeSplit(entries []session.Entry, split int) int {
 	if split <= 0 || len(entries) == 0 {
 		return 0
 	}
@@ -46,19 +46,19 @@ func SafeSplit(entries []agents.SessionEntry, split int) int {
 // Summarizing that produces a summary of a summary, and a conversation that
 // does it every pass decays into a paraphrase of a paraphrase. Callers check
 // this before spending a model call.
-func IsSummaryOnly(entries []agents.SessionEntry) bool {
+func IsSummaryOnly(entries []session.Entry) bool {
 	if len(entries) == 0 {
 		return false
 	}
 	for _, e := range entries {
-		if e.Kind == agents.EntryKindCompaction {
+		if e.Kind == session.EntryKindCompaction {
 			continue
 		}
 		if kind, _, _, _ := classify(e); kind == GroupOther {
 			continue
 		}
 		p := probe(e)
-		if p.Role != "system" || !strings.Contains(entryText(e), agents.SummaryMarker) {
+		if p.Role != "system" || !strings.Contains(entryText(e), session.SummaryMarker) {
 			return false
 		}
 	}
@@ -67,7 +67,7 @@ func IsSummaryOnly(entries []agents.SessionEntry) bool {
 
 // entryText pulls an entry's readable text, whether its content is a bare
 // string or the parts array the Responses API also accepts.
-func entryText(e agents.SessionEntry) string {
+func entryText(e session.Entry) string {
 	p := probe(e)
 	if len(p.Content) == 0 {
 		return ""

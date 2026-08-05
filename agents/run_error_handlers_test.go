@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // refusalOutput builds an assistant message whose content is a refusal part.
@@ -402,11 +404,11 @@ func TestErrorHandlers_WrappedOutputType_WrapsFallback(t *testing.T) {
 }
 
 func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
-	session := NewInMemorySession()
+	sess := session.NewInMemorySession()
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}, Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}, Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
@@ -414,22 +416,22 @@ func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
 	if _, err := RunSync(context.Background(), agent, "hi", opts); err != nil {
 		t.Fatal(err)
 	}
-	items, err := session.ContextItems(context.Background(), Cursor{})
+	items, err := sess.ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// user input + model message + synthesized fallback message
 	if len(items) != 3 {
-		t.Fatalf("session items = %d, want 3", len(items))
+		t.Fatalf("sess items = %d, want 3", len(items))
 	}
 	last := items[len(items)-1]
 	if last.OfOutputMessage == nil {
-		t.Fatalf("last session item is not an output message: %+v", last)
+		t.Fatalf("last sess item is not an output message: %+v", last)
 	}
 }
 
 func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
-	session := NewInMemorySession()
+	sess := session.NewInMemorySession()
 	tool := NewTool("loop", "loops",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "again", nil
@@ -440,7 +442,7 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
-	opts := RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 		},
@@ -448,16 +450,16 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 	if _, err := RunSync(context.Background(), agent, "go", opts); err != nil {
 		t.Fatal(err)
 	}
-	items, err := session.ContextItems(context.Background(), Cursor{})
+	items, err := sess.ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// user input + turn-1 tool call + tool output + synthesized message
 	if len(items) != 4 {
-		t.Fatalf("session items = %d, want 4", len(items))
+		t.Fatalf("sess items = %d, want 4", len(items))
 	}
 	if items[len(items)-1].OfOutputMessage == nil {
-		t.Fatalf("last session item is not the synthesized message: %+v", items[len(items)-1])
+		t.Fatalf("last sess item is not the synthesized message: %+v", items[len(items)-1])
 	}
 }
 

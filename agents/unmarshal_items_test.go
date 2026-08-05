@@ -3,11 +3,13 @@ package agents
 import (
 	"strings"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
-// TestUnmarshalItems_PreservesAssistantContent covers audit: UnmarshalItems
-// must route each element through UnmarshalInputItem so an assistant message's
-// output_text survives a MarshalItems -> UnmarshalItems round-trip. A plain slice
+// TestUnmarshalItems_PreservesAssistantContent covers audit: session.UnmarshalItems
+// must route each element through session.UnmarshalInputItem so an assistant message's
+// output_text survives a session.MarshalItems -> session.UnmarshalItems round-trip. A plain slice
 // decode matches EasyInputMessageParam first, silently dropping the content —
 // external Session backends that store via this pair would lose assistant text.
 func TestUnmarshalItems_PreservesAssistantContent(t *testing.T) {
@@ -15,11 +17,11 @@ func TestUnmarshalItems_PreservesAssistantContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := MarshalItems([]InputItem{in})
+	data, err := session.MarshalItems([]InputItem{in})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := UnmarshalItems(data)
+	got, err := session.UnmarshalItems(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +31,7 @@ func TestUnmarshalItems_PreservesAssistantContent(t *testing.T) {
 	if got[0].OfOutputMessage == nil {
 		t.Fatalf("assistant message did not decode as OfOutputMessage (content dropped)")
 	}
-	re, err := MarshalInputItem(got[0])
+	re, err := session.MarshalInputItem(got[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,9 +44,9 @@ func TestUnmarshalItems_PreservesAssistantContent(t *testing.T) {
 // message serialized without a "type" discriminator must still decode. A plain
 // slice decode cannot detect it (the union has no discriminator to match).
 func TestUnmarshalItems_EasyMessageWithoutType(t *testing.T) {
-	got, err := UnmarshalItems([]byte(`[{"role":"user","content":"hi there"}]`))
+	got, err := session.UnmarshalItems([]byte(`[{"role":"user","content":"hi there"}]`))
 	if err != nil {
-		t.Fatalf("UnmarshalItems failed on type-less easy message: %v", err)
+		t.Fatalf("session.UnmarshalItems failed on type-less easy message: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d items, want 1", len(got))
@@ -57,12 +59,12 @@ func TestUnmarshalItems_EasyMessageWithoutType(t *testing.T) {
 // TestUnmarshalItems_EmptyInputs preserves the nil-tolerant contract.
 func TestUnmarshalItems_EmptyInputs(t *testing.T) {
 	for _, data := range [][]byte{nil, []byte(""), []byte("null")} {
-		got, err := UnmarshalItems(data)
+		got, err := session.UnmarshalItems(data)
 		if err != nil {
-			t.Errorf("UnmarshalItems(%q) error: %v", data, err)
+			t.Errorf("session.UnmarshalItems(%q) error: %v", data, err)
 		}
 		if got != nil {
-			t.Errorf("UnmarshalItems(%q) = %v, want nil", data, got)
+			t.Errorf("session.UnmarshalItems(%q) = %v, want nil", data, got)
 		}
 	}
 }

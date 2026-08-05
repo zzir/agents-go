@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // StorageConformance holds a SessionStorage to the entry-lifecycle contract in
@@ -18,7 +19,7 @@ import (
 //
 // newStorage must return an empty store, and must be callable repeatedly within
 // one test.
-func StorageConformance(t *testing.T, newStorage func(t *testing.T) agents.SessionStorage) {
+func StorageConformance(t *testing.T, newStorage func(t *testing.T) session.Storage) {
 	t.Helper()
 	for _, c := range storageChecks {
 		t.Run(c.name, func(t *testing.T) { c.run(t, newStorage(t)) })
@@ -27,7 +28,7 @@ func StorageConformance(t *testing.T, newStorage func(t *testing.T) agents.Sessi
 
 var storageChecks = []struct {
 	name string
-	run  func(t *testing.T, st agents.SessionStorage)
+	run  func(t *testing.T, st session.Storage)
 }{
 	{"SeqIsMonotonic", checkSeqMonotonic},
 	{"SeqSurvivesARemoval", checkSeqSurvivesRemoval},
@@ -46,16 +47,16 @@ var storageChecks = []struct {
 // message" than a banner is — while the entries it KEPT stay reachable.
 // Stopping the search at the checkpoint once made the kept entries unpoppable
 // while the model could still see them.
-func checkItemPopSkipsFoldedReachesKept(t *testing.T, st agents.SessionStorage) {
+func checkItemPopSkipsFoldedReachesKept(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	popper, ok := st.(agents.ItemPopper)
+	popper, ok := st.(session.ItemPopper)
 	if !ok {
 		t.Skip("this store does not pop items")
 	}
 	storageWrite(t, st, "folded away", "kept in the window")
 	stored := storageEntries(t, st)
-	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+	cp, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:     "summary of the folded part",
 		ExcludedIDs: []string{stored[0].ID},
 	})
@@ -90,16 +91,16 @@ func checkItemPopSkipsFoldedReachesKept(t *testing.T, st agents.SessionStorage) 
 // with the checkpoint, so the folded history is part of the view again. The
 // checkpoint and any store-side bookkeeping of the fold are two records of one
 // fact, and a store that keeps such bookkeeping reverses it in the same step.
-func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st agents.SessionStorage) {
+func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	popper, ok := st.(agents.EntryPopper)
+	popper, ok := st.(session.EntryPopper)
 	if !ok {
 		t.Skip("this store does not pop")
 	}
 	storageWrite(t, st, "the folded question")
 	stored := storageEntries(t, st)
-	cp, err := agents.NewCompactionEntry(agents.CompactionPayload{
+	cp, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:     "summary standing in for it",
 		ExcludedIDs: []string{stored[0].ID},
 	})
@@ -110,8 +111,8 @@ func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st agents.SessionStora
 		t.Fatalf("append checkpoint: %v", err)
 	}
 
-	sess := agents.NewSession(st)
-	before, err := sess.ContextEntries(ctx, agents.Cursor{})
+	sess := session.NewSession(st)
+	before, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,11 +126,11 @@ func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st agents.SessionStora
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
-	if popped == nil || popped.Kind != agents.EntryKindCompaction {
+	if popped == nil || popped.Kind != session.EntryKindCompaction {
 		t.Fatalf("popped %+v, want the checkpoint — it is the most recent entry", popped)
 	}
 
-	after, err := sess.ContextEntries(ctx, agents.Cursor{})
+	after, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,15 +145,15 @@ func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st agents.SessionStora
 	}
 }
 
-func storageWrite(t *testing.T, st agents.SessionStorage, texts ...string) {
+func storageWrite(t *testing.T, st session.Storage, texts ...string) {
 	t.Helper()
-	entries := make([]agents.SessionEntry, 0, len(texts))
+	entries := make([]session.Entry, 0, len(texts))
 	for _, text := range texts {
-		item, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
+		item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
 		if err != nil {
 			t.Fatal(err)
 		}
-		e, err := agents.NewItemEntry(item, agents.Source{})
+		e, err := session.NewItemEntry(item, agents.Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,16 +164,16 @@ func storageWrite(t *testing.T, st agents.SessionStorage, texts ...string) {
 	}
 }
 
-func storageEntries(t *testing.T, st agents.SessionStorage) []agents.SessionEntry {
+func storageEntries(t *testing.T, st session.Storage) []session.Entry {
 	t.Helper()
-	got, err := st.Entries(context.Background(), agents.Cursor{})
+	got, err := st.Entries(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatalf("entries: %v", err)
 	}
 	return got
 }
 
-func checkSeqMonotonic(t *testing.T, st agents.SessionStorage) {
+func checkSeqMonotonic(t *testing.T, st session.Storage) {
 	t.Helper()
 	storageWrite(t, st, "one", "two")
 	storageWrite(t, st, "three")
@@ -191,10 +192,10 @@ func checkSeqMonotonic(t *testing.T, st agents.SessionStorage) {
 // A number this session has issued is never issued again, including after the
 // entry holding it is removed. Otherwise a caller resuming from the last number
 // it saw skips the next append forever — its cursor is already past it.
-func checkSeqSurvivesRemoval(t *testing.T, st agents.SessionStorage) {
+func checkSeqSurvivesRemoval(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	popper, ok := st.(agents.EntryPopper)
+	popper, ok := st.(session.EntryPopper)
 	if !ok {
 		t.Skip("nothing here removes an entry, so no number is ever freed")
 	}
@@ -217,21 +218,21 @@ func checkSeqSurvivesRemoval(t *testing.T, st agents.SessionStorage) {
 
 // Clearing or replacing a history does not restart the numbering: a cursor
 // outlives the entries it pointed at.
-func checkSeqSurvivesReplace(t *testing.T, st agents.SessionStorage) {
+func checkSeqSurvivesReplace(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	replacer, ok := st.(agents.AtomicReplacer)
+	replacer, ok := st.(session.AtomicReplacer)
 	if !ok {
 		t.Skip("this store does not replace its history")
 	}
 	storageWrite(t, st, "one", "two")
 	highest := storageEntries(t, st)[1].Seq
 
-	item, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"replacement"}`))
+	item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"replacement"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := agents.NewItemEntry(item, agents.Source{})
+	e, err := session.NewItemEntry(item, agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +252,7 @@ func checkSeqSurvivesReplace(t *testing.T, st agents.SessionStorage) {
 
 // Reading a session does not renumber it. A store that numbers by position in
 // the result set moves every surviving entry whenever a read filters one out.
-func checkSeqStableOnRead(t *testing.T, st agents.SessionStorage) {
+func checkSeqStableOnRead(t *testing.T, st session.Storage) {
 	t.Helper()
 	storageWrite(t, st, "one", "two", "three")
 	first := storageEntries(t, st)
@@ -263,7 +264,7 @@ func checkSeqStableOnRead(t *testing.T, st agents.SessionStorage) {
 		}
 	}
 	// And a read that returns a subset does not renumber what it returns.
-	tail, err := st.Entries(context.Background(), agents.Cursor{Limit: -1})
+	tail, err := st.Entries(context.Background(), session.Cursor{Limit: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,13 +274,13 @@ func checkSeqStableOnRead(t *testing.T, st agents.SessionStorage) {
 	}
 }
 
-func checkEntryIDsUnique(t *testing.T, st agents.SessionStorage) {
+func checkEntryIDsUnique(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
 	storageWrite(t, st, "one", "two")
 
 	var popped string
-	if popper, ok := st.(agents.EntryPopper); ok {
+	if popper, ok := st.(session.EntryPopper); ok {
 		e, err := popper.PopEntry(ctx)
 		if err != nil {
 			t.Fatalf("pop: %v", err)
@@ -305,21 +306,21 @@ func checkEntryIDsUnique(t *testing.T, st agents.SessionStorage) {
 // The point of a cursor: resuming from the last number seen returns everything
 // since, and nothing already shown. Checked across a removal, which is where
 // numbering by count or by position gets it wrong.
-func checkCursorCompleteness(t *testing.T, st agents.SessionStorage) {
+func checkCursorCompleteness(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
 	storageWrite(t, st, "one", "two")
 	seen := storageEntries(t, st)
 	cursor := seen[len(seen)-1].Seq
 
-	if popper, ok := st.(agents.EntryPopper); ok {
+	if popper, ok := st.(session.EntryPopper); ok {
 		if _, err := popper.PopEntry(ctx); err != nil {
 			t.Fatalf("pop: %v", err)
 		}
 	}
 	storageWrite(t, st, "three")
 
-	fresh, err := st.Entries(ctx, agents.Cursor{AfterSeq: cursor})
+	fresh, err := st.Entries(ctx, session.Cursor{AfterSeq: cursor})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,16 +338,16 @@ func checkCursorCompleteness(t *testing.T, st agents.SessionStorage) {
 // EntryPopper takes the most recent ENTRY. A store that skips past what it
 // finds uninteresting removes something else while reporting it popped the last
 // thing — and leaves what it skipped pointing at what is now gone.
-func checkPopTakesNewest(t *testing.T, st agents.SessionStorage) {
+func checkPopTakesNewest(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	popper, ok := st.(agents.EntryPopper)
+	popper, ok := st.(session.EntryPopper)
 	if !ok {
 		t.Skip("this store does not pop")
 	}
 	storageWrite(t, st, "one")
 	// An entry that is not a conversation item, and is the most recent.
-	if err := st.Append(ctx, agents.NewAnnotationEntry(
+	if err := st.Append(ctx, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
 		agents.Source{Type: agents.SourceErrorHandler},
 	)); err != nil {
@@ -373,15 +374,15 @@ func checkPopTakesNewest(t *testing.T, st agents.SessionStorage) {
 // survivors hanging off an id that is gone. A walk that meets a missing parent
 // stops there, so the session would read short: losing everything BEFORE the
 // entry that was removed, rather than just it.
-func checkItemPopKeepsTheTree(t *testing.T, st agents.SessionStorage) {
+func checkItemPopKeepsTheTree(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	popper, ok := st.(agents.ItemPopper)
+	popper, ok := st.(session.ItemPopper)
 	if !ok {
 		t.Skip("this store does not pop items")
 	}
 	storageWrite(t, st, "one", "two")
-	if err := st.Append(ctx, agents.NewAnnotationEntry(
+	if err := st.Append(ctx, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
 		agents.Source{Type: agents.SourceErrorHandler},
 	)); err != nil {
@@ -392,7 +393,7 @@ func checkItemPopKeepsTheTree(t *testing.T, st agents.SessionStorage) {
 	if err != nil {
 		t.Fatalf("pop item: %v", err)
 	}
-	if popped == nil || popped.Kind != agents.EntryKindItem {
+	if popped == nil || popped.Kind != session.EntryKindItem {
 		t.Fatalf("popped %+v, want the most recent item", popped)
 	}
 
@@ -411,7 +412,7 @@ func checkItemPopKeepsTheTree(t *testing.T, st agents.SessionStorage) {
 	}
 	// The walk reaches every survivor: a walk that stops early is how a removal
 	// in the middle of a branch loses everything BEFORE it.
-	if n := len(agents.PathToLeaf(kept, agents.LeafOf(kept))); n != len(kept) {
+	if n := len(session.PathToLeaf(kept, session.LeafOf(kept))); n != len(kept) {
 		t.Fatalf("the active branch walks %d of %d surviving entries — the removal truncated it", n, len(kept))
 	}
 }

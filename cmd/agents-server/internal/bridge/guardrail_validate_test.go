@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -64,7 +65,7 @@ func TestGuardrailInspectsTheStageItRanAt(t *testing.T) {
 		t.Fatalf("stages = %v, want all four", g.Stages)
 	}
 
-	item, err := agents.UnmarshalInputItem([]byte(`{"role":"user","content":"the secret"}`))
+	item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"the secret"}`))
 	if err != nil {
 		t.Fatalf("build item: %v", err)
 	}

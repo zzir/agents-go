@@ -5,6 +5,8 @@ import (
 	"errors"
 	"iter"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // overflowingModel fails the first n calls with a context-length error.
@@ -124,17 +126,17 @@ func TestOverflow_NoRetryWhenCompactionChangesNothing(t *testing.T) {
 	}
 }
 
-// selfCompactingStorage is a CompactionAware storage whose forced pass drops
+// selfCompactingStorage is a session.CompactionAware storage whose forced pass drops
 // the oldest `drop` entries. Non-forced calls (after-run housekeeping) are
 // recorded but do nothing, so the test isolates the overflow path.
 type selfCompactingStorage struct {
-	SessionStorage
+	session.Storage
 	drop        int
 	forcedCalls int
 	normalCalls int
 }
 
-func (s *selfCompactingStorage) RunCompaction(ctx context.Context, args CompactionArgs) error {
+func (s *selfCompactingStorage) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	if !args.Force {
 		s.normalCalls++
 		return nil
@@ -143,7 +145,7 @@ func (s *selfCompactingStorage) RunCompaction(ctx context.Context, args Compacti
 	if s.drop <= 0 {
 		return nil
 	}
-	entries, err := s.Entries(ctx, Cursor{})
+	entries, err := s.Entries(ctx, session.Cursor{})
 	if err != nil {
 		return err
 	}
@@ -161,11 +163,11 @@ func (s *selfCompactingStorage) RunCompaction(ctx context.Context, args Compacti
 // its own trigger already answered "not yet", and the provider just overruled
 // it — and the turn retries from the rebuilt, smaller context.
 func TestOverflow_ForcesSelfCompactingStorage(t *testing.T) {
-	st := &selfCompactingStorage{SessionStorage: NewInMemoryStorage("test"), drop: 2}
+	st := &selfCompactingStorage{Storage: session.NewInMemoryStorage("test"), drop: 2}
 	items := InputItemsFromText("one")
 	items = append(items, InputItemsFromText("two")...)
 	items = append(items, InputItemsFromText("three")...)
-	entries, err := NewItemEntries(items, Source{Type: SourceUser})
+	entries, err := session.NewItemEntries(items, Source{Type: SourceUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +178,7 @@ func TestOverflow_ForcesSelfCompactingStorage(t *testing.T) {
 	model := &overflowingModel{failures: 1, answer: modelResp(messageOutput(t, "recovered"))}
 	agent := &Agent{Name: "a", ModelImpl: model}
 	res, err := RunSync(context.Background(), agent, "now", RunOptions{
-		Conversation: ConversationOptions{Session: NewSession(st)},
+		Conversation: ConversationOptions{Session: session.NewSession(st)},
 		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 2}},
 	})
 	if err != nil {
@@ -197,14 +199,14 @@ func TestOverflow_ForcesSelfCompactingStorage(t *testing.T) {
 // A forced pass that changes nothing buys no retry — same rule as the
 // Compactor path.
 func TestOverflow_StorageNoopBuysNoRetry(t *testing.T) {
-	st := &selfCompactingStorage{SessionStorage: NewInMemoryStorage("test"), drop: 0}
+	st := &selfCompactingStorage{Storage: session.NewInMemoryStorage("test"), drop: 0}
 	if err := st.Append(context.Background(), mustItemEntries(t, "one")...); err != nil {
 		t.Fatal(err)
 	}
 	model := &overflowingModel{failures: 5}
 	agent := &Agent{Name: "a", ModelImpl: model}
 	_, err := RunSync(context.Background(), agent, "now", RunOptions{
-		Conversation: ConversationOptions{Session: NewSession(st)},
+		Conversation: ConversationOptions{Session: session.NewSession(st)},
 		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 3}},
 	})
 	if err == nil {
@@ -215,13 +217,13 @@ func TestOverflow_StorageNoopBuysNoRetry(t *testing.T) {
 	}
 }
 
-func mustItemEntries(t *testing.T, texts ...string) []SessionEntry {
+func mustItemEntries(t *testing.T, texts ...string) []session.Entry {
 	t.Helper()
 	items := make([]InputItem, 0, len(texts))
 	for _, text := range texts {
 		items = append(items, InputItemsFromText(text)...)
 	}
-	entries, err := NewItemEntries(items, Source{Type: SourceUser})
+	entries, err := session.NewItemEntries(items, Source{Type: SourceUser})
 	if err != nil {
 		t.Fatal(err)
 	}

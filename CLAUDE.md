@@ -83,13 +83,15 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   in `run_input_guardrails.go`), `run_state.go`: `NeedsApproval` returns
   interruptions; serialize `RunState`, then `Approve`/`Reject` +
   `agents.ResumeRun` — runs survive process restarts.
-- **Sessions** — three layers: `SessionStorage` (reads/writes entries, knows no
-  meaning), `Session` (a struct, turns entries into model input), and
-  `EntryProjector` (which kinds reach the model). Storage is
+- **Sessions** — the `agents/session` subpackage, three layers: `session.Storage`
+  (reads/writes entries, knows no meaning), `session.Session` (a struct, turns
+  entries into model input), and `session.Projector` (which kinds reach the
+  model). The shared value types (`Source`, `ItemDisplay`, `RequestUsage`,
+  `Diagnostic`, `ErrorCode`) live in session and are aliased in agents. Storage is
   `InMemoryStorage` / `memory.FileSession` in core, SQL in the `sessions`
   module, server-side variants in `openai` (Conversations, Compaction,
   `UsePreviousResponseID` / `ConversationID`).
-- **Entries are append-only** — `agents/session_entry.go`. A session is a TREE:
+- **Entries are append-only** — `agents/session/entry.go`. A session is a TREE:
   `ParentID` links, `Branch`/`PathEntries` walk it, and a display that settles
   late is a new UPDATE entry folded in at read time, never a rewrite.
 - **Compaction** — `agents/compaction_points.go` drives it at three points;

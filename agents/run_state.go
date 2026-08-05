@@ -9,6 +9,8 @@ import (
 	"maps"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // RunStateSchemaVersion is the version stamped into serialized RunState. The
@@ -636,7 +638,7 @@ func marshalInputItems(items []InputItem) ([]json.RawMessage, error) {
 func unmarshalInputItems(raw []json.RawMessage) ([]InputItem, error) {
 	var out []InputItem
 	for _, r := range raw {
-		item, err := UnmarshalInputItem(r)
+		item, err := session.UnmarshalInputItem(r)
 		if err != nil {
 			return nil, err
 		}
@@ -812,7 +814,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 func deserializeItems(items []serialItem, lookup func(string) *Agent) ([]*RunItem, error) {
 	var out []*RunItem
 	for _, si := range items {
-		item, err := UnmarshalInputItem(si.Input)
+		item, err := session.UnmarshalInputItem(si.Input)
 		if err != nil {
 			return nil, err
 		}

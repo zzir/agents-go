@@ -1,16 +1,17 @@
-package agents
+package session
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
 )
 
-// InMemoryRepo is a SessionRepo holding everything in memory.
+// InMemoryRepo is a Repo holding everything in memory.
 //
 // It exists for tests and short-lived processes, and it is in the core because
-// SessionRepo is: an interface whose only implementations live in other modules
+// Repo is: an interface whose only implementations live in other modules
 // cannot be exercised without pulling one of them in, which is a heavy way to
 // test a lifecycle.
 type InMemoryRepo struct {
@@ -25,7 +26,7 @@ func NewInMemoryRepo() *InMemoryRepo {
 	return &InMemoryRepo{sessions: map[string]*InMemoryStorage{}}
 }
 
-// Create implements SessionRepo.
+// Create implements Repo.
 func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -35,7 +36,7 @@ func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, 
 		id = "sess-" + time.Now().UTC().Format("20060102150405") + "-" + strconv.Itoa(r.nextID)
 	}
 	if _, exists := r.sessions[id]; exists {
-		return nil, NewUserError("session %q already exists", id)
+		return nil, fmt.Errorf("session: session %q already exists", id)
 	}
 	st := NewInMemoryStorage(id)
 	st.SetTitle(opts.Title)
@@ -45,7 +46,7 @@ func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, 
 	return NewSession(st), nil
 }
 
-// Open implements SessionRepo. An unknown id is an error, never an empty
+// Open implements Repo. An unknown id is an error, never an empty
 // session: a wrong id that reads as a fresh conversation makes a run start over
 // instead of continuing, which is worse than failing.
 func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
@@ -53,13 +54,13 @@ func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
 	defer r.mu.Unlock()
 	st, ok := r.sessions[id]
 	if !ok {
-		return nil, ErrSessionNotFound
+		return nil, ErrNotFound
 	}
 	return NewSession(st), nil
 }
 
-// List implements SessionRepo.
-func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]SessionMetadata, error) {
+// List implements Repo.
+func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, error) {
 	r.mu.Lock()
 	ids := append([]string(nil), r.order...)
 	stores := make([]*InMemoryStorage, 0, len(ids))
@@ -68,7 +69,7 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]SessionMet
 	}
 	r.mu.Unlock()
 
-	out := make([]SessionMetadata, 0, len(stores))
+	out := make([]Metadata, 0, len(stores))
 	for _, st := range stores {
 		md, err := st.Metadata(ctx)
 		if err != nil {
@@ -82,7 +83,7 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]SessionMet
 	return out, nil
 }
 
-// Delete implements SessionRepo. Deleting an unknown session is not an error:
+// Delete implements Repo. Deleting an unknown session is not an error:
 // the caller wanted it gone, and it is.
 //
 // A handle already handed out is retired with it: a write through one must
@@ -105,4 +106,4 @@ func (r *InMemoryRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-var _ SessionRepo = (*InMemoryRepo)(nil)
+var _ Repo = (*InMemoryRepo)(nil)

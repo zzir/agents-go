@@ -4,22 +4,23 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
-func item(t *testing.T, raw string) agents.SessionEntry {
+func item(t *testing.T, raw string) session.Entry {
 	t.Helper()
-	in, err := agents.UnmarshalInputItem([]byte(raw))
+	in, err := session.UnmarshalInputItem([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := agents.NewItemEntry(in, agents.Source{})
+	e, err := session.NewItemEntry(in, agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return e
 }
 
-func withIDs(entries []agents.SessionEntry) []agents.SessionEntry {
+func withIDs(entries []session.Entry) []session.Entry {
 	for i := range entries {
 		entries[i].ID = string(rune('a' + i))
 		entries[i].Seq = int64(i + 1)
@@ -27,27 +28,27 @@ func withIDs(entries []agents.SessionEntry) []agents.SessionEntry {
 	return entries
 }
 
-func user(t *testing.T, text string) agents.SessionEntry {
+func user(t *testing.T, text string) session.Entry {
 	t.Helper()
 	return item(t, `{"role":"user","content":`+quote(text)+`}`)
 }
-func assistant(t *testing.T, text string) agents.SessionEntry {
+func assistant(t *testing.T, text string) session.Entry {
 	t.Helper()
 	return item(t, `{"role":"assistant","content":`+quote(text)+`}`)
 }
-func call(t *testing.T, id, name string) agents.SessionEntry {
+func call(t *testing.T, id, name string) session.Entry {
 	t.Helper()
 	return item(t, `{"type":"function_call","call_id":`+quote(id)+`,"name":`+quote(name)+`,"arguments":"{}"}`)
 }
-func output(t *testing.T, id, text string) agents.SessionEntry {
+func output(t *testing.T, id, text string) session.Entry {
 	t.Helper()
 	return item(t, `{"type":"function_call_output","call_id":`+quote(id)+`,"output":`+quote(text)+`}`)
 }
-func reasoning(t *testing.T) agents.SessionEntry {
+func reasoning(t *testing.T) session.Entry {
 	t.Helper()
 	return item(t, `{"type":"reasoning","id":"r1","summary":[]}`)
 }
-func userWithID(t *testing.T, id, text string) agents.SessionEntry {
+func userWithID(t *testing.T, id, text string) session.Entry {
 	t.Helper()
 	e := user(t, text)
 	e.ID = id
@@ -67,7 +68,7 @@ func kinds(idx *Index) []GroupKind {
 // strategy can separate them. The old design achieved this by nudging a split
 // point until it stopped straddling a pair.
 func TestGrouping_CallAndOutputAreOneGroup(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "what is the weather"),
 		call(t, "c1", "get_weather"),
 		output(t, "c1", "sunny"),
@@ -92,7 +93,7 @@ func TestGrouping_CallAndOutputAreOneGroup(t *testing.T) {
 
 // Reasoning that precedes a tool call led to it, so they travel together.
 func TestGrouping_ReasoningJoinsTheCallItPrecedes(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "q"),
 		reasoning(t),
 		call(t, "c1", "f"),
@@ -111,7 +112,7 @@ func TestGrouping_ReasoningJoinsTheCallItPrecedes(t *testing.T) {
 // Reasoning NOT followed by a call is just assistant content; folding it into a
 // tool group would misattribute it.
 func TestGrouping_StandaloneReasoningStaysAssistant(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "q"),
 		reasoning(t),
 		assistant(t, "answer"),
@@ -127,7 +128,7 @@ func TestGrouping_StandaloneReasoningStaysAssistant(t *testing.T) {
 // Parallel calls in one turn belong to one group: dropping half of them would
 // leave outputs with no calls.
 func TestGrouping_ParallelCallsStayTogether(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "q"),
 		call(t, "c1", "f"),
 		call(t, "c2", "g"),
@@ -148,7 +149,7 @@ func TestGrouping_ParallelCallsStayTogether(t *testing.T) {
 // A group is never split, so whatever a strategy excludes, the remaining
 // entries never contain a call without its output.
 func TestGrouping_NoSplitCanStrandACall(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "q"),
 		call(t, "c1", "f"),
 		output(t, "c1", "1"),
@@ -190,7 +191,7 @@ func TestGrouping_NoSplitCanStrandACall(t *testing.T) {
 // exchanges" rather than "the last N entries", which is not the same thing when
 // one exchange ran twelve tools.
 func TestGrouping_TurnsCountUserMessages(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		item(t, `{"role":"system","content":"be brief"}`),
 		user(t, "one"),
 		call(t, "c1", "f"),
@@ -212,13 +213,13 @@ func TestGrouping_TurnsCountUserMessages(t *testing.T) {
 // Incremental update only groups what arrived, and rebuilds when the history it
 // knew is no longer a prefix — a branch switch or a compaction.
 func TestIndex_UpdateIsIncrementalButRebuildsOnRewrite(t *testing.T) {
-	first := withIDs([]agents.SessionEntry{user(t, "one"), assistant(t, "a")})
+	first := withIDs([]session.Entry{user(t, "one"), assistant(t, "a")})
 	idx := NewIndex(first, nil)
 	if len(idx.Groups) != 2 {
 		t.Fatalf("groups = %v", kinds(idx))
 	}
 
-	grown := append(append([]agents.SessionEntry(nil), first...), withIDs([]agents.SessionEntry{user(t, "two")})[0])
+	grown := append(append([]session.Entry(nil), first...), withIDs([]session.Entry{user(t, "two")})[0])
 	grown[2].ID = "c"
 	idx.Update(grown)
 	if len(idx.Groups) != 3 {
@@ -226,7 +227,7 @@ func TestIndex_UpdateIsIncrementalButRebuildsOnRewrite(t *testing.T) {
 	}
 
 	// History rewritten under it: the entries it knew are gone.
-	rewritten := withIDs([]agents.SessionEntry{user(t, "fresh")})
+	rewritten := withIDs([]session.Entry{user(t, "fresh")})
 	rewritten[0].ID = "zzz"
 	idx.Update(rewritten)
 	if len(idx.Groups) != 1 {
@@ -238,7 +239,7 @@ func TestIndex_UpdateIsIncrementalButRebuildsOnRewrite(t *testing.T) {
 // covers, and only what came after is estimated. Re-estimating the measured
 // part would replace a fact with a guess.
 func TestContextTokens_UsesProviderUsageThenEstimates(t *testing.T) {
-	entries := withIDs([]agents.SessionEntry{
+	entries := withIDs([]session.Entry{
 		user(t, "a long question that would estimate to something"),
 		assistant(t, "an answer"),
 		user(t, "follow up"),
@@ -269,7 +270,7 @@ func TestContextTokens_UsesProviderUsageThenEstimates(t *testing.T) {
 
 // Entries the model never sees cost nothing in context.
 func TestEstimator_NonContextEntriesAreFree(t *testing.T) {
-	ann := agents.NewAnnotationEntry(agents.ItemDisplay{Text: "a very long error banner indeed"}, agents.Source{})
+	ann := session.NewAnnotationEntry(agents.ItemDisplay{Text: "a very long error banner indeed"}, agents.Source{})
 	if got := (CharEstimator{}).Estimate(ann); got != 0 {
 		t.Errorf("annotation estimated at %d tokens; it is never sent", got)
 	}

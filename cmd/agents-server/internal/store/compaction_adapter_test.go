@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -47,10 +48,10 @@ func insertItemRows(t *testing.T, s *EntryStore, rawItems []string) {
 	t.Helper()
 	s.SetRunID("r1")
 	s.SetModel("m1")
-	entries := make([]agents.SessionEntry, 0, len(rawItems))
+	entries := make([]session.Entry, 0, len(rawItems))
 	for _, raw := range rawItems {
 		if raw == "" {
-			entries = append(entries, agents.NewAnnotationEntry(
+			entries = append(entries, session.NewAnnotationEntry(
 				agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
 				agents.Source{Type: agents.SourceErrorHandler},
 			))
@@ -87,7 +88,7 @@ const (
 func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		userItemJSON,      // 0 — only this one may be compacted
 		callItemJSON,      // 1 ┐ pair straddling the count-based split (msgSplit=2)
@@ -101,7 +102,7 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 	ca := NewCompactionAdapter(sa, model, 1, 4, "", CompactionNotifier{})
 
 	spanStarted := false
-	err := ca.RunCompaction(context.Background(), agents.CompactionArgs{
+	err := ca.RunCompaction(context.Background(), session.CompactionArgs{
 		StartSpan: func() *tracing.SpanHandle { spanStarted = true; return nil },
 	})
 	if err != nil {
@@ -131,13 +132,13 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 		}
 	}
 	summary := rows[6]
-	if summary.Kind != string(agents.EntryKindCompaction) || summary.Compacted {
+	if summary.Kind != string(session.EntryKindCompaction) || summary.Compacted {
 		t.Errorf("checkpoint row wrong: kind=%q compacted=%v", summary.Kind, summary.Compacted)
 	}
 
 	// The surviving history must still be replayable as a self-consistent
 	// sequence: the call/output pair is intact after the summary.
-	items, err := agents.NewSession(sa).ContextItems(context.Background(), agents.Cursor{})
+	items, err := session.NewSession(sa).ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatalf("GetItems: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		userItemJSON,      // 0 — compacted
 		"",                // 1 — annotation, follows row 0 onto the compact side
@@ -177,7 +178,7 @@ func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 	ca := NewCompactionAdapter(sa, model, 1, 4, "", CompactionNotifier{})
 
 	// Count-based msgSplit = 3: it would strand output (row 3) from call (row 2).
-	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
+	if err := ca.RunCompaction(context.Background(), session.CompactionArgs{}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 
@@ -198,7 +199,7 @@ func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		callItemJSON,   // 0 ┐ splitting anywhere inside is unsafe,
 		outputItemJSON, // 1 ┘ and an empty prefix means nothing to summarize
@@ -209,7 +210,7 @@ func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 	model := &summaryFakeModel{summary: "should never be called"}
 	ca := NewCompactionAdapter(sa, model, 1, 3, "", CompactionNotifier{})
 
-	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{Force: true}); err != nil {
+	if err := ca.RunCompaction(context.Background(), session.CompactionArgs{Force: true}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 	if model.calls != 0 {
@@ -231,7 +232,7 @@ func TestCompactionAdapterSkipsWhenNoSafeSplit(t *testing.T) {
 func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	insertItemRows(t, sa, []string{
 		userItemJSON, assistantItemJSON, userItemJSON, // 0..2 — compacted
 		assistantItemJSON, userItemJSON, // 3..4 — kept window
@@ -244,7 +245,7 @@ func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 		OnDone:  func(before, after int) { doneBefore, doneAfter = before, after },
 	})
 
-	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
+	if err := ca.RunCompaction(context.Background(), session.CompactionArgs{}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 	if model.calls != 1 || len(model.inputs[0]) != 3 {
@@ -272,12 +273,12 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
 	rows := loadRows(t, db, sessionID)
 	ids := []int64{rows[0].ID, rows[1].ID}
 
-	summary, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum"})
+	summary, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "sum"})
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
@@ -303,7 +304,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
 	got := loadRows(t, db, sessionID)
 	ids2 := []int64{got[0].ID, got[1].ID}
-	summary2, err := agents.NewCompactionEntry(agents.CompactionPayload{Summary: "sum2"})
+	summary2, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "sum2"})
 	if err != nil {
 		t.Fatalf("checkpoint 2: %v", err)
 	}
@@ -325,7 +326,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 func TestCompactionAdapterTokenTrigger(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
-	sa := NewEntryStoreFor(db, agents.Direct(sessionID))
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	sa.SetRunID("r1")
 	sa.SetModel("m1")
 
@@ -344,7 +345,7 @@ func TestCompactionAdapterTokenTrigger(t *testing.T) {
 	model := &summaryFakeModel{summary: "sum"}
 	// 100 (usage) + ~4 small tails ≈ well under 10k: must not fire.
 	ca := NewCompactionAdapter(sa, model, 10000, 2, "", CompactionNotifier{})
-	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
+	if err := ca.RunCompaction(context.Background(), session.CompactionArgs{}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 	if model.calls != 0 {
@@ -353,7 +354,7 @@ func TestCompactionAdapterTokenTrigger(t *testing.T) {
 
 	// Same history, threshold below the priced size: must fire.
 	ca = NewCompactionAdapter(sa, model, 90, 2, "", CompactionNotifier{})
-	if err := ca.RunCompaction(context.Background(), agents.CompactionArgs{}); err != nil {
+	if err := ca.RunCompaction(context.Background(), session.CompactionArgs{}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 	if model.calls != 1 {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/compaction"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/models/openai"
 )
 
@@ -67,8 +68,8 @@ func main() {
 		},
 	}}
 
-	storage := agents.NewInMemoryStorage("demo")
-	sess := agents.NewSession(storage)
+	storage := session.NewInMemoryStorage("demo")
+	sess := session.NewSession(storage)
 	compactor := compaction.New(strategy, nil) // nil = CharEstimator
 
 	opts := agents.RunOptions{
@@ -94,7 +95,7 @@ func main() {
 	// a fourth run would be given — the passes above ran before this run's last
 	// two entries existed, so re-running it is what makes the two numbers
 	// comparable.
-	entries, err := sess.ContextEntries(ctx, agents.Cursor{})
+	entries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)
 	}

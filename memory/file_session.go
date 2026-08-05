@@ -2,7 +2,7 @@
 //
 // FileSession stores conversation history as a JSONL file (one entry per line),
 // with zero external dependencies. It suits single-machine, moderate-volume use;
-// for high concurrency or large histories, implement agents.Session against a
+// for high concurrency or large histories, implement session.Session against a
 // database of your choice.
 package memory
 
@@ -19,7 +19,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // pathLocks shares one mutex per session file path, so independently opened
@@ -154,9 +154,9 @@ func sanitizeSessionID(id string) string {
 	return strings.Trim(b.String(), ".")
 }
 
-// Entries implements agents.SessionStorage, returning entries in append order
+// Entries implements session.Storage, returning entries in append order
 // paginated by cursor.
-func (s *FileSession) Entries(_ context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+func (s *FileSession) Entries(_ context.Context, cur session.Cursor) ([]session.Entry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -165,23 +165,23 @@ func (s *FileSession) Entries(_ context.Context, cur agents.Cursor) ([]agents.Se
 	}
 	// Decode everything first (skipping corrupt lines) so a bad line cannot
 	// shrink the window below limit while older valid entries exist.
-	entries := make([]agents.SessionEntry, 0, len(lines))
+	entries := make([]session.Entry, 0, len(lines))
 	for _, line := range lines {
-		var e agents.SessionEntry
+		var e session.Entry
 		if err := json.Unmarshal(line, &e); err != nil {
 			// Skip corrupt lines rather than failing the whole read.
 			continue
 		}
 		entries = append(entries, e)
 	}
-	return agents.PageEntries(entries, cur), nil
+	return session.PageEntries(entries, cur), nil
 }
 
-// Metadata implements agents.SessionStorage.
-func (s *FileSession) Metadata(_ context.Context) (agents.SessionMetadata, error) {
+// Metadata implements session.Storage.
+func (s *FileSession) Metadata(_ context.Context) (session.Metadata, error) {
 	release := acquire(s.lockKey)
 	defer release()
-	md := agents.SessionMetadata{ID: s.path}
+	md := session.Metadata{ID: s.path}
 	lines, err := s.readLines()
 	if err != nil {
 		return md, err
@@ -193,8 +193,8 @@ func (s *FileSession) Metadata(_ context.Context) (agents.SessionMetadata, error
 	return md, nil
 }
 
-// Entry implements agents.SessionStorage.
-func (s *FileSession) Entry(_ context.Context, id string) (*agents.SessionEntry, error) {
+// Entry implements session.Storage.
+func (s *FileSession) Entry(_ context.Context, id string) (*session.Entry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -202,7 +202,7 @@ func (s *FileSession) Entry(_ context.Context, id string) (*agents.SessionEntry,
 		return nil, err
 	}
 	for _, line := range lines {
-		var e agents.SessionEntry
+		var e session.Entry
 		if json.Unmarshal(line, &e) == nil && e.ID == id {
 			return &e, nil
 		}
@@ -213,7 +213,7 @@ func (s *FileSession) Entry(_ context.Context, id string) (*agents.SessionEntry,
 // Append adds entries to the session file. The batch is marshaled up
 // front and written with a single write call, so a marshal failure writes
 // nothing and a crash cannot interleave half-written lines from this batch.
-func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) error {
+func (s *FileSession) Append(_ context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -227,7 +227,7 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 	if err != nil {
 		return err
 	}
-	prepared := agents.PrepareAppend(entries, agents.AppendPointOf(existing))
+	prepared := session.PrepareAppend(entries, session.AppendPointOf(existing))
 	var buf bytes.Buffer
 	for i := range prepared {
 		data, err := json.Marshal(prepared[i])
@@ -258,7 +258,7 @@ func (s *FileSession) Append(_ context.Context, entries ...agents.SessionEntry) 
 // swapped in one atomic file rewrite (temp file + fsync + rename), so a crash
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
-func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.SessionEntry) error {
+func (s *FileSession) ReplaceEntries(_ context.Context, entries ...session.Entry) error {
 	// The lock covers the read: the high-water mark below is only right if the
 	// file cannot grow between reading it and the rewrite. Outside the lock, a
 	// concurrent append lands after the read and the rewrite both discards its
@@ -274,7 +274,7 @@ func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.Sessio
 	if err != nil {
 		return err
 	}
-	prepared := agents.PrepareAppend(entries, agents.AppendPoint{LastSeq: agents.AppendPointOf(existing).LastSeq})
+	prepared := session.PrepareAppend(entries, session.AppendPoint{LastSeq: session.AppendPointOf(existing).LastSeq})
 	lines := make([][]byte, 0, len(prepared))
 	for i := range prepared {
 		data, err := json.Marshal(prepared[i])
@@ -288,13 +288,13 @@ func (s *FileSession) ReplaceEntries(_ context.Context, entries ...agents.Sessio
 
 // PopEntry removes and returns the most recent entry, or nil if the session is
 // empty. The file is rewritten atomically.
-func (s *FileSession) PopEntry(_ context.Context) (*agents.SessionEntry, error) {
-	return s.pop(agents.PopLast)
+func (s *FileSession) PopEntry(_ context.Context) (*session.Entry, error) {
+	return s.pop(session.PopLast)
 }
 
-// PopItem implements agents.ItemPopper.
-func (s *FileSession) PopItem(_ context.Context) (*agents.SessionEntry, error) {
-	return s.pop(agents.PopLastItem)
+// PopItem implements session.ItemPopper.
+func (s *FileSession) PopItem(_ context.Context) (*session.Entry, error) {
+	return s.pop(session.PopLastItem)
 }
 
 // pop rewrites the file without the entry PlanPop chose, applying the relinks
@@ -306,18 +306,18 @@ func (s *FileSession) PopItem(_ context.Context) (*agents.SessionEntry, error) {
 // every line that failed to decode — the only copy of whatever those lines
 // held. Refusing is the contract (spec §2.5e2, "what must be one step"): a
 // record that cannot be read cannot be part of deciding a removal.
-func (s *FileSession) pop(mode agents.PopMode) (*agents.SessionEntry, error) {
+func (s *FileSession) pop(mode session.PopMode) (*session.Entry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	entries, err := s.readEntriesStrict()
 	if err != nil {
 		return nil, err
 	}
-	plan, ok := agents.PlanPop(entries, mode)
+	plan, ok := session.PlanPop(entries, mode)
 	if !ok {
 		return nil, nil
 	}
-	kept := agents.ApplyRemoval(entries, plan)
+	kept := session.ApplyRemoval(entries, plan)
 	lines := make([][]byte, 0, len(kept))
 	for i := range kept {
 		data, merr := json.Marshal(kept[i])
@@ -347,14 +347,14 @@ func (s *FileSession) Clear(_ context.Context) error {
 // the per-path lock. A caller about to REWRITE the file from the result must
 // use readEntriesStrict instead: writing back a lenient read destroys the
 // skipped lines.
-func (s *FileSession) readEntries() ([]agents.SessionEntry, error) {
+func (s *FileSession) readEntries() ([]session.Entry, error) {
 	lines, err := s.readLines()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]agents.SessionEntry, 0, len(lines))
+	out := make([]session.Entry, 0, len(lines))
 	for _, line := range lines {
-		var e agents.SessionEntry
+		var e session.Entry
 		if json.Unmarshal(line, &e) == nil {
 			out = append(out, e)
 		}
@@ -364,14 +364,14 @@ func (s *FileSession) readEntries() ([]agents.SessionEntry, error) {
 
 // readEntriesStrict decodes the file's entries, failing on the first line that
 // cannot be decoded. Callers must hold the per-path lock.
-func (s *FileSession) readEntriesStrict() ([]agents.SessionEntry, error) {
+func (s *FileSession) readEntriesStrict() ([]session.Entry, error) {
 	lines, err := s.readLines()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]agents.SessionEntry, 0, len(lines))
+	out := make([]session.Entry, 0, len(lines))
 	for i, line := range lines {
-		var e agents.SessionEntry
+		var e session.Entry
 		if err := json.Unmarshal(line, &e); err != nil {
 			return nil, fmt.Errorf("session file %s: line %d cannot be decoded: %w", s.path, i+1, err)
 		}
@@ -454,8 +454,8 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 }
 
 var (
-	_ agents.SessionStorage = (*FileSession)(nil)
-	_ agents.AtomicReplacer = (*FileSession)(nil)
-	_ agents.EntryPopper    = (*FileSession)(nil)
-	_ agents.ItemPopper     = (*FileSession)(nil)
+	_ session.Storage        = (*FileSession)(nil)
+	_ session.AtomicReplacer = (*FileSession)(nil)
+	_ session.EntryPopper    = (*FileSession)(nil)
+	_ session.ItemPopper     = (*FileSession)(nil)
 )

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/models/openai"
 )
@@ -39,7 +40,7 @@ func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
-	repo := agents.NewInMemoryRepo()
+	repo := session.NewInMemoryRepo()
 	store := tasks.NewInMemoryStore()
 
 	// The agents this program can run as. A real host would look these up.
@@ -140,7 +141,7 @@ func main() {
 	})
 
 	// The parent conversation.
-	parent, err := repo.Create(ctx, agents.CreateOptions{ID: "parent", Title: "chat"})
+	parent, err := repo.Create(ctx, session.CreateOptions{ID: "parent", Title: "chat"})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // fakeLauncher records launches and can be made to fail.
@@ -46,17 +46,17 @@ func (l *fakeLauncher) wakes() []LaunchRequest {
 // a test can assert cleanup happened.
 type countingRepo struct {
 	mu       sync.Mutex
-	repo     agents.SessionRepo
+	repo     session.Repo
 	created  []string
 	deleted  []string
 	failNext bool
 }
 
 func newCountingRepo() *countingRepo {
-	return &countingRepo{repo: agents.NewInMemoryRepo()}
+	return &countingRepo{repo: session.NewInMemoryRepo()}
 }
 
-func (r *countingRepo) Create(ctx context.Context, opts agents.CreateOptions) (*agents.Session, error) {
+func (r *countingRepo) Create(ctx context.Context, opts session.CreateOptions) (*session.Session, error) {
 	r.mu.Lock()
 	if r.failNext {
 		r.failNext = false
@@ -68,11 +68,11 @@ func (r *countingRepo) Create(ctx context.Context, opts agents.CreateOptions) (*
 	return r.repo.Create(ctx, opts)
 }
 
-func (r *countingRepo) Open(ctx context.Context, id string) (*agents.Session, error) {
+func (r *countingRepo) Open(ctx context.Context, id string) (*session.Session, error) {
 	return r.repo.Open(ctx, id)
 }
 
-func (r *countingRepo) List(ctx context.Context, opts agents.ListOptions) ([]agents.SessionMetadata, error) {
+func (r *countingRepo) List(ctx context.Context, opts session.ListOptions) ([]session.Metadata, error) {
 	return r.repo.List(ctx, opts)
 }
 

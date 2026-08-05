@@ -3,7 +3,7 @@ package memory_test
 import (
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agentstest"
 	"github.com/zzir/agents-go/memory"
 )
@@ -18,12 +18,12 @@ func TestFileRepoConformance(t *testing.T) {
 		}
 		return agentstest.RepoUnderTest{
 			Repo: repo,
-			Direct: func(id string) (*agents.Session, error) {
+			Direct: func(id string) (*session.Session, error) {
 				fs, err := memory.NewFileSession(dir, id)
 				if err != nil {
 					return nil, err
 				}
-				return agents.NewSession(fs), nil
+				return session.NewSession(fs), nil
 			},
 		}
 	})

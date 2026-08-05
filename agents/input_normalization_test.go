@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func fnCall(callID string) InputItem {
@@ -122,8 +124,8 @@ func TestNormalizeStoredInput_KeepsDuplicateMessages(t *testing.T) {
 // End-to-end: a session holding a dangling function_call (what any client
 // persists at an interruption) must not reach the model as an orphan.
 func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
-	sess := NewInMemorySession()
-	if err := NewSession(sess).AppendItems(context.Background(), []InputItem{
+	sess := session.NewInMemorySession()
+	if err := session.NewSession(sess).AppendItems(context.Background(), []InputItem{
 		userMsg("earlier question"),
 		fnCall("dangling"), // no output — a turn that paused here
 	}, Source{}); err != nil {
@@ -132,7 +134,7 @@ func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "answer"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 	// The model must not have received the dangling call.

@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -111,12 +112,12 @@ type ConversationOptions struct {
 	// Session, when set, supplies and persists conversation history: prior items
 	// are prepended to the input, and the new input plus generated items are
 	// saved after the run completes.
-	Session *Session
+	Session *session.Session
 
-	// SessionSettings overrides how the run reads the Session (e.g. how many
+	// session.Settings overrides how the run reads the Session (e.g. how many
 	// recent items to load). Non-zero fields take precedence over a Session-level
 	// default. Ignored without a Session.
-	Settings *SessionSettings
+	Settings *session.Settings
 
 	// UsePreviousResponseID opts into server-managed conversation state: instead
 	// of resending the full history each turn, the runner chains calls via the
@@ -138,9 +139,9 @@ type ConversationOptions struct {
 	// in the model's mouth.
 	//
 	// A projector mapped to nil suppresses that kind entirely. The common
-	// override is the opposite — projecting EntryKindTerminal as a user message
+	// override is the opposite — projecting session.EntryKindTerminal as a user message
 	// so the model can see what was run by hand.
-	Projectors map[EntryKind]EntryProjector
+	Projectors map[session.EntryKind]session.Projector
 }
 
 // ExecOptions bounds and steers the run loop.

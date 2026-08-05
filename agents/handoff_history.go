@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 const (
@@ -43,8 +45,8 @@ type NestHistoryOptions struct {
 // Before summarizing, it flattens any summary produced by an earlier handoff
 // back into its underlying transcript, so a chain of handoffs yields one flat
 // summary rather than a summary-of-summaries. The transcript is serialized as
-// one JSON item per line (via MarshalInputItem), which round-trips through
-// UnmarshalInputItem when later flattened.
+// one JSON item per line (via session.MarshalInputItem), which round-trips through
+// session.UnmarshalInputItem when later flattened.
 //
 // Like every InputFilter it only changes what the target agent sees; it does not
 // alter what is saved to the session.
@@ -73,7 +75,7 @@ func summaryMessage(transcript []InputItem) InputItem {
 		lines = append(lines, historyEmptyPlaceholder)
 	} else {
 		for i, item := range transcript {
-			data, err := MarshalInputItem(item)
+			data, err := session.MarshalInputItem(item)
 			if err != nil {
 				continue
 			}
@@ -129,7 +131,7 @@ func extractNestedTranscript(item InputItem) ([]InputItem, bool) {
 			continue
 		}
 		line = stripLineNumber(line)
-		it, err := UnmarshalInputItem([]byte(line))
+		it, err := session.UnmarshalInputItem([]byte(line))
 		if err != nil {
 			sawUnparsable = true
 			continue

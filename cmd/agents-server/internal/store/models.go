@@ -14,7 +14,7 @@ type Session struct {
 
 	ID string `bun:"id,pk"               json:"id"`
 	// Gen names which generation of this id owns the session's entries; see
-	// agents.SessionRef.
+	// session.Ref.
 	Gen    string `bun:"gen,notnull"          json:"-"`
 	Name   string `bun:"name,notnull"         json:"name"`
 	Pinned bool   `bun:"pinned"               json:"pinned"`
@@ -47,7 +47,7 @@ type Task struct {
 	RunID           string `bun:"run_id"               json:"run_id,omitempty"`
 	ParentSessionID string `bun:"parent_session_id,notnull" json:"parent_session_id"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
-	// this row names (agents.SessionRef). A session id names a session, not a
+	// this row names (session.Ref). A session id names a session, not a
 	// place, so a row matched on the id alone attaches itself to a replacement
 	// created under the same name — listing a dead incarnation's tasks under
 	// the new one and owing it wake-ups it never asked for. The store binds

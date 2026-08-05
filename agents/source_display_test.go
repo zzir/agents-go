@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // An output item type the SDK does not model must survive a turn byte for byte.
@@ -255,24 +257,24 @@ func TestUnknownItem_SurvivesSessionRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stored, err := MarshalInputItem(in)
+	stored, err := session.MarshalInputItem(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	back, err := UnmarshalInputItem(stored)
+	back, err := session.UnmarshalInputItem(stored)
 	if err != nil {
 		t.Fatalf("a stored unknown item could not be read back: %v", err)
 	}
-	again, err := MarshalInputItem(back)
+	again, err := session.MarshalInputItem(back)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(again) != raw {
-		t.Errorf("session round-trip changed the bytes:\n got %s\nwant %s", again, raw)
+		t.Errorf("sess round-trip changed the bytes:\n got %s\nwant %s", again, raw)
 	}
 
 	// Malformed JSON with no type is still an error, not an opaque blob.
-	if _, err := UnmarshalInputItem([]byte(`{"nonsense":true}`)); err == nil {
+	if _, err := session.UnmarshalInputItem([]byte(`{"nonsense":true}`)); err == nil {
 		t.Error("an item with no type should be rejected, not stored as an override")
 	}
 }
@@ -285,7 +287,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &unknown); err != nil {
 		t.Fatal(err)
 	}
-	session := NewInMemorySession()
+	sess := session.NewInMemorySession()
 	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 
@@ -294,7 +296,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 		modelResp(messageOutput(t, "done")),
 	}}}
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Conversation: ConversationOptions{Session: NewSession(session)},
+		Conversation: ConversationOptions{Session: session.NewSession(sess)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -303,9 +305,9 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 	// fail the whole conversation.
 	next := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "second"))}}
 	if _, err := RunSync(context.Background(), &Agent{Name: "a", ModelImpl: next}, "again", RunOptions{
-		Conversation: ConversationOptions{Session: NewSession(session)},
+		Conversation: ConversationOptions{Session: session.NewSession(sess)},
 	}); err != nil {
-		t.Fatalf("reloading a session holding an unknown item failed: %v", err)
+		t.Fatalf("reloading a sess holding an unknown item failed: %v", err)
 	}
 	sent, err := json.Marshal(next.lastReq.Input)
 	if err != nil {

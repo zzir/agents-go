@@ -1,4 +1,4 @@
-package agents
+package session
 
 import "encoding/json"
 
@@ -23,8 +23,8 @@ type DerivedState struct {
 	Requests int
 }
 
-// SessionStats summarizes a session cheaply enough to show in a list.
-type SessionStats struct {
+// Stats summarizes a session cheaply enough to show in a list.
+type Stats struct {
 	// Entries is the total number of entries.
 	Entries int
 	// Items is how many of those are conversation items.
@@ -43,7 +43,7 @@ type SessionStats struct {
 // It is deliberately a pure function of the entries: given the same log it
 // gives the same answer, on any machine, at any time, with no cache to
 // invalidate.
-func ReduceState(entries []SessionEntry) DerivedState {
+func ReduceState(entries []Entry) DerivedState {
 	var st DerivedState
 	open := map[string]bool{}
 	var order []string
@@ -56,7 +56,7 @@ func ReduceState(entries []SessionEntry) DerivedState {
 			st.LastResponseID = e.ResponseID
 		}
 		if e.Usage != nil {
-			addRequestUsage(&st.Usage, e.Usage)
+			AddRequestUsage(&st.Usage, e.Usage)
 			st.Requests++
 		}
 		if e.Kind != EntryKindItem {
@@ -84,9 +84,9 @@ func ReduceState(entries []SessionEntry) DerivedState {
 	return st
 }
 
-// Stats summarizes entries without decoding their payloads.
-func Stats(entries []SessionEntry) SessionStats {
-	st := SessionStats{Entries: len(entries)}
+// StatsOf summarizes entries without decoding their payloads.
+func StatsOf(entries []Entry) Stats {
+	st := Stats{Entries: len(entries)}
 	for _, e := range entries {
 		switch e.Kind {
 		case EntryKindItem:
@@ -97,15 +97,18 @@ func Stats(entries []SessionEntry) SessionStats {
 			st.Compactions++
 		}
 		if e.Usage != nil {
-			addRequestUsage(&st.Usage, e.Usage)
+			AddRequestUsage(&st.Usage, e.Usage)
 			st.Requests++
 		}
 	}
 	return st
 }
 
-// addRequestUsage accumulates src into dst.
-func addRequestUsage(dst *RequestUsage, src *RequestUsage) {
+// AddRequestUsage accumulates src into dst.
+// AddRequestUsage accumulates src into dst, field by field. It is the one
+// definition of "sum request usage" shared by state folding and any caller
+// aggregating entries itself.
+func AddRequestUsage(dst *RequestUsage, src *RequestUsage) {
 	dst.InputTokens += src.InputTokens
 	dst.OutputTokens += src.OutputTokens
 	dst.TotalTokens += src.TotalTokens
@@ -117,7 +120,7 @@ func addRequestUsage(dst *RequestUsage, src *RequestUsage) {
 // entryCallID reports an item entry's tool call id and whether it is a call or
 // an output, by probing the stored wire JSON rather than decoding the whole
 // union — the item may be a type this build does not model.
-func entryCallID(e SessionEntry) (id string, isCall, isOutput bool) {
+func entryCallID(e Entry) (id string, isCall, isOutput bool) {
 	if len(e.Item) == 0 {
 		return "", false, false
 	}

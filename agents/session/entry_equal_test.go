@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 )
 
 // nonZeroFor returns a value of type t that differs from t's zero value, for
-// every type SessionEntry's fields use.
+// every type Entry's fields use.
 func nonZeroFor(t reflect.Type) (reflect.Value, bool) {
 	switch t.Kind() {
 	case reflect.String:
@@ -63,17 +63,17 @@ func nonZeroFor(t reflect.Type) (reflect.Value, bool) {
 	return reflect.Value{}, false
 }
 
-// Every field of SessionEntry must take part in Equal. This walks the struct
+// Every field of Entry must take part in Equal. This walks the struct
 // rather than listing the fields, so a field added later fails here instead of
 // silently making two different entries compare equal — which is how a
 // compaction pass gets discarded as a no-op or an index resumes onto a history
 // that is not its own.
 func TestEqualCoversEverySessionEntryField(t *testing.T) {
-	typ := reflect.TypeOf(SessionEntry{})
+	typ := reflect.TypeOf(Entry{})
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		t.Run(field.Name, func(t *testing.T) {
-			var base SessionEntry
+			var base Entry
 			mutated := base
 			val, ok := nonZeroFor(field.Type)
 			if !ok {
@@ -97,8 +97,8 @@ func TestEqualCoversEverySessionEntryField(t *testing.T) {
 // CreatedAt is compared with time.Time.Equal and not with ==.
 func TestEqualIgnoresMonotonicClock(t *testing.T) {
 	now := time.Now()
-	a := SessionEntry{ID: "e1", CreatedAt: now}
-	b := SessionEntry{ID: "e1", CreatedAt: now.Round(0)} // strips the monotonic reading
+	a := Entry{ID: "e1", CreatedAt: now}
+	b := Entry{ID: "e1", CreatedAt: now.Round(0)} // strips the monotonic reading
 	if !a.Equal(b) {
 		t.Fatal("the same instant compared unequal because of the monotonic clock")
 	}

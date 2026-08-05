@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // ── §2.1 lifecycle and identity ─────────────────────────────────────────────
@@ -32,7 +32,7 @@ func TestTask_ChildSessionIsHidden(t *testing.T) {
 	h := newHarness(t)
 	info := h.spawn(t)
 
-	visible, err := h.repo.List(ctx, agents.ListOptions{})
+	visible, err := h.repo.List(ctx, session.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestTask_ChildSessionIsHidden(t *testing.T) {
 			t.Error("the task session appears in the default listing")
 		}
 	}
-	all, err := h.repo.List(ctx, agents.ListOptions{IncludeHidden: true})
+	all, err := h.repo.List(ctx, session.ListOptions{IncludeHidden: true})
 	if err != nil {
 		t.Fatal(err)
 	}

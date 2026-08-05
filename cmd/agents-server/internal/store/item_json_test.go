@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // contentJSON unmarshals item JSON and returns its "content" value.
@@ -69,11 +69,11 @@ func TestAdaptForeignItemJSON(t *testing.T) {
 		t.Fatalf("id not stripped: %s", got)
 	}
 	// Stripping must survive the SDK round-trip without resurrecting an empty id.
-	item, err := agents.UnmarshalInputItem(got)
+	item, err := session.UnmarshalInputItem(got)
 	if err != nil {
 		t.Fatalf("unmarshal stripped item: %v", err)
 	}
-	out, err := agents.MarshalInputItem(item)
+	out, err := session.MarshalInputItem(item)
 	if err != nil {
 		t.Fatalf("marshal stripped item: %v", err)
 	}
@@ -89,11 +89,11 @@ func TestAdaptForeignItemJSON(t *testing.T) {
 // request — with content still an array and the text intact.
 func TestNormalizeItemJSONRoundTrip(t *testing.T) {
 	norm := NormalizeItemJSON([]byte(`{"role":"user","content":"hello world"}`))
-	item, err := agents.UnmarshalInputItem(norm)
+	item, err := session.UnmarshalInputItem(norm)
 	if err != nil {
 		t.Fatalf("unmarshal normalized item: %v", err)
 	}
-	out, err := agents.MarshalInputItem(item)
+	out, err := session.MarshalInputItem(item)
 	if err != nil {
 		t.Fatalf("marshal round-tripped item: %v", err)
 	}

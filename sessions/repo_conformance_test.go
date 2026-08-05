@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agentstest"
 	"github.com/zzir/agents-go/sessions"
 )
@@ -23,8 +23,8 @@ func TestSQLRepoConformance(t *testing.T) {
 		}
 		return agentstest.RepoUnderTest{
 			Repo: sessions.NewRepo(db),
-			Direct: func(id string) (*agents.Session, error) {
-				return agents.NewSession(sessions.New(db, id)), nil
+			Direct: func(id string) (*session.Session, error) {
+				return session.NewSession(sessions.New(db, id)), nil
 			},
 		}
 	})

@@ -6,12 +6,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // itemsContain reports whether any item's wire JSON contains needle.
 func itemsContain(items []InputItem, needle string) bool {
 	for _, it := range items {
-		b, err := MarshalInputItem(it)
+		b, err := session.MarshalInputItem(it)
 		if err != nil {
 			continue
 		}
@@ -26,12 +28,12 @@ func itemsContain(items []InputItem, needle string) bool {
 // session history loaded before the run. It used to be reconstructed from the
 // run's own items only, so prior history was missing.
 func TestTurnInput_IncludesSessionHistory(t *testing.T) {
-	session := NewInMemorySession()
-	prior, err := UnmarshalInputItem([]byte(`{"role":"user","content":"MARKER_FROM_HISTORY"}`))
+	sess := session.NewInMemorySession()
+	prior, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"MARKER_FROM_HISTORY"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendItems(context.Background(), []InputItem{prior}, Source{}); err != nil {
+	if err := sess.AppendItems(context.Background(), []InputItem{prior}, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,11 +49,11 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
-	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}}); err != nil {
+	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}}); err != nil {
 		t.Fatal(err)
 	}
 	if !itemsContain(seen, "MARKER_FROM_HISTORY") {
-		t.Errorf("TurnInput is missing the session history that was sent to the model; got %d items", len(seen))
+		t.Errorf("TurnInput is missing the sess history that was sent to the model; got %d items", len(seen))
 	}
 	if !itemsContain(seen, "new question") {
 		t.Error("TurnInput is missing the run's new input")

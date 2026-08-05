@@ -1,19 +1,21 @@
-package agents
+package session
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/openai/openai-go/v3/responses"
 )
 
-// EntryProjector turns a session entry into the model input items it
+// Projector turns a session entry into the model input items it
 // contributes. Returning none means the entry is not part of the conversation
 // the model sees.
 //
 // It is the single place that answers "what does the model get to read". That
 // question used to be answered implicitly — by what a session happened to
 // store — so anything worth keeping but not worth sending had no home.
-type EntryProjector func(SessionEntry) ([]InputItem, error)
+type Projector func(Entry) ([]InputItem, error)
 
 // defaultProjectors is the projection every run starts from.
 //
@@ -29,11 +31,11 @@ type EntryProjector func(SessionEntry) ([]InputItem, error)
 // folded, render its summary and stand-ins where the folded content was —
 // and ProjectEntries applies that rule structurally. An override for
 // EntryKindCompaction disables the structural handling and takes over.
-var defaultProjectors = map[EntryKind]EntryProjector{
+var defaultProjectors = map[EntryKind]Projector{
 	EntryKindItem: projectItem,
 }
 
-func projectItem(e SessionEntry) ([]InputItem, error) {
+func projectItem(e Entry) ([]InputItem, error) {
 	item, err := e.InputItem()
 	if err != nil {
 		return nil, err
@@ -113,7 +115,7 @@ type CompactionPayload struct {
 }
 
 // CompactionPayload decodes a compaction checkpoint's payload.
-func (e SessionEntry) CompactionPayload() (CompactionPayload, error) {
+func (e Entry) CompactionPayload() (CompactionPayload, error) {
 	if e.Kind != EntryKindCompaction {
 		return CompactionPayload{}, fmt.Errorf("entry %q is a %s entry, not a compaction checkpoint", e.ID, e.Kind)
 	}
@@ -133,7 +135,7 @@ func (e SessionEntry) CompactionPayload() (CompactionPayload, error) {
 // An undecodable checkpoint contributes nothing rather than failing the call:
 // the callers that build views report the decode error themselves, and the
 // callers that select a removal must not be blocked by one corrupt record.
-func FoldedEntryIDs(entries []SessionEntry) map[string]bool {
+func FoldedEntryIDs(entries []Entry) map[string]bool {
 	var folded map[string]bool
 	for _, e := range entries {
 		if e.Kind != EntryKindCompaction {
@@ -155,7 +157,7 @@ func FoldedEntryIDs(entries []SessionEntry) map[string]bool {
 
 // projectorFor resolves the projector for a kind, letting a caller's overrides
 // win over the defaults.
-func projectorFor(overrides map[EntryKind]EntryProjector, kind EntryKind) (EntryProjector, bool) {
+func projectorFor(overrides map[EntryKind]Projector, kind EntryKind) (Projector, bool) {
 	if p, ok := overrides[kind]; ok {
 		return p, p != nil
 	}
@@ -183,7 +185,7 @@ func projectorFor(overrides map[EntryKind]EntryProjector, kind EntryKind) (Entry
 // branch's view (ContextEntries does); handing over append order across
 // branches would let an abandoned attempt's checkpoint fold entries the
 // active branch still reads.
-func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProjector) ([]InputItem, error) {
+func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]InputItem, error) {
 	folded := FoldedEntryIDs(entries)
 	_, checkpointOverridden := overrides[EntryKindCompaction]
 
@@ -209,7 +211,7 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 			if p.Summary != "" {
 				// A system message, not a user one: nobody said this. It is
 				// context the runtime supplies in place of folded history.
-				front = append(front, InputItemsFromSystemText(p.Summary)...)
+				front = append(front, systemTextItems(p.Summary)...)
 			}
 			for fi, f := range p.Folds {
 				items := make([]InputItem, 0, len(f.Items))
@@ -273,11 +275,11 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 //     may have been folded away by compaction, or may simply not have been
 //     written yet — an update is allowed to arrive first, which is what removes
 //     the ordering race instead of handling it.
-func FoldUpdates(entries []SessionEntry) []SessionEntry {
+func FoldUpdates(entries []Entry) []Entry {
 	// Index targets first so an update that precedes its target still applies.
 	index := make(map[string]int, len(entries))
 	byCall := make(map[string]int)
-	out := make([]SessionEntry, 0, len(entries))
+	out := make([]Entry, 0, len(entries))
 	for _, e := range entries {
 		if e.Kind == EntryKindUpdate {
 			continue
@@ -308,7 +310,7 @@ func FoldUpdates(entries []SessionEntry) []SessionEntry {
 		if !ok {
 			continue
 		}
-		merged := ItemDisplay{}
+		merged := Display{}
 		if out[i].Display != nil {
 			merged = *out[i].Display
 		}
@@ -322,12 +324,12 @@ func FoldUpdates(entries []SessionEntry) []SessionEntry {
 // away. The entries the pass KEPT are not part of it: they stay in the session
 // and the projection reads them from there, so the checkpoint holds nothing it
 // would have to keep in step with the tree.
-func NewCompactionEntry(p CompactionPayload) (SessionEntry, error) {
+func NewCompactionEntry(p CompactionPayload) (Entry, error) {
 	raw, err := json.Marshal(p)
 	if err != nil {
-		return SessionEntry{}, fmt.Errorf("encoding compaction payload: %w", err)
+		return Entry{}, fmt.Errorf("encoding compaction payload: %w", err)
 	}
-	return SessionEntry{
+	return Entry{
 		Kind:    EntryKindCompaction,
 		Source:  Source{Type: SourceCompaction},
 		Payload: raw,
@@ -354,4 +356,13 @@ func ExtractOutputText(output []OutputItem) string {
 		}
 	}
 	return ""
+}
+
+// systemTextItems builds a single system message. It is what the projection
+// uses to speak as the runtime — a compaction summary, a folded record —
+// without putting words in the user's or the assistant's mouth.
+func systemTextItems(text string) []InputItem {
+	return []InputItem{
+		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleSystem),
+	}
 }

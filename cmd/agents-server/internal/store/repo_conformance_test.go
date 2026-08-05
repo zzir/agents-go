@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agentstest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -22,7 +22,7 @@ func TestServerRepoConformance(t *testing.T) {
 		}
 		sessions := store.NewSessionStore(db)
 		return agentstest.RepoUnderTest{
-			Repo: store.NewSessionRepoAdapter(sessions, func(ref agents.SessionRef) agents.SessionStorage {
+			Repo: store.NewSessionRepoAdapter(sessions, func(ref session.Ref) session.Storage {
 				return store.NewEntryStoreFor(db, ref)
 			}),
 		}

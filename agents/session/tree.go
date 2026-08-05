@@ -1,6 +1,9 @@
-package agents
+package session
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // LeafOf folds a session's entries down to the id of its active branch tip.
 //
@@ -8,7 +11,7 @@ import "context"
 // updated on every append and could disagree with the log after a crash or a
 // concurrent writer; folding cannot. The rule is one line: a leaf entry moves
 // the tip to its target, anything else becomes the tip itself.
-func LeafOf(entries []SessionEntry) string {
+func LeafOf(entries []Entry) string {
 	leaf := ""
 	for _, e := range entries {
 		if e.Kind == EntryKindLeaf {
@@ -32,8 +35,8 @@ func LeafOf(entries []SessionEntry) string {
 // answered by ProjectEntries applying the checkpoint's exclusions. Ending the
 // walk here is what once made everything behind a checkpoint unreachable to a
 // pop, while the model could still see it.
-func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
-	byID := make(map[string]SessionEntry, len(entries))
+func PathToLeaf(entries []Entry, leafID string) []Entry {
+	byID := make(map[string]Entry, len(entries))
 	for _, e := range entries {
 		if e.Kind == EntryKindLeaf {
 			continue
@@ -41,7 +44,7 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 		byID[e.ID] = e
 	}
 
-	var reversed []SessionEntry
+	var reversed []Entry
 	seen := make(map[string]bool, len(entries))
 	for id := leafID; id != ""; {
 		e, ok := byID[id]
@@ -57,7 +60,7 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 		id = e.ParentID
 	}
 
-	out := make([]SessionEntry, len(reversed))
+	out := make([]Entry, len(reversed))
 	for i, e := range reversed {
 		out[len(reversed)-1-i] = e
 	}
@@ -82,7 +85,7 @@ func PathToLeaf(entries []SessionEntry, leafID string) []SessionEntry {
 // target is gone — the active branch genuinely points at nothing: empty is the
 // honest answer, and falling back to append order there is how abandoned
 // attempts once leaked into the model's view.
-func ActiveBranchOf(entries []SessionEntry) []SessionEntry {
+func ActiveBranchOf(entries []Entry) []Entry {
 	path := PathToLeaf(entries, LeafOf(entries))
 	if len(path) == 0 || path[0].ParentID != "" {
 		return path
@@ -106,7 +109,7 @@ func ActiveBranchOf(entries []SessionEntry) []SessionEntry {
 	if start == root {
 		return path
 	}
-	out := make([]SessionEntry, 0, (root-start)+len(path))
+	out := make([]Entry, 0, (root-start)+len(path))
 	out = append(out, entries[start:root]...)
 	return append(out, path...)
 }
@@ -131,13 +134,13 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 		return err
 	}
 	if target == nil {
-		return NewUserError("branch: no entry %q in this session", entryID)
+		return fmt.Errorf("session: branch: no entry %q in this session", entryID)
 	}
 	if target.Kind == EntryKindLeaf {
 		// A leaf move is a pointer, not a place: the walk excludes it from the
 		// tree, so a branch "to" one resolves the tip to an id that is not a
 		// node and the session reads as having no active branch.
-		return NewUserError("branch: entry %q is a branch move, not an entry to branch to", entryID)
+		return fmt.Errorf("session: branch: entry %q is a branch move, not an entry to branch to", entryID)
 	}
 	leaf, err := NewLeafEntry(entryID)
 	if err != nil {
@@ -148,7 +151,7 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 
 // PathEntries returns the entries on the active branch, oldest-first. A flat,
 // linkless history is one branch and reads whole (see ActiveBranchOf).
-func (s *Session) PathEntries(ctx context.Context) ([]SessionEntry, error) {
+func (s *Session) PathEntries(ctx context.Context) ([]Entry, error) {
 	entries, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err

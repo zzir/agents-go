@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/sessions"
 )
 
@@ -23,22 +24,22 @@ func TestSQLRepo(t *testing.T) {
 	}
 	repo := sessions.NewRepo(db)
 
-	visible, err := repo.Create(ctx, agents.CreateOptions{ID: "chat-1", Title: "A chat"})
+	visible, err := repo.Create(ctx, session.CreateOptions{ID: "chat-1", Title: "A chat"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "task-1", Hidden: true}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "task-1", Hidden: true}); err != nil {
 		t.Fatal(err)
 	}
 
-	listed, err := repo.List(ctx, agents.ListOptions{})
+	listed, err := repo.List(ctx, session.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(listed) != 1 || listed[0].ID != "chat-1" || listed[0].Title != "A chat" {
 		t.Fatalf("List = %+v, want only the visible session with its title", listed)
 	}
-	all, _ := repo.List(ctx, agents.ListOptions{IncludeHidden: true})
+	all, _ := repo.List(ctx, session.ListOptions{IncludeHidden: true})
 	if len(all) != 2 {
 		t.Fatalf("List(IncludeHidden) = %d, want 2", len(all))
 	}
@@ -49,7 +50,7 @@ func TestSQLRepo(t *testing.T) {
 	if _, err := repo.Open(ctx, "chat-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Open(ctx, "missing"); !errors.Is(err, agents.ErrSessionNotFound) {
+	if _, err := repo.Open(ctx, "missing"); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("Open(missing) = %v, want ErrSessionNotFound", err)
 	}
 
@@ -58,8 +59,8 @@ func TestSQLRepo(t *testing.T) {
 	if err := repo.Delete(ctx, "chat-1"); err != nil {
 		t.Fatal(err)
 	}
-	orphan := agents.NewSession(sessions.New(db, "chat-1"))
-	got, err := orphan.Entries(ctx, agents.Cursor{})
+	orphan := session.NewSession(sessions.New(db, "chat-1"))
+	got, err := orphan.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,14 +82,14 @@ func TestSQLSession_EntryLookupIsIndexed(t *testing.T) {
 	if err := sessions.CreateSchema(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	sess := agents.NewSession(s)
+	sess := session.NewSession(s)
 
 	for range 20 {
 		if err := sess.AppendItems(ctx, agents.InputItemsFromText("x"), agents.Source{}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	entries, err := sess.Entries(ctx, agents.Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

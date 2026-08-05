@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func TestFileSession_RoundTrip(t *testing.T) {
@@ -19,11 +20,11 @@ func TestFileSession_RoundTrip(t *testing.T) {
 
 	items := agents.InputItemsFromText("hello")
 	items = append(items, agents.InputItemsFromText("world")...)
-	if err := agents.NewSession(sess).AppendItems(ctx, items, agents.Source{}); err != nil {
+	if err := session.NewSession(sess).AppendItems(ctx, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
+	got, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	}
 
 	// Limit returns the most recent N, oldest-first.
-	last, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{Limit: -1})
+	last, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{Limit: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	if popped == nil || poppedItem.OfMessage.Content.OfString.Value != "world" {
 		t.Errorf("popped = %+v", popped)
 	}
-	remaining, _ := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
+	remaining, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
 	if len(remaining) != 1 {
 		t.Errorf("after pop: %d items, want 1", len(remaining))
 	}
@@ -64,7 +65,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	if err := sess.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
-	empty, _ := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
+	empty, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
 	if len(empty) != 0 {
 		t.Errorf("after clear: %d items, want 0", len(empty))
 	}
@@ -78,7 +79,7 @@ func TestFileSession_PersistsAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.NewSession(a).AppendItems(ctx, agents.InputItemsFromText("remember me"), agents.Source{}); err != nil {
+	if err := session.NewSession(a).AppendItems(ctx, agents.InputItemsFromText("remember me"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +88,7 @@ func TestFileSession_PersistsAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, _ := agents.NewSession(b).ContextItems(ctx, agents.Cursor{})
+	items, _ := session.NewSession(b).ContextItems(ctx, session.Cursor{})
 	if len(items) != 1 {
 		t.Errorf("reopened session lost history: %d items", len(items))
 	}
@@ -99,10 +100,10 @@ func TestFileSession_IsolationBySessionID(t *testing.T) {
 	a, _ := NewFileSession(dir, "a")
 	b, _ := NewFileSession(dir, "b")
 
-	if err := agents.NewSession(a).AppendItems(ctx, agents.InputItemsFromText("for-a"), agents.Source{}); err != nil {
+	if err := session.NewSession(a).AppendItems(ctx, agents.InputItemsFromText("for-a"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	bItems, _ := agents.NewSession(b).ContextItems(ctx, agents.Cursor{})
+	bItems, _ := session.NewSession(b).ContextItems(ctx, session.Cursor{})
 	if len(bItems) != 0 {
 		t.Errorf("session b leaked items from a: %d", len(bItems))
 	}
@@ -133,7 +134,7 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := append(agents.InputItemsFromText("one"), agents.InputItemsFromText("two")...)
-	entries, err := agents.NewItemEntries(items, agents.Source{})
+	entries, err := session.NewItemEntries(items, agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 
 	// Reading stays lenient: one bad record must not make the session
 	// unreadable, and nothing is destroyed by a read.
-	got, err := sess.Entries(ctx, agents.Cursor{})
+	got, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil || len(got) != 2 {
 		t.Fatalf("lenient read after corruption: %d entries, err=%v", len(got), err)
 	}
@@ -221,7 +222,7 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range writes {
-			if err := agents.NewSession(a).AppendItems(context.Background(), agents.InputItemsFromText("from-a"), agents.Source{}); err != nil {
+			if err := session.NewSession(a).AppendItems(context.Background(), agents.InputItemsFromText("from-a"), agents.Source{}); err != nil {
 				t.Error(err)
 				return
 			}
@@ -243,7 +244,7 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 	}()
 	wg.Wait()
 
-	items, err := agents.NewSession(a).ContextItems(context.Background(), agents.Cursor{})
+	items, err := session.NewSession(a).ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,9 +255,9 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 
 // mustEntries wraps plain items as item entries for tests that exercise the
 // replace path.
-func mustEntries(t *testing.T, items []agents.InputItem) []agents.SessionEntry {
+func mustEntries(t *testing.T, items []agents.InputItem) []session.Entry {
 	t.Helper()
-	entries, err := agents.NewItemEntries(items, agents.Source{})
+	entries, err := session.NewItemEntries(items, agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Compactor adapts a Strategy to agents.Compactor, so a run can be given one
@@ -31,7 +32,7 @@ func New(strategy Strategy, estimator TokenEstimator) *Compactor {
 }
 
 // Compact implements agents.Compactor.
-func (c *Compactor) Compact(ctx context.Context, entries []agents.SessionEntry) ([]agents.SessionEntry, error) {
+func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error) {
 	if c.strategy == nil || len(entries) == 0 {
 		return entries, nil
 	}
@@ -78,11 +79,11 @@ var _ agents.Compactor = (*Compactor)(nil)
 // fall out of step when one of them is later removed. Only a group's
 // Replacement travels in the checkpoint (as a CompactionFold), because that
 // stand-in exists nowhere else.
-func (c *Compactor) Checkpoint(compacted []agents.SessionEntry) (agents.SessionEntry, bool, error) {
+func (c *Compactor) Checkpoint(compacted []session.Entry) (session.Entry, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.idx == nil {
-		return agents.SessionEntry{}, false, nil
+		return session.Entry{}, false, nil
 	}
 	// The index must still describe exactly the entries the caller's Compact
 	// saw. A Compactor may be shared across concurrent runs, and between one
@@ -92,11 +93,11 @@ func (c *Compactor) Checkpoint(compacted []agents.SessionEntry) (agents.SessionE
 	// log. Losing a checkpoint costs one recomputed pass; leaking one is
 	// unrecoverable.
 	if n, ok := c.idx.prefixMatches(compacted); !ok || n != len(compacted) {
-		return agents.SessionEntry{}, false, nil
+		return session.Entry{}, false, nil
 	}
 
 	var excluded []string
-	var folds []agents.CompactionFold
+	var folds []session.CompactionFold
 	var prevSummary string
 	before := 0
 	for i, g := range c.idx.Groups {
@@ -123,10 +124,10 @@ func (c *Compactor) Checkpoint(compacted []agents.SessionEntry) (agents.SessionE
 		}
 	}
 	if len(excluded) == 0 {
-		return agents.SessionEntry{}, false, nil
+		return session.Entry{}, false, nil
 	}
 
-	e, err := agents.NewCompactionEntry(agents.CompactionPayload{
+	e, err := session.NewCompactionEntry(session.CompactionPayload{
 		PrevSummary:  prevSummary,
 		Folds:        folds,
 		ExcludedIDs:  excluded,
@@ -134,7 +135,7 @@ func (c *Compactor) Checkpoint(compacted []agents.SessionEntry) (agents.SessionE
 		TokensAfter:  c.idx.ContextTokens(),
 	})
 	if err != nil {
-		return agents.SessionEntry{}, false, err
+		return session.Entry{}, false, err
 	}
 	return e, true, nil
 }
@@ -142,16 +143,16 @@ func (c *Compactor) Checkpoint(compacted []agents.SessionEntry) (agents.SessionE
 // foldFor turns group i's Replacement into the checkpoint fold that renders in
 // its place, anchored before the first surviving entry after it so the
 // projection puts the stand-in where the folded group was.
-func foldFor(groups []*Group, i int, replaces []string) (agents.CompactionFold, bool) {
+func foldFor(groups []*Group, i int, replaces []string) (session.CompactionFold, bool) {
 	g := groups[i]
-	f := agents.CompactionFold{Replaces: replaces}
+	f := session.CompactionFold{Replaces: replaces}
 	for _, re := range g.Replacement {
 		if len(re.Item) > 0 {
 			f.Items = append(f.Items, re.Item)
 		}
 	}
 	if len(f.Items) == 0 {
-		return agents.CompactionFold{}, false
+		return session.CompactionFold{}, false
 	}
 	for _, ng := range groups[i+1:] {
 		if ng.Excluded {

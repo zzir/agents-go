@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
+
 	"github.com/zzir/agents-go/agents"
 )
 

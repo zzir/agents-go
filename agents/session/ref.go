@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"crypto/rand"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// SessionRef addresses one session: one generation of one id.
+// Ref addresses one session: one generation of one id.
 //
 // # Why an id is not enough
 //
@@ -22,7 +22,7 @@ import (
 // chance to forget, and forgetting is silent — the write lands somewhere, the
 // delete removes something.
 //
-// So it is the address. A function that takes a SessionRef cannot be handed a
+// So it is the address. A function that takes a Ref cannot be handed a
 // bare id, and a delete written against one cannot remove a generation the
 // caller did not mean. What used to be a rule enforced by review is a parameter.
 //
@@ -37,7 +37,7 @@ import (
 // it, and its writes do not reach a repo's sessions. Reading it as "any
 // generation" is how a repo delete came to empty a session it had never
 // created.
-type SessionRef struct {
+type Ref struct {
 	// ID is the session's name, as a caller knows it.
 	ID string
 	// Gen distinguishes this generation of that name from the ones before.
@@ -46,14 +46,14 @@ type SessionRef struct {
 }
 
 // Direct returns a ref for the scope where the id names the storage.
-func Direct(id string) SessionRef { return SessionRef{ID: id} }
+func Direct(id string) Ref { return Ref{ID: id} }
 
 // IsDirect reports whether r addresses the scope where the id names the
 // storage, rather than one generation of a repo-managed session.
-func (r SessionRef) IsDirect() bool { return r.Gen == "" }
+func (r Ref) IsDirect() bool { return r.Gen == "" }
 
 // String renders the ref for logs and errors.
-func (r SessionRef) String() string {
+func (r Ref) String() string {
 	if r.IsDirect() {
 		return r.ID
 	}

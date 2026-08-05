@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/models/modelkit"
 )
 
@@ -230,7 +231,7 @@ func TestBuildParamsImageDataURL(t *testing.T) {
 	input = append(input, calls...)
 	// A multimodal tool result, through the wire shape ParseInput sees.
 	raw := `{"type":"function_call_output","call_id":"toolu_1","output":[{"type":"input_image","image_url":"data:image/png;base64,QUJD"}]}`
-	result, err := agents.UnmarshalInputItem([]byte(raw))
+	result, err := session.UnmarshalInputItem([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}

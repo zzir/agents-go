@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // A Blocking input guardrail's Replace verdict must reach the model on the
@@ -31,7 +33,7 @@ func TestBlockingGuardrailReplaceReachesModel(t *testing.T) {
 	}
 	sent := ""
 	for _, it := range model.lastReq.Input {
-		raw, _ := MarshalInputItem(it)
+		raw, _ := session.MarshalInputItem(it)
 		sent += string(raw)
 	}
 	if strings.Contains(sent, "the secret input") {
@@ -143,7 +145,7 @@ func TestResumeDoesNotReattributeUsage(t *testing.T) {
 	second.Usage = &Usage{Requests: 1, InputTokens: 7, OutputTokens: 2, TotalTokens: 9}
 	model := &fakeModel{responses: []*ModelResponse{first, second}}
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
-	sess := NewInMemorySession()
+	sess := session.NewInMemorySession()
 
 	res, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
 	if err != nil {
@@ -157,7 +159,7 @@ func TestResumeDoesNotReattributeUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := sess.Entries(ctx, Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

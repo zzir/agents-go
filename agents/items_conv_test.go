@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func TestOutputToInputRoundTrip(t *testing.T) {
@@ -59,10 +61,10 @@ func TestOutputToInputAssistantMessage(t *testing.T) {
 	}
 	assertMessageJSON(t, b)
 
-	// The stored form must survive UnmarshalInputItem (session reload).
-	in2, err := UnmarshalInputItem(b)
+	// The stored form must survive session.UnmarshalInputItem (session reload).
+	in2, err := session.UnmarshalInputItem(b)
 	if err != nil {
-		t.Fatalf("UnmarshalInputItem: %v", err)
+		t.Fatalf("session.UnmarshalInputItem: %v", err)
 	}
 	if in2.OfOutputMessage == nil {
 		t.Fatalf("expected OfOutputMessage after reload, got %+v", in2)
@@ -97,11 +99,11 @@ func assertMessageJSON(t *testing.T, b []byte) {
 }
 
 func TestUnmarshalInputItemRejectsGarbage(t *testing.T) {
-	if _, err := UnmarshalInputItem([]byte(`{"bogus":true}`)); err == nil {
+	if _, err := session.UnmarshalInputItem([]byte(`{"bogus":true}`)); err == nil {
 		t.Fatal("expected error for unrecognized item shape")
 	}
 	// Easy messages (no "type" discriminator) must still decode.
-	in, err := UnmarshalInputItem([]byte(`{"role":"user","content":"hi"}`))
+	in, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"hi"}`))
 	if err != nil {
 		t.Fatalf("easy message: %v", err)
 	}

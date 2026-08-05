@@ -33,10 +33,10 @@ See [Sessions](sessions.md) and [Context management](context.md).
 
 | Capability | API |
 |---|---|
-| Sessions | `agents.Session`, `InMemorySession`, `memory.FileSession` (JSONL), `sessions` module (SQLite/Postgres) |
+| Sessions | `session.Session`, `InMemorySession`, `memory.FileSession` (JSONL), `sessions` module (SQLite/Postgres) |
 | Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
 | History compaction | `RunOptions.Compaction` + `agents/compaction` strategies (local, append-only checkpoints), `openai.CompactionSession` (server-side `responses.compact`) |
-| Session forking | `agents.ForkSession` |
+| Session forking | `session.Fork` |
 | Server-side state | `RunOptions.Conversation.UsePreviousResponseID` / `RunOptions.Conversation.ConversationID` |
 | Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)`, or any `func(ctx, rc, agent) (*agents.Prompt, error)` |
 

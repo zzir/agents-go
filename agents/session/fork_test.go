@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"testing"
@@ -20,7 +20,7 @@ func TestForkSession_FullCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ForkSession(ctx, src, dst); err != nil {
+	if err := Fork(ctx, src, dst); err != nil {
 		t.Fatal(err)
 	}
 
@@ -45,7 +45,7 @@ func TestForkSession_EmptySource(t *testing.T) {
 		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
 	}, Source{})
 
-	if err := ForkSession(ctx, src, dst); err != nil {
+	if err := Fork(ctx, src, dst); err != nil {
 		t.Fatal(err)
 	}
 

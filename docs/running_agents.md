@@ -61,7 +61,7 @@ Each `Run` is one logical turn of a conversation. To carry history across runs y
 1. **Use a [Session](sessions.md)** — history is loaded before the run and saved incrementally as it proceeds (each turn as it completes):
 
    ```go
-   sess := agents.NewInMemorySession()
+   sess := session.NewInMemorySession()
    agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
    agents.Run(ctx, agent, "What state is it in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
    ```

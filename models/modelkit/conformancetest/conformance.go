@@ -22,6 +22,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // UsageSpec is the canonical token accounting a scenario's turn must report.
@@ -285,11 +286,11 @@ func assertRoundTrip(t *testing.T, spec TurnSpec, output []agents.OutputItem) {
 		t.Fatalf("OutputToInput: %v", err)
 	}
 	for i, in := range inputs {
-		raw, err := agents.MarshalInputItem(in)
+		raw, err := session.MarshalInputItem(in)
 		if err != nil {
 			t.Fatalf("marshaling input item %d: %v", i, err)
 		}
-		if _, err := agents.UnmarshalInputItem(raw); err != nil {
+		if _, err := session.UnmarshalInputItem(raw); err != nil {
 			t.Fatalf("unmarshaling input item %d: %v", i, err)
 		}
 	}
@@ -305,7 +306,7 @@ func assertRoundTrip(t *testing.T, spec TurnSpec, output []agents.OutputItem) {
 		}
 		var found bool
 		for _, in := range inputs {
-			raw, _ := agents.MarshalInputItem(in)
+			raw, _ := session.MarshalInputItem(in)
 			var probe struct {
 				Type             string `json:"type"`
 				EncryptedContent string `json:"encrypted_content"`

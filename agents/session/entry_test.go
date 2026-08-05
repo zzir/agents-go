@@ -1,22 +1,24 @@
-package agents
+package session
 
 import (
 	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/openai/openai-go/v3/responses"
 )
 
 // Projection decides what the model reads. Recording something and sending it
 // are different acts, and the session used to have no way to say so.
 func TestProjectEntries_OnlyContextKindsReachTheModel(t *testing.T) {
-	item, err := NewItemEntry(InputItemsFromText("real question")[0], Source{Type: SourceUser})
+	item, err := NewItemEntry(userTextItems("real question")[0], Source{Type: SourceUser})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := []SessionEntry{
+	entries := []Entry{
 		item,
-		NewAnnotationEntry(ItemDisplay{Kind: DisplayMessage, Text: "run cancelled"}, Source{}),
+		NewAnnotationEntry(Display{Kind: DisplayMessage, Text: "run cancelled"}, Source{}),
 		{Kind: EntryKindTerminal, Payload: json.RawMessage(`{"output":"ls -la"}`)},
 		{Kind: EntryKindCustom, CustomType: "sticky_note", Payload: json.RawMessage(`{}`)},
 		{Kind: "a_kind_from_the_future", Payload: json.RawMessage(`{}`)},
@@ -38,18 +40,18 @@ func TestProjectEntries_OnlyContextKindsReachTheModel(t *testing.T) {
 // A caller can opt a kind into context — the documented use is showing the
 // model what was run by hand in a terminal.
 func TestProjectEntries_CallerOverridesTheDefaults(t *testing.T) {
-	entries := []SessionEntry{
+	entries := []Entry{
 		{Kind: EntryKindTerminal, Payload: json.RawMessage(`{"command":"go test ./..."}`)},
 	}
-	got, err := ProjectEntries(entries, map[EntryKind]EntryProjector{
-		EntryKindTerminal: func(e SessionEntry) ([]InputItem, error) {
+	got, err := ProjectEntries(entries, map[EntryKind]Projector{
+		EntryKindTerminal: func(e Entry) ([]InputItem, error) {
 			var p struct {
 				Command string `json:"command"`
 			}
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, err
 			}
-			return InputItemsFromText("$ " + p.Command), nil
+			return userTextItems("$ " + p.Command), nil
 		},
 	})
 	if err != nil {
@@ -65,8 +67,8 @@ func TestProjectEntries_CallerOverridesTheDefaults(t *testing.T) {
 
 	// And a projector mapped to nil suppresses a kind that would otherwise
 	// reach the model.
-	item, _ := NewItemEntry(InputItemsFromText("hi")[0], Source{})
-	got, err = ProjectEntries([]SessionEntry{item}, map[EntryKind]EntryProjector{EntryKindItem: nil})
+	item, _ := NewItemEntry(userTextItems("hi")[0], Source{})
+	got, err = ProjectEntries([]Entry{item}, map[EntryKind]Projector{EntryKindItem: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,21 +80,21 @@ func TestProjectEntries_CallerOverridesTheDefaults(t *testing.T) {
 // An update amends a display without rewriting the entry it targets, which is
 // what keeps the log append-only.
 func TestFoldUpdates(t *testing.T) {
-	target := SessionEntry{
+	target := Entry{
 		ID:      "e1",
 		Kind:    EntryKindItem,
-		Display: &ItemDisplay{Kind: DisplayToolCall, ToolName: "spawn_task", Text: "running"},
+		Display: &Display{Kind: DisplayToolCall, ToolName: "spawn_task", Text: "running"},
 	}
-	first, err := NewUpdateEntry("e1", ItemDisplay{Text: "still running", Extra: map[string]any{"pct": 40}})
+	first, err := NewUpdateEntry("e1", Display{Text: "still running", Extra: map[string]any{"pct": 40}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewUpdateEntry("e1", ItemDisplay{Text: "done", Extra: map[string]any{"pct": 100}})
+	second, err := NewUpdateEntry("e1", Display{Text: "done", Extra: map[string]any{"pct": 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := FoldUpdates([]SessionEntry{target, first, second})
+	got := FoldUpdates([]Entry{target, first, second})
 	if len(got) != 1 {
 		t.Fatalf("folded to %d entries, want 1 (updates are consumed)", len(got))
 	}
@@ -115,13 +117,13 @@ func TestFoldUpdates(t *testing.T) {
 // and projection associates them by id regardless of order — which removes the
 // race rather than retrying around it.
 func TestFoldUpdates_UpdateMayPrecedeItsTarget(t *testing.T) {
-	update, err := NewUpdateEntry("e1", ItemDisplay{Text: "finished first"})
+	update, err := NewUpdateEntry("e1", Display{Text: "finished first"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := SessionEntry{ID: "e1", Kind: EntryKindItem, Display: &ItemDisplay{Kind: DisplayToolCall}}
+	target := Entry{ID: "e1", Kind: EntryKindItem, Display: &Display{Kind: DisplayToolCall}}
 
-	got := FoldUpdates([]SessionEntry{update, target})
+	got := FoldUpdates([]Entry{update, target})
 	if len(got) != 1 || got[0].Display.Text != "finished first" {
 		t.Fatalf("an update stored before its target did not apply: %+v", got)
 	}
@@ -134,12 +136,12 @@ func TestFoldUpdates_UpdateMayPrecedeItsTarget(t *testing.T) {
 // update brought more.
 func TestFoldUpdates_DoesNotWriteThroughToStorage(t *testing.T) {
 	st := NewInMemoryStorage("s")
-	target := SessionEntry{
+	target := Entry{
 		ID:      "e1",
 		Kind:    EntryKindItem,
-		Display: &ItemDisplay{Kind: DisplayToolCall, CallID: "c1", Extra: map[string]any{"pct": float64(40)}},
+		Display: &Display{Kind: DisplayToolCall, CallID: "c1", Extra: map[string]any{"pct": float64(40)}},
 	}
-	update, err := NewUpdateEntry("e1", ItemDisplay{Extra: map[string]any{"pct": float64(100), "done": true}})
+	update, err := NewUpdateEntry("e1", Display{Extra: map[string]any{"pct": float64(100), "done": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,12 +171,12 @@ func TestFoldUpdates_DoesNotWriteThroughToStorage(t *testing.T) {
 // folded the target away, and failing a whole read over a stale pointer would
 // make history unloadable.
 func TestFoldUpdates_MissingTargetIsIgnored(t *testing.T) {
-	update, err := NewUpdateEntry("nobody", ItemDisplay{Text: "orphan"})
+	update, err := NewUpdateEntry("nobody", Display{Text: "orphan"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := SessionEntry{ID: "e1", Kind: EntryKindItem}
-	got := FoldUpdates([]SessionEntry{target, update})
+	target := Entry{ID: "e1", Kind: EntryKindItem}
+	got := FoldUpdates([]Entry{target, update})
 	if len(got) != 1 || got[0].ID != "e1" {
 		t.Fatalf("folded = %+v, want just the surviving entry", got)
 	}
@@ -183,11 +185,11 @@ func TestFoldUpdates_MissingTargetIsIgnored(t *testing.T) {
 // Updates never reach the model — they amend a display, and a display is not
 // something anyone said.
 func TestProjectEntries_UpdatesAreNotContext(t *testing.T) {
-	update, err := NewUpdateEntry("e1", ItemDisplay{Text: "amended"})
+	update, err := NewUpdateEntry("e1", Display{Text: "amended"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := ProjectEntries([]SessionEntry{update}, nil)
+	got, err := ProjectEntries([]Entry{update}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,66 +198,15 @@ func TestProjectEntries_UpdatesAreNotContext(t *testing.T) {
 	}
 }
 
-// A run's entries carry provenance and display, so a reader gets the timeline
-// the run produced instead of re-deriving it from the wire item.
-func TestRunPersistsEntriesWithProvenanceAndDisplay(t *testing.T) {
-	session := NewInMemorySession()
-	tool := NewTool("t", "t",
-		func(context.Context, *ToolContext, struct{}) (string, error) { return "tool out", nil })
-	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
-		modelResp(functionCallOutput(t, "t", "c1", `{}`)),
-		modelResp(messageOutput(t, "done")),
-	}}}
-
-	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Conversation: ConversationOptions{Session: NewSession(session)},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	entries, err := session.Entries(context.Background(), Cursor{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) < 4 {
-		t.Fatalf("stored %d entries, want the input plus the turn's items", len(entries))
-	}
-
-	var sawUser, sawToolOutput bool
-	for _, e := range entries {
-		if e.ID == "" {
-			t.Errorf("entry stored without an id: %+v", e)
-		}
-		if e.CreatedAt.IsZero() {
-			t.Errorf("entry stored without a timestamp: %+v", e)
-		}
-		switch e.Source.Type {
-		case SourceUser:
-			sawUser = true
-		case SourceTool:
-			sawToolOutput = true
-			if e.Display == nil || e.Display.Output != "tool out" {
-				t.Errorf("tool output entry lost its display: %+v", e.Display)
-			}
-		}
-	}
-	if !sawUser {
-		t.Error("no entry attributed to the user")
-	}
-	if !sawToolOutput {
-		t.Error("no entry attributed to a tool")
-	}
-}
-
 // A compaction checkpoint copies nothing: it names what it folded, its summary
 // renders up front, and the kept history projects from the entries themselves.
 func TestCompactionCheckpointProjection(t *testing.T) {
-	folded, err := NewItemEntry(InputItemsFromText("earlier discussion detail")[0], Source{})
+	folded, err := NewItemEntry(userTextItems("earlier discussion detail")[0], Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	folded.ID = "e1"
-	kept, err := NewItemEntry(InputItemsFromText("the most recent question")[0], Source{})
+	kept, err := NewItemEntry(userTextItems("the most recent question")[0], Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +220,7 @@ func TestCompactionCheckpointProjection(t *testing.T) {
 	}
 	cp.ID = "e3"
 
-	got, err := ProjectEntries([]SessionEntry{folded, kept, cp}, nil)
+	got, err := ProjectEntries([]Entry{folded, kept, cp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,13 +245,11 @@ func TestCompactionCheckpointProjection(t *testing.T) {
 // which is the case for anything reporting on a call afterwards, since the
 // entry id is assigned by storage at a moment the amender may not have reached.
 func TestUpdateEntry_TargetsACallID(t *testing.T) {
-	call, err := EntryFromRunItem(NewModelItem(ItemToolCall, nil, functionCallOutput(t, "spawn_task", "call-9", `{}`)), "resp_1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	call := toolCallEntry(t, "spawn_task", "call-9")
 	call.ID = "e2"
+	call.ResponseID = "resp_1"
 
-	upd, err := NewCallUpdateEntry("call-9", ItemDisplay{
+	upd, err := NewCallUpdateEntry("call-9", Display{
 		Extra: map[string]any{"task_status": "completed"},
 	})
 	if err != nil {
@@ -309,7 +258,7 @@ func TestUpdateEntry_TargetsACallID(t *testing.T) {
 
 	// The update is stored BEFORE its target — the case the retry loop used to
 	// exist for — and folding still associates them.
-	folded := FoldUpdates([]SessionEntry{upd, call})
+	folded := FoldUpdates([]Entry{upd, call})
 	if len(folded) != 1 {
 		t.Fatalf("folded to %d entries, want the update merged away", len(folded))
 	}
@@ -326,17 +275,35 @@ func TestUpdateEntry_TargetsACallID(t *testing.T) {
 // An update naming a call nothing holds amends nothing, rather than attaching
 // itself to whatever happened to be nearby.
 func TestUpdateEntry_UnknownCallIDIsIgnored(t *testing.T) {
-	call, err := EntryFromRunItem(NewModelItem(ItemToolCall, nil, functionCallOutput(t, "probe", "call-1", `{}`)), "r")
-	if err != nil {
-		t.Fatal(err)
-	}
+	call := toolCallEntry(t, "probe", "call-1")
 	call.ID = "e1"
-	upd, err := NewCallUpdateEntry("call-does-not-exist", ItemDisplay{Text: "ghost"})
+	upd, err := NewCallUpdateEntry("call-does-not-exist", Display{Text: "ghost"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	folded := FoldUpdates([]SessionEntry{call, upd})
+	folded := FoldUpdates([]Entry{call, upd})
 	if len(folded) != 1 || (folded[0].Display != nil && folded[0].Display.Text == "ghost") {
 		t.Errorf("an unmatched update was applied: %+v", folded)
 	}
+}
+
+// userTextItems builds a single user message, standing in for the runner-side
+// input helper the session package deliberately does not depend on.
+func userTextItems(text string) []InputItem {
+	return []InputItem{
+		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleUser),
+	}
+}
+
+// toolCallEntry builds an item entry holding a function_call with a tool-call
+// display, the way the runner records one through EntryFromRunItem.
+func toolCallEntry(t *testing.T, name, callID string) Entry {
+	t.Helper()
+	raw := rawInputOverride(`{"type":"function_call","call_id":"` + callID + `","name":"` + name + `","arguments":"{}"}`)
+	e, err := NewItemEntry(raw, Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Display = &Display{Kind: DisplayToolCall, ToolName: name, CallID: callID, Arguments: "{}"}
+	return e
 }

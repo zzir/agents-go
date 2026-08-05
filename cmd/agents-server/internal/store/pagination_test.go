@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func TestGetEntriesPagination(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, agents.Direct("s1"))
+	s := NewEntryStoreFor(db, session.Direct("s1"))
 	s.SetRunID("r1")
 
 	for i := range 5 {
@@ -20,7 +20,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// No limit: all 5, oldest-first.
-	all, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 0)
+	all, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// limit=2 returns the newest two, still ascending.
-	page, err := s.GetEntries(ctx, agents.Direct("s1"), 0, 2)
+	page, err := s.GetEntries(ctx, session.Direct("s1"), 0, 2)
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// before_id cursor: everything older than the page's first id, newest 2.
-	older, err := s.GetEntries(ctx, agents.Direct("s1"), page[0].ID, 2)
+	older, err := s.GetEntries(ctx, session.Direct("s1"), page[0].ID, 2)
 	if err != nil {
 		t.Fatalf("get older: %v", err)
 	}

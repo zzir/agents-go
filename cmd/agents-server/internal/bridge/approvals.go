@@ -13,6 +13,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -77,7 +78,7 @@ func (r *Runner) persistInterruption(result *RunResult) error {
 // content extraction the messages table uses, so the reconstructed bubble is
 // byte-identical to the one the SDK persists once the turn completes.
 func userInputText(items []agents.InputItem) string {
-	raw, err := agents.MarshalItems(items)
+	raw, err := session.MarshalItems(items)
 	if err != nil {
 		return ""
 	}
@@ -93,11 +94,11 @@ func userInputText(items []agents.InputItem) string {
 		if json.Unmarshal(it, &probe) != nil || probe.Role != "user" {
 			continue
 		}
-		item, err := agents.UnmarshalInputItem(it)
+		item, err := session.UnmarshalInputItem(it)
 		if err != nil {
 			continue
 		}
-		if txt := strings.TrimSpace(agents.ItemText(item)); txt != "" {
+		if txt := strings.TrimSpace(session.ItemText(item)); txt != "" {
 			parts = append(parts, txt)
 		}
 	}
@@ -157,7 +158,7 @@ func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore) {
 	phase.OnUnlock(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), planUnlockPersistTimeout)
 		defer cancel()
-		entry := agents.NewAnnotationEntry(
+		entry := session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: store.PlanUnlockedKind},
 			agents.Source{Type: agents.SourceTool, ID: middleware.PlanToolName},
 		)

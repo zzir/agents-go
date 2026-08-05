@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"context"
@@ -14,14 +14,12 @@ func crashedSession(t *testing.T) *Session {
 	st := NewInMemoryStorage("crashed")
 	sess := NewSession(st)
 
-	user, err := NewItemEntries(InputItemsFromText("send the report"), Source{Type: SourceUser})
+	user, err := NewItemEntries(userTextItems("send the report"), Source{Type: SourceUser})
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := EntryFromRunItem(NewModelItem(ItemToolCall, nil, functionCallOutput(t, "send_email", "c1", `{}`)), "resp_1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	call := toolCallEntry(t, "send_email", "c1")
+	call.ResponseID = "resp_1"
 	if err := sess.Append(ctx, append(user, call)...); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +38,7 @@ func TestRecovery_RepairsADanglingCall(t *testing.T) {
 		t.Fatalf("pending = %v, want the dangling call", state.PendingCallIDs)
 	}
 
-	report, err := RecoverSession(ctx, sess, RecoveryPolicy{})
+	report, err := Recover(ctx, sess, RecoveryPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +75,7 @@ func TestRecovery_OnlyAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RecoverSession(ctx, sess, RecoveryPolicy{}); err != nil {
+	if _, err := Recover(ctx, sess, RecoveryPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	after, err := sess.Entries(ctx, Cursor{})
@@ -98,7 +96,7 @@ func TestRecovery_OnlyAppends(t *testing.T) {
 // default is that it did not run again.
 func TestRecovery_DoesNotRetryByDefault(t *testing.T) {
 	ctx := context.Background()
-	report, err := RecoverSession(ctx, crashedSession(t), RecoveryPolicy{})
+	report, err := Recover(ctx, crashedSession(t), RecoveryPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,50 +105,18 @@ func TestRecovery_DoesNotRetryByDefault(t *testing.T) {
 	}
 }
 
-// A tool that says it is safe to repeat is left for the next run instead.
-func TestRecovery_RetrySafeToolIsLeftDangling(t *testing.T) {
-	ctx := context.Background()
-	sess := crashedSession(t)
-	sendEmail := NewTool("send_email", "", func(context.Context, *ToolContext, struct{}) (string, error) {
-		return "", nil
-	})
-	sendEmail.RetrySafe = true
-	tools := []*Tool{sendEmail}
-
-	report, err := RecoverSession(ctx, sess, RecoveryPolicy{RetrySafe: RetrySafeNames(tools)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Retryable) != 1 || len(report.Repaired) != 0 {
-		t.Fatalf("report = %+v, want the call left for a retry", report)
-	}
-	if state := mustState(t, sess); len(state.PendingCallIDs) != 1 {
-		t.Error("a retry-safe call was repaired instead of left dangling")
-	}
-}
-
-// A tool that never declared itself safe is not made safe by being in the list.
-func TestRecovery_UndeclaredToolIsUnsafe(t *testing.T) {
-	tools := []*Tool{NewTool("send_email", "", func(context.Context, *ToolContext, struct{}) (string, error) {
-		return "", nil
-	})}
-	if RetrySafeNames(tools)("send_email") {
-		t.Error("a plain tool reported itself retry-safe")
-	}
-}
-
 // A healthy session is left completely alone.
 func TestRecovery_NoOpOnAHealthySession(t *testing.T) {
 	ctx := context.Background()
 	sess := NewSession(NewInMemoryStorage("ok"))
-	entries, err := NewItemEntries(InputItemsFromText("hello"), Source{Type: SourceUser})
+	entries, err := NewItemEntries(userTextItems("hello"), Source{Type: SourceUser})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.Append(ctx, entries...); err != nil {
 		t.Fatal(err)
 	}
-	report, err := RecoverSession(ctx, sess, RecoveryPolicy{})
+	report, err := Recover(ctx, sess, RecoveryPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,27 +129,6 @@ func TestRecovery_NoOpOnAHealthySession(t *testing.T) {
 	}
 	if len(after) != len(entries) {
 		t.Error("a healthy session was modified")
-	}
-}
-
-// The repaired history is one the model can actually be sent.
-func TestRecovery_RepairedSessionRunsAgain(t *testing.T) {
-	ctx := context.Background()
-	sess := crashedSession(t)
-	if _, err := RecoverSession(ctx, sess, RecoveryPolicy{}); err != nil {
-		t.Fatal(err)
-	}
-	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "carrying on"))}}
-	agent := &Agent{Name: "a", ModelImpl: model}
-
-	res, err := RunSync(ctx, agent, "and then?", RunOptions{
-		Conversation: ConversationOptions{Session: sess},
-	})
-	if err != nil {
-		t.Fatalf("the repaired session could not be run: %v", err)
-	}
-	if res.FinalOutputString() != "carrying on" {
-		t.Errorf("final = %q", res.FinalOutputString())
 	}
 }
 

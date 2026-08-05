@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ const (
 	EntryKindCustom EntryKind = "custom"
 )
 
-// SessionEntry is one record in a session's history.
+// Entry is one record in a session's history.
 //
 // Sessions used to store bare Responses items, which meant everything that was
 // not a Responses item had nowhere to live: an error banner, a compaction
@@ -45,7 +45,7 @@ const (
 // whose display must change later gets an EntryKindUpdate naming it, folded in
 // at projection time. That is what lets a session be shared, forked, and read
 // concurrently without a writer invalidating a reader's view.
-type SessionEntry struct {
+type Entry struct {
 	// ID identifies the entry within its session. Storage assigns it when
 	// empty.
 	ID string `json:"id"`
@@ -82,7 +82,7 @@ type SessionEntry struct {
 	Payload json.RawMessage `json:"payload,omitzero"`
 
 	// Display is the entry's UI projection, when it has one.
-	Display *ItemDisplay `json:"display,omitzero"`
+	Display *Display `json:"display,omitzero"`
 	// Usage is the token usage of the model call this entry belongs to — a call
 	// on THIS conversation. Exactly one entry per response carries it, so
 	// summing over entries counts each request once.
@@ -134,21 +134,21 @@ type UpdatePayload struct {
 	// find nothing, retry — which is what this mechanism exists to remove.
 	TargetCallID string `json:"target_call_id,omitzero"`
 	// Display is merged over the target's display. Only non-zero fields apply.
-	Display ItemDisplay `json:"display"`
+	Display Display `json:"display"`
 }
 
 // NewItemEntry builds an entry holding a Responses item.
-func NewItemEntry(item InputItem, src Source) (SessionEntry, error) {
+func NewItemEntry(item InputItem, src Source) (Entry, error) {
 	raw, err := MarshalInputItem(item)
 	if err != nil {
-		return SessionEntry{}, fmt.Errorf("encoding session item: %w", err)
+		return Entry{}, fmt.Errorf("encoding session item: %w", err)
 	}
-	return SessionEntry{Kind: EntryKindItem, Source: src, Item: raw}, nil
+	return Entry{Kind: EntryKindItem, Source: src, Item: raw}, nil
 }
 
 // NewItemEntries builds item entries for a slice of input items.
-func NewItemEntries(items []InputItem, src Source) ([]SessionEntry, error) {
-	out := make([]SessionEntry, 0, len(items))
+func NewItemEntries(items []InputItem, src Source) ([]Entry, error) {
+	out := make([]Entry, 0, len(items))
 	for i, item := range items {
 		e, err := NewItemEntry(item, src)
 		if err != nil {
@@ -159,34 +159,10 @@ func NewItemEntries(items []InputItem, src Source) ([]SessionEntry, error) {
 	return out, nil
 }
 
-// EntryFromRunItem builds a session entry from a run item, carrying its
-// provenance, display and owning agent.
-func EntryFromRunItem(it *RunItem, responseID string) (SessionEntry, error) {
-	in, err := it.ToInputItem()
-	if err != nil {
-		return SessionEntry{}, err
-	}
-	e, err := NewItemEntry(in, it.Source)
-	if err != nil {
-		return SessionEntry{}, err
-	}
-	if it.Agent != nil {
-		e.AgentName = it.Agent.Name
-	}
-	d := it.Display()
-	e.Display = &d
-	e.ResponseID = responseID
-	if it.NestedUsage != nil {
-		u := it.NestedUsage.Request()
-		e.NestedUsage = &u
-	}
-	return e, nil
-}
-
 // NewAnnotationEntry builds an entry that is shown to people but never sent to
 // the model: an error banner, a cancellation notice, partial output.
-func NewAnnotationEntry(display ItemDisplay, src Source) SessionEntry {
-	return SessionEntry{Kind: EntryKindAnnotation, Source: src, Display: &display}
+func NewAnnotationEntry(display Display, src Source) Entry {
+	return Entry{Kind: EntryKindAnnotation, Source: src, Display: &display}
 }
 
 // LeafPayload is the body of an EntryKindLeaf entry: it moves the session's
@@ -202,18 +178,18 @@ type LeafPayload struct {
 }
 
 // NewLeafEntry builds an entry moving the active branch to targetID.
-func NewLeafEntry(targetID string) (SessionEntry, error) {
+func NewLeafEntry(targetID string) (Entry, error) {
 	raw, err := json.Marshal(LeafPayload{TargetID: targetID})
 	if err != nil {
-		return SessionEntry{}, fmt.Errorf("encoding leaf payload: %w", err)
+		return Entry{}, fmt.Errorf("encoding leaf payload: %w", err)
 	}
-	return SessionEntry{Kind: EntryKindLeaf, Payload: raw}, nil
+	return Entry{Kind: EntryKindLeaf, Payload: raw}, nil
 }
 
 // WithLeafTarget returns the leaf entry re-pointed at targetID, keeping its own
 // identity. It is how a removal moves a branch pointer off an entry that is
 // going, rather than leaving it aimed at something that will not be there.
-func (e SessionEntry) WithLeafTarget(targetID string) (SessionEntry, error) {
+func (e Entry) WithLeafTarget(targetID string) (Entry, error) {
 	if e.Kind != EntryKindLeaf {
 		return e, fmt.Errorf("entry %q is a %s entry, not a leaf move", e.ID, e.Kind)
 	}
@@ -226,7 +202,7 @@ func (e SessionEntry) WithLeafTarget(targetID string) (SessionEntry, error) {
 }
 
 // LeafPayload decodes a leaf entry's payload.
-func (e SessionEntry) LeafPayload() (LeafPayload, error) {
+func (e Entry) LeafPayload() (LeafPayload, error) {
 	if e.Kind != EntryKindLeaf {
 		return LeafPayload{}, fmt.Errorf("entry %q is a %s entry, not a leaf move", e.ID, e.Kind)
 	}
@@ -238,7 +214,7 @@ func (e SessionEntry) LeafPayload() (LeafPayload, error) {
 }
 
 // NewUpdateEntry builds an entry amending an earlier entry's display.
-func NewUpdateEntry(targetID string, display ItemDisplay) (SessionEntry, error) {
+func NewUpdateEntry(targetID string, display Display) (Entry, error) {
 	return newUpdate(UpdatePayload{TargetID: targetID, Display: display})
 }
 
@@ -247,20 +223,20 @@ func NewUpdateEntry(targetID string, display ItemDisplay) (SessionEntry, error) 
 //
 // It is what a long-running thing reports through: the caller knows the call it
 // was started by, and the entry id belongs to storage.
-func NewCallUpdateEntry(callID string, display ItemDisplay) (SessionEntry, error) {
+func NewCallUpdateEntry(callID string, display Display) (Entry, error) {
 	return newUpdate(UpdatePayload{TargetCallID: callID, Display: display})
 }
 
-func newUpdate(p UpdatePayload) (SessionEntry, error) {
+func newUpdate(p UpdatePayload) (Entry, error) {
 	raw, err := json.Marshal(p)
 	if err != nil {
-		return SessionEntry{}, fmt.Errorf("encoding update payload: %w", err)
+		return Entry{}, fmt.Errorf("encoding update payload: %w", err)
 	}
-	return SessionEntry{Kind: EntryKindUpdate, Payload: raw}, nil
+	return Entry{Kind: EntryKindUpdate, Payload: raw}, nil
 }
 
 // InputItem decodes an item entry's Responses item.
-func (e SessionEntry) InputItem() (InputItem, error) {
+func (e Entry) InputItem() (InputItem, error) {
 	if e.Kind != EntryKindItem {
 		return InputItem{}, fmt.Errorf("entry %q is a %s entry, not an item", e.ID, e.Kind)
 	}
@@ -268,7 +244,7 @@ func (e SessionEntry) InputItem() (InputItem, error) {
 }
 
 // UpdatePayload decodes an update entry's payload.
-func (e SessionEntry) UpdatePayload() (UpdatePayload, error) {
+func (e Entry) UpdatePayload() (UpdatePayload, error) {
 	if e.Kind != EntryKindUpdate {
 		return UpdatePayload{}, fmt.Errorf("entry %q is a %s entry, not an update", e.ID, e.Kind)
 	}
@@ -280,7 +256,7 @@ func (e SessionEntry) UpdatePayload() (UpdatePayload, error) {
 }
 
 // merge overlays a non-zero field of other onto d.
-func (d *ItemDisplay) merge(other ItemDisplay) {
+func (d *Display) merge(other Display) {
 	if other.Kind != "" {
 		d.Kind = other.Kind
 	}
@@ -325,11 +301,11 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 // that rewrites only a payload looks like a no-op, and an index resumes onto a
 // history that is not its own.
 //
-// Neither == nor reflect.DeepEqual can stand in for it. SessionEntry holds
+// Neither == nor reflect.DeepEqual can stand in for it. Entry holds
 // maps, so it is not comparable; and DeepEqual on a time.Time distinguishes
 // readings of the same instant by their monotonic clock, so an entry that has
 // round-tripped through storage would never equal the one still in memory.
-func (e SessionEntry) Equal(other SessionEntry) bool {
+func (e Entry) Equal(other Entry) bool {
 	switch {
 	case e.ID != other.ID,
 		e.Seq != other.Seq,
@@ -361,7 +337,7 @@ func equalUsage(a, b *RequestUsage) bool {
 	return *a == *b
 }
 
-func equalDisplay(a, b *ItemDisplay) bool {
+func equalDisplay(a, b *Display) bool {
 	if a == nil || b == nil {
 		return a == b
 	}

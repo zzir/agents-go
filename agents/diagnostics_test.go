@@ -6,6 +6,8 @@ import (
 	"iter"
 	"testing"
 	"time"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // flakyModel fails the first n calls, then answers.
@@ -126,7 +128,7 @@ func TestDiagnostics_ToolPanicIsRecorded(t *testing.T) {
 // answer bad".
 func TestDiagnostics_LandOnTheSessionEntry(t *testing.T) {
 	ctx := context.Background()
-	sess := NewSession(NewInMemoryStorage("test"))
+	sess := session.NewSession(session.NewInMemoryStorage("test"))
 	inner := &flakyModel{failures: 1, answer: modelResp(messageOutput(t, "ok"))}
 	agent := &Agent{Name: "a", ModelImpl: NewRetryModel(inner, RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond})}
 
@@ -135,7 +137,7 @@ func TestDiagnostics_LandOnTheSessionEntry(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := sess.Entries(ctx, Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +153,7 @@ func TestDiagnostics_LandOnTheSessionEntry(t *testing.T) {
 // Each diagnostic belongs to the turn it happened in, not to every turn after.
 func TestDiagnostics_AreNotRepeatedAcrossTurns(t *testing.T) {
 	ctx := context.Background()
-	sess := NewSession(NewInMemoryStorage("test"))
+	sess := session.NewSession(session.NewInMemoryStorage("test"))
 	tool := NewTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		panic("once")
 	})
@@ -165,7 +167,7 @@ func TestDiagnostics_AreNotRepeatedAcrossTurns(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := sess.Entries(ctx, Cursor{})
+	entries, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

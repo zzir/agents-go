@@ -2,8 +2,8 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // TurnSnapshot is everything a turn was resolved to, captured before the model
@@ -243,7 +243,7 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 func injectedInput(agent *Agent, items []InputItem) []*RunItem {
 	out := make([]*RunItem, 0, len(items))
 	for _, item := range items {
-		disp := ItemDisplay{Kind: DisplayMessage, Text: inputItemText(item)}
+		disp := ItemDisplay{Kind: DisplayMessage, Text: session.ItemText(item)}
 		out = append(out, &RunItem{
 			Kind:     ItemInjectedInput,
 			Agent:    agent,
@@ -253,33 +253,4 @@ func injectedInput(agent *Agent, items []InputItem) []*RunItem {
 		})
 	}
 	return out
-}
-
-// inputItemText pulls the readable text out of an input item for its display.
-func inputItemText(item InputItem) string {
-	raw, err := MarshalInputItem(item)
-	if err != nil {
-		return ""
-	}
-	var probe struct {
-		Content json.RawMessage `json:"content"`
-	}
-	if json.Unmarshal(raw, &probe) != nil || len(probe.Content) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(probe.Content, &s) == nil {
-		return s
-	}
-	var parts []struct {
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(probe.Content, &parts) != nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, p := range parts {
-		b.WriteString(p.Text)
-	}
-	return b.String()
 }

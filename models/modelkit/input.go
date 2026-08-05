@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Item is one canonical input item in the neutral form adapters map from.
@@ -101,7 +102,7 @@ type partProbe struct {
 func ParseInput(items []agents.InputItem) ([]Item, error) {
 	out := make([]Item, 0, len(items))
 	for i := range items {
-		raw, err := agents.MarshalInputItem(items[i])
+		raw, err := session.MarshalInputItem(items[i])
 		if err != nil {
 			return nil, fmt.Errorf("modelkit: marshaling input item %d: %w", i, err)
 		}

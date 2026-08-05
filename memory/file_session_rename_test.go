@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // TestFileSession_WriteLinesCleansTempOnRenameFailure ensures the atomic-rewrite
@@ -32,7 +33,7 @@ func TestFileSession_WriteLinesCleansTempOnRenameFailure(t *testing.T) {
 	}
 
 	// ReplaceEntries routes through writeLines; the rename at its tail must fail.
-	if err := agents.ReplaceStorageEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("hello"))...); err == nil {
+	if err := session.ReplaceEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("hello"))...); err == nil {
 		t.Fatal("ReplaceEntries succeeded, but the rename onto a directory should fail")
 	}
 

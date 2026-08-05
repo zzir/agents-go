@@ -16,7 +16,7 @@ package compaction
 import (
 	"encoding/json"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // GroupKind says what a group holds.
@@ -60,7 +60,7 @@ func (k GroupKind) String() string {
 // Group is a run of entries that must be kept or dropped together.
 type Group struct {
 	Kind    GroupKind
-	Entries []agents.SessionEntry
+	Entries []session.Entry
 	// TurnIndex is the conversation turn this group belongs to, counted from
 	// user messages. Nil for system content and for entries outside the
 	// conversation, which belong to no turn.
@@ -83,7 +83,7 @@ type Group struct {
 	ExcludeReason string
 	// Replacement, when set, is what the group projects to instead of its
 	// entries — a folded tool-result summary, for example.
-	Replacement []agents.SessionEntry
+	Replacement []session.Entry
 }
 
 // itemProbe is the minimum needed to classify a stored item without decoding
@@ -100,7 +100,7 @@ type itemProbe struct {
 	Summary json.RawMessage `json:"summary"`
 }
 
-func probe(e agents.SessionEntry) itemProbe {
+func probe(e session.Entry) itemProbe {
 	var p itemProbe
 	if len(e.Item) > 0 {
 		_ = json.Unmarshal(e.Item, &p)
@@ -109,11 +109,11 @@ func probe(e agents.SessionEntry) itemProbe {
 }
 
 // classify reports an entry's role in the conversation.
-func classify(e agents.SessionEntry) (kind GroupKind, isCall, isOutput, isReasoning bool) {
+func classify(e session.Entry) (kind GroupKind, isCall, isOutput, isReasoning bool) {
 	switch e.Kind {
-	case agents.EntryKindCompaction:
+	case session.EntryKindCompaction:
 		return GroupSummary, false, false, false
-	case agents.EntryKindItem:
+	case session.EntryKindItem:
 	default:
 		return GroupOther, false, false, false
 	}

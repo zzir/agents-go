@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/sessions"
 )
 
@@ -19,7 +20,7 @@ func item(text string) agents.InputItem {
 
 func jsonOf(t *testing.T, it agents.InputItem) string {
 	t.Helper()
-	b, err := agents.MarshalInputItem(it)
+	b, err := session.MarshalInputItem(it)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	t.Helper()
 	ctx := context.Background()
 
-	got, err := agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	got, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +41,11 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	in := []agents.InputItem{item("a"), item("b"), item("c")}
-	if err := agents.NewSession(s).AppendItems(ctx, in, agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, in, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	got, err = session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	}
 
 	// Most recent 2, still oldest-first => b, c.
-	got, err = agents.NewSession(s).ContextItems(ctx, agents.Cursor{Limit: -2})
+	got, err = session.NewSession(s).ContextItems(ctx, session.Cursor{Limit: -2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	if jsonOf(t, lastItem) != jsonOf(t, in[2]) {
 		t.Errorf("pop: got %v, want c", lastItem)
 	}
-	got, _ = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	got, _ = session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if len(got) != 2 {
 		t.Errorf("after pop: got %d items, want 2", len(got))
 	}
@@ -89,7 +90,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 	if err := s.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = agents.NewSession(s).ContextItems(ctx, agents.Cursor{})
+	got, _ = session.NewSession(s).ContextItems(ctx, session.Cursor{})
 	if len(got) != 0 {
 		t.Errorf("after clear: got %d items, want 0", len(got))
 	}
@@ -138,7 +139,7 @@ func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
 	for range writers {
 		go func() {
 			for range perWriter {
-				e, err := agents.NewItemEntry(item("x"), agents.Source{})
+				e, err := session.NewItemEntry(item("x"), agents.Source{})
 				if err != nil {
 					errc <- err
 					return
@@ -157,7 +158,7 @@ func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
 		}
 	}
 
-	entries, err := s.Entries(ctx, agents.Cursor{})
+	entries, err := s.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
 		seqs[e.Seq] = true
 	}
 	// A fork shows up as a branch walk that does not cover every entry.
-	if path := agents.PathToLeaf(entries, agents.LeafOf(entries)); len(path) != len(entries) {
+	if path := session.PathToLeaf(entries, session.LeafOf(entries)); len(path) != len(entries) {
 		t.Fatalf("the active branch holds %d of %d entries — concurrent appends forked the session", len(path), len(entries))
 	}
 }
@@ -190,10 +191,10 @@ func TestSQLite_SessionIsolation(t *testing.T) {
 	}
 	b := sessions.New(db, "b")
 
-	if err := agents.NewSession(a).AppendItems(ctx, []agents.InputItem{item("only-a")}, agents.Source{}); err != nil {
+	if err := session.NewSession(a).AppendItems(ctx, []agents.InputItem{item("only-a")}, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := agents.NewSession(b).ContextItems(ctx, agents.Cursor{})
+	got, _ := session.NewSession(b).ContextItems(ctx, session.Cursor{})
 	if len(got) != 0 {
 		t.Errorf("session b leaked %d items from a", len(got))
 	}
@@ -222,9 +223,9 @@ func TestPostgres(t *testing.T) {
 }
 
 // mustEntries wraps plain items as item entries for tests exercising replace.
-func mustEntries(t *testing.T, items []agents.InputItem) []agents.SessionEntry {
+func mustEntries(t *testing.T, items []agents.InputItem) []session.Entry {
 	t.Helper()
-	entries, err := agents.NewItemEntries(items, agents.Source{})
+	entries, err := session.NewItemEntries(items, agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}

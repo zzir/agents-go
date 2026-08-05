@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func userMsg(text string) InputItem {
@@ -24,7 +26,7 @@ func TestNestHandoffHistory_FoldsToSingleMessage(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("got %d items, want 1 folded message", len(out))
 	}
-	text := inputItemText(out[0])
+	text := session.ItemText(out[0])
 	for _, want := range []string{defaultHistoryStartMarker, defaultHistoryEndMarker, "what is my balance?", "let me check"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("summary missing %q\n%s", want, text)
@@ -48,7 +50,7 @@ func TestNestHandoffHistory_FlattensPriorSummary(t *testing.T) {
 	if len(flat) != 4 {
 		t.Fatalf("flattened to %d items, want 4 (summary expanded)", len(flat))
 	}
-	if got := inputItemText(flat[0]); got != "hi" {
+	if got := session.ItemText(flat[0]); got != "hi" {
 		t.Errorf("flat[0] = %q, want hi", got)
 	}
 
@@ -57,7 +59,7 @@ func TestNestHandoffHistory_FlattensPriorSummary(t *testing.T) {
 	if len(refolded) != 1 {
 		t.Fatalf("re-folded to %d items, want 1", len(refolded))
 	}
-	text := inputItemText(refolded[0])
+	text := session.ItemText(refolded[0])
 	if n := strings.Count(text, defaultHistoryStartMarker); n != 1 {
 		t.Errorf("start marker appears %d times, want 1 (no summary-of-summary)", n)
 	}
@@ -83,7 +85,7 @@ func TestNestHandoffHistory_CustomMapper(t *testing.T) {
 	if called != 1 {
 		t.Errorf("mapper called %d times, want 1", called)
 	}
-	if len(out) != 1 || inputItemText(out[0]) != "SUMMARY" {
+	if len(out) != 1 || session.ItemText(out[0]) != "SUMMARY" {
 		t.Errorf("output = %v, want one SUMMARY message", out)
 	}
 }
@@ -94,8 +96,8 @@ func TestNestHandoffHistory_EmptyHistory(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("got %d items, want 1", len(out))
 	}
-	if !strings.Contains(inputItemText(out[0]), "no previous turns recorded") {
-		t.Errorf("empty-history summary missing placeholder:\n%s", inputItemText(out[0]))
+	if !strings.Contains(session.ItemText(out[0]), "no previous turns recorded") {
+		t.Errorf("empty-history summary missing placeholder:\n%s", session.ItemText(out[0]))
 	}
 }
 

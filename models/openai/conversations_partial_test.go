@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // TestConversationsSession_AddItemsPartialFailureReported verifies that when a
@@ -63,7 +64,7 @@ func TestConversationsSession_AddItemsPartialFailureReported(t *testing.T) {
 		items = append(items, agents.InputItemsFromText("m"+strconv.Itoa(i))...)
 	}
 
-	err := agents.NewSession(s).AppendItems(ctx, items, agents.Source{})
+	err := session.NewSession(s).AppendItems(ctx, items, agents.Source{})
 	if err == nil {
 		t.Fatal("AddItems returned nil, want an error when a later batch fails")
 	}
@@ -98,7 +99,7 @@ func TestConversationsSession_AddItemsFirstBatchFailureIsPlain(t *testing.T) {
 		option.WithMaxRetries(0),
 	)
 
-	err := agents.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("only"), agents.Source{})
+	err := session.NewSession(s).AppendItems(ctx, agents.InputItemsFromText("only"), agents.Source{})
 	if err == nil {
 		t.Fatal("AddItems returned nil, want an error")
 	}

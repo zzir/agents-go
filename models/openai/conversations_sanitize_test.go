@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 func mustItem(t *testing.T, raw string) agents.InputItem {
 	t.Helper()
-	it, err := agents.UnmarshalInputItem([]byte(raw))
+	it, err := session.UnmarshalInputItem([]byte(raw))
 	if err != nil {
 		t.Fatalf("unmarshal %s: %v", raw, err)
 	}
@@ -62,7 +63,7 @@ func TestConversationsSession_AddSanitizes(t *testing.T) {
 		mustItem(t, `{"type":"reasoning","summary":[]}`),
 		mustItem(t, `{"role":"user","content":"hello"}`),
 	}
-	if err := agents.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
+	if err := session.NewSession(s).AppendItems(ctx, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()

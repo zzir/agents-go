@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // A sidecar that cannot be read must stop a delete, not wave it through. "team
@@ -19,7 +19,7 @@ func TestDeleteRefusesWhenTheSidecarCannotBeRead(t *testing.T) {
 	repo := newRepo(t, dir)
 	ctx := context.Background()
 
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "team a"}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "team a"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// Corrupt the sidecar in place: the file is still there and still owned by
@@ -60,16 +60,16 @@ func TestCreateDoesNotRollBackSomebodyElsesSidecar(t *testing.T) {
 	repo := newRepo(t, dir)
 	ctx := context.Background()
 
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "taken", Title: "the original"}); err != nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "taken", Title: "the original"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
 	// Same id, and a colliding one: both fail at the O_EXCL open, before any
 	// claim of their own.
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "taken"}); err == nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "taken"}); err == nil {
 		t.Fatal("creating a session twice succeeded")
 	}
-	if _, err := repo.Create(ctx, agents.CreateOptions{ID: "taken "}); err == nil {
+	if _, err := repo.Create(ctx, session.CreateOptions{ID: "taken "}); err == nil {
 		t.Fatal("creating a session under a colliding name succeeded")
 	}
 
@@ -91,13 +91,13 @@ func TestCreateKeepsItsSidecarOnSuccess(t *testing.T) {
 	dir := t.TempDir()
 	repo := newRepo(t, dir)
 
-	if _, err := repo.Create(context.Background(), agents.CreateOptions{ID: "kept"}); err != nil {
+	if _, err := repo.Create(context.Background(), session.CreateOptions{ID: "kept"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, sanitizeSessionID("kept")+".meta.json")); err != nil {
 		t.Fatalf("a successful create left no sidecar: %v", err)
 	}
-	list, err := repo.List(context.Background(), agents.ListOptions{})
+	list, err := repo.List(context.Background(), session.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

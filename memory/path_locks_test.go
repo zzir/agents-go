@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // TestPathLocks_ConcurrentAddItemsSamePath opens one FileSession per goroutine
@@ -27,7 +28,7 @@ func TestPathLocks_ConcurrentAddItemsSamePath(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if err := agents.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText(fmt.Sprintf("msg-%d", i)), agents.Source{}); err != nil {
+			if err := session.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText(fmt.Sprintf("msg-%d", i)), agents.Source{}); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -38,7 +39,7 @@ func TestPathLocks_ConcurrentAddItemsSamePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{})
+	items, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,11 +69,11 @@ func TestPathLocks_TableShrinksToZero(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if err := agents.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
+			if err := session.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 				t.Error(err)
 				return
 			}
-			if _, err := agents.NewSession(sess).ContextItems(ctx, agents.Cursor{}); err != nil {
+			if _, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{}); err != nil {
 				t.Error(err)
 				return
 			}

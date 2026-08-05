@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -33,12 +34,12 @@ func TestRunStreamed_NoAPIKeyPersistsPromptAndError(t *testing.T) {
 	}
 
 	// The prompt survives as a replayable user item...
-	if got := countDisplays(t, db, sess.ID, agents.EntryKindItem, ""); got != 1 {
+	if got := countDisplays(t, db, sess.ID, session.EntryKindItem, ""); got != 1 {
 		t.Errorf("user item entries = %d, want 1 (prompt must survive the config failure)", got)
 	}
 	// ...alongside an error annotation, so the client's reload renders the failed
 	// turn instead of an empty session.
-	if got := countDisplays(t, db, sess.ID, agents.EntryKindAnnotation, agents.DisplayError); got != 1 {
+	if got := countDisplays(t, db, sess.ID, session.EntryKindAnnotation, agents.DisplayError); got != 1 {
 		t.Errorf("error annotation entries = %d, want 1", got)
 	}
 }

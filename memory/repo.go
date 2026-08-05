@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Repo is a directory of JSONL sessions: one file per session, plus a sidecar
@@ -37,7 +37,7 @@ func NewRepo(dir string) (*Repo, error) {
 
 type sidecar struct {
 	ID string `json:"id"`
-	// Gen is this session's generation; see agents.SessionRef. Empty in
+	// Gen is this session's generation; see session.Ref. Empty in
 	// sidecars written before the field existed, which is the direct scope's
 	// value and also where those sessions' entries actually are.
 	Gen       string    `json:"gen,omitempty"`
@@ -53,7 +53,7 @@ type sidecar struct {
 }
 
 // ref is what this sidecar's session is addressed by.
-func (m sidecar) ref() agents.SessionRef { return agents.SessionRef{ID: m.ID, Gen: m.Gen} }
+func (m sidecar) ref() session.Ref { return session.Ref{ID: m.ID, Gen: m.Gen} }
 
 func (r *Repo) sidecarPath(id string) string {
 	return filepath.Join(r.dir, sanitizeSessionID(id)+".meta.json")
@@ -66,7 +66,7 @@ func (r *Repo) sidecarPath(id string) string {
 // direct scope — an empty generation — is <id>.jsonl, which is exactly what
 // NewFileSession(dir, id) opens, and is also where a session stored before
 // generations existed already is.
-func (r *Repo) entriesPath(ref agents.SessionRef) string {
+func (r *Repo) entriesPath(ref session.Ref) string {
 	name := sanitizeSessionID(ref.ID)
 	if !ref.IsDirect() {
 		name += "-" + ref.Gen
@@ -75,12 +75,12 @@ func (r *Repo) entriesPath(ref agents.SessionRef) string {
 }
 
 // session builds the storage for a ref, decorated with the sidecar's metadata.
-func (r *Repo) session(meta sidecar) (*agents.Session, error) {
+func (r *Repo) session(meta sidecar) (*session.Session, error) {
 	fs, err := OpenFileSession(r.entriesPath(meta.ref()))
 	if err != nil {
 		return nil, err
 	}
-	return agents.NewSession(&repoStorage{FileSession: fs, repo: r, meta: meta}), nil
+	return session.NewSession(&repoStorage{FileSession: fs, repo: r, meta: meta}), nil
 }
 
 // repoStorage is a repo session's storage: the entries file plus the sidecar.
@@ -108,10 +108,10 @@ type repoStorage struct {
 }
 
 var (
-	_ agents.SessionStorage = (*repoStorage)(nil)
-	_ agents.AtomicReplacer = (*repoStorage)(nil)
-	_ agents.EntryPopper    = (*repoStorage)(nil)
-	_ agents.ItemPopper     = (*repoStorage)(nil)
+	_ session.Storage        = (*repoStorage)(nil)
+	_ session.AtomicReplacer = (*repoStorage)(nil)
+	_ session.EntryPopper    = (*repoStorage)(nil)
+	_ session.ItemPopper     = (*repoStorage)(nil)
 )
 
 // lockKey names the per-session repo lock. Every mutation through a
@@ -135,12 +135,12 @@ func (s *repoStorage) alive() error {
 	cur, err := s.repo.readSidecar(s.meta.ID)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("session %q: %w", s.meta.ID, agents.ErrSessionNotFound)
+			return fmt.Errorf("session %q: %w", s.meta.ID, session.ErrNotFound)
 		}
 		return fmt.Errorf("session %q: cannot verify it still exists: %w", s.meta.ID, err)
 	}
 	if cur.ID != s.meta.ID || cur.Gen != s.meta.Gen {
-		return fmt.Errorf("session %q: %w (the name now belongs to another session)", s.meta.ID, agents.ErrSessionNotFound)
+		return fmt.Errorf("session %q: %w (the name now belongs to another session)", s.meta.ID, session.ErrNotFound)
 	}
 	return nil
 }
@@ -150,7 +150,7 @@ func (s *repoStorage) alive() error {
 // still describes this handle's generation — after a delete-and-recreate it
 // describes somebody else, and the metadata bound at build time answers
 // instead.
-func (s *repoStorage) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+func (s *repoStorage) Metadata(ctx context.Context) (session.Metadata, error) {
 	md, err := s.FileSession.Metadata(ctx)
 	if err != nil {
 		return md, err
@@ -187,7 +187,7 @@ func (s *repoStorage) touch() {
 	_ = s.repo.writeSidecar(cur)
 }
 
-func (s *repoStorage) Append(ctx context.Context, entries ...agents.SessionEntry) error {
+func (s *repoStorage) Append(ctx context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -216,7 +216,7 @@ func (s *repoStorage) Clear(ctx context.Context) error {
 	return nil
 }
 
-func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...agents.SessionEntry) error {
+func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	release := acquire(s.repo.lockKey(s.meta.ID))
 	defer release()
 	if err := s.alive(); err != nil {
@@ -229,7 +229,7 @@ func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...agents.Sess
 	return nil
 }
 
-func (s *repoStorage) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
+func (s *repoStorage) PopEntry(ctx context.Context) (*session.Entry, error) {
 	release := acquire(s.repo.lockKey(s.meta.ID))
 	defer release()
 	if err := s.alive(); err != nil {
@@ -242,7 +242,7 @@ func (s *repoStorage) PopEntry(ctx context.Context) (*agents.SessionEntry, error
 	return e, err
 }
 
-func (s *repoStorage) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
+func (s *repoStorage) PopItem(ctx context.Context) (*session.Entry, error) {
 	release := acquire(s.repo.lockKey(s.meta.ID))
 	defer release()
 	if err := s.alive(); err != nil {
@@ -256,7 +256,7 @@ func (s *repoStorage) PopItem(ctx context.Context) (*agents.SessionEntry, error)
 }
 
 // Create records a new session and returns it.
-func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Session, error) {
+func (r *Repo) Create(_ context.Context, opts session.CreateOptions) (*session.Session, error) {
 	id := opts.ID
 	if id == "" {
 		// A random suffix beside the timestamp: two id-less Creates in one
@@ -277,7 +277,7 @@ func (r *Repo) Create(_ context.Context, opts agents.CreateOptions) (*agents.Ses
 	}
 	// A generation of its own, so this session's entries are a file no handle
 	// to a previous one of the same name can reach.
-	gen, err := agents.NewGeneration()
+	gen, err := session.NewGeneration()
 	if err != nil {
 		return nil, err
 	}
@@ -387,11 +387,11 @@ func (r *Repo) readSidecar(id string) (sidecar, error) {
 }
 
 // Open returns an existing session, or an error when there is none.
-func (r *Repo) Open(_ context.Context, id string) (*agents.Session, error) {
+func (r *Repo) Open(_ context.Context, id string) (*session.Session, error) {
 	meta, err := r.readSidecar(id)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("open session %q: %w", id, agents.ErrSessionNotFound)
+			return nil, fmt.Errorf("open session %q: %w", id, session.ErrNotFound)
 		}
 		return nil, err
 	}
@@ -399,18 +399,18 @@ func (r *Repo) Open(_ context.Context, id string) (*agents.Session, error) {
 	// the same name. Opening it would silently serve somebody else's history.
 	if meta.ID != id {
 		return nil, fmt.Errorf("open session %q: %w (the name maps to session %q)",
-			id, agents.ErrSessionNotFound, meta.ID)
+			id, session.ErrNotFound, meta.ID)
 	}
 	return r.session(meta)
 }
 
 // List returns session metadata, newest first.
-func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.SessionMetadata, error) {
+func (r *Repo) List(_ context.Context, opts session.ListOptions) ([]session.Metadata, error) {
 	matches, err := filepath.Glob(filepath.Join(r.dir, "*.meta.json"))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]agents.SessionMetadata, 0, len(matches))
+	out := make([]session.Metadata, 0, len(matches))
 	for _, path := range matches {
 		raw, rerr := os.ReadFile(path)
 		if rerr != nil {
@@ -425,7 +425,7 @@ func (r *Repo) List(_ context.Context, opts agents.ListOptions) ([]agents.Sessio
 		if meta.Hidden && !opts.IncludeHidden {
 			continue
 		}
-		md := agents.SessionMetadata{
+		md := session.Metadata{
 			ID: meta.ID, Title: meta.Title, Hidden: meta.Hidden, CreatedAt: meta.CreatedAt,
 		}
 		// Last change: the entries file's mtime or the sidecar's stamp,
@@ -488,10 +488,10 @@ func (r *Repo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func sortByUpdatedDesc(md []agents.SessionMetadata) {
-	slices.SortStableFunc(md, func(a, b agents.SessionMetadata) int {
+func sortByUpdatedDesc(md []session.Metadata) {
+	slices.SortStableFunc(md, func(a, b session.Metadata) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
 }
 
-var _ agents.SessionRepo = (*Repo)(nil)
+var _ session.Repo = (*Repo)(nil)

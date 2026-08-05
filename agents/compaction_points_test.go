@@ -4,16 +4,18 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // recordingCompactor drops the oldest n entries and records every pass.
 type recordingCompactor struct {
 	drop  int
 	err   error
-	calls [][]SessionEntry
+	calls [][]session.Entry
 }
 
-func (c *recordingCompactor) Compact(_ context.Context, entries []SessionEntry) ([]SessionEntry, error) {
+func (c *recordingCompactor) Compact(_ context.Context, entries []session.Entry) ([]session.Entry, error) {
 	c.calls = append(c.calls, entries)
 	if c.err != nil {
 		return nil, c.err
@@ -24,21 +26,21 @@ func (c *recordingCompactor) Compact(_ context.Context, entries []SessionEntry) 
 	return entries[c.drop:], nil
 }
 
-func seededSession(t *testing.T, texts ...string) *Session {
+func seededSession(t *testing.T, texts ...string) *session.Session {
 	t.Helper()
-	st := NewInMemoryStorage("test")
+	st := session.NewInMemoryStorage("test")
 	items := make([]InputItem, 0, len(texts))
 	for _, text := range texts {
 		items = append(items, InputItemsFromText(text)...)
 	}
-	entries, err := NewItemEntries(items, Source{Type: SourceUser})
+	entries, err := session.NewItemEntries(items, Source{Type: SourceUser})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Append(context.Background(), entries...); err != nil {
 		t.Fatal(err)
 	}
-	return NewSession(st)
+	return session.NewSession(st)
 }
 
 // The BeforeRun pass shapes what the very first model call sees — the point of
@@ -195,7 +197,7 @@ type checkpointingCompactor struct {
 	dropped []string
 }
 
-func (c *checkpointingCompactor) Compact(_ context.Context, entries []SessionEntry) ([]SessionEntry, error) {
+func (c *checkpointingCompactor) Compact(_ context.Context, entries []session.Entry) ([]session.Entry, error) {
 	if len(entries) < 2 {
 		return entries, nil
 	}
@@ -203,11 +205,11 @@ func (c *checkpointingCompactor) Compact(_ context.Context, entries []SessionEnt
 	return entries[1:], nil
 }
 
-func (c *checkpointingCompactor) Checkpoint(_ []SessionEntry) (SessionEntry, bool, error) {
+func (c *checkpointingCompactor) Checkpoint(_ []session.Entry) (session.Entry, bool, error) {
 	if len(c.dropped) == 0 {
-		return SessionEntry{}, false, nil
+		return session.Entry{}, false, nil
 	}
-	e, err := NewCompactionEntry(CompactionPayload{
+	e, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:     "earlier discussion",
 		ExcludedIDs: c.dropped,
 	})
@@ -229,13 +231,13 @@ func TestCompaction_AfterRunWritesACheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	all, err := sess.Entries(ctx, Cursor{})
+	all, err := sess.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var checkpoint *SessionEntry
+	var checkpoint *session.Entry
 	for i := range all {
-		if all[i].Kind == EntryKindCompaction {
+		if all[i].Kind == session.EntryKindCompaction {
 			checkpoint = &all[i]
 		}
 	}
@@ -265,13 +267,13 @@ func TestCompaction_AfterRunWritesACheckpoint(t *testing.T) {
 	// The next run's view drops what the checkpoint folded and keeps the
 	// checkpoint, whose summary the projection renders in the folded
 	// history's place.
-	ctxEntries, err := sess.ContextEntries(ctx, Cursor{})
+	ctxEntries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sawCheckpoint := false
 	for _, e := range ctxEntries {
-		if e.Kind == EntryKindCompaction {
+		if e.Kind == session.EntryKindCompaction {
 			sawCheckpoint = true
 		}
 		for _, id := range p.ExcludedIDs {
@@ -290,32 +292,32 @@ func TestCompaction_AfterRunWritesACheckpoint(t *testing.T) {
 // silently — the save point would rebuild nothing and the after-run
 // checkpoint would never be written.
 func TestCompactionDetectsSameLengthRewrite(t *testing.T) {
-	before := []SessionEntry{
-		{ID: "e1", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"the long original"}`)},
-		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	before := []session.Entry{
+		{ID: "e1", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"the long original"}`)},
+		{ID: "e2", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
 	}
 
-	same := []SessionEntry{
-		{ID: "e1", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"the long original"}`)},
-		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	same := []session.Entry{
+		{ID: "e1", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"the long original"}`)},
+		{ID: "e2", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
 	}
 	if changedEntries(before, same) {
 		t.Error("identical entries reported as changed; every turn would rebuild")
 	}
 
 	// Same count, different content: a summary standing in for an entry.
-	rewritten := []SessionEntry{
-		{ID: "c1", Kind: EntryKindItem, Item: []byte(`{"role":"system","content":"[summary] the long original"}`)},
-		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	rewritten := []session.Entry{
+		{ID: "c1", Kind: session.EntryKindItem, Item: []byte(`{"role":"system","content":"[summary] the long original"}`)},
+		{ID: "e2", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
 	}
 	if !changedEntries(before, rewritten) {
 		t.Error("a same-length rewrite was reported as no change; the pass would be discarded")
 	}
 
 	// Same ids, different content — the case an id-only check would miss.
-	edited := []SessionEntry{
-		{ID: "e1", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"shortened"}`)},
-		{ID: "e2", Kind: EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
+	edited := []session.Entry{
+		{ID: "e1", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"shortened"}`)},
+		{ID: "e2", Kind: session.EntryKindItem, Item: []byte(`{"role":"user","content":"and another"}`)},
 	}
 	if !changedEntries(before, edited) {
 		t.Error("an in-place edit was reported as no change")

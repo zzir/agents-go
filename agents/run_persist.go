@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -36,7 +37,7 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 	if end <= r.persistedSessionItems {
 		return nil
 	}
-	toSave := make([]SessionEntry, 0, end-r.persistedSessionItems)
+	toSave := make([]session.Entry, 0, end-r.persistedSessionItems)
 	for _, it := range r.sessionItems[r.persistedSessionItems:end] {
 		// Provenance and display ride along, so a reader gets the same timeline
 		// the run produced instead of re-deriving it from the wire item.
@@ -141,11 +142,11 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	if endsWithLocalItem(r.sessionItems) {
 		return
 	}
-	if cs, ok := r.opts.Conversation.Session.Storage().(CompactionAware); ok {
+	if cs, ok := r.opts.Conversation.Session.Storage().(session.CompactionAware); ok {
 		// The span starts lazily — only when the session actually compacts —
 		// so no-op passes don't clutter the trace.
 		var cspan *tracing.SpanHandle
-		cerr := cs.RunCompaction(ctx, CompactionArgs{
+		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
 			ResponseID: r.lastResponseID,
 			Store:      r.lastStore,
 			StartSpan: func() *tracing.SpanHandle {

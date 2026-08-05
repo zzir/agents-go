@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func appendText(t *testing.T, sess *Session, texts ...string) []SessionEntry {
+func appendText(t *testing.T, sess *Session, texts ...string) []Entry {
 	t.Helper()
 	ctx := context.Background()
 	for _, text := range texts {
-		if err := sess.AppendItems(ctx, InputItemsFromText(text), Source{}); err != nil {
+		if err := sess.AppendItems(ctx, userTextItems(text), Source{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -176,7 +176,7 @@ func TestFork_ExtractsTheActiveBranch(t *testing.T) {
 	appendText(t, src, "kept")
 
 	dst := NewInMemorySession()
-	if err := ForkSession(ctx, src, dst); err != nil {
+	if err := Fork(ctx, src, dst); err != nil {
 		t.Fatal(err)
 	}
 
@@ -214,9 +214,9 @@ func TestTree_LinklessHistoryKeepsItsPrefix(t *testing.T) {
 	st := NewInMemoryStorage("legacy")
 
 	// Three entries as a pre-branching store wrote them: ids, no parents.
-	legacy := make([]SessionEntry, 0, 3)
+	legacy := make([]Entry, 0, 3)
 	for _, text := range []string{"one", "two", "three"} {
-		e, err := NewItemEntry(InputItemsFromText(text)[0], Source{})
+		e, err := NewItemEntry(userTextItems(text)[0], Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,12 +240,12 @@ func TestTree_LinklessHistoryKeepsItsPrefix(t *testing.T) {
 	}
 
 	// The first append after the upgrade links to the last old entry.
-	next, err := NewItemEntry(InputItemsFromText("four")[0], Source{})
+	next, err := NewItemEntry(userTextItems("four")[0], Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	next.ID, next.Seq, next.ParentID = "new-four", 4, stored[2].ID
-	mixed := append(append([]SessionEntry{}, stored...), next)
+	mixed := append(append([]Entry{}, stored...), next)
 
 	got := ActiveBranchOf(mixed)
 	if len(got) != 4 {

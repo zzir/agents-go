@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // entryRow is one session entry.
@@ -26,9 +27,9 @@ type entryRow struct {
 	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
 	SessionID string `bun:"session_id,notnull"  json:"session_id"`
 	// Gen is the session generation these entries belong to; see
-	// agents.SessionRef. Empty is the direct scope, not a wildcard.
+	// session.Ref. Empty is the direct scope, not a wildcard.
 	Gen string `bun:"gen,notnull" json:"-"`
-	// Seq is the entry's cursor position, allocated by agents.PrepareAppend.
+	// Seq is the entry's cursor position, allocated by session.PrepareAppend.
 	// Not the row id: that one is unique per table and assigned on insert,
 	// while Seq is the session-local position a Cursor pages on.
 	Seq      int64  `bun:"seq,notnull" json:"-"`
@@ -36,7 +37,7 @@ type entryRow struct {
 	ParentID string `bun:"parent_id"           json:"parent_id,omitempty"`
 	Kind     string `bun:"kind,notnull"        json:"kind"`
 	RunID    string `bun:"run_id"              json:"run_id,omitempty"`
-	// Entry is the JSON of an agents.SessionEntry.
+	// Entry is the JSON of an session.Entry.
 	Entry string `bun:"entry,type:text,notnull" json:"-"`
 	// SourceModel records which model produced the entry, so replaying the
 	// session against a different one can adapt or drop what that one would
@@ -50,12 +51,12 @@ type entryRow struct {
 
 // EntryStore persists a server session's entries and serves them to the SDK.
 //
-// It implements agents.SessionStorage directly rather than adapting another
+// It implements session.Storage directly rather than adapting another
 // shape, which is what removed the losses: an entry goes in as the runner
 // produced it and comes back the same, display and provenance included.
 type EntryStore struct {
 	db    *bun.DB
-	ref   agents.SessionRef
+	ref   session.Ref
 	runID string
 	// model is what this run targets. Entries produced by a different model are
 	// adapted on the way out; see load.
@@ -66,7 +67,7 @@ type EntryStore struct {
 // session row it has already read, so the generation is never resolved a second
 // time — between two lookups an id can be deleted and recreated, and the handle
 // would then be bound to the replacement.
-func NewEntryStoreFor(db *bun.DB, ref agents.SessionRef) *EntryStore {
+func NewEntryStoreFor(db *bun.DB, ref session.Ref) *EntryStore {
 	return &EntryStore{db: db, ref: ref}
 }
 
@@ -79,7 +80,7 @@ func NewSharedEntryStore(db *bun.DB) *EntryStore {
 
 // RefFor resolves the generation currently answering to a session id, for a
 // caller that holds a shared handle rather than the database.
-func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (agents.SessionRef, error) {
+func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (session.Ref, error) {
 	return RefFor(ctx, s.db, sessionID)
 }
 
@@ -87,7 +88,7 @@ func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (agents.Sessi
 // model. It takes a ref, so there is no id-shaped hole for the generation to
 // fall through: four methods used to build one of these by hand and three of
 // them lost it.
-func (s *EntryStore) forRef(ref agents.SessionRef) *EntryStore {
+func (s *EntryStore) forRef(ref session.Ref) *EntryStore {
 	return &EntryStore{db: s.db, ref: ref, runID: s.runID, model: s.model}
 }
 
@@ -117,11 +118,11 @@ func (s *EntryStore) RunHasAnnotation(ctx context.Context, runID, kind string) (
 		return false, fmt.Errorf("scanning run %s entries: %w", runID, err)
 	}
 	for i := range rows {
-		var e agents.SessionEntry
+		var e session.Entry
 		if json.Unmarshal([]byte(rows[i].Entry), &e) != nil {
 			continue
 		}
-		if e.Kind == agents.EntryKindAnnotation && e.Display != nil && e.Display.Kind == kind {
+		if e.Kind == session.EntryKindAnnotation && e.Display != nil && e.Display.Kind == kind {
 			return true, nil
 		}
 	}
@@ -133,17 +134,17 @@ func (s *EntryStore) RunHasAnnotation(ctx context.Context, runID, kind string) (
 // Only "there is no such session" is absence; a cancelled context or an
 // unreachable database is a failure to look, and reading the second as the
 // first silently moves a handle into the direct scope.
-func RefFor(ctx context.Context, db bun.IDB, sessionID string) (agents.SessionRef, error) {
+func RefFor(ctx context.Context, db bun.IDB, sessionID string) (session.Ref, error) {
 	var row Session
 	err := db.NewSelect().Model(&row).Column("gen").
 		Where("id = ?", sessionID).Limit(1).Scan(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return agents.SessionRef{}, fmt.Errorf("session %s: %w", sessionID, ErrNotFound)
+		return session.Ref{}, fmt.Errorf("session %s: %w", sessionID, ErrNotFound)
 	case err != nil:
-		return agents.SessionRef{}, fmt.Errorf("resolving session %s: %w", sessionID, err)
+		return session.Ref{}, fmt.Errorf("resolving session %s: %w", sessionID, err)
 	}
-	return agents.SessionRef{ID: sessionID, Gen: row.Gen}, nil
+	return session.Ref{ID: sessionID, Gen: row.Gen}, nil
 }
 
 // SetRunID stamps subsequent writes with the run that produced them, so the UI
@@ -154,14 +155,14 @@ func (s *EntryStore) SetRunID(runID string) { s.runID = runID }
 // one is adapted rather than replayed verbatim into a backend that rejects it.
 func (s *EntryStore) SetModel(model string) { s.model = model }
 
-// Append implements agents.SessionStorage.
+// Append implements session.Storage.
 //
 // The append point is read inside the same transaction as the insert: reading
 // the tip and writing against it are one step (spec §2.5e2), or two concurrent
 // appends both read the old tip and silently fork the branch. The pool is
 // capped at one connection (see Open), so the transaction owns the database
 // for its whole extent and a competing write cannot interleave.
-func (s *EntryStore) Append(ctx context.Context, entries ...agents.SessionEntry) error {
+func (s *EntryStore) Append(ctx context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -174,7 +175,7 @@ func (s *EntryStore) Append(ctx context.Context, entries ...agents.SessionEntry)
 // part of a larger change — compaction marking rows folded and writing its
 // checkpoint — can do both in one transaction instead of leaving a window where
 // the session has one without the other.
-func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents.SessionEntry) error {
+func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -182,7 +183,7 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...agents
 	if err != nil {
 		return err
 	}
-	prepared := agents.PrepareAppend(entries, at)
+	prepared := session.PrepareAppend(entries, at)
 
 	rows := make([]entryRow, 0, len(prepared))
 	for i := range prepared {
@@ -236,7 +237,7 @@ func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 	// delete can remove (spec §2.5e2: writing and proving the destination
 	// still exists are one step).
 	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
-		return fmt.Errorf("session %s: %w", s.ref.ID, agents.ErrSessionNotFound)
+		return fmt.Errorf("session %s: %w", s.ref.ID, session.ErrNotFound)
 	}
 	return nil
 }
@@ -247,29 +248,29 @@ func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 // The high-water mark is a MAX over every row, compacted ones included — a
 // folded-away entry still consumed its position, and a number this session has
 // handed out is never handed out again.
-func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (agents.AppendPoint, error) {
+func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
 	entries, err := s.loadIn(ctx, db, false, false)
 	if err != nil {
-		return agents.AppendPoint{}, err
+		return session.AppendPoint{}, err
 	}
 	var lastSeq int64
 	if err := db.NewSelect().Model((*entryRow)(nil)).
 		ColumnExpr("COALESCE(MAX(seq), 0)").
 		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
 		Scan(ctx, &lastSeq); err != nil {
-		return agents.AppendPoint{}, fmt.Errorf("reading the last sequence number: %w", err)
+		return session.AppendPoint{}, fmt.Errorf("reading the last sequence number: %w", err)
 	}
-	return agents.AppendPoint{Leaf: agents.LeafOf(entries), LastSeq: lastSeq}, nil
+	return session.AppendPoint{Leaf: session.LeafOf(entries), LastSeq: lastSeq}, nil
 }
 
 // load reads the session's entries in append order. Excluding compacted rows is
 // the read the RUN uses; including them is what the UI uses to show what was
 // folded away.
-func (s *EntryStore) load(ctx context.Context, includeCompacted bool) ([]agents.SessionEntry, error) {
+func (s *EntryStore) load(ctx context.Context, includeCompacted bool) ([]session.Entry, error) {
 	return s.loadIn(ctx, s.db, includeCompacted, false)
 }
 
-func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, strict bool) ([]agents.SessionEntry, error) {
+func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, strict bool) ([]session.Entry, error) {
 	var rows []entryRow
 	q := s.scoped(db.NewSelect().Model(&rows)).
 		OrderExpr("id ASC")
@@ -294,9 +295,9 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 		}
 	}
 
-	out := make([]agents.SessionEntry, 0, len(rows))
+	out := make([]session.Entry, 0, len(rows))
 	for i := range rows {
-		var e agents.SessionEntry
+		var e session.Entry
 		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
 			if strict {
 				// A REMOVAL cannot be decided on a view with a hole in it: the
@@ -314,7 +315,7 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 		// An item produced by another model may be one this backend rejects —
 		// a reasoning block above all, whose shape and ids are provider
 		// specific. Adapt it, or drop it when it cannot be adapted.
-		if e.Kind == agents.EntryKindItem && s.model != "" &&
+		if e.Kind == session.EntryKindItem && s.model != "" &&
 			rows[i].SourceModel != "" && rows[i].SourceModel != s.model {
 			adapted := adaptForeignItemJSON(e.Item)
 			if adapted == nil {
@@ -329,22 +330,22 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 	return out, nil
 }
 
-// Entries implements agents.SessionStorage.
-func (s *EntryStore) Entries(ctx context.Context, cur agents.Cursor) ([]agents.SessionEntry, error) {
+// Entries implements session.Storage.
+func (s *EntryStore) Entries(ctx context.Context, cur session.Cursor) ([]session.Entry, error) {
 	entries, err := s.load(ctx, false)
 	if err != nil {
 		return nil, err
 	}
-	return agents.PageEntries(entries, cur), nil
+	return session.PageEntries(entries, cur), nil
 }
 
-// Entry implements agents.SessionStorage.
+// Entry implements session.Storage.
 //
 // Only "no such entry" is absence; a cancelled context or an unreachable
 // database is a failure to look, and reaches the caller as one (spec §2.5e2,
 // "absence"). Folding the two into nil once made "does this entry exist"
 // checks silently pass over a database that was down.
-func (s *EntryStore) Entry(ctx context.Context, id string) (*agents.SessionEntry, error) {
+func (s *EntryStore) Entry(ctx context.Context, id string) (*session.Entry, error) {
 	row := new(entryRow)
 	err := s.scoped(s.db.NewSelect().Model(row)).
 		Where("entry_id = ?", id).
@@ -355,23 +356,23 @@ func (s *EntryStore) Entry(ctx context.Context, id string) (*agents.SessionEntry
 	case err != nil:
 		return nil, fmt.Errorf("loading entry %q: %w", id, err)
 	}
-	var e agents.SessionEntry
+	var e session.Entry
 	if err := json.Unmarshal([]byte(row.Entry), &e); err != nil {
 		return nil, fmt.Errorf("decoding entry %q: %w", id, err)
 	}
 	return &e, nil
 }
 
-// Metadata implements agents.SessionStorage. It merges the session row, so a
+// Metadata implements session.Storage. It merges the session row, so a
 // handle and the listing give the same answer about the same session (spec
 // §2.5e2, "the change record") — this was the one backend still reporting only
 // a count while its own List returned title, hidden and both timestamps.
-func (s *EntryStore) Metadata(ctx context.Context) (agents.SessionMetadata, error) {
+func (s *EntryStore) Metadata(ctx context.Context) (session.Metadata, error) {
 	n, err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).Count(ctx)
 	if err != nil {
-		return agents.SessionMetadata{}, err
+		return session.Metadata{}, err
 	}
-	md := agents.SessionMetadata{ID: s.ref.ID, EntryCount: n}
+	md := session.Metadata{ID: s.ref.ID, EntryCount: n}
 	var row Session
 	err = s.db.NewSelect().Model(&row).
 		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Limit(1).Scan(ctx)
@@ -388,7 +389,7 @@ func (s *EntryStore) Metadata(ctx context.Context) (agents.SessionMetadata, erro
 	return md, nil
 }
 
-// Clear implements agents.SessionStorage. Clearing is a change like any other,
+// Clear implements session.Storage. Clearing is a change like any other,
 // so it moves the session in a listing.
 func (s *EntryStore) Clear(ctx context.Context) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -400,20 +401,20 @@ func (s *EntryStore) Clear(ctx context.Context) error {
 	})
 }
 
-// PopEntry implements agents.EntryPopper: it removes the most recent entry,
+// PopEntry implements session.EntryPopper: it removes the most recent entry,
 // whatever kind it is — the selection is PlanPop's, shared by every backend.
 // Rows a compaction pass soft-deleted are not present to be taken; popping the
 // checkpoint that folded them brings them back instead (see pop).
-func (s *EntryStore) PopEntry(ctx context.Context) (*agents.SessionEntry, error) {
-	return s.pop(ctx, agents.PopLast)
+func (s *EntryStore) PopEntry(ctx context.Context) (*session.Entry, error) {
+	return s.pop(ctx, session.PopLast)
 }
 
-// PopItem implements agents.ItemPopper: the most recent conversation item on
+// PopItem implements session.ItemPopper: the most recent conversation item on
 // the active branch, skipping what is not one — a banner, a leaf move, an
 // entry a checkpoint folded away. The selection is PlanPop's, shared by every
 // backend.
-func (s *EntryStore) PopItem(ctx context.Context) (*agents.SessionEntry, error) {
-	return s.pop(ctx, agents.PopLastItem)
+func (s *EntryStore) PopItem(ctx context.Context) (*session.Entry, error) {
+	return s.pop(ctx, session.PopLastItem)
 }
 
 // pop selects the entry to remove, deletes it and applies its relinks all in
@@ -432,12 +433,12 @@ func (s *EntryStore) PopItem(ctx context.Context) (*agents.SessionEntry, error) 
 // The delete still arbitrates against writers outside this process: zero rows
 // affected means the entry was already gone, this caller lost, and it retries
 // against what the session holds now.
-func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.SessionEntry, error) {
+func (s *EntryStore) pop(ctx context.Context, mode session.PopMode) (*session.Entry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var popped *agents.SessionEntry
+		var popped *session.Entry
 		done := true
 		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			// Compacted rows are folded away, not present: they are not
@@ -448,7 +449,7 @@ func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.Sess
 			if err != nil {
 				return err
 			}
-			plan, ok := agents.PlanPop(entries, mode)
+			plan, ok := session.PlanPop(entries, mode)
 			if !ok {
 				return nil
 			}
@@ -462,7 +463,7 @@ func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.Sess
 				done = false
 				return nil
 			}
-			byID := make(map[string]agents.SessionEntry, len(entries))
+			byID := make(map[string]session.Entry, len(entries))
 			for _, e := range entries {
 				byID[e.ID] = e
 			}
@@ -490,8 +491,8 @@ func (s *EntryStore) pop(ctx context.Context, mode agents.PopMode) (*agents.Sess
 // unfoldIn clears the compacted flag on everything a just-removed checkpoint
 // had folded, on the transaction that removed it. Not a checkpoint, or a
 // checkpoint that folded nothing: nothing to do.
-func (s *EntryStore) unfoldIn(ctx context.Context, tx bun.Tx, popped agents.SessionEntry) error {
-	if popped.Kind != agents.EntryKindCompaction {
+func (s *EntryStore) unfoldIn(ctx context.Context, tx bun.Tx, popped session.Entry) error {
+	if popped.Kind != session.EntryKindCompaction {
 		return nil
 	}
 	p, err := popped.CompactionPayload()
@@ -512,13 +513,13 @@ func (s *EntryStore) unfoldIn(ctx context.Context, tx bun.Tx, popped agents.Sess
 
 // relinkIn re-points the entries a removal orphaned, on the transaction that
 // carried the delete.
-func relinkIn(ctx context.Context, tx bun.Tx, ref agents.SessionRef, plan agents.Removal, byID map[string]agents.SessionEntry) error {
+func relinkIn(ctx context.Context, tx bun.Tx, ref session.Ref, plan session.Removal, byID map[string]session.Entry) error {
 	for id, parent := range plan.Relink {
 		e, ok := byID[id]
 		if !ok {
 			continue
 		}
-		if e.Kind == agents.EntryKindLeaf {
+		if e.Kind == session.EntryKindLeaf {
 			updated, lerr := e.WithLeafTarget(parent)
 			if lerr != nil {
 				continue
@@ -543,9 +544,9 @@ func relinkIn(ctx context.Context, tx bun.Tx, ref agents.SessionRef, plan agents
 }
 
 var (
-	_ agents.SessionStorage = (*EntryStore)(nil)
-	_ agents.EntryPopper    = (*EntryStore)(nil)
-	_ agents.ItemPopper     = (*EntryStore)(nil)
+	_ session.Storage     = (*EntryStore)(nil)
+	_ session.EntryPopper = (*EntryStore)(nil)
+	_ session.ItemPopper  = (*EntryStore)(nil)
 )
 
 // EntryView is the REST shape of one entry.
@@ -603,7 +604,7 @@ type CompactionInfo struct {
 // it; a client that re-derived it would be a second one, free to disagree. It
 // happens over the whole session before the cursor is applied, because an
 // update and the entry it amends need not land in the same page.
-func (s *EntryStore) GetEntries(ctx context.Context, ref agents.SessionRef, beforeID int64, limit int) ([]EntryView, error) {
+func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID int64, limit int) ([]EntryView, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
 		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
@@ -611,10 +612,10 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref agents.SessionRef, befo
 		return nil, fmt.Errorf("getting entries: %w", err)
 	}
 
-	entries := make([]agents.SessionEntry, 0, len(rows))
+	entries := make([]session.Entry, 0, len(rows))
 	meta := make(map[string]entryRow, len(rows))
 	for i := range rows {
-		var e agents.SessionEntry
+		var e session.Entry
 		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
 			continue
 		}
@@ -623,7 +624,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref agents.SessionRef, befo
 	}
 
 	onPath := activeBranch(entries)
-	folded := agents.FoldUpdates(entries)
+	folded := session.FoldUpdates(entries)
 	views := make([]EntryView, 0, len(folded))
 	for _, e := range folded {
 		row := meta[e.ID]
@@ -664,7 +665,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref agents.SessionRef, befo
 }
 
 // roleOf maps an entry's provenance to the role a renderer groups by.
-func roleOf(e agents.SessionEntry) string {
+func roleOf(e session.Entry) string {
 	switch e.Source.Type {
 	case agents.SourceUser:
 		return "user"
@@ -683,7 +684,7 @@ func roleOf(e agents.SessionEntry) string {
 		// default below — that renders the model's prose as a system chip.
 		return "assistant"
 	}
-	if e.Kind == agents.EntryKindAnnotation {
+	if e.Kind == session.EntryKindAnnotation {
 		return "system"
 	}
 	return "assistant"
@@ -691,19 +692,19 @@ func roleOf(e agents.SessionEntry) string {
 
 // contentOf returns the entry's readable text: the display's if the runner
 // produced one, otherwise the entry's own.
-func contentOf(e agents.SessionEntry) string {
+func contentOf(e session.Entry) string {
 	if e.Display != nil && e.Display.Text != "" {
 		return e.Display.Text
 	}
 	// A checkpoint written by a compactor that set no display still has
 	// something to show — the summary standing in for what it folded.
-	if e.Kind == agents.EntryKindCompaction {
+	if e.Kind == session.EntryKindCompaction {
 		if p, err := e.CompactionPayload(); err == nil {
 			return p.Summary
 		}
 		return ""
 	}
-	if e.Kind != agents.EntryKindItem || len(e.Item) == 0 {
+	if e.Kind != session.EntryKindItem || len(e.Item) == 0 {
 		return ""
 	}
 	return itemTextJSON(e.Item)
@@ -713,8 +714,8 @@ func contentOf(e agents.SessionEntry) string {
 // entry. The kept entries are not part of it — a checkpoint names what it
 // folded and carries no copy of anything still in the session — so the client
 // timeline reads them where they are.
-func compactionInfoOf(e agents.SessionEntry) *CompactionInfo {
-	if e.Kind != agents.EntryKindCompaction {
+func compactionInfoOf(e session.Entry) *CompactionInfo {
+	if e.Kind != session.EntryKindCompaction {
 		return nil
 	}
 	p, err := e.CompactionPayload()
@@ -734,12 +735,12 @@ func compactionInfoOf(e agents.SessionEntry) *CompactionInfo {
 // It appends a leaf entry rather than deleting anything: the abandoned attempt
 // stays recorded, which is what makes "try that again differently" reversible
 // and what lets the UI offer both versions.
-func (s *EntryStore) Branch(ctx context.Context, ref agents.SessionRef, entryID string) error {
-	return agents.NewSession(s.forRef(ref)).Branch(ctx, entryID)
+func (s *EntryStore) Branch(ctx context.Context, ref session.Ref, entryID string) error {
+	return session.NewSession(s.forRef(ref)).Branch(ctx, entryID)
 }
 
 // Leaf returns the session's active branch tip.
-func (s *EntryStore) Leaf(ctx context.Context, ref agents.SessionRef) (string, error) {
+func (s *EntryStore) Leaf(ctx context.Context, ref session.Ref) (string, error) {
 	at, err := s.forRef(ref).appendPointIn(ctx, s.db)
 	if err != nil {
 		return "", err
@@ -750,15 +751,15 @@ func (s *EntryStore) Leaf(ctx context.Context, ref agents.SessionRef) (string, e
 // activeBranch returns the ids on the current branch: the walk from the leaf up
 // through parent links to the root, as a set rather than PathToLeaf's ordered
 // slice, because membership is all the views below ask.
-func activeBranch(entries []agents.SessionEntry) map[string]bool {
-	byID := make(map[string]agents.SessionEntry, len(entries))
+func activeBranch(entries []session.Entry) map[string]bool {
+	byID := make(map[string]session.Entry, len(entries))
 	for _, e := range entries {
 		if e.ID != "" {
 			byID[e.ID] = e
 		}
 	}
 	on := make(map[string]bool, len(entries))
-	for id := agents.LeafOf(entries); id != ""; {
+	for id := session.LeafOf(entries); id != ""; {
 		e, ok := byID[id]
 		if !ok || on[id] {
 			break // a missing parent ends the walk; a repeat means a cycle
@@ -778,8 +779,8 @@ func activeBranch(entries []agents.SessionEntry) map[string]bool {
 // try again for thirty seconds. An update entry may be stored before its
 // target; projection associates them by call id afterwards, so there is nothing
 // to wait for.
-func (s *EntryStore) AppendCallDisplayUpdate(ctx context.Context, ref agents.SessionRef, callID string, display agents.ItemDisplay) error {
-	e, err := agents.NewCallUpdateEntry(callID, display)
+func (s *EntryStore) AppendCallDisplayUpdate(ctx context.Context, ref session.Ref, callID string, display agents.ItemDisplay) error {
+	e, err := session.NewCallUpdateEntry(callID, display)
 	if err != nil {
 		return err
 	}
@@ -788,10 +789,10 @@ func (s *EntryStore) AppendCallDisplayUpdate(ctx context.Context, ref agents.Ses
 
 // AppendAnnotation records something shown to people but never sent to the
 // model: an error banner, a cancellation notice.
-func (s *EntryStore) AppendAnnotation(ctx context.Context, ref agents.SessionRef, runID, text string) error {
+func (s *EntryStore) AppendAnnotation(ctx context.Context, ref session.Ref, runID, text string) error {
 	store := s.forRef(ref)
 	store.runID = runID
-	return store.Append(ctx, agents.NewAnnotationEntry(
+	return store.Append(ctx, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayError, Text: text},
 		agents.Source{Type: agents.SourceErrorHandler},
 	))
@@ -804,7 +805,7 @@ func (s *EntryStore) AppendAnnotation(ctx context.Context, ref agents.SessionRef
 // one pointing back at entries in another session. Copying the ids verbatim
 // would make the two sessions' entries indistinguishable by id, which every
 // lookup here keys on.
-func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst agents.SessionRef, upToID int64, exclusive bool) ([]string, error) {
+func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID int64, exclusive bool) ([]string, error) {
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
 		Where("session_id = ?", src.ID).Where("gen = ?", src.Gen).
@@ -829,16 +830,16 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst agents.SessionRef, u
 	now := time.Now().UTC()
 	// The fork's own numbering, from the shared allocator: the destination is a
 	// new session, so its positions start where any new session's would.
-	seq := agents.SeqFor(agents.AppendPoint{})
+	seq := session.SeqFor(session.AppendPoint{})
 	for i := range rows {
 		if rid := rows[i].RunID; rid != "" && !seen[rid] {
 			seen[rid] = true
 			runIDs = append(runIDs, rid)
 		}
-		newID := agents.EntryIDFor(seq)
+		newID := session.EntryIDFor(seq)
 		remap[rows[i].EntryID] = newID
 
-		var e agents.SessionEntry
+		var e session.Entry
 		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
 			continue
 		}
@@ -867,7 +868,7 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst agents.SessionRef, u
 
 // ForkSession atomically creates dst and copies src's entries into it in one
 // transaction, so a failure never leaves an orphaned empty session behind.
-func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src agents.SessionRef, upToID int64, exclusive bool) ([]string, error) {
+func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.Ref, upToID int64, exclusive bool) ([]string, error) {
 	var runIDs []string
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Confirm the source still exists inside the tx: a concurrent delete
@@ -889,7 +890,7 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src agents.S
 		now := time.Now().UTC()
 		dst.CreatedAt, dst.UpdatedAt = now, now
 		if dst.Gen == "" {
-			gen, gerr := agents.NewGeneration()
+			gen, gerr := session.NewGeneration()
 			if gerr != nil {
 				return gerr
 			}
@@ -899,7 +900,7 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src agents.S
 			return fmt.Errorf("fork create session: %w", err)
 		}
 		var e error
-		runIDs, e = forkEntriesTx(ctx, tx, src, agents.SessionRef{ID: dst.ID, Gen: dst.Gen}, upToID, exclusive)
+		runIDs, e = forkEntriesTx(ctx, tx, src, session.Ref{ID: dst.ID, Gen: dst.Gen}, upToID, exclusive)
 		return e
 	})
 	if err != nil {

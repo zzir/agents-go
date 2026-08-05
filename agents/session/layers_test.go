@@ -1,4 +1,4 @@
-package agents
+package session
 
 import (
 	"context"
@@ -12,7 +12,7 @@ func TestCursor_PagesOnSequenceNotOffset(t *testing.T) {
 	st := NewInMemoryStorage("s")
 	sess := NewSession(st)
 	for _, text := range []string{"a", "b", "c"} {
-		if err := sess.AppendItems(ctx, InputItemsFromText(text), Source{}); err != nil {
+		if err := sess.AppendItems(ctx, userTextItems(text), Source{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -27,7 +27,7 @@ func TestCursor_PagesOnSequenceNotOffset(t *testing.T) {
 
 	// Something lands between the two reads — which is exactly what an offset
 	// cannot survive.
-	if err := sess.AppendItems(ctx, InputItemsFromText("d"), Source{}); err != nil {
+	if err := sess.AppendItems(ctx, userTextItems("d"), Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,7 +51,7 @@ func TestCursor_NegativeLimitTakesTheTail(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()
 	for _, text := range []string{"a", "b", "c", "d"} {
-		if err := sess.AppendItems(ctx, InputItemsFromText(text), Source{}); err != nil {
+		if err := sess.AppendItems(ctx, userTextItems(text), Source{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -82,10 +82,10 @@ func TestCursor_NegativeLimitTakesTheTail(t *testing.T) {
 func TestContextEntries_DropFoldedHistory(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()
-	if err := sess.AppendItems(ctx, InputItemsFromText("ancient"), Source{}); err != nil {
+	if err := sess.AppendItems(ctx, userTextItems("ancient"), Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AppendItems(ctx, InputItemsFromText("kept"), Source{}); err != nil {
+	if err := sess.AppendItems(ctx, userTextItems("kept"), Source{}); err != nil {
 		t.Fatal(err)
 	}
 	all, err := sess.Entries(ctx, Cursor{})
@@ -99,7 +99,7 @@ func TestContextEntries_DropFoldedHistory(t *testing.T) {
 	if err := sess.Append(ctx, cp); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AppendItems(ctx, InputItemsFromText("recent"), Source{}); err != nil {
+	if err := sess.AppendItems(ctx, userTextItems("recent"), Source{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,7 +199,7 @@ func TestReduceState(t *testing.T) {
 func TestPopEntry_RequiresACapableStore(t *testing.T) {
 	ctx := context.Background()
 	sess := NewInMemorySession()
-	if err := sess.AppendItems(ctx, InputItemsFromText("only"), Source{}); err != nil {
+	if err := sess.AppendItems(ctx, userTextItems("only"), Source{}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := sess.PopEntry(ctx)
@@ -215,14 +215,14 @@ func TestPopEntry_RequiresACapableStore(t *testing.T) {
 
 type readOnlyStorage struct{}
 
-func (readOnlyStorage) Metadata(context.Context) (SessionMetadata, error) {
-	return SessionMetadata{}, nil
+func (readOnlyStorage) Metadata(context.Context) (Metadata, error) {
+	return Metadata{}, nil
 }
-func (readOnlyStorage) Append(context.Context, ...SessionEntry) error { return nil }
-func (readOnlyStorage) Entry(context.Context, string) (*SessionEntry, error) {
+func (readOnlyStorage) Append(context.Context, ...Entry) error { return nil }
+func (readOnlyStorage) Entry(context.Context, string) (*Entry, error) {
 	return nil, nil
 }
-func (readOnlyStorage) Entries(context.Context, Cursor) ([]SessionEntry, error) {
+func (readOnlyStorage) Entries(context.Context, Cursor) ([]Entry, error) {
 	return nil, nil
 }
 func (readOnlyStorage) Clear(context.Context) error { return nil }
