@@ -68,9 +68,8 @@ const (
 )
 
 // PromptCacheOptions configures prompt caching for OpenAI Responses API
-// requests. It mirrors the Python SDK's ModelSettings.prompt_cache_options.
-// Combine Mode "explicit" with content-part cache breakpoints on the input to
-// control which prompt prefixes are eligible for caching.
+// requests. Combine Mode "explicit" with content-part cache breakpoints on the
+// input to control which prompt prefixes are eligible for caching.
 type PromptCacheOptions struct {
 	// Mode is "implicit" (default) or "explicit". Empty leaves it unset.
 	Mode PromptCacheMode `json:"mode,omitempty"`
@@ -112,8 +111,7 @@ const (
 )
 
 // ContextManagement is a single server-side context-management entry forwarded
-// to the OpenAI Responses API (e.g. compaction). It mirrors the Python SDK's
-// ContextManagement passthrough.
+// to the OpenAI Responses API (e.g. compaction).
 type ContextManagement struct {
 	// Type is the entry type. Currently only "compaction" is supported.
 	Type ContextManagementType `json:"type"`
@@ -135,8 +133,6 @@ type Reasoning struct {
 // top_p, truncation, etc). Not every model or provider supports every field.
 // All fields are optional; a nil pointer means "leave unset" so the provider
 // default applies.
-//
-// It is the Go counterpart of the Python SDK's ModelSettings dataclass.
 type ModelSettings struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
@@ -173,8 +169,9 @@ type ModelSettings struct {
 	PromptCacheRetention PromptCacheRetention `json:"prompt_cache_retention,omitempty"`
 
 	// PromptCacheKey is forwarded as the Responses API prompt_cache_key to
-	// improve prompt-cache hit rates. Empty means unset. Unlike the Python SDK,
-	// the runner never generates a key: callers set this (or ExtraBody) themselves.
+	// improve prompt-cache hit rates. Empty means unset. The runner never
+	// generates a key: callers set this (or ExtraBody) themselves, because a
+	// key the SDK invented would silently partition a cache the caller shares.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
 	// PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
@@ -200,8 +197,8 @@ type ModelSettings struct {
 }
 
 // Resolve returns a new ModelSettings produced by overlaying every set
-// (non-nil / non-empty) field of override on top of the receiver. It mirrors
-// Python's ModelSettings.resolve. The receiver and override are not mutated.
+// (non-nil / non-empty) field of override on top of the receiver. The receiver
+// and override are not mutated.
 func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	if m == nil {
 		m = &ModelSettings{}
@@ -263,7 +260,8 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 		out.TopLogprobs = override.TopLogprobs
 	}
 	// ExtraHeaders/ExtraQuery/ExtraBody are replaced wholesale when the override
-	// sets them (matching Python's ModelSettings.resolve), not merged per-key.
+	// sets them, not merged per-key: a half-merged header set is harder to
+	// reason about than a replaced one.
 	if override.ExtraHeaders != nil {
 		out.ExtraHeaders = override.ExtraHeaders
 	}

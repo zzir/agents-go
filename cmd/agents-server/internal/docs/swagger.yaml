@@ -162,8 +162,9 @@ components:
         prompt_cache_key:
           description: |-
             PromptCacheKey is forwarded as the Responses API prompt_cache_key to
-            improve prompt-cache hit rates. Empty means unset. Unlike the Python SDK,
-            the runner never generates a key: callers set this (or ExtraBody) themselves.
+            improve prompt-cache hit rates. Empty means unset. The runner never
+            generates a key: callers set this (or ExtraBody) themselves, because a
+            key the SDK invented would silently partition a cache the caller shares.
           type: string
         prompt_cache_options:
           $ref: '#/components/schemas/agents.PromptCacheOptions'

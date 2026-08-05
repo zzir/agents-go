@@ -1,6 +1,5 @@
 // Package tracing provides traces and spans for observing agent runs, plus
-// processors and exporters for shipping that telemetry elsewhere. It is the Go
-// counterpart of the Python SDK's tracing subsystem.
+// processors and exporters for shipping that telemetry elsewhere.
 package tracing
 
 import (
@@ -114,7 +113,7 @@ func randHex(n int) string {
 }
 
 // NewTraceID returns a fresh trace identifier: "trace_" followed by 32 hex
-// characters, matching the Python SDK's format.
+// characters. The shape is what trace backends and dashboards already parse.
 func NewTraceID() string { return "trace_" + randHex(16) }
 
 // NewSpanID returns a fresh span identifier: "span_" followed by 16 hex

@@ -1586,6 +1586,18 @@ Defaults that callers may depend on:
 
 These have been discussed and settled. Read the rationale before reopening.
 
+**A decision is only as good as the reason recorded under it.** Some entries
+here were settled early, when the SDK was still a port, and their stated reason
+is a fact about the Python SDK rather than about this one. Those are marked
+**🔁 reason under review** — the decision still stands and the code still
+matches it, but the *justification* is not load-bearing, so a proposal to change
+one should be weighed on its own merits instead of being closed by citation.
+Anything unmarked has a reason that stands on its own.
+
+When re-deciding a marked entry, replace the citation with a reason that would
+convince someone who had never seen the Python SDK — or change the decision.
+Either way, drop the mark in the same change.
+
 ### 5.1 Handoffs stay; graph orchestration does not replace them
 
 A handoff is "switch agent at runtime"; a graph is "declare the topology up
@@ -1594,17 +1606,43 @@ history folding; the equivalent in a graph model takes a lot of glue. Graph
 orchestration, if it ever arrives, belongs *above* handoffs — serving task
 orchestration, not replacing agent switching.
 
-### 5.2 Type names stay
+### 5.2 Type names stay 🔁 reason under review
 
 `RunItem`, `RunResult`, `RunContext` and friends came from the Python SDK, but
 they read fine as Go. Renaming buys nothing except "looks less like Python" and
 breaks every caller.
 
-### 5.3 `Instructions` and `Prompt` both stay
+**Under review**, because "looks less like Python" is not the only thing at
+stake and this entry has been used to close cases where it was not the point:
+
+- `Get`-prefixed methods (`Model.GetResponse`, `ModelProvider.GetModel`,
+  `Instructions.GetInstructions`, `PromptProvider.GetPrompt`,
+  `Agent.GetSystemPrompt`, `Agent.GetPrompt`) are direct transliterations of
+  `get_*`. Go accessors do not carry the prefix, and this is a rule about Go,
+  not about Python.
+- The `T`-prefixed aliases (`TResponseInputItem` and friends) spell a Python
+  `TypeAlias` convention that has no Go counterpart. [§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)
+  already schedules them for the next breaking window.
+- `AgentsError` stutters (`agents.AgentsError`) and carries a `nolint`
+  admitting it.
+
+The rule that survives is the second half: **a rename is a breaking change and
+is batched**, not taken piecemeal. The window in §5.5b is where these belong.
+
+### 5.3 `Instructions` and `Prompt` both stay 🔁 reason under review
 
 `Prompt` (a server-stored prompt template with a version and variables) is a
 **Responses API capability**, not a porting artifact. The two compose: a stored
 prompt provides the base, instructions append to it.
+
+**Under review**, because this settles only *whether both concepts exist* — the
+answer is still yes — and has been read as settling their *shape*, which it
+never addressed. Both `Instructions` and `PromptProvider` are single-method
+interfaces (`GetInstructions`, `GetPrompt`) whose only implementations are
+unexported types in this package; nothing outside the SDK implements either.
+A func type would carry the same capability with no adapter types, and would
+drop `Agent.GetSystemPrompt` / `Agent.GetPrompt` — both five-line forwarders.
+That is a separate decision from this one, and it is open.
 
 ### 5.4 A tool is a struct, not an interface
 
@@ -1923,12 +1961,59 @@ Three rules govern a stream that dies before its terminal event:
 
 ## 6. Open questions
 
-*(none currently — all questions raised during the independent-evolution review
-have been settled into §2 above.)*
-
 When a new case comes up that this document does not answer, add it here with
 the options under consideration. Implementing it means moving it out of this
 section and into §2 in the same change.
+
+### 6.1 `RunItem` is a closed union of seven near-identical types
+
+`RunItem` is sealed by `isRunItem()`, so it is a closed union, not a
+polymorphic seam: nothing outside the package can implement it. The seven
+members are all `{Agent, Raw}` plus at most a few fields, and each restates six
+methods — 42 method bodies, most of them one line. `ItemType()` returns a
+string constant, which is a hand-written tag. Serialization already fights the
+shape: `rawInputRunItem` exists as an eighth, fake member so a resumed
+`RunState` has something to rebuild into.
+
+Options: a struct with a `Kind` field (methods become functions, the fake
+member disappears); keep the interface and accept the restatement.
+
+Measured, so the trade is not guesswork: outside tests, the concrete types are
+asserted 7 times, `case *MessageOutputItem` appears twice, and `Display()` is
+called twice.
+
+### 6.2 Two parallel error classifications
+
+Errors carry both an exception-style hierarchy (`AgentsError` embedded into six
+concrete types) and an `ErrorCode` string. They can disagree: `CodeOf` ends in
+a fallback `switch` on the concrete type precisely because a caller building an
+exported error as a struct literal leaves `Code` at its zero value. Embedding
+(rather than wrapping) also means `errors.As` cannot reach the base, which is
+why `agentsErrorCarrier` + `base()` + `AsAgentsError` exist.
+
+Options: keep `ErrorCode` as the single classification (it survives transports,
+which is its real value) with sentinel errors for `errors.Is`, and keep a
+concrete type only where it carries extra fields (`MaxTurnsError.MaxTurns`,
+`GuardrailTripwireError.Result`) without embedding the base; or keep both and
+specify which wins.
+
+### 6.3 `RunErrorDetails` duplicates `RunResult`
+
+Seven of `RunErrorDetails`'s fields (`Input`, `NewItems`, `RawResponses`,
+`LastAgent`, `Usage`, `GuardrailResults`, `Diagnostics`) are `RunResult`'s,
+verbatim. A failed run and a completed one describe the same thing.
+
+Options: carry a `*RunResult` on the error; keep both and document the split.
+
+### 6.4 `agents` is one package
+
+73 non-test files, ~15k lines, ~450 exported symbols — against 67 for the next
+largest package in the repo. The session/entry layer (`session_*.go`) and the
+run loop (`run_*.go`) are only weakly coupled and could separate.
+
+This is deliberately last: [§6.1](#61-runitem-is-a-closed-union-of-seven-near-identical-types)
+and [§6.2](#62-two-parallel-error-classifications) both delete files, and
+splitting first would move the same code twice.
 
 ---
 

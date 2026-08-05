@@ -27,8 +27,7 @@ type Handoff struct {
 	InputJSONSchema map[string]any
 	// NonStrictSchema opts the handoff input out of strict-mode schema
 	// validation, for schemas strict mode cannot express. The zero value is
-	// strict — matching the Python SDK's strict_json_schema=True default —
-	// which is why the field is spelled as an opt-out.
+	// strict — which is why the field is spelled as an opt-out.
 	NonStrictSchema bool
 	// AgentName is the name of the target agent, used for tracing.
 	AgentName string
@@ -52,12 +51,11 @@ type Handoff struct {
 }
 
 // validateHandoffInput checks the raw handoff arguments against the handoff's
-// InputJSONSchema before the handoff fires. When the schema declares root-level
-// required keys the handoff expects structured input, so a nil/empty/non-object
-// payload or one missing a required key is a *ModelBehaviorError fed back to the
-// model (Python parity: handoffs/__init__.py:278-307 raises ModelBehaviorError
-// "Handoff function expected non-null input, but got None"). A handoff with no
-// required keys (the default no-input transfer) accepts any arguments.
+// InputJSONSchema before the handoff fires. When the schema declares
+// root-level required keys the handoff expects structured input, so a
+// nil/empty/non-object payload or one missing a required key is a
+// *ModelBehaviorError fed back to the model. A handoff with no required keys
+// (the default no-input transfer) accepts any arguments.
 func validateHandoffInput(h *Handoff, argsJSON string) error {
 	required, ok := h.InputJSONSchema["required"].([]any)
 	if !ok || len(required) == 0 {
@@ -83,15 +81,13 @@ func validateHandoffInput(h *Handoff, argsJSON string) error {
 var invalidToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 // transformToolName sanitizes a name for function calling: spaces and other
-// invalid characters become underscores, and the result is lowercased. It
-// mirrors transform_string_function_style in the Python SDK.
+// invalid characters become underscores, and the result is lowercased.
 func transformToolName(name string) string {
 	return strings.ToLower(invalidToolNameChars.ReplaceAllString(strings.ReplaceAll(name, " ", "_"), "_"))
 }
 
 // HandoffTo builds a Handoff that delegates the run to target. The resulting
-// tool is named "transfer_to_<target>" (sanitized) and takes no input. It is
-// the Go counterpart of Python's handoff(agent).
+// tool is named "transfer_to_<target>" (sanitized) and takes no input.
 //
 // To customize the tool name/description or require input, construct a Handoff
 // struct directly.

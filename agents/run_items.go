@@ -10,8 +10,8 @@ import (
 
 // RunItem is a sealed interface for the items produced during a run: model
 // messages, tool calls, tool outputs, handoffs and reasoning. Every item knows
-// the agent that produced it and can be converted to a model input item for the
-// next turn. It mirrors the Python SDK's RunItem union.
+// the agent that produced it and can be converted to a model input item for
+// the next turn.
 type RunItem interface {
 	// AgentRef returns the agent associated with this item.
 	AgentRef() *Agent
@@ -347,10 +347,9 @@ func (i *rawInputRunItem) Display() ItemDisplay                     { return i.D
 
 // ReasoningItemIDPolicy controls whether reasoning-item ids are preserved when
 // run items are converted back into model input for a later turn. The default
-// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them, which is
-// useful when replaying reasoning items whose server-side ids are no longer valid
-// (e.g. store=false runs that rely on encrypted_content). It is the Go
-// counterpart of Python's RunConfig.reasoning_item_id_policy.
+// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them, which
+// is useful when replaying reasoning items whose server-side ids are no longer
+// valid (e.g. store=false runs that rely on encrypted_content).
 type ReasoningItemIDPolicy int
 
 const (
@@ -361,8 +360,7 @@ const (
 )
 
 // applyReasoningItemIDPolicy strips the id from reasoning input items when the
-// policy is ReasoningItemIDOmit, mirroring Python's _without_reasoning_item_id
-// (run_internal/items.py). It replaces the OfReasoning pointer with a modified
+// policy is ReasoningItemIDOmit. It replaces the OfReasoning pointer with a modified
 // copy so any RunItem or caller slice sharing the original param is unaffected.
 //
 // Note: the underlying openai-go reasoning param always serializes an "id" key,

@@ -71,9 +71,8 @@ func (s *compactingSession) RunCompaction(ctx context.Context, args CompactionAr
 	return nil
 }
 
-// Function spans carry the tool call's arguments and stringified result
-// (Python parity: FunctionSpanData.input/output), gated by the same
-// sensitive-data switch as generation payloads.
+// Function spans carry the tool call's arguments and stringified result, gated
+// by the same sensitive-data switch as generation payloads.
 func TestFunctionSpanRecordsInputOutput(t *testing.T) {
 	agent, proc := tracingAgent(t)
 	agent.ModelImpl = &fakeModel{responses: []*ModelResponse{
@@ -283,8 +282,7 @@ func TestGenerationSpanEnvOptOut(t *testing.T) {
 }
 
 // Tool errors routinely embed the call arguments, so the function span's error
-// message is redacted when sensitive-data tracing is off (Python parity:
-// REDACTED_TOOL_ERROR_MESSAGE).
+// message is redacted when sensitive-data tracing is off.
 func TestFunctionSpanErrorRedaction(t *testing.T) {
 	newRun := func(include bool) *tracing.Span {
 		t.Helper()

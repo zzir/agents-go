@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-// RunErrorDetails carries the run state captured when a run fails, so callers can
-// inspect partial progress. It mirrors the Python SDK's RunErrorDetails.
+// RunErrorDetails carries the run state captured when a run fails, so callers
+// can inspect partial progress.
 type RunErrorDetails struct {
 	Input        []TResponseInputItem
 	NewItems     []RunItem

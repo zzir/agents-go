@@ -12,7 +12,7 @@ import (
 
 // usageFromStreamResponse extracts token usage from a streamed final Response.
 // When the response carries no usage block it counts as zero requests (matching
-// the blocking path's usageFromResponse and Python's `Usage()` fallback), so a
+// the blocking path's usageFromResponse), so a
 // backend that omits usage does not inflate the request count.
 func usageFromStreamResponse(resp *responses.Response) *Usage {
 	if !resp.JSON.Usage.Valid() {

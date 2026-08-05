@@ -133,8 +133,7 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 		}
 		params.ContextManagement = entries
 	}
-	// parallel_tool_calls only applies when tools are present, matching the
-	// Python SDK's gating.
+	// parallel_tool_calls only applies when tools are present.
 	if s.ParallelToolCalls != nil {
 		if *s.ParallelToolCalls && hasTools {
 			params.ParallelToolCalls = oai.Bool(true)

@@ -6,8 +6,7 @@ import (
 )
 
 // multipleHandoffsMessage is sent back as the tool output for every handoff
-// beyond the first when the model requests several in one turn. It matches the
-// Python SDK's message.
+// beyond the first when the model requests several in one turn.
 const multipleHandoffsMessage = "Multiple handoffs detected, ignoring this one."
 
 // executeHandoff switches to the first requested handoff target, recording a
@@ -25,7 +24,7 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 	// Validate the handoff arguments against the handoff's input schema before it
 	// fires, so a handoff that expects input but receives none (or invalid input)
 	// is rejected as a *ModelBehaviorError instead of silently transferring with
-	// zero-valued input (Python parity: handoffs/__init__.py:278-307).
+	// zero-valued input.
 	if verr := validateHandoffInput(&run.Handoff, run.Call.Arguments); verr != nil {
 		span.SetError(verr.Error(), map[string]any{"details": "invalid handoff input"})
 		return nil, verr

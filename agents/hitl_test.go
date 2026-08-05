@@ -319,8 +319,8 @@ func (c *tracingCollector) named(prefix string) int {
 
 func newTestTracer(c *tracingCollector) *tracing.Tracer { return tracing.NewTracer(c) }
 
-// Approval precedence (Python parity: is_tool_approved). A permanent approval
-// wins over a later per-call rejection of the same tool.
+// Approval precedence. A permanent approval wins over a later per-call
+// rejection of the same tool.
 func TestApprovalStore_Precedence(t *testing.T) {
 	item := func(tool, callID string) *ToolApprovalItem {
 		return &ToolApprovalItem{ToolName: tool, CallID: callID}

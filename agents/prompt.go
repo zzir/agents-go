@@ -3,8 +3,7 @@ package agents
 import "context"
 
 // Prompt configures an agent to use an OpenAI stored prompt (the Responses API
-// `prompt` parameter) instead of, or alongside, inline Instructions. It is the
-// Go counterpart of the Python SDK's Prompt.
+// `prompt` parameter) instead of, or alongside, inline Instructions.
 type Prompt struct {
 	// ID is the stored prompt's unique identifier. Required.
 	ID string
@@ -39,7 +38,7 @@ func (f promptFunc) GetPrompt(ctx context.Context, rc *RunContext, agent *Agent)
 }
 
 // PromptFunc adapts a function to the PromptProvider interface, for prompts that
-// depend on the run context (the Go counterpart of Python's DynamicPromptFunction).
+// depend on the run context.
 func PromptFunc(f func(context.Context, *RunContext, *Agent) (*Prompt, error)) PromptProvider {
 	return promptFunc(f)
 }

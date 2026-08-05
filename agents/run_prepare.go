@@ -83,9 +83,8 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 			modelInput = append(modelInput, history...)
 			modelInput = append(modelInput, userInput...)
 			// Scrub the merged history+input before it reaches the model: a
-			// stored dangling tool call (e.g. persisted by the Python SDK at an
-			// interruption) or a duplicate re-sent item would otherwise 400 at
-			// the Responses API. Mirrors Python's prepare_input_with_session.
+			// stored dangling tool call (e.g. persisted at an interruption) or
+			// a duplicate re-sent item would otherwise 400 at the Responses API.
 			modelInput = normalizeStoredInput(modelInput)
 		}
 	}

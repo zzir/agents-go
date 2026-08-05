@@ -56,7 +56,7 @@ type Options struct {
 
 	// RequireApproval, when set, decides per call whether an exposed MCP tool
 	// needs human approval (HITL), receiving the run context, the current agent
-	// (captured per ListTools call, matching the Python SDK) and the tool's
+	// (captured per ListTools call) and the tool's
 	// original (unprefixed) name. For the common static case use ApproveTools:
 	//
 	//	mcp.Options{RequireApproval: mcp.ApproveTools("write_file")}
@@ -72,7 +72,7 @@ type Options struct {
 	RetryBackoffBase time.Duration
 
 	// UseStructuredContent controls how a tool result's structuredContent field
-	// is handled. It is false by default (matching the Python SDK): most servers
+	// is handled. It is false by default: most servers
 	// duplicate their structured data in the content blocks, so structuredContent
 	// is ignored and the content blocks are sent to the model. Set it true to use
 	// structuredContent exclusively (the content blocks are then ignored) for
@@ -229,9 +229,9 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 }
 
 // bindApproval returns the tool to expose for this ListTools call, wiring
-// RequireApproval (if set) with the current agent captured per call — matching
-// the Python SDK, which re-binds the approval closure to the current agent
-// each turn. The cached base tool is left untouched.
+// RequireApproval (if set) with the current agent captured per call, so the
+// closure names the agent whose turn it is rather than whichever agent first
+// listed the server. The cached base tool is left untouched.
 func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) *agents.FunctionTool {
 	if s.opts.RequireApproval == nil {
 		return ct.tool
@@ -345,10 +345,9 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	return list, nil
 }
 
-// runWithRetries invokes fn, retrying failures up to MaxRetryAttempts times with
-// exponential backoff (RetryBackoffBase * 2^(attempt-1)). MaxRetryAttempts == -1
-// retries indefinitely; 0 disables retries. It mirrors the Python SDK's
-// _run_with_retries.
+// runWithRetries invokes fn, retrying failures up to MaxRetryAttempts times
+// with exponential backoff (RetryBackoffBase * 2^(attempt-1)).
+// MaxRetryAttempts == -1 retries indefinitely; 0 disables retries.
 func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 	base := s.opts.RetryBackoffBase
 	if base <= 0 {
@@ -404,7 +403,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.FunctionTo
 	}
 	originalName := mt.Name
 	// A tool's own _meta travels with every call_tool request, overriding any
-	// resolver-produced metadata on key collisions (Python merge order).
+	// resolver-produced metadata on key collisions.
 	staticMeta := map[string]any(mt.Meta)
 	tool := &agents.FunctionTool{
 		Name:             exposedName,
@@ -417,8 +416,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.FunctionTo
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
 		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			// Always send an "arguments" object — an empty {} rather than an
-			// omitted field — matching the Python SDK, which passes an empty
-			// dict; some servers reject calls with no arguments key.
+			// omitted field: some servers reject calls with no arguments key.
 			args := map[string]any{}
 			if strings.TrimSpace(argsJSON) != "" {
 				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
@@ -429,8 +427,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.FunctionTo
 				}
 			}
 			// Client-side pre-validation of required parameters, before touching
-			// the server: a missing required key is a *agents.UserError, matching
-			// the Python SDK's _validate_required_parameters.
+			// the server: a missing required key is a *agents.UserError.
 			if err := validateRequiredArgs(s.name, originalName, required, args); err != nil {
 				return agents.ToolResult{}, err
 			}
@@ -491,7 +488,7 @@ func stringifyMCPOutput(v any) string {
 }
 
 // validateRequiredArgs reports a *agents.UserError when any schema-required
-// argument is missing, mirroring the Python SDK's _validate_required_parameters.
+// argument is missing, before the request reaches the server.
 func validateRequiredArgs(serverName, toolName string, required []string, args map[string]any) error {
 	if len(required) == 0 {
 		return nil
@@ -591,15 +588,13 @@ func deepCopySchema(m map[string]any) map[string]any {
 	return cp
 }
 
-// resultOutput renders a tool result for the model, mirroring the Python SDK's
-// content conversion:
+// resultOutput renders a tool result for the model:
 // - When useStructured is set AND the result carries non-empty
 // structuredContent, that field is used exclusively (JSON-encoded to a
 // single text output) and the content blocks are ignored. A nil or empty
-// structuredContent falls through to the content blocks instead, mirroring
-// the Python SDK's `if use_structured_content and result.structuredContent:`
-// truthiness — most servers duplicate their data in the content blocks, so
-// an empty structured field must never blank out the result. By default
+// structuredContent falls through to the content blocks instead — most servers
+// duplicate their data in the content blocks, so an empty structured field must
+// never blank out the result. By default
 // (useStructured false) structuredContent is ignored entirely.
 // - A single text block passes through as a plain string.
 // - Multiple blocks, or any non-text block, become a []ToolOutputContent list
@@ -643,8 +638,7 @@ func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) any {
 }
 
 // hasStructuredContent reports whether a tool result's structuredContent field
-// holds a usable value, mirroring the truthiness of the Python SDK's
-// `if... result.structuredContent:` guard. The MCP schema types the field as a
+// holds a usable value. The MCP schema types the field as a
 // JSON object (Go: nil or map[string]any); a nil or empty object is treated as
 // absent so the caller falls back to the content blocks. Empty slices/strings
 // are covered defensively for non-conforming servers, while genuine scalar

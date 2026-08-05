@@ -7,8 +7,8 @@ import (
 )
 
 // wrapperDictKey is the property name used to wrap non-object output types, so
-// the response schema root is always an object (an OpenAI requirement). It
-// matches _WRAPPER_DICT_KEY in the Python SDK.
+// the response schema root is always an object (an OpenAI requirement).
+// ValidateJSON unwraps it, so the wrapping never reaches the caller.
 const wrapperDictKey = "response"
 
 // typedOutputSchema is the OutputSchema implementation backing OutputType[T].
@@ -96,8 +96,7 @@ func outputSchemaError(s OutputSchema) error {
 }
 
 // isObjectLike reports whether a type serializes to a JSON object at the root
-// (a struct or map), mirroring Python's _is_subclass_of_base_model_or_dict
-// check. Pointers are deliberately not unwrapped: a *T root would produce a
+// (a struct or map). Pointers are deliberately not unwrapped: a *T root would produce a
 // nullable schema root, which OpenAI rejects, so pointer types go through the
 // {"response": ...} envelope instead.
 func isObjectLike(t reflect.Type) bool {

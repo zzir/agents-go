@@ -78,7 +78,7 @@ func WrapInstructions(inner Instructions, prefix, suffix string) Instructions {
 
 // Agent is a model configured with instructions, tools, guardrails, handoffs and
 // an optional structured output type. It is the central building block of the
-// SDK and mirrors the Python SDK's Agent dataclass.
+// SDK: a plain struct with no Run method, so the runner takes it as data.
 //
 // Construct an Agent with a struct literal; only Name is required. Zero values
 // are sensible defaults (e.g. a nil ModelSettings means the provider's).
@@ -146,8 +146,7 @@ type Agent struct {
 	// DisableToolChoiceReset keeps ModelSettings.ToolChoice as-is on every turn.
 	// By default (false), once this agent has called a tool, tool_choice is left
 	// unset on its subsequent turns so a "required" or specific-tool setting
-	// cannot force an infinite tool-call loop. It is the inverse of the Python
-	// SDK's reset_tool_choice (default true).
+	// cannot force an infinite tool-call loop.
 	DisableToolChoiceReset bool
 }
 

@@ -89,8 +89,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	// fatalErrs records each call's aborting error by call index. errgroup still
 	// cancels the siblings on the first failure, but the error surfaced to the
 	// run is chosen deterministically — the lowest call index — rather than
-	// whichever goroutine happened to finish first (Python parity: a stable
-	// winner by call order).
+	// whichever goroutine happened to finish first.
 	fatalErrs := make([]error, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
 	if limit := r.toolConcurrency(runs); limit > 0 {
@@ -197,8 +196,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			if span.Span != nil {
 				tc.functionSpanID = span.Span.SpanID
 			}
-			// Record the call arguments and result on the span (Python parity:
-			// FunctionSpanData.input/output), gated like generation payloads.
+			// Record the call arguments and result on the span, gated like generation
+			// payloads.
 			logToolData := r.traceIncludeSensitiveData()
 			if logToolData {
 				span.Set("input", run.Call.Arguments)
@@ -239,9 +238,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 						"tool": run.Call.Name, "call_id": run.Call.CallID,
 					})
 				}
-				// Tool errors routinely embed the call arguments, so the span
-				// error is gated like input/output (Python parity:
-				// get_trace_tool_error / REDACTED_TOOL_ERROR_MESSAGE).
+				// Tool errors routinely embed the call arguments, so the span error is
+				// gated like input/output.
 				if logToolData {
 					span.SetError(err.Error(), nil)
 				} else {
@@ -257,10 +255,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 					}
 					return fmt.Errorf("tool %q failed: %w", run.Call.Name, err)
 				}
-				// The failure message becomes the tool output and flows through
-				// the same tail as a success — output guardrails and custom
-				// data see it (Python parity: the error is converted inside
-				// the invocation, then handled like a normal result).
+				// The failure message becomes the tool output and flows through the same
+				// tail as a success — output guardrails and custom data see it.
 				var herr error
 				out, herr = toolHandleFailure(gctx, run.Tool, tc, err)
 				if herr != nil {
@@ -342,7 +338,7 @@ const DefaultRejectionMessage = "Tool execution was not approved."
 
 // redactedToolErrorMessage replaces a tool error's text on its function span
 // when sensitive-data tracing is off — error strings routinely embed the call
-// arguments. Matches Python's REDACTED_TOOL_ERROR_MESSAGE.
+// arguments.
 const redactedToolErrorMessage = "Tool execution failed. Error details are redacted."
 
 // partitionByApproval splits function tool calls into those ready to run, those
@@ -362,9 +358,8 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 	store := r.rc.Approvals
 	for _, run := range runs {
 		// An explicit approve/reject decision (typically on resume) wins before
-		// anything else: honoring it here skips re-invoking NeedsApprovalFunc,
-		// whose side effects or errors must not re-fire for a resolved call
-		// (Python parity: openai-agents-python 3229/3259).
+		// anything else: honoring it here skips re-invoking NeedsApprovalFunc, whose
+		// side effects or errors must not re-fire for a resolved call.
 		if store != nil {
 			if decision, decided := store.decisionFor(run.Call.Name, run.Call.CallID); decided {
 				if !decision.approved {

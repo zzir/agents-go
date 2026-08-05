@@ -5,10 +5,9 @@ import (
 	"fmt"
 )
 
-// OutputSchema describes the structured output a model is asked to produce. It
-// is the Go counterpart of the Python SDK's AgentOutputSchemaBase abstract base
-// class. The OpenAI model adapter uses it to build the response_format payload
-// and to validate/parse the model's final output.
+// OutputSchema describes the structured output a model is asked to produce.
+// The OpenAI model adapter uses it to build the response_format payload and to
+// validate/parse the model's final output.
 //
 // It is defined here because the Model interface depends on it.
 type OutputSchema interface {

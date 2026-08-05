@@ -114,8 +114,8 @@ func TestAgentTool_NestedRejectResumes(t *testing.T) {
 	}
 }
 
-// A completed agent-as-tool nested run folds its usage into the parent
-// run's usage (Python parity: the nested run shares the parent's usage).
+// A completed agent-as-tool nested run folds its usage into the parent run's
+// usage.
 func TestAgentTool_NestedUsageAccumulatesIntoParent(t *testing.T) {
 	inner := &Agent{
 		Name:      "specialist",

@@ -42,11 +42,10 @@ type SpanHandle struct {
 type TraceOption func(*Trace)
 
 // WithGroupID links this trace to a group of related traces (e.g. one chat
-// thread across several runs) — the counterpart of Python's RunConfig.group_id.
+// thread across several runs).
 func WithGroupID(id string) TraceOption { return func(tr *Trace) { tr.GroupID = id } }
 
-// WithMetadata attaches user metadata to the trace — the counterpart of
-// Python's RunConfig.trace_metadata.
+// WithMetadata attaches user metadata to the trace.
 func WithMetadata(md map[string]any) TraceOption { return func(tr *Trace) { tr.Metadata = md } }
 
 // StartTrace begins a new trace for the given workflow. Finish it with Finish.

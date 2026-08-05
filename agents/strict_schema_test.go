@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// These cases are ported from the Python SDK's test_strict_schema.py to keep the
-// strict-mode conversion behavior aligned.
+// These cases pin the strict-mode conversion: each is a schema shape the OpenAI
+// API rejects unless EnsureStrictJSONSchema rewrites it first.
 
 func TestStrict_EmptySchema(t *testing.T) {
 	got, err := EnsureStrictJSONSchema(map[string]any{})

@@ -99,8 +99,8 @@ func TestToolGuardrail_ReceivesTheCallIdentity(t *testing.T) {
 	}
 }
 
-// TestNeedsApprovalFunc_ReceivesCallID verifies the per-call approval predicate
-// receives the tool call id (Python parity: needs_approval(ctx, params, call_id)).
+// TestNeedsApprovalFunc_ReceivesCallID verifies the per-call approval
+// predicate receives the tool call id).
 func TestNeedsApprovalFunc_ReceivesCallID(t *testing.T) {
 	var gotCallID atomic.Value
 	tool := NewFunctionTool("deploy", "deploys",

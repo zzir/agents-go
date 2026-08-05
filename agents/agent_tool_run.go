@@ -118,10 +118,9 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 }
 
 // dispatchAgentToolStreamEvent invokes the OnStream callback, recovering any
-// panic: a handler bug must not fail the tool call (Python parity: log and
-// continue). The panic is recorded as a diagnostic on the parent run — the
-// handler is the parent's configuration — so it is observable instead of
-// silently dropped.
+// panic: a handler bug must not fail the tool call. The panic is recorded as a
+// diagnostic on the parent run — the handler is the parent's configuration
+// — so it is observable instead of silently dropped.
 func dispatchAgentToolStreamEvent(ctx context.Context, fn func(AgentToolStreamEvent), ev AgentToolStreamEvent) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -149,8 +148,7 @@ func (e *nestedRunInterrupt) Error() string {
 }
 
 // agentToolOutput derives the string result of a completed nested run,
-// mirroring Python's as_tool default extraction: the final output when
-// non-empty, else the last non-empty assistant message text, else the last
+// preferring the most specific thing it said: the final output when non-empty, else the last non-empty assistant message text, else the last
 // non-empty string tool output, else the (stringified) final output.
 func agentToolOutput(res *RunResult) string {
 	if s, ok := res.FinalOutput.(string); ok {
@@ -183,8 +181,7 @@ func agentToolOutput(res *RunResult) string {
 // nestedRunOptions builds the RunOptions for a nested run, inheriting the
 // parent's model provider/model/tracer/logger, run-level guardrails and
 // side-effect-free execution options (tool concurrency limit, tool-not-found
-// behavior, input filters) — the Go counterpart of Python's "a nested run with
-// run_config=None reuses the parent's RunConfig". The nested run gets a fresh
+// behavior, input filters). The nested run gets a fresh
 // approval store so nested approvals don't leak into the parent. The parent's
 // Session never carries over; cfg.ModifyRunOptions is the only way to give the
 // nested run conversation state of its own.

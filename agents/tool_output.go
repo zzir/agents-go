@@ -15,8 +15,7 @@ import (
 //
 // The interface is sealed: ToolOutputText, ToolOutputImage and ToolOutputFile
 // are its only implementations, mirroring the Responses API's input_text,
-// input_image and input_file content parts. This is the Go counterpart of the
-// Python SDK's ToolOutputText / ToolOutputImage / ToolOutputFileContent.
+// input_image and input_file content parts.
 //
 // A tool that returns an ordinary value (string, struct, …) still has it
 // stringified as before; only values implementing this interface take the

@@ -15,8 +15,7 @@ import (
 )
 
 // fakeModel is a scripted Model for testing the runner without a real API. Each
-// call to GetResponse returns the next queued response. It mirrors the Python
-// test suite's FakeModel.
+// call to GetResponse returns the next queued response.
 type fakeModel struct {
 	responses []*ModelResponse
 	idx       int

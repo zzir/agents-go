@@ -16,10 +16,9 @@ import (
 )
 
 // ConversationsSession is an agents.Session backed by the OpenAI Conversations
-// API: history lives server-side under a conversation ID rather than in a local
-// store. The conversation is created lazily on first use unless an existing ID
-// is supplied via SetConversationID. It is the Go counterpart of the Python
-// SDK's OpenAIConversationsSession.
+// API: history lives server-side under a conversation ID rather than in a
+// local store. The conversation is created lazily on first use unless an
+// existing ID is supplied via SetConversationID.
 //
 // Item conversion reuses agents.UnmarshalInputItem, so the common item kinds
 // (messages, function calls and their outputs) round-trip; exotic server-only
@@ -263,8 +262,7 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.TRespon
 
 // conversationItemTypesWithRequiredID lists the Responses input item types whose
 // top-level id the Conversations create-item schema requires; every other type's
-// id is stripped before persistence. Mirrors the Python SDK's
-// _OPENAI_CONVERSATION_ITEM_TYPES_WITH_REQUIRED_ID.
+// id is stripped before persistence.
 var conversationItemTypesWithRequiredID = map[string]bool{
 	"file_search_call":        true,
 	"web_search_call":         true,
@@ -280,8 +278,7 @@ var conversationItemTypesWithRequiredID = map[string]bool{
 }
 
 // sanitizeConversationItem strips provider-specific fields from an item before
-// it is persisted through the Conversations API, mirroring the Python SDK's
-// _sanitize_openai_conversation_item / _is_unpersistable_for_openai_conversation.
+// it is persisted through the Conversations API.
 //
 // It returns the sanitized item and whether it should be persisted at all: a
 // reasoning item lacking both a server id and encrypted content is unpersistable

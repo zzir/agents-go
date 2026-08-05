@@ -174,11 +174,9 @@ type racedCallOutcome struct {
 // downgrading to a blocking call silently cost a streaming UI its whole first
 // turn of deltas.
 //
-// A tripped guardrail aborts the turn WITHOUT billing usage or firing
-// OnLLMEnd — the model outcome is discarded (Python parity:
-// should_cancel_parallel_model_task_on_input_guardrail_trip). Raw events
-// already yielded by a streamed call stand; the run's error is what says they
-// came to nothing.
+// A tripped guardrail aborts the turn WITHOUT billing usage or firing OnLLMEnd
+// — the model outcome is discarded. Raw events already yielded by a streamed
+// call stand; the run's error is what says they came to nothing.
 func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest, race *inputGuardRace, originalInput []TResponseInputItem) racedCallOutcome {
 	out := racedCallOutcome{original: originalInput}
 	modelCtx, modelCancel := context.WithCancel(ctx)

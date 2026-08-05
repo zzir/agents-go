@@ -38,8 +38,7 @@ type NestHistoryOptions struct {
 }
 
 // NestHandoffHistory returns a Handoff InputFilter that summarizes the prior
-// conversation into a compact form for the next agent, mirroring the Python
-// SDK's nest_handoff_history.
+// conversation into a compact form for the next agent.
 //
 // Before summarizing, it flattens any summary produced by an earlier handoff
 // back into its underlying transcript, so a chain of handoffs yields one flat

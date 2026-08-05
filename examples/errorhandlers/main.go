@@ -1,8 +1,7 @@
 // Command errorhandlers demonstrates RunOptions.ErrorHandlers: recovering a
 // run that would otherwise fail — here a tool loop that exhausts its turn
 // budget, and a structured-output agent whose final message fails validation —
-// by supplying a fallback final output (the counterpart of Python's
-// Runner.run(..., error_handlers={...})).
+// by supplying a fallback final output.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/errorhandlers
 package main

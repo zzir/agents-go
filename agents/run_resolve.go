@@ -29,9 +29,9 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 		base = &ModelSettings{}
 	}
 	s := base.Resolve(r.opts.Model.Settings)
-	// Once an agent has called tools, leave tool_choice unset on its later
-	// turns so a "required"/specific-tool setting cannot force an infinite
-	// tool-call loop (the Python SDK's reset_tool_choice behavior).
+	// Once an agent has called tools, leave tool_choice unset on its later turns
+	// so a "required"/specific-tool setting cannot force an infinite tool-call
+	// loop.
 	if !agent.DisableToolChoiceReset && s.ToolChoice != "" && r.toolsUsedBy[agent.Name] {
 		s.ToolChoice = ""
 	}

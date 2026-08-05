@@ -2,14 +2,12 @@ package agents
 
 import "fmt"
 
-// RunResult is the outcome of a completed (non-streaming) run. It mirrors the
-// Python SDK's RunResult.
+// RunResult is the outcome of a completed (non-streaming) run.
 type RunResult struct {
 	// Input is the input list of the run's first model call: the session
 	// history (when a Session is configured) followed by the new user input.
-	// A handoff input filter may have rewritten it. This matches the Python
-	// SDK's RunResult.input semantics; the items passed to Run itself are not
-	// retained separately.
+	// A handoff input filter may have rewritten it; the items passed to Run
+	// itself are not retained separately.
 	Input []TResponseInputItem
 	// NewItems are all items generated during the run (messages, tool calls,
 	// tool outputs, handoffs, reasoning).
@@ -44,8 +42,7 @@ type RunResult struct {
 
 	// AgentToolInvocation identifies the parent tool call when this result was
 	// produced by a nested agent-as-tool run (visible to a
-	// CustomOutputExtractor); nil for top-level runs. The counterpart of
-	// Python's RunResult.agent_tool_invocation.
+	// CustomOutputExtractor); nil for top-level runs.
 	AgentToolInvocation *AgentToolInvocation
 
 	// StoppedEarly reports that the run ended at a turn boundary because

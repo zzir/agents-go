@@ -29,9 +29,8 @@ type RequestUsage struct {
 
 // Usage aggregates token usage across all model requests in a run.
 //
-// It is the Go counterpart of the Python SDK's Usage dataclass. RequestUsageEntries
-// preserves a per-request breakdown so callers can compute accurate costs even
-// though the top-level counters are summed.
+// RequestUsageEntries preserves a per-request breakdown so callers can compute
+// accurate costs even though the top-level counters are summed.
 type Usage struct {
 	// Requests is the total number of LLM API calls made.
 	Requests int64 `json:"requests"`
@@ -89,7 +88,7 @@ func (u *Usage) Snapshot() Usage {
 	}
 }
 
-// Add aggregates another Usage into the receiver, mirroring Python's Usage.add.
+// Add aggregates another Usage into the receiver.
 //
 // Per-request entries are preserved: if other already carries entries they are
 // appended; otherwise, if other represents a single request with tokens, a

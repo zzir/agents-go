@@ -128,7 +128,7 @@ func TestResultOutput_ImageResource(t *testing.T) {
 }
 
 // Multiple text blocks become a list of native text parts, not one
-// JSON-encoded string (Python parity).
+// JSON-encoded string.
 func TestResultOutput_MultipleTextBlocks(t *testing.T) {
 	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
 		&mcpsdk.TextContent{Text: "first"},
@@ -171,8 +171,7 @@ func TestResultOutput_StructuredContentGating(t *testing.T) {
 
 // When UseStructuredContent is opted in but the result carries no (or empty)
 // structuredContent, the output must fall back to the content blocks rather
-// than blanking out — mirroring the Python SDK's
-// `if use_structured_content and result.structuredContent:` truthiness.
+// than blanking out.
 func TestResultOutput_StructuredContentEmptyFallsBackToBlocks(t *testing.T) {
 	cases := []struct {
 		name       string

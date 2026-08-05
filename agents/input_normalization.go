@@ -3,10 +3,9 @@ package agents
 import "encoding/json"
 
 // toolCallToOutputType maps tool-call input item types to the output item type
-// that completes them, mirroring Python's _TOOL_CALL_TO_OUTPUT_TYPE. Go itself
-// produces only function_call items, but stored history may have been written
-// by the Python SDK (or by hand) using the hosted-tool item types, so the full
-// table keeps cross-writer sessions replayable.
+// that completes them. This SDK produces only function_call items, but stored
+// history may have been written by another Responses client (or by hand) using
+// the hosted-tool item types, so the full table keeps such sessions replayable.
 var toolCallToOutputType = map[string]string{
 	"function_call":    "function_call_output",
 	"custom_tool_call": "custom_tool_call_output",
@@ -20,10 +19,9 @@ var toolCallToOutputType = map[string]string{
 // normalizeStoredInput scrubs items that entered the run from outside it —
 // session history in prepareRun, a resumed state's original input — so replay
 // cannot 400 at the Responses API: orphan tool calls (calls without a matching
-// output, e.g. persisted by the Python SDK at an interruption) are dropped
+// output, e.g. persisted by any client at an interruption) are dropped
 // together with the reasoning items tied to them, then duplicate identified
-// items collapse keeping the latest occurrence. Mirrors Python's
-// drop_orphan_function_calls + deduplicate_input_items_preferring_latest.
+// items collapse keeping the latest occurrence.
 func normalizeStoredInput(items []TResponseInputItem) []TResponseInputItem {
 	if len(items) == 0 {
 		return items
@@ -102,8 +100,7 @@ func dropOrphanToolCalls(items []TResponseInputItem, itemMaps []map[string]any) 
 
 	// A reasoning item is tied to the next non-reasoning item; if that item was
 	// just dropped, the reasoning item dangles too. Scan backward so chained
-	// reasoning items collapse together (Python parity:
-	// _drop_reasoning_items_preceding_dropped_calls).
+	// reasoning items collapse together.
 	dropReasoning := make([]bool, len(items))
 	for i := len(items) - 1; i >= 0; i-- {
 		m := itemMaps[i]
@@ -137,8 +134,8 @@ func dropOrphanToolCalls(items []TResponseInputItem, itemMaps []map[string]any) 
 	return outItems, outMaps
 }
 
-// inputItemDedupeKey derives a stable identity for deduplication, mirroring
-// Python's _dedupe_key: messages (role-bearing or type=="message") are never
+// inputItemDedupeKey derives a stable identity for deduplication: messages
+// (role-bearing or type=="message") are never
 // deduped, placeholder fake ids are ignored so call_id-based dedupe still
 // applies, and identity comes from id, then call_id, then approval_request_id.
 // "" means "no identity — always keep".

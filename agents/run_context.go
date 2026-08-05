@@ -10,10 +10,12 @@ import (
 // RunContext carries user-supplied data and run-scoped state through a single
 // agent run. It is passed to tool invocations, guardrails and lifecycle hooks.
 //
-// Unlike the Python SDK, which parameterizes Agent on a context type, the Go SDK
-// keeps user data in the Context field as an any value. Tool authors type-assert
-// it back to their concrete type. The standard library context.Context is used
-// separately for cancellation and deadlines.
+// User data lives in the Context field as an any value; tool authors type-assert
+// it back to their concrete type. Making Agent generic over that type instead
+// would put a type parameter on every value the runner touches — agents,
+// tools, guardrails, handoffs — to type one field nothing in the SDK reads.
+// The standard library context.Context stays separate, for cancellation and
+// deadlines.
 type RunContext struct {
 	// Context is the arbitrary user value threaded through the run. It is never
 	// inspected by the SDK.
@@ -116,8 +118,7 @@ func NewRunContext(userData any) *RunContext {
 // tool name. It is goroutine-safe.
 //
 // Each tool name has one entry holding a permanent allow/deny plus per-call
-// allow/deny sets, mirroring the Python SDK's approval model. Precedence when
-// resolving a call: a permanent approval wins over everything (including a
+// allow/deny sets. Precedence when resolving a call: a permanent approval wins over everything (including a
 // permanent or per-call rejection), then a permanent rejection, then a per-call
 // approval, then a per-call rejection.
 type ApprovalStore struct {
@@ -199,9 +200,8 @@ func (s *ApprovalStore) Reject(item *ToolApprovalItem, always bool, message stri
 }
 
 // decisionFor returns the recorded decision for a call. ok is false when the
-// tool name has no entry or the call is undecided. Precedence matches Python's
-// is_tool_approved: permanent approval, permanent rejection, per-call approval,
-// per-call rejection.
+// tool name has no entry or the call is undecided. Precedence: permanent
+// approval, permanent rejection, per-call approval, per-call rejection.
 func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -228,10 +228,9 @@ func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, 
 // into dst, keyed by the item's call id. An agent-as-tool uses it to carry the
 // parent run's approve/reject decisions into the nested run it resumes, so the
 // human's choice on a surfaced nested interruption actually takes effect.
-// Permanent (always) decisions stay permanent in the nested store — matching
-// Python's _apply_nested_approvals — so an "always approve" on the parent
-// covers the nested run's future calls to the same tool without another
-// pause/resume round-trip.
+// Permanent (always) decisions stay permanent in the nested store — so an
+// "always approve" on the parent covers the nested run's future calls to the
+// same tool without another pause/resume round-trip.
 func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem) {
 	if dst == nil {
 		return
@@ -274,11 +273,10 @@ type ToolContext struct {
 	ToolCallID string
 	// ToolArguments is the raw JSON arguments string emitted by the model.
 	ToolArguments string
-	// Agent is the agent whose tool is being invoked. It mirrors the Python
-	// SDK's ToolContext.agent.
+	// Agent is the agent whose tool is being invoked.
 	Agent *Agent
 	// ToolCall is the raw model-emitted function-call output item that triggered
-	// this invocation. It mirrors the Python SDK's ToolContext.tool_call.
+	// this invocation.
 	ToolCall TResponseOutputItem
 	// functionSpanID is the tracing span ID of this tool call, letting a
 	// nested agent-as-tool run parent its agent spans under the function span

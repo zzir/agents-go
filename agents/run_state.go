@@ -12,8 +12,8 @@ import (
 )
 
 // RunStateSchemaVersion is the version stamped into serialized RunState. The
-// format guarantees Go↔Go round-trips; it is not binary-compatible with the
-// Python SDK's RunState.
+// format guarantees round-trips within this SDK; it is not an interchange
+// format with any other agents SDK.
 //
 // The version is checked for STRICT equality on decode: a state stamped with any
 // other version — older or newer — is rejected rather than best-effort decoded
@@ -29,8 +29,8 @@ const RunStateSchemaVersion = "1.4"
 // approval. Obtain one from RunResult.State, record approvals/rejections via
 // Approve/Reject, then continue with ResumeRun.
 //
-// It is the Go counterpart of the Python SDK's RunState. Serialize it with
-// MarshalJSON to persist across processes and rebuild with RunStateFromJSON.
+// Serialize it with MarshalJSON to persist across processes and rebuild with
+// RunStateFromJSON.
 type RunState struct {
 	CurrentAgent        *Agent
 	OriginalInput       []TResponseInputItem
@@ -46,7 +46,7 @@ type RunState struct {
 	CurrentTurn int
 
 	// MaxTurns is the turn budget of the interrupted run. ResumeRun always
-	// continues under it (ignoring RunOptions.Exec.MaxTurns, matching Python), so a
+	// continues under it, ignoring RunOptions.Exec.MaxTurns, so a
 	// run started with MaxTurns 20 and interrupted at turn 12 resumes under 20.
 	// Zero — e.g. states serialized before this field existed — falls back to
 	// DefaultMaxTurns; a negative value (MaxTurnsUnlimited) disables the budget.
@@ -70,10 +70,10 @@ type RunState struct {
 	PersistedSessionItems int
 
 	// ToolsUsed lists the names of agents that had already called tools when the
-	// run paused, so ResumeRun keeps the tool_choice reset in effect for them
-	// (Python serializes its tool-use tracker snapshot). Empty for states from
-	// before this field existed — the interrupted agent re-marks itself when its
-	// response is re-processed, so only cross-agent hand-back loses the reset.
+	// run paused, so ResumeRun keeps the tool_choice reset in effect for them.
+	// Empty for states from before this field existed — the interrupted agent
+	// re-marks itself when its response is re-processed, so only cross-agent
+	// hand-back loses the reset.
 	ToolsUsed []string
 
 	// DisclosedTools names the deferred tools opened up before the pause, so a
@@ -225,11 +225,9 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		return nil, nil, err
 	}
 	// Turn budget on resume: the interrupted run's own budget always wins, so
-	// repeated interrupt/resume cycles stay under the original limit
-	// (Python parity: Runner.run ignores the max_turns argument when the input
-	// is a RunState). A negative budget (MaxTurnsUnlimited) is preserved; only a
-	// zero — including states serialized before MaxTurns existed — falls back to
-	// the default.
+	// repeated interrupt/resume cycles stay under the original limit. A negative
+	// budget (MaxTurnsUnlimited) is preserved; only a zero — including states
+	// serialized before MaxTurns existed — falls back to the default.
 	maxTurns := state.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
@@ -264,8 +262,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// approval call lives in GeneratedItems (awaiting its output this turn), not
 	// in OriginalInput, so it is untouched. The loop seeds originalInput from
 	// r.resume.OriginalInput, so write the scrubbed form back onto the state
-	// this ResumeRun is already consuming. Mirrors Python's
-	// normalize_resumed_input.
+	// this ResumeRun is already consuming.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
 	agentName := ""
@@ -282,8 +279,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	}
 	// Seed the guardrail-result accumulators from the state so the resumed run's
 	// RunResult still reports the pre-pause results. First-turn input guardrails
-	// are not re-run on resume, so this is the only way they survive (Python
-	// parity: the resume loop seeds its accumulators from run_state).
+	// are not re-run on resume, so this is the only way they survive.
 	r.guardrailResults = state.GuardrailResults
 	// Restore the tool-use tracker so tool_choice stays reset for every agent
 	// that had used tools before the pause (not only the interrupted one).
@@ -479,7 +475,7 @@ func toSerialGuardrailResults(rs []GuardrailResult) []serialGuardrailResult {
 }
 
 // The from-serial helpers rebuild results with a name-only stub guardrail (the
-// live Run func does not round-trip), mirroring Python's guardrail-result revival.
+// live Run func does not round-trip).
 
 func fromSerialGuardrailResults(rs []serialGuardrailResult) []GuardrailResult {
 	if len(rs) == 0 {

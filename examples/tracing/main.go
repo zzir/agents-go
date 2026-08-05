@@ -2,8 +2,7 @@
 // batch processor and console exporter records one trace per run, with spans
 // for the agent turn, each model call and each tool call. TraceGroupID links
 // the traces of related runs (e.g. one chat thread) and TraceMetadata attaches
-// arbitrary context — the counterparts of Python's RunConfig group_id /
-// trace_metadata.
+// arbitrary context to every span the run records.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/tracing
 package main

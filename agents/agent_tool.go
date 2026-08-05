@@ -24,8 +24,7 @@ type AgentToolConfig struct {
 	CustomOutputExtractor func(*RunResult) (string, error)
 
 	// IsEnabled, when non-nil, is consulted before exposing the tool to the
-	// calling model; returning false hides it for that run. The counterpart of
-	// Python's as_tool(is_enabled=...).
+	// calling model; returning false hides it for that run.
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
 
 	// NeedsApproval pauses the parent run before the nested agent executes,
@@ -35,10 +34,9 @@ type AgentToolConfig struct {
 	NeedsApproval     bool
 	NeedsApprovalFunc func(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error)
 
-	// FailureErrorFunction overrides how a failed nested run is rendered back
-	// to the calling model. nil keeps DefaultToolErrorFunction. To make
-	// failures fatal instead (Python's failure_error_function=None), clear the
-	// field on the returned *FunctionTool.
+	// FailureErrorFunction overrides how a failed nested run is rendered back to
+	// the calling model. nil keeps DefaultToolErrorFunction. To make failures
+	// fatal instead, clear the field on the returned *FunctionTool.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
 	// ModifyRunOptions edits the nested run's RunOptions before it starts. It
@@ -53,8 +51,7 @@ type AgentToolConfig struct {
 	ModifyRunOptions func(*RunOptions)
 
 	// OnStream, when non-nil, switches the nested run to streaming and
-	// delivers every stream event to the callback, mirroring Python's
-	// as_tool(on_stream=...). Events are dispatched from a single background
+	// delivers every stream event to the callback. Events are dispatched from a single background
 	// goroutine so a slow callback does not stall the nested run. When the
 	// nested run completes normally the tool call waits for the callback to
 	// drain; when the parent run is canceled it does not. A panic inside the
@@ -69,8 +66,7 @@ type AgentToolConfig struct {
 }
 
 // AgentToolStreamEvent is delivered to AgentToolConfig.OnStream for every
-// stream event of a nested agent-as-tool run. It mirrors Python's
-// AgentToolStreamEvent.
+// stream event of a nested agent-as-tool run.
 type AgentToolStreamEvent struct {
 	// Event is the nested run's stream event.
 	Event StreamEvent
@@ -86,8 +82,7 @@ type AgentToolStreamEvent struct {
 
 // AgentToolInvocation identifies the parent tool call that produced a nested
 // agent-as-tool run. It is exposed on the nested RunResult so a
-// CustomOutputExtractor can tell which call it is extracting for — the
-// counterpart of Python's RunResult.agent_tool_invocation.
+// CustomOutputExtractor can tell which call it is extracting for.
 type AgentToolInvocation struct {
 	ToolName   string
 	ToolCallID string
@@ -100,10 +95,9 @@ type agentToolInput struct {
 	Input string `json:"input" jsonschema:"The input to pass to the agent"`
 }
 
-// AsTool turns the agent into a Tool callable by other agents. Unlike a handoff,
-// the nested agent receives only the provided input (not the full conversation)
-// and returns control to the calling agent when done. It mirrors the Python
-// SDK's Agent.as_tool.
+// AsTool turns the agent into a Tool callable by other agents. Unlike a
+// handoff, the nested agent receives only the provided input (not the full
+// conversation) and returns control to the calling agent when done.
 //
 // The nested run inherits the parent run's model provider, model override,
 // model settings, run-level guardrails and tracer from the run context, so the
@@ -122,8 +116,8 @@ func (a *Agent) AsTool(cfg AgentToolConfig) *FunctionTool {
 // are reflected from Params (like NewFunctionTool), and the arguments are
 // rendered into the nested run's input with the default structured rendering
 // (preamble + JSON + schema summary; see DefaultAgentToolInputBuilder) or
-// cfg.InputBuilder. It mirrors Python's as_tool(parameters=...). A free
-// function because Go methods cannot take type parameters.
+// cfg.InputBuilder. A free function because Go methods cannot take type
+// parameters.
 func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *FunctionTool {
 	name := cfg.Name
 	if name == "" {
@@ -182,7 +176,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			// loop): its state was cached on the parent run context by tool call
 			// id. Mirror the parent's approve/reject decisions for the surfaced
 			// nested interruptions into the nested run before resuming so the
-			// human's choice takes effect. Mirrors Python's as_tool resume path.
+			// human's choice takes effect.
 			if tc.RunContext != nil {
 				if paused := tc.takeNestedToolState(tc.ToolCallID); paused != nil {
 					resumed = true
@@ -190,17 +184,15 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 						tc.Approvals.mirrorInto(paused.Approvals, paused.Interruptions)
 					}
 					resumeOpts := nestedOpts
-					// The serialized state already carries the conversation so
-					// far (Python nulls conversation_id/previous_response_id on
-					// resume).
+					// The serialized state already carries the conversation so far.
 					resumeOpts.Conversation.ConversationID = ""
 					res, err = runNestedAgent(ctx, a, "", paused, resumeOpts, cfg, tc, argsJSON)
 				}
 			}
 			if !resumed {
 				// Arguments validate against their declared shape before they
-				// can influence the nested run — mirroring the Python
-				// TypeAdapter: a malformed-argument error goes back to the
+				// can influence the nested run: a malformed-argument
+				// error goes back to the
 				// model to self-correct instead of silently becoming the
 				// nested run's prompt.
 				switch {
@@ -239,8 +231,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 					interruptions: res.Interruptions,
 				}
 			}
-			// Fold the completed nested run's usage into the parent run's usage
-			// (Python parity: the nested run shares the parent's usage). Add is
+			// Fold the completed nested run's usage into the parent run's usage. Add is
 			// goroutine-safe, so concurrent agent-tool calls are fine.
 			if tc.RunContext != nil && res.Usage != nil {
 				tc.Usage.Add(res.Usage)

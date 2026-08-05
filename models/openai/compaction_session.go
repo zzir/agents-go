@@ -53,10 +53,9 @@ type CompactionOptions struct {
 // CompactionSession decorates any agents.Session, calling the OpenAI
 // responses.compact API to summarize stored history once it grows past a
 // threshold, then replacing the underlying history with the compacted result.
-// It is the Go counterpart of Python's OpenAIResponsesCompactionSession.
 //
-// Unlike Python, which can compact after every turn, the Go runner persists a
-// run's items once at completion, so compaction is attempted once per run (when
+// The runner persists a run's items once at completion, so compaction is
+// attempted once per run (when
 // the run finishes and its items are saved). The decision hook still bounds how
 // often the responses.compact API is actually called.
 type CompactionSession struct {
@@ -285,7 +284,7 @@ func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...agent
 	return r.ReplaceEntries(ctx, entries...)
 }
 
-// resolveCompactionMode mirrors Python's _resolve_compaction_mode: under "auto",
+// resolveCompactionMode decides how to feed the compaction call: under "auto",
 // use the full input when the last response is unstored or has no id, otherwise
 // chain from previous_response_id.
 func resolveCompactionMode(mode CompactionMode, responseID string, store *bool) CompactionMode {
@@ -302,8 +301,7 @@ func resolveCompactionMode(mode CompactionMode, responseID string, store *bool) 
 }
 
 // compactionCandidateCount counts items eligible for compaction, excluding user
-// messages and existing compaction items (matching Python's
-// select_compaction_candidate_items).
+// messages and existing compaction items.
 func compactionCandidateCount(items []agents.TResponseInputItem) int {
 	n := 0
 	for _, it := range items {
@@ -319,8 +317,7 @@ func compactionCandidateCount(items []agents.TResponseInputItem) int {
 
 // stripOrphanedAssistantIDs removes the id from assistant messages when the
 // compacted output carries no reasoning items, since replaying an assistant id
-// without its paired reasoning item is rejected by the API (matching Python's
-// _strip_orphaned_assistant_ids).
+// without its paired reasoning item is rejected by the API.
 func stripOrphanedAssistantIDs(items []agents.TResponseInputItem) []agents.TResponseInputItem {
 	if len(items) == 0 {
 		return items
@@ -372,8 +369,8 @@ func withoutID(it agents.TResponseInputItem) (agents.TResponseInputItem, bool) {
 	return it, false
 }
 
-// isOpenAIModelName mirrors Python's is_openai_model_name: gpt-*, o<digit>*, or
-// ft:gpt-* prefixes.
+// isOpenAIModelName reports whether a model name is a first-party OpenAI one:
+// gpt-*, o<digit>*, or ft:gpt-* prefixes.
 func isOpenAIModelName(model string) bool {
 	m := strings.TrimSpace(model)
 	if m == "" {

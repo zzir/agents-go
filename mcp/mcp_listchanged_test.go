@@ -55,8 +55,8 @@ func TestMCP_CacheHitDoesNotRefetch(t *testing.T) {
 }
 
 // TestMCP_EmptyArgumentsSentAsEmptyObject pins the wire format of zero-argument
-// tool calls: "arguments" must be an explicit {} — matching the Python SDK,
-// which sends an empty dict — not an omitted field, because some servers
+// tool calls: "arguments" must be an explicit {}, not an omitted field, because
+// some servers
 // reject calls without an arguments key.
 func TestMCP_EmptyArgumentsSentAsEmptyObject(t *testing.T) {
 	ctx := context.Background()

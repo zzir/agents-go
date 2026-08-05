@@ -170,8 +170,7 @@ type ListOptions struct {
 	Cursor Cursor
 }
 
-// SessionSettings configures how a run reads a Session. It is the Go counterpart
-// of Python's SessionSettings.
+// SessionSettings configures how a run reads a Session.
 type SessionSettings struct {
 	// Limit caps how many of the most recent entries GetEntries loads at run
 	// start. Zero (the default) means no limit — the full history is loaded.

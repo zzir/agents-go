@@ -79,7 +79,7 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 		}
 	}
 	// top_logprobs only takes effect when logprobs are included in the output,
-	// matching the Python SDK's implicit include.
+	// so the include is added implicitly.
 	if req.Settings != nil && req.Settings.TopLogprobs != nil {
 		const logprobsInclude = responses.ResponseIncludable("message.output_text.logprobs")
 		if !slices.Contains(params.Include, logprobsInclude) {
@@ -87,9 +87,8 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 		}
 	}
 
-	// parallel_tool_calls gating counts function tools only, excluding handoffs,
-	// matching the Python SDK (openai_responses.py:746 uses `tools`, not the
-	// combined tool+handoff list).
+	// parallel_tool_calls gating counts function tools only, excluding handoffs:
+	// a run whose only "tools" are handoffs has nothing to parallelize.
 	applySettings(&params, req.Settings, len(req.Tools) > 0)
 	return params, nil
 }
@@ -109,8 +108,7 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 	}
 	for k, v := range s.ExtraBody {
 		// WithJSONSet interprets the key as an sjson path, so escape its
-		// special characters to set a literal top-level key (Python's
-		// extra_body semantics).
+		// special characters to set a literal top-level key.
 		opts = append(opts, option.WithJSONSet(modelkit.EscapeJSONPath(k), v))
 	}
 	return opts
@@ -129,7 +127,7 @@ func (m *ResponsesModel) GetResponse(ctx context.Context, req agents.ModelReques
 		return nil, fmt.Errorf("openai responses: %w", err)
 	}
 	// The Responses API omits the usage block for some responses; count it as
-	// zero requests in that case (Python: `Usage() if not response.usage`).
+	// zero requests in that case.
 	var usage *responses.ResponseUsage
 	if resp.JSON.Usage.Valid() {
 		usage = &resp.Usage
@@ -185,8 +183,7 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 			// The Responses API reports terminal failures as ordinary stream
 			// events that never trip the SSE layer's Err(); surface them as
 			// typed *ModelBehaviorError so a failed run cannot end as an empty
-			// success (Python: response_terminal_failure_error /
-			// response_error_event_failure_error).
+			// success.
 			switch event.Type {
 			case "error", "response.error":
 				e := event.AsError()
@@ -233,8 +230,7 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 }
 
 // responseTerminalFailure builds a *ModelBehaviorError for a response.failed /
-// response.incomplete terminal stream event, mirroring Python's
-// format_response_terminal_failure.
+// response.incomplete terminal stream event.
 func responseTerminalFailure(eventType, status, errCode, errMessage, incompleteReason string) *agents.ModelBehaviorError {
 	msg := fmt.Sprintf("Responses stream ended with terminal event `%s`.", eventType)
 	var details []string
@@ -261,8 +257,7 @@ func responseTerminalFailure(eventType, status, errCode, errMessage, incompleteR
 }
 
 // responseErrorEventFailure builds a *ModelBehaviorError for an error /
-// response.error terminal stream event, mirroring Python's
-// format_response_error_event.
+// response.error terminal stream event.
 func responseErrorEventFailure(eventType string, e responses.ResponseErrorEvent) *agents.ModelBehaviorError {
 	msg := fmt.Sprintf("Responses stream ended with terminal event `%s`.", eventType)
 	var details []string

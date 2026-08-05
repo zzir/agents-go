@@ -276,8 +276,7 @@ func TestErrorHandlers_ModelRefusal_FailsWithoutHandler(t *testing.T) {
 }
 
 func TestErrorHandlers_RefusalTakesPrecedenceOverText(t *testing.T) {
-	// A message carrying both text and a refusal part is a refusal (Python
-	// parity: extract_refusal wins over extract_text).
+	// A message carrying both text and a refusal part is a refusal.
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(textAndRefusalOutput(t, "partial text", "cannot help")),
 	}}

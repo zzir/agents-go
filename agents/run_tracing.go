@@ -22,8 +22,7 @@ func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 
 // traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData,
 // falling back to the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
-// variable where anything but "false" means true — the same default as the
-// Python SDK.
+// variable where anything but "false" means true.
 func (r *runner) traceIncludeSensitiveData() bool {
 	if r.opts.Observe.IncludeSensitiveData != nil {
 		return *r.opts.Observe.IncludeSensitiveData

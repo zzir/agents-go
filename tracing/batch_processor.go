@@ -20,8 +20,8 @@ type BatchProcessorOptions struct {
 
 // BatchProcessor buffers finished traces and spans and exports them in batches
 // from a background goroutine. Span/trace ends are enqueued; a periodic timer
-// and a size threshold trigger flushes. Shutdown drains the queue and stops the
-// goroutine. It is the Go counterpart of the Python SDK's BatchTraceProcessor.
+// and a size threshold trigger flushes. Shutdown drains the queue and stops
+// the goroutine.
 type BatchProcessor struct {
 	exporter Exporter
 	opts     BatchProcessorOptions
@@ -78,8 +78,8 @@ func (p *BatchProcessor) enqueue(item Item) {
 	}
 }
 
-// OnTraceStart enqueues the trace row immediately (matching the Python SDK) so
-// that a crash mid-run does not orphan its spans.
+// OnTraceStart enqueues the trace row immediately, so that a crash mid-run does
+// not orphan its spans.
 func (p *BatchProcessor) OnTraceStart(t *Trace) { p.enqueue(t) }
 
 // OnTraceEnd is a no-op: the trace row was already enqueued on start.
@@ -132,8 +132,9 @@ func (p *BatchProcessor) ForceFlush() { p.flush() }
 
 // Shutdown stops the background goroutine after a final flush. It honors ctx: if
 // the context is cancelled first, it returns without waiting for the goroutine.
-// Items arriving after Shutdown are dropped (and counted), matching the Python
-// SDK's behavior of discarding telemetry once shut down.
+// Items arriving after Shutdown are dropped, and counted: telemetry that
+// arrives once the exporter is gone has nowhere to go, and blocking a caller
+// on a shut-down processor would be worse than losing a span.
 func (p *BatchProcessor) Shutdown(ctx context.Context) {
 	p.mu.Lock()
 	p.shutdown = true

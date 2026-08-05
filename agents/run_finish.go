@@ -14,11 +14,10 @@ func (r *runner) usageSnapshot() *Usage {
 }
 
 // finishRun is the final-output tail shared by the normal completion path and
-// a max-turns recovery. Order: the agent-end hook fires FIRST (matching Python;
-// before output guardrails — a tripped
-// guardrail does not suppress on_agent_end), then output guardrails, then
-// session persistence and compaction (kept after guardrails, matching Python's
-// streaming path: a guardrail-tripped final output is not persisted).
+// a max-turns recovery. Order: the agent-end hook fires FIRST, before output
+// guardrails, so a tripped guardrail does not suppress it; then output
+// guardrails; then session persistence and compaction, so a guardrail-tripped
+// final output is never persisted.
 func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TResponseInputItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
 	if agent.OnEnd != nil {
 		if err := agent.OnEnd(ctx, r.rc, finalOutput); err != nil {
@@ -55,9 +54,8 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 	r.compactAfterRun(ctx)
 	return &RunResult{
 		Input: originalInput,
-		// The unfiltered item log: a handoff input filter rewrites the model's
-		// view (generatedItems) but never what the result reports (Python parity:
-		// new_items = session_items).
+		// The unfiltered item log: a handoff input filter rewrites the model's view
+		// (generatedItems) but never what the result reports.
 		NewItems:         r.sessionItems,
 		RawResponses:     raw,
 		FinalOutput:      finalOutput,
@@ -77,13 +75,13 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 // recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn a turn-budget
 // overrun into a normal completion. It returns (nil, nil) when there is no
 // handler or it declines — the caller then fails with the MaxTurnsError. On
-// recovery the agent span still records the overrun (Python parity: the error
-// is traced even when handled), the synthesized fallback message joins the
-// run's items and session unless the handler opted out, and the run finishes
-// through the same guardrail/persist/hook tail as a normal final output.
+// recovery the agent span still records the overrun, the synthesized fallback
+// message joins the run's items and session unless the handler opted out, and
+// the run finishes through the same guardrail/persist/hook tail as a normal
+// final output.
 func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []TResponseInputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
 	// Handlers see the session view of the run (never reset by handoff input
-	// filters), like Python's session_items-based RunErrorData for max_turns.
+	// filters).
 	rec, err := r.resolveErrorRecovery(ctx, "max_turns", r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
 	if err != nil || rec == nil {
 		return nil, err
@@ -105,8 +103,7 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []RunItem, ra
 	// child spans (generation, function) set their own errors at the source.
 	r.agentSpan.SetError(err.Error(), nil)
 	// Report the unfiltered item log when a handoff input filter has reset the
-	// caller's generatedItems view (Python parity: RunErrorDetails carries
-	// session_items). Without a filter the two are identical.
+	// caller's generatedItems view. Without a filter the two are identical.
 	newItems := items
 	if len(r.sessionItems) > len(items) {
 		newItems = r.sessionItems

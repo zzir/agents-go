@@ -136,9 +136,8 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	// tool/handoff outputs (a terminating tool, rejected calls) or a synthesized
 	// error-handler fallback message — are not on the server's
 	// previous_response_id chain, so compacting from lastResponseID would
-	// erase them from the stored history. Python defers compaction for such
-	// turns (save_result_to_session's has_local_tool_outputs check); with one
-	// compaction per run, ending on such a turn means skipping it.
+	// erase them from the stored history. With one compaction per run, ending
+	// on such a turn means skipping it.
 	if endsWithLocalItem(r.sessionItems) {
 		return
 	}

@@ -177,7 +177,8 @@ func runItemEventName(item RunItem) string {
 	case *HandoffCallItem:
 		return "handoff_requested"
 	case *HandoffOutputItem:
-		return "handoff_occured" // (sic) matches the Python SDK's spelling
+		// (sic) — the misspelling is the wire name consumers already match on.
+		return "handoff_occured"
 	case *ReasoningItem:
 		return "reasoning_item_created"
 	default:

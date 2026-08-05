@@ -9,7 +9,7 @@ import (
 )
 
 // emptyStrictSchema is the canonical empty object schema OpenAI strict mode
-// expects, matching _EMPTY_SCHEMA in the Python SDK.
+// expects for a tool that takes no arguments.
 func emptyStrictSchema() map[string]any {
 	return map[string]any{
 		"additionalProperties": false,
@@ -25,8 +25,8 @@ func emptyStrictSchema() map[string]any {
 // into anyOf, single-element allOf is inlined, null defaults are stripped, and
 // $refs carrying sibling keys are unraveled.
 //
-// It is a faithful port of ensure_strict_json_schema in the Python SDK and is
-// the compatibility-critical path: getting it wrong yields 400s from the API.
+// It is the compatibility-critical path: getting it wrong yields 400s from the
+// API, on requests that look fine locally.
 func EnsureStrictJSONSchema(schema map[string]any) (map[string]any, error) {
 	if len(schema) == 0 {
 		return emptyStrictSchema(), nil

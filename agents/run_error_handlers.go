@@ -7,8 +7,8 @@ import (
 	"slices"
 )
 
-// RunErrorData is a snapshot of the run's progress passed to a RunErrorHandler.
-// It mirrors the Python SDK's RunErrorData.
+// RunErrorData is a snapshot of the run's progress passed to a
+// RunErrorHandler.
 type RunErrorData struct {
 	// Input is the run's original input (after session history was prepended
 	// and any handoff input filter was applied).
@@ -47,7 +47,7 @@ type RunErrorHandlerResult struct {
 	FinalOutput any
 	// ExcludeFromHistory, when true, skips synthesizing an assistant message
 	// carrying FinalOutput into the run's items (and session). The zero value
-	// records the message — matching Python's include_in_history=True default.
+	// records the message.
 	ExcludeFromHistory bool
 }
 
@@ -56,10 +56,9 @@ type RunErrorHandlerResult struct {
 // unchanged. Returning a non-nil error aborts the run with that error instead.
 type RunErrorHandler func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error)
 
-// RunErrorHandlers holds per-error-kind recovery handlers, the counterpart of
-// Python's Runner.run(..., error_handlers={...}). Each handler turns its error
-// into a normal run completion with a fallback final output; nil handlers
-// leave that error fatal.
+// RunErrorHandlers holds per-error-kind recovery handlers. Each handler turns
+// its error into a normal run completion with a fallback final output; nil
+// handlers leave that error fatal.
 type RunErrorHandlers struct {
 	// MaxTurns is consulted when the run exceeds its turn budget
 	// (*MaxTurnsError).
@@ -71,15 +70,15 @@ type RunErrorHandlers struct {
 	// type produces a final message that fails schema validation, or no final
 	// text at all (*ModelBehaviorError). Other model-behavior errors (e.g.
 	// calling an unknown tool) are not routed here. When the model produced no
-	// text and this handler is nil (or declines), the runner keeps Python's
-	// behavior of running the model again instead of failing.
+	// text and this handler is nil (or declines), the runner calls the model
+	// again instead of failing: an empty turn is usually a transient miss, and
+	// failing the run would discard everything before it.
 	InvalidFinalOutput RunErrorHandler
 }
 
 // buildRunErrorData snapshots the run for a handler invocation. Items that
-// cannot convert to input form are skipped from History/Output (mirroring
-// Python's run_item_to_input_item returning None), never an error — this runs
-// on a path that is already failing.
+// cannot convert to input form are skipped from History/Output, never raised as
+// an error — this runs on a path that is already failing.
 func buildRunErrorData(input []TResponseInputItem, newItems []RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
 	output := make([]TResponseInputItem, 0, len(newItems))
 	for _, it := range newItems {

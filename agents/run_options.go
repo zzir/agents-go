@@ -9,10 +9,10 @@ import (
 // DefaultMaxTurns is the turn budget applied when RunOptions.Exec.MaxTurns is zero.
 const DefaultMaxTurns = 10
 
-// MaxTurnsUnlimited disables the turn budget when set as RunOptions.Exec.MaxTurns —
-// the run loops until it produces a final output, hands off to a finishing
-// agent, or is cancelled. The counterpart of Python's max_turns=None. Use with
-// care: a model that never finishes will loop indefinitely.
+// MaxTurnsUnlimited disables the turn budget when set as
+// RunOptions.Exec.MaxTurns — the run loops until it produces a final output,
+// hands off to a finishing agent, or is cancelled. Use with care: a model that
+// never finishes will loop indefinitely.
 const MaxTurnsUnlimited = -1
 
 // ModelInputData is the editable portion of a model call passed to a
@@ -115,8 +115,7 @@ type ConversationOptions struct {
 
 	// SessionSettings overrides how the run reads the Session (e.g. how many
 	// recent items to load). Non-zero fields take precedence over a Session-level
-	// default. Ignored without a Session — the counterpart of Python's
-	// RunConfig.session_settings.
+	// default. Ignored without a Session.
 	Settings *SessionSettings
 
 	// UsePreviousResponseID opts into server-managed conversation state: instead
@@ -162,12 +161,10 @@ type ExecOptions struct {
 
 	// PreApprovalToolInputGuardrails, when true, runs a tool's input guardrails
 	// before surfacing a human-approval interruption for it: a guardrail
-	// rejection returns the guardrail message as the tool output without
-	// emitting an approval request or executing the tool. Calls that pass still
-	// re-run the same guardrails immediately before execution after approval,
-	// so time-sensitive checks are revalidated on resume. Off by default —
-	// the counterpart of Python's
-	// RunConfig.tool_execution.pre_approval_tool_input_guardrails.
+	// rejection returns the guardrail message as the tool output without emitting
+	// an approval request or executing the tool. Calls that pass still re-run the
+	// same guardrails immediately before execution after approval, so
+	// time-sensitive checks are revalidated on resume. Off by default.
 	PreApprovalToolInputGuardrails bool
 
 	// HandoffInputFilter is a run-level default applied to any handoff that does
@@ -178,8 +175,7 @@ type ExecOptions struct {
 	// ErrorHandlers supplies per-error-kind recovery handlers that can turn a
 	// failing run — max turns exceeded, a model refusal, or an invalid
 	// structured final output — into a normal completion with a fallback final
-	// output. The zero value leaves every error fatal. The counterpart of
-	// Python's Runner.run(..., error_handlers={...}).
+	// output. The zero value leaves every error fatal.
 	ErrorHandlers RunErrorHandlers
 
 	// ToolLoop bounds the tool loop: consecutive all-failed turns, and what
@@ -192,9 +188,8 @@ type ExecOptions struct {
 
 	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
 	// items are converted back into model input on later turns. The default
-	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It is
-	// persisted across interruptions in RunState — the counterpart of Python's
-	// RunConfig.reasoning_item_id_policy.
+	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It
+	// is persisted across interruptions in RunState.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
 
 	// PrepareNextTurn rebuilds the next turn's configuration at the turn
@@ -229,21 +224,18 @@ type ObserveOptions struct {
 	// Build one with tracing.NewTracer(processor).
 	Tracer *tracing.Tracer
 
-	// TraceIncludeSensitiveData controls whether generation spans record the
-	// full model request (model, system instructions, input items) and output
-	// items. nil reads the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA
-	// environment variable, where anything but "false" means true — matching
-	// the Python SDK's RunConfig.trace_include_sensitive_data default. Set to
-	// false when trace exports must not carry conversation content.
+	// TraceIncludeSensitiveData controls whether generation spans record the full
+	// model request (model, system instructions, input items) and output items.
+	// nil reads the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
+	// variable, where anything but "false" means true. Set to false when trace
+	// exports must not carry conversation content.
 	IncludeSensitiveData *bool
 
-	// TraceGroupID links this run's trace to a group of related traces (e.g.
-	// one chat thread across several runs) — the counterpart of Python's
-	// RunConfig.group_id. Only used when Tracer starts a new trace.
+	// TraceGroupID links this run's trace to a group of related traces (e.g. one
+	// chat thread across several runs). Only used when Tracer starts a new trace.
 	TraceGroupID string
 
-	// TraceMetadata attaches user metadata to the run's trace — the
-	// counterpart of Python's RunConfig.trace_metadata. Only used when Tracer
-	// starts a new trace.
+	// TraceMetadata attaches user metadata to the run's trace. Only used when
+	// Tracer starts a new trace.
 	TraceMetadata map[string]any
 }

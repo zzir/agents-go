@@ -112,20 +112,20 @@ func TestNormalizeStoredInput_KeepsCleanHistory(t *testing.T) {
 
 func TestNormalizeStoredInput_KeepsDuplicateMessages(t *testing.T) {
 	// Messages carry no stable id in easy form, so identical messages must not
-	// collapse (Python parity: _dedupe_key returns None for role-bearing items).
+	// collapse.
 	items := []TResponseInputItem{userMsg("hi"), userMsg("hi")}
 	if got := normalizeStoredInput(items); len(got) != 2 {
 		t.Errorf("duplicate messages collapsed: len = %d, want 2", len(got))
 	}
 }
 
-// End-to-end: a session holding a dangling function_call (as the Python SDK
+// End-to-end: a session holding a dangling function_call (what any client
 // persists at an interruption) must not reach the model as an orphan.
 func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	sess := NewInMemorySession()
 	if err := NewSession(sess).AppendItems(context.Background(), []TResponseInputItem{
 		userMsg("earlier question"),
-		fnCall("dangling"), // no output — a paused Python turn
+		fnCall("dangling"), // no output — a turn that paused here
 	}, Source{}); err != nil {
 		t.Fatal(err)
 	}

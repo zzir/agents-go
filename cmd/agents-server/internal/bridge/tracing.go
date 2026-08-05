@@ -40,7 +40,7 @@ func newWSProcessor(send func(string, any), traces *store.TraceStore, sessionID,
 
 // boundSpanData prepares span data for the client: the redundant "name" key
 // is dropped (span.Name already travels on the envelope; the data copy exists
-// for Python-parity HTTP export), and the bulky payload fields (model
+// for HTTP export), and the bulky payload fields (model
 // input/output) are replaced with a marker when the JSON exceeds
 // maxSpanDataJSON. Returns the cleaned data map and its JSON.
 func boundSpanData(data map[string]any) (map[string]any, string) {

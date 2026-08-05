@@ -213,8 +213,8 @@ type runner struct {
 	// persistedSessionItems counts how many leading sessionItems have already
 	// been written to the session. The loop persists incrementally — after each
 	// turn and at an interruption — so a cancelled or failed run keeps every
-	// completed turn instead of losing the whole run (matching Python's per-turn
-	// save_result_to_session). Carried across interrupt/resume in RunState.
+	// completed turn instead of losing the whole run. Carried across
+	// interrupt/resume in RunState.
 	persistedSessionItems int
 
 	// userInputSaved guards the one-time persistence of userInput at loop start
@@ -271,11 +271,10 @@ type runner struct {
 	consecutiveErrorTurns int
 
 	// toolsUsedBy tracks which agents have called tools this run, driving the
-	// tool_choice reset (Agent.DisableToolChoiceReset). Keyed by agent name so
-	// it can be carried across an interrupt/resume in RunState (Python
-	// serializes its tool-use tracker snapshot), keeping the reset in effect for
-	// every agent that used tools before the pause — not just the interrupted
-	// one.
+	// tool_choice reset (Agent.DisableToolChoiceReset). Keyed by agent name so it
+	// can be carried across an interrupt/resume in RunState, keeping the reset in
+	// effect for every agent that used tools before the pause — not just the
+	// interrupted one.
 	toolsUsedBy map[string]bool
 
 	// lastResponseID / lastStore record the final model call's response id and
@@ -721,7 +720,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 					// conversation state: the server holds the unfiltered history,
 					// so a filtered view would desync (in ConversationID mode,
 					// resending the full filtered input duplicates the server's
-					// stored items). Fail fast, matching Python's UserError.
+					// stored items). Fail fast.
 					if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
 						err := NewUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
 						return nil, r.fail(err, originalInput, generatedItems, rawResponses, currentAgent)
@@ -786,7 +785,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				cursor:                cursor,
 				// Carry the guardrail results accumulated so far so a resumed run's
 				// RunResult still reports them: first-turn input guardrails are not
-				// re-run on resume (Python parity), so this is their only source.
+				// re-run on resume, so this is their only source.
 				GuardrailResults: r.snapshotGuardrailResults(),
 				// Carry any paused agent-as-tool nested states so ResumeRun
 				// continues them; merge with any already cached on the run context

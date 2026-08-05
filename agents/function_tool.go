@@ -28,8 +28,8 @@ import (
 // error, surfaced at construction like regexp.MustCompile. For a schema that
 // is runtime data, use NewRawFunctionTool, which returns an error instead.
 //
-// This is the Go counterpart of Python's @function_tool decorator; reflection
-// over struct tags replaces runtime signature inspection.
+// The schema comes from reflection over A's struct tags, so the tool the model
+// is shown and the Go type it decodes into cannot drift apart.
 func NewFunctionTool[A any, R any](
 	name, description string,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
@@ -84,7 +84,7 @@ func isStructKind(t reflect.Type) bool {
 
 // toolArgumentsJSONError marks tool arguments that were not decodable JSON at
 // all (a syntax error, as opposed to a shape/validation mismatch), so
-// DefaultToolErrorFunction can use Python's dedicated "parsing tool arguments"
+// DefaultToolErrorFunction can use the dedicated "parsing tool arguments"
 // wording for it. It unwraps to a *ModelBehaviorError like every other
 // argument failure.
 type toolArgumentsJSONError struct {
@@ -96,8 +96,7 @@ func (e *toolArgumentsJSONError) Error() string { return e.mbe.Error() }
 func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
 
 // decodeToolArgs decodes and validates the model-provided JSON argument string
-// into dst. Mirroring Python's _parse_function_tool_json_input + pydantic
-// validation, every failure is a *ModelBehaviorError — fed back to the model
+// into dst. Every failure is a *ModelBehaviorError — fed back to the model
 // via the tool's FailureErrorFunction so it can retry with corrected
 // arguments:
 // - undecodable JSON (syntax) — wrapped in toolArgumentsJSONError for the
@@ -107,8 +106,7 @@ func (e *toolArgumentsJSONError) Unwrap() error { return e.mbe }
 // - a type mismatch while decoding into dst.
 //
 // An empty or whitespace-only string is treated as "{}" so tools taking a
-// struct with all-optional fields still work (Python parity: input_json or
-// "{}").
+// struct with all-optional fields still work.
 func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst any) error {
 	trimmed := strings.TrimSpace(argsJSON)
 	trimmed = cmp.Or(trimmed, "{}")
@@ -146,9 +144,8 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 // runtime schema is expected data, a bad argument type is a bug.
 //
 // Strict mode is enabled by default, and the schema is normalized to the
-// strict subset via EnsureStrictJSONSchema — the same treatment Python's
-// FunctionTool.__post_init__ applies — on a deep copy, so the caller's map is
-// not mutated. To use the schema verbatim without strict mode, set
+// strict subset via EnsureStrictJSONSchema, on a deep copy, so the caller's map
+// is not mutated. To use the schema verbatim without strict mode, set
 // ParamsJSONSchema and clear Strict on the returned tool.
 func NewRawFunctionTool(
 	name, description string,

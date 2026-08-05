@@ -98,10 +98,8 @@ func (p *processedResponse) hasToolsToRun() bool {
 	return len(p.Functions) > 0 || len(p.Handoffs) > 0 || len(p.UnknownTools) > 0
 }
 
-// processModelResponse classifies each output item of a model response into run
-// items and pending tool/handoff actions. It is the Go counterpart of the Python
-// SDK's process_model_response, covering messages, reasoning, function calls and
-// handoff calls.
+// processModelResponse classifies each output item of a model response into
+// run items and pending tool/handoff actions.
 func processModelResponse(
 	agent *Agent,
 	tools []*FunctionTool,
@@ -164,8 +162,7 @@ func processModelResponse(
 }
 
 // executeToolsAndSideEffects runs the tools and handoffs requested by a model
-// response and determines the next step. It mirrors the decision logic of the
-// Python SDK's execute_tools_and_side_effects / get_single_step_result.
+// response and determines the next step.
 //
 // resumed marks the first turn after a HITL resume: the interrupted response's
 // own items were already recorded before the run paused, so they must not be
@@ -285,9 +282,8 @@ func (r *runner) executeToolsAndSideEffects(
 
 	// If any nested agent-as-tool run paused, pause the parent run too: surface
 	// the nested interruptions as the parent's own and carry the paused nested
-	// states so ResumeRun continues them. Sibling tools that completed keep
-	// their outputs in newStepItems (Python parity: their FunctionToolResults
-	// are recorded; only the interrupted call's output is withheld).
+	// states so ResumeRun continues them. Sibling tools that completed keep their
+	// outputs in newStepItems.
 	if len(nestedInterruptions) > 0 {
 		return &singleStepResult{
 			NewStepItems:  newStepItems,
@@ -300,10 +296,9 @@ func (r *runner) executeToolsAndSideEffects(
 	// Unknown tool calls (ToolNotFoundReturnToModel): feed an error output back so
 	// the model can correct itself. hasToolsToRun stays true, forcing another turn.
 	for _, call := range pr.UnknownTools {
-		// Attach the tool-not-found error to the current agent span (Python
-		// parity: attach_error_to_current_span with {"tool_name":...}). The tool
-		// name is model-chosen metadata, not user data, so it is recorded
-		// regardless of the sensitive-data setting.
+		// Attach the tool-not-found error to the current agent span. The tool name
+		// is model-chosen metadata, not user data, so it is recorded regardless of
+		// the sensitive-data setting.
 		r.agentSpan.SetError("Tool not found", map[string]any{"tool_name": call.Name})
 		msg := fmt.Sprintf("Tool '%s' not found.", call.Name)
 		newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, msg))
@@ -329,8 +324,7 @@ func (r *runner) executeToolsAndSideEffects(
 		}, nil
 	}
 
-	// Determine whether the model produced a final output this turn. The branch
-	// structure mirrors Python's execute_tools_and_side_effects tail.
+	// Determine whether the model produced a final output this turn.
 	lastMessage := lastMessageItem(newStepItems)
 	if !pr.hasToolsToRun() {
 		// Tool activity without any message (e.g. only rejected calls): the
@@ -384,8 +378,7 @@ func (r *runner) executeToolsAndSideEffects(
 					}
 				} else {
 					// No final text for a structured output type: recover via the
-					// handler, or run the model again (never a hard failure —
-					// Python parity).
+					// handler, or run the model again — never a hard failure.
 					mbErr := NewModelBehaviorError("model returned no final output for the structured output type")
 					rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
@@ -414,9 +407,8 @@ func (r *runner) executeToolsAndSideEffects(
 
 // orderToolResults merges the executed and rejected tool results back into the
 // original call order given by calls, so run items and the turn hooks observe
-// every call in the sequence the model emitted (Python builds its
-// FunctionToolResults in tool_runs order). Results are matched by call id; any
-// unmatched executed/rejected results are appended defensively.
+// every call in the sequence the model emitted. Results are matched by call
+// id; any unmatched executed/rejected results are appended defensively.
 func orderToolResults(calls []toolRunFunction, executed, rejected []functionToolResult) []functionToolResult {
 	byCallID := make(map[string]functionToolResult, len(executed)+len(rejected))
 	for _, r := range executed {

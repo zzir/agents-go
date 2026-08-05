@@ -5,9 +5,9 @@ import (
 	"iter"
 )
 
-// ModelRequest bundles the parameters for a single model call. It replaces the
-// long positional argument list of the Python SDK's Model.get_response with a
-// struct whose zero values are sensible defaults.
+// ModelRequest bundles the parameters for a single model call as a struct whose
+// zero values are sensible defaults, so a new parameter is not a signature
+// change for every Model implementation.
 type ModelRequest struct {
 	// SystemInstructions is the system prompt, if any.
 	SystemInstructions string

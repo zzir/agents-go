@@ -13,9 +13,9 @@ import (
 type Provider struct {
 	client oai.Client
 	// defaultModel is used for agents that omit a model name. It is unset by
-	// default: unlike the Python SDK, this port ships no built-in default model,
-	// so a model must be named per agent (Agent.Model) or configured here via
-	// WithDefaultModel. Resolving an empty name with no default is a UserError.
+	// default: the SDK ships no built-in default model, because the right one
+	// changes faster than a release does, so a model must be named per agent
+	// (Agent.Model) or configured here via WithDefaultModel. Resolving an empty name with no default is a UserError.
 	defaultModel string
 }
 

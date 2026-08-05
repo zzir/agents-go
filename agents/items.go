@@ -9,8 +9,8 @@ import (
 )
 
 // The agents SDK speaks the OpenAI Responses API item format as its lingua
-// franca, exactly as the Python SDK does. These aliases give the rest of the
-// package stable, intention-revealing names for the underlying openai-go types.
+// franca, exactly. These aliases give the rest of the package stable,
+// intention-revealing names for the underlying openai-go types.
 type (
 	// TResponseInputItem is a single item in the model input list, in OpenAI
 	// Responses format. A conversation history is a slice of these.
@@ -25,8 +25,6 @@ type (
 )
 
 // ModelResponse is the full result of a single model call.
-//
-// It is the Go counterpart of the Python SDK's ModelResponse dataclass.
 type ModelResponse struct {
 	// Output is the items produced by the model (messages, tool calls, etc).
 	Output []TResponseOutputItem
@@ -68,8 +66,7 @@ func (m *ModelResponse) ToInputItems() ([]TResponseInputItem, error) {
 }
 
 // OutputToInput converts a slice of model output items into input items by
-// re-encoding each item's wire JSON into the input union. This mirrors the
-// per-item to_input_item() conversions in the Python SDK.
+// re-encoding each item's wire JSON into the input union.
 func OutputToInput(out []TResponseOutputItem) ([]TResponseInputItem, error) {
 	items := make([]TResponseInputItem, 0, len(out))
 	for i := range out {
