@@ -111,11 +111,14 @@ func processModelResponse(
 	for _, h := range handoffs {
 		handoffMap[h.ToolName] = h
 	}
+	// Every tool is dispatchable — one with no OnInvoke fails AT INVOCATION as
+	// a UserError naming the tool. Filtering it out here instead would route
+	// the model's call to the not-found path, blaming the model for a
+	// configuration bug (and under ToolNotFoundReturnToModel, inviting it to
+	// retry forever against one).
 	functionMap := make(map[string]*Tool)
 	for _, t := range tools {
-		if t.OnInvoke != nil {
-			functionMap[t.Name] = t
-		}
+		functionMap[t.Name] = t
 	}
 
 	pr := &processedResponse{}
@@ -337,7 +340,7 @@ func (r *runner) executeToolsAndSideEffects(
 				// A refusal fails the run (recoverable via
 				// ErrorHandlers.ModelRefusal), taking precedence over any text
 				// or structured content in the same message.
-				if refusal := extractMessageRefusal(*lastMessage.Raw); refusal != "" {
+				if refusal := lastMessage.refusal(); refusal != "" {
 					refErr := &ModelRefusalError{
 						AgentsError: AgentsError{Code: CodeModelRefusal, Message: "model refused to respond: " + refusal},
 						Refusal:     refusal,

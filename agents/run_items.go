@@ -227,6 +227,16 @@ func appendTextPart(b *strings.Builder, text string) {
 	b.WriteString(text)
 }
 
+// refusal returns a message item's refusal content, or "" — including for a
+// rebuilt item, whose Raw is gone (a refusal fails the run before it is ever
+// persisted, so a rebuilt message cannot be one).
+func (i *RunItem) refusal() string {
+	if i.Kind != ItemMessage || i.Raw == nil {
+		return ""
+	}
+	return extractMessageRefusal(*i.Raw)
+}
+
 // FunctionCall returns the underlying function tool call view, for
 // ItemToolCall and ItemHandoffCall. It is the zero value for other kinds.
 func (i *RunItem) FunctionCall() responses.ResponseFunctionToolCall {

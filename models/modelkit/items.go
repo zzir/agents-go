@@ -123,7 +123,7 @@ type reasoningTextJSON struct {
 // ReasoningItem synthesizes a canonical reasoning item.
 //
 // text goes into the content parts (reasoning_text), not the summary:
-// agents.ReasoningItem.Text reads summary first and falls back to content, and
+// a reasoning RunItem's Text reads summary first and falls back to content, and
 // content is where Responses-compatible backends put RAW reasoning text —
 // which is what a translated backend has. encryptedContent is the adapter's
 // opaque continuity blob (a thinking signature, redacted reasoning, …); it
