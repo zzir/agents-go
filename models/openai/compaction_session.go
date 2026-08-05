@@ -73,6 +73,7 @@ var (
 	_ session.EntryPopper     = (*CompactionSession)(nil)
 	_ session.ItemPopper      = (*CompactionSession)(nil)
 	_ session.AtomicReplacer  = (*CompactionSession)(nil)
+	_ session.GuardedReplacer = (*CompactionSession)(nil)
 )
 
 // NewCompactionSession wraps underlying with automatic responses.compact
@@ -140,11 +141,21 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 // RunCompaction implements agents.CompactionAwareSession. It compacts the stored
 // history via responses.compact when the decision hook (or args.Force) says so,
 // replacing the underlying session's items with the compacted output.
+//
+// A nil error does not promise the history was replaced: the pass is abandoned
+// when something was appended while the compact call was in flight, since the
+// replacement no longer covers the whole log (the reason is recorded on the
+// compaction span as "abandoned"). A caller that needs to know whether the pass
+// landed compares the entries before and after, as the overflow path does.
 func (s *CompactionSession) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	all, err := s.underlying.Entries(ctx, session.Cursor{})
 	if err != nil {
 		return err
 	}
+	// Where the log stands now. The replacement written at the end covers
+	// exactly these entries, and a network round trip separates the two, so a
+	// store that can compare this back is asked to — see the swap below.
+	expect := session.AppendPointOf(all).LastSeq
 	// The replacement below is a FLAT item list — a shape that cannot express
 	// a tree. A branched session (any leaf-move entry, or entries off the
 	// active path) would have its abandoned attempts summarized into the
@@ -201,8 +212,6 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	out = stripOrphanedAssistantIDs(out)
 	span.Set("after_items", len(out))
 
-	// ReplaceStorageEntries swaps atomically when the underlying session
-	// supports it, so a failed write cannot leave the history cleared but empty.
 	compactedEntries, err := session.NewItemEntries(out, agents.Source{Type: agents.SourceCompaction})
 	if err != nil {
 		return fmt.Errorf("compaction: encoding compacted history: %w", err)
@@ -227,13 +236,42 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 		case session.EntryKindItem, session.EntryKindCompaction, session.EntryKindLeaf:
 			continue
 		default:
-			e.ID, e.ParentID, e.Seq = "", "", 0 // re-minted by the store, like the items'
+			// The id is kept. An update entry names its target by id, and the
+			// two travel together through this rewrite: re-minting would leave
+			// the update pointing at an entry no longer there, and a fold that
+			// finds no target is silently dropped — the late display it carried
+			// (a background task's card) lost for good. Position is not
+			// preserved, so the link is re-derived: parent and sequence number
+			// are the store's to assign.
+			e.ParentID, e.Seq = "", 0
 			replacement = append(replacement, e)
 		}
 	}
 	replacement = append(replacement, compactedEntries...)
-	if err := session.ReplaceEntries(ctx, s.underlying, replacement...); err != nil {
+
+	// Either swap is atomic wherever the store can be, so a failed write cannot
+	// leave the history cleared but empty.
+	g, ok := s.underlying.(session.GuardedReplacer)
+	if !ok {
+		// A store that cannot compare the log back keeps the unguarded rewrite:
+		// refusing to compact for it would take the feature away from every
+		// third-party store rather than from the race.
+		if err := session.ReplaceEntries(ctx, s.underlying, replacement...); err != nil {
+			return fmt.Errorf("compaction: replacing history: %w", err)
+		}
+		return nil
+	}
+	replaced, err := g.ReplaceEntriesIf(ctx, expect, replacement...)
+	if err != nil {
 		return fmt.Errorf("compaction: replacing history: %w", err)
+	}
+	if !replaced {
+		// Something was appended while the compact call was in flight, so the
+		// replacement no longer covers the whole history and writing it would
+		// delete what arrived. Compaction is housekeeping: abandoning the pass
+		// costs nothing but size, and the next one starts from the history as it
+		// now stands.
+		span.Set("abandoned", "concurrent_append")
 	}
 	return nil
 }
@@ -275,7 +313,7 @@ func (s *CompactionSession) PopItem(ctx context.Context) (*session.Entry, error)
 // degrading to Clear+Append. A caller that type-asserted AtomicReplacer chose
 // this method precisely to avoid the failure mode where an Append error leaves
 // the history empty; handing them that failure mode anyway would make the
-// assertion a lie. (RunCompaction itself still uses ReplaceStorageEntries,
+// assertion a lie. (RunCompaction itself goes through session.ReplaceEntries,
 // whose documented contract IS best-effort-with-fallback.)
 func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	r, ok := s.underlying.(session.AtomicReplacer)
@@ -283,6 +321,18 @@ func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...sessi
 		return fmt.Errorf("session storage %T cannot replace entries atomically", s.underlying)
 	}
 	return r.ReplaceEntries(ctx, entries...)
+}
+
+// ReplaceEntriesIf implements session.GuardedReplacer by delegation; see
+// PopEntry. A wrapped store without the guard gets an error rather than an
+// unguarded rewrite: replaced=false says the log moved, which is a fact about
+// the log this wrapper is in no position to invent.
+func (s *CompactionSession) ReplaceEntriesIf(ctx context.Context, expect int64, entries ...session.Entry) (bool, error) {
+	g, ok := s.underlying.(session.GuardedReplacer)
+	if !ok {
+		return false, fmt.Errorf("session storage %T cannot replace entries under a guard", s.underlying)
+	}
+	return g.ReplaceEntriesIf(ctx, expect, entries...)
 }
 
 // resolveCompactionMode decides how to feed the compaction call: under "auto",

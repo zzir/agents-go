@@ -420,14 +420,16 @@ exclusions again wherever it is called, so a view built without the filter
 still cannot replay folded history.
 
 Capabilities a store may or may not have are **optional interfaces**, not
-required methods: `AtomicReplacer`, `EntryPopper`, `CompactionAware`. Popping in
-particular is not in `session.Storage` because a run never pops; requiring it
-would tax stores that cannot (a server-managed conversation) for a feature the
-run loop does not use. **A wrapper that claims a capability delivers its
-contract or refuses**: delegating `AtomicReplacer` to a wrapped store without
-it must return an error before touching anything, never degrade to a
-non-atomic Clear+Append — a caller type-asserted the interface precisely to
-rule that failure mode out.
+required methods: `AtomicReplacer`, `GuardedReplacer`, `EntryPopper`,
+`CompactionAware`. Popping in particular is not in `session.Storage` because a
+run never pops; requiring it would tax stores that cannot (a server-managed
+conversation) for a feature the run loop does not use. **A wrapper that claims
+a capability delivers its contract or refuses**: delegating `AtomicReplacer` to
+a wrapped store without it must return an error before touching anything, never
+degrade to a non-atomic Clear+Append — a caller type-asserted the interface
+precisely to rule that failure mode out. `GuardedReplacer` is delegated the
+same way: a wrapper over a store that cannot compare the log back errors rather
+than answering `replaced=false`, which would assert the log had moved.
 
 ### 2.5d Sessions are trees ✅
 
@@ -549,11 +551,23 @@ next backend will answer differently.
   forever, silently, its cursor already past it.
 - **Never moved for an entry that stays.** Numbering by position in a result set
   shifts every survivor whenever a read filters one out — a compaction pass, an
-  item another model produced.
+  item another model produced. A rewrite that RE-ADDS an entry is the one
+  exception: server-side compaction carries over what it did not summarize,
+  keeping the ids (an update entry finds its target by id) and taking fresh
+  numbers. A consumer tailing with `AfterSeq` sees such an entry a second time
+  under a new number, so it deduplicates by id — an (id, seq) pair is not fixed
+  for a session's life.
 - **`Clear` and `ReplaceEntries` do not restart it.** A cursor outlives the
   entries it pointed at, so a replaced history that renumbers from the beginning
   lands entirely before an existing cursor and is skipped in full.
-- One value per entry, whichever API returns it. *All shared.*
+- One value per entry, whichever API returns it. *All shared, but for the one
+  backend below that holds no numbers of its own.*
+- **A server-held conversation numbers best-effort.**
+  `openai.ConversationsSession` has no local store to have allocated a number,
+  so it numbers by position in what the server returned: if the server ever
+  stops returning an item, everything after it shifts. Reading the most recent
+  N (a negative limit) is unaffected; resuming from `AfterSeq` is best-effort
+  there. *Per backend.*
 
 #### The tree
 
@@ -716,6 +730,29 @@ checkpoint costs one recomputed pass; a stolen one is a cross-session leak.
 
 The one path that still rewrites is `openai.CompactionSession`, because the
 server's compact API returns a replacement rather than a decision.
+
+**That rewrite is guarded by the sequence number it read.** Reading the history
+and writing the replacement are separated by a network round trip, and an entry
+appended inside that window is in neither — an unconditional swap deletes it
+silently, with no copy left anywhere. So the swap goes through
+`GuardedReplacer`: the store compares its highest sequence number back and
+writes only while it still matches, comparison and write in ONE step, taken
+under whatever already serializes that store's appends. The number compared is
+the highest the store HOLDS, not the highest it ever issued — a session emptied
+by a pop would otherwise refuse every replace forever — and zero for a log read
+empty. **A pass that loses the comparison is abandoned**, not retried and not
+merged: nothing is written, the reason is recorded on the `compaction` span as
+`abandoned`, and the next pass starts from the history as it then stands, since
+compaction is housekeeping and one skipped pass costs size alone. A store
+without the capability keeps the unguarded swap: refusing to compact for it
+would take the feature away from every third-party store rather than from the
+race.
+
+**The rewrite keeps the ids of the entries it carries over.** An update entry
+names its target by id, so re-minting on the way through leaves it pointing at
+an entry no longer there, and a fold that finds no target is dropped in silence
+— the late display it carried (a background task's card) lost for good. Those
+entries are numbered afresh regardless (§2.5e2).
 
 ### 2.5g Context overflow ✅
 

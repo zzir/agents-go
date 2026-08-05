@@ -265,25 +265,48 @@ func (s *FileSession) ReplaceEntries(_ context.Context, entries ...session.Entry
 	// entries and re-issues their sequence numbers.
 	release := acquire(s.lockKey)
 	defer release()
+	_, err := s.replaceLocked(entries, nil)
+	return err
+}
 
+// ReplaceEntriesIf implements session.GuardedReplacer. The file the guard reads
+// is the file the rewrite publishes: both happen under the per-path lock every
+// append takes, so an append cannot slip between them.
+func (s *FileSession) ReplaceEntriesIf(_ context.Context, expect int64, entries ...session.Entry) (bool, error) {
+	release := acquire(s.lockKey)
+	defer release()
+	return s.replaceLocked(entries, &expect)
+}
+
+// replaceLocked rewrites the file to hold exactly entries, reporting whether it
+// wrote. A non-nil expect makes the rewrite conditional on the file's highest
+// sequence number still being that one. Callers hold the per-path lock.
+func (s *FileSession) replaceLocked(entries []session.Entry, expect *int64) (bool, error) {
 	// A replace does not restart the numbering: a cursor outlives the entries
 	// it pointed at, and a history renumbered from the beginning would land
 	// entirely before one and be skipped in full. What is on disk now is read
 	// for its high-water mark alone.
 	existing, err := s.readEntries()
 	if err != nil {
-		return err
+		return false, err
 	}
-	prepared := session.PrepareAppend(entries, session.AppendPoint{LastSeq: session.AppendPointOf(existing).LastSeq})
+	lastSeq := session.AppendPointOf(existing).LastSeq
+	if expect != nil && lastSeq != *expect {
+		return false, nil
+	}
+	prepared := session.PrepareAppend(entries, session.AppendPoint{LastSeq: lastSeq})
 	lines := make([][]byte, 0, len(prepared))
 	for i := range prepared {
 		data, err := json.Marshal(prepared[i])
 		if err != nil {
-			return fmt.Errorf("marshaling session entry: %w", err)
+			return false, fmt.Errorf("marshaling session entry: %w", err)
 		}
 		lines = append(lines, data)
 	}
-	return s.writeLines(lines)
+	if err := s.writeLines(lines); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // PopEntry removes and returns the most recent entry, or nil if the session is
@@ -454,8 +477,9 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 }
 
 var (
-	_ session.Storage        = (*FileSession)(nil)
-	_ session.AtomicReplacer = (*FileSession)(nil)
-	_ session.EntryPopper    = (*FileSession)(nil)
-	_ session.ItemPopper     = (*FileSession)(nil)
+	_ session.Storage         = (*FileSession)(nil)
+	_ session.AtomicReplacer  = (*FileSession)(nil)
+	_ session.GuardedReplacer = (*FileSession)(nil)
+	_ session.EntryPopper     = (*FileSession)(nil)
+	_ session.ItemPopper      = (*FileSession)(nil)
 )

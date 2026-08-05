@@ -113,7 +113,7 @@ meant to be replaced.
 | Tools | `NewTool[Args, Result]` | Give the agent something to do. A tool is a `*Tool` **struct**, not an interface — every tool executes locally |
 | Tool behavior | fields on `Tool` | Add approval, a timeout, guardrails, sequencing — set the field, or copy the struct for a tool you did not build |
 | Run behavior | `RunMiddleware` | Wrap a whole run: logging, approval policy, retry-the-run |
-| Storage | `session.Storage` (+ optional `session.AtomicReplacer`, `session.EntryPopper`) | Persist entries anywhere |
+| Storage | `session.Storage` (+ optional `session.AtomicReplacer`, `session.GuardedReplacer`, `session.EntryPopper`) | Persist entries anywhere |
 | Context shaping | `Compactor` (+ optional `CompactionCheckpointer`) | Decide what history the model sees when it gets long |
 | Safety | `Guardrail` | Inspect input, output, tool arguments or tool results — one value can cover several stages |
 | Observability | `Tracer`, `Processor` | Send spans somewhere |

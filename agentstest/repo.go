@@ -44,6 +44,7 @@ var repoChecks = []struct {
 	{"DeleteUnknownSucceeds", checkDeleteUnknown},
 	{"ARecreatedIDIsANewSession", checkRecreatedID},
 	{"AStaleHandleSeesOnlyItsOwn", checkStaleHandleMetadata},
+	{"ADeletedHandleRefusesEveryWrite", checkDeletedHandleRefusesEveryWrite},
 	{"DeleteLeavesTheDirectScopeAlone", checkDeleteVsDirect},
 	{"DirectAndRepoDoNotShareHistory", checkDirectIsolation},
 }
@@ -149,6 +150,71 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	}
 	if got := repoTexts(t, fresh); len(got) != 1 {
 		t.Fatalf("the new session was disturbed by the stale handle: %v", got)
+	}
+}
+
+// EVERY write refuses, not just the one a test reached for. A repo's storage
+// is usually a wrapper around a plain one, and the wrapper is what proves the
+// session still exists — so a capability the inner store gains arrives here on
+// its own, past that proof, and writes storage nothing references: invisible to
+// a listing, unreachable by Delete (spec §2.5e2).
+func checkDeletedHandleRefusesEveryWrite(t *testing.T, r RepoUnderTest) {
+	t.Helper()
+	ctx := context.Background()
+	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	repoWrite(t, sess, "written while it existed")
+	st := sess.Storage()
+	if err := r.Repo.Delete(ctx, "x"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	refuses := func(what string, err error) {
+		t.Helper()
+		if !errors.Is(err, session.ErrNotFound) {
+			t.Errorf("%s through a handle to a deleted session must refuse with ErrNotFound, got: %v", what, err)
+		}
+	}
+	refuses("Append", st.Append(ctx, storageItem(t, "from the dead")))
+	refuses("Clear", st.Clear(ctx))
+	if replacer, ok := st.(session.AtomicReplacer); ok {
+		refuses("ReplaceEntries", replacer.ReplaceEntries(ctx, storageItem(t, "from the dead")))
+	}
+	if g, ok := st.(session.GuardedReplacer); ok {
+		_, err := g.ReplaceEntriesIf(ctx, 0, storageItem(t, "from the dead"))
+		refuses("ReplaceEntriesIf", err)
+	}
+	// A pop may instead report that it found nothing: the entries went with the
+	// session, so there is no undo to refuse and nothing was written either
+	// way. Handing one BACK is the failure — that is the dead session's history
+	// being read and mutated through a handle that should not reach it.
+	popped := func(what string, e *session.Entry, err error) {
+		t.Helper()
+		if err == nil && e != nil {
+			t.Errorf("%s through a handle to a deleted session removed %+v", what, e)
+			return
+		}
+		if err != nil && !errors.Is(err, session.ErrNotFound) {
+			t.Errorf("%s through a handle to a deleted session failed with %v, want ErrNotFound or nothing to pop", what, err)
+		}
+	}
+	if popper, ok := st.(session.EntryPopper); ok {
+		e, err := popper.PopEntry(ctx)
+		popped("PopEntry", e, err)
+	}
+	if popper, ok := st.(session.ItemPopper); ok {
+		e, err := popper.PopItem(ctx)
+		popped("PopItem", e, err)
+	}
+
+	listed, err := r.Repo.List(ctx, session.ListOptions{IncludeHidden: true})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("a refused write left %d session(s) behind: %+v", len(listed), listed)
 	}
 }
 

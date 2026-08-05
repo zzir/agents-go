@@ -124,6 +124,7 @@ Not every store can do everything, and the interface does not pretend otherwise.
 | Capability | For |
 |---|---|
 | `AtomicReplacer` | Swapping the whole history in one step, so a rewrite cannot leave the session empty |
+| `GuardedReplacer` | Swapping the whole history only while its highest sequence number is still the one the caller read, so a rewrite computed from a stale copy cannot delete what landed in between |
 | `EntryPopper` | Removing the most recent entry. **Not** in `SessionStorage`: a run never pops, and requiring it would tax stores that cannot (a server-managed conversation) |
 | `CompactionAware` | Compacting its own history after a run |
 
@@ -188,7 +189,7 @@ Two rules make this more than a workaround:
   have been folded away by compaction, and failing an entire read over a stale
   pointer would make history unloadable.
 
-Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction) and the entries it folds stay exactly as they were. The one path that does rewrite is `openai.CompactionSession`, because the server-side compact API returns a replacement rather than a decision; it goes through `session.ReplaceEntries`, which uses a backend's `AtomicReplacer` when it has one and only falls back to the non-atomic `Clear`+`Append` otherwise. All built-in backends implement it, which removes the window where a crash between the two calls leaves the session empty.
+Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction) and the entries it folds stay exactly as they were. The one path that does rewrite is `openai.CompactionSession`, because the server-side compact API returns a replacement rather than a decision; the write is guarded instead. A backend implementing `session.GuardedReplacer` swaps the history in one step and only while its highest sequence number is still the one the pass read: a turn persisted while the compact call was in flight is not in the replacement, so writing it would delete what the pass never saw, and the pass stands down rather than doing that. A backend without the guard gets `session.ReplaceEntries`, which uses `AtomicReplacer` when it has one and only falls back to the non-atomic `Clear`+`Append` otherwise. Every built-in backend implements both, which also removes the window where a crash between the two calls leaves the session empty.
 
 ## Choosing an implementation
 
@@ -356,7 +357,7 @@ agents.Run(ctx, agent, "…", agents.RunOptions{Conversation: agents.Conversatio
 
 The runner attempts compaction once, after the final output is persisted (items persist per turn, but compaction runs once per run). "Candidate" items exclude user messages and existing compaction items. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
 
-Compaction is best-effort housekeeping: by the time it runs, the run's items are already saved and the final output produced, so a compaction failure is recorded on the run's `compaction` trace span instead of failing the run. The rewrite goes through `ReplaceStorageEntries`, so backends implementing `AtomicReplacer` swap history atomically — this is the one path that still rewrites, because the server's compact API returns a replacement rather than a decision.
+Compaction is best-effort housekeeping: by the time it runs, the run's items are already saved and the final output produced, so a compaction failure is recorded on the run's `compaction` trace span instead of failing the run. The rewrite goes through `session.GuardedReplacer`, so a backend that has it swaps history in one step and only while nothing has been appended since the pass read it; a pass that loses that comparison is abandoned, recorded on the span as `abandoned`, and the next run's pass starts from the history as it then stands. A backend with only `AtomicReplacer` gets the unguarded swap. This is the one path that still rewrites, because the server's compact API returns a replacement rather than a decision.
 
 For the provider-agnostic, append-only alternative see [Run-level compaction](#run-level-compaction) above.
 

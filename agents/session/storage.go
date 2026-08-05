@@ -200,14 +200,34 @@ func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...Entry) er
 	if err := s.checkLive(); err != nil {
 		return err
 	}
-	s.entries = nil
+	s.replaceLocked(entries)
+	return nil
+}
+
+// ReplaceEntriesIf implements GuardedReplacer. The comparison and the swap are
+// under the lock an append takes, so nothing can land between them.
+func (s *InMemoryStorage) ReplaceEntriesIf(_ context.Context, expect int64, entries ...Entry) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkLive(); err != nil {
+		return false, err
+	}
+	if AppendPointOf(s.entries).LastSeq != expect {
+		return false, nil
+	}
+	s.replaceLocked(entries)
+	return true, nil
+}
+
+// replaceLocked swaps the whole history, carrying the high-water mark over.
+// Callers hold s.mu.
+func (s *InMemoryStorage) replaceLocked(entries []Entry) {
 	prepared := PrepareAppend(entries, AppendPoint{LastSeq: s.seq})
 	s.entries = prepared
 	if n := len(prepared); n > 0 {
 		s.seq = prepared[n-1].Seq
 	}
 	s.updatedAt = time.Now().UTC()
-	return nil
 }
 
 // SetHidden marks the session as serving another one.
@@ -225,10 +245,11 @@ func (s *InMemoryStorage) SetTitle(title string) {
 }
 
 var (
-	_ Storage        = (*InMemoryStorage)(nil)
-	_ AtomicReplacer = (*InMemoryStorage)(nil)
-	_ EntryPopper    = (*InMemoryStorage)(nil)
-	_ ItemPopper     = (*InMemoryStorage)(nil)
+	_ Storage         = (*InMemoryStorage)(nil)
+	_ AtomicReplacer  = (*InMemoryStorage)(nil)
+	_ GuardedReplacer = (*InMemoryStorage)(nil)
+	_ EntryPopper     = (*InMemoryStorage)(nil)
+	_ ItemPopper      = (*InMemoryStorage)(nil)
 )
 
 // PageEntries applies a cursor to entries already in append order. Backends
@@ -272,6 +293,32 @@ func ReplaceEntries(ctx context.Context, s Storage, entries ...Entry) error {
 // failure lands between clearing and re-adding.
 type AtomicReplacer interface {
 	ReplaceEntries(ctx context.Context, entries ...Entry) error
+}
+
+// GuardedReplacer is an optional Storage capability: replace the entire
+// history, but only if the log has not moved since the caller read it.
+//
+// It exists for the one rewrite that cannot decide and write in the same step —
+// a replacement computed by a server-side compaction API, with a network round
+// trip in the middle. An entry appended inside that window is not in the
+// replacement, and an unconditional swap deletes it: silently, and with no copy
+// left anywhere.
+//
+// expect is the highest sequence number the store held when the caller read it,
+// and zero for a log it read empty. When it still matches, the history is
+// replaced and replaced is true; when it does not, nothing is written and
+// replaced is false — losing the race is not an error, and what to do about it
+// is the caller's decision. The comparison and the write are ONE step, taken
+// under whatever the backend already serializes appends with: reading the
+// current sequence number and then calling ReplaceEntries puts the window
+// straight back.
+//
+// It catches the appends it exists for, not every possible change. A removal
+// that leaves the highest sequence number in place — popping an item from under
+// a newer annotation — reads as unmoved, which for the housekeeping this guards
+// costs a summary that is one entry out of date.
+type GuardedReplacer interface {
+	ReplaceEntriesIf(ctx context.Context, expect int64, entries ...Entry) (replaced bool, err error)
 }
 
 // EntryPopper is an optional Storage capability: remove and return the

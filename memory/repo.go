@@ -107,11 +107,17 @@ type repoStorage struct {
 	meta sidecar
 }
 
+// Every write in these capabilities is overridden below. The embedded
+// FileSession promotes its own, and a promoted write is one that never took the
+// repo lock and never proved the session still exists — a capability added to
+// FileSession lands here on its own, so this list is the reminder to follow it
+// with an override.
 var (
-	_ session.Storage        = (*repoStorage)(nil)
-	_ session.AtomicReplacer = (*repoStorage)(nil)
-	_ session.EntryPopper    = (*repoStorage)(nil)
-	_ session.ItemPopper     = (*repoStorage)(nil)
+	_ session.Storage         = (*repoStorage)(nil)
+	_ session.AtomicReplacer  = (*repoStorage)(nil)
+	_ session.GuardedReplacer = (*repoStorage)(nil)
+	_ session.EntryPopper     = (*repoStorage)(nil)
+	_ session.ItemPopper      = (*repoStorage)(nil)
 )
 
 // lockKey names the per-session repo lock. Every mutation through a
@@ -227,6 +233,19 @@ func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...session.Ent
 	}
 	s.touch()
 	return nil
+}
+
+func (s *repoStorage) ReplaceEntriesIf(ctx context.Context, expect int64, entries ...session.Entry) (bool, error) {
+	release := acquire(s.repo.lockKey(s.meta.ID))
+	defer release()
+	if err := s.alive(); err != nil {
+		return false, err
+	}
+	replaced, err := s.FileSession.ReplaceEntriesIf(ctx, expect, entries...)
+	if err == nil && replaced {
+		s.touch()
+	}
+	return replaced, err
 }
 
 func (s *repoStorage) PopEntry(ctx context.Context) (*session.Entry, error) {
