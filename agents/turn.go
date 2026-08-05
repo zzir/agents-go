@@ -120,11 +120,11 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []TRespo
 	if err != nil {
 		return nil, err
 	}
-	instructions, err := agent.GetSystemPrompt(ctx, r.rc)
+	instructions, err := agent.systemPrompt(ctx, r.rc)
 	if err != nil {
 		return nil, err
 	}
-	prompt, err := agent.GetPrompt(ctx, r.rc)
+	prompt, err := agent.resolvePrompt(ctx, r.rc)
 	if err != nil {
 		return nil, err
 	}

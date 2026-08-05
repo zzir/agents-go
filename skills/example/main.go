@@ -29,9 +29,9 @@ func main() {
 
 	agent := &agents.Agent{
 		Name: "assistant",
-		Instructions: agents.InstructionsFunc(func(_ context.Context, _ *agents.RunContext, _ *agents.Agent) (string, error) {
+		Instructions: func(_ context.Context, _ *agents.RunContext, _ *agents.Agent) (string, error) {
 			return "You are a helpful assistant.\n\n" + skills.RenderIndex(loaded), nil
-		}),
+		},
 		Model: "gpt-4o",
 		Tools: []*agents.Tool{skills.ReadFileTool(dir)},
 	}

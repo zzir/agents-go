@@ -14,31 +14,18 @@ type Prompt struct {
 	Variables map[string]any
 }
 
-// PromptProvider yields an agent's stored-prompt configuration, either fixed
-// (StaticPrompt) or computed per run (PromptFunc). A nil *Prompt result means
-// the agent uses no stored prompt for that run.
-type PromptProvider interface {
-	GetPrompt(ctx context.Context, rc *RunContext, agent *Agent) (*Prompt, error)
-}
+// PromptProvider yields an agent's stored-prompt configuration per run. A nil
+// *Prompt result means the agent uses no stored prompt for that run.
+//
+// It is a func type: assign a function directly, or use StaticPrompt for a
+// fixed configuration. (It was an interface once, with only unexported
+// implementations — an adapter layer nothing ever plugged into.)
+type PromptProvider func(ctx context.Context, rc *RunContext, agent *Agent) (*Prompt, error)
 
-type staticPrompt Prompt
-
-func (p staticPrompt) GetPrompt(context.Context, *RunContext, *Agent) (*Prompt, error) {
-	pp := Prompt(p)
-	return &pp, nil
-}
-
-// StaticPrompt wraps a fixed Prompt as a PromptProvider.
-func StaticPrompt(p Prompt) PromptProvider { return staticPrompt(p) }
-
-type promptFunc func(context.Context, *RunContext, *Agent) (*Prompt, error)
-
-func (f promptFunc) GetPrompt(ctx context.Context, rc *RunContext, agent *Agent) (*Prompt, error) {
-	return f(ctx, rc, agent)
-}
-
-// PromptFunc adapts a function to the PromptProvider interface, for prompts that
-// depend on the run context.
-func PromptFunc(f func(context.Context, *RunContext, *Agent) (*Prompt, error)) PromptProvider {
-	return promptFunc(f)
+// StaticPrompt returns a PromptProvider yielding a fixed Prompt.
+func StaticPrompt(p Prompt) PromptProvider {
+	return func(context.Context, *RunContext, *Agent) (*Prompt, error) {
+		pp := p
+		return &pp, nil
+	}
 }

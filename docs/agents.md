@@ -39,14 +39,13 @@ The most common fields:
 
 ## Dynamic instructions
 
-`Instructions` is an interface, so the system prompt can be computed per run from the [context](context.md):
+`Instructions` is a func type, so the system prompt can be computed per run from the [context](context.md) — assign a function directly:
 
 ```go
-agent.Instructions = agents.InstructionsFunc(
-	func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (string, error) {
-		user := rc.Context.(*MyAppContext)
-		return "The user's name is " + user.Name + ". Help them with their questions.", nil
-	})
+agent.Instructions = func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (string, error) {
+	user := rc.Context.(*MyAppContext)
+	return "The user's name is " + user.Name + ". Help them with their questions.", nil
+}
 ```
 
 `agents.StaticInstructions("...")` wraps the fixed-string case.
@@ -63,7 +62,7 @@ agent.Prompt = agents.StaticPrompt(agents.Prompt{
 })
 ```
 
-`agents.PromptFunc(func(ctx, rc, agent) (*agents.Prompt, error))` computes the prompt per run from the [context](context.md). Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.GetPrompt`), which fetch prompt *text* to use as instructions.
+`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [context](context.md). Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.GetPrompt`), which fetch prompt *text* to use as instructions.
 
 ## Structured output types
 

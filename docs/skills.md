@@ -19,9 +19,9 @@ loaded, _ := skills.Load("./skills") // scan dirs, parse each SKILL.md frontmatt
 
 agent := &agents.Agent{
     Name: "assistant",
-    Instructions: agents.InstructionsFunc(func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (string, error) {
+    Instructions: func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (string, error) {
         return base + "\n" + skills.RenderIndex(loaded), nil // discovery
-    }),
+    },
     Tools: []*agents.Tool{skills.ReadFileTool("./skills")},   // activation / execution
 }
 ```

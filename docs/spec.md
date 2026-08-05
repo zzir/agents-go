@@ -1646,11 +1646,11 @@ breaks every caller.
 **Under review**, because "looks less like Python" is not the only thing at
 stake and this entry has been used to close cases where it was not the point:
 
-- `Get`-prefixed methods (`Model.GetResponse`, `ModelProvider.GetModel`,
-  `Instructions.GetInstructions`, `PromptProvider.GetPrompt`,
-  `Agent.GetSystemPrompt`, `Agent.GetPrompt`) are direct transliterations of
-  `get_*`. Go accessors do not carry the prefix, and this is a rule about Go,
-  not about Python.
+- `Get`-prefixed methods (`Model.GetResponse`, `ModelProvider.GetModel`) are
+  direct transliterations of `get_*`. Go accessors do not carry the prefix,
+  and this is a rule about Go, not about Python. (The Instructions/Prompt
+  family's `Get` methods were removed with the func-type change,
+  [§5.3](#53-instructions-and-prompt-both-stay-both-are-func-types).)
 - The `T`-prefixed aliases (`TResponseInputItem` and friends) spell a Python
   `TypeAlias` convention that has no Go counterpart. [§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)
   already schedules them for the next breaking window.
@@ -1661,20 +1661,21 @@ stake and this entry has been used to close cases where it was not the point:
 The rule that survives is the second half: **a rename is a breaking change and
 is batched**, not taken piecemeal. The window in §5.5b is where these belong.
 
-### 5.3 `Instructions` and `Prompt` both stay 🔁 reason under review
+### 5.3 `Instructions` and `Prompt` both stay; both are func types
 
 `Prompt` (a server-stored prompt template with a version and variables) is a
 **Responses API capability**, not a porting artifact. The two compose: a stored
 prompt provides the base, instructions append to it.
 
-**Under review**, because this settles only *whether both concepts exist* — the
-answer is still yes — and has been read as settling their *shape*, which it
-never addressed. Both `Instructions` and `PromptProvider` are single-method
-interfaces (`GetInstructions`, `GetPrompt`) whose only implementations are
-unexported types in this package; nothing outside the SDK implements either.
-A func type would carry the same capability with no adapter types, and would
-drop `Agent.GetSystemPrompt` / `Agent.GetPrompt` — both five-line forwarders.
-That is a separate decision from this one, and it is open.
+Their shape: `Instructions` and `PromptProvider` are **func types**, not
+interfaces. As single-method interfaces their only implementations were
+unexported types in this package behind adapter constructors
+(`InstructionsFunc`, `PromptFunc`) — a plug point nothing ever plugged into. A
+func type is the same capability assigned directly; `StaticInstructions` /
+`StaticPrompt` cover the fixed case and `WrapInstructions` composes. The
+`Agent.GetSystemPrompt` / `Agent.GetPrompt` forwarders became unexported
+resolution points — resolution (nil handling, prompt-ID validation) is the
+runner's job, not API surface.
 
 ### 5.4 A tool is a struct, not an interface
 

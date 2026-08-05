@@ -5,75 +5,46 @@ import (
 	"fmt"
 )
 
-// Instructions produces the system prompt for an agent. It may be static or
-// computed per run. Use StaticInstructions for a fixed string or InstructionsFunc
-// to derive instructions dynamically from the run context.
-type Instructions interface {
-	GetInstructions(ctx context.Context, rc *RunContext, agent *Agent) (string, error)
-}
+// Instructions produces the system prompt for an agent, computed per run.
+//
+// It is a func type: assign a function directly for dynamic instructions, or
+// use StaticInstructions for a fixed string. (It was an interface once, with
+// only unexported implementations behind two adapter constructors — a plug
+// point nothing ever plugged into.)
+type Instructions func(ctx context.Context, rc *RunContext, agent *Agent) (string, error)
 
-type staticInstructions string
-
-func (s staticInstructions) GetInstructions(context.Context, *RunContext, *Agent) (string, error) {
-	return string(s), nil
-}
-
-// StaticInstructions wraps a fixed instruction string as Instructions.
-func StaticInstructions(s string) Instructions { return staticInstructions(s) }
-
-type instructionsFunc func(context.Context, *RunContext, *Agent) (string, error)
-
-func (f instructionsFunc) GetInstructions(ctx context.Context, rc *RunContext, agent *Agent) (string, error) {
-	return f(ctx, rc, agent)
-}
-
-// InstructionsFunc adapts a function to the Instructions interface.
-func InstructionsFunc(f func(context.Context, *RunContext, *Agent) (string, error)) Instructions {
-	return instructionsFunc(f)
-}
-
-// wrappedInstructions decorates an Instructions with a prefix and/or suffix,
-// applied at resolution time. It eliminates the common pattern of extracting
-// text with GetInstructions(ctx, nil, nil), concatenating, and re-wrapping.
-type wrappedInstructions struct {
-	inner          Instructions
-	prefix, suffix string
-}
-
-func (w *wrappedInstructions) GetInstructions(ctx context.Context, rc *RunContext, agent *Agent) (string, error) {
-	base, err := w.inner.GetInstructions(ctx, rc, agent)
-	if err != nil {
-		return "", err
-	}
-	if w.prefix != "" && base != "" {
-		base = w.prefix + "\n\n" + base
-	} else if w.prefix != "" {
-		base = w.prefix
-	}
-	if w.suffix != "" && base != "" {
-		base = base + "\n\n" + w.suffix
-	} else if w.suffix != "" {
-		base = w.suffix
-	}
-	return base, nil
+// StaticInstructions returns Instructions yielding a fixed string.
+func StaticInstructions(s string) Instructions {
+	return func(context.Context, *RunContext, *Agent) (string, error) { return s, nil }
 }
 
 // WrapInstructions decorates inner by prepending prefix and appending suffix at
 // resolution time, separated by double newlines. Empty prefix/suffix are
-// skipped. If inner is nil, a static instruction from prefix+suffix is returned.
+// skipped; a nil inner contributes nothing. It exists because concatenation is
+// the wrong tool here: the inner instructions may themselves be computed per
+// run, so the joining has to happen at resolution, not at wrapping.
 func WrapInstructions(inner Instructions, prefix, suffix string) Instructions {
-	if inner == nil {
-		s := prefix
-		if suffix != "" {
-			if s != "" {
-				s += "\n\n" + suffix
-			} else {
-				s = suffix
+	return func(ctx context.Context, rc *RunContext, agent *Agent) (string, error) {
+		base := ""
+		if inner != nil {
+			b, err := inner(ctx, rc, agent)
+			if err != nil {
+				return "", err
 			}
+			base = b
 		}
-		return StaticInstructions(s)
+		if prefix != "" && base != "" {
+			base = prefix + "\n\n" + base
+		} else if prefix != "" {
+			base = prefix
+		}
+		if suffix != "" && base != "" {
+			base = base + "\n\n" + suffix
+		} else if suffix != "" {
+			base = suffix
+		}
+		return base, nil
 	}
-	return &wrappedInstructions{inner: inner, prefix: prefix, suffix: suffix}
 }
 
 // Agent is a model configured with instructions, tools, guardrails, handoffs and
@@ -158,21 +129,23 @@ func (a *Agent) Clone() *Agent {
 	return &cp
 }
 
-// GetSystemPrompt resolves the agent's instructions for the given run context.
-func (a *Agent) GetSystemPrompt(ctx context.Context, rc *RunContext) (string, error) {
+// systemPrompt resolves the agent's instructions for the run: nil means no
+// system prompt. The runner's per-turn resolution point.
+func (a *Agent) systemPrompt(ctx context.Context, rc *RunContext) (string, error) {
 	if a.Instructions == nil {
 		return "", nil
 	}
-	return a.Instructions.GetInstructions(ctx, rc, a)
+	return a.Instructions(ctx, rc, a)
 }
 
-// GetPrompt resolves the agent's stored-prompt configuration for the given run
-// context, or nil if the agent has no Prompt.
-func (a *Agent) GetPrompt(ctx context.Context, rc *RunContext) (*Prompt, error) {
+// resolvePrompt resolves the agent's stored-prompt configuration for the run,
+// or nil when the agent has none. A prompt without an ID is a configuration
+// error, caught here so it fails the run before the request is built.
+func (a *Agent) resolvePrompt(ctx context.Context, rc *RunContext) (*Prompt, error) {
 	if a.Prompt == nil {
 		return nil, nil
 	}
-	p, err := a.Prompt.GetPrompt(ctx, rc, a)
+	p, err := a.Prompt(ctx, rc, a)
 	if err != nil {
 		return nil, err
 	}

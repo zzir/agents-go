@@ -100,10 +100,10 @@ func TestPrepareNextTurn_AppliesToOneTurnOnly(t *testing.T) {
 		return "ok", nil
 	})
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model,
-		Instructions: InstructionsFunc(func(context.Context, *RunContext, *Agent) (string, error) {
+		Instructions: func(context.Context, *RunContext, *Agent) (string, error) {
 			calls++
 			return "resolved", nil
-		})}
+		}}
 
 	prepared := 0
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{

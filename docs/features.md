@@ -38,7 +38,7 @@ See [Sessions](sessions.md) and [Context management](context.md).
 | History compaction | `RunOptions.Compaction` + `agents/compaction` strategies (local, append-only checkpoints), `openai.CompactionSession` (server-side `responses.compact`) |
 | Session forking | `agents.ForkSession` |
 | Server-side state | `RunOptions.Conversation.UsePreviousResponseID` / `RunOptions.Conversation.ConversationID` |
-| Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)` / `agents.PromptFunc(...)` |
+| Stored prompts | `Agent.Prompt = agents.StaticPrompt(...)`, or any `func(ctx, rc, agent) (*agents.Prompt, error)` |
 
 ## Reliability & routing
 

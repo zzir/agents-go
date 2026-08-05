@@ -74,7 +74,7 @@ func TestTodo_PreambleWrapsInstructions(t *testing.T) {
 	var seen string
 	mw := Todo{}
 	stream := mw.Run(context.Background(), func(_ context.Context, in agents.RunInput) agents.RunStream {
-		prompt, err := in.Agent.GetSystemPrompt(context.Background(), nil)
+		prompt, err := in.Agent.Instructions(context.Background(), nil, in.Agent)
 		if err != nil {
 			t.Fatal(err)
 		}
