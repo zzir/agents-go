@@ -173,7 +173,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 
 			cmd := args.Cmd
 			if args.Workdir != "" {
-				cmd = "cd " + shellQuote(args.Workdir) + " && " + cmd
+				cmd = "cd " + ShellQuote(args.Workdir) + " && " + cmd
 			}
 
 			// Instrumented here rather than in each backend: this is the one
@@ -244,15 +244,6 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 				}), nil
 		},
 	}
-}
-
-// shellQuote wraps s in single quotes for POSIX shell, escaping embedded
-// single quotes.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // formatResult renders an ExecResult as the string sent back to the model.

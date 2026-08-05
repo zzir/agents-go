@@ -162,6 +162,23 @@ func TestTruncateWithInfo_UTF8Safe(t *testing.T) {
 	}
 }
 
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"":              "''",
+		"abc":           "'abc'",
+		"a b":           "'a b'",
+		"a'b":           `'a'\''b'`,
+		"$(rm -rf /)":   "'$(rm -rf /)'",
+		"a&&b; c | d":   "'a&&b; c | d'",
+		"it's a 'test'": `'it'\''s a '\''test'\'''`,
+	}
+	for in, want := range cases {
+		if got := ShellQuote(in); got != want {
+			t.Errorf("ShellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 	sb := NewLocal()
 	tool := CodeTool(sb, CodeToolConfig{

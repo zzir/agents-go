@@ -23,7 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -94,8 +94,10 @@ func Load(rootDir string) ([]Skill, error) {
 		if !e.IsDir() {
 			continue
 		}
+		// mdPath is relative and slash-separated, the form Skill.Path and the
+		// errors below use; only the read itself needs the OS-native path.
 		mdPath := path.Join(e.Name(), "SKILL.md")
-		data, err := os.ReadFile(path.Join(rootDir, e.Name(), "SKILL.md"))
+		data, err := os.ReadFile(filepath.Join(rootDir, e.Name(), "SKILL.md"))
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -108,7 +110,7 @@ func Load(rootDir string) ([]Skill, error) {
 		}
 		out = append(out, sk)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Skill) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
 }
 
@@ -159,7 +161,7 @@ func LoadRecursive(rootDir string) ([]Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b Skill) int { return strings.Compare(a.Path, b.Path) })
 	return out, nil
 }
 

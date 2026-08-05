@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -51,6 +52,22 @@ func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("sandbox: %w (%d bytes)", ErrReadLimitExceeded, limit)
 	}
 	return data, nil
+}
+
+// ShellQuote returns s as a single POSIX shell token: wrapped in single quotes,
+// with every embedded single quote closed, escaped and reopened:
+//
+//	don't  ->  'don'\''t'
+//
+// A backend that assembles an "sh -c" command line must pass every interpolated
+// value — path, argument, environment entry — through it, so nothing in the
+// value can be read as shell syntax. It lives here so the escaping has one
+// definition across the backends rather than one copy per module.
+func ShellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Sandbox executes commands and performs file operations in an isolated
@@ -169,8 +186,9 @@ type DirEntry struct {
 	Size  int64  `json:"size"`
 }
 
-// ErrNoWorkDir is returned by ReadFile, WriteFile and ListDir when the sandbox
-// has no persistent working directory.
+// ErrNoWorkDir is returned by the file operations — ReadFile, WriteFile,
+// CreateExclusive, ListDir, RemoveFile and Rename — when the sandbox has no
+// persistent working directory.
 var ErrNoWorkDir = errors.New("sandbox: no persistent working directory configured")
 
 // ErrOutsideWorkDir is returned (wrapped) by file operations that refuse a

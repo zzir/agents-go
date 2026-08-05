@@ -22,10 +22,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -251,10 +252,7 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest) (
 
 	// Tag the exec so killExec can find it inside the container on timeout;
 	// appended last so a request Env cannot override it.
-	marker, err := newExecMarker()
-	if err != nil {
-		return nil, err
-	}
+	marker := newExecMarker()
 	execOpts := client.ExecCreateOptions{
 		Cmd:          req.Cmd,
 		WorkingDir:   workDir,
@@ -529,12 +527,12 @@ func (s *stopWhenFull) Read(p []byte) (int, error) {
 const execMarkerEnv = "AGENTS_SANDBOX_EXEC"
 
 // newExecMarker returns a random per-exec marker value.
-func newExecMarker() (string, error) {
+func newExecMarker() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("docker sandbox: exec marker: %w", err)
-	}
-	return hex.EncodeToString(b), nil
+	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
+	// OS source is unavailable.
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // killExec best-effort terminates a timed-out exec process (and its
@@ -546,21 +544,12 @@ func newExecMarker() (string, error) {
 func (s *Sandbox) killExec(ctx context.Context, containerID, marker string) {
 	script := fmt.Sprintf(
 		`for d in /proc/[0-9]*; do if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qxF %s; then p=${d#/proc/}; kill -9 -"$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; fi; done`,
-		shellQuote(execMarkerEnv+"="+marker))
+		sandbox.ShellQuote(execMarkerEnv+"="+marker))
 	kill, err := s.cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{Cmd: []string{"sh", "-c", script}})
 	if err != nil {
 		return
 	}
 	_, _ = s.cli.ExecStart(ctx, kill.ID, client.ExecStartOptions{Detach: true})
-}
-
-// shellQuote returns s as a single-quoted shell token, safe for embedding in
-// sh -c commands.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // ReadFile implements sandbox.Sandbox. Files larger than
@@ -653,9 +642,9 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 // exclusiveCreateScripts builds the in-container shell scripts for an atomic
 // exclusive-create of fullPath (absolute in-container) via a temp hard link.
 // Absolute paths start with "/", so mkdir/ln/rm can never mistake one for an
-// option (e.g. a "-f" filename) — shellQuote stops shell expansion, not option
-// parsing. The temp file has a Go-generated unpredictable name (not a shell
-// glob), so we never touch a user file. Returns:
+// option (e.g. a "-f" filename) — sandbox.ShellQuote stops shell expansion,
+// not option parsing. The temp file has a Go-generated unpredictable name (not
+// a shell glob), so we never touch a user file. Returns:
 //   - create: write tmp from b64, then hard-link it onto the target. ln fails
 //     with EEXIST if the target exists — the atomic exclusive create.
 //   - cleanup: run when the outcome is unknown (Exec error or timeout). Undo a
@@ -663,10 +652,10 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 //     propagating any rm failure to the exit code.
 //   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
 func exclusiveCreateScripts(fullPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
-	target := shellQuote(fullPath)
-	dirQ := shellQuote(path.Dir(fullPath))
-	tmpQ := shellQuote(tmpPath)
-	create = "mkdir -p " + dirQ + " && printf %s " + shellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
+	target := sandbox.ShellQuote(fullPath)
+	dirQ := sandbox.ShellQuote(path.Dir(fullPath))
+	tmpQ := sandbox.ShellQuote(tmpPath)
+	create = "mkdir -p " + dirQ + " && printf %s " + sandbox.ShellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
 	cleanup = "rc=0; if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + " || rc=1; fi; rm -f " + tmpQ + " || rc=1; exit $rc"
 	rmTmp = "rm -f " + tmpQ
 	return
@@ -717,9 +706,9 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		}
 		b64 := base64.StdEncoding.EncodeToString(content)
 		buf := make([]byte, 8)
-		if _, err := rand.Read(buf); err != nil {
-			return err
-		}
+		// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if
+		// the OS source is unavailable.
+		_, _ = rand.Read(buf)
 		tmpPath := path.Join(path.Dir(full), ".ap."+hex.EncodeToString(buf))
 		createScript, cleanupScript, rmTmpScript := exclusiveCreateScripts(full, tmpPath, b64)
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", createScript}})
@@ -849,7 +838,7 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 		if err != nil {
 			return nil, err
 		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 		out := make([]sandbox.DirEntry, 0, len(entries))
 		for _, e := range entries {
 			info, ierr := e.Info()
@@ -875,7 +864,7 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 		// entry or corrupt the next line. The name is the final \t-field, so a
 		// tab inside it is preserved by the 3-way split; NUL can never appear
 		// in a filename, so records stay unambiguous.
-		cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\0'", shellQuote(dir))
+		cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\0'", sandbox.ShellQuote(dir))
 		res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
 		if err != nil {
 			return nil, err
@@ -994,10 +983,7 @@ func (s *Sandbox) streamPersistent(ctx context.Context, req sandbox.ExecRequest,
 
 	// Tag the exec so killExec can find it inside the container on timeout;
 	// appended last so a request Env cannot override it.
-	marker, err := newExecMarker()
-	if err != nil {
-		return nil, err
-	}
+	marker := newExecMarker()
 	execOpts := client.ExecCreateOptions{
 		Cmd:          req.Cmd,
 		WorkingDir:   workDir,
@@ -1165,12 +1151,8 @@ func buildTar(files map[string]string) (io.Reader, error) {
 			dirSet[d] = true
 		}
 	}
-	sort.Strings(names)
-	dirs := make([]string, 0, len(dirSet))
-	for d := range dirSet {
-		dirs = append(dirs, d)
-	}
-	sort.Strings(dirs) // parents sort before children
+	slices.Sort(names)
+	dirs := slices.Sorted(maps.Keys(dirSet)) // parents sort before children
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

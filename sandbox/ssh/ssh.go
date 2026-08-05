@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -188,11 +189,7 @@ func (s *Sandbox) exec(ctx context.Context, req sandbox.ExecRequest, stdout, std
 	if s.opts.WorkDir != "" {
 		workDir = s.opts.WorkDir
 	} else {
-		suffix, err := randomHex(8)
-		if err != nil {
-			return nil, fmt.Errorf("ssh sandbox: %w", err)
-		}
-		workDir = path.Join("/tmp", "agents-sandbox-"+suffix)
+		workDir = path.Join("/tmp", "agents-sandbox-"+randomHex(8))
 		if err := s.sftp.MkdirAll(workDir); err != nil {
 			return nil, fmt.Errorf("ssh sandbox: create work dir %s: %w", workDir, err)
 		}
@@ -435,18 +432,13 @@ func (s *Sandbox) Close() error {
 func buildCommand(dir string, env map[string]string, cmd []string) string {
 	var b strings.Builder
 	b.WriteString("cd ")
-	b.WriteString(shellQuote(dir))
+	b.WriteString(sandbox.ShellQuote(dir))
 	b.WriteString(" && exec ")
 	if len(env) > 0 {
-		keys := make([]string, 0, len(env))
-		for k := range env {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
 		b.WriteString("env")
-		for _, k := range keys {
+		for _, k := range slices.Sorted(maps.Keys(env)) {
 			b.WriteByte(' ')
-			b.WriteString(shellQuote(k + "=" + env[k]))
+			b.WriteString(sandbox.ShellQuote(k + "=" + env[k]))
 		}
 		b.WriteByte(' ')
 	}
@@ -454,18 +446,9 @@ func buildCommand(dir string, env map[string]string, cmd []string) string {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		b.WriteString(shellQuote(c))
+		b.WriteString(sandbox.ShellQuote(c))
 	}
 	return b.String()
-}
-
-// shellQuote returns s quoted for a POSIX shell: wrapped in single quotes with
-// any embedded single quote rendered as the '\” sequence.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // normalizeAddr appends the default SSH port when addr has none.
@@ -477,12 +460,12 @@ func normalizeAddr(addr string) string {
 }
 
 // randomHex returns n random bytes hex-encoded.
-func randomHex(n int) (string, error) {
+func randomHex(n int) string {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
+	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
+	// OS source is unavailable.
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // buildAuthMethods turns an AuthConfig into ordered ssh.AuthMethods: agent

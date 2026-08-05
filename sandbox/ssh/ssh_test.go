@@ -12,23 +12,6 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-func TestShellQuote(t *testing.T) {
-	cases := map[string]string{
-		"":              "''",
-		"abc":           "'abc'",
-		"a b":           "'a b'",
-		"a'b":           `'a'\''b'`,
-		"$(rm -rf /)":   "'$(rm -rf /)'",
-		"a&&b; c | d":   "'a&&b; c | d'",
-		"it's a 'test'": `'it'\''s a '\''test'\'''`,
-	}
-	for in, want := range cases {
-		if got := shellQuote(in); got != want {
-			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestBuildCommand(t *testing.T) {
 	got := buildCommand("/tmp/work", nil, []string{"python3", "main.py"})
 	want := "cd '/tmp/work' && exec 'python3' 'main.py'"
@@ -86,14 +69,8 @@ func TestExpandHome_NonTilde(t *testing.T) {
 }
 
 func TestRandomHex(t *testing.T) {
-	a, err := randomHex(8)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := randomHex(8)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := randomHex(8)
+	b := randomHex(8)
 	if len(a) != 16 || len(b) != 16 {
 		t.Errorf("len = %d/%d, want 16", len(a), len(b))
 	}

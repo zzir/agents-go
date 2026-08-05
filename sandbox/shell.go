@@ -131,9 +131,9 @@ func (s *ShellSession) readLoop() {
 // printf arguments; only the OUTPUT ever contains them joined.
 func newSentinel() (head, tail string) {
 	var b [12]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("sandbox: reading randomness: " + err.Error())
-	}
+	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
+	// OS source is unavailable.
+	_, _ = rand.Read(b[:])
 	h := hex.EncodeToString(b[:])
 	return "__agents_sh_" + h[:12], h[12:] + "__"
 }

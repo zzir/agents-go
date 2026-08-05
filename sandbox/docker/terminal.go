@@ -34,10 +34,7 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	// Tag the shell with a marker (as execPersistent does) so Close can kill
 	// the whole process tree inside the container: dropping the attach
 	// connection alone leaves e.g. a running `top` alive.
-	marker, err := newExecMarker()
-	if err != nil {
-		return nil, err
-	}
+	marker := newExecMarker()
 	shell := opts.Shell
 	if len(shell) == 0 {
 		// Prefer bash when the image ships it — tab completion, history and

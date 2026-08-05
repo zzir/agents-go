@@ -231,6 +231,8 @@ type DirEntry struct {
 }
 ```
 
+A backend that assembles `sh -c` command lines should pass every interpolated value — path, argument, environment entry — through `sandbox.ShellQuote`, the same helper the Docker and SSH backends use, so the escaping has one definition rather than one copy per backend.
+
 ## ExecStreamer (optional)
 
 Backends can optionally implement `ExecStreamer` to stream command output as it arrives:

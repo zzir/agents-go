@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -65,20 +66,15 @@ func buildShellCommand(dir string, env map[string]string, shell []string) string
 	var b strings.Builder
 	if dir != "" {
 		b.WriteString("cd ")
-		b.WriteString(shellQuote(dir))
+		b.WriteString(sandbox.ShellQuote(dir))
 		b.WriteString(" && ")
 	}
 	b.WriteString("exec ")
 	if len(env) > 0 {
-		keys := make([]string, 0, len(env))
-		for k := range env {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
 		b.WriteString("env")
-		for _, k := range keys {
+		for _, k := range slices.Sorted(maps.Keys(env)) {
 			b.WriteByte(' ')
-			b.WriteString(shellQuote(k + "=" + env[k]))
+			b.WriteString(sandbox.ShellQuote(k + "=" + env[k]))
 		}
 		b.WriteByte(' ')
 	}
@@ -90,7 +86,7 @@ func buildShellCommand(dir string, env map[string]string, shell []string) string
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		b.WriteString(shellQuote(c))
+		b.WriteString(sandbox.ShellQuote(c))
 	}
 	return b.String()
 }
