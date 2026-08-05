@@ -880,7 +880,10 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 				send(protocol.EventRunToolResult, protocol.RunToolResult{
 					RunID:      runID,
 					ToolCallID: e.Item.CallID(),
-					Output:     fmt.Sprintf("%v", e.Item.Output),
+					// The display rendering, not %v: a multimodal output is a
+					// content list, and Go syntax for it would not match what
+					// the same item reads back as from the stored session.
+					Output: e.Item.Display().Output,
 				})
 			}
 		case "handoff_requested":

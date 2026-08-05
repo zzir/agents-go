@@ -495,6 +495,10 @@ func allTerminate(results []functionToolResult) bool {
 // agent (no output type) the value is coerced to a string so the final output
 // is a string rather than a raw Go value. Agents with an output type keep the
 // raw value for the caller to decode.
+//
+// It renders through stringifyToolOutput so a multimodal output (a content
+// list rather than a string) reads as the JSON the model was sent, not as Go
+// syntax — the same rendering the item's display and the stored session use.
 func coerceToolFinalOutput(agent *Agent, output any) any {
 	if agent.OutputType != nil {
 		return output
@@ -502,5 +506,5 @@ func coerceToolFinalOutput(agent *Agent, output any) any {
 	if s, ok := output.(string); ok {
 		return s
 	}
-	return fmt.Sprint(output)
+	return stringifyToolOutput(output)
 }

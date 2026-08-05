@@ -104,8 +104,8 @@ r, _ := server.Session().ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file
 
 ## Behavior
 
-- Tool call results prefer the server's `structuredContent` (JSON), then a single text block verbatim; multiple or non-text content blocks are JSON-encoded so nothing is dropped.
-- Image results are passed through natively: when a result carries image content (an `image` block, or an embedded resource with an `image/*` MIME type) it becomes a `function_call_output` content list so the model receives real image input — text blocks stay text, other blocks are JSON-encoded into a text part. This builds on [structured tool output](tools.md#structured--multimodal-output).
+- Tool call results reach the model as content parts, one per content block: text stays text, image content (an `image` block, or an embedded resource with an `image/*` MIME type) becomes real image input, and everything else is JSON-encoded into a text part. A lone text block still collapses to a plain string. This builds on [structured tool output](tools.md#structured--multimodal-output).
+- `Options.UseStructuredContent` instead uses the server's `structuredContent` exclusively, as a single JSON text part, falling back to the content blocks when it is empty. It is off by default because most servers duplicate that data in the blocks.
 - A tool call that fails — including results flagged `isError` — is fed back to the model as the tool output so it can recover, like any function tool failure. Set the produced tool's `FailureErrorFunction` to nil if you want failures to abort the run (advanced).
 - `Close()` shuts the session down; it is safe to call once finished with the server.
 

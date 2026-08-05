@@ -78,11 +78,127 @@ func TestMCP_ToolFiltering(t *testing.T) {
 	}
 }
 
+// fixedResultTool registers a tool that ignores its arguments and answers with
+// a fixed result, for exercising the adapted tool against exotic content blocks.
+func fixedResultTool(srv *mcpsdk.Server, name string, res *mcpsdk.CallToolResult) {
+	srv.AddTool(&mcpsdk.Tool{Name: name, Description: name, InputSchema: emptyObjectSchema()},
+		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return res, nil
+		})
+}
+
+// callExposedTool invokes an exposed tool by name through the adapted
+// agents.Tool — the path a run takes, assembly layer included.
+func callExposedTool(t *testing.T, server *Server, name, argsJSON string) agents.ToolResult {
+	t.Helper()
+	ctx := context.Background()
+	rc, ag := rcAg()
+	tools, err := server.ListTools(ctx, rc, ag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range tools {
+		if tl.Name != name {
+			continue
+		}
+		out, err := tl.OnInvoke(ctx, &agents.ToolContext{RunContext: rc}, argsJSON)
+		if err != nil {
+			t.Fatalf("call %q: %v", name, err)
+		}
+		return out
+	}
+	t.Fatalf("tool %q is not exposed", name)
+	return agents.ToolResult{}
+}
+
+// A multi-block result reaches the model as native parts: text stays text and
+// the image stays an image, rather than both being flattened into one
+// JSON-encoded text part the model can only read as prose.
+func TestMCP_MultiBlockResultIsNative(t *testing.T) {
+	png := []byte{0x89, 0x50, 0x4e, 0x47}
+	server := startServer(t, Options{}, func(srv *mcpsdk.Server) {
+		fixedResultTool(srv, "chart", &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+			&mcpsdk.TextContent{Text: "see chart"},
+			&mcpsdk.ImageContent{MIMEType: "image/png", Data: png},
+		}})
+	})
+
+	out := callExposedTool(t, server, "chart", `{}`)
+	if len(out.Content) != 2 {
+		t.Fatalf("len(Content) = %d, want 2: %#v", len(out.Content), out.Content)
+	}
+	if tp, ok := out.Content[0].(agents.ToolOutputText); !ok || tp.Text != "see chart" {
+		t.Errorf("Content[0] = %#v, want text %q", out.Content[0], "see chart")
+	}
+	img, ok := out.Content[1].(agents.ToolOutputImage)
+	if !ok {
+		t.Fatalf("Content[1] = %T, want ToolOutputImage", out.Content[1])
+	}
+	if want := agents.DataURL("image/png", png); img.ImageURL != want {
+		t.Errorf("image URL = %q, want %q", img.ImageURL, want)
+	}
+	if out.IsError {
+		t.Error("IsError = true, want false")
+	}
+}
+
+// The single-text case stays a lone text part, which collapses back to a plain
+// string for the model.
+func TestMCP_SingleTextResultCollapses(t *testing.T) {
+	server := startServer(t, Options{}, nil)
+
+	out := callExposedTool(t, server, "echo", `{"text":"hi"}`)
+	if got := singleText(t, out.Content); got != "echo: hi" {
+		t.Errorf("text part = %q, want %q", got, "echo: hi")
+	}
+	if got := out.ModelOutput(); got != "echo: hi" {
+		t.Errorf("ModelOutput() = %#v, want %q", got, "echo: hi")
+	}
+}
+
+// An isError result carries its blocks natively too, and stays marked as an
+// error so a UI can render it as one.
+func TestMCP_ErrorResultKeepsNativeContent(t *testing.T) {
+	png := []byte{0x89, 0x50, 0x4e, 0x47}
+	server := startServer(t, Options{}, func(srv *mcpsdk.Server) {
+		fixedResultTool(srv, "boom", &mcpsdk.CallToolResult{
+			IsError: true,
+			Content: []mcpsdk.Content{
+				&mcpsdk.TextContent{Text: "rendering failed, last frame:"},
+				&mcpsdk.ImageContent{MIMEType: "image/png", Data: png},
+			},
+		})
+	})
+
+	out := callExposedTool(t, server, "boom", `{}`)
+	if !out.IsError {
+		t.Error("IsError = false, want true")
+	}
+	if len(out.Content) != 2 {
+		t.Fatalf("len(Content) = %d, want 2: %#v", len(out.Content), out.Content)
+	}
+	if _, ok := out.Content[1].(agents.ToolOutputImage); !ok {
+		t.Errorf("Content[1] = %T, want ToolOutputImage", out.Content[1])
+	}
+}
+
+// singleText returns the text of a one-part text result, failing otherwise.
+func singleText(t *testing.T, parts []agents.ToolOutputContent) string {
+	t.Helper()
+	if len(parts) != 1 {
+		t.Fatalf("len(parts) = %d, want 1: %#v", len(parts), parts)
+	}
+	tp, ok := parts[0].(agents.ToolOutputText)
+	if !ok {
+		t.Fatalf("parts[0] = %T, want ToolOutputText", parts[0])
+	}
+	return tp.Text
+}
+
 func TestResultOutput_TextOnly(t *testing.T) {
 	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "hello"}}}
-	out := resultOutput(res, false)
-	if s, ok := out.(string); !ok || s != "hello" {
-		t.Fatalf("text-only result = %#v, want string \"hello\"", out)
+	if got := singleText(t, resultOutput(res, false)); got != "hello" {
+		t.Fatalf("text-only result = %q, want %q", got, "hello")
 	}
 }
 
@@ -91,11 +207,7 @@ func TestResultOutput_Image(t *testing.T) {
 		&mcpsdk.TextContent{Text: "see chart"},
 		&mcpsdk.ImageContent{MIMEType: "image/png", Data: []byte{0x89, 0x50}},
 	}}
-	out := resultOutput(res, false)
-	parts, ok := out.([]agents.ToolOutputContent)
-	if !ok {
-		t.Fatalf("image result is not structured content: %T", out)
-	}
+	parts := resultOutput(res, false)
 	if len(parts) != 2 {
 		t.Fatalf("len(parts) = %d", len(parts))
 	}
@@ -117,10 +229,9 @@ func TestResultOutput_ImageResource(t *testing.T) {
 			URI: "file:///c.png", MIMEType: "image/png", Blob: []byte{1, 2, 3},
 		}},
 	}}
-	out := resultOutput(res, false)
-	parts, ok := out.([]agents.ToolOutputContent)
-	if !ok || len(parts) != 1 {
-		t.Fatalf("resource image result = %#v", out)
+	parts := resultOutput(res, false)
+	if len(parts) != 1 {
+		t.Fatalf("resource image result = %#v", parts)
 	}
 	if _, ok := parts[0].(agents.ToolOutputImage); !ok {
 		t.Errorf("parts[0] = %T, want ToolOutputImage", parts[0])
@@ -134,11 +245,7 @@ func TestResultOutput_MultipleTextBlocks(t *testing.T) {
 		&mcpsdk.TextContent{Text: "first"},
 		&mcpsdk.TextContent{Text: "second"},
 	}}
-	out := resultOutput(res, false)
-	parts, ok := out.([]agents.ToolOutputContent)
-	if !ok {
-		t.Fatalf("multi-block result = %T, want []ToolOutputContent parts", out)
-	}
+	parts := resultOutput(res, false)
 	if len(parts) != 2 {
 		t.Fatalf("len(parts) = %d, want 2", len(parts))
 	}
@@ -150,6 +257,14 @@ func TestResultOutput_MultipleTextBlocks(t *testing.T) {
 	}
 }
 
+// A result with no content blocks still yields one (empty) text part, so a tool
+// whose effect is the point sends an empty string to the model.
+func TestResultOutput_NoBlocks(t *testing.T) {
+	if got := singleText(t, resultOutput(&mcpsdk.CallToolResult{}, false)); got != "" {
+		t.Errorf("empty result = %q, want the empty string", got)
+	}
+}
+
 // StructuredContent is ignored by default (the content blocks win) and
 // used exclusively only when opted in.
 func TestResultOutput_StructuredContentGating(t *testing.T) {
@@ -158,14 +273,12 @@ func TestResultOutput_StructuredContentGating(t *testing.T) {
 		StructuredContent: map[string]any{"value": 42},
 	}
 	// Default: ignore structuredContent, use the content block.
-	if out := resultOutput(res, false); out != "block text" {
-		t.Errorf("default output = %#v, want the content block text", out)
+	if got := singleText(t, resultOutput(res, false)); got != "block text" {
+		t.Errorf("default output = %q, want the content block text", got)
 	}
 	// Opted in: use structuredContent exclusively.
-	out := resultOutput(res, true)
-	s, ok := out.(string)
-	if !ok || !strings.Contains(s, "42") {
-		t.Errorf("useStructured output = %#v, want the structured JSON", out)
+	if got := singleText(t, resultOutput(res, true)); !strings.Contains(got, "42") {
+		t.Errorf("useStructured output = %q, want the structured JSON", got)
 	}
 }
 
@@ -188,8 +301,8 @@ func TestResultOutput_StructuredContentEmptyFallsBackToBlocks(t *testing.T) {
 				Content:           []mcpsdk.Content{&mcpsdk.TextContent{Text: "fallback text"}},
 				StructuredContent: tc.structured,
 			}
-			if out := resultOutput(res, true); out != "fallback text" {
-				t.Errorf("output = %#v, want the content block text (structured was empty)", out)
+			if got := singleText(t, resultOutput(res, true)); got != "fallback text" {
+				t.Errorf("output = %q, want the content block text (structured was empty)", got)
 			}
 		})
 	}
@@ -199,8 +312,8 @@ func TestResultOutput_StructuredContentEmptyFallsBackToBlocks(t *testing.T) {
 // an empty string (nothing to fall back to) — never a panic.
 func TestResultOutput_StructuredContentEmptyNoBlocks(t *testing.T) {
 	res := &mcpsdk.CallToolResult{StructuredContent: map[string]any{}}
-	if out := resultOutput(res, true); out != "" {
-		t.Errorf("output = %#v, want empty string", out)
+	if got := singleText(t, resultOutput(res, true)); got != "" {
+		t.Errorf("output = %q, want empty string", got)
 	}
 }
 
@@ -211,8 +324,7 @@ func TestResultOutput_StructuredContentScalarIsUsed(t *testing.T) {
 		Content:           []mcpsdk.Content{&mcpsdk.TextContent{Text: "block"}},
 		StructuredContent: 42.0,
 	}
-	out := resultOutput(res, true)
-	if s, ok := out.(string); !ok || s != "42" {
-		t.Errorf("output = %#v, want the structured scalar \"42\"", out)
+	if got := singleText(t, resultOutput(res, true)); got != "42" {
+		t.Errorf("output = %q, want the structured scalar \"42\"", got)
 	}
 }

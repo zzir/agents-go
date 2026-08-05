@@ -459,32 +459,14 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 			// An isError result is NOT a Go error: its content (usually the
 			// error message) passes to the model verbatim so it can recover.
 			// It IS marked as an error on the result, so a UI can render it as
-			// one — previously that distinction was lost entirely.
-			out := agents.ToolResult{IsError: result.IsError}
-			switch v := resultOutput(result, s.opts.UseStructuredContent).(type) {
-			case string:
-				out.Content = []agents.ToolOutputContent{agents.ToolOutputText{Text: v}}
-			default:
-				out = agents.TextResult(stringifyMCPOutput(v))
-				out.IsError = result.IsError
-			}
-			return out, nil
+			// one.
+			return agents.ToolResult{
+				IsError: result.IsError,
+				Content: resultOutput(result, s.opts.UseStructuredContent),
+			}, nil
 		},
 	}
 	return tool
-}
-
-// stringifyMCPOutput renders a structured MCP result as the text the model
-// sees, matching how the SDK stringifies any non-string tool output.
-func stringifyMCPOutput(v any) string {
-	if v == nil {
-		return ""
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("%v", v)
-	}
-	return string(b)
 }
 
 // validateRequiredArgs reports a *agents.UserError when any schema-required
@@ -586,36 +568,30 @@ func deepCopySchema(m map[string]any) map[string]any {
 	return cp
 }
 
-// resultOutput renders a tool result for the model:
+// resultOutput renders a tool result into the content parts the model receives:
 // - When useStructured is set AND the result carries non-empty
-// structuredContent, that field is used exclusively (JSON-encoded to a
-// single text output) and the content blocks are ignored. A nil or empty
-// structuredContent falls through to the content blocks instead — most servers
-// duplicate their data in the content blocks, so an empty structured field must
-// never blank out the result. By default
-// (useStructured false) structuredContent is ignored entirely.
-// - A single text block passes through as a plain string.
-// - Multiple blocks, or any non-text block, become a []ToolOutputContent list
-// so the model receives each block natively (text stays text, images become
-// images, everything else is JSON-encoded into a text part) rather than one
-// opaque JSON string.
-func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) any {
+// structuredContent, that field is used exclusively (JSON-encoded into a
+// single text part) and the content blocks are ignored. A nil or empty
+// structuredContent falls through to the content blocks instead — most
+// servers duplicate their data in the content blocks, so an empty structured
+// field must never blank out the result. By default (useStructured false)
+// structuredContent is ignored entirely.
+// - Otherwise every content block becomes its own part, so the model receives
+// each one natively: text stays text, images become images, and everything
+// else is JSON-encoded into a text part. A result with no blocks at all
+// yields a single empty text part.
+func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) []agents.ToolOutputContent {
 	if useStructured && hasStructuredContent(result.StructuredContent) {
 		if b, err := json.Marshal(result.StructuredContent); err == nil {
-			return string(b)
+			return []agents.ToolOutputContent{agents.ToolOutputText{Text: string(b)}}
 		}
 		// A marshal failure is unexpected for JSON-decoded content; fall through
 		// to the content blocks rather than emitting an empty result.
 	}
 	if len(result.Content) == 0 {
-		return ""
+		return []agents.ToolOutputContent{agents.ToolOutputText{}}
 	}
-	if len(result.Content) == 1 {
-		if tc, ok := result.Content[0].(*mcpsdk.TextContent); ok {
-			return tc.Text
-		}
-	}
-	var parts []agents.ToolOutputContent
+	parts := make([]agents.ToolOutputContent, 0, len(result.Content))
 	for _, c := range result.Content {
 		switch v := c.(type) {
 		case *mcpsdk.TextContent:
