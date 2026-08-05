@@ -34,7 +34,7 @@ func usageFromStreamResponse(resp *responses.Response) *Usage {
 
 // streamOneModelCall streams a single model call, forwarding each raw event to
 // the consumer and assembling the final ModelResponse from the completed event.
-// Only Run takes this path; RunSync makes one blocking GetResponse call.
+// Only Run takes this path; RunSync makes one blocking Respond call.
 // The first event's arrival is stamped on the generation span as
 // time_to_first_token_ms.
 func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest) (*ModelResponse, error) {
@@ -78,10 +78,10 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 // both feed it, so the two paths cannot drift.
 type responseAssembler struct {
 	final *ModelResponse
-	items []TResponseOutputItem
+	items []OutputItem
 }
 
-func (a *responseAssembler) observe(event *TResponseStreamEvent) {
+func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 	switch event.Type {
 	case "response.output_item.done":
 		// Collected as a fallback for backends (e.g. ChatGPT with store=false)

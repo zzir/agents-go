@@ -84,7 +84,7 @@ type GuardrailPayload struct {
 	Agent *Agent
 
 	// Input is the run input under inspection (StageInput).
-	Input []TResponseInputItem
+	Input []InputItem
 	// Output is the value under inspection: the run's final output
 	// (StageOutput) or a tool's result (StageToolOutput).
 	Output any
@@ -194,7 +194,7 @@ func newTripwireError(res GuardrailResult) *GuardrailTripwireError {
 // NewInputGuardrail builds a StageInput guardrail from a callback that sees
 // only the input items. Use a [Guardrail] literal when you need the
 // [RunContext], the [Agent], or more than one stage.
-func NewInputGuardrail(name string, fn func(ctx context.Context, input []TResponseInputItem) (GuardrailDecision, error)) Guardrail {
+func NewInputGuardrail(name string, fn func(ctx context.Context, input []InputItem) (GuardrailDecision, error)) Guardrail {
 	return Guardrail{
 		Name:   name,
 		Stages: []GuardrailStage{StageInput},
@@ -333,7 +333,7 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 // guardrail returned Replace. The message becomes a single user message, which
 // is the whole input for the turn — finer rewriting belongs in a model-input
 // filter, not a guardrail.
-func inputReplacement(results []GuardrailResult) ([]TResponseInputItem, bool) {
+func inputReplacement(results []GuardrailResult) ([]InputItem, bool) {
 	for _, r := range results {
 		if r.Decision.Action == GuardrailReplace {
 			return InputItemsFromText(r.Decision.Message), true

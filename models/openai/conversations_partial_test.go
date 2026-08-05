@@ -58,7 +58,7 @@ func TestConversationsSession_AddItemsPartialFailureReported(t *testing.T) {
 	)
 
 	// 25 items => two batches [20, 5]; the second batch fails.
-	items := make([]agents.TResponseInputItem, 0, 25)
+	items := make([]agents.InputItem, 0, 25)
 	for i := range 25 {
 		items = append(items, agents.InputItemsFromText("m"+strconv.Itoa(i))...)
 	}

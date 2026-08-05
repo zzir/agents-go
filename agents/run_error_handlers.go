@@ -12,14 +12,14 @@ import (
 type RunErrorData struct {
 	// Input is the run's original input (after session history was prepended
 	// and any handoff input filter was applied).
-	Input []TResponseInputItem
+	Input []InputItem
 	// NewItems are the items generated so far.
 	NewItems []*RunItem
 	// History is Input followed by Output: the full conversation as the next
 	// model call would have seen it.
-	History []TResponseInputItem
+	History []InputItem
 	// Output is NewItems converted to model-input form.
-	Output []TResponseInputItem
+	Output []InputItem
 	// RawResponses are the raw model responses backing the error: every
 	// response so far for a max-turns overrun, the current turn's response for
 	// a refusal or invalid final output.
@@ -79,8 +79,8 @@ type RunErrorHandlers struct {
 // buildRunErrorData snapshots the run for a handler invocation. Items that
 // cannot convert to input form are skipped from History/Output, never raised as
 // an error — this runs on a path that is already failing.
-func buildRunErrorData(input []TResponseInputItem, newItems []*RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
-	output := make([]TResponseInputItem, 0, len(newItems))
+func buildRunErrorData(input []InputItem, newItems []*RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
+	output := make([]InputItem, 0, len(newItems))
 	for _, it := range newItems {
 		in, err := it.ToInputItem()
 		if err != nil {
@@ -88,7 +88,7 @@ func buildRunErrorData(input []TResponseInputItem, newItems []*RunItem, raw []*M
 		}
 		output = append(output, in)
 	}
-	history := make([]TResponseInputItem, 0, len(input)+len(output))
+	history := make([]InputItem, 0, len(input)+len(output))
 	history = append(history, input...)
 	history = append(history, output...)
 	return RunErrorData{
@@ -120,7 +120,7 @@ func (r *runner) resolveErrorRecovery(
 	handler RunErrorHandler,
 	cause error,
 	agent *Agent,
-	input []TResponseInputItem,
+	input []InputItem,
 	newItems []*RunItem,
 	raw []*ModelResponse,
 ) (*errorRecovery, error) {
@@ -242,7 +242,7 @@ func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*RunIt
 	if err != nil {
 		return nil, err
 	}
-	var item TResponseOutputItem
+	var item OutputItem
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return nil, err
 	}

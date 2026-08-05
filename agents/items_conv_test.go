@@ -17,7 +17,7 @@ func TestOutputToInputRoundTrip(t *testing.T) {
 	if item.RawJSON() == "" {
 		t.Fatalf("RawJSON empty after unmarshal")
 	}
-	in, err := OutputToInput([]TResponseOutputItem{item})
+	in, err := OutputToInput([]OutputItem{item})
 	if err != nil {
 		t.Fatalf("OutputToInput: %v", err)
 	}

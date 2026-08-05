@@ -24,7 +24,7 @@ type serverCursor struct {
 //
 // It runs again within the first turn when a Blocking input guardrail
 // REPLACES the input: the guarded call itself must see the rewritten input.
-func (r *runner) buildTurnInput(cur serverCursor, originalInput []TResponseInputItem, generated []*RunItem) (in []TResponseInputItem, prevID string, usedOriginal bool, err error) {
+func (r *runner) buildTurnInput(cur serverCursor, originalInput []InputItem, generated []*RunItem) (in []InputItem, prevID string, usedOriginal bool, err error) {
 	switch {
 	case r.opts.Conversation.UsePreviousResponseID && cur.responseID != "":
 		in, err = itemsToInputList(generated[cur.itemCount:])
@@ -66,12 +66,12 @@ func (cur *serverCursor) advance(opts ConversationOptions, resp *ModelResponse, 
 
 // buildModelInput assembles the model input for a turn: the original input
 // followed by every generated item converted back to input form.
-func buildModelInput(originalInput []TResponseInputItem, generated []*RunItem) ([]TResponseInputItem, error) {
+func buildModelInput(originalInput []InputItem, generated []*RunItem) ([]InputItem, error) {
 	genInput, err := itemsToInputList(generated)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]TResponseInputItem, 0, len(originalInput)+len(genInput))
+	out := make([]InputItem, 0, len(originalInput)+len(genInput))
 	out = append(out, originalInput...)
 	out = append(out, genInput...)
 	return out, nil

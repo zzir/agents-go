@@ -43,7 +43,7 @@ type playgroundReq struct {
 	ModelSettings *agents.ModelSettings `json:"model_settings,omitempty"`
 	// Tools are schema-only tool definitions echoed back from the traced
 	// request, so the model sees the same tool surface and can emit function
-	// calls. They are never executed: a single GetResponse runs no tool loop.
+	// calls. They are never executed: a single Respond runs no tool loop.
 	Tools []playgroundTool `json:"tools,omitempty"`
 	// OutputSchema, when set, requests structured output — echoed from the
 	// traced generation so a structured call replays as one. Without it a
@@ -111,13 +111,13 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	}
 	modelName := req.Model
 	modelName = cmp.Or(modelName, built.Agent.Model)
-	model, err := built.Provider.GetModel(modelName)
+	model, err := built.Provider.Model(modelName)
 	if err != nil || model == nil {
 		badRequest(c, "resolving model: "+errString(err))
 		return
 	}
 
-	items := make([]agents.TResponseInputItem, 0, len(req.InputItems))
+	items := make([]agents.InputItem, 0, len(req.InputItems))
 	for i, raw := range req.InputItems {
 		item, err := agents.UnmarshalInputItem(store.NormalizeItemJSON(raw))
 		if err != nil {
@@ -166,7 +166,7 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	}
 
 	start := time.Now()
-	resp, err := model.GetResponse(c.Request.Context(), mreq)
+	resp, err := model.Respond(c.Request.Context(), mreq)
 	if err != nil {
 		upstreamError(c, err)
 		return
@@ -210,12 +210,12 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 
 	start := time.Now()
 	var ttft int64 = -1
-	var final []agents.TResponseOutputItem
+	var final []agents.OutputItem
 	var usage *agents.Usage
 	terminal := false
 	// Fallback assembly from item.done events: some backends (e.g. ChatGPT
 	// with store=false) return an empty Output in the completed event.
-	var acc []agents.TResponseOutputItem
+	var acc []agents.OutputItem
 	// TTFT stamps on the first DELTA — the first actual token. Earlier events
 	// carry none (response.created arrives immediately; output_item events
 	// only frame content). A terminal event stamps as a fallback so a stream

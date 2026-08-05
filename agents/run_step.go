@@ -48,7 +48,7 @@ type functionCall struct {
 	CallID    string
 	Name      string
 	Arguments string
-	Raw       TResponseOutputItem
+	Raw       OutputItem
 }
 
 // ToolNotFoundBehavior controls handling of a model tool call that names no
@@ -156,8 +156,8 @@ func processModelResponse(
 			// and dropping one corrupts the conversation, because the next turn
 			// resends a history the model does not recognize as its own.
 			//
-			// UnknownOutputItem carries the bytes through untouched. It used to
-			// be silently discarded here.
+			// ItemUnknown carries the bytes through untouched. Such items used
+			// to be silently discarded here.
 			pr.NewItems = append(pr.NewItems, NewModelItem(ItemUnknown, agent, output))
 		}
 	}
@@ -177,7 +177,7 @@ func (r *runner) executeToolsAndSideEffects(
 	pr *processedResponse,
 	outputSchema OutputSchema,
 	resumed bool,
-	originalInput []TResponseInputItem,
+	originalInput []InputItem,
 	preStepItems []*RunItem,
 	resp *ModelResponse,
 ) (*singleStepResult, error) {

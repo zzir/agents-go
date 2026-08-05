@@ -10,7 +10,7 @@ import (
 // recordingProvider records the model name it is asked for.
 type recordingProvider struct{ got *string }
 
-func (r recordingProvider) GetModel(name string) (agents.Model, error) {
+func (r recordingProvider) Model(name string) (agents.Model, error) {
 	*r.got = name
 	return nil, nil
 }
@@ -21,8 +21,8 @@ func (r recordingProvider) GetModel(name string) (agents.Model, error) {
 func TestFixedModelProviderUsesConfiguredModel(t *testing.T) {
 	var got string
 	fp := fixedModelProvider{inner: recordingProvider{got: &got}, model: "gpt-4o-mini"}
-	if _, err := fp.GetModel("gpt-4o"); err != nil {
-		t.Fatalf("GetModel: %v", err)
+	if _, err := fp.Model("gpt-4o"); err != nil {
+		t.Fatalf("Model: %v", err)
 	}
 	if got != "gpt-4o-mini" {
 		t.Fatalf("fallback provider was asked for %q, want the configured gpt-4o-mini", got)

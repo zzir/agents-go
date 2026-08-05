@@ -15,7 +15,7 @@ type overflowingModel struct {
 	lastReq  ModelRequest
 }
 
-func (m *overflowingModel) GetResponse(_ context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *overflowingModel) Respond(_ context.Context, req ModelRequest) (*ModelResponse, error) {
 	m.calls++
 	m.lastReq = req
 	if m.calls <= m.failures {
@@ -24,8 +24,8 @@ func (m *overflowingModel) GetResponse(_ context.Context, req ModelRequest) (*Mo
 	return m.answer, nil
 }
 
-func (m *overflowingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *overflowingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		yield(nil, errors.New("not used"))
 	}
 }
@@ -217,7 +217,7 @@ func TestOverflow_StorageNoopBuysNoRetry(t *testing.T) {
 
 func mustItemEntries(t *testing.T, texts ...string) []SessionEntry {
 	t.Helper()
-	items := make([]TResponseInputItem, 0, len(texts))
+	items := make([]InputItem, 0, len(texts))
 	for _, text := range texts {
 		items = append(items, InputItemsFromText(text)...)
 	}

@@ -19,7 +19,7 @@ func (s *fakeCompactionSession) RunCompaction(_ context.Context, args Compaction
 func TestRunnerInvokesCompaction(t *testing.T) {
 	sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 	model := &recordingModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{messageOutput(t, "hi")}, Usage: NewUsage(), ResponseID: "resp_42"},
+		{Output: []OutputItem{messageOutput(t, "hi")}, Usage: NewUsage(), ResponseID: "resp_42"},
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
@@ -45,7 +45,7 @@ func TestRunnerInvokesCompaction(t *testing.T) {
 func TestRunnerInvokesCompactionWithoutResponseID(t *testing.T) {
 	sess := &fakeCompactionSession{InMemoryStorage: NewInMemoryStorage("test")}
 	model := &recordingModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{messageOutput(t, "hi")}, Usage: NewUsage()}, // no ResponseID
+		{Output: []OutputItem{messageOutput(t, "hi")}, Usage: NewUsage()}, // no ResponseID
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 

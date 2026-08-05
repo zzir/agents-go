@@ -12,22 +12,22 @@ import (
 // franca, exactly. These aliases give the rest of the package stable,
 // intention-revealing names for the underlying openai-go types.
 type (
-	// TResponseInputItem is a single item in the model input list, in OpenAI
+	// InputItem is a single item in the model input list, in OpenAI
 	// Responses format. A conversation history is a slice of these.
-	TResponseInputItem = responses.ResponseInputItemUnionParam
+	InputItem = responses.ResponseInputItemUnionParam
 
-	// TResponseOutputItem is a single item produced by the model, in OpenAI
+	// OutputItem is a single item produced by the model, in OpenAI
 	// Responses format.
-	TResponseOutputItem = responses.ResponseOutputItemUnion
+	OutputItem = responses.ResponseOutputItemUnion
 
-	// TResponseStreamEvent is a single streaming event from the Responses API.
-	TResponseStreamEvent = responses.ResponseStreamEventUnion
+	// ResponseStreamEvent is a single streaming event from the Responses API.
+	ResponseStreamEvent = responses.ResponseStreamEventUnion
 )
 
 // ModelResponse is the full result of a single model call.
 type ModelResponse struct {
 	// Output is the items produced by the model (messages, tool calls, etc).
-	Output []TResponseOutputItem
+	Output []OutputItem
 	// Usage is the token usage for this request.
 	Usage *Usage
 	// ResponseID is the provider response identifier, used to chain calls via
@@ -61,14 +61,14 @@ func (m *ModelResponse) Truncated() bool {
 // ToInputItems converts the model output items into input items suitable for the
 // next model call. Output and input share the same wire format, so the
 // conversion round-trips through JSON.
-func (m *ModelResponse) ToInputItems() ([]TResponseInputItem, error) {
+func (m *ModelResponse) ToInputItems() ([]InputItem, error) {
 	return OutputToInput(m.Output)
 }
 
 // OutputToInput converts a slice of model output items into input items by
 // re-encoding each item's wire JSON into the input union.
-func OutputToInput(out []TResponseOutputItem) ([]TResponseInputItem, error) {
-	items := make([]TResponseInputItem, 0, len(out))
+func OutputToInput(out []OutputItem) ([]InputItem, error) {
+	items := make([]InputItem, 0, len(out))
 	for i := range out {
 		in, err := outputItemToInput(out[i])
 		if err != nil {
@@ -92,8 +92,8 @@ var knownOutputTypes = map[string]bool{
 	"function_call_output": true,
 }
 
-func outputItemToInput(out TResponseOutputItem) (TResponseInputItem, error) {
-	var in TResponseInputItem
+func outputItemToInput(out OutputItem) (InputItem, error) {
+	var in InputItem
 	raw := out.RawJSON()
 	if raw == "" {
 		return in, fmt.Errorf("output item has no raw JSON to convert")
@@ -103,7 +103,7 @@ func outputItemToInput(out TResponseOutputItem) (TResponseInputItem, error) {
 	// union cannot represent output_text/refusal parts, silently dropping them.
 	if out.Type == "message" {
 		p := out.AsMessage().ToParam()
-		return TResponseInputItem{OfOutputMessage: &p}, nil
+		return InputItem{OfOutputMessage: &p}, nil
 	}
 	// A type we do not model goes back on the wire byte for byte. Decoding it
 	// into the typed union would drop every field the union does not know, and
@@ -120,13 +120,13 @@ func outputItemToInput(out TResponseOutputItem) (TResponseInputItem, error) {
 
 // rawInputOverride wraps raw wire JSON as an input item that serializes back to
 // exactly those bytes.
-func rawInputOverride(raw string) TResponseInputItem {
-	return param.Override[TResponseInputItem](json.RawMessage(raw))
+func rawInputOverride(raw string) InputItem {
+	return param.Override[InputItem](json.RawMessage(raw))
 }
 
 // MarshalInputItem serializes an input item to JSON. It is the inverse of
 // UnmarshalInputItem and is the encoding Session implementations should use.
-func MarshalInputItem(item TResponseInputItem) ([]byte, error) {
+func MarshalInputItem(item InputItem) ([]byte, error) {
 	return json.Marshal(item)
 }
 
@@ -137,8 +137,8 @@ func MarshalInputItem(item TResponseInputItem) ([]byte, error) {
 // content), and "easy" role messages serialize without a "type" discriminator,
 // so the union decoder cannot auto-detect them. Session implementations should
 // use it when reading stored items.
-func UnmarshalInputItem(data []byte) (TResponseInputItem, error) {
-	var item TResponseInputItem
+func UnmarshalInputItem(data []byte) (InputItem, error) {
+	var item InputItem
 	var probe struct {
 		Type string `json:"type"`
 		Role string `json:"role"`
@@ -147,7 +147,7 @@ func UnmarshalInputItem(data []byte) (TResponseInputItem, error) {
 	if probe.Type == "message" && probe.Role == "assistant" {
 		var om responses.ResponseOutputMessageParam
 		if err := json.Unmarshal(data, &om); err == nil && len(om.Content) > 0 {
-			return TResponseInputItem{OfOutputMessage: &om}, nil
+			return InputItem{OfOutputMessage: &om}, nil
 		}
 	}
 	if err := json.Unmarshal(data, &item); err == nil {
@@ -158,7 +158,7 @@ func UnmarshalInputItem(data []byte) (TResponseInputItem, error) {
 	// JSON objects are rejected instead of becoming empty messages.
 	var easy responses.EasyInputMessageParam
 	if err := json.Unmarshal(data, &easy); err == nil && easy.Role != "" {
-		return TResponseInputItem{OfMessage: &easy}, nil
+		return InputItem{OfMessage: &easy}, nil
 	}
 	// A typed item the union does not know: keep the bytes rather than reject
 	// them. Stored history can outlive this SDK's type coverage — a session
@@ -176,8 +176,8 @@ func UnmarshalInputItem(data []byte) (TResponseInputItem, error) {
 
 // InputItemsFromText builds a single-message input list from a user string. It
 // is a convenience for the common case of running an agent on plain text.
-func InputItemsFromText(text string) []TResponseInputItem {
-	return []TResponseInputItem{
+func InputItemsFromText(text string) []InputItem {
+	return []InputItem{
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleUser),
 	}
 }
@@ -187,8 +187,8 @@ func InputItemsFromText(text string) []TResponseInputItem {
 // It is for seeding history the SDK did not produce — importing a conversation
 // from elsewhere, or reconstructing one for a test. A run's own assistant turns
 // come from the model and arrive as items already.
-func InputItemsFromAssistantText(text string) []TResponseInputItem {
-	return []TResponseInputItem{
+func InputItemsFromAssistantText(text string) []InputItem {
+	return []InputItem{
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleAssistant),
 	}
 }
@@ -199,7 +199,7 @@ func InputItemsFromAssistantText(text string) []TResponseInputItem {
 // It exists because the Responses API accepts content as either a bare string
 // or an array of parts, and a consumer rendering history would otherwise have
 // to know that — and handle only the shape it happened to meet first.
-func ItemText(item TResponseInputItem) string { return inputItemText(item) }
+func ItemText(item InputItem) string { return inputItemText(item) }
 
 // InputItemsFromSystemText builds a single system message.
 //
@@ -207,8 +207,8 @@ func ItemText(item TResponseInputItem) string { return inputItemText(item) }
 // a folded record of tool calls. Attributing such content to the user or the
 // assistant would put words in someone's mouth, and the model would treat it as
 // something that was actually said.
-func InputItemsFromSystemText(text string) []TResponseInputItem {
-	return []TResponseInputItem{
+func InputItemsFromSystemText(text string) []InputItem {
+	return []InputItem{
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleSystem),
 	}
 }

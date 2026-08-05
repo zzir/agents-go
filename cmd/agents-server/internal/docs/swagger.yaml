@@ -690,7 +690,7 @@ components:
           description: |-
             Tools are schema-only tool definitions echoed back from the traced
             request, so the model sees the same tool surface and can emit function
-            calls. They are never executed: a single GetResponse runs no tool loop.
+            calls. They are never executed: a single Respond runs no tool loop.
           items:
             $ref: '#/components/schemas/handler.playgroundTool'
           type: array

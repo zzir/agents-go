@@ -76,7 +76,7 @@ func (r *Runner) persistInterruption(result *RunResult) error {
 // the UI can rebuild the user bubble on reload. It reuses the same item→role/
 // content extraction the messages table uses, so the reconstructed bubble is
 // byte-identical to the one the SDK persists once the turn completes.
-func userInputText(items []agents.TResponseInputItem) string {
+func userInputText(items []agents.InputItem) string {
 	raw, err := agents.MarshalItems(items)
 	if err != nil {
 		return ""

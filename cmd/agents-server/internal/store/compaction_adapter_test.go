@@ -14,14 +14,14 @@ import (
 )
 
 // summaryFakeModel is a minimal agents.Model returning a fixed summary text
-// and recording the input of each GetResponse call.
+// and recording the input of each Respond call.
 type summaryFakeModel struct {
 	summary string
 	calls   int
-	inputs  [][]agents.TResponseInputItem
+	inputs  [][]agents.InputItem
 }
 
-func (m *summaryFakeModel) GetResponse(_ context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+func (m *summaryFakeModel) Respond(_ context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	m.calls++
 	m.inputs = append(m.inputs, req.Input)
 	var out responses.ResponseOutputItemUnion
@@ -29,11 +29,11 @@ func (m *summaryFakeModel) GetResponse(_ context.Context, req agents.ModelReques
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		panic(err)
 	}
-	return &agents.ModelResponse{Output: []agents.TResponseOutputItem{out}, Usage: agents.NewUsage()}, nil
+	return &agents.ModelResponse{Output: []agents.OutputItem{out}, Usage: agents.NewUsage()}, nil
 }
 
-func (m *summaryFakeModel) StreamResponse(context.Context, agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
-	return func(func(*agents.TResponseStreamEvent, error) bool) {}
+func (m *summaryFakeModel) StreamResponse(context.Context, agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
+	return func(func(*agents.ResponseStreamEvent, error) bool) {}
 }
 
 func mustQuote(s string) string {

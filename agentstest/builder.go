@@ -44,7 +44,7 @@ func (b *ResponseBuilder) nextID(prefix string) string {
 }
 
 // Item appends a pre-built output item to the current turn.
-func (b *ResponseBuilder) Item(item agents.TResponseOutputItem) *ResponseBuilder {
+func (b *ResponseBuilder) Item(item agents.OutputItem) *ResponseBuilder {
 	t := b.cur()
 	t.Items = append(t.Items, item)
 	return b

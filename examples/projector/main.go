@@ -55,7 +55,7 @@ func main() {
 	// Opt it in. A projector maps one entry kind to the items it contributes;
 	// mapping a kind to nil suppresses it instead.
 	report(ctx, sess, "with terminal output projected", map[agents.EntryKind]agents.EntryProjector{
-		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.TResponseInputItem, error) {
+		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.InputItem, error) {
 			var t struct{ Command, Output string }
 			if err := json.Unmarshal(e.Payload, &t); err != nil {
 				return nil, err

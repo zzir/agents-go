@@ -165,7 +165,7 @@ func TestToolPipeline_ConcurrentFailureDeterministicWinner(t *testing.T) {
 	second.FailureErrorFunction = nil // fatal
 
 	model := &fakeModel{responses: []*ModelResponse{{
-		Output: []TResponseOutputItem{
+		Output: []OutputItem{
 			functionCallOutput(t, "first", "c1", `{}`),
 			functionCallOutput(t, "second", "c2", `{}`),
 		},

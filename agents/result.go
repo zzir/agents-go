@@ -8,7 +8,7 @@ type RunResult struct {
 	// history (when a Session is configured) followed by the new user input.
 	// A handoff input filter may have rewritten it; the items passed to Run
 	// itself are not retained separately.
-	Input []TResponseInputItem
+	Input []InputItem
 	// NewItems are all items generated during the run (messages, tool calls,
 	// tool outputs, handoffs, reasoning).
 	NewItems []*RunItem
@@ -84,7 +84,7 @@ type ToolApprovalItem struct {
 	Arguments string
 	// Raw is the underlying model tool-call output item, retained so the run can
 	// re-process it on resume.
-	Raw TResponseOutputItem
+	Raw OutputItem
 }
 
 // ToInputList returns the run's whole conversation as model input: the input it
@@ -93,7 +93,7 @@ type ToolApprovalItem struct {
 // It is what you feed the next run to continue a conversation without a
 // Session — and what a middleware that re-runs an agent hands to the second
 // attempt, so the agent sees what it already said rather than repeating it.
-func (r *RunResult) ToInputList() ([]TResponseInputItem, error) {
+func (r *RunResult) ToInputList() ([]InputItem, error) {
 	return buildModelInput(r.Input, r.NewItems)
 }
 

@@ -15,7 +15,7 @@ func TestUnmarshalItems_PreservesAssistantContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := MarshalItems([]TResponseInputItem{in})
+	data, err := MarshalItems([]InputItem{in})
 	if err != nil {
 		t.Fatal(err)
 	}

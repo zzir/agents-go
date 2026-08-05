@@ -114,8 +114,8 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 	return opts
 }
 
-// GetResponse implements agents.Model.
-func (m *ResponsesModel) GetResponse(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+// Respond implements agents.Model.
+func (m *ResponsesModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	params, err := m.buildParams(req)
 	if err != nil {
 		return nil, err
@@ -165,8 +165,8 @@ func (m *ResponsesModel) GetResponse(ctx context.Context, req agents.ModelReques
 }
 
 // StreamResponse implements agents.Model.
-func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
-	return func(yield func(*agents.TResponseStreamEvent, error) bool) {
+func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
+	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
 		params, err := m.buildParams(req)
 		if err != nil {
 			yield(nil, err)

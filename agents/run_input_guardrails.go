@@ -42,8 +42,8 @@ func (g *inputGuardRace) stop() {
 // race carries any non-blocking guardrails spawned to race the model call
 // (nil when there are none).
 type inputGateResult struct {
-	original []TResponseInputItem
-	model    []TResponseInputItem
+	original []InputItem
+	model    []InputItem
 	race     *inputGuardRace
 }
 
@@ -63,10 +63,10 @@ type inputGateResult struct {
 func (r *runner) firstTurnInputGuardrails(
 	ctx context.Context,
 	startAgent *Agent,
-	originalInput []TResponseInputItem,
+	originalInput []InputItem,
 	usedOriginalInput bool,
 	snapshot *TurnSnapshot,
-	rebuild func(replaced []TResponseInputItem) ([]TResponseInputItem, error),
+	rebuild func(replaced []InputItem) ([]InputItem, error),
 ) (inputGateResult, error) {
 	out := inputGateResult{original: originalInput}
 	all := selectStage(r.runGuardrails(startAgent), StageInput)
@@ -160,7 +160,7 @@ func (r *runner) firstTurnInputGuardrails(
 //     overflow compact-and-retry.
 type racedCallOutcome struct {
 	resp     *ModelResponse
-	original []TResponseInputItem // possibly rewritten by a Replace verdict
+	original []InputItem // possibly rewritten by a Replace verdict
 	guardErr error
 	modelErr error
 	stopped  bool
@@ -177,7 +177,7 @@ type racedCallOutcome struct {
 // A tripped guardrail aborts the turn WITHOUT billing usage or firing OnLLMEnd
 // — the model outcome is discarded. Raw events already yielded by a streamed
 // call stand; the run's error is what says they came to nothing.
-func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest, race *inputGuardRace, originalInput []TResponseInputItem) racedCallOutcome {
+func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest, race *inputGuardRace, originalInput []InputItem) racedCallOutcome {
 	out := racedCallOutcome{original: originalInput}
 	modelCtx, modelCancel := context.WithCancel(ctx)
 	relay := make(chan inputGuardOutcome, 1)
@@ -192,7 +192,7 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 	if r.rawEvents {
 		out.resp, err = r.streamOneModelCall(modelCtx, span, model, req)
 	} else {
-		out.resp, err = model.GetResponse(modelCtx, req)
+		out.resp, err = model.Respond(modelCtx, req)
 	}
 	// An abandoned stream must stop the run WHERE IT STANDS
 	// (spec §2.0), and the guardrails are the run: waiting for

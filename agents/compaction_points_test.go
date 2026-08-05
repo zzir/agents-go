@@ -27,7 +27,7 @@ func (c *recordingCompactor) Compact(_ context.Context, entries []SessionEntry) 
 func seededSession(t *testing.T, texts ...string) *Session {
 	t.Helper()
 	st := NewInMemoryStorage("test")
-	items := make([]TResponseInputItem, 0, len(texts))
+	items := make([]InputItem, 0, len(texts))
 	for _, text := range texts {
 		items = append(items, InputItemsFromText(text)...)
 	}

@@ -13,7 +13,7 @@ type recordingModel struct {
 	reqs      []ModelRequest
 }
 
-func (m *recordingModel) GetResponse(_ context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *recordingModel) Respond(_ context.Context, req ModelRequest) (*ModelResponse, error) {
 	m.reqs = append(m.reqs, req)
 	var resp *ModelResponse
 	if m.idx < len(m.responses) {
@@ -28,13 +28,13 @@ func (m *recordingModel) GetResponse(_ context.Context, req ModelRequest) (*Mode
 	return resp, nil
 }
 
-func (m *recordingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(func(*TResponseStreamEvent, error) bool) {}
+func (m *recordingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(func(*ResponseStreamEvent, error) bool) {}
 }
 
 func TestConversationIDSendsIncrementalInput(t *testing.T) {
 	model := &recordingModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{messageOutput(t, "hi")}, Usage: NewUsage(), ResponseID: "resp_1"},
+		{Output: []OutputItem{messageOutput(t, "hi")}, Usage: NewUsage(), ResponseID: "resp_1"},
 	}}
 	agent := &Agent{Name: "a", Model: "m"}
 
@@ -56,8 +56,8 @@ func TestConversationIDSendsIncrementalInput(t *testing.T) {
 func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 	// Turn 1: model calls a tool. Turn 2: model produces final text.
 	model := &recordingModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{functionCallOutput(t, "echo", "call_1", "{}")}, Usage: NewUsage(), ResponseID: "resp_1"},
-		{Output: []TResponseOutputItem{messageOutput(t, "done")}, Usage: NewUsage(), ResponseID: "resp_2"},
+		{Output: []OutputItem{functionCallOutput(t, "echo", "call_1", "{}")}, Usage: NewUsage(), ResponseID: "resp_1"},
+		{Output: []OutputItem{messageOutput(t, "done")}, Usage: NewUsage(), ResponseID: "resp_2"},
 	}}
 	echo := NewTool("echo", "echo", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
@@ -90,7 +90,7 @@ func TestConversationIDRejectsSession(t *testing.T) {
 }
 
 // modelRespID is modelResp with an explicit response id, for chaining tests.
-func modelRespID(id string, items ...TResponseOutputItem) *ModelResponse {
+func modelRespID(id string, items ...OutputItem) *ModelResponse {
 	r := modelResp(items...)
 	r.ResponseID = id
 	return r

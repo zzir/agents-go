@@ -13,7 +13,7 @@ import (
 // It is the single place that answers "what does the model get to read". That
 // question used to be answered implicitly — by what a session happened to
 // store — so anything worth keeping but not worth sending had no home.
-type EntryProjector func(SessionEntry) ([]TResponseInputItem, error)
+type EntryProjector func(SessionEntry) ([]InputItem, error)
 
 // defaultProjectors is the projection every run starts from.
 //
@@ -33,12 +33,12 @@ var defaultProjectors = map[EntryKind]EntryProjector{
 	EntryKindItem: projectItem,
 }
 
-func projectItem(e SessionEntry) ([]TResponseInputItem, error) {
+func projectItem(e SessionEntry) ([]InputItem, error) {
 	item, err := e.InputItem()
 	if err != nil {
 		return nil, err
 	}
-	return []TResponseInputItem{item}, nil
+	return []InputItem{item}, nil
 }
 
 // SummaryMarker prefixes a compaction summary. It is how a later pass
@@ -183,7 +183,7 @@ func projectorFor(overrides map[EntryKind]EntryProjector, kind EntryKind) (Entry
 // branch's view (ContextEntries does); handing over append order across
 // branches would let an abandoned attempt's checkpoint fold entries the
 // active branch still reads.
-func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProjector) ([]TResponseInputItem, error) {
+func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProjector) ([]InputItem, error) {
 	folded := FoldedEntryIDs(entries)
 	_, checkpointOverridden := overrides[EntryKindCompaction]
 
@@ -191,8 +191,8 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 	// stand-ins keyed by the entry they render before. Only live checkpoints
 	// render — one that was itself folded is out of the view like anything
 	// else, its exclusions already counted by FoldedEntryIDs.
-	var front []TResponseInputItem
-	var inserts map[string][]TResponseInputItem
+	var front []InputItem
+	var inserts map[string][]InputItem
 	if !checkpointOverridden {
 		present := make(map[string]bool, len(entries))
 		for _, e := range entries {
@@ -212,7 +212,7 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 				front = append(front, InputItemsFromSystemText(p.Summary)...)
 			}
 			for fi, f := range p.Folds {
-				items := make([]TResponseInputItem, 0, len(f.Items))
+				items := make([]InputItem, 0, len(f.Items))
 				for i, raw := range f.Items {
 					item, uerr := UnmarshalInputItem(raw)
 					if uerr != nil {
@@ -222,7 +222,7 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 				}
 				if f.Before != "" && present[f.Before] {
 					if inserts == nil {
-						inserts = make(map[string][]TResponseInputItem)
+						inserts = make(map[string][]InputItem)
 					}
 					inserts[f.Before] = append(inserts[f.Before], items...)
 				} else {
@@ -235,7 +235,7 @@ func ProjectEntries(entries []SessionEntry, overrides map[EntryKind]EntryProject
 		}
 	}
 
-	out := make([]TResponseInputItem, 0, len(front)+len(entries))
+	out := make([]InputItem, 0, len(front)+len(entries))
 	out = append(out, front...)
 	for _, e := range entries {
 		if ins, ok := inserts[e.ID]; ok {
@@ -336,7 +336,7 @@ func NewCompactionEntry(p CompactionPayload) (SessionEntry, error) {
 
 // ExtractOutputText returns the first output_text content from a model
 // response output. Used to extract summary text from a compaction call.
-func ExtractOutputText(output []TResponseOutputItem) string {
+func ExtractOutputText(output []OutputItem) string {
 	for _, item := range output {
 		b := []byte(item.RawJSON())
 		var probe struct {

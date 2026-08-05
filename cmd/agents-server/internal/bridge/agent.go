@@ -460,7 +460,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 					ac.Name, hID, hResult.ProviderType, result.ProviderType, targetKey)
 			}
 			if hResult.Provider != nil && hResult.Agent.Model != "" && hResult.Agent.ModelImpl == nil {
-				m, merr := hResult.Provider.GetModel(hResult.Agent.Model)
+				m, merr := hResult.Provider.Model(hResult.Agent.Model)
 				if merr != nil {
 					return nil, fmt.Errorf("agent %q handoff %q: resolve model: %w", ac.Name, hID, merr)
 				}
@@ -623,8 +623,8 @@ type fixedModelProvider struct {
 	model string
 }
 
-func (f fixedModelProvider) GetModel(string) (agents.Model, error) {
-	return f.inner.GetModel(f.model)
+func (f fixedModelProvider) Model(string) (agents.Model, error) {
+	return f.inner.Model(f.model)
 }
 
 // wrapFallbackProvider chains one fixed-model provider per decoded fallback

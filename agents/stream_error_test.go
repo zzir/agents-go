@@ -13,12 +13,12 @@ import (
 // cancellation (e.g. "openai responses stream: context canceled").
 type cancelStreamModel struct{ cancel context.CancelFunc }
 
-func (m *cancelStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *cancelStreamModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	return nil, context.Canceled
 }
 
-func (m *cancelStreamModel) StreamResponse(ctx context.Context, _ ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *cancelStreamModel) StreamResponse(ctx context.Context, _ ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		m.cancel()
 		yield(nil, context.Canceled)
 	}

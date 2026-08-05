@@ -175,7 +175,7 @@ func (p CompactionPoint) String() string {
 // folded summary survives.
 //
 // It reports ok=false when nothing applies, leaving the caller's context alone.
-func (r *runner) recompactAtSavePoint(ctx context.Context) (input []TResponseInputItem, ok bool, err error) {
+func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, ok bool, err error) {
 	if !r.opts.Compaction.active(CompactAtSavePoint) {
 		return nil, false, nil
 	}

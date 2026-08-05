@@ -5,13 +5,13 @@ The SDK abstracts model access behind two small interfaces, with two backends ou
 ```go
 // Model is one LLM: one call (or one streamed call) per turn.
 type Model interface {
-	GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error)
-	StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error]
+	Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error)
+	StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error]
 }
 
 // ModelProvider resolves an agent's model name to a Model.
 type ModelProvider interface {
-	GetModel(modelName string) (Model, error)
+	Model(modelName string) (Model, error)
 }
 ```
 
@@ -86,7 +86,7 @@ model := agents.NewRetryModel(primary, policy)
 
 Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation; `openai.RetryableError` adds OpenAI-aware status-code classification. `openai.RetryAfter` understands both `Retry-After-Ms` (milliseconds, checked first — what OpenAI actually sends on short rate limits) and `Retry-After` (seconds or HTTP-date), and a server-suggested delay is always capped at the policy's `MaxDelay`.
 
-> **Two layers of retry.** The `openai-go` client already retries transient failures on its own — by default `MaxRetries: 2` on 408/409/429/5xx and connection errors, honoring `Retry-After`. `NewRetryModel` sits *above* that: it wraps the whole `GetResponse`/stream call (including response handling) and is the unit that a fallback chain advances over. The two compose multiplicatively, so with the defaults a single transient error can be attempted up to `MaxAttempts × 3` times. To keep retry behavior in one place — more predictable and easier to observe — disable the client layer when building the provider and let `RetryModel` own it:
+> **Two layers of retry.** The `openai-go` client already retries transient failures on its own — by default `MaxRetries: 2` on 408/409/429/5xx and connection errors, honoring `Retry-After`. `NewRetryModel` sits *above* that: it wraps the whole `Respond`/stream call (including response handling) and is the unit that a fallback chain advances over. The two compose multiplicatively, so with the defaults a single transient error can be attempted up to `MaxAttempts × 3` times. To keep retry behavior in one place — more predictable and easier to observe — disable the client layer when building the provider and let `RetryModel` own it:
 >
 > ```go
 > provider := openai.NewProvider(option.WithMaxRetries(0))
@@ -129,13 +129,13 @@ router := agents.NewRouterProvider(map[string]agents.ModelProvider{
 }).WithFallback(openaiP)
 
 agents.Run(ctx, agent, input, agents.RunOptions{Model: agents.ModelOptions{Provider: router}})
-// Agent.Model "groq/llama-3.3-70b" -> groqP.GetModel("llama-3.3-70b")
-// Agent.Model "gpt-4o"             -> fallback openaiP.GetModel("gpt-4o")
+// Agent.Model "groq/llama-3.3-70b" -> groqP.Model("llama-3.3-70b")
+// Agent.Model "gpt-4o"             -> fallback openaiP.Model("gpt-4o")
 ```
 
-> **Streaming caveat:** retry and fallback can only switch backends *before the first output event*. Events that carry no model output — lifecycle preamble (`response.created` / `response.in_progress` / `response.queued`) and terminal-failure events (`error` / `response.error` / `response.failed`) — don't commit an attempt: the decorators hold them back until output arrives, so a stream that dies early (a gateway `unexpected EOF`, a clean EOF with no terminal event — surfaced by the adapters as the same retryable truncation — or a `response.failed`) is replaced like a failed blocking call, and the consumer never sees the abandoned attempt's events. Once tokens start streaming a later error is passed through unchanged — already-sent output cannot be rolled back. Blocking `GetResponse` has no such limit, so it retries and falls back on any failure.
+> **Streaming caveat:** retry and fallback can only switch backends *before the first output event*. Events that carry no model output — lifecycle preamble (`response.created` / `response.in_progress` / `response.queued`) and terminal-failure events (`error` / `response.error` / `response.failed`) — don't commit an attempt: the decorators hold them back until output arrives, so a stream that dies early (a gateway `unexpected EOF`, a clean EOF with no terminal event — surfaced by the adapters as the same retryable truncation — or a `response.failed`) is replaced like a failed blocking call, and the consumer never sees the abandoned attempt's events. Once tokens start streaming a later error is passed through unchanged — already-sent output cannot be rolled back. Blocking `Respond` has no such limit, so it retries and falls back on any failure.
 
-**Stream-only backends** — `agents.NewStreamOnlyModel(inner)` / `agents.NewStreamOnlyProvider(inner)` adapt a backend that rejects non-streaming requests (the ChatGPT Codex backend answers a non-streaming POST with 400): `GetResponse` runs the request as an internal stream and assembles the final `ModelResponse` from the terminal event; `StreamResponse` passes through. Compose it innermost, directly on the backend it adapts — decorators above it then see blocking-call failures as ordinary `GetResponse` errors:
+**Stream-only backends** — `agents.NewStreamOnlyModel(inner)` / `agents.NewStreamOnlyProvider(inner)` adapt a backend that rejects non-streaming requests (the ChatGPT Codex backend answers a non-streaming POST with 400): `Respond` runs the request as an internal stream and assembles the final `ModelResponse` from the terminal event; `StreamResponse` passes through. Compose it innermost, directly on the backend it adapts — decorators above it then see blocking-call failures as ordinary `Respond` errors:
 
 ```go
 provider := agents.NewRetryProvider(
@@ -188,10 +188,10 @@ Implement `Model` to use any backend — return Responses-format output items an
 ```go
 type myModel struct{}
 
-func (myModel) GetResponse(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+func (myModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	// call your backend, translate to Responses output items
 }
-func (myModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
+func (myModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
 	// yield Responses streaming events; end with a response.completed event
 }
 ```

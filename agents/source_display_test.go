@@ -13,7 +13,7 @@ import (
 // turn resends a history the model does not recognize as its own.
 func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 	const raw = `{"type":"some_future_call","id":"fx_1","status":"completed","weird":{"a":[1,2],"b":null}}`
-	var unknown TResponseOutputItem
+	var unknown OutputItem
 	if err := json.Unmarshal([]byte(raw), &unknown); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 	model := &fakeModel{responses: []*ModelResponse{
 		{
-			Output: []TResponseOutputItem{unknown, functionCallOutput(t, "t", "c1", `{}`)},
+			Output: []OutputItem{unknown, functionCallOutput(t, "t", "c1", `{}`)},
 			Usage:  NewUsage(),
 		},
 		modelResp(messageOutput(t, "done")),
@@ -69,7 +69,7 @@ func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 // form (downstream code inspects OfReasoning and friends), an unknown one goes
 // through the raw override.
 func TestOutputItemToInput_TypedFirstOverrideFallback(t *testing.T) {
-	var reasoning TResponseOutputItem
+	var reasoning OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"reasoning","id":"r1","summary":[]}`), &reasoning); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestOutputItemToInput_TypedFirstOverrideFallback(t *testing.T) {
 		t.Error("a reasoning item lost its typed form; applyReasoningItemIDPolicy needs it")
 	}
 
-	var unknown TResponseOutputItem
+	var unknown OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"brand_new","id":"x1","payload":{"n":7}}`), &unknown); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func itemTypesOf(items []*RunItem) []string {
 // unloadable over one item.
 func TestUnknownItem_SurvivesSessionRoundTrip(t *testing.T) {
 	const raw = `{"type":"some_future_call","id":"fx_1","weird":{"a":[1,2]}}`
-	var unknown TResponseOutputItem
+	var unknown OutputItem
 	if err := json.Unmarshal([]byte(raw), &unknown); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestUnknownItem_SurvivesSessionRoundTrip(t *testing.T) {
 // run reads the session back and resends it.
 func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 	const raw = `{"type":"some_future_call","id":"fx_1","weird":{"a":[1,2]}}`
-	var unknown TResponseOutputItem
+	var unknown OutputItem
 	if err := json.Unmarshal([]byte(raw), &unknown); err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{unknown, functionCallOutput(t, "t", "c1", `{}`)}, Usage: NewUsage()},
+		{Output: []OutputItem{unknown, functionCallOutput(t, "t", "c1", `{}`)}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "done")),
 	}}}
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{

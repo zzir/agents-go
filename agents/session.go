@@ -70,7 +70,7 @@ func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]SessionEntr
 }
 
 // ContextItems returns the model input the session projects to.
-func (s *Session) ContextItems(ctx context.Context, cur Cursor) ([]TResponseInputItem, error) {
+func (s *Session) ContextItems(ctx context.Context, cur Cursor) ([]InputItem, error) {
 	entries, err := s.ContextEntries(ctx, cur)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (s *Session) Append(ctx context.Context, entries ...SessionEntry) error {
 }
 
 // AppendItems records plain Responses items as item entries.
-func (s *Session) AppendItems(ctx context.Context, items []TResponseInputItem, src Source) error {
+func (s *Session) AppendItems(ctx context.Context, items []InputItem, src Source) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -216,9 +216,9 @@ type CompactionAware interface {
 
 // MarshalItems serializes a slice of input items to JSON, suitable for database
 // storage. It handles nil slices gracefully (returning "[]").
-func MarshalItems(items []TResponseInputItem) ([]byte, error) {
+func MarshalItems(items []InputItem) ([]byte, error) {
 	if items == nil {
-		items = []TResponseInputItem{}
+		items = []InputItem{}
 	}
 	return json.Marshal(items)
 }
@@ -231,7 +231,7 @@ func MarshalItems(items []TResponseInputItem) ([]byte, error) {
 // and "easy" role messages without a "type" discriminator still decode instead
 // of failing. This keeps a MarshalItems→UnmarshalItems round-trip — the encoding
 // external Session backends use for DB storage — lossless.
-func UnmarshalItems(data []byte) ([]TResponseInputItem, error) {
+func UnmarshalItems(data []byte) ([]InputItem, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return nil, nil
 	}
@@ -239,7 +239,7 @@ func UnmarshalItems(data []byte) ([]TResponseInputItem, error) {
 	if err := json.Unmarshal(data, &raws); err != nil {
 		return nil, fmt.Errorf("unmarshal session items: %w", err)
 	}
-	items := make([]TResponseInputItem, 0, len(raws))
+	items := make([]InputItem, 0, len(raws))
 	for i, raw := range raws {
 		item, err := UnmarshalInputItem(raw)
 		if err != nil {

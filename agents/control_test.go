@@ -8,7 +8,7 @@ import (
 )
 
 // inputTexts renders a model request's input for assertions.
-func inputTexts(items []TResponseInputItem) string {
+func inputTexts(items []InputItem) string {
 	var b strings.Builder
 	for _, it := range items {
 		b.WriteString(inputItemText(it))
@@ -191,7 +191,7 @@ func TestPendingInput_Empty(t *testing.T) {
 	if !(PendingInput{}).Empty() {
 		t.Error("a zero PendingInput is not empty")
 	}
-	if (PendingInput{Steer: make([]TResponseInputItem, 1)}).Empty() {
+	if (PendingInput{Steer: make([]InputItem, 1)}).Empty() {
 		t.Error("a queued steer reports empty")
 	}
 }

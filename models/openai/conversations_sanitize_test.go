@@ -8,7 +8,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-func mustItem(t *testing.T, raw string) agents.TResponseInputItem {
+func mustItem(t *testing.T, raw string) agents.InputItem {
 	t.Helper()
 	it, err := agents.UnmarshalInputItem([]byte(raw))
 	if err != nil {
@@ -58,7 +58,7 @@ func TestConversationsSession_AddSanitizes(t *testing.T) {
 	ctx := t.Context()
 	s, fake := newTestSession(t)
 
-	items := []agents.TResponseInputItem{
+	items := []agents.InputItem{
 		mustItem(t, `{"type":"reasoning","summary":[]}`),
 		mustItem(t, `{"role":"user","content":"hello"}`),
 	}

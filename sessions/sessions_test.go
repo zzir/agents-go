@@ -13,11 +13,11 @@ import (
 	"github.com/zzir/agents-go/sessions"
 )
 
-func item(text string) agents.TResponseInputItem {
+func item(text string) agents.InputItem {
 	return agents.InputItemsFromText(text)[0]
 }
 
-func jsonOf(t *testing.T, it agents.TResponseInputItem) string {
+func jsonOf(t *testing.T, it agents.InputItem) string {
 	t.Helper()
 	b, err := agents.MarshalInputItem(it)
 	if err != nil {
@@ -39,7 +39,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 		t.Fatalf("new session: got %d items, want 0", len(got))
 	}
 
-	in := []agents.TResponseInputItem{item("a"), item("b"), item("c")}
+	in := []agents.InputItem{item("a"), item("b"), item("c")}
 	if err := agents.NewSession(s).AppendItems(ctx, in, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestSQLite_SessionIsolation(t *testing.T) {
 	}
 	b := sessions.New(db, "b")
 
-	if err := agents.NewSession(a).AppendItems(ctx, []agents.TResponseInputItem{item("only-a")}, agents.Source{}); err != nil {
+	if err := agents.NewSession(a).AppendItems(ctx, []agents.InputItem{item("only-a")}, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := agents.NewSession(b).ContextItems(ctx, agents.Cursor{})
@@ -222,7 +222,7 @@ func TestPostgres(t *testing.T) {
 }
 
 // mustEntries wraps plain items as item entries for tests exercising replace.
-func mustEntries(t *testing.T, items []agents.TResponseInputItem) []agents.SessionEntry {
+func mustEntries(t *testing.T, items []agents.InputItem) []agents.SessionEntry {
 	t.Helper()
 	entries, err := agents.NewItemEntries(items, agents.Source{})
 	if err != nil {

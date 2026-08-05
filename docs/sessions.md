@@ -145,7 +145,7 @@ is the opposite of suppression — letting the model see terminal output:
 agents.RunOptions{Conversation: agents.ConversationOptions{
 	Session: sess,
 	Projectors: map[agents.EntryKind]agents.EntryProjector{
-		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.TResponseInputItem, error) {
+		agents.EntryKindTerminal: func(e agents.SessionEntry) ([]agents.InputItem, error) {
 			var p struct{ Command string `json:"command"` }
 			if err := json.Unmarshal(e.Payload, &p); err != nil { return nil, err }
 			return agents.InputItemsFromText("$ " + p.Command), nil
@@ -435,7 +435,7 @@ the session records which branch is active.
 ```go
 // Go back to the user's message and answer it again.
 sess.Branch(ctx, userEntryID)
-res, _ := agents.RunSync(ctx, agent, []agents.TResponseInputItem{}, agents.RunOptions{
+res, _ := agents.RunSync(ctx, agent, []agents.InputItem{}, agents.RunOptions{
     Conversation: agents.ConversationOptions{Session: sess},
     Model:        agents.ModelOptions{Provider: provider},
 })
@@ -443,7 +443,7 @@ res, _ := agents.RunSync(ctx, agent, []agents.TResponseInputItem{}, agents.RunOp
 
 An **empty item list** is what makes that a regeneration rather than a repeat:
 there is nothing to add, and the run answers the history the branch now points
-at. Note that this is `[]agents.TResponseInputItem{}` and not `""` — an empty
+at. Note that this is `[]agents.InputItem{}` and not `""` — an empty
 string is a string input, and it appends an empty user message.
 
 Switching is itself an append — a **leaf entry** naming the new tip — so the

@@ -41,8 +41,8 @@ func Capabilities() modelkit.Capabilities {
 	return modelkit.Capabilities{}
 }
 
-// GetModel implements agents.ModelProvider.
-func (p *Provider) GetModel(modelName string) (agents.Model, error) {
+// Model implements agents.ModelProvider.
+func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
 		modelName = p.defaultModel
 	}

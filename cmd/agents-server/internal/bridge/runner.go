@@ -117,7 +117,7 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 	}
 	modelName := built.CompactionModel
 	modelName = cmp.Or(modelName, built.Agent.Model)
-	summaryModel, err := provider.GetModel(modelName)
+	summaryModel, err := provider.Model(modelName)
 	if err != nil || summaryModel == nil {
 		return agents.NewSession(sa)
 	}
@@ -446,7 +446,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 			// add, history to answer.
 			var runInput any = input
 			if input == "" {
-				runInput = []agents.TResponseInputItem{}
+				runInput = []agents.InputItem{}
 			}
 			return agents.Run(ctx, agent, runInput, opts)
 		},

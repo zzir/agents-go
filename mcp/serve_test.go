@@ -195,7 +195,7 @@ type scriptedModel struct {
 	err  error
 }
 
-func (m *scriptedModel) GetResponse(context.Context, agents.ModelRequest) (*agents.ModelResponse, error) {
+func (m *scriptedModel) Respond(context.Context, agents.ModelRequest) (*agents.ModelResponse, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -205,11 +205,11 @@ func (m *scriptedModel) GetResponse(context.Context, agents.ModelRequest) (*agen
 	if err := json.Unmarshal([]byte(raw), &item); err != nil {
 		return nil, err
 	}
-	return &agents.ModelResponse{Output: []agents.TResponseOutputItem{item}, Usage: agents.NewUsage()}, nil
+	return &agents.ModelResponse{Output: []agents.OutputItem{item}, Usage: agents.NewUsage()}, nil
 }
 
-func (m *scriptedModel) StreamResponse(context.Context, agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
-	return func(yield func(*agents.TResponseStreamEvent, error) bool) {
+func (m *scriptedModel) StreamResponse(context.Context, agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
+	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
 		yield(nil, errors.New("streaming not used in these tests"))
 	}
 }

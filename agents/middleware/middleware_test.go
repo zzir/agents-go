@@ -71,7 +71,7 @@ func TestLoop_FeedsTheAttemptBackIn(t *testing.T) {
 	model := &scriptedModel{responses: []*agents.ModelResponse{resp(message(t, "one")), resp(message(t, "two"))}}
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
 
-	var inputs [][]agents.TResponseInputItem
+	var inputs [][]agents.InputItem
 	if _, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
 		Middlewares: []agents.RunMiddleware{
 			Loop{MaxAttempts: 2, Evaluate: func(context.Context, *agents.RunResult) (Evaluation, error) {

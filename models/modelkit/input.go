@@ -98,7 +98,7 @@ type partProbe struct {
 // would otherwise re-learn, and JSON is the one representation all of them —
 // including items restored from a session by an older or newer build — are
 // guaranteed to have.
-func ParseInput(items []agents.TResponseInputItem) ([]Item, error) {
+func ParseInput(items []agents.InputItem) ([]Item, error) {
 	out := make([]Item, 0, len(items))
 	for i := range items {
 		raw, err := agents.MarshalInputItem(items[i])

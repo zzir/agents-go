@@ -165,8 +165,8 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 	return opts
 }
 
-// GetResponse implements agents.Model.
-func (m *MessagesModel) GetResponse(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+// Respond implements agents.Model.
+func (m *MessagesModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	params, err := m.buildParams(req)
 	if err != nil {
 		return nil, err
@@ -201,8 +201,8 @@ func (m *MessagesModel) GetResponse(ctx context.Context, req agents.ModelRequest
 
 // StreamResponse implements agents.Model. The Messages SSE stream is
 // translated event by event into canonical response.* events; see stream.go.
-func (m *MessagesModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
-	return func(yield func(*agents.TResponseStreamEvent, error) bool) {
+func (m *MessagesModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
+	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
 		params, err := m.buildParams(req)
 		if err != nil {
 			yield(nil, err)

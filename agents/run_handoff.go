@@ -59,7 +59,7 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 
 // applyHandoffInputFilter builds the full conversation input and runs filter
 // over it, returning the filtered input for the next agent.
-func applyHandoffInputFilter(filter func(HandoffInputData) HandoffInputData, originalInput []TResponseInputItem, generated []*RunItem) ([]TResponseInputItem, error) {
+func applyHandoffInputFilter(filter func(HandoffInputData) HandoffInputData, originalInput []InputItem, generated []*RunItem) ([]InputItem, error) {
 	full, err := buildModelInput(originalInput, generated)
 	if err != nil {
 		return nil, err

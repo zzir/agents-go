@@ -75,7 +75,7 @@ Run-level and agent-level guardrails both apply; run-level ones run first.
 For single-stage guardrails these are shorter and keep payload access type-safe:
 
 ```go
-agents.NewInputGuardrail("len", func(ctx context.Context, input []agents.TResponseInputItem) (agents.GuardrailDecision, error) {
+agents.NewInputGuardrail("len", func(ctx context.Context, input []agents.InputItem) (agents.GuardrailDecision, error) {
     if tooLong(input) {
         return agents.Trip("input too long"), nil
     }

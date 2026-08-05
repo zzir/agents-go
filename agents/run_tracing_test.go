@@ -202,11 +202,11 @@ func TestGenerationSpanRecordsRequestAndOutput(t *testing.T) {
 	if d["model"] != "fake-model" || d["system_instructions"] != "be brief" {
 		t.Fatalf("request meta missing: %v", d)
 	}
-	in, ok := d["input"].([]TResponseInputItem)
+	in, ok := d["input"].([]InputItem)
 	if !ok || len(in) != 1 {
 		t.Fatalf("input not recorded: %#v", d["input"])
 	}
-	out, ok := d["output"].([]TResponseOutputItem)
+	out, ok := d["output"].([]OutputItem)
 	if !ok || len(out) != 1 {
 		t.Fatalf("output not recorded: %#v", d["output"])
 	}
@@ -234,10 +234,10 @@ func TestGenerationSpanRecordsRequestAndOutputStreamed(t *testing.T) {
 		t.Fatalf("want 1 generation span, got %d", len(gens))
 	}
 	d := gens[0].Data
-	if _, ok := d["input"].([]TResponseInputItem); !ok {
+	if _, ok := d["input"].([]InputItem); !ok {
 		t.Fatalf("streamed input not recorded: %#v", d["input"])
 	}
-	if _, ok := d["output"].([]TResponseOutputItem); !ok {
+	if _, ok := d["output"].([]OutputItem); !ok {
 		t.Fatalf("streamed output not recorded: %#v", d["output"])
 	}
 	if _, ok := d["time_to_first_token_ms"].(int64); !ok {

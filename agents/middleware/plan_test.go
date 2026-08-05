@@ -31,17 +31,17 @@ func (m *recordingModel) record(req agents.ModelRequest) {
 	m.toolsPerCall = append(m.toolsPerCall, names)
 }
 
-func (m *recordingModel) GetResponse(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+func (m *recordingModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	m.record(req)
-	return m.scriptedModel.GetResponse(ctx, req)
+	return m.scriptedModel.Respond(ctx, req)
 }
 
-func (m *recordingModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
+func (m *recordingModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
 	m.record(req)
 	return m.scriptedModel.StreamResponse(ctx, req)
 }
 
-func toolCallArgs(t *testing.T, name, callID, args string) agents.TResponseOutputItem {
+func toolCallArgs(t *testing.T, name, callID, args string) agents.OutputItem {
 	t.Helper()
 	return outputItem(t, `{"type":"function_call","id":"fc_1","call_id":`+quote(callID)+
 		`,"name":`+quote(name)+`,"arguments":`+quote(args)+`,"status":"completed"}`)

@@ -15,7 +15,7 @@ type flakyModel struct {
 	answer   *ModelResponse
 }
 
-func (m *flakyModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *flakyModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	m.calls++
 	if m.calls <= m.failures {
 		return nil, errors.New("upstream unavailable")
@@ -23,8 +23,8 @@ func (m *flakyModel) GetResponse(context.Context, ModelRequest) (*ModelResponse,
 	return m.answer, nil
 }
 
-func (m *flakyModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *flakyModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		m.calls++
 		if m.calls <= m.failures {
 			yield(nil, errors.New("upstream unavailable"))

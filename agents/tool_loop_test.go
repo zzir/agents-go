@@ -223,7 +223,7 @@ func TestSequentialTool_SerializesTheWholeBatch(t *testing.T) {
 	parallelB := NewTool("par_b", "", body)
 
 	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{
+		{Output: []OutputItem{
 			functionCallOutput(t, "serial", "c1", `{}`),
 			functionCallOutput(t, "par_a", "c2", `{}`),
 			functionCallOutput(t, "par_b", "c3", `{}`),
@@ -256,7 +256,7 @@ func TestSequentialTool_AbsentMeansParallel(t *testing.T) {
 		return "ok", nil
 	}
 	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{
+		{Output: []OutputItem{
 			functionCallOutput(t, "a", "c1", `{}`),
 			functionCallOutput(t, "b", "c2", `{}`),
 		}, Usage: NewUsage()},

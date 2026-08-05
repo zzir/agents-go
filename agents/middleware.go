@@ -9,7 +9,7 @@ import "context"
 // is the run's own copy, so an edit affects this run and nothing else.
 type RunInput struct {
 	Agent *Agent
-	Input []TResponseInputItem
+	Input []InputItem
 	Opts  *RunOptions
 }
 

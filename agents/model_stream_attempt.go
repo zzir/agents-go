@@ -45,7 +45,7 @@ type streamAttempt struct {
 	// this attempt turns out to be the last word (clean finish, or a failure
 	// no further attempt will follow) and drops it when another attempt
 	// supersedes it.
-	pending []*TResponseStreamEvent
+	pending []*ResponseStreamEvent
 }
 
 // deliverStreamAttempt consumes one inner stream on behalf of a retrying or
@@ -59,8 +59,8 @@ type streamAttempt struct {
 // coherent response no matter how many attempts it took. A nil event neither
 // commits nor buffers; it is dropped (the runner tolerates nil the same way).
 func deliverStreamAttempt(
-	seq iter.Seq2[*TResponseStreamEvent, error],
-	yield func(*TResponseStreamEvent, error) bool,
+	seq iter.Seq2[*ResponseStreamEvent, error],
+	yield func(*ResponseStreamEvent, error) bool,
 ) streamAttempt {
 	var a streamAttempt
 	for ev, err := range seq {
@@ -93,7 +93,7 @@ func deliverStreamAttempt(
 
 // flushStreamEvents delivers buffered events in order; false means the
 // consumer stopped.
-func flushStreamEvents(events []*TResponseStreamEvent, yield func(*TResponseStreamEvent, error) bool) bool {
+func flushStreamEvents(events []*ResponseStreamEvent, yield func(*ResponseStreamEvent, error) bool) bool {
 	for _, ev := range events {
 		if !yield(ev, nil) {
 			return false

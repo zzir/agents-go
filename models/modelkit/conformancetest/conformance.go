@@ -177,9 +177,9 @@ func Run(t *testing.T, target Target) {
 	for _, s := range Scenarios() {
 		t.Run(s.Name+"/blocking", func(t *testing.T) {
 			model := target.NewModel(t, s)
-			resp, err := model.GetResponse(context.Background(), s.Request())
+			resp, err := model.Respond(context.Background(), s.Request())
 			if err != nil {
-				t.Fatalf("GetResponse: %v", err)
+				t.Fatalf("Respond: %v", err)
 			}
 			assertResponse(t, s.Turn, resp)
 		})
@@ -204,7 +204,7 @@ func assertResponse(t *testing.T, spec TurnSpec, resp *agents.ModelResponse) {
 
 	var text strings.Builder
 	var calls []ToolCallSpec
-	var reasonings []agents.TResponseOutputItem
+	var reasonings []agents.OutputItem
 	for i, item := range resp.Output {
 		if item.RawJSON() == "" {
 			t.Fatalf("output item %d has empty RawJSON — it cannot round-trip into next-turn input", i)
@@ -249,7 +249,7 @@ func assertToolCalls(t *testing.T, want, got []ToolCallSpec) {
 	}
 }
 
-func assertReasoning(t *testing.T, spec *ReasoningSpec, items []agents.TResponseOutputItem) {
+func assertReasoning(t *testing.T, spec *ReasoningSpec, items []agents.OutputItem) {
 	t.Helper()
 	if spec == nil {
 		if len(items) != 0 {
@@ -278,7 +278,7 @@ func assertReasoning(t *testing.T, spec *ReasoningSpec, items []agents.TResponse
 
 // assertRoundTrip converts the output into next-turn input — the conversion
 // every multi-turn run performs — and checks nothing load-bearing is lost.
-func assertRoundTrip(t *testing.T, spec TurnSpec, output []agents.TResponseOutputItem) {
+func assertRoundTrip(t *testing.T, spec TurnSpec, output []agents.OutputItem) {
 	t.Helper()
 	inputs, err := agents.OutputToInput(output)
 	if err != nil {
@@ -375,10 +375,10 @@ var allowedEventTypes = map[string]bool{
 func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelResponse {
 	t.Helper()
 	var (
-		events       []*agents.TResponseStreamEvent
+		events       []*agents.ResponseStreamEvent
 		final        *agents.ModelResponse
 		terminalSeen bool
-		doneItems    []agents.TResponseOutputItem
+		doneItems    []agents.OutputItem
 		doneItemIDs  = map[string]bool{}
 		textDeltas   strings.Builder
 		reasonDeltas strings.Builder
@@ -490,7 +490,7 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 // terminal event's output agree: the runner uses the terminal output but falls
 // back to accumulated done items when a backend omits it, so the two must be
 // interchangeable.
-func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.TResponseOutputItem) {
+func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.OutputItem) {
 	t.Helper()
 	if len(done) != len(final) {
 		t.Fatalf("output_item.done count %d != terminal output count %d", len(done), len(final))

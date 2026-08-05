@@ -70,7 +70,7 @@ func (p OverflowPolicy) isOverflow(err error) bool {
 // cannot fall out of step with what was stored. It reports false when nothing
 // was dropped — retrying an identical request would fail identically, and
 // spending the retry budget on that is worse than reporting the overflow.
-func (r *runner) recoverOverflow(ctx context.Context, err error) ([]TResponseInputItem, bool) {
+func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, bool) {
 	r.log.Warn(ctx, "context overflow; compacting and retrying the turn",
 		slog.String("error", err.Error()))
 	RecordDiagnostic(ctx, DiagContextOverflow, err, nil)
@@ -93,7 +93,7 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]TResponseInp
 // storage and rebuilds the turn's context from the session, reporting whether
 // the pass changed anything (an unchanged history buys no retry, same as the
 // Compactor path).
-func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]TResponseInputItem, bool) {
+func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]InputItem, bool) {
 	sess := r.opts.Conversation.Session
 	if sess == nil {
 		return nil, false

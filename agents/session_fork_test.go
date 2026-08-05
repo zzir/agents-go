@@ -11,7 +11,7 @@ func TestForkSession_FullCopy(t *testing.T) {
 	src := NewInMemorySession()
 	dst := NewInMemorySession()
 
-	items := []TResponseInputItem{
+	items := []InputItem{
 		responses.ResponseInputItemParamOfMessage("hello", responses.EasyInputMessageRoleUser),
 		responses.ResponseInputItemParamOfMessage("hi", responses.EasyInputMessageRoleAssistant),
 		responses.ResponseInputItemParamOfMessage("how are you", responses.EasyInputMessageRoleUser),
@@ -41,7 +41,7 @@ func TestForkSession_EmptySource(t *testing.T) {
 	dst := NewInMemorySession()
 
 	// Pre-populate dst to verify it gets cleared.
-	_ = dst.AppendItems(ctx, []TResponseInputItem{
+	_ = dst.AppendItems(ctx, []InputItem{
 		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
 	}, Source{})
 

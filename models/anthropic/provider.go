@@ -52,8 +52,8 @@ func (p *Provider) WithPromptCaching(enabled bool) *Provider {
 	return p
 }
 
-// GetModel implements agents.ModelProvider.
-func (p *Provider) GetModel(modelName string) (agents.Model, error) {
+// Model implements agents.ModelProvider.
+func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
 		modelName = p.defaultModel
 	}

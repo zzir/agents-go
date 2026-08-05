@@ -90,7 +90,7 @@ func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, p
 	p := openaiProvider.NewProvider(opts...)
 	if creds != nil {
 		// The Codex backend rejects non-streaming requests (400), so blocking
-		// GetResponse callers — title gen, compaction summaries, playground —
+		// Respond callers — title gen, compaction summaries, playground —
 		// are served by an internal stream instead.
 		return agents.NewStreamOnlyProvider(p)
 	}

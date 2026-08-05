@@ -45,12 +45,12 @@ func (m *FallbackModel) WithShouldFallback(f func(error) bool) *FallbackModel {
 	return m
 }
 
-// GetResponse implements Model: backends are tried in order until one
+// Respond implements Model: backends are tried in order until one
 // succeeds or the classifier stops the chain; all errors are joined.
-func (m *FallbackModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
 	var errs []error
 	for i, inner := range m.models {
-		resp, err := inner.GetResponse(ctx, req)
+		resp, err := inner.Respond(ctx, req)
 		if err == nil {
 			if i > 0 {
 				// The run succeeded, on the backup. Without this the only trace
@@ -77,8 +77,8 @@ func (m *FallbackModel) GetResponse(ctx context.Context, req ModelRequest) (*Mod
 // NewRetryModel), so the chain advances on a response.failed exactly like the
 // blocking path and the consumer never sees an abandoned backend's events.
 // After output, a mid-stream error is surfaced as-is.
-func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		var errs []error
 		for i, inner := range m.models {
 			a := deliverStreamAttempt(inner.StreamResponse(ctx, req), yield)
@@ -117,7 +117,7 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 var _ Model = (*FallbackModel)(nil)
 
 // FallbackProvider wraps a primary ModelProvider with fallback alternatives.
-// Each GetModel call produces a FallbackModel chaining every provider's model.
+// Each Model call produces a FallbackModel chaining every provider's model.
 type FallbackProvider struct {
 	primary        ModelProvider
 	fallbacks      []ModelProvider
@@ -142,7 +142,7 @@ func (p *FallbackProvider) WithShouldFallback(f func(error) bool) *FallbackProvi
 	return p
 }
 
-// GetModel implements ModelProvider: it resolves name on the primary and each
+// Model implements ModelProvider: it resolves name on the primary and each
 // fallback provider, returning a FallbackModel chaining the results (with this
 // provider's classifier applied).
 //
@@ -151,8 +151,8 @@ func (p *FallbackProvider) WithShouldFallback(f func(error) bool) *FallbackProvi
 // aggregated error is returned rather than silently degrading to a bare
 // primary — which would disable the fallback protection the caller asked for.
 // With no fallbacks configured at all, the primary is returned unchanged.
-func (p *FallbackProvider) GetModel(name string) (Model, error) {
-	m, err := p.primary.GetModel(name)
+func (p *FallbackProvider) Model(name string) (Model, error) {
+	m, err := p.primary.Model(name)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (p *FallbackProvider) GetModel(name string) (Model, error) {
 		errs []error
 	)
 	for _, fp := range p.fallbacks {
-		fm, ferr := fp.GetModel(name)
+		fm, ferr := fp.Model(name)
 		if ferr != nil {
 			errs = append(errs, ferr)
 			continue

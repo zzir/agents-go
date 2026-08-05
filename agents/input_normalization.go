@@ -22,7 +22,7 @@ var toolCallToOutputType = map[string]string{
 // output, e.g. persisted by any client at an interruption) are dropped
 // together with the reasoning items tied to them, then duplicate identified
 // items collapse keeping the latest occurrence.
-func normalizeStoredInput(items []TResponseInputItem) []TResponseInputItem {
+func normalizeStoredInput(items []InputItem) []InputItem {
 	if len(items) == 0 {
 		return items
 	}
@@ -39,7 +39,7 @@ func normalizeStoredInput(items []TResponseInputItem) []TResponseInputItem {
 
 // inputItemAsMap projects an input item to a generic map via its JSON form;
 // nil when the item does not marshal to a JSON object.
-func inputItemAsMap(item TResponseInputItem) map[string]any {
+func inputItemAsMap(item InputItem) map[string]any {
 	b, err := json.Marshal(item)
 	if err != nil {
 		return nil
@@ -58,7 +58,7 @@ func inputItemAsMap(item TResponseInputItem) map[string]any {
 // rejects reasoning "without its required following item". Calls without a
 // call_id are kept (only hosted anonymous tool_search calls lack one; better
 // to let the server decide than to over-prune).
-func dropOrphanToolCalls(items []TResponseInputItem, itemMaps []map[string]any) ([]TResponseInputItem, []map[string]any) {
+func dropOrphanToolCalls(items []InputItem, itemMaps []map[string]any) ([]InputItem, []map[string]any) {
 	completed := map[string]bool{} // outputType + call id
 	for _, m := range itemMaps {
 		if m == nil {
@@ -122,7 +122,7 @@ func dropOrphanToolCalls(items []TResponseInputItem, itemMaps []map[string]any) 
 		}
 	}
 
-	outItems := make([]TResponseInputItem, 0, len(items))
+	outItems := make([]InputItem, 0, len(items))
 	outMaps := make([]map[string]any, 0, len(itemMaps))
 	for i := range items {
 		if dropped[i] || dropReasoning[i] {
@@ -164,7 +164,7 @@ func inputItemDedupeKey(m map[string]any) string {
 
 // dedupeInputItemsPreferringLatest collapses items sharing a stable identity,
 // keeping the LATEST occurrence (a re-sent item supersedes the stored copy).
-func dedupeInputItemsPreferringLatest(items []TResponseInputItem, itemMaps []map[string]any) []TResponseInputItem {
+func dedupeInputItemsPreferringLatest(items []InputItem, itemMaps []map[string]any) []InputItem {
 	seen := map[string]bool{}
 	keep := make([]bool, len(items))
 	kept := 0
@@ -182,7 +182,7 @@ func dedupeInputItemsPreferringLatest(items []TResponseInputItem, itemMaps []map
 	if kept == len(items) {
 		return items
 	}
-	out := make([]TResponseInputItem, 0, kept)
+	out := make([]InputItem, 0, kept)
 	for i := range items {
 		if keep[i] {
 			out = append(out, items[i])

@@ -60,7 +60,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	// Serialize a real interrupted RunState so ResolveApproval exercises the
 	// genuine restore path. Raw must be a valid output item — the state
 	// serializer round-trips its wire JSON.
-	var rawCall agents.TResponseOutputItem
+	var rawCall agents.OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-busy-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {
 		t.Fatalf("unmarshal raw call: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 		Tasks:            tasks,
 	})
 
-	var rawCall agents.TResponseOutputItem
+	var rawCall agents.OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-race-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {
 		t.Fatalf("unmarshal raw call: %v", err)
 	}

@@ -32,7 +32,7 @@ type TurnSnapshot struct {
 	// would replay that turn with the tool call and its output missing. To edit
 	// what a call sends, use ModelOptions.InputFilter, which runs per turn and
 	// sees the input the loop actually built.
-	Input []TResponseInputItem
+	Input []InputItem
 }
 
 // TurnResult describes one completed turn: the model call and everything that
@@ -115,7 +115,7 @@ func turnFinalOutput(agent *Agent, items []*RunItem) any {
 // Each of these can fail — dynamic instructions, a prompt callback, a tool's
 // enable predicate — and each failure is the run's, so they are resolved
 // together rather than scattered through the turn body.
-func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []TResponseInputItem) (*TurnSnapshot, error) {
+func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputItem) (*TurnSnapshot, error) {
 	model, err := r.resolveModel(agent)
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ type savePointResult struct {
 	FinalOutput any
 	// Recompacted reports that Input replaces the run's context.
 	Recompacted bool
-	Input       []TResponseInputItem
+	Input       []InputItem
 	// NextSnapshot, when non-nil, is used for the next turn instead of
 	// resolving one from the agent.
 	NextSnapshot *TurnSnapshot
@@ -240,7 +240,7 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 //
 // The alternative, carrying a separate "pending input" list the loop splices in
 // at call time, would need every one of those paths taught about it.
-func injectedInput(agent *Agent, items []TResponseInputItem) []*RunItem {
+func injectedInput(agent *Agent, items []InputItem) []*RunItem {
 	out := make([]*RunItem, 0, len(items))
 	for _, item := range items {
 		disp := ItemDisplay{Kind: DisplayMessage, Text: inputItemText(item)}
@@ -256,7 +256,7 @@ func injectedInput(agent *Agent, items []TResponseInputItem) []*RunItem {
 }
 
 // inputItemText pulls the readable text out of an input item for its display.
-func inputItemText(item TResponseInputItem) string {
+func inputItemText(item InputItem) string {
 	raw, err := MarshalInputItem(item)
 	if err != nil {
 		return ""

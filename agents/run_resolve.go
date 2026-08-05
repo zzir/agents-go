@@ -17,7 +17,7 @@ func (r *runner) resolveModel(agent *Agent) (Model, error) {
 		return r.opts.Model.Override, nil
 	}
 	if r.opts.Model.Provider != nil {
-		return r.opts.Model.Provider.GetModel(agent.Model)
+		return r.opts.Model.Provider.Model(agent.Model)
 	}
 	return nil, NewUserError("no model available: set Agent.ModelImpl, RunOptions.Model.Override, or RunOptions.Model.Provider")
 }

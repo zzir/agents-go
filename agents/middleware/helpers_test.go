@@ -31,12 +31,12 @@ func (m *scriptedModel) next() *agents.ModelResponse {
 	return resp
 }
 
-func (m *scriptedModel) GetResponse(context.Context, agents.ModelRequest) (*agents.ModelResponse, error) {
+func (m *scriptedModel) Respond(context.Context, agents.ModelRequest) (*agents.ModelResponse, error) {
 	return m.next(), nil
 }
 
-func (m *scriptedModel) StreamResponse(context.Context, agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
-	return func(yield func(*agents.TResponseStreamEvent, error) bool) {
+func (m *scriptedModel) StreamResponse(context.Context, agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
+	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
 		resp := m.next()
 		raw := make([]json.RawMessage, 0, len(resp.Output))
 		for i := range resp.Output {
@@ -46,7 +46,7 @@ func (m *scriptedModel) StreamResponse(context.Context, agents.ModelRequest) ite
 		payload := `{"type":"response.completed","sequence_number":0,"response":{"id":"resp_1","output":` +
 			string(out) + `,"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8,` +
 			`"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}`
-		var event agents.TResponseStreamEvent
+		var event agents.ResponseStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			panic(err)
 		}
@@ -59,7 +59,7 @@ func quote(s string) string {
 	return string(b)
 }
 
-func outputItem(t *testing.T, raw string) agents.TResponseOutputItem {
+func outputItem(t *testing.T, raw string) agents.OutputItem {
 	t.Helper()
 	var item responses.ResponseOutputItemUnion
 	if err := json.Unmarshal([]byte(raw), &item); err != nil {
@@ -68,19 +68,19 @@ func outputItem(t *testing.T, raw string) agents.TResponseOutputItem {
 	return item
 }
 
-func message(t *testing.T, text string) agents.TResponseOutputItem {
+func message(t *testing.T, text string) agents.OutputItem {
 	t.Helper()
 	return outputItem(t, `{"type":"message","id":"msg_1","status":"completed","role":"assistant",`+
 		`"content":[{"type":"output_text","text":`+quote(text)+`,"annotations":[]}]}`)
 }
 
-func toolCall(t *testing.T, name, callID string) agents.TResponseOutputItem {
+func toolCall(t *testing.T, name, callID string) agents.OutputItem {
 	t.Helper()
 	return outputItem(t, `{"type":"function_call","id":"fc_1","call_id":`+quote(callID)+
 		`,"name":`+quote(name)+`,"arguments":"{}","status":"completed"}`)
 }
 
-func resp(items ...agents.TResponseOutputItem) *agents.ModelResponse {
+func resp(items ...agents.OutputItem) *agents.ModelResponse {
 	return &agents.ModelResponse{Output: items, Usage: agents.NewUsage()}
 }
 

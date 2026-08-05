@@ -225,7 +225,7 @@ calls a service — nests its work under the run by reading the current span off
 the context:
 
 ```go
-func (m *myModel) GetResponse(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+func (m *myModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	span, ctx := tracing.StartSpanFrom(ctx, "cache.lookup", "cache", nil)
 	defer span.Finish()
 	…

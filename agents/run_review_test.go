@@ -44,7 +44,7 @@ func TestBlockingGuardrailReplaceReachesModel(t *testing.T) {
 
 // Racing (non-blocking) input guardrails must not de-stream the model call: a
 // streamed run still yields raw response events on its first turn. The race
-// once downgraded the call to a blocking GetResponse, and a chat UI with any
+// once downgraded the call to a blocking Respond, and a chat UI with any
 // input guardrail streamed nothing.
 func TestStreamedRunWithRacingGuardrailKeepsRawEvents(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}

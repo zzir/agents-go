@@ -29,7 +29,7 @@ func TestMessageItemRoundTrips(t *testing.T) {
 	}
 	// The property everything downstream depends on: the item converts back
 	// into model input for the next turn.
-	in, err := agents.OutputToInput([]agents.TResponseOutputItem{item})
+	in, err := agents.OutputToInput([]agents.OutputItem{item})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestFunctionCallItem(t *testing.T) {
 	if fc.CallID != "call_1" || fc.Name != "get_weather" || fc.Arguments != `{"city":"Oslo"}` {
 		t.Fatalf("unexpected function call: %+v", fc)
 	}
-	if _, err := agents.OutputToInput([]agents.TResponseOutputItem{item}); err != nil {
+	if _, err := agents.OutputToInput([]agents.OutputItem{item}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -76,7 +76,7 @@ func TestReasoningItemTextAndEncrypted(t *testing.T) {
 	}
 	// The continuity blob must survive conversion back to input — it is the
 	// only thing that lets a signature-carrying backend resume its reasoning.
-	in, err := agents.OutputToInput([]agents.TResponseOutputItem{item})
+	in, err := agents.OutputToInput([]agents.OutputItem{item})
 	if err != nil {
 		t.Fatal(err)
 	}

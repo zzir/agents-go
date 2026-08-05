@@ -84,7 +84,7 @@ var thinkingBudgets = map[agents.ReasoningEffort]int64{
 // function_call as separate items, and the Messages API wants them as content
 // blocks of a single assistant turn (thinking first, then text, then
 // tool_use — the order the canonical history already has them in).
-func convertInput(items []agents.TResponseInputItem) ([]ant.MessageParam, error) {
+func convertInput(items []agents.InputItem) ([]ant.MessageParam, error) {
 	parsed, err := modelkit.ParseInput(items)
 	if err != nil {
 		return nil, err
@@ -459,7 +459,7 @@ func convertToolChoice(choice agents.ToolChoice, parallel *bool, hasTools bool) 
 // item. Item ids are synthesized from the message id and block index for
 // blocks the API leaves anonymous; a tool_use block's own id doubles as both
 // item id and call id.
-func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.TResponseOutputItem, error) {
+func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.OutputItem, error) {
 	switch block.Type {
 	case "text":
 		return modelkit.MessageItem(blockItemID(msgID, index), block.Text)
@@ -477,7 +477,7 @@ func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.T
 		// No server tools are ever requested, so no server-tool block should
 		// ever arrive; one that does cannot be represented (or replayed) and
 		// silently dropping it would corrupt the conversation.
-		return agents.TResponseOutputItem{}, agents.NewModelBehaviorError(
+		return agents.OutputItem{}, agents.NewModelBehaviorError(
 			"anthropic: response contained an unexpected content block of type %q", block.Type)
 	}
 }
@@ -490,15 +490,15 @@ func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.T
 // particular. Those must not survive into items: the runner EXECUTES tool
 // calls before it ever looks for a refusal, and a refused response's actions
 // must not have side effects.
-func convertOutput(msg *ant.Message) ([]agents.TResponseOutputItem, error) {
+func convertOutput(msg *ant.Message) ([]agents.OutputItem, error) {
 	if msg.StopReason == ant.StopReasonRefusal {
 		item, err := modelkit.RefusalItem(blockItemID(msg.ID, 0), refusalText(msg))
 		if err != nil {
 			return nil, err
 		}
-		return []agents.TResponseOutputItem{item}, nil
+		return []agents.OutputItem{item}, nil
 	}
-	items := make([]agents.TResponseOutputItem, 0, len(msg.Content))
+	items := make([]agents.OutputItem, 0, len(msg.Content))
 	for i, block := range msg.Content {
 		item, err := blockToItem(msg.ID, i, block)
 		if err != nil {

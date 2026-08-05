@@ -9,11 +9,11 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-func userInputItems(t *testing.T, raws ...string) []agents.TResponseInputItem {
+func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
 	t.Helper()
 	// Decode per item via the SDK so role-only messages ({"role":"user",...})
 	// resolve to the EasyInputMessage variant, exactly as a real run's input does.
-	items := make([]agents.TResponseInputItem, 0, len(raws))
+	items := make([]agents.InputItem, 0, len(raws))
 	for _, r := range raws {
 		it, err := agents.UnmarshalInputItem([]byte(r))
 		if err != nil {
@@ -73,7 +73,7 @@ func TestPersistInterruptionStoresUserInput(t *testing.T) {
 	approvals := store.NewPendingApprovalStore(db)
 	runner := NewRunner(ctx, db, &AgentDeps{PendingApprovals: approvals})
 
-	var rawCall agents.TResponseOutputItem
+	var rawCall agents.OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {
 		t.Fatalf("unmarshal raw call: %v", err)
 	}

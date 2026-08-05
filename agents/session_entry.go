@@ -138,7 +138,7 @@ type UpdatePayload struct {
 }
 
 // NewItemEntry builds an entry holding a Responses item.
-func NewItemEntry(item TResponseInputItem, src Source) (SessionEntry, error) {
+func NewItemEntry(item InputItem, src Source) (SessionEntry, error) {
 	raw, err := MarshalInputItem(item)
 	if err != nil {
 		return SessionEntry{}, fmt.Errorf("encoding session item: %w", err)
@@ -147,7 +147,7 @@ func NewItemEntry(item TResponseInputItem, src Source) (SessionEntry, error) {
 }
 
 // NewItemEntries builds item entries for a slice of input items.
-func NewItemEntries(items []TResponseInputItem, src Source) ([]SessionEntry, error) {
+func NewItemEntries(items []InputItem, src Source) ([]SessionEntry, error) {
 	out := make([]SessionEntry, 0, len(items))
 	for i, item := range items {
 		e, err := NewItemEntry(item, src)
@@ -260,9 +260,9 @@ func newUpdate(p UpdatePayload) (SessionEntry, error) {
 }
 
 // InputItem decodes an item entry's Responses item.
-func (e SessionEntry) InputItem() (TResponseInputItem, error) {
+func (e SessionEntry) InputItem() (InputItem, error) {
 	if e.Kind != EntryKindItem {
-		return TResponseInputItem{}, fmt.Errorf("entry %q is a %s entry, not an item", e.ID, e.Kind)
+		return InputItem{}, fmt.Errorf("entry %q is a %s entry, not an item", e.ID, e.Kind)
 	}
 	return UnmarshalInputItem(e.Item)
 }

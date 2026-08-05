@@ -24,7 +24,7 @@ import (
 // Nothing executes until the stream is ranged: the run happens on the
 // consumer's goroutine, one event at a time.
 //
-// input may be a string or a []TResponseInputItem; use InputItemsFromText for
+// input may be a string or a []InputItem; use InputItemsFromText for
 // the common single-message case.
 //
 //	stream, ctrl := agents.Run(ctx, agent, "hi", agents.RunOptions{})
@@ -166,7 +166,7 @@ type runner struct {
 	opts      RunOptions
 	rc        *RunContext
 	maxTurns  int
-	userInput []TResponseInputItem // the new input to persist to the session
+	userInput []InputItem          // the new input to persist to the session
 	resume    *RunState            // non-nil when resuming from an interruption
 	trace     *tracing.TraceHandle // non-nil when tracing is enabled
 	agentSpan *tracing.SpanHandle  // current agent span, parent of generation/tool spans
@@ -185,7 +185,7 @@ type runner struct {
 
 	// rawEvents asks for the model to be called through StreamResponse so its
 	// raw events reach the consumer. RunSync leaves it false and gets a single
-	// GetResponse call instead.
+	// Respond call instead.
 	//
 	// This is the ONE remaining difference between the two entry points. It
 	// used to be six, all keyed off a nil check on the streaming handle.
@@ -297,7 +297,7 @@ func (r *runner) agentParentID() string {
 	return r.agentSpan.Span.SpanID
 }
 
-func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TResponseInputItem) (*RunResult, error) {
+func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []InputItem) (*RunResult, error) {
 	// Finish the active agent span when the loop ends (nil-safe when untraced).
 	defer func() { r.agentSpan.Finish() }()
 
@@ -461,7 +461,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 		if turn == startTurn && r.resume == nil && !r.inputGuardrailsRan {
 			r.inputGuardrailsRan = true
 			gate, gerr := r.firstTurnInputGuardrails(ctx, startAgent, originalInput, usedOriginalInput, snapshot,
-				func(replaced []TResponseInputItem) ([]TResponseInputItem, error) {
+				func(replaced []InputItem) ([]InputItem, error) {
 					in, _, _, err := r.buildTurnInput(cursor, replaced, generatedItems)
 					return in, err
 				})
@@ -556,7 +556,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 			case r.rawEvents:
 				resp, err = r.streamOneModelCall(callCtx, span, model, req)
 			default:
-				resp, err = model.GetResponse(callCtx, req)
+				resp, err = model.Respond(callCtx, req)
 			}
 			if err != nil {
 				span.SetError(err.Error(), nil)

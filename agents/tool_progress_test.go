@@ -131,7 +131,7 @@ func TestToolProgress_ConcurrentToolsDoNotRaceTheStream(t *testing.T) {
 		})
 	}
 	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{
+		{Output: []OutputItem{
 			functionCallOutput(t, "a", "c1", `{}`),
 			functionCallOutput(t, "b", "c2", `{}`),
 			functionCallOutput(t, "c", "c3", `{}`),

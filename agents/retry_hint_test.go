@@ -15,13 +15,13 @@ type failingModel struct {
 	calls int
 }
 
-func (m *failingModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *failingModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	m.calls++
 	return nil, m.err
 }
 
-func (m *failingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *failingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		m.calls++
 		yield(nil, m.err)
 	}
@@ -43,7 +43,7 @@ func TestRetryStopsOnOversizedServerHint(t *testing.T) {
 		RetryAfter:  func(error) (time.Duration, bool) { return 3 * time.Hour, true },
 		sleep:       func(context.Context, time.Duration) error { slept++; return nil },
 	}
-	_, err := NewRetryModel(model, policy).GetResponse(context.Background(), ModelRequest{})
+	_, err := NewRetryModel(model, policy).Respond(context.Background(), ModelRequest{})
 
 	if err == nil {
 		t.Fatal("want an error")
@@ -74,7 +74,7 @@ func TestRetryHonorsServerHintWithinCap(t *testing.T) {
 		RetryAfter:  func(error) (time.Duration, bool) { return 2 * time.Second, true },
 		sleep:       func(_ context.Context, d time.Duration) error { delays = append(delays, d); return nil },
 	}
-	if _, err := NewRetryModel(model, policy).GetResponse(context.Background(), ModelRequest{}); err == nil {
+	if _, err := NewRetryModel(model, policy).Respond(context.Background(), ModelRequest{}); err == nil {
 		t.Fatal("want an error")
 	}
 	if len(delays) != 2 {

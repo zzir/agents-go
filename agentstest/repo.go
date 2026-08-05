@@ -53,7 +53,7 @@ func repoWrite(t *testing.T, sess *agents.Session, text string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AppendItems(context.Background(), []agents.TResponseInputItem{item}, agents.Source{}); err != nil {
+	if err := sess.AppendItems(context.Background(), []agents.InputItem{item}, agents.Source{}); err != nil {
 		t.Fatalf("append %q: %v", text, err)
 	}
 }
@@ -142,7 +142,7 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	werr := stale.AppendItems(ctx, []agents.TResponseInputItem{item}, agents.Source{})
+	werr := stale.AppendItems(ctx, []agents.InputItem{item}, agents.Source{})
 	if werr == nil || !errors.Is(werr, agents.ErrSessionNotFound) {
 		t.Fatalf("a write through a handle to a deleted session must refuse with ErrSessionNotFound, got: %v", werr)
 	}

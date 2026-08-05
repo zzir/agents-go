@@ -18,7 +18,7 @@ func (r *runner) usageSnapshot() *Usage {
 // guardrails, so a tripped guardrail does not suppress it; then output
 // guardrails; then session persistence and compaction, so a guardrail-tripped
 // final output is never persisted.
-func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TResponseInputItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
+func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []InputItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
 	if agent.OnEnd != nil {
 		if err := agent.OnEnd(ctx, r.rc, finalOutput); err != nil {
 			return nil, err
@@ -79,7 +79,7 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []TR
 // message joins the run's items and session unless the handler opted out, and
 // the run finishes through the same guardrail/persist/hook tail as a normal
 // final output.
-func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []TResponseInputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
+func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []InputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
 	// Handlers see the session view of the run (never reset by handoff input
 	// filters).
 	rec, err := r.resolveErrorRecovery(ctx, "max_turns", r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
@@ -98,7 +98,7 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, orig
 	return r.finishRun(ctx, agent, originalInput, rawResponses, rec.finalOutput)
 }
 
-func (r *runner) fail(err error, input []TResponseInputItem, items []*RunItem, raw []*ModelResponse, last *Agent) error {
+func (r *runner) fail(err error, input []InputItem, items []*RunItem, raw []*ModelResponse, last *Agent) error {
 	// Mark the current agent span failed so the error is visible in traces;
 	// child spans (generation, function) set their own errors at the source.
 	r.agentSpan.SetError(err.Error(), nil)

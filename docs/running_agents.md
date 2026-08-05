@@ -6,7 +6,7 @@ Run agents with one of three entry points:
 - `agents.Run(ctx, agent, input, opts)` — the same loop as a stream you range, plus a control handle ([Streaming](streaming.md))
 - `agents.ResumeRun(ctx, state, opts)` — continues a run paused for tool approval ([Human-in-the-loop](human_in_the_loop.md))
 
-`input` is either a `string` (treated as a user message) or a `[]agents.TResponseInputItem` — the OpenAI Responses API item list.
+`input` is either a `string` (treated as a user message) or a `[]agents.InputItem` — the OpenAI Responses API item list.
 
 ```go
 res, err := agents.RunSync(ctx, agent, "Write a haiku about recursion.", agents.RunOptions{

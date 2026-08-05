@@ -9,7 +9,7 @@ import (
 )
 
 // itemsContain reports whether any item's wire JSON contains needle.
-func itemsContain(items []TResponseInputItem, needle string) bool {
+func itemsContain(items []InputItem, needle string) bool {
 	for _, it := range items {
 		b, err := MarshalInputItem(it)
 		if err != nil {
@@ -31,11 +31,11 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendItems(context.Background(), []TResponseInputItem{prior}, Source{}); err != nil {
+	if err := session.AppendItems(context.Background(), []InputItem{prior}, Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	var seen []TResponseInputItem
+	var seen []InputItem
 	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			seen = tc.TurnInput()
@@ -61,7 +61,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 // TurnInput reflects CallModelInputFilter edits, because it reports what was
 // sent rather than what the runner assembled.
 func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
-	var seen []TResponseInputItem
+	var seen []InputItem
 	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			seen = tc.TurnInput()
@@ -93,7 +93,7 @@ func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
 // the run context see it too.
 func TestTurnInput_VisibleToGuardrails(t *testing.T) {
 	var mu sync.Mutex
-	var seen []TResponseInputItem
+	var seen []InputItem
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
 	agent := &Agent{
 		Name:      "a",
@@ -124,7 +124,7 @@ func TestTurnInput_VisibleToGuardrails(t *testing.T) {
 // turn's tool call and its output.
 func TestTurnInput_AdvancesPerTurn(t *testing.T) {
 	var mu sync.Mutex
-	var perTurn [][]TResponseInputItem
+	var perTurn [][]InputItem
 	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			mu.Lock()
@@ -194,7 +194,7 @@ func TestTurnInput_NilContext(t *testing.T) {
 	if got := rc.TurnInput(); got != nil {
 		t.Errorf("nil context TurnInput = %v, want nil", got)
 	}
-	rc.setTurnInput([]TResponseInputItem{}) // must not panic
+	rc.setTurnInput([]InputItem{}) // must not panic
 }
 
 func TestTurnInput_MarshalsCleanly(t *testing.T) {

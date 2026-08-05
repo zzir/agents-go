@@ -164,7 +164,7 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	}
 }
 
-func itemContains(t *testing.T, item agents.TResponseInputItem, sub string) bool {
+func itemContains(t *testing.T, item agents.InputItem, sub string) bool {
 	t.Helper()
 	b, err := agents.MarshalInputItem(item)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestConversationsSession_AddItemsBatchesAtAPILimit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := NewConversationsSession(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
 
-	items := make([]agents.TResponseInputItem, 0, 45)
+	items := make([]agents.InputItem, 0, 45)
 	for i := range 45 {
 		items = append(items, agents.InputItemsFromText("msg-"+strconv.Itoa(i))...)
 	}

@@ -42,7 +42,7 @@ func TestConformance(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
-			model, err := provider.GetModel("claude-test")
+			model, err := provider.Model("claude-test")
 			if err != nil {
 				t.Fatal(err)
 			}

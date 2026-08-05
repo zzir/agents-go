@@ -22,7 +22,7 @@ func textContent(parts []Part) string {
 }
 
 func TestParseInputEasyMessages(t *testing.T) {
-	items := []agents.TResponseInputItem{
+	items := []agents.InputItem{
 		agents.InputItemsFromText("hi")[0],
 		agents.InputItemsFromSystemText("be brief")[0],
 		agents.InputItemsFromAssistantText("hello")[0],
@@ -56,7 +56,7 @@ func TestParseInputModelOutputRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in, err := agents.OutputToInput([]agents.TResponseOutputItem{rs, msg, fc})
+	in, err := agents.OutputToInput([]agents.OutputItem{rs, msg, fc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestParseInputMultimodalToolOutput(t *testing.T) {
 	if !ok {
 		t.Fatal("toolOutputContentItem returned false")
 	}
-	parsed, err := ParseInput([]agents.TResponseInputItem{item})
+	parsed, err := ParseInput([]agents.InputItem{item})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestParseInputMultimodalToolOutput(t *testing.T) {
 
 // toolOutputItem builds a multimodal function_call_output through the public
 // agents surface (a fake tool run would do the same).
-func toolOutputItem(t *testing.T, callID string, content []agents.ToolOutputContent) (agents.TResponseInputItem, bool) {
+func toolOutputItem(t *testing.T, callID string, content []agents.ToolOutputContent) (agents.InputItem, bool) {
 	t.Helper()
 	list := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(content))
 	for _, c := range content {
@@ -142,7 +142,7 @@ func TestParseInputUnknownTypePassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseInput([]agents.TResponseInputItem{item})
+	parsed, err := ParseInput([]agents.InputItem{item})
 	if err != nil {
 		t.Fatal(err)
 	}

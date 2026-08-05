@@ -43,8 +43,8 @@ func TestRequestOptions_ExtraBodyLeadingColonKey(t *testing.T) {
 			ExtraBody: map[string]any{":k": "v"},
 		},
 	}
-	if _, err := m.GetResponse(t.Context(), req); err != nil {
-		t.Fatalf("GetResponse: %v", err)
+	if _, err := m.Respond(t.Context(), req); err != nil {
+		t.Fatalf("Respond: %v", err)
 	}
 
 	var body map[string]any

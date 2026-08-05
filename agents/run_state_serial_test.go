@@ -48,7 +48,7 @@ func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T)
 	}
 	queues := []struct {
 		name      string
-		want, got []TResponseInputItem
+		want, got []InputItem
 	}{
 		{"Steer", state.PendingInput.Steer, restored.PendingInput.Steer},
 		{"NextTurn", state.PendingInput.NextTurn, restored.PendingInput.NextTurn},
@@ -93,7 +93,7 @@ func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 	outerModel := &fakeModel{responses: []*ModelResponse{
 		{
 			ResponseID: "resp_1",
-			Output: []TResponseOutputItem{
+			Output: []OutputItem{
 				functionCallOutput(t, "auto_tool", "call_auto", `{}`),
 				functionCallOutput(t, "specialist", "call_spec", `{"input":"go"}`),
 			},

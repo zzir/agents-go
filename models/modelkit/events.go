@@ -23,8 +23,8 @@ func TruncatedStreamError(prefix string) error {
 
 // eventFromJSON decodes canonical wire JSON into a stream event, stamping the
 // raw bytes exactly as OutputItemFromJSON does for items.
-func eventFromJSON(raw []byte) (agents.TResponseStreamEvent, error) {
-	var ev agents.TResponseStreamEvent
+func eventFromJSON(raw []byte) (agents.ResponseStreamEvent, error) {
+	var ev agents.ResponseStreamEvent
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		return ev, fmt.Errorf("modelkit: decoding stream event: %w", err)
 	}
@@ -32,10 +32,10 @@ func eventFromJSON(raw []byte) (agents.TResponseStreamEvent, error) {
 }
 
 // marshalEvent builds an event from a marshalable payload.
-func marshalEvent(payload any) (agents.TResponseStreamEvent, error) {
+func marshalEvent(payload any) (agents.ResponseStreamEvent, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return agents.TResponseStreamEvent{}, err
+		return agents.ResponseStreamEvent{}, err
 	}
 	return eventFromJSON(raw)
 }
@@ -48,7 +48,7 @@ func marshalEvent(payload any) (agents.TResponseStreamEvent, error) {
 // ResponseCreatedEvent synthesizes the response.created event that opens a
 // stream. Consumers use it as the "a response is now in flight" signal, so an
 // adapter should emit it as its first event.
-func ResponseCreatedEvent(responseID string) (agents.TResponseStreamEvent, error) {
+func ResponseCreatedEvent(responseID string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(struct {
 		Type           string `json:"type"`
 		SequenceNumber int    `json:"sequence_number"`
@@ -68,7 +68,7 @@ func ResponseCreatedEvent(responseID string) (agents.TResponseStreamEvent, error
 // item construction has begun. itemType is the canonical type ("message",
 // "reasoning", "function_call"); name is the tool name and callID the call id
 // for function_call items, ignored otherwise.
-func OutputItemAddedEvent(outputIndex int, itemType, itemID, callID, name string) (agents.TResponseStreamEvent, error) {
+func OutputItemAddedEvent(outputIndex int, itemType, itemID, callID, name string) (agents.ResponseStreamEvent, error) {
 	item := map[string]any{"id": itemID, "type": itemType, "status": "in_progress"}
 	switch itemType {
 	case "message":
@@ -91,7 +91,7 @@ func OutputItemAddedEvent(outputIndex int, itemType, itemID, callID, name string
 
 // OutputTextDeltaEvent synthesizes response.output_text.delta — the event
 // streaming text consumers (including the agents-server UI) render from.
-func OutputTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.TResponseStreamEvent, error) {
+func OutputTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(map[string]any{
 		"type":            "response.output_text.delta",
 		"sequence_number": 0,
@@ -106,7 +106,7 @@ func OutputTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.
 // ReasoningTextDeltaEvent synthesizes response.reasoning_text.delta for
 // incremental raw reasoning text, matching where ReasoningItem puts the final
 // text (content, not summary).
-func ReasoningTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.TResponseStreamEvent, error) {
+func ReasoningTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(map[string]any{
 		"type":            "response.reasoning_text.delta",
 		"sequence_number": 0,
@@ -119,7 +119,7 @@ func ReasoningTextDeltaEvent(itemID string, outputIndex int, delta string) (agen
 
 // FunctionCallArgumentsDeltaEvent synthesizes
 // response.function_call_arguments.delta for incremental tool-call arguments.
-func FunctionCallArgumentsDeltaEvent(itemID string, outputIndex int, delta string) (agents.TResponseStreamEvent, error) {
+func FunctionCallArgumentsDeltaEvent(itemID string, outputIndex int, delta string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(map[string]any{
 		"type":            "response.function_call_arguments.delta",
 		"sequence_number": 0,
@@ -132,10 +132,10 @@ func FunctionCallArgumentsDeltaEvent(itemID string, outputIndex int, delta strin
 // OutputItemDoneEvent synthesizes response.output_item.done carrying the
 // finished item. The runner's stream accumulator collects exactly these, so an
 // adapter must emit one per output item, in order.
-func OutputItemDoneEvent(outputIndex int, item agents.TResponseOutputItem) (agents.TResponseStreamEvent, error) {
+func OutputItemDoneEvent(outputIndex int, item agents.OutputItem) (agents.ResponseStreamEvent, error) {
 	raw := item.RawJSON()
 	if raw == "" {
-		return agents.TResponseStreamEvent{}, fmt.Errorf("modelkit: output item has no raw JSON (construct it with the modelkit item builders)")
+		return agents.ResponseStreamEvent{}, fmt.Errorf("modelkit: output item has no raw JSON (construct it with the modelkit item builders)")
 	}
 	return marshalEvent(map[string]any{
 		"type":            "response.output_item.done",
@@ -162,17 +162,17 @@ type ResponseUsage struct {
 // FinalResponse is everything a terminal stream event carries.
 type FinalResponse struct {
 	ID     string
-	Output []agents.TResponseOutputItem
+	Output []agents.OutputItem
 	Usage  ResponseUsage
 }
 
 // terminalEvent builds response.completed / response.incomplete.
-func terminalEvent(eventType, status string, fr FinalResponse, incompleteReason string) (agents.TResponseStreamEvent, error) {
+func terminalEvent(eventType, status string, fr FinalResponse, incompleteReason string) (agents.ResponseStreamEvent, error) {
 	items := make([]json.RawMessage, 0, len(fr.Output))
 	for i := range fr.Output {
 		raw := fr.Output[i].RawJSON()
 		if raw == "" {
-			return agents.TResponseStreamEvent{}, fmt.Errorf("modelkit: output item %d has no raw JSON (construct it with the modelkit item builders)", i)
+			return agents.ResponseStreamEvent{}, fmt.Errorf("modelkit: output item %d has no raw JSON (construct it with the modelkit item builders)", i)
 		}
 		items = append(items, json.RawMessage(raw))
 	}
@@ -206,7 +206,7 @@ func terminalEvent(eventType, status string, fr FinalResponse, incompleteReason 
 // CompletedEvent synthesizes the response.completed terminal event. The runner
 // assembles its final ModelResponse from this event, so the output list and
 // usage here are what the run records — deltas are presentation only.
-func CompletedEvent(fr FinalResponse) (agents.TResponseStreamEvent, error) {
+func CompletedEvent(fr FinalResponse) (agents.ResponseStreamEvent, error) {
 	return terminalEvent("response.completed", "completed", fr, "")
 }
 
@@ -214,9 +214,9 @@ func CompletedEvent(fr FinalResponse) (agents.TResponseStreamEvent, error) {
 // reason "max_output_tokens" for a response cut off at the output-token limit:
 // that is the one incomplete reason the runner treats as recoverable
 // truncation (agents.ModelResponse.Truncated) rather than a failure.
-func IncompleteEvent(fr FinalResponse, reason string) (agents.TResponseStreamEvent, error) {
+func IncompleteEvent(fr FinalResponse, reason string) (agents.ResponseStreamEvent, error) {
 	if reason == "" {
-		return agents.TResponseStreamEvent{}, fmt.Errorf("modelkit: IncompleteEvent requires a reason")
+		return agents.ResponseStreamEvent{}, fmt.Errorf("modelkit: IncompleteEvent requires a reason")
 	}
 	return terminalEvent("response.incomplete", "incomplete", fr, reason)
 }

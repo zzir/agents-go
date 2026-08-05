@@ -4,7 +4,7 @@
 
 ```go
 type RunResult struct {
-	Input         []TResponseInputItem // first model call's input (history + new input; may be rewritten by handoff filters)
+	Input         []InputItem // first model call's input (history + new input; may be rewritten by handoff filters)
 	NewItems      []RunItem            // everything generated during the run
 	RawResponses  []*ModelResponse     // raw model responses, in order
 	FinalOutput   any                  // string for plain-text agents, decoded value for OutputType agents

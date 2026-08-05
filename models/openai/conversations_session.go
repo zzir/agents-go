@@ -191,7 +191,7 @@ const conversationItemsBatchLimit = 20
 // not be stored server-side is worse. Use a local Session when everything a run
 // records must survive.
 func (s *ConversationsSession) Append(ctx context.Context, entries ...agents.SessionEntry) error {
-	items := make([]agents.TResponseInputItem, 0, len(entries))
+	items := make([]agents.InputItem, 0, len(entries))
 	for _, e := range entries {
 		if e.Kind != agents.EntryKindItem {
 			continue
@@ -213,7 +213,7 @@ func (s *ConversationsSession) Append(ctx context.Context, entries ...agents.Ses
 // (sanitizeConversationItem): provider-only fields are dropped, stale top-level
 // ids are stripped except where the create-item schema requires them, and
 // reasoning items lacking both an id and encrypted content are omitted entirely.
-func (s *ConversationsSession) addItems(ctx context.Context, in []agents.TResponseInputItem) error {
+func (s *ConversationsSession) addItems(ctx context.Context, in []agents.InputItem) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -222,7 +222,7 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.TRespon
 	// longer the most recent.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sanitized := make([]agents.TResponseInputItem, 0, len(in))
+	sanitized := make([]agents.InputItem, 0, len(in))
 	for _, item := range in {
 		clean, keep, err := sanitizeConversationItem(item)
 		if err != nil {
@@ -283,7 +283,7 @@ var conversationItemTypesWithRequiredID = map[string]bool{
 // It returns the sanitized item and whether it should be persisted at all: a
 // reasoning item lacking both a server id and encrypted content is unpersistable
 // (keep == false). Non-object items pass through unchanged.
-func sanitizeConversationItem(item agents.TResponseInputItem) (agents.TResponseInputItem, bool, error) {
+func sanitizeConversationItem(item agents.InputItem) (agents.InputItem, bool, error) {
 	raw, err := json.Marshal(item)
 	if err != nil {
 		return item, false, err
@@ -403,6 +403,6 @@ func (s *ConversationsSession) lockedEnsureID(ctx context.Context) (string, erro
 
 // conversationItemToInput converts a server conversation item back into an input
 // item, reusing the runner's robust decoder.
-func conversationItemToInput(item conversations.ConversationItemUnion) (agents.TResponseInputItem, error) {
+func conversationItemToInput(item conversations.ConversationItemUnion) (agents.InputItem, error) {
 	return agents.UnmarshalInputItem([]byte(item.RawJSON()))
 }

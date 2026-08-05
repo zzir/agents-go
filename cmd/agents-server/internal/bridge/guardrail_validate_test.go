@@ -73,7 +73,7 @@ func TestGuardrailInspectsTheStageItRanAt(t *testing.T) {
 		p    agents.GuardrailPayload
 		trip bool
 	}{
-		{"input trips", agents.GuardrailPayload{Stage: agents.StageInput, Input: []agents.TResponseInputItem{item}}, true},
+		{"input trips", agents.GuardrailPayload{Stage: agents.StageInput, Input: []agents.InputItem{item}}, true},
 		{"input allows", agents.GuardrailPayload{Stage: agents.StageInput}, false},
 		{"tool arguments trip", agents.GuardrailPayload{Stage: agents.StageToolInput, Arguments: `{"q":"secret"}`}, true},
 		{"tool arguments allow", agents.GuardrailPayload{Stage: agents.StageToolInput, Arguments: `{"q":"weather"}`}, false},
@@ -82,7 +82,7 @@ func TestGuardrailInspectsTheStageItRanAt(t *testing.T) {
 		{"final output allows", agents.GuardrailPayload{Stage: agents.StageOutput, Output: "all clear"}, false},
 		// The run input is NOT what a tool stage inspects: reading the wrong
 		// field is how a tool guardrail silently passes everything.
-		{"tool stage ignores the run input", agents.GuardrailPayload{Stage: agents.StageToolInput, Input: []agents.TResponseInputItem{item}}, false},
+		{"tool stage ignores the run input", agents.GuardrailPayload{Stage: agents.StageToolInput, Input: []agents.InputItem{item}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

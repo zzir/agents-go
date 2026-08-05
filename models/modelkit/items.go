@@ -9,13 +9,13 @@ import (
 
 // OutputItemFromJSON decodes canonical wire JSON into an output item.
 //
-// It is the only correct way to construct a TResponseOutputItem outside
+// It is the only correct way to construct an OutputItem outside
 // openai-go: building the union struct field-by-field leaves RawJSON empty,
 // and an item without raw bytes cannot be converted back into model input
 // (agents.OutputToInput requires them) or persisted into a session. Decoding
 // through JSON stamps the raw bytes the way a real API response would.
-func OutputItemFromJSON(raw []byte) (agents.TResponseOutputItem, error) {
-	var item agents.TResponseOutputItem
+func OutputItemFromJSON(raw []byte) (agents.OutputItem, error) {
+	var item agents.OutputItem
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return item, fmt.Errorf("modelkit: decoding output item: %w", err)
 	}
@@ -34,7 +34,7 @@ type messagePartJSON struct {
 
 // MessageItem synthesizes a canonical assistant message item with a single
 // output_text part. id may be empty when the backend does not assign item ids.
-func MessageItem(id, text string) (agents.TResponseOutputItem, error) {
+func MessageItem(id, text string) (agents.OutputItem, error) {
 	raw, err := json.Marshal(struct {
 		ID      string            `json:"id"`
 		Type    string            `json:"type"`
@@ -49,7 +49,7 @@ func MessageItem(id, text string) (agents.TResponseOutputItem, error) {
 		Content: []messagePartJSON{{Type: "output_text", Text: text, Annotations: []any{}}},
 	})
 	if err != nil {
-		return agents.TResponseOutputItem{}, err
+		return agents.OutputItem{}, err
 	}
 	return OutputItemFromJSON(raw)
 }
@@ -59,7 +59,7 @@ func MessageItem(id, text string) (agents.TResponseOutputItem, error) {
 // runner (ModelRefusalError, error_handlers.model_refusal): a backend that
 // reports refusal out-of-band (Anthropic's stop_reason) and hands the text
 // over as output_text has silently converted a refusal into an answer.
-func RefusalItem(id, refusal string) (agents.TResponseOutputItem, error) {
+func RefusalItem(id, refusal string) (agents.OutputItem, error) {
 	raw, err := json.Marshal(struct {
 		ID      string `json:"id"`
 		Type    string `json:"type"`
@@ -80,7 +80,7 @@ func RefusalItem(id, refusal string) (agents.TResponseOutputItem, error) {
 		}{{Type: "refusal", Refusal: refusal}},
 	})
 	if err != nil {
-		return agents.TResponseOutputItem{}, err
+		return agents.OutputItem{}, err
 	}
 	return OutputItemFromJSON(raw)
 }
@@ -89,7 +89,7 @@ func RefusalItem(id, refusal string) (agents.TResponseOutputItem, error) {
 // the tool arguments as a JSON document; empty means "{}" — the Responses
 // format carries arguments as a string that must itself parse as JSON, and the
 // runner hands it to the tool's argument decoder verbatim.
-func FunctionCallItem(id, callID, name, argumentsJSON string) (agents.TResponseOutputItem, error) {
+func FunctionCallItem(id, callID, name, argumentsJSON string) (agents.OutputItem, error) {
 	if argumentsJSON == "" {
 		argumentsJSON = "{}"
 	}
@@ -109,7 +109,7 @@ func FunctionCallItem(id, callID, name, argumentsJSON string) (agents.TResponseO
 		Status:    "completed",
 	})
 	if err != nil {
-		return agents.TResponseOutputItem{}, err
+		return agents.OutputItem{}, err
 	}
 	return OutputItemFromJSON(raw)
 }
@@ -130,7 +130,7 @@ type reasoningTextJSON struct {
 // survives the round-trip through session storage, which is the only reason
 // multi-turn reasoning replay works. text may be empty for an encrypted-only
 // item.
-func ReasoningItem(id, text, encryptedContent string) (agents.TResponseOutputItem, error) {
+func ReasoningItem(id, text, encryptedContent string) (agents.OutputItem, error) {
 	var content []reasoningTextJSON
 	if text != "" {
 		content = []reasoningTextJSON{{Type: "reasoning_text", Text: text}}
@@ -149,7 +149,7 @@ func ReasoningItem(id, text, encryptedContent string) (agents.TResponseOutputIte
 		EncryptedContent: encryptedContent,
 	})
 	if err != nil {
-		return agents.TResponseOutputItem{}, err
+		return agents.OutputItem{}, err
 	}
 	return OutputItemFromJSON(raw)
 }

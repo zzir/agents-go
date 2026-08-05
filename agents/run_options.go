@@ -19,7 +19,7 @@ const MaxTurnsUnlimited = -1
 // CallModelInputFilter: the system instructions and the input items.
 type ModelInputData struct {
 	Instructions string
-	Input        []TResponseInputItem
+	Input        []InputItem
 }
 
 // CallModelInputFilter edits the instructions and input items just before a

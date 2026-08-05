@@ -14,7 +14,7 @@ type StreamEvent interface{ streamEvent() }
 // through directly from the model. It appears only on runs started with Run;
 // RunSync calls the model without streaming and produces none.
 type RawResponsesStreamEvent struct {
-	Data *TResponseStreamEvent
+	Data *ResponseStreamEvent
 }
 
 func (*RawResponsesStreamEvent) streamEvent() {}

@@ -12,7 +12,7 @@ import (
 
 var errBoom = errors.New("boom")
 
-// scriptedModel returns a queued (resp, err) per GetResponse call. Its
+// scriptedModel returns a queued (resp, err) per Respond call. Its
 // StreamResponse is a no-op present only to satisfy the Model interface.
 type scriptedModel struct {
 	steps []scriptStep
@@ -24,7 +24,7 @@ type scriptStep struct {
 	err  error
 }
 
-func (m *scriptedModel) GetResponse(_ context.Context, _ ModelRequest) (*ModelResponse, error) {
+func (m *scriptedModel) Respond(_ context.Context, _ ModelRequest) (*ModelResponse, error) {
 	i := m.calls
 	m.calls++
 	if i >= len(m.steps) {
@@ -33,8 +33,8 @@ func (m *scriptedModel) GetResponse(_ context.Context, _ ModelRequest) (*ModelRe
 	return m.steps[i].resp, m.steps[i].err
 }
 
-func (m *scriptedModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(func(*TResponseStreamEvent, error) bool) {}
+func (m *scriptedModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(func(*ResponseStreamEvent, error) bool) {}
 }
 
 // streamStep emits `events` placeholder events, then errors with `err` (nil = clean finish).
@@ -48,12 +48,12 @@ type scriptedStreamModel struct {
 	calls int
 }
 
-func (m *scriptedStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *scriptedStreamModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	return &ModelResponse{}, nil
 }
 
-func (m *scriptedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *scriptedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		i := m.calls
 		m.calls++
 		var st streamStep
@@ -61,7 +61,7 @@ func (m *scriptedStreamModel) StreamResponse(context.Context, ModelRequest) iter
 			st = m.steps[i]
 		}
 		for range st.events {
-			if !yield(&TResponseStreamEvent{}, nil) {
+			if !yield(&ResponseStreamEvent{}, nil) {
 				return
 			}
 		}
@@ -72,7 +72,7 @@ func (m *scriptedStreamModel) StreamResponse(context.Context, ModelRequest) iter
 }
 
 // drain consumes a stream, counting events and returning the terminal error.
-func drain(seq iter.Seq2[*TResponseStreamEvent, error]) (int, error) {
+func drain(seq iter.Seq2[*ResponseStreamEvent, error]) (int, error) {
 	count := 0
 	var gotErr error
 	for _, err := range seq {
@@ -96,7 +96,7 @@ func TestRetryModel_SucceedsAfterFailures(t *testing.T) {
 		{nil, errBoom}, {nil, errBoom}, {&ModelResponse{ResponseID: "ok"}, nil},
 	}}
 	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 3}))
-	resp, err := m.GetResponse(context.Background(), ModelRequest{})
+	resp, err := m.Respond(context.Background(), ModelRequest{})
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -111,7 +111,7 @@ func TestRetryModel_SucceedsAfterFailures(t *testing.T) {
 func TestRetryModel_ExhaustsAndReturnsLastError(t *testing.T) {
 	inner := &scriptedModel{steps: []scriptStep{{nil, errBoom}, {nil, errBoom}, {nil, errBoom}}}
 	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 3}))
-	_, err := m.GetResponse(context.Background(), ModelRequest{})
+	_, err := m.Respond(context.Background(), ModelRequest{})
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v, want errBoom", err)
 	}
@@ -124,7 +124,7 @@ func TestRetryModel_NonRetryableStopsImmediately(t *testing.T) {
 	inner := &scriptedModel{steps: []scriptStep{{nil, errBoom}, {&ModelResponse{}, nil}}}
 	p := noSleepPolicy(RetryPolicy{MaxAttempts: 5, RetryIf: func(error) bool { return false }})
 	m := NewRetryModel(inner, p)
-	_, err := m.GetResponse(context.Background(), ModelRequest{})
+	_, err := m.Respond(context.Background(), ModelRequest{})
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v, want errBoom", err)
 	}
@@ -136,7 +136,7 @@ func TestRetryModel_NonRetryableStopsImmediately(t *testing.T) {
 func TestRetryModel_DefaultRetryIfSkipsContextCancel(t *testing.T) {
 	inner := &scriptedModel{steps: []scriptStep{{nil, context.Canceled}}}
 	m := NewRetryModel(inner, noSleepPolicy(RetryPolicy{MaxAttempts: 5}))
-	_, err := m.GetResponse(context.Background(), ModelRequest{})
+	_, err := m.Respond(context.Background(), ModelRequest{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
@@ -187,12 +187,12 @@ type typedStreamStep struct {
 	err   error
 }
 
-func (m *typedStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *typedStreamModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	return &ModelResponse{}, nil
 }
 
-func (m *typedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *typedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		i := m.calls
 		m.calls++
 		var st typedStreamStep
@@ -200,7 +200,7 @@ func (m *typedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Se
 			st = m.steps[i]
 		}
 		for _, typ := range st.types {
-			if !yield(&TResponseStreamEvent{Type: typ}, nil) {
+			if !yield(&ResponseStreamEvent{Type: typ}, nil) {
 				return
 			}
 		}
@@ -212,7 +212,7 @@ func (m *typedStreamModel) StreamResponse(context.Context, ModelRequest) iter.Se
 
 // drainTypes consumes a stream, returning the event types seen in order and
 // the terminal error.
-func drainTypes(seq iter.Seq2[*TResponseStreamEvent, error]) ([]string, error) {
+func drainTypes(seq iter.Seq2[*ResponseStreamEvent, error]) ([]string, error) {
 	var types []string
 	var gotErr error
 	for ev, err := range seq {
@@ -303,17 +303,17 @@ func TestRetryModel_StreamFlushesPreambleOnCleanAllPreambleFinish(t *testing.T) 
 // the decorators must too).
 type nilEventStreamModel struct{ calls int }
 
-func (m *nilEventStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *nilEventStreamModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	return &ModelResponse{}, nil
 }
 
-func (m *nilEventStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *nilEventStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		m.calls++
 		if !yield(nil, nil) {
 			return
 		}
-		yield(&TResponseStreamEvent{Type: "response.output_text.delta"}, nil)
+		yield(&ResponseStreamEvent{Type: "response.output_text.delta"}, nil)
 	}
 }
 
@@ -448,7 +448,7 @@ func TestFallbackModel_PrimaryFailsBackupSucceeds(t *testing.T) {
 	primary := &scriptedModel{steps: []scriptStep{{nil, errBoom}}}
 	backup := &scriptedModel{steps: []scriptStep{{&ModelResponse{ResponseID: "b"}, nil}}}
 	m := NewFallbackModel(primary, backup)
-	resp, err := m.GetResponse(context.Background(), ModelRequest{})
+	resp, err := m.Respond(context.Background(), ModelRequest{})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -464,7 +464,7 @@ func TestFallbackModel_PrimarySucceedsBackupUntouched(t *testing.T) {
 	primary := &scriptedModel{steps: []scriptStep{{&ModelResponse{ResponseID: "a"}, nil}}}
 	backup := &scriptedModel{}
 	m := NewFallbackModel(primary, backup)
-	if _, err := m.GetResponse(context.Background(), ModelRequest{}); err != nil {
+	if _, err := m.Respond(context.Background(), ModelRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	if backup.calls != 0 {
@@ -479,7 +479,7 @@ func TestFallbackModel_AllFailJoinsErrors(t *testing.T) {
 		&scriptedModel{steps: []scriptStep{{nil, errA}}},
 		&scriptedModel{steps: []scriptStep{{nil, errB}}},
 	)
-	_, err := m.GetResponse(context.Background(), ModelRequest{})
+	_, err := m.Respond(context.Background(), ModelRequest{})
 	if !errors.Is(err, errA) || !errors.Is(err, errB) {
 		t.Fatalf("err = %v, want both joined", err)
 	}
@@ -489,7 +489,7 @@ func TestFallbackModel_ContextCancelStopsChain(t *testing.T) {
 	primary := &scriptedModel{steps: []scriptStep{{nil, context.Canceled}}}
 	backup := &scriptedModel{}
 	m := NewFallbackModel(primary, backup)
-	_, err := m.GetResponse(context.Background(), ModelRequest{})
+	_, err := m.Respond(context.Background(), ModelRequest{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
@@ -532,7 +532,7 @@ type stubProvider struct {
 	model    Model
 }
 
-func (p *stubProvider) GetModel(name string) (Model, error) {
+func (p *stubProvider) Model(name string) (Model, error) {
 	p.gotModel = name
 	return p.model, nil
 }
@@ -542,13 +542,13 @@ func TestRouterProvider_RoutesByPrefix(t *testing.T) {
 	oa := &stubProvider{model: &scriptedModel{}}
 	r := NewRouterProvider(map[string]ModelProvider{"groq": groq, "openai": oa})
 
-	if _, err := r.GetModel("groq/llama-3.3-70b"); err != nil {
+	if _, err := r.Model("groq/llama-3.3-70b"); err != nil {
 		t.Fatal(err)
 	}
 	if groq.gotModel != "llama-3.3-70b" {
 		t.Errorf("groq got %q", groq.gotModel)
 	}
-	if _, err := r.GetModel("openai/gpt-4o"); err != nil {
+	if _, err := r.Model("openai/gpt-4o"); err != nil {
 		t.Fatal(err)
 	}
 	if oa.gotModel != "gpt-4o" {
@@ -559,7 +559,7 @@ func TestRouterProvider_RoutesByPrefix(t *testing.T) {
 func TestRouterProvider_FallbackForUnprefixed(t *testing.T) {
 	def := &stubProvider{model: &scriptedModel{}}
 	r := NewRouterProvider(map[string]ModelProvider{"groq": &stubProvider{}}).WithFallback(def)
-	if _, err := r.GetModel("gpt-4o"); err != nil {
+	if _, err := r.Model("gpt-4o"); err != nil {
 		t.Fatal(err)
 	}
 	if def.gotModel != "gpt-4o" {
@@ -569,7 +569,7 @@ func TestRouterProvider_FallbackForUnprefixed(t *testing.T) {
 
 func TestRouterProvider_NoMatchNoFallbackErrors(t *testing.T) {
 	r := NewRouterProvider(map[string]ModelProvider{"groq": &stubProvider{}})
-	if _, err := r.GetModel("unknown/model"); err == nil {
+	if _, err := r.Model("unknown/model"); err == nil {
 		t.Fatal("expected error for unmatched prefix without fallback")
 	}
 }
@@ -580,7 +580,7 @@ func TestFallbackProvider_AllFallbacksFailReturnsAggregatedError(t *testing.T) {
 		errModelProvider{err: errors.New("f1 down")},
 		errModelProvider{err: errors.New("f2 down")},
 	)
-	m, err := fp.GetModel("x")
+	m, err := fp.Model("x")
 	if err == nil {
 		t.Fatal("expected aggregated error when every fallback fails to resolve")
 	}
@@ -596,7 +596,7 @@ func TestFallbackProvider_PartialFallbackKeepsChain(t *testing.T) {
 	primary := &stubProvider{model: &scriptedModel{}}
 	good := &stubProvider{model: &scriptedModel{}}
 	fp := NewFallbackProvider(primary, errModelProvider{err: errors.New("bad down")}, good)
-	m, err := fp.GetModel("x")
+	m, err := fp.Model("x")
 	if err != nil {
 		t.Fatalf("partial resolution should not error: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestFallbackProvider_PartialFallbackKeepsChain(t *testing.T) {
 
 func TestFallbackProvider_NoFallbacksReturnsPrimary(t *testing.T) {
 	primary := &stubProvider{model: &scriptedModel{}}
-	m, err := NewFallbackProvider(primary).GetModel("x")
+	m, err := NewFallbackProvider(primary).Model("x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +618,7 @@ func TestFallbackProvider_NoFallbacksReturnsPrimary(t *testing.T) {
 
 func TestFallbackProvider_PrimaryFailurePropagates(t *testing.T) {
 	fp := NewFallbackProvider(errModelProvider{err: errBoom}, &stubProvider{model: &scriptedModel{}})
-	if _, err := fp.GetModel("x"); !errors.Is(err, errBoom) {
+	if _, err := fp.Model("x"); !errors.Is(err, errBoom) {
 		t.Fatalf("primary failure should propagate, got %v", err)
 	}
 }

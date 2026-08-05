@@ -33,7 +33,7 @@ const RunStateSchemaVersion = "1.4"
 // RunStateFromJSON.
 type RunState struct {
 	CurrentAgent        *Agent
-	OriginalInput       []TResponseInputItem
+	OriginalInput       []InputItem
 	GeneratedItems      []*RunItem
 	RawResponses        []*ModelResponse
 	InterruptedResponse *ModelResponse
@@ -54,7 +54,7 @@ type RunState struct {
 
 	// UserInput is the new input the interrupted Run was invoked with (without
 	// session history), so the resumed run can persist it to the session.
-	UserInput []TResponseInputItem
+	UserInput []InputItem
 
 	// SessionItems is the full item log for session persistence; it differs from
 	// GeneratedItems only when a handoff input filter rewrote the conversation.
@@ -621,7 +621,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 // marshalInputItems and unmarshalInputItems round-trip a Responses input-item
 // list, one raw message per item. Every item list on the state (original
 // input, user input, the pending-input queues) serializes through them.
-func marshalInputItems(items []TResponseInputItem) ([]json.RawMessage, error) {
+func marshalInputItems(items []InputItem) ([]json.RawMessage, error) {
 	var out []json.RawMessage
 	for i := range items {
 		raw, err := json.Marshal(items[i])
@@ -633,8 +633,8 @@ func marshalInputItems(items []TResponseInputItem) ([]json.RawMessage, error) {
 	return out, nil
 }
 
-func unmarshalInputItems(raw []json.RawMessage) ([]TResponseInputItem, error) {
-	var out []TResponseInputItem
+func unmarshalInputItems(raw []json.RawMessage) ([]InputItem, error) {
+	var out []InputItem
 	for _, r := range raw {
 		item, err := UnmarshalInputItem(r)
 		if err != nil {

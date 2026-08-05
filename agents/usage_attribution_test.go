@@ -58,7 +58,7 @@ func TestUsage_LandsOnTheLastEntryOfTheResponse(t *testing.T) {
 	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	withID := func(id string, items ...TResponseOutputItem) *ModelResponse {
+	withID := func(id string, items ...OutputItem) *ModelResponse {
 		r := modelResp(items...)
 		r.ResponseID = id
 		return r
@@ -135,7 +135,7 @@ func TestUsage_NestedIsAttributedToTheCall(t *testing.T) {
 // UsageByResponse answers "where did it go", which the run total cannot.
 func TestUsage_ByResponse(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{messageOutput(t, "one")}, ResponseID: "r1",
+		{Output: []OutputItem{messageOutput(t, "one")}, ResponseID: "r1",
 			Usage: &Usage{Requests: 1, InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
 	}}
 	agent := &Agent{Name: "a", ModelImpl: model}
@@ -191,4 +191,4 @@ func TestUsage_SnapshotConcurrentWithAdd(t *testing.T) {
 
 type errModelProvider struct{ err error }
 
-func (p errModelProvider) GetModel(string) (Model, error) { return nil, p.err }
+func (p errModelProvider) Model(string) (Model, error) { return nil, p.err }

@@ -9,21 +9,21 @@ import (
 )
 
 // eventStreamModel yields a fixed event sequence, then an optional error. Its
-// GetResponse counts calls so tests can prove the adapter never uses it.
+// Respond counts calls so tests can prove the adapter never uses it.
 type eventStreamModel struct {
-	events      []TResponseStreamEvent
+	events      []ResponseStreamEvent
 	err         error
 	getCalls    int
 	streamCalls int
 }
 
-func (m *eventStreamModel) GetResponse(context.Context, ModelRequest) (*ModelResponse, error) {
+func (m *eventStreamModel) Respond(context.Context, ModelRequest) (*ModelResponse, error) {
 	m.getCalls++
 	return &ModelResponse{ResponseID: "blocking"}, nil
 }
 
-func (m *eventStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *eventStreamModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		m.streamCalls++
 		for i := range m.events {
 			if !yield(&m.events[i], nil) {
@@ -38,9 +38,9 @@ func (m *eventStreamModel) StreamResponse(context.Context, ModelRequest) iter.Se
 
 // mustStreamEvent builds a stream event via JSON so the union's As* accessors
 // work (a hand-filled struct would leave the raw payload empty).
-func mustStreamEvent(t *testing.T, raw string) TResponseStreamEvent {
+func mustStreamEvent(t *testing.T, raw string) ResponseStreamEvent {
 	t.Helper()
-	var ev TResponseStreamEvent
+	var ev ResponseStreamEvent
 	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
 		t.Fatalf("build stream event: %v", err)
 	}
@@ -51,7 +51,7 @@ const streamOnlyMessageItem = `{"type":"message","id":"m1","role":"assistant","s
 	`"content":[{"type":"output_text","text":"hi","annotations":[]}]}`
 
 func TestStreamOnlyModel_GetResponseAssemblesFromStream(t *testing.T) {
-	inner := &eventStreamModel{events: []TResponseStreamEvent{
+	inner := &eventStreamModel{events: []ResponseStreamEvent{
 		mustStreamEvent(t, `{"type":"response.created","response":{"id":"resp_1"}}`),
 		mustStreamEvent(t, `{"type":"response.completed","response":{"id":"resp_1","status":"completed",`+
 			`"output":[`+streamOnlyMessageItem+`],"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8,`+
@@ -59,7 +59,7 @@ func TestStreamOnlyModel_GetResponseAssemblesFromStream(t *testing.T) {
 	}}
 	m := NewStreamOnlyModel(inner)
 
-	resp, err := m.GetResponse(context.Background(), ModelRequest{})
+	resp, err := m.Respond(context.Background(), ModelRequest{})
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -81,11 +81,11 @@ func TestStreamOnlyModel_IncompleteResponseAssembles(t *testing.T) {
 	// A length-truncated response still arrived; like the blocking path, it is
 	// assembled (with its reason) rather than failed, so the runner can refuse
 	// its tool calls and re-ask instead of losing the turn.
-	inner := &eventStreamModel{events: []TResponseStreamEvent{
+	inner := &eventStreamModel{events: []ResponseStreamEvent{
 		mustStreamEvent(t, `{"type":"response.incomplete","response":{"id":"resp_2","status":"incomplete",`+
 			`"output":[`+streamOnlyMessageItem+`],"incomplete_details":{"reason":"max_output_tokens"}}}`),
 	}}
-	resp, err := NewStreamOnlyModel(inner).GetResponse(context.Background(), ModelRequest{})
+	resp, err := NewStreamOnlyModel(inner).Respond(context.Background(), ModelRequest{})
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -97,11 +97,11 @@ func TestStreamOnlyModel_IncompleteResponseAssembles(t *testing.T) {
 func TestStreamOnlyModel_EmptyOutputFallsBackToStreamedItems(t *testing.T) {
 	// ChatGPT with store=false sends a completed event whose Output is empty;
 	// the adapter must fall back to items collected from output_item.done.
-	inner := &eventStreamModel{events: []TResponseStreamEvent{
+	inner := &eventStreamModel{events: []ResponseStreamEvent{
 		mustStreamEvent(t, `{"type":"response.output_item.done","output_index":0,"item":`+streamOnlyMessageItem+`}`),
 		mustStreamEvent(t, `{"type":"response.completed","response":{"id":"resp_3","status":"completed","output":[]}}`),
 	}}
-	resp, err := NewStreamOnlyModel(inner).GetResponse(context.Background(), ModelRequest{})
+	resp, err := NewStreamOnlyModel(inner).Respond(context.Background(), ModelRequest{})
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -112,20 +112,20 @@ func TestStreamOnlyModel_EmptyOutputFallsBackToStreamedItems(t *testing.T) {
 
 func TestStreamOnlyModel_StreamErrorPropagates(t *testing.T) {
 	inner := &eventStreamModel{
-		events: []TResponseStreamEvent{mustStreamEvent(t, `{"type":"response.created","response":{"id":"r"}}`)},
+		events: []ResponseStreamEvent{mustStreamEvent(t, `{"type":"response.created","response":{"id":"r"}}`)},
 		err:    errBoom,
 	}
-	_, err := NewStreamOnlyModel(inner).GetResponse(context.Background(), ModelRequest{})
+	_, err := NewStreamOnlyModel(inner).Respond(context.Background(), ModelRequest{})
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v, want errBoom", err)
 	}
 }
 
 func TestStreamOnlyModel_NoTerminalEventErrors(t *testing.T) {
-	inner := &eventStreamModel{events: []TResponseStreamEvent{
+	inner := &eventStreamModel{events: []ResponseStreamEvent{
 		mustStreamEvent(t, `{"type":"response.created","response":{"id":"r"}}`),
 	}}
-	_, err := NewStreamOnlyModel(inner).GetResponse(context.Background(), ModelRequest{})
+	_, err := NewStreamOnlyModel(inner).Respond(context.Background(), ModelRequest{})
 	var mbe *ModelBehaviorError
 	if !errors.As(err, &mbe) {
 		t.Fatalf("err = %v, want *ModelBehaviorError", err)
@@ -133,7 +133,7 @@ func TestStreamOnlyModel_NoTerminalEventErrors(t *testing.T) {
 }
 
 func TestStreamOnlyModel_StreamResponsePassesThrough(t *testing.T) {
-	inner := &eventStreamModel{events: []TResponseStreamEvent{
+	inner := &eventStreamModel{events: []ResponseStreamEvent{
 		mustStreamEvent(t, `{"type":"response.created","response":{"id":"r"}}`),
 		mustStreamEvent(t, `{"type":"response.output_text.delta","delta":"hi"}`),
 	}}
@@ -147,17 +147,17 @@ func TestStreamOnlyModel_StreamResponsePassesThrough(t *testing.T) {
 }
 
 func TestStreamOnlyProvider_WrapsModels(t *testing.T) {
-	inner := &eventStreamModel{events: []TResponseStreamEvent{
+	inner := &eventStreamModel{events: []ResponseStreamEvent{
 		mustStreamEvent(t, `{"type":"response.completed","response":{"id":"resp_p","status":"completed","output":[]}}`),
 	}}
 	p := NewStreamOnlyProvider(&stubProvider{model: inner})
-	m, err := p.GetModel("gpt-test")
+	m, err := p.Model("gpt-test")
 	if err != nil {
-		t.Fatalf("GetModel: %v", err)
+		t.Fatalf("Model: %v", err)
 	}
-	resp, err := m.GetResponse(context.Background(), ModelRequest{})
+	resp, err := m.Respond(context.Background(), ModelRequest{})
 	if err != nil {
-		t.Fatalf("GetResponse: %v", err)
+		t.Fatalf("Respond: %v", err)
 	}
 	if resp.ResponseID != "resp_p" || inner.getCalls != 0 {
 		t.Errorf("ResponseID=%q getCalls=%d, want resp_p/0", resp.ResponseID, inner.getCalls)
@@ -166,7 +166,7 @@ func TestStreamOnlyProvider_WrapsModels(t *testing.T) {
 
 func TestStreamOnlyProvider_PropagatesGetModelError(t *testing.T) {
 	p := NewStreamOnlyProvider(errModelProvider{err: errBoom})
-	if _, err := p.GetModel("x"); !errors.Is(err, errBoom) {
+	if _, err := p.Model("x"); !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v, want errBoom", err)
 	}
 }

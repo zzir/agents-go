@@ -15,7 +15,7 @@ import (
 )
 
 // fakeModel is a scripted Model for testing the runner without a real API. Each
-// call to GetResponse returns the next queued response.
+// call to Respond returns the next queued response.
 type fakeModel struct {
 	responses []*ModelResponse
 	idx       int
@@ -27,7 +27,7 @@ type fakeModel struct {
 	onRequest func(ModelRequest)
 }
 
-func (m *fakeModel) GetResponse(_ context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *fakeModel) Respond(_ context.Context, req ModelRequest) (*ModelResponse, error) {
 	m.lastReq = req
 	m.calls++
 	if m.onRequest != nil {
@@ -44,8 +44,8 @@ func (m *fakeModel) GetResponse(_ context.Context, req ModelRequest) (*ModelResp
 	return resp, nil
 }
 
-func (m *fakeModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *fakeModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		m.lastReq = req
 		m.calls++
 		if m.onRequest != nil {
@@ -67,7 +67,7 @@ func (m *fakeModel) StreamResponse(ctx context.Context, req ModelRequest) iter.S
 // completedStreamEvent builds a response.completed stream event whose embedded
 // Response carries the given output items, so the streaming runner can assemble
 // a ModelResponse from it.
-func completedStreamEvent(resp *ModelResponse) TResponseStreamEvent {
+func completedStreamEvent(resp *ModelResponse) ResponseStreamEvent {
 	rawItems := make([]json.RawMessage, 0, len(resp.Output))
 	for i := range resp.Output {
 		rawItems = append(rawItems, json.RawMessage(resp.Output[i].RawJSON()))
@@ -76,7 +76,7 @@ func completedStreamEvent(resp *ModelResponse) TResponseStreamEvent {
 	payload := `{"type":"response.completed","sequence_number":0,"response":{"id":"resp_1","output":` +
 		string(outBytes) + `,"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8,` +
 		`"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}`
-	var event TResponseStreamEvent
+	var event ResponseStreamEvent
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
 		panic(err)
 	}
@@ -85,7 +85,7 @@ func completedStreamEvent(resp *ModelResponse) TResponseStreamEvent {
 
 // --- output item builders (constructed via JSON so RawJSON is populated) ---
 
-func mustOutputItem(t *testing.T, raw string) TResponseOutputItem {
+func mustOutputItem(t *testing.T, raw string) OutputItem {
 	t.Helper()
 	var item responses.ResponseOutputItemUnion
 	if err := json.Unmarshal([]byte(raw), &item); err != nil {
@@ -94,14 +94,14 @@ func mustOutputItem(t *testing.T, raw string) TResponseOutputItem {
 	return item
 }
 
-func messageOutput(t *testing.T, text string) TResponseOutputItem {
+func messageOutput(t *testing.T, text string) OutputItem {
 	t.Helper()
 	raw := `{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":` +
 		quote(text) + `,"annotations":[]}]}`
 	return mustOutputItem(t, raw)
 }
 
-func functionCallOutput(t *testing.T, name, callID, args string) TResponseOutputItem {
+func functionCallOutput(t *testing.T, name, callID, args string) OutputItem {
 	t.Helper()
 	raw := `{"type":"function_call","id":"fc_1","call_id":` + quote(callID) +
 		`,"name":` + quote(name) + `,"arguments":` + quote(args) + `,"status":"completed"}`
@@ -113,7 +113,7 @@ func quote(s string) string {
 	return string(b)
 }
 
-func modelResp(items ...TResponseOutputItem) *ModelResponse {
+func modelResp(items ...OutputItem) *ModelResponse {
 	return &ModelResponse{Output: items, Usage: &Usage{Requests: 1, InputTokens: 5, OutputTokens: 3, TotalTokens: 8}}
 }
 
@@ -379,7 +379,7 @@ func TestRun_ParallelTools(t *testing.T) {
 		return "b-done", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []TResponseOutputItem{
+		{Output: []OutputItem{
 			functionCallOutput(t, "tool_a", "c1", `{}`),
 			functionCallOutput(t, "tool_b", "c2", `{}`),
 		}, Usage: NewUsage()},
@@ -474,7 +474,7 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 	}
 }
 
-// blockingModel blocks in GetResponse until its context is cancelled, then
+// blockingModel blocks in Respond until its context is cancelled, then
 // reports the cancellation. Used to prove an input-guardrail tripwire cancels
 // the in-flight model call.
 type blockingModel struct {
@@ -483,15 +483,15 @@ type blockingModel struct {
 	once      sync.Once
 }
 
-func (m *blockingModel) GetResponse(ctx context.Context, _ ModelRequest) (*ModelResponse, error) {
+func (m *blockingModel) Respond(ctx context.Context, _ ModelRequest) (*ModelResponse, error) {
 	m.once.Do(func() { close(m.called) })
 	<-ctx.Done()
 	close(m.cancelled)
 	return nil, ctx.Err()
 }
 
-func (m *blockingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(func(*TResponseStreamEvent, error) bool) {}
+func (m *blockingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(func(*ResponseStreamEvent, error) bool) {}
 }
 
 // An input-guardrail tripwire cancels the in-flight model call rather than

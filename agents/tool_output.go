@@ -120,18 +120,18 @@ func ToolOutputImageFromBytes(mimeType string, data []byte) ToolOutputImage {
 // when output is structured/multimodal content (a ToolOutputContent or a
 // non-empty []ToolOutputContent), reporting false for ordinary values so the
 // caller falls back to the string path.
-func toolOutputContentItem(callID string, output any) (TResponseInputItem, bool) {
+func toolOutputContentItem(callID string, output any) (InputItem, bool) {
 	var parts []ToolOutputContent
 	switch v := output.(type) {
 	case ToolOutputContent:
 		parts = []ToolOutputContent{v}
 	case []ToolOutputContent:
 		if len(v) == 0 {
-			return TResponseInputItem{}, false
+			return InputItem{}, false
 		}
 		parts = v
 	default:
-		return TResponseInputItem{}, false
+		return InputItem{}, false
 	}
 	list := make(responses.ResponseFunctionCallOutputItemListParam, len(parts))
 	for i, p := range parts {

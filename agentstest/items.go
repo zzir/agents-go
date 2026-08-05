@@ -20,7 +20,7 @@ import (
 // to script item shapes the SDK does not model — including types it does not
 // recognize at all, which is exactly what a test for forward-compatible
 // handling needs.
-func RawItem(rawJSON string) agents.TResponseOutputItem {
+func RawItem(rawJSON string) agents.OutputItem {
 	item, err := modelkit.OutputItemFromJSON([]byte(rawJSON))
 	if err != nil {
 		panic(fmt.Sprintf("agentstest: invalid output item JSON: %v\n%s", err, rawJSON))
@@ -29,7 +29,7 @@ func RawItem(rawJSON string) agents.TResponseOutputItem {
 }
 
 // MessageItem builds an assistant message carrying text.
-func MessageItem(id, text string) agents.TResponseOutputItem {
+func MessageItem(id, text string) agents.OutputItem {
 	return must(modelkit.MessageItem(id, text))
 }
 
@@ -38,14 +38,14 @@ func MessageItem(id, text string) agents.TResponseOutputItem {
 // A refusal takes precedence over any text in the same message, so a run
 // scripted with one fails with an [agents.ModelRefusalError] unless a recovery
 // handler is configured.
-func RefusalItem(id, refusal string) agents.TResponseOutputItem {
+func RefusalItem(id, refusal string) agents.OutputItem {
 	return must(modelkit.RefusalItem(id, refusal))
 }
 
 // FunctionCallItem builds a function tool call. argsJSON is the raw arguments
 // string the model would emit — pass invalid JSON to exercise the
 // argument-parsing error path (empty means "{}").
-func FunctionCallItem(id, name, callID, argsJSON string) agents.TResponseOutputItem {
+func FunctionCallItem(id, name, callID, argsJSON string) agents.OutputItem {
 	return must(modelkit.FunctionCallItem(id, callID, name, argsJSON))
 }
 
@@ -54,12 +54,12 @@ func FunctionCallItem(id, name, callID, argsJSON string) agents.TResponseOutputI
 // Deliberately NOT modelkit.ReasoningItem: that one places text in the content
 // parts (raw reasoning, what a translated backend has), while this fake mimics
 // the native Responses shape where the API returns a summary.
-func ReasoningItem(id, text string) agents.TResponseOutputItem {
+func ReasoningItem(id, text string) agents.OutputItem {
 	return RawItem(`{"type":"reasoning","id":` + quote(id) +
 		`,"summary":[{"type":"summary_text","text":` + quote(text) + `}]}`)
 }
 
-func must(item agents.TResponseOutputItem, err error) agents.TResponseOutputItem {
+func must(item agents.OutputItem, err error) agents.OutputItem {
 	if err != nil {
 		panic(fmt.Sprintf("agentstest: %v", err))
 	}

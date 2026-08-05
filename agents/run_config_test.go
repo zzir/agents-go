@@ -14,7 +14,7 @@ import (
 // toolCalls builds a model response that calls name n times (distinct call IDs).
 func toolCalls(t *testing.T, name string, n int) *ModelResponse {
 	t.Helper()
-	items := make([]TResponseOutputItem, n)
+	items := make([]OutputItem, n)
 	for i := range n {
 		items[i] = functionCallOutput(t, name, fmt.Sprintf("call_%d", i), "{}")
 	}
@@ -132,7 +132,7 @@ func TestHandoffInputFilter_RunLevelDefault(t *testing.T) {
 }
 
 // reasoningOutput builds a reasoning output item carrying the given id.
-func reasoningOutput(t *testing.T, id string) TResponseOutputItem {
+func reasoningOutput(t *testing.T, id string) OutputItem {
 	t.Helper()
 	raw := `{"type":"reasoning","id":` + quote(id) +
 		`,"summary":[{"type":"summary_text","text":"think"}]}`
@@ -141,7 +141,7 @@ func reasoningOutput(t *testing.T, id string) TResponseOutputItem {
 
 // reasoningInputID returns the id of the first reasoning item in a model input
 // list, and whether one was present.
-func reasoningInputID(items []TResponseInputItem) (string, bool) {
+func reasoningInputID(items []InputItem) (string, bool) {
 	for i := range items {
 		if r := items[i].OfReasoning; r != nil {
 			return r.ID, true

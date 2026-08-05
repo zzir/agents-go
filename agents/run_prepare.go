@@ -15,7 +15,7 @@ import (
 // (nested run) or tracing is off — and must be deferred by the caller.
 // ResumeRun has its own entry construction (it seeds from a RunState) and
 // shares only the loop.
-func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []TResponseInputItem, func(), error) {
+func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []InputItem, func(), error) {
 	maxTurns := opts.Exec.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
@@ -79,7 +79,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 			return nil, nil, nil, herr
 		}
 		if len(history) > 0 {
-			modelInput = make([]TResponseInputItem, 0, len(history)+len(userInput))
+			modelInput = make([]InputItem, 0, len(history)+len(userInput))
 			modelInput = append(modelInput, history...)
 			modelInput = append(modelInput, userInput...)
 			// Scrub the merged history+input before it reaches the model: a
@@ -96,7 +96,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 // state for a resume.
 type loopSeed struct {
 	agent          *Agent
-	originalInput  []TResponseInputItem
+	originalInput  []InputItem
 	generatedItems []*RunItem
 	rawResponses   []*ModelResponse
 
@@ -119,7 +119,7 @@ type loopSeed struct {
 // tool calls), so the resume continues from that cursor instead of re-saving.
 // Turn counting also continues where the interrupted run stopped, so repeated
 // interrupt/resume cycles cannot exceed the turn budget.
-func (r *runner) seedLoop(startAgent *Agent, originalInput []TResponseInputItem) loopSeed {
+func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed {
 	seed := loopSeed{
 		agent:          startAgent,
 		originalInput:  originalInput,
@@ -167,16 +167,16 @@ func validateServerState(opts RunOptions) error {
 	return nil
 }
 
-// normalizeInput coerces a string or []TResponseInputItem into the input list.
-func normalizeInput(input any) ([]TResponseInputItem, error) {
+// normalizeInput coerces a string or []InputItem into the input list.
+func normalizeInput(input any) ([]InputItem, error) {
 	switch v := input.(type) {
 	case string:
 		return InputItemsFromText(v), nil
-	case []TResponseInputItem:
+	case []InputItem:
 		return v, nil
 	case nil:
 		return nil, NewUserError("run input must not be nil")
 	default:
-		return nil, NewUserError("unsupported run input type %T (want string or []TResponseInputItem)", input)
+		return nil, NewUserError("unsupported run input type %T (want string or []InputItem)", input)
 	}
 }

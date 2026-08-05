@@ -24,7 +24,7 @@ type RunControl interface {
 	//
 	// It is "change course": the user says something while the agent is
 	// working, and it must reach the model whether or not the agent thought it
-	// was finished. Input is a string or []TResponseInputItem.
+	// was finished. Input is a string or []InputItem.
 	Steer(input any) error
 
 	// NextTurn injects input at the next turn boundary, if the run takes one.
@@ -51,9 +51,9 @@ type RunControl interface {
 
 // PendingInput is queued input a run has not consumed.
 type PendingInput struct {
-	Steer    []TResponseInputItem
-	NextTurn []TResponseInputItem
-	FollowUp []TResponseInputItem
+	Steer    []InputItem
+	NextTurn []InputItem
+	FollowUp []InputItem
 }
 
 // Empty reports whether nothing is queued.
@@ -76,7 +76,7 @@ const (
 // and when relative to its neighbors.
 type pendingEntry struct {
 	kind  injectKind
-	items []TResponseInputItem
+	items []InputItem
 	seq   uint64
 }
 
@@ -156,7 +156,7 @@ func (c *runControl) Pending() PendingInput {
 
 // takeTurnInput drains what the save point delivers — steer and next-turn
 // input, in arrival order — into the in-flight set.
-func (c *runControl) takeTurnInput() []TResponseInputItem {
+func (c *runControl) takeTurnInput() []InputItem {
 	return c.take(func(k injectKind) bool { return k == injectSteer || k == injectNextTurn })
 }
 
@@ -166,7 +166,7 @@ func (c *runControl) takeTurnInput() []TResponseInputItem {
 // next-turn is deliberately absent. It rides along with a turn the run was
 // going to take anyway; making it force one would erase the only difference
 // between it and Steer.
-func (c *runControl) takeContinuation() []TResponseInputItem {
+func (c *runControl) takeContinuation() []InputItem {
 	return c.take(func(k injectKind) bool { return k == injectSteer || k == injectFollowUp })
 }
 
@@ -175,13 +175,13 @@ func (c *runControl) takeContinuation() []TResponseInputItem {
 // of other kinds keep their queue positions. The move is not yet delivery —
 // commitInjected and rollbackInjected settle what happened to the attempt the
 // items were handed to.
-func (c *runControl) take(want func(injectKind) bool) []TResponseInputItem {
+func (c *runControl) take(want func(injectKind) bool) []InputItem {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var out []TResponseInputItem
+	var out []InputItem
 	keep := c.pending[:0]
 	for _, e := range c.pending {
 		if want(e.kind) {
@@ -260,7 +260,7 @@ func (c *runControl) restore(p PendingInput) {
 	c.restored = true
 	for _, s := range []struct {
 		kind  injectKind
-		items []TResponseInputItem
+		items []InputItem
 	}{
 		{injectSteer, p.Steer},
 		{injectNextTurn, p.NextTurn},

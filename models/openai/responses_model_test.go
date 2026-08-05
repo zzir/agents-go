@@ -313,7 +313,7 @@ func TestStreamResponseEndsWithoutTerminalEventIsRetryableTruncation(t *testing.
 	}))
 	t.Cleanup(srv.Close)
 	provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
-	model, err := provider.GetModel("gpt-test")
+	model, err := provider.Model("gpt-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestStreamResponseTrailingTransportErrorAfterCompletedIsIgnored(t *testing.
 	}))
 	t.Cleanup(srv.Close)
 	provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
-	model, err := provider.GetModel("gpt-test")
+	model, err := provider.Model("gpt-test")
 	if err != nil {
 		t.Fatal(err)
 	}

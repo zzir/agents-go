@@ -99,7 +99,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	// dropped for foreign replay, malformed JSON) carry no pairing constraints;
 	// the row-split mapping below leaves them on the same side as their
 	// preceding convertible neighbor.
-	items := make([]agents.TResponseInputItem, 0, len(active))
+	items := make([]agents.InputItem, 0, len(active))
 	entries := make([]agents.SessionEntry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
@@ -174,7 +174,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args agents.Comp
 	span.Set("before_items", len(active))
 	span.Set("after_items", 1+(len(active)-len(toCompact)))
 
-	resp, err := ca.summaryModel.GetResponse(ctx, agents.ModelRequest{
+	resp, err := ca.summaryModel.Respond(ctx, agents.ModelRequest{
 		SystemInstructions: ca.summaryPrompt,
 		Input:              toSummarize,
 	})

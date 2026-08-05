@@ -80,10 +80,10 @@ type RunItem struct {
 
 	// Raw is the model's own output item, for the kinds the model produced.
 	// Nil for runner-synthesized kinds and for items rebuilt from a RunState.
-	Raw *TResponseOutputItem
+	Raw *OutputItem
 	// RawInput is the item's input form, for the kinds the runner synthesized
 	// (a tool result, a handoff acknowledgement) and for rebuilt items.
-	RawInput *TResponseInputItem
+	RawInput *InputItem
 
 	// Output is a tool's return value as the tool produced it, before it was
 	// rendered for the model (ItemToolCallOutput).
@@ -169,12 +169,12 @@ func (i *RunItem) Display() ItemDisplay {
 }
 
 // ToInputItem converts the item to a Responses API input item for the next turn.
-func (i *RunItem) ToInputItem() (TResponseInputItem, error) {
+func (i *RunItem) ToInputItem() (InputItem, error) {
 	if i.RawInput != nil {
 		return *i.RawInput, nil
 	}
 	if i.Raw == nil {
-		return TResponseInputItem{}, fmt.Errorf("run item of kind %q carries neither a model item nor an input item", i.Kind)
+		return InputItem{}, fmt.Errorf("run item of kind %q carries neither a model item nor an input item", i.Kind)
 	}
 	return outputItemToInput(*i.Raw)
 }
@@ -267,7 +267,7 @@ func (i *RunItem) CallID() string {
 //
 // The runner builds these itself; this is for tests and for code that
 // reconstructs a run's items from the outside.
-func NewModelItem(kind ItemKind, agent *Agent, raw TResponseOutputItem) *RunItem {
+func NewModelItem(kind ItemKind, agent *Agent, raw OutputItem) *RunItem {
 	return &RunItem{Kind: kind, Agent: agent, Raw: &raw}
 }
 
@@ -335,7 +335,7 @@ const (
 // Note: the underlying openai-go reasoning param always serializes an "id" key,
 // so an omitted id is sent as an empty string rather than dropped entirely; only
 // the stale id value is removed.
-func applyReasoningItemIDPolicy(items []TResponseInputItem, policy ReasoningItemIDPolicy) []TResponseInputItem {
+func applyReasoningItemIDPolicy(items []InputItem, policy ReasoningItemIDPolicy) []InputItem {
 	if policy != ReasoningItemIDOmit {
 		return items
 	}
@@ -350,8 +350,8 @@ func applyReasoningItemIDPolicy(items []TResponseInputItem, policy ReasoningItem
 }
 
 // itemsToInputList converts a slice of RunItems into model input items.
-func itemsToInputList(items []*RunItem) ([]TResponseInputItem, error) {
-	out := make([]TResponseInputItem, 0, len(items))
+func itemsToInputList(items []*RunItem) ([]InputItem, error) {
+	out := make([]InputItem, 0, len(items))
 	for _, it := range items {
 		in, err := it.ToInputItem()
 		if err != nil {
@@ -364,7 +364,7 @@ func itemsToInputList(items []*RunItem) ([]TResponseInputItem, error) {
 
 // extractMessageText pulls the concatenated output_text content from a message
 // output item. It returns "" for non-message items.
-func extractMessageText(item TResponseOutputItem) string {
+func extractMessageText(item OutputItem) string {
 	msg := item.AsMessage()
 	var b strings.Builder
 	for _, part := range msg.Content {
@@ -377,7 +377,7 @@ func extractMessageText(item TResponseOutputItem) string {
 
 // extractMessageRefusal pulls the concatenated refusal content from a message
 // output item, or "" when the message carries none.
-func extractMessageRefusal(item TResponseOutputItem) string {
+func extractMessageRefusal(item OutputItem) string {
 	msg := item.AsMessage()
 	var b strings.Builder
 	for _, part := range msg.Content {
@@ -408,7 +408,7 @@ func newFunctionCallOutputItem(agent *Agent, callID string, output any) *RunItem
 
 // newHandoffOutputItem builds the synthetic acknowledgement recorded when a
 // handoff is taken.
-func newHandoffOutputItem(agent, from, to *Agent, raw TResponseInputItem) *RunItem {
+func newHandoffOutputItem(agent, from, to *Agent, raw InputItem) *RunItem {
 	return &RunItem{
 		Kind:        ItemHandoffOutput,
 		Agent:       agent,
@@ -421,7 +421,7 @@ func newHandoffOutputItem(agent, from, to *Agent, raw TResponseInputItem) *RunIt
 
 // handoffOutputInput builds the function_call_output input item acknowledging a
 // handoff, carrying the standard transfer message {"assistant": <agent name>}.
-func handoffOutputInput(callID, targetAgentName string) TResponseInputItem {
+func handoffOutputInput(callID, targetAgentName string) InputItem {
 	msg := fmt.Sprintf(`{"assistant":%q}`, targetAgentName)
 	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, msg)
 }

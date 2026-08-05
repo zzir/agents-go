@@ -86,7 +86,7 @@ func TestBuildParamsMergesAssistantTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := agents.OutputToInput([]agents.TResponseOutputItem{rs, msg, fc})
+	input, err := agents.OutputToInput([]agents.OutputItem{rs, msg, fc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestBuildParamsReasoningWithoutSignatureIsDropped(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		input, err := agents.OutputToInput([]agents.TResponseOutputItem{rs})
+		input, err := agents.OutputToInput([]agents.OutputItem{rs})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,7 +205,7 @@ func TestBuildParamsRedactedThinkingRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := agents.OutputToInput([]agents.TResponseOutputItem{rs})
+	input, err := agents.OutputToInput([]agents.OutputItem{rs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestBuildParamsImageDataURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls, err := agents.OutputToInput([]agents.TResponseOutputItem{fc})
+	calls, err := agents.OutputToInput([]agents.OutputItem{fc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestBuildParamsEmptyToolResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls, err := agents.OutputToInput([]agents.TResponseOutputItem{fc})
+	calls, err := agents.OutputToInput([]agents.OutputItem{fc})
 	if err != nil {
 		t.Fatal(err)
 	}

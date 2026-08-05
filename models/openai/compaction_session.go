@@ -302,7 +302,7 @@ func resolveCompactionMode(mode CompactionMode, responseID string, store *bool) 
 
 // compactionCandidateCount counts items eligible for compaction, excluding user
 // messages and existing compaction items.
-func compactionCandidateCount(items []agents.TResponseInputItem) int {
+func compactionCandidateCount(items []agents.InputItem) int {
 	n := 0
 	for _, it := range items {
 		typ, role, hasContent := itemShape(it)
@@ -318,7 +318,7 @@ func compactionCandidateCount(items []agents.TResponseInputItem) int {
 // stripOrphanedAssistantIDs removes the id from assistant messages when the
 // compacted output carries no reasoning items, since replaying an assistant id
 // without its paired reasoning item is rejected by the API.
-func stripOrphanedAssistantIDs(items []agents.TResponseInputItem) []agents.TResponseInputItem {
+func stripOrphanedAssistantIDs(items []agents.InputItem) []agents.InputItem {
 	if len(items) == 0 {
 		return items
 	}
@@ -327,7 +327,7 @@ func stripOrphanedAssistantIDs(items []agents.TResponseInputItem) []agents.TResp
 			return items
 		}
 	}
-	out := make([]agents.TResponseInputItem, 0, len(items))
+	out := make([]agents.InputItem, 0, len(items))
 	for _, it := range items {
 		_, role, _ := itemShape(it)
 		if role == "assistant" {
@@ -343,7 +343,7 @@ func stripOrphanedAssistantIDs(items []agents.TResponseInputItem) []agents.TResp
 
 // itemShape extracts an input item's type, role and whether it has content, via
 // a JSON round-trip (the union has too many variants to switch on directly).
-func itemShape(it agents.TResponseInputItem) (typ, role string, hasContent bool) {
+func itemShape(it agents.InputItem) (typ, role string, hasContent bool) {
 	b, err := agents.MarshalInputItem(it)
 	if err != nil {
 		return "", "", false
@@ -360,11 +360,11 @@ func itemShape(it agents.TResponseInputItem) (typ, role string, hasContent bool)
 // withoutID returns the item with its top-level "id" removed, or ok=false if it
 // has none. It is only ever called on assistant items (OfOutputMessage); it
 // makes a shallow copy so the shared session-history pointee is never mutated.
-func withoutID(it agents.TResponseInputItem) (agents.TResponseInputItem, bool) {
+func withoutID(it agents.InputItem) (agents.InputItem, bool) {
 	if it.OfOutputMessage != nil {
 		msg := *it.OfOutputMessage
 		msg.ID = ""
-		return agents.TResponseInputItem{OfOutputMessage: &msg}, true
+		return agents.InputItem{OfOutputMessage: &msg}, true
 	}
 	return it, false
 }

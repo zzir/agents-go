@@ -32,7 +32,7 @@ type RunContext struct {
 	// turnInputMu guards turnInput: the run loop refreshes it while tools,
 	// guardrails and hooks read it from their own goroutines.
 	turnInputMu sync.RWMutex
-	turnInput   []TResponseInputItem
+	turnInput   []InputItem
 
 	// inheritedOpts carries the run's model provider/model so nested runs (e.g.
 	// agent-as-tool) inherit them. Set by the runner; not user-facing.
@@ -67,7 +67,7 @@ type RunContext struct {
 // It is empty before the first turn's input is built. The returned slice is a
 // copy, but the items in it are shared with the live request: treat them as
 // read-only.
-func (rc *RunContext) TurnInput() []TResponseInputItem {
+func (rc *RunContext) TurnInput() []InputItem {
 	if rc == nil {
 		return nil
 	}
@@ -76,12 +76,12 @@ func (rc *RunContext) TurnInput() []TResponseInputItem {
 	if len(rc.turnInput) == 0 {
 		return nil
 	}
-	return append([]TResponseInputItem(nil), rc.turnInput...)
+	return append([]InputItem(nil), rc.turnInput...)
 }
 
 // setTurnInput publishes the turn's model input. The runner calls it once the
 // input is final, and again if CallModelInputFilter edits it.
-func (rc *RunContext) setTurnInput(items []TResponseInputItem) {
+func (rc *RunContext) setTurnInput(items []InputItem) {
 	if rc == nil {
 		return
 	}
@@ -277,7 +277,7 @@ type ToolContext struct {
 	Agent *Agent
 	// ToolCall is the raw model-emitted function-call output item that triggered
 	// this invocation.
-	ToolCall TResponseOutputItem
+	ToolCall OutputItem
 	// functionSpanID is the tracing span ID of this tool call, letting a
 	// nested agent-as-tool run parent its agent spans under the function span
 	// instead of floating at the trace root.

@@ -8,7 +8,7 @@ import (
 )
 
 // refusalOutput builds an assistant message whose content is a refusal part.
-func refusalOutput(t *testing.T, refusal string) TResponseOutputItem {
+func refusalOutput(t *testing.T, refusal string) OutputItem {
 	t.Helper()
 	raw := `{"type":"message","id":"msg_r","status":"completed","role":"assistant","content":[{"type":"refusal","refusal":` +
 		quote(refusal) + `}]}`
@@ -17,7 +17,7 @@ func refusalOutput(t *testing.T, refusal string) TResponseOutputItem {
 
 // textAndRefusalOutput builds an assistant message carrying both an
 // output_text part and a refusal part.
-func textAndRefusalOutput(t *testing.T, text, refusal string) TResponseOutputItem {
+func textAndRefusalOutput(t *testing.T, text, refusal string) OutputItem {
 	t.Helper()
 	raw := `{"type":"message","id":"msg_tr","status":"completed","role":"assistant","content":[` +
 		`{"type":"output_text","text":` + quote(text) + `,"annotations":[]},` +

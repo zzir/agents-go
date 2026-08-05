@@ -8,9 +8,9 @@ import (
 )
 
 func TestProvider_EmptyModelIsUserError(t *testing.T) {
-	_, err := NewProvider().GetModel("")
+	_, err := NewProvider().Model("")
 	if err == nil {
-		t.Fatal("GetModel(\"\") with no default should error")
+		t.Fatal("Model(\"\") with no default should error")
 	}
 	var ue *agents.UserError
 	if !errors.As(err, &ue) {
@@ -19,7 +19,7 @@ func TestProvider_EmptyModelIsUserError(t *testing.T) {
 }
 
 func TestProvider_ExplicitModelResolves(t *testing.T) {
-	got, err := NewProvider().GetModel("gpt-4o")
+	got, err := NewProvider().Model("gpt-4o")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestProvider_ExplicitModelResolves(t *testing.T) {
 }
 
 func TestProvider_WithDefaultModel(t *testing.T) {
-	got, err := NewProvider().WithDefaultModel("gpt-4o-mini").GetModel("")
+	got, err := NewProvider().WithDefaultModel("gpt-4o-mini").Model("")
 	if err != nil {
 		t.Fatal(err)
 	}

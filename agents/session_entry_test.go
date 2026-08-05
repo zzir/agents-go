@@ -42,7 +42,7 @@ func TestProjectEntries_CallerOverridesTheDefaults(t *testing.T) {
 		{Kind: EntryKindTerminal, Payload: json.RawMessage(`{"command":"go test ./..."}`)},
 	}
 	got, err := ProjectEntries(entries, map[EntryKind]EntryProjector{
-		EntryKindTerminal: func(e SessionEntry) ([]TResponseInputItem, error) {
+		EntryKindTerminal: func(e SessionEntry) ([]InputItem, error) {
 			var p struct {
 				Command string `json:"command"`
 			}

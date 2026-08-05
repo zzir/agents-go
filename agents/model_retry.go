@@ -185,7 +185,7 @@ type retryModel struct {
 	policy RetryPolicy
 }
 
-// NewRetryModel wraps inner so that failing GetResponse calls (and
+// NewRetryModel wraps inner so that failing Respond calls (and
 // StreamResponse calls that fail before any output event) are retried per
 // policy. It is a provider-agnostic Model decorator; compose it with
 // NewFallbackModel.
@@ -193,12 +193,12 @@ func NewRetryModel(inner Model, policy RetryPolicy) Model {
 	return &retryModel{inner: inner, policy: policy}
 }
 
-func (m *retryModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
 	retryIf := m.policy.retryIf()
 	maxAttempts := m.policy.maxAttempts()
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		resp, err := m.inner.GetResponse(ctx, req)
+		resp, err := m.inner.Respond(ctx, req)
 		if err == nil {
 			return resp, nil
 		}
@@ -229,8 +229,8 @@ func (m *retryModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelR
 // abandoned attempt's events. Once output has been emitted it cannot be
 // un-sent: the attempt is committed and a later error is passed straight
 // through.
-func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error] {
-	return func(yield func(*TResponseStreamEvent, error) bool) {
+func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
 		retryIf := m.policy.retryIf()
 		maxAttempts := m.policy.maxAttempts()
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -291,8 +291,8 @@ func NewRetryProvider(inner ModelProvider, policy RetryPolicy) ModelProvider {
 	return &retryProvider{inner: inner, policy: policy}
 }
 
-func (p *retryProvider) GetModel(name string) (Model, error) {
-	m, err := p.inner.GetModel(name)
+func (p *retryProvider) Model(name string) (Model, error) {
+	m, err := p.inner.Model(name)
 	if err != nil {
 		return nil, err
 	}

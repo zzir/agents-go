@@ -7,20 +7,20 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-func fnCall(callID string) TResponseInputItem {
+func fnCall(callID string) InputItem {
 	return responses.ResponseInputItemParamOfFunctionCall("{}", callID, "tool")
 }
 
-func fnOutput(callID, output string) TResponseInputItem {
+func fnOutput(callID, output string) InputItem {
 	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, output)
 }
 
-func reasoningItem(id string) TResponseInputItem {
+func reasoningItem(id string) InputItem {
 	return responses.ResponseInputItemParamOfReasoning(id, nil)
 }
 
 // callIDsOf returns the call ids of every function_call item, in order.
-func callIDsOf(items []TResponseInputItem) []string {
+func callIDsOf(items []InputItem) []string {
 	var out []string
 	for _, it := range items {
 		if it.OfFunctionCall != nil {
@@ -31,7 +31,7 @@ func callIDsOf(items []TResponseInputItem) []string {
 }
 
 func TestNormalizeStoredInput_DropsOrphanCall(t *testing.T) {
-	items := []TResponseInputItem{
+	items := []InputItem{
 		userMsg("hi"),
 		fnCall("c1"),
 		fnOutput("c1", "done"), // c1 is paired — keep
@@ -50,7 +50,7 @@ func TestNormalizeStoredInput_DropsOrphanCall(t *testing.T) {
 }
 
 func TestNormalizeStoredInput_DropsReasoningBeforeOrphan(t *testing.T) {
-	items := []TResponseInputItem{
+	items := []InputItem{
 		userMsg("hi"),
 		reasoningItem("rs_kept"),
 		fnCall("paired"),
@@ -75,7 +75,7 @@ func TestNormalizeStoredInput_DropsReasoningBeforeOrphan(t *testing.T) {
 
 func TestNormalizeStoredInput_DedupesPreferringLatest(t *testing.T) {
 	// The same completed call appears twice (session history + a re-sent copy).
-	items := []TResponseInputItem{
+	items := []InputItem{
 		fnCall("c1"),
 		fnOutput("c1", "first"),
 		fnCall("c1"),             // duplicate call_id
@@ -98,7 +98,7 @@ func TestNormalizeStoredInput_DedupesPreferringLatest(t *testing.T) {
 }
 
 func TestNormalizeStoredInput_KeepsCleanHistory(t *testing.T) {
-	items := []TResponseInputItem{
+	items := []InputItem{
 		userMsg("hi"),
 		fnCall("c1"),
 		fnOutput("c1", "done"),
@@ -113,7 +113,7 @@ func TestNormalizeStoredInput_KeepsCleanHistory(t *testing.T) {
 func TestNormalizeStoredInput_KeepsDuplicateMessages(t *testing.T) {
 	// Messages carry no stable id in easy form, so identical messages must not
 	// collapse.
-	items := []TResponseInputItem{userMsg("hi"), userMsg("hi")}
+	items := []InputItem{userMsg("hi"), userMsg("hi")}
 	if got := normalizeStoredInput(items); len(got) != 2 {
 		t.Errorf("duplicate messages collapsed: len = %d, want 2", len(got))
 	}
@@ -123,7 +123,7 @@ func TestNormalizeStoredInput_KeepsDuplicateMessages(t *testing.T) {
 // persists at an interruption) must not reach the model as an orphan.
 func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	sess := NewInMemorySession()
-	if err := NewSession(sess).AppendItems(context.Background(), []TResponseInputItem{
+	if err := NewSession(sess).AppendItems(context.Background(), []InputItem{
 		userMsg("earlier question"),
 		fnCall("dangling"), // no output — a turn that paused here
 	}, Source{}); err != nil {

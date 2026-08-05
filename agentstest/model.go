@@ -14,7 +14,7 @@ import (
 // Turn is one scripted model response: the items it produces, its usage, and
 // optionally a transport error instead of a response.
 type Turn struct {
-	Items []agents.TResponseOutputItem
+	Items []agents.OutputItem
 	Usage agents.RequestUsage
 	// Err, when non-nil, makes the model return this error instead of a
 	// response — the model-call failure path.
@@ -141,8 +141,8 @@ func (t Turn) response(seq int) *agents.ModelResponse {
 	}
 }
 
-// GetResponse implements [agents.Model].
-func (m *FakeModel) GetResponse(_ context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
+// Respond implements [agents.Model].
+func (m *FakeModel) Respond(_ context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
 	turn, ok := m.next(req)
 	if !ok {
 		return &agents.ModelResponse{Usage: agents.NewUsage()}, nil
@@ -156,8 +156,8 @@ func (m *FakeModel) GetResponse(_ context.Context, req agents.ModelRequest) (*ag
 // StreamResponse implements [agents.Model]. It emits one
 // response.output_item.done per item followed by response.completed, plus
 // output_text deltas when StreamTextDeltas is set.
-func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) iter.Seq2[*agents.TResponseStreamEvent, error] {
-	return func(yield func(*agents.TResponseStreamEvent, error) bool) {
+func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
+	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
 		turn, ok := m.next(req)
 		if !ok {
 			// An exhausted script bills nothing, on BOTH paths: the zero
@@ -172,7 +172,7 @@ func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) i
 			return
 		}
 		seq := 0
-		emit := func(ev agents.TResponseStreamEvent) bool {
+		emit := func(ev agents.ResponseStreamEvent) bool {
 			seq++
 			return yield(&ev, nil)
 		}
@@ -204,18 +204,18 @@ var _ agents.Model = (*FakeModel)(nil)
 // Events are synthesized by the modelkit builders (the same ones adapters
 // use), wrapped in this package's panic contract.
 
-func mustEvent(ev agents.TResponseStreamEvent, err error) agents.TResponseStreamEvent {
+func mustEvent(ev agents.ResponseStreamEvent, err error) agents.ResponseStreamEvent {
 	if err != nil {
 		panic(fmt.Sprintf("agentstest: %v", err))
 	}
 	return ev
 }
 
-func outputItemDoneEvent(index int, item agents.TResponseOutputItem) agents.TResponseStreamEvent {
+func outputItemDoneEvent(index int, item agents.OutputItem) agents.ResponseStreamEvent {
 	return mustEvent(modelkit.OutputItemDoneEvent(index, item))
 }
 
-func completedEvent(items []agents.TResponseOutputItem, respID string, u agents.RequestUsage) agents.TResponseStreamEvent {
+func completedEvent(items []agents.OutputItem, respID string, u agents.RequestUsage) agents.ResponseStreamEvent {
 	if u == (agents.RequestUsage{}) {
 		u = defaultTurnUsage
 	}
@@ -238,7 +238,7 @@ func completedEvent(items []agents.TResponseOutputItem, respID string, u agents.
 
 // textDeltaEvents produces per-rune output_text deltas for a message item so
 // streaming consumers see incremental text. Non-message items produce none.
-func textDeltaEvents(index int, item agents.TResponseOutputItem) []agents.TResponseStreamEvent {
+func textDeltaEvents(index int, item agents.OutputItem) []agents.ResponseStreamEvent {
 	if item.Type != "message" {
 		return nil
 	}
@@ -252,7 +252,7 @@ func textDeltaEvents(index int, item agents.TResponseOutputItem) []agents.TRespo
 		return nil
 	}
 	itemID := item.ID
-	events := make([]agents.TResponseStreamEvent, 0, len([]rune(text.String()))+1)
+	events := make([]agents.ResponseStreamEvent, 0, len([]rune(text.String()))+1)
 	for _, r := range text.String() {
 		events = append(events, mustEvent(modelkit.OutputTextDeltaEvent(itemID, index, string(r))))
 	}

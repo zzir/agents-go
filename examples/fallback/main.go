@@ -28,11 +28,11 @@ func main() {
 	//       option.WithBaseURL("https://api.groq.com/openai/v1"),
 	//       option.WithAPIKey(os.Getenv("GROQ_API_KEY")))
 
-	primary, err := provider.GetModel("gpt-4o")
+	primary, err := provider.Model("gpt-4o")
 	if err != nil {
 		log.Fatal(err)
 	}
-	backup, err := provider.GetModel("gpt-4o-mini")
+	backup, err := provider.Model("gpt-4o-mini")
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -18,8 +18,8 @@ import (
 // items in output_item.done and the terminal event are converted from the
 // accumulated blocks — the same code path as the blocking response — so the
 // two paths cannot drift.
-func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.TResponseStreamEvent, error) bool) {
-	emit := func(ev agents.TResponseStreamEvent, err error) bool {
+func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool) {
+	emit := func(ev agents.ResponseStreamEvent, err error) bool {
 		if err != nil {
 			yield(nil, err)
 			return false

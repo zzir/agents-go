@@ -33,7 +33,7 @@ func (s *recordingSession) saveCount() int {
 }
 
 // cancelOnCallModel cancels the run's context and returns context.Canceled on
-// its `at`-th GetResponse call, simulating a cancel that arrives after earlier
+// its `at`-th Respond call, simulating a cancel that arrives after earlier
 // turns have already completed and persisted.
 type cancelOnCallModel struct {
 	*fakeModel
@@ -41,13 +41,13 @@ type cancelOnCallModel struct {
 	at     int
 }
 
-func (m *cancelOnCallModel) GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
+func (m *cancelOnCallModel) Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
 	if m.calls+1 == m.at {
 		m.calls++
 		m.cancel()
 		return nil, context.Canceled
 	}
-	return m.fakeModel.GetResponse(ctx, req)
+	return m.fakeModel.Respond(ctx, req)
 }
 
 // itemStats classifies stored input items for assertions.
@@ -56,7 +56,7 @@ type itemStats struct {
 	callIDs, outputIDs                map[string]bool
 }
 
-func classify(items []TResponseInputItem) itemStats {
+func classify(items []InputItem) itemStats {
 	st := itemStats{callIDs: map[string]bool{}, outputIDs: map[string]bool{}}
 	for i := range items {
 		switch {

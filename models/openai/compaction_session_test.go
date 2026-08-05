@@ -44,7 +44,7 @@ func TestResolveCompactionMode(t *testing.T) {
 }
 
 func TestCompactionCandidateCount(t *testing.T) {
-	items := []agents.TResponseInputItem{}
+	items := []agents.InputItem{}
 	items = append(items, agents.InputItemsFromText("user question")...) // user → excluded
 	items = append(items, mustInput(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi","annotations":[]}]}`))
 	items = append(items, mustInput(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`))
@@ -93,7 +93,7 @@ func TestRunCompactionReplacesHistory(t *testing.T) {
 
 	under := agents.NewInMemoryStorage("test")
 	// Seed enough candidate items to clear the threshold.
-	seed := []agents.TResponseInputItem{}
+	seed := []agents.InputItem{}
 	for range 12 {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}
@@ -133,7 +133,7 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	under := agents.NewInMemoryStorage("test")
-	_ = agents.NewSession(under).AppendItems(ctx, []agents.TResponseInputItem{
+	_ = agents.NewSession(under).AppendItems(ctx, []agents.InputItem{
 		mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`),
 	}, agents.Source{})
 	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1"},
@@ -149,7 +149,7 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	}
 }
 
-func mustInput(t *testing.T, raw string) agents.TResponseInputItem {
+func mustInput(t *testing.T, raw string) agents.InputItem {
 	t.Helper()
 	item, err := agents.UnmarshalInputItem([]byte(raw))
 	if err != nil {
@@ -194,7 +194,7 @@ func newCompactStub(t *testing.T) *httptest.Server {
 func seededCompactionSession(t *testing.T, baseURL string, n int, under agents.SessionStorage) *CompactionSession {
 	t.Helper()
 	ctx := t.Context()
-	seed := make([]agents.TResponseInputItem, 0, n)
+	seed := make([]agents.InputItem, 0, n)
 	for range n {
 		seed = append(seed, mustInput(t, `{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}`))
 	}

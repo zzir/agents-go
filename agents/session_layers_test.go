@@ -155,7 +155,7 @@ func TestReduceState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := NewItemEntries([]TResponseInputItem{callItem, paired, output}, Source{})
+	entries, err := NewItemEntries([]InputItem{callItem, paired, output}, Source{})
 	if err != nil {
 		t.Fatal(err)
 	}

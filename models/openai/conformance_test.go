@@ -44,7 +44,7 @@ func TestConformance(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
-			model, err := provider.GetModel("gpt-test")
+			model, err := provider.Model("gpt-test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,10 +54,10 @@ func TestConformance(t *testing.T) {
 }
 
 // conformanceItems synthesizes the turn's output items in canonical form.
-func conformanceItems(t *testing.T, turn conformancetest.TurnSpec) []agents.TResponseOutputItem {
+func conformanceItems(t *testing.T, turn conformancetest.TurnSpec) []agents.OutputItem {
 	t.Helper()
-	var items []agents.TResponseOutputItem
-	add := func(item agents.TResponseOutputItem, err error) {
+	var items []agents.OutputItem
+	add := func(item agents.OutputItem, err error) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,8 +124,8 @@ func writeConformanceResponse(t *testing.T, w http.ResponseWriter, turn conforma
 func writeConformanceStream(t *testing.T, w http.ResponseWriter, turn conformancetest.TurnSpec) {
 	t.Helper()
 	items := conformanceItems(t, turn)
-	var events []agents.TResponseStreamEvent
-	add := func(ev agents.TResponseStreamEvent, err error) {
+	var events []agents.ResponseStreamEvent
+	add := func(ev agents.ResponseStreamEvent, err error) {
 		if err != nil {
 			t.Fatal(err)
 		}

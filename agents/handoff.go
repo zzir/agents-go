@@ -12,7 +12,7 @@ import (
 // model input items, up to and including the handoff. A common use is to trim
 // earlier tool calls before delegating.
 type HandoffInputData struct {
-	InputHistory []TResponseInputItem
+	InputHistory []InputItem
 }
 
 // Handoff represents the ability for one agent to delegate a run to another

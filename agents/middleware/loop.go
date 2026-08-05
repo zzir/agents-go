@@ -94,7 +94,7 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 				yield(nil, fmt.Errorf("middleware: carrying attempt %d forward: %w", attempt, ierr))
 				return
 			}
-			input = make([]agents.TResponseInputItem, 0, len(prior)+1)
+			input = make([]agents.InputItem, 0, len(prior)+1)
 			input = append(input, prior...)
 			input = append(input, agents.InputItemsFromText(ev.Feedback)...)
 		}

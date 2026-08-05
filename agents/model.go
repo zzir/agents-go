@@ -14,7 +14,7 @@ type ModelRequest struct {
 	// Prompt is the OpenAI stored-prompt configuration, if the agent set one.
 	Prompt *Prompt
 	// Input is the conversation history in OpenAI Responses input format.
-	Input []TResponseInputItem
+	Input []InputItem
 	// Settings holds the model configuration (temperature, etc).
 	Settings *ModelSettings
 	// Tools are the tools available to the model.
@@ -32,19 +32,19 @@ type ModelRequest struct {
 // Model is the interface for calling an LLM. Implementations live in provider
 // subpackages (e.g. openai).
 type Model interface {
-	// GetResponse performs a single, non-streaming model call.
-	GetResponse(ctx context.Context, req ModelRequest) (*ModelResponse, error)
+	// Respond performs a single, non-streaming model call.
+	Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error)
 
 	// StreamResponse performs a streaming model call, yielding raw Responses API
 	// stream events. The second iterator value carries any terminal error; once
 	// a non-nil error is yielded, iteration stops.
-	StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*TResponseStreamEvent, error]
+	StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error]
 }
 
 // ModelProvider looks up Models by name. The runner uses it to resolve an
 // agent's model when the agent specifies a name rather than a concrete Model.
 type ModelProvider interface {
-	// GetModel returns the model for the given name. An empty name selects the
+	// Model returns the model for the given name. An empty name selects the
 	// provider's default model.
-	GetModel(modelName string) (Model, error)
+	Model(modelName string) (Model, error)
 }

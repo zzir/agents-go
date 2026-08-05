@@ -254,7 +254,7 @@ func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
 
 // mustEntries wraps plain items as item entries for tests that exercise the
 // replace path.
-func mustEntries(t *testing.T, items []agents.TResponseInputItem) []agents.SessionEntry {
+func mustEntries(t *testing.T, items []agents.InputItem) []agents.SessionEntry {
 	t.Helper()
 	entries, err := agents.NewItemEntries(items, agents.Source{})
 	if err != nil {

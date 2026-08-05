@@ -1588,7 +1588,7 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 
 | Not provided | Why |
 |---|---|
-| A built-in default model | The SDK does not guess which model you want. With none configured, `GetModel` returns a `*UserError`. |
+| A built-in default model | The SDK does not guess which model you want. With none configured, `Model` returns a `*UserError`. |
 | Implicit model-parameter injection (e.g. reasoning defaults for a model family) | Explicit beats implicit. Set `ModelSettings` yourself. |
 | A free-form request passthrough dict | `ExtraBody` / `ExtraHeaders` / `ExtraQuery` cover it, and they are typed. |
 | Redis / encrypted session backends | Implement the session storage interface. The SDK ships in-memory, JSONL and SQL. |
@@ -1617,17 +1617,13 @@ Defaults that callers may depend on:
 
 These have been discussed and settled. Read the rationale before reopening.
 
-**A decision is only as good as the reason recorded under it.** Some entries
-here were settled early, when the SDK was still a port, and their stated reason
-is a fact about the Python SDK rather than about this one. Those are marked
-**🔁 reason under review** — the decision still stands and the code still
-matches it, but the *justification* is not load-bearing, so a proposal to change
-one should be weighed on its own merits instead of being closed by citation.
-Anything unmarked has a reason that stands on its own.
-
-When re-deciding a marked entry, replace the citation with a reason that would
-convince someone who had never seen the Python SDK — or change the decision.
-Either way, drop the mark in the same change.
+**A decision is only as good as the reason recorded under it.** Entries whose
+stated reason is a citation of another codebase rather than a property of this
+one get marked **🔁 reason under review**: the decision stands, but it may not
+be closed by citation — re-deciding one means replacing the citation with a
+reason that stands on its own, or changing the decision, and dropping the mark
+in the same change. Every entry below currently carries its own reason; the
+mark is the mechanism for the next time one does not.
 
 ### 5.1 Handoffs stay; graph orchestration does not replace them
 
@@ -1637,29 +1633,30 @@ history folding; the equivalent in a graph model takes a lot of glue. Graph
 orchestration, if it ever arrives, belongs *above* handoffs — serving task
 orchestration, not replacing agent switching.
 
-### 5.2 Type names stay 🔁 reason under review
+### 5.2 Names describe the thing, and renames are batched
 
-`RunItem`, `RunResult`, `RunContext` and friends came from the Python SDK, but
-they read fine as Go. Renaming buys nothing except "looks less like Python" and
-breaks every caller.
+A name earns a rename only when it misdescribes or violates a Go rule — never
+to "look less like Python". `RunItem`, `RunResult`, `RunContext` and friends
+read fine as Go and stay. What did not, and was renamed in the pre-v0.2
+breaking batch:
 
-**Under review**, because "looks less like Python" is not the only thing at
-stake and this entry has been used to close cases where it was not the point:
+- `Get`-prefixed methods: `Model.GetResponse` → `Respond` (an action, so a
+  verb), `ModelProvider.GetModel` → `Model` (a lookup, so the accessor form).
+  The Instructions/Prompt family's `Get` methods were removed with the
+  func-type change ([§5.3](#53-instructions-and-prompt-both-stay-both-are-func-types)).
+- The `T`-prefixed aliases spelled a Python `TypeAlias` convention with no Go
+  counterpart: `TResponseInputItem` → `InputItem`, `TResponseOutputItem` →
+  `OutputItem`, `TResponseStreamEvent` → `ResponseStreamEvent` (the run-level
+  event interface already owns the bare `StreamEvent` name).
+- `AgentsError` stuttered; resolved by deletion in the error rework
+  ([§2.10](#210-errors-and-recovery-)).
+- `FunctionTool` → `Tool`: with the interface gone there is only one kind of
+  tool, and the qualifier distinguished nothing.
 
-- `Get`-prefixed methods (`Model.GetResponse`, `ModelProvider.GetModel`) are
-  direct transliterations of `get_*`. Go accessors do not carry the prefix,
-  and this is a rule about Go, not about Python. (The Instructions/Prompt
-  family's `Get` methods were removed with the func-type change,
-  [§5.3](#53-instructions-and-prompt-both-stay-both-are-func-types).)
-- The `T`-prefixed aliases (`TResponseInputItem` and friends) spell a Python
-  `TypeAlias` convention that has no Go counterpart. [§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)
-  already schedules them for the next breaking window.
-- ~~`AgentsError` stutters (`agents.AgentsError`) and carries a `nolint`
-  admitting it.~~ Resolved by deletion: the error rework
-  ([§2.10](#210-errors-and-recovery-)) removed the base type entirely.
-
-The rule that survives is the second half: **a rename is a breaking change and
-is batched**, not taken piecemeal. The window in §5.5b is where these belong.
+The rule that survives for the future: **a rename is a breaking change and is
+batched into a window users absorb once** — this batch rode the v0.2 window
+alongside the structural collapses; the next one is the openai-go v4 bump
+([§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)).
 
 ### 5.3 `Instructions` and `Prompt` both stay; both are func types
 
@@ -1698,7 +1695,7 @@ strict schemas all survive round-trips. The cost is that non-LLM entries need a
 
 ### 5.5b The wire types couple our compatibility to openai-go's
 
-§5.5's zero-conversion choice has a price with a name: `TResponseInputItem` and
+§5.5's zero-conversion choice has a price with a name: `InputItem` and
 friends are **type aliases of `openai-go/v3` union types**, and they appear in
 nearly every exported signature. A major-version bump of openai-go (v3→v4) is
 therefore a breaking change of this SDK's **entire API surface**, whatever else
@@ -1712,9 +1709,10 @@ This is accepted, not overlooked:
 - The major version is pinned in `go.mod`; nothing forces a bump on users
   until we take one deliberately.
 - **When a bump does come, it is the merge window** for every other
-  API-surface change on the shelf — e.g. renaming the Python-inherited
-  `T`-prefixed aliases (§5.2 does not protect names whose surface is breaking
-  anyway) — so users absorb one deprecation cycle (§5.8), not two.
+  API-surface change on the shelf, so users absorb one deprecation cycle
+  (§5.8), not two. (The `T`-prefix renames once parked here were taken in the
+  pre-v0.2 batch instead — that window was already breaking these exact
+  signatures.)
 
 ### 5.6 Background work runs in-process, not in isolated processes
 
@@ -1932,7 +1930,7 @@ and anything else fails with `sandbox.ErrOutsideWorkDir` — an explicit
 Some backends accept **only** streaming requests — the ChatGPT Codex backend
 (`chatgpt.com/backend-api/codex`) rejects a non-streaming POST with 400. The
 adaptation is `NewStreamOnlyModel` / `NewStreamOnlyProvider`: a
-provider-agnostic decorator whose `GetResponse` runs the request as an
+provider-agnostic decorator whose `Respond` runs the request as an
 internal `StreamResponse` and assembles the final `ModelResponse` from the
 terminal event; `StreamResponse` passes through untouched.
 
@@ -1945,7 +1943,7 @@ cannot drift; like that path, the assembled response carries no `RequestID`
 and treats a length-truncated `response.incomplete` as an arrived (not
 failed) response. Compose it **innermost**, directly on the backend it
 adapts: decorators above it (retry, fallback, routing) then see a severed
-stream as an ordinary `GetResponse` error and handle it normally.
+stream as an ordinary `Respond` error and handle it normally.
 
 ### 5.16 A severed stream retries only before output, with the preamble held back
 
