@@ -110,7 +110,7 @@ func TestRecovery_RepairedSessionRunsAgain(t *testing.T) {
 		Conversation: ConversationOptions{Session: sess},
 	})
 	if err != nil {
-		t.Fatalf("the repaired sess could not be run: %v", err)
+		t.Fatalf("the repaired session could not be run: %v", err)
 	}
 	if res.FinalOutputString() != "carrying on" {
 		t.Errorf("final = %q", res.FinalOutputString())

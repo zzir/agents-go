@@ -270,7 +270,7 @@ func TestUnknownItem_SurvivesSessionRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(again) != raw {
-		t.Errorf("sess round-trip changed the bytes:\n got %s\nwant %s", again, raw)
+		t.Errorf("session round-trip changed the bytes:\n got %s\nwant %s", again, raw)
 	}
 
 	// Malformed JSON with no type is still an error, not an opaque blob.
@@ -307,7 +307,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 	if _, err := RunSync(context.Background(), &Agent{Name: "a", ModelImpl: next}, "again", RunOptions{
 		Conversation: ConversationOptions{Session: session.NewSession(sess)},
 	}); err != nil {
-		t.Fatalf("reloading a sess holding an unknown item failed: %v", err)
+		t.Fatalf("reloading a session holding an unknown item failed: %v", err)
 	}
 	sent, err := json.Marshal(next.lastReq.Input)
 	if err != nil {

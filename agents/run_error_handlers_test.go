@@ -422,11 +422,11 @@ func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
 	}
 	// user input + model message + synthesized fallback message
 	if len(items) != 3 {
-		t.Fatalf("sess items = %d, want 3", len(items))
+		t.Fatalf("session items = %d, want 3", len(items))
 	}
 	last := items[len(items)-1]
 	if last.OfOutputMessage == nil {
-		t.Fatalf("last sess item is not an output message: %+v", last)
+		t.Fatalf("last session item is not an output message: %+v", last)
 	}
 }
 
@@ -456,10 +456,10 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 	}
 	// user input + turn-1 tool call + tool output + synthesized message
 	if len(items) != 4 {
-		t.Fatalf("sess items = %d, want 4", len(items))
+		t.Fatalf("session items = %d, want 4", len(items))
 	}
 	if items[len(items)-1].OfOutputMessage == nil {
-		t.Fatalf("last sess item is not the synthesized message: %+v", items[len(items)-1])
+		t.Fatalf("last session item is not the synthesized message: %+v", items[len(items)-1])
 	}
 }
 

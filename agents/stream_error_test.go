@@ -202,7 +202,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 		tripped(t, err)
 
 		if items, _ := sess.ContextItems(context.Background(), session.Cursor{}); len(items) != 0 {
-			t.Errorf("sess has %d orphan items, want 0", len(items))
+			t.Errorf("session has %d orphan items, want 0", len(items))
 		}
 		if model.calls != 0 {
 			t.Errorf("model was called %d times, want 0", model.calls)
@@ -222,7 +222,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 
 		items, _ := sess.ContextItems(context.Background(), session.Cursor{})
 		if len(items) != 1 {
-			t.Errorf("sess has %d items, want the 1 user input", len(items))
+			t.Errorf("session has %d items, want the 1 user input", len(items))
 		}
 	})
 

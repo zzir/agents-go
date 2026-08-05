@@ -74,7 +74,7 @@ most from a naive "list of messages".
 | Layer | Type | Knows about |
 |---|---|---|
 | Storage | `session.Storage` | Reading and writing entries. Nothing about meaning. |
-| Semantics | `Session` (a struct, not an interface) | Turning entries into what the model reads. |
+| Semantics | `session.Session` (a struct, not an interface) | Turning entries into what the model reads. |
 | Projection | `session.Projector` | Which entry kinds reach the model at all. |
 
 A session stores **entries**, not bare items. An entry carries the item plus

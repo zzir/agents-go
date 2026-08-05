@@ -53,7 +53,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !itemsContain(seen, "MARKER_FROM_HISTORY") {
-		t.Errorf("TurnInput is missing the sess history that was sent to the model; got %d items", len(seen))
+		t.Errorf("TurnInput is missing the session history that was sent to the model; got %d items", len(seen))
 	}
 	if !itemsContain(seen, "new question") {
 		t.Error("TurnInput is missing the run's new input")

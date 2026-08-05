@@ -319,7 +319,7 @@ func TestInMemorySession(t *testing.T) {
 	}
 	items, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
 	if len(items) < 2 {
-		t.Fatalf("sess should have user input + assistant msg, got %d", len(items))
+		t.Fatalf("session should have user input + assistant msg, got %d", len(items))
 	}
 
 	// Second run: history must be prepended to the model input.
