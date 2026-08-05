@@ -156,9 +156,12 @@ Beyond its payload, every item reports two things:
 - **`Source` — who produced it.** The zero value is the model.
   `IsExternal()` separates what came from outside the SDK (the model, the
   caller) from what the runner synthesized (a tool output, a handoff
-  acknowledgement, an error handler's fallback). The runner uses it to decide
-  whether history ends on a local item; a context provider uses it to avoid
-  re-ingesting its own injections.
+  acknowledgement, an error handler's fallback). A context provider uses it to
+  avoid re-ingesting its own injections, and the runner reads it to find the
+  last model-produced item — the frontier of what a server-side response chain
+  can hold ([§2.5f](#25f-compaction-)). It does not settle that question on its
+  own: input the caller injected after the last model call is external and is
+  still off the chain.
 
   This replaced a sentinel response id (`__fake_id__`) stamped on synthesized
   items, which every consumer that cared had to know and string-compare.
@@ -744,6 +747,26 @@ checkpoint costs one recomputed pass; a stolen one is a cross-session leak.
 
 The one path that still rewrites is `openai.CompactionSession`, because the
 server's compact API returns a replacement rather than a decision.
+
+**A rewrite built from the response chain never deletes what that chain never
+saw.** A run with a local `Session` resends its whole input every turn
+(`UsePreviousResponseID` refuses to combine with one), so the last response
+holds everything that stood in front of the model when it answered — its own
+output, and every tool output, handoff acknowledgement and steer before it.
+Those are on the chain, and a summary that folds them away read them first.
+What the chain cannot hold is what came AFTER: a terminating tool's output, an
+error handler's fallback message, input injected past the last model call. The
+runner reports whether any exist as `CompactionArgs.OffChainItems`, decided by
+POSITION — everything after the last model-produced item — and not by
+provenance, since a steer taken after the final output is external and yet
+reached no model call. `openai.CompactionSession` answers it by compacting from
+the stored items instead of `previous_response_id`: the same conversation,
+minus the deletion. A caller who PINNED `CompactionModePreviousResponseID` gets
+the pass skipped and `abandoned: off_chain_items` on the span instead, because
+the mode is the one thing they configured and compaction can always afford to
+wait. **The runner does not decide this by skipping the pass.** It used to, and
+that took the decision away from a storage with no chain to be wrong about: an
+agent that always finishes through a terminating tool never compacted at all.
 
 **That rewrite is guarded by the sequence number it read.** Reading the history
 and writing the replacement are separated by a network round trip, and an entry

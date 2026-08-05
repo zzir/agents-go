@@ -142,11 +142,13 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 // history via responses.compact when the decision hook (or args.Force) says so,
 // replacing the underlying session's items with the compacted output.
 //
-// A nil error does not promise the history was replaced: the pass is abandoned
+// A nil error does not promise the history was replaced. The pass is abandoned
 // when something was appended while the compact call was in flight, since the
-// replacement no longer covers the whole log (the reason is recorded on the
-// compaction span as "abandoned"). A caller that needs to know whether the pass
-// landed compares the entries before and after, as the overflow path does.
+// replacement no longer covers the whole log, and before the call at all when
+// the caller pinned previous_response_id for a log holding items that chain
+// never saw (both are recorded on the compaction span as "abandoned"). A caller
+// that needs to know whether the pass landed compares the entries before and
+// after, as the overflow path does.
 func (s *CompactionSession) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	all, err := s.underlying.Entries(ctx, session.Cursor{})
 	if err != nil {
@@ -189,7 +191,18 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	}
 	span.Set("before_items", len(items))
 
-	mode := resolveCompactionMode(s.mode, args.ResponseID, args.Store)
+	mode, ok := resolveCompactionMode(s.mode, args)
+	if !ok {
+		// The caller pinned previous_response_id and the log holds items that
+		// chain never saw. Compacting anyway would replace them with a summary
+		// written without them; switching modes behind the caller's back would
+		// ignore the one thing they configured. Skipping is what compaction can
+		// always afford — the next pass starts from the history as it then
+		// stands — and the span says so rather than leaving a pinned mode
+		// looking silently broken.
+		span.Set("abandoned", "off_chain_items")
+		return nil
+	}
 	params := responses.ResponseCompactParams{Model: responses.ResponseCompactParamsModel(s.model)}
 	if mode == CompactionModePreviousResponseID {
 		if args.ResponseID == "" {
@@ -338,17 +351,34 @@ func (s *CompactionSession) ReplaceEntriesIf(ctx context.Context, expect int64, 
 // resolveCompactionMode decides how to feed the compaction call: under "auto",
 // use the full input when the last response is unstored or has no id, otherwise
 // chain from previous_response_id.
-func resolveCompactionMode(mode CompactionMode, responseID string, store *bool) CompactionMode {
-	if mode != CompactionModeAuto {
-		return mode
+//
+// Items the chain cannot hold (CompactionArgs.OffChainItems) rule
+// previous_response_id out either way, because the replacement it produces is
+// built from that chain and this rewrite REPLACES the log with it: what the
+// chain never saw would be deleted having never been read. Under "auto" the
+// answer is the input mode — the items handed to the compact call are exactly
+// the ones the replacement stands in for, which is the mode's own semantics —
+// and ok=true. A caller who pinned previous_response_id gets ok=false instead:
+// the pass is theirs to skip, not this function's to silently redirect.
+func resolveCompactionMode(configured CompactionMode, args session.CompactionArgs) (mode CompactionMode, ok bool) {
+	mode = configured
+	if mode == CompactionModeAuto {
+		switch {
+		case args.Store != nil && !*args.Store:
+			mode = CompactionModeInput
+		case args.ResponseID == "":
+			mode = CompactionModeInput
+		default:
+			mode = CompactionModePreviousResponseID
+		}
 	}
-	if store != nil && !*store {
-		return CompactionModeInput
+	if mode == CompactionModePreviousResponseID && args.OffChainItems {
+		if configured == CompactionModePreviousResponseID {
+			return mode, false
+		}
+		return CompactionModeInput, true
 	}
-	if responseID == "" {
-		return CompactionModeInput
-	}
-	return CompactionModePreviousResponseID
+	return mode, true
 }
 
 // compactionCandidateCount counts items eligible for compaction, excluding user

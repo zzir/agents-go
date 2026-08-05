@@ -150,8 +150,8 @@ func TestSource_PropagatesThroughARun(t *testing.T) {
 }
 
 // An error handler's fallback message is the SDK's, not the model's — which is
-// exactly what endsWithLocalItem needs to know, and what the sentinel id used
-// to encode.
+// what hasOffChainItems reads to find the last item a response chain can hold,
+// and what the sentinel id used to encode.
 func TestSource_ErrorHandlerFallback(t *testing.T) {
 	loop := NewTool("loop", "loops",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })

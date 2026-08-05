@@ -30,17 +30,32 @@ func TestIsOpenAIModelName(t *testing.T) {
 func TestResolveCompactionMode(t *testing.T) {
 	f := false
 	tr := true
-	if m := resolveCompactionMode(CompactionModeAuto, "resp_1", &tr); m != CompactionModePreviousResponseID {
-		t.Errorf("auto+stored = %v", m)
+	stored := session.CompactionArgs{ResponseID: "resp_1", Store: &tr}
+	if m, ok := resolveCompactionMode(CompactionModeAuto, stored); m != CompactionModePreviousResponseID || !ok {
+		t.Errorf("auto+stored = %v, %v", m, ok)
 	}
-	if m := resolveCompactionMode(CompactionModeAuto, "resp_1", &f); m != CompactionModeInput {
-		t.Errorf("auto+unstored = %v", m)
+	if m, ok := resolveCompactionMode(CompactionModeAuto, session.CompactionArgs{ResponseID: "resp_1", Store: &f}); m != CompactionModeInput || !ok {
+		t.Errorf("auto+unstored = %v, %v", m, ok)
 	}
-	if m := resolveCompactionMode(CompactionModeAuto, "", nil); m != CompactionModeInput {
-		t.Errorf("auto+no-id = %v", m)
+	if m, ok := resolveCompactionMode(CompactionModeAuto, session.CompactionArgs{}); m != CompactionModeInput || !ok {
+		t.Errorf("auto+no-id = %v, %v", m, ok)
 	}
-	if m := resolveCompactionMode(CompactionModeInput, "resp_1", &tr); m != CompactionModeInput {
-		t.Errorf("explicit mode should be preserved, got %v", m)
+	if m, ok := resolveCompactionMode(CompactionModeInput, stored); m != CompactionModeInput || !ok {
+		t.Errorf("explicit mode should be preserved, got %v, %v", m, ok)
+	}
+
+	// Items the chain cannot hold rule previous_response_id out: under auto the
+	// compact call takes the stored items instead, and a caller who pinned the
+	// chain mode has their pass skipped rather than silently redirected.
+	offChain := session.CompactionArgs{ResponseID: "resp_1", Store: &tr, OffChainItems: true}
+	if m, ok := resolveCompactionMode(CompactionModeAuto, offChain); m != CompactionModeInput || !ok {
+		t.Errorf("auto+off-chain = %v, %v; want input, true", m, ok)
+	}
+	if _, ok := resolveCompactionMode(CompactionModePreviousResponseID, offChain); ok {
+		t.Error("pinned previous_response_id + off-chain items should skip the pass")
+	}
+	if m, ok := resolveCompactionMode(CompactionModeInput, offChain); m != CompactionModeInput || !ok {
+		t.Errorf("input mode is already safe for off-chain items, got %v, %v", m, ok)
 	}
 }
 
@@ -147,6 +162,123 @@ func TestRunCompactionBelowThreshold(t *testing.T) {
 	}
 	if called {
 		t.Error("responses.compact should not be called below the threshold")
+	}
+}
+
+// recordingCompactStub is newCompactStub that also keeps every request body, so
+// a test can say HOW the conversation was handed to responses.compact.
+func recordingCompactStub(t *testing.T, bodies *[]map[string]any) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		*bodies = append(*bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "resp_compacted", "created_at": 0, "object": "response.compaction",
+			"output": []any{map[string]any{
+				"type": "message", "role": "assistant", "id": "msg_c", "status": "completed",
+				"content": []any{map[string]any{"type": "output_text", "text": "summary", "annotations": []any{}}},
+			}},
+			"usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// seedOffChainLog builds a history whose last item is one the server's chain
+// cannot hold — a tool output produced after the last model response, which is
+// what CompactionArgs.OffChainItems reports.
+func seedOffChainLog(t *testing.T, under session.Storage) {
+	t.Helper()
+	s := session.NewSession(under)
+	if err := s.AppendItems(t.Context(), []agents.InputItem{
+		mustInput(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"calling","annotations":[]}]}`),
+		mustInput(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`),
+	}, agents.Source{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendItems(t.Context(), []agents.InputItem{
+		mustInput(t, `{"type":"function_call_output","call_id":"c1","output":"only-in-the-log"}`),
+	}, agents.Source{Type: agents.SourceTool}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Under "auto", a log holding items the chain never saw is compacted from the
+// stored history instead. previous_response_id would replace those items with a
+// summary written without them — deleted having never been read — while the
+// input mode hands the compact call exactly what its answer stands in for.
+func TestRunCompactionOffChainItemsCompactFromStoredHistory(t *testing.T) {
+	ctx := t.Context()
+	var bodies []map[string]any
+	srv := recordingCompactStub(t, &bodies)
+
+	under := session.NewInMemoryStorage("test")
+	seedOffChainLog(t, under)
+	sess, err := NewCompactionSession(under, CompactionOptions{Model: "gpt-4.1", Threshold: 1},
+		option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sess.RunCompaction(ctx, session.CompactionArgs{ResponseID: "resp_1", OffChainItems: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("compact calls = %d, want 1", len(bodies))
+	}
+	if id, ok := bodies[0]["previous_response_id"]; ok {
+		t.Errorf("compacted from the chain (%v) while the log held items it cannot show", id)
+	}
+	sent, _ := json.Marshal(bodies[0]["input"])
+	if !contains(string(sent), "only-in-the-log") {
+		t.Errorf("the off-chain item never reached the compact call: %s", sent)
+	}
+}
+
+// A caller who pinned previous_response_id gets the pass SKIPPED rather than
+// silently switched: the mode is the one thing they configured, and compaction
+// is housekeeping that can always afford to wait.
+func TestRunCompactionPinnedChainModeSkipsOffChainItems(t *testing.T) {
+	ctx := t.Context()
+	var bodies []map[string]any
+	srv := recordingCompactStub(t, &bodies)
+
+	under := session.NewInMemoryStorage("test")
+	seedOffChainLog(t, under)
+	sess, err := NewCompactionSession(under,
+		CompactionOptions{Model: "gpt-4.1", Threshold: 1, Mode: CompactionModePreviousResponseID},
+		option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	span := &tracing.SpanHandle{Span: &tracing.Span{Data: map[string]any{}}}
+	err = sess.RunCompaction(ctx, session.CompactionArgs{
+		ResponseID:    "resp_1",
+		OffChainItems: true,
+		StartSpan:     func() *tracing.SpanHandle { return span },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 0 {
+		t.Errorf("compact calls = %d, want 0 — the pinned mode cannot see those items", len(bodies))
+	}
+	if got := span.Span.Data["abandoned"]; got != "off_chain_items" {
+		t.Errorf("span abandoned = %v, want off_chain_items", got)
+	}
+	items, err := session.NewSession(under).ContextItems(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Errorf("history len = %d, want 3 — a skipped pass rewrites nothing", len(items))
 	}
 }
 

@@ -204,6 +204,19 @@ type CompactionArgs struct {
 	Store *bool
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
+	// OffChainItems reports that the stored history holds items the
+	// server-side chain rooted at ResponseID cannot know about: whatever the
+	// run produced AFTER that response — a terminating tool's output, an error
+	// handler's fallback message, input injected past the last model call.
+	//
+	// A storage that answers by REPLACING the log with something built from
+	// that chain must not do so while this is set: the replacement would delete
+	// those items, and unlike the ones it summarized, nothing ever read them.
+	// Compacting from the stored history instead is always safe, since that is
+	// exactly what the replacement stands in for. False says the chain covers
+	// the whole log, which is the assumption a storage that ignores this field
+	// keeps making.
+	OffChainItems bool
 	// StartSpan, when non-nil, opens a compaction tracing span. Implementations
 	// call it right before actually compacting (not on the no-op path, so
 	// traces only show passes that did work) and may annotate the returned

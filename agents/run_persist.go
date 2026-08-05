@@ -133,15 +133,6 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	if r.checkpointAfterRun(ctx) {
 		return
 	}
-	// Items produced locally AFTER the last model response — a final turn's
-	// tool/handoff outputs (a terminating tool, rejected calls) or a synthesized
-	// error-handler fallback message — are not on the server's
-	// previous_response_id chain, so compacting from lastResponseID would
-	// erase them from the stored history. With one compaction per run, ending
-	// on such a turn means skipping it.
-	if endsWithLocalItem(r.sessionItems) {
-		return
-	}
 	if cs, ok := r.opts.Conversation.Session.Storage().(session.CompactionAware); ok {
 		// The span starts lazily — only when the session actually compacts —
 		// so no-op passes don't clutter the trace.
@@ -149,6 +140,13 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
 			ResponseID: r.lastResponseID,
 			Store:      r.lastStore,
+			// Whether anything in the log postdates that response. The storage
+			// decides what to do about it: a chain-based one compacts from the
+			// stored history instead, one that never looks at a chain ignores
+			// it. Deciding here — by skipping the pass — was wrong in both
+			// directions: it starved a storage that had no chain to be wrong
+			// about, and it missed the items that actually get erased.
+			OffChainItems: hasOffChainItems(r.sessionItems),
 			StartSpan: func() *tracing.SpanHandle {
 				cspan = r.trace.StartCompactionSpan(r.agentParentID())
 				return cspan
@@ -168,21 +166,32 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	}
 }
 
-// endsWithLocalItem reports whether the run's last item was produced locally
-// by the SDK rather than returned by the model: a tool/handoff output, or an
-// error-handler's synthesized fallback message (marked with the fake response
-// id). Such items postdate the last model response and are absent from the
-// server-side response chain that previous_response_id compaction replays.
-func endsWithLocalItem(items []*RunItem) bool {
-	if len(items) == 0 {
-		return false
+// hasOffChainItems reports whether the run's items include any the server-side
+// response chain cannot hold — what a storage compacting from lastResponseID
+// would delete without ever having read.
+//
+// A run with a local Session resends its whole input every turn
+// (UsePreviousResponseID refuses to combine with one), so the last response
+// holds everything that stood in front of the model when it answered: its own
+// output, and every tool output, handoff acknowledgement and steer that came
+// before it. Those are on the chain, and a summary that folds them away read
+// them first. What the chain cannot hold is what came AFTER — a terminating
+// tool's output, an error handler's fallback message, input injected past the
+// last model call. Position is the whole question, which is why this counts
+// from the last model item rather than asking each item where it came from.
+//
+// It answers by provenance in one direction only: SourceModel marks the frontier
+// because nothing else can. Provenance alone cannot answer the question — a
+// steer taken after the final output is external (the caller wrote it) and yet
+// reached no model call, which is exactly the item the old last-item-is-local
+// test let through.
+func hasOffChainItems(items []*RunItem) bool {
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Source.Type == SourceModel {
+			return i != len(items)-1
+		}
 	}
-	// Anything the runner synthesized — a tool output, a handoff
-	// acknowledgement, an error handler's fallback message — is local. The
-	// model's own output and the caller's input are not.
-	//
-	// This used to be a type switch that string-compared a sentinel id on
-	// messages and re-derived the answer from a kind string on restored items;
-	// provenance answers it directly, and correctly for item types added later.
-	return !items[len(items)-1].Source.IsExternal()
+	// No model output at all, so nothing anchors these items to a response and
+	// none of them can be on its chain.
+	return len(items) > 0
 }
