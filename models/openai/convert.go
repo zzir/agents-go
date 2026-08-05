@@ -4,8 +4,6 @@
 package openai
 
 import (
-	"fmt"
-
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
@@ -18,22 +16,15 @@ import (
 // executes locally (handoffs are modeled as function tools too), so the
 // conversion only emits function-tool params. The SDK has no provider-hosted
 // tool types.
-func convertTools(tools []agents.Tool, handoffs []agents.Handoff) ([]responses.ToolUnionParam, error) {
+func convertTools(tools []*agents.FunctionTool, handoffs []agents.Handoff) []responses.ToolUnionParam {
 	out := make([]responses.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {
-		// Through ToolAs, not a bare assertion: a decorated tool (approval,
-		// timeout, guardrails) still has to reach the model with the same
-		// name and schema as the tool underneath it.
-		d, ok := agents.ToolAs[agents.DescribableTool](t)
-		if !ok {
-			return nil, fmt.Errorf("openai: unsupported tool type %T (only function tools are supported)", t)
-		}
-		out = append(out, functionToolParam(t.ToolName(), d.ToolDescription(), d.ToolParamsSchema(), d.ToolStrict()))
+		out = append(out, functionToolParam(t.Name, t.Description, t.ParamsJSONSchema, t.Strict))
 	}
 	for _, h := range handoffs {
 		out = append(out, functionToolParam(h.ToolName, h.ToolDescription, h.InputJSONSchema, !h.NonStrictSchema))
 	}
-	return out, nil
+	return out
 }
 
 func functionToolParam(name, description string, schema map[string]any, strict bool) responses.ToolUnionParam {

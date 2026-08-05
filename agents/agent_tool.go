@@ -109,7 +109,7 @@ type agentToolInput struct {
 // model settings, run-level guardrails and tracer from the run context, so the
 // sub-agent need not set its own model when the parent supplies a provider.
 // For a custom argument schema, use AgentAsTool.
-func (a *Agent) AsTool(cfg AgentToolConfig) Tool {
+func (a *Agent) AsTool(cfg AgentToolConfig) *FunctionTool {
 	schema, err := SchemaFor[agentToolInput](true)
 	if err != nil {
 		// agentToolInput is a fixed struct; its schema cannot fail to reflect.
@@ -124,7 +124,7 @@ func (a *Agent) AsTool(cfg AgentToolConfig) Tool {
 // (preamble + JSON + schema summary; see DefaultAgentToolInputBuilder) or
 // cfg.InputBuilder. It mirrors Python's as_tool(parameters=...). A free
 // function because Go methods cannot take type parameters.
-func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) Tool {
+func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *FunctionTool {
 	name := cfg.Name
 	if name == "" {
 		name = transformToolName(a.Name)
@@ -148,7 +148,7 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) Tool {
 // agentTool builds the FunctionTool shared by AsTool and AgentAsTool.
 // validate, when non-nil, type-checks the raw arguments (AgentAsTool's Params
 // decode); nil falls back to the default {"input": string} handling.
-func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) Tool {
+func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *FunctionTool {
 	name := cfg.Name
 	if name == "" {
 		name = transformToolName(a.Name)

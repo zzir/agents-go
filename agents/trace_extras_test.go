@@ -60,7 +60,7 @@ func TestNestedAgentToolSpanParentedUnderFunctionSpan(t *testing.T) {
 			modelResp(functionCallOutput(t, "ask_sub", "call-1", `{"input":"hi"}`)),
 			modelResp(messageOutput(t, "parent done")),
 		}},
-		Tools: []Tool{tool},
+		Tools: []*FunctionTool{tool},
 	}
 	proc := &recordingProcessor{}
 	if _, err := RunSync(context.Background(), parent, "go", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {

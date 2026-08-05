@@ -19,7 +19,7 @@ import (
 // the nested fields carry the surfaced interruptions and the paused nested
 // state (keyed by this call's id) so the parent run can pause and later resume.
 type functionToolResult struct {
-	tool                Tool
+	tool                *FunctionTool
 	outputItem          *ToolCallOutputItem
 	output              any
 	callID              string
@@ -157,7 +157,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				RecordDiagnostic(ctx, DiagToolPanic, perr, map[string]any{
 					"tool": run.Call.Name, "call_id": run.Call.CallID,
 				})
-				if !toolHandlesFailure(run.Tool) {
+				if run.Tool.FailureErrorFunction == nil {
 					err = perr.fatalError()
 					return
 				}
@@ -249,7 +249,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 				}
 				span.Finish()
 				// Without a FailureErrorFunction the error aborts the run.
-				if !toolHandlesFailure(run.Tool) {
+				if run.Tool.FailureErrorFunction == nil {
 					// A panic recovered inside invokeTool's timeout goroutine
 					// gets its stack attached here, like the direct path above.
 					if pe, ok := errors.AsType[*toolPanicError](err); ok {
@@ -377,7 +377,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 				continue
 			}
 		}
-		needs, aerr := toolNeedsApproval(ctx, run.Tool, r.rc, run.Call.Arguments, run.Call.CallID)
+		needs, aerr := run.Tool.needsApproval(ctx, r.rc, run.Call.Arguments, run.Call.CallID)
 		if aerr != nil {
 			return nil, nil, nil, aerr
 		}
@@ -426,12 +426,12 @@ func agentApprovesToolName(agent *Agent, toolName string) bool {
 // toolGuardrails is the guardrail set consulted for one tool call: run-level
 // and agent-level guardrails first (their tool stages cover every tool), then
 // the tool's own.
-func (r *runner) toolGuardrails(agent *Agent, tool Tool) []Guardrail {
+func (r *runner) toolGuardrails(agent *Agent, tool *FunctionTool) []Guardrail {
 	runLevel := r.runGuardrails(agent)
 	if len(runLevel) == 0 {
-		return toolOwnGuardrails(tool)
+		return tool.Guardrails
 	}
-	own := toolOwnGuardrails(tool)
+	own := tool.Guardrails
 	out := make([]Guardrail, 0, len(runLevel)+len(own))
 	out = append(out, runLevel...)
 	out = append(out, own...)
@@ -472,17 +472,13 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 // result (or panic) is delivered to a buffered channel private to this call
 // and discarded — it never touches shared state. Cancellation of the caller's
 // ctx is reported as ctx.Err(), never as a timeout.
-func invokeTool(ctx context.Context, tool Tool, tc *ToolContext, argsJSON string) (ToolResult, error) {
-	invoker, ok := ToolAs[InvokableTool](tool)
-	if !ok {
-		return ToolResult{}, NewUserError("tool %q cannot be invoked", tool.ToolName())
+func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJSON string) (ToolResult, error) {
+	if tool.OnInvoke == nil {
+		return ToolResult{}, NewUserError("tool %q has no OnInvoke", tool.Name)
 	}
-	timeout := time.Duration(0)
-	if tt, ok := ToolAs[TimeoutTool](tool); ok {
-		timeout = tt.ToolTimeout()
-	}
+	timeout := tool.Timeout
 	if timeout <= 0 {
-		return invoker.Invoke(ctx, tc, argsJSON)
+		return tool.OnInvoke(ctx, tc, argsJSON)
 	}
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -500,17 +496,17 @@ func invokeTool(ctx context.Context, tool Tool, tc *ToolContext, argsJSON string
 		// error on the tool's normal error path.
 		defer func() {
 			if p := recover(); p != nil {
-				ch <- invokeOutcome{err: newToolPanicError(tool.ToolName(), p)}
+				ch <- invokeOutcome{err: newToolPanicError(tool.Name, p)}
 			}
 		}()
-		out, err := invoker.Invoke(tctx, tc, argsJSON)
+		out, err := tool.OnInvoke(tctx, tc, argsJSON)
 		ch <- invokeOutcome{out: out, err: err}
 	}()
 
 	timeoutErr := func() error {
 		return &ToolTimeoutError{
-			AgentsError: AgentsError{Code: CodeToolTimeout, Message: fmt.Sprintf("tool %q timed out after %v", tool.ToolName(), timeout)},
-			ToolName:    tool.ToolName(),
+			AgentsError: AgentsError{Code: CodeToolTimeout, Message: fmt.Sprintf("tool %q timed out after %v", tool.Name, timeout)},
+			ToolName:    tool.Name,
 		}
 	}
 	select {
@@ -532,57 +528,24 @@ func invokeTool(ctx context.Context, tool Tool, tc *ToolContext, argsJSON string
 	}
 }
 
-// toolOwnGuardrails returns whatever guardrails a tool declares, from a field
-// or from a decorator — the runner does not need to know which.
-func toolOwnGuardrails(tool Tool) []Guardrail {
-	if g, ok := ToolAs[GuardedTool](tool); ok {
-		return g.ToolGuardrails()
-	}
-	return nil
-}
-
-// toolHandlesFailure reports whether a tool converts its own errors into output
-// the model can recover from. A tool that does not aborts the run.
-func toolHandlesFailure(tool Tool) bool {
-	h, ok := ToolAs[FailureHandlingTool](tool)
-	if !ok {
-		return false
-	}
-	// A FunctionTool always satisfies the interface but may have no handler
-	// installed, which is how a caller asks for fatal errors.
-	if ft, isFn := h.(*FunctionTool); isFn {
-		return ft.FailureErrorFunction != nil
-	}
-	return true
-}
-
 // toolHandleFailure invokes the tool's failure handler. The handler is user
 // code and gets the same panic protection the tool body has: one of its call
 // sites is the recovery defer itself, where an unrecovered second panic would
 // unwind straight out of the errgroup goroutine and kill the process — after
 // the deferred done() had already let the run "complete". A panicking handler
 // is reported as the fatal error it is, never re-thrown.
-func toolHandleFailure(ctx context.Context, tool Tool, tc *ToolContext, cause error) (msg string, fatal error) {
+func toolHandleFailure(ctx context.Context, tool *FunctionTool, tc *ToolContext, cause error) (msg string, fatal error) {
 	defer func() {
 		if p := recover(); p != nil {
-			perr := newToolPanicError(tool.ToolName(), p)
+			perr := newToolPanicError(tool.Name, p)
 			RecordDiagnostic(ctx, DiagToolPanic, perr, map[string]any{
-				"tool": tool.ToolName(), "source": "failure_handler",
+				"tool": tool.Name, "source": "failure_handler",
 			})
 			fatal = perr.fatalError()
 		}
 	}()
-	if h, ok := ToolAs[FailureHandlingTool](tool); ok {
-		return h.HandleToolFailure(ctx, tc, cause), nil
+	if tool.FailureErrorFunction != nil {
+		return tool.FailureErrorFunction(ctx, tc, cause), nil
 	}
 	return "", nil
-}
-
-// toolNeedsApproval asks a tool whether this specific call needs human
-// approval, from a field or a decorator.
-func toolNeedsApproval(ctx context.Context, tool Tool, rc *RunContext, argsJSON, callID string) (bool, error) {
-	if a, ok := ToolAs[ApprovalRequiredTool](tool); ok {
-		return a.NeedsToolApproval(ctx, rc, argsJSON, callID)
-	}
-	return false, nil
 }

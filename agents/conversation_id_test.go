@@ -62,7 +62,7 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 	echo := NewFunctionTool("echo", "echo", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Model: "m", Tools: []Tool{echo}}
+	agent := &Agent{Name: "a", Model: "m", Tools: []*FunctionTool{echo}}
 
 	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc"}, Model: ModelOptions{Override: model}})
 	if err != nil {
@@ -105,7 +105,7 @@ func TestPreviousResponseID(t *testing.T) {
 		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
 		modelRespID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestPreviousResponseID_Disabled(t *testing.T) {
 		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
 		modelRespID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestPreviousResponseID_Streaming(t *testing.T) {
 		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
 		modelRespID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}})
 	_, res, err := streamRun(stream)

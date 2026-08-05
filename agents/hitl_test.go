@@ -20,7 +20,7 @@ func approvalAgentAndModel(t *testing.T, ran *bool) *Agent {
 		modelResp(functionCallOutput(t, "delete_db", "call_1", `{}`)),
 		modelResp(messageOutput(t, "all done")),
 	}}
-	return &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 }
 
 func TestHITL_InterruptThenApprove(t *testing.T) {
@@ -67,7 +67,7 @@ func TestHITL_InterruptThenReject(t *testing.T) {
 		modelResp(functionCallOutput(t, "delete_db", "call_1", `{}`)),
 		modelResp(messageOutput(t, "okay, skipped")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
@@ -151,7 +151,7 @@ func TestHITL_ApproveToolsAgentLevel(t *testing.T) {
 	}}
 	agent := &Agent{
 		Name:         "a",
-		Tools:        []Tool{tool},
+		Tools:        []*FunctionTool{tool},
 		ModelImpl:    model,
 		ApproveTools: []string{"delete_db"},
 	}
@@ -191,7 +191,7 @@ func TestHITL_ApproveToolsWildcard(t *testing.T) {
 	}}
 	agent := &Agent{
 		Name:         "a",
-		Tools:        []Tool{tool},
+		Tools:        []*FunctionTool{tool},
 		ModelImpl:    model,
 		ApproveTools: []string{"*"},
 	}
@@ -227,7 +227,7 @@ func TestRun_TracingEmitsSpans(t *testing.T) {
 	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "tracer-agent", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "tracer-agent", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{Observe: ObserveOptions{Tracer: tr}})
 	if err != nil {

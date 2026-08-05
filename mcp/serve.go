@@ -36,7 +36,7 @@ func (o ServeOptions) withDefaults() ServeOptions {
 // reimplemented for each.
 //
 // The caller owns the transport; see ServeStdio for the common case.
-func NewToolServer(tools []agents.Tool, opts ServeOptions) (*mcpsdk.Server, error) {
+func NewToolServer(tools []*agents.FunctionTool, opts ServeOptions) (*mcpsdk.Server, error) {
 	opts = opts.withDefaults()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    opts.Name,
@@ -54,24 +54,19 @@ func NewToolServer(tools []agents.Tool, opts ServeOptions) (*mcpsdk.Server, erro
 }
 
 // exportTool converts one SDK tool into its MCP declaration and handler.
-func exportTool(t agents.Tool) (*mcpsdk.Tool, mcpsdk.ToolHandler, error) {
-	name := t.ToolName()
-	desc, ok := agents.ToolAs[agents.DescribableTool](t)
-	if !ok {
-		return nil, nil, fmt.Errorf("mcp: tool %q cannot describe itself and cannot be served", name)
-	}
-	inv, ok := agents.ToolAs[agents.InvokableTool](t)
-	if !ok {
-		return nil, nil, fmt.Errorf("mcp: tool %q is not invokable and cannot be served", name)
+func exportTool(t *agents.FunctionTool) (*mcpsdk.Tool, mcpsdk.ToolHandler, error) {
+	name := t.Name
+	if t.OnInvoke == nil {
+		return nil, nil, fmt.Errorf("mcp: tool %q has no OnInvoke and cannot be served", name)
 	}
 
-	schema, err := json.Marshal(desc.ToolParamsSchema())
+	schema, err := json.Marshal(t.ParamsJSONSchema)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mcp: encoding schema for tool %q: %w", name, err)
 	}
 	decl := &mcpsdk.Tool{
 		Name:        name,
-		Description: desc.ToolDescription(),
+		Description: t.Description,
 		InputSchema: json.RawMessage(schema),
 	}
 
@@ -88,7 +83,7 @@ func exportTool(t agents.Tool) (*mcpsdk.Tool, mcpsdk.ToolHandler, error) {
 			ToolName:      name,
 			ToolArguments: args,
 		}
-		res, err := inv.Invoke(ctx, tc, args)
+		res, err := t.OnInvoke(ctx, tc, args)
 		if err != nil {
 			// A tool failure is a RESULT, not a protocol error: the caller is a
 			// model, and it can act on "that path does not exist" while a

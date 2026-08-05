@@ -11,9 +11,9 @@ import (
 )
 
 // invokeTool runs a file tool and returns its string output.
-func invokeTool(t *testing.T, tool agents.Tool, args string) string {
+func invokeTool(t *testing.T, tool *agents.FunctionTool, args string) string {
 	t.Helper()
-	ft := tool.(*agents.FunctionTool)
+	ft := tool
 	out, err := ft.OnInvoke(context.Background(), &agents.ToolContext{}, args)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestFileToolErrors_NoHostPathLeak(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		tool     agents.Tool
+		tool     *agents.FunctionTool
 		args     string
 		wantKind string
 	}{
@@ -67,7 +67,7 @@ func TestFileToolErrors_IncludeRequestPath(t *testing.T) {
 func TestFileToolErrors_NoWorkDir(t *testing.T) {
 	sb := NewLocal() // no WorkDir: every file op fails with ErrNoWorkDir
 	for name, tc := range map[string]struct {
-		tool agents.Tool
+		tool *agents.FunctionTool
 		args string
 	}{
 		"read":  {ReadFileTool(sb, FileToolConfig{}), `{"path":"a.txt"}`},

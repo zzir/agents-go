@@ -93,7 +93,7 @@ func TestTruncatedResponseDoesNotPause(t *testing.T) {
 		truncated,
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -142,7 +142,7 @@ func TestResumeDoesNotReattributeUsage(t *testing.T) {
 	second.ResponseID = "resp_2"
 	second.Usage = &Usage{Requests: 1, InputTokens: 7, OutputTokens: 2, TotalTokens: 9}
 	model := &fakeModel{responses: []*ModelResponse{first, second}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 	sess := NewInMemorySession()
 
 	res, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})

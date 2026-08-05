@@ -279,7 +279,7 @@ func TestBuildFullAgentTaskDepthCap(t *testing.T) {
 
 func hasTool(b *BuildResult, name string) bool {
 	for _, tool := range b.Agent.Tools {
-		if tool.ToolName() == name {
+		if tool.Name == name {
 			return true
 		}
 	}

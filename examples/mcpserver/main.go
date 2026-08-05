@@ -43,7 +43,7 @@ func run() error {
 			return fmt.Sprintf("%.1f°F", a.Celsius*9/5+32), nil
 		})
 
-	srv, err := mcp.NewToolServer([]agents.Tool{toC}, mcp.ServeOptions{
+	srv, err := mcp.NewToolServer([]*agents.FunctionTool{toC}, mcp.ServeOptions{
 		Name:         "unit-tools",
 		Instructions: "Unit conversions.",
 	})

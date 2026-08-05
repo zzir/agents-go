@@ -17,8 +17,8 @@ func TestCodeToolForwardsNeedsApprovalFunc(t *testing.T) {
 			return true, nil
 		},
 	})
-	ft, ok := tool.(*agents.FunctionTool)
-	if !ok || ft.NeedsApprovalFunc == nil {
+	ft := tool
+	if ft.NeedsApprovalFunc == nil {
 		t.Fatal("CodeTool did not forward NeedsApprovalFunc")
 	}
 	need, err := ft.NeedsApprovalFunc(context.Background(), nil, `{"cmd":"rm -rf x"}`, "call_1")
@@ -28,7 +28,7 @@ func TestCodeToolForwardsNeedsApprovalFunc(t *testing.T) {
 
 	// Unset → the tool has no gate (nil func), i.e. never approval-gated here.
 	plain := CodeTool(NewLocal(), CodeToolConfig{})
-	if pf, ok := plain.(*agents.FunctionTool); !ok || pf.NeedsApprovalFunc != nil {
+	if plain.NeedsApprovalFunc != nil {
 		t.Fatal("unset NeedsApprovalFunc should leave the tool ungated")
 	}
 }

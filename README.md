@@ -96,7 +96,7 @@ getWeather := agents.NewFunctionTool("get_weather", "Look up the weather.",
 		return "sunny in " + args.City, nil
 	})
 
-agent := &agents.Agent{Name: "bot", Model: "gpt-4o", Tools: []agents.Tool{getWeather}}
+agent := &agents.Agent{Name: "bot", Model: "gpt-4o", Tools: []*agents.FunctionTool{getWeather}}
 ```
 
 Structured output is the same idea in reverse: `OutputType[T]()` on the agent,

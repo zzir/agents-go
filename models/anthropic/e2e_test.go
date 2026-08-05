@@ -68,7 +68,7 @@ func TestRunSyncToolLoop(t *testing.T) {
 	agent := &agents.Agent{
 		Name:  "weather-bot",
 		Model: "claude-test",
-		Tools: []agents.Tool{getWeather},
+		Tools: []*agents.FunctionTool{getWeather},
 	}
 	res, err := agents.RunSync(context.Background(), agent, "Weather in Oslo?", agents.RunOptions{
 		Model: agents.ModelOptions{

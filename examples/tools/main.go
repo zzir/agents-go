@@ -27,7 +27,7 @@ func main() {
 		Name:         "weather-bot",
 		Instructions: agents.StaticInstructions("Answer weather questions using the get_weather tool."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{getWeather},
+		Tools:        []*agents.FunctionTool{getWeather},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "上海今天天气怎么样？", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})

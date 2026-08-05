@@ -47,7 +47,7 @@ func TestGuardrailResults_ToolStagesSurfacedOnResult(t *testing.T) {
 		modelResp(functionCallOutput(t, "echo", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -95,7 +95,7 @@ func TestGuardrailResults_OneGuardrailCoversManyStages(t *testing.T) {
 		modelResp(functionCallOutput(t, "echo", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model, Guardrails: []Guardrail{scanner}}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model, Guardrails: []Guardrail{scanner}}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -147,7 +147,7 @@ func TestGuardrailResults_RunStateRoundTrip(t *testing.T) {
 	tool.NeedsApproval = true
 	agent := &Agent{
 		Name:      "a",
-		Tools:     []Tool{tool},
+		Tools:     []*FunctionTool{tool},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "delete_db", "c1", `{}`))}},
 		Guardrails: []Guardrail{{
 			Name:     "in_gr",

@@ -171,7 +171,7 @@ func TestRenderIndex(t *testing.T) {
 func TestReadFileTool(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "pdf-processing", pdfSkill)
-	tool := skills.ReadFileTool(root).(*agents.FunctionTool)
+	tool := skills.ReadFileTool(root)
 	ctx := context.Background()
 	tc := &agents.ToolContext{}
 

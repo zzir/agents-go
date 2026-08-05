@@ -63,7 +63,7 @@ func run() error {
 		Name:         "coder",
 		Instructions: agents.StaticInstructions("Solve problems by writing and running Python with run_python. Print the answer."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{runPython},
+		Tools:        []*agents.FunctionTool{runPython},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent,

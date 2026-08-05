@@ -29,7 +29,7 @@ func main() {
 		Name:         "ops",
 		Instructions: agents.StaticInstructions("Help with file operations."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{deleteFile},
+		Tools:        []*agents.FunctionTool{deleteFile},
 	}
 
 	ctx := context.Background()

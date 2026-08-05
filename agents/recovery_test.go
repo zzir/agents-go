@@ -111,11 +111,11 @@ func TestRecovery_DoesNotRetryByDefault(t *testing.T) {
 func TestRecovery_RetrySafeToolIsLeftDangling(t *testing.T) {
 	ctx := context.Background()
 	sess := crashedSession(t)
-	tools := []Tool{
-		WithRetrySafe(NewFunctionTool("send_email", "", func(context.Context, *ToolContext, struct{}) (string, error) {
-			return "", nil
-		})),
-	}
+	sendEmail := NewFunctionTool("send_email", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "", nil
+	})
+	sendEmail.RetrySafe = true
+	tools := []*FunctionTool{sendEmail}
 
 	report, err := RecoverSession(ctx, sess, RecoveryPolicy{RetrySafe: RetrySafeNames(tools)})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestRecovery_RetrySafeToolIsLeftDangling(t *testing.T) {
 
 // A tool that never declared itself safe is not made safe by being in the list.
 func TestRecovery_UndeclaredToolIsUnsafe(t *testing.T) {
-	tools := []Tool{NewFunctionTool("send_email", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tools := []*FunctionTool{NewFunctionTool("send_email", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "", nil
 	})}
 	if RetrySafeNames(tools)("send_email") {

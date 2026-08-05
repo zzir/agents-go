@@ -263,7 +263,7 @@ func TestBuildParamsToolSchemaSurvives(t *testing.T) {
 		func(_ context.Context, _ *agents.ToolContext, a args) (string, error) { return "", nil })
 	wire := wireParams(t, testModel(), agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),
-		Tools: []agents.Tool{tool},
+		Tools: []*agents.FunctionTool{tool},
 	})
 	tools := wire["tools"].([]any)
 	if len(tools) != 1 {

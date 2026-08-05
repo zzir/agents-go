@@ -301,7 +301,7 @@ func TestErrorHandlers_MaxTurns_Recovers(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c3", `{}`)),
 	}}
 	var endOutput any
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model,
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model,
 		OnEnd: func(_ context.Context, _ *RunContext, output any) error {
 			endOutput = output
 			return nil
@@ -347,7 +347,7 @@ func TestErrorHandlers_MaxTurns_DeclineKeepsError(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	opts := RunOptions{Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
@@ -439,7 +439,7 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	opts := RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
@@ -501,7 +501,7 @@ func TestErrorHandlers_Streamed_MaxTurnsRecovery(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	opts := RunOptions{Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {

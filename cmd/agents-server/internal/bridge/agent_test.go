@@ -69,7 +69,7 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	}
 	names := map[string]bool{}
 	for _, tl := range built.Agent.Tools {
-		names[tl.ToolName()] = true
+		names[tl.Name] = true
 	}
 	if !names[middleware.PlanToolName] || !names[middleware.TodoToolName] {
 		t.Fatalf("workflow tools missing from build: %v", names)

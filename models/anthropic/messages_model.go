@@ -39,10 +39,7 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 	if err != nil {
 		return ant.MessageNewParams{}, err
 	}
-	tools, err := convertTools(req.Tools, req.Handoffs)
-	if err != nil {
-		return ant.MessageNewParams{}, err
-	}
+	tools := convertTools(req.Tools, req.Handoffs)
 
 	messages, leadingSystem := hoistLeadingSystem(messages)
 	params := ant.MessageNewParams{

@@ -110,8 +110,8 @@ meant to be replaced.
 |---|---|---|
 | Model backend | `Model`, `ModelProvider` | Talk to something other than the OpenAI Responses API |
 | Model behavior | decorators: `NewRetryModel`, `NewFallbackModel`, `RouterProvider`, `NewStreamOnlyModel` | Add retry, failover, per-prefix routing or stream-only adaptation without touching the loop |
-| Tools | `NewFunctionTool[Args, Result]` | Give the agent something to do. The `Tool` interface is **sealed** — every tool executes locally |
-| Tool capabilities | side interfaces, reached with `ToolAs[T]` | Add behavior (approval, timeout, sequential execution) that survives decorator stacking |
+| Tools | `NewFunctionTool[Args, Result]` | Give the agent something to do. A tool is a `*FunctionTool` **struct**, not an interface — every tool executes locally |
+| Tool behavior | fields on `FunctionTool` | Add approval, a timeout, guardrails, sequencing — set the field, or copy the struct for a tool you did not build |
 | Run behavior | `RunMiddleware` | Wrap a whole run: logging, approval policy, retry-the-run |
 | Storage | `SessionStorage` (+ optional `AtomicReplacer`, `EntryPopper`) | Persist entries anywhere |
 | Context shaping | `Compactor` (+ optional `CompactionCheckpointer`) | Decide what history the model sees when it gets long |
@@ -119,14 +119,14 @@ meant to be replaced.
 | Observability | `Tracer`, `Processor` | Send spans somewhere |
 | Execution | `Sandbox` | Run model-generated commands under isolation |
 
-**`ToolAs[T]` deserves a note.** Tool decorators stack, and a plain type
-assertion only ever sees the outermost one — a timeout wrapper around an
-approval wrapper loses the approval. `ToolAs[T]` walks an `Unwrap()` chain the
-way `errors.As` does, so a capability is found wherever it sits in the stack.
-This was measured before it was designed: every stacking order lost every
-capability except the outermost. See
-[spec.md §2.7c](spec.md#27c-tool-capabilities-are-side-interfaces-), which
-states the rule that follows from it — a bare type assertion is a bug.
+**The tool seam is a struct on purpose.** Tools used to be a sealed interface
+with eight optional side interfaces, reached through a `ToolAs[T]` walker,
+because behavior was added by wrapping. Every one of those wrappers only set
+what was already a field on the single concrete type, and the walker existed
+because a plain type assertion through a wrapper silently returned false — a
+timeout wrapper around an approval wrapper reported that the tool needed no
+approval. Fields have no such failure mode, and a variant of someone else's tool
+is `cp := *tool`. See [spec.md §2.7c](spec.md#27c-tool-capabilities-are-fields-).
 
 ---
 

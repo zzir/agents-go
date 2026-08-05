@@ -76,7 +76,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 		model := &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
 		}}
-		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+		agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 		res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
 		if err != nil {
@@ -100,7 +100,7 @@ func TestCompactionSkippedWhenRunEndsWithLocalItems(t *testing.T) {
 			modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 			modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 		}}
-		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+		agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 		opts := RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 			MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {

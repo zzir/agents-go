@@ -19,7 +19,7 @@ func TestTrace_ClosedWhenConsumerAbandonsStream(t *testing.T) {
 	loopTool := NewFunctionTool("loop", "loops",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })
 	newAgent := func() *Agent {
-		return &Agent{Name: "a", Tools: []Tool{loopTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+		return &Agent{Name: "a", Tools: []*FunctionTool{loopTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 			modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 			modelResp(messageOutput(t, "done")),

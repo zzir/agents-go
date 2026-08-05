@@ -9,7 +9,7 @@
 //	    Text("it is sunny").
 //	    Build()
 //
-//	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{weatherTool}, ModelImpl: model}
+//	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{weatherTool}, ModelImpl: model}
 //	res, err := agents.RunSync(ctx, agent, "weather in SF?", agents.RunOptions{})
 //
 // Each turn of the builder becomes one model response, so the example above

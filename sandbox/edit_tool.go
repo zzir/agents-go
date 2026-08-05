@@ -39,7 +39,7 @@ const applyPatchDesc = "Apply a patch to one or more files in the sandbox. Forma
 // computed entirely in memory first — any hunk that can't be located aborts
 // before a single file is touched — and if a write fails mid-commit the
 // already-applied operations are rolled back from an in-memory snapshot.
-func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
+func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
 	cfg = cfg.withDefaults()
 	return agents.NewFunctionTool(
 		"apply_patch",

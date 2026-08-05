@@ -57,7 +57,7 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 		modelResp(messageOutput(t, "now running it"), functionCallOutput(t, "exec_command", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{gated, free}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{gated, free}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
 	interrupted, res := collectItemEvents(t, stream)
@@ -112,7 +112,7 @@ func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
 		modelResp(functionCallOutput(t, "step", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{gated}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{gated}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {

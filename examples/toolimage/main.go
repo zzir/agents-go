@@ -51,7 +51,7 @@ func main() {
 		Name:         "vision-bot",
 		Instructions: agents.StaticInstructions("Use the render_swatch tool, then describe the image you get back."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{swatch},
+		Tools:        []*agents.FunctionTool{swatch},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent,

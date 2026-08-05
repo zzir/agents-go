@@ -100,7 +100,7 @@ func TestCodeSurvivesTheRunLoop(t *testing.T) {
 
 	_, err = RunSync(context.Background(), &Agent{Name: "a", ModelImpl: &fakeModel{
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "loop", "c1", `{}`))},
-	}, Tools: []Tool{NewFunctionTool("loop", "loop",
+	}, Tools: []*FunctionTool{NewFunctionTool("loop", "loop",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })}},
 		"hi", RunOptions{Exec: ExecOptions{MaxTurns: 1}})
 	if got := CodeOf(err); got != CodeMaxTurns {
@@ -127,7 +127,7 @@ func TestToolPanicCode(t *testing.T) {
 	}
 	agent := &Agent{Name: "a", ModelImpl: &fakeModel{
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "boom", "c1", `{}`))},
-	}, Tools: []Tool{panicking}}
+	}, Tools: []*FunctionTool{panicking}}
 
 	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err == nil {

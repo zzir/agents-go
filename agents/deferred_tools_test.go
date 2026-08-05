@@ -8,7 +8,7 @@ import (
 func toolNames(req ModelRequest) []string {
 	out := make([]string, 0, len(req.Tools))
 	for _, t := range req.Tools {
-		out = append(out, t.ToolName())
+		out = append(out, t.Name)
 	}
 	return out
 }
@@ -30,16 +30,17 @@ func TestDeferredTools_HiddenUntilDisclosed(t *testing.T) {
 		r.AddedTools = []string{"read_account"}
 		return r, nil
 	})
-	readAccount := WithDeferred(NewFunctionTool("read_account", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	readAccount := NewFunctionTool("read_account", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "balance 10", nil
-	}))
+	})
+	readAccount.Deferred = true
 
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "authenticate", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "read_account", "c2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{authenticate, readAccount}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{authenticate, readAccount}, ModelImpl: model}
 
 	var offered [][]string
 	model.onRequest = func(req ModelRequest) { offered = append(offered, toolNames(req)) }
@@ -75,11 +76,11 @@ func TestDeferredTools_DisclosureDoesNotOverrideDisabled(t *testing.T) {
 		r.AddedTools = []string{"secret"}
 		return r, nil
 	})
-	secret := WithEnabled(
-		WithDeferred(NewFunctionTool("secret", "", func(context.Context, *ToolContext, struct{}) (string, error) {
-			return "", nil
-		})),
-		func(context.Context, *RunContext, *Agent) (bool, error) { return false, nil })
+	secret := NewFunctionTool("secret", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "", nil
+	})
+	secret.Deferred = true
+	secret.IsEnabled = func(context.Context, *RunContext, *Agent) (bool, error) { return false, nil }
 
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "open", "c1", `{}`)),
@@ -87,7 +88,7 @@ func TestDeferredTools_DisclosureDoesNotOverrideDisabled(t *testing.T) {
 	}}
 	var offered [][]string
 	model.onRequest = func(req ModelRequest) { offered = append(offered, toolNames(req)) }
-	agent := &Agent{Name: "a", Tools: []Tool{opener, secret}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{opener, secret}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func TestDeferredTools_UnknownNameIsIgnored(t *testing.T) {
 		modelResp(functionCallOutput(t, "open", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{opener}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{opener}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -131,9 +132,10 @@ func TestDeferredTools_DisclosureSurvivesAResume(t *testing.T) {
 		return "done", nil
 	})
 	gated.NeedsApproval = true
-	secret := WithDeferred(NewFunctionTool("secret", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	secret := NewFunctionTool("secret", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "", nil
-	}))
+	})
+	secret.Deferred = true
 
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "open", "c1", `{}`)),
@@ -142,7 +144,7 @@ func TestDeferredTools_DisclosureSurvivesAResume(t *testing.T) {
 	}}
 	var offered [][]string
 	model.onRequest = func(req ModelRequest) { offered = append(offered, toolNames(req)) }
-	agent := &Agent{Name: "a", Tools: []Tool{opener, gated, secret}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{opener, gated, secret}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {

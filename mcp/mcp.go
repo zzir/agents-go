@@ -108,7 +108,7 @@ type Server struct {
 // for static/dynamic filtering on each ListTools call.
 type cachedTool struct {
 	originalName string
-	tool         agents.Tool
+	tool         *agents.FunctionTool
 }
 
 func newServer(name string, opts Options) *Server {
@@ -204,7 +204,7 @@ func (s *Server) allow(toolName string) bool {
 // list and adapting each into an agents.FunctionTool that proxies to CallTool.
 // Static (AllowedTools/BlockedTools) and dynamic (ToolFilter) filters run here on
 // every call, so caching never hides a context-dependent filter decision.
-func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]agents.Tool, error) {
+func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.FunctionTool, error) {
 	span, ctx := tracing.StartSpanFrom(ctx, "mcp.list_tools", tracing.SpanTypeMCP,
 		map[string]any{"server": s.name})
 	defer span.Finish()
@@ -215,7 +215,7 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 		return nil, err
 	}
 	span.Set("tools", len(all))
-	var tools []agents.Tool
+	var tools []*agents.FunctionTool
 	for _, ct := range all {
 		if !s.allow(ct.originalName) {
 			continue
@@ -232,15 +232,11 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 // RequireApproval (if set) with the current agent captured per call — matching
 // the Python SDK, which re-binds the approval closure to the current agent
 // each turn. The cached base tool is left untouched.
-func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) agents.Tool {
+func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) *agents.FunctionTool {
 	if s.opts.RequireApproval == nil {
 		return ct.tool
 	}
-	ft, ok := ct.tool.(*agents.FunctionTool)
-	if !ok {
-		return ct.tool
-	}
-	clone := *ft
+	clone := *ct.tool
 	name := ct.originalName
 	fn := s.opts.RequireApproval
 	clone.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, _ string, _ string) (bool, error) {
@@ -391,7 +387,7 @@ func (s *Server) InvalidateToolsCache() {
 	s.mu.Unlock()
 }
 
-func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) agents.Tool {
+func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.FunctionTool {
 	schema := schemaToMap(mt.InputSchema)
 	// Capture the required-argument list from the original (non-strict) schema,
 	// used for client-side validation before every call_tool request.

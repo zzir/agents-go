@@ -66,7 +66,7 @@ func TestStreamedResult_StopAfterTurn(t *testing.T) {
 		modelResp(functionCallOutput(t, "gate", "c2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{gate}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{gate}, ModelImpl: model}
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
 	var res *RunResult
@@ -250,7 +250,7 @@ func TestRunStreamed_Events(t *testing.T) {
 		modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"SF"}`)),
 		modelResp(messageOutput(t, "it is sunny")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "weather?", RunOptions{})
 	var raw, toolCalled, toolOutput, message int

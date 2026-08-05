@@ -16,7 +16,7 @@ func TestAgentAsTool(t *testing.T) {
 		modelResp(functionCallOutput(t, "summarize", "c1", `{"input":"some long text"}`)),
 		modelResp(messageOutput(t, "done: SUMMARY: hello")),
 	}}
-	orch := &Agent{Name: "orchestrator", Tools: []Tool{summarize}, ModelImpl: orchModel}
+	orch := &Agent{Name: "orchestrator", Tools: []*FunctionTool{summarize}, ModelImpl: orchModel}
 
 	res, err := RunSync(context.Background(), orch, "summarize this", RunOptions{})
 	if err != nil {
@@ -40,7 +40,7 @@ func TestAgentAsTool_CustomExtractor(t *testing.T) {
 			return "extracted:" + r.FinalOutputString(), nil
 		},
 	})
-	ft := tool.(*FunctionTool)
+	ft := tool
 	out, err := ft.OnInvoke(context.Background(), &ToolContext{RunContext: NewRunContext(nil)}, `{"input":"x"}`)
 	if err != nil {
 		t.Fatal(err)

@@ -27,14 +27,14 @@ func TestResume_SiblingToolNotReExecutedAfterNestedApproval(t *testing.T) {
 			return "deleted", nil
 		})
 	innerTool.NeedsApproval = true
-	inner := &Agent{Name: "specialist", Tools: []Tool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	inner := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "delete_db", "inner_call", `{}`)),
 		modelResp(messageOutput(t, "inner finished")),
 	}}}
 
 	outer := &Agent{
 		Name: "triage",
-		Tools: []Tool{
+		Tools: []*FunctionTool{
 			siblingTool,
 			inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"}),
 		},

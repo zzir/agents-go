@@ -110,7 +110,7 @@ func (m *SandboxManager) CloseAll() {
 }
 
 // CodeTool builds a code-execution tool bound to the sandbox for the given config.
-func (m *SandboxManager) CodeTool(cfg *store.SandboxConfig) (agents.Tool, error) {
+func (m *SandboxManager) CodeTool(cfg *store.SandboxConfig) (*agents.FunctionTool, error) {
 	sb, err := m.GetOrCreate(cfg)
 	if err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func (m *SandboxManager) trackCloser(id string) func(io.Closer) {
 // they target the same filesystem exec_command runs in. When commandApproval is
 // set, exec_command is gated per call through the session command-trust store:
 // a command is approved on first use, then trusted per the user's choice.
-func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, commandApproval bool) ([]agents.Tool, error) {
+func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, commandApproval bool) ([]*agents.FunctionTool, error) {
 	sb, err := m.GetOrCreate(cfg)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, commandApproval 
 	if commandApproval {
 		codeCfg.NeedsApprovalFunc = m.commandGate
 	}
-	tools := []agents.Tool{sandbox.CodeTool(sb, codeCfg)}
+	tools := []*agents.FunctionTool{sandbox.CodeTool(sb, codeCfg)}
 	tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
 	tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{}))
 	return tools, nil

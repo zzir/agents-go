@@ -108,7 +108,7 @@ func TestMiddleware_PassesEventsThrough(t *testing.T) {
 	})
 	tool := NewFunctionTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "out", nil })
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}

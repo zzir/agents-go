@@ -33,10 +33,7 @@ var _ agents.Model = (*ResponsesModel)(nil)
 
 // buildParams assembles the Responses API request from a ModelRequest.
 func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.ResponseNewParams, error) {
-	tools, err := convertTools(req.Tools, req.Handoffs)
-	if err != nil {
-		return responses.ResponseNewParams{}, err
-	}
+	tools := convertTools(req.Tools, req.Handoffs)
 
 	params := responses.ResponseNewParams{
 		Model: m.model,

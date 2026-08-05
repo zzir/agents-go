@@ -28,7 +28,7 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent.Tools = []Tool{tool}
+	agent.Tools = []*FunctionTool{tool}
 	agent.ModelImpl = model
 
 	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{}); err != nil {
@@ -78,7 +78,7 @@ func TestToolGuardrail_ReceivesTheCallIdentity(t *testing.T) {
 		),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestNeedsApprovalFunc_ReceivesCallID(t *testing.T) {
 		modelResp(functionCallOutput(t, "deploy", "call_99", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)

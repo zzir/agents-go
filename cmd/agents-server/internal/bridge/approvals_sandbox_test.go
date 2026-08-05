@@ -49,7 +49,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 			t.Fatal("registry missing the agent")
 		}
 		for _, tool := range a.Tools {
-			if tool.ToolName() == "exec_command" {
+			if tool.Name == "exec_command" {
 				return true
 			}
 		}

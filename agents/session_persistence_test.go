@@ -100,7 +100,7 @@ func TestSession_PersistsEachTurn(t *testing.T) {
 		modelResp(messageOutput(t, "step two"), functionCallOutput(t, "echo", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{echoTool(nil)}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{echoTool(nil)}, ModelImpl: model}
 
 	sess := newRecordingSession()
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}}); err != nil {
@@ -135,7 +135,7 @@ func TestSession_CancelKeepsCompletedTurns(t *testing.T) {
 		modelResp(messageOutput(t, "working on it"), functionCallOutput(t, "echo", "call_1", `{}`)),
 	}}
 	model := &cancelOnCallModel{fakeModel: inner, cancel: cancel, at: 2}
-	agent := &Agent{Name: "a", Tools: []Tool{echoTool(nil)}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{echoTool(nil)}, ModelImpl: model}
 
 	sess := newRecordingSession()
 	_, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})
@@ -228,7 +228,7 @@ func TestSession_ResumeDoesNotDuplicate(t *testing.T) {
 		modelResp(functionCallOutput(t, "danger", "call_2", `{}`)),
 		modelResp(messageOutput(t, "all done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{safeTool, danger}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{safeTool, danger}, ModelImpl: model}
 
 	sess := newRecordingSession()
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{Session: NewSession(sess)}})

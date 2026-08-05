@@ -65,7 +65,7 @@ func TestNextTurn_RidesAlongWithTheNextTurn(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
 	if err := ctrl.NextTurn("also mention the weather"); err != nil {
@@ -208,7 +208,7 @@ func TestPendingInput_SurvivesAnInterruption(t *testing.T) {
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
 	var res *RunResult
@@ -376,7 +376,7 @@ func TestInterruptionTake_RollsBackWhenPersistFails(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "call_1", `{}`)),
 		modelResp(functionCallOutput(t, "delete_db", "call_2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{probe, danger}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{probe, danger}, ModelImpl: model}
 	storage := &appendFailingStorage{SessionStorage: NewInMemoryStorage("test"), failOn: "please also"}
 	sess := NewSession(storage)
 

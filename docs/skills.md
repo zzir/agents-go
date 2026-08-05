@@ -22,7 +22,7 @@ agent := &agents.Agent{
     Instructions: agents.InstructionsFunc(func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (string, error) {
         return base + "\n" + skills.RenderIndex(loaded), nil // discovery
     }),
-    Tools: []agents.Tool{skills.ReadFileTool("./skills")},   // activation / execution
+    Tools: []*agents.FunctionTool{skills.ReadFileTool("./skills")},   // activation / execution
 }
 ```
 

@@ -11,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -549,11 +548,7 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 	}
 	items := make([]mcpToolInfo, len(tools))
 	for i, t := range tools {
-		info := mcpToolInfo{Name: t.ToolName()}
-		if ft, ok := t.(*agents.FunctionTool); ok {
-			info.Description = ft.Description
-		}
-		items[i] = info
+		items[i] = mcpToolInfo{Name: t.Name, Description: t.Description}
 	}
 	c.JSON(http.StatusOK, items)
 }

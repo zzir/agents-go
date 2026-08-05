@@ -15,13 +15,13 @@ An agent equipped with tools, [handoffs](handoffs.md) and clear instructions can
 4. Use specialist agents that excel at one task over one generalist.
 
 ```go
-research := &agents.Agent{Name: "Researcher", Tools: []agents.Tool{webLookup}}
+research := &agents.Agent{Name: "Researcher", Tools: []*agents.FunctionTool{webLookup}}
 writer := &agents.Agent{Name: "Writer", Instructions: agents.StaticInstructions("Write the final report.")}
 
 planner := &agents.Agent{
 	Name:         "Planner",
 	Instructions: agents.StaticInstructions("Plan the work, research as needed, then hand off to the writer."),
-	Tools:        []agents.Tool{webLookup},
+	Tools:        []*agents.FunctionTool{webLookup},
 	Handoffs:     []agents.Handoff{agents.HandoffTo(writer)},
 }
 ```
@@ -38,7 +38,7 @@ orchestrator := &agents.Agent{
 	Name: "orchestrator",
 	Instructions: agents.StaticInstructions(
 		"You are a translation agent. Use the tools to translate; for multiple languages, call the relevant tools."),
-	Tools: []agents.Tool{
+	Tools: []*agents.FunctionTool{
 		spanish.AsTool(agents.AgentToolConfig{Name: "translate_to_spanish", Description: "Translate the user's message to Spanish"}),
 		french.AsTool(agents.AgentToolConfig{Name: "translate_to_french", Description: "Translate the user's message to French"}),
 	},

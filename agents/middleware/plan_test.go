@@ -21,7 +21,7 @@ type recordingModel struct {
 func (m *recordingModel) record(req agents.ModelRequest) {
 	names := make([]string, 0, len(req.Tools)+len(req.Handoffs))
 	for _, t := range req.Tools {
-		names = append(names, t.ToolName())
+		names = append(names, t.Name)
 	}
 	// Handoffs surface to the model as transfer tools; record them alongside
 	// so the tests can pin their phase gating too.
@@ -48,7 +48,7 @@ func toolCallArgs(t *testing.T, name, callID, args string) agents.TResponseOutpu
 }
 
 // noopTool is a recording function tool with no behavior.
-func noopTool(name string, calls *atomic.Int32) agents.Tool {
+func noopTool(name string, calls *atomic.Int32) *agents.FunctionTool {
 	return agents.NewFunctionTool(name, "test tool",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			if calls != nil {
@@ -69,12 +69,12 @@ func TestPlan_ApproveUnlocksExecutionInTheSameRun(t *testing.T) {
 	}}}
 	// A write tool the HOST already disabled: the plan gate must compose with
 	// its hook, not shadow it — unlock must not resurrect it.
-	lockedWrite := agents.WithEnabled(noopTool("locked_write", nil),
-		func(context.Context, *agents.RunContext, *agents.Agent) (bool, error) { return false, nil })
+	lockedWrite := noopTool("locked_write", nil)
+	lockedWrite.IsEnabled = func(context.Context, *agents.RunContext, *agents.Agent) (bool, error) { return false, nil }
 	agent := &agents.Agent{
 		Name:      "a",
 		ModelImpl: model,
-		Tools:     []agents.Tool{noopTool("read_file", nil), noopTool("write_file", &writes), lockedWrite},
+		Tools:     []*agents.FunctionTool{noopTool("read_file", nil), noopTool("write_file", &writes), lockedWrite},
 		Handoffs:  []agents.Handoff{agents.HandoffTo(&agents.Agent{Name: "other"})},
 	}
 	opts := agents.RunOptions{Middlewares: []agents.RunMiddleware{Plan{}}}
@@ -133,7 +133,7 @@ func TestPlan_RejectKeepsPlanning(t *testing.T) {
 	agent := &agents.Agent{
 		Name:      "a",
 		ModelImpl: model,
-		Tools:     []agents.Tool{noopTool("write_file", &writes)},
+		Tools:     []*agents.FunctionTool{noopTool("write_file", &writes)},
 	}
 	res, err := agents.RunSync(context.Background(), agent, "go",
 		agents.RunOptions{Middlewares: []agents.RunMiddleware{Plan{}}})
@@ -157,18 +157,18 @@ func TestPlan_RejectKeepsPlanning(t *testing.T) {
 }
 
 // fakeMCP lists a fixed set of tools.
-type fakeMCP struct{ tools []agents.Tool }
+type fakeMCP struct{ tools []*agents.FunctionTool }
 
 func (f fakeMCP) Name() string { return "fake" }
 func (f fakeMCP) Close() error { return nil }
-func (f fakeMCP) ListTools(context.Context, *agents.RunContext, *agents.Agent) ([]agents.Tool, error) {
+func (f fakeMCP) ListTools(context.Context, *agents.RunContext, *agents.Agent) ([]*agents.FunctionTool, error) {
 	return slices.Clone(f.tools), nil
 }
 
 // MCP tools are listed fresh each turn; while planning only read-only names
 // survive the listing, afterwards everything does.
 func TestPlan_MCPListingIsPhaseGated(t *testing.T) {
-	inner := fakeMCP{tools: []agents.Tool{noopTool("read_file", nil), noopTool("mcp__write", nil)}}
+	inner := fakeMCP{tools: []*agents.FunctionTool{noopTool("read_file", nil), noopTool("mcp__write", nil)}}
 	phase := &PlanPhase{}
 	m := planMCP{inner: inner, phase: phase, readOnly: map[string]bool{"read_file": true}}
 
@@ -176,7 +176,7 @@ func TestPlan_MCPListingIsPhaseGated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(planning) != 1 || planning[0].ToolName() != "read_file" {
+	if len(planning) != 1 || planning[0].Name != "read_file" {
 		t.Fatalf("planning listing = %v", toolNames(planning))
 	}
 	if err := phase.Unlock(); err != nil {
@@ -191,10 +191,10 @@ func TestPlan_MCPListingIsPhaseGated(t *testing.T) {
 	}
 }
 
-func toolNames(tools []agents.Tool) []string {
+func toolNames(tools []*agents.FunctionTool) []string {
 	out := make([]string, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, t.ToolName())
+		out = append(out, t.Name)
 	}
 	return out
 }

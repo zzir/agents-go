@@ -114,8 +114,8 @@ failing with `*MaxTurnsError`. Tool-free is the point — offered a tool it woul
 call one. It is opt-in because a turn budget is sometimes a cost ceiling, and
 this spends a call it said not to spend.
 
-A tool marked with `agents.WithSequential` makes its **whole batch** run one call
-at a time; see [Tools](tools.md#decorators-adding-a-capability-to-a-tool-you-did-not-build).
+A tool with `Sequential: true` makes its **whole batch** run one call
+at a time; see [Tools](tools.md#adapting-a-tool-you-did-not-build).
 
 ### Truncated responses
 

@@ -30,7 +30,7 @@ func TestRun_AbandonedStreamCancelsRunningTools(t *testing.T) {
 		modelResp(functionCallOutput(t, "slow", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
 	for ev, err := range stream {
@@ -100,7 +100,7 @@ func TestRunTools_SiblingCancellationDoesNotMaskRealError(t *testing.T) {
 			functionCallOutput(t, "culprit", "call_c", `{}`),
 		),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{victim, culprit}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{victim, culprit}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil {

@@ -159,7 +159,7 @@ func TestRun_ToolCallThenFinal(t *testing.T) {
 		modelResp(functionCallOutput(t, "get_weather", "call_1", `{"city":"SF"}`)),
 		modelResp(messageOutput(t, "it is sunny")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "weather in SF?", RunOptions{})
 	if err != nil {
@@ -215,7 +215,7 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c3", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 2}})
 	if err == nil {
@@ -239,7 +239,7 @@ func TestRun_ShouldStopAfterTurn(t *testing.T) {
 			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 				return "the-answer", nil
 			})
-		return &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+		return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 	}
 
 	t.Run("stops at a named tool, reporting its output", func(t *testing.T) {
@@ -386,7 +386,7 @@ func TestRun_ParallelTools(t *testing.T) {
 		}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "both done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{toolA, toolB}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{toolA, toolB}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "do both", RunOptions{})
 	if err != nil {
@@ -408,7 +408,7 @@ func TestRun_IsEnabledHidesTool(t *testing.T) {
 		return false, nil
 	}
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -432,7 +432,7 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 	}
 	responses = append(responses, modelResp(messageOutput(t, "finally done")))
 	model := &fakeModel{responses: responses}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: MaxTurnsUnlimited}})
 	if err != nil {
@@ -455,7 +455,7 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 5}})
 	if err != nil {

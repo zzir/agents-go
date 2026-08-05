@@ -18,7 +18,7 @@ func TestUsage_OneEntryPerResponseCarriesIt(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(ctx, agent, "go", RunOptions{
 		Conversation: ConversationOptions{Session: sess},
@@ -67,7 +67,7 @@ func TestUsage_LandsOnTheLastEntryOfTheResponse(t *testing.T) {
 		withID("resp_1", functionCallOutput(t, "probe", "c1", `{}`)),
 		withID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 	if _, err := RunSync(ctx, agent, "go", RunOptions{
 		Conversation: ConversationOptions{Session: sess},
 	}); err != nil {
@@ -104,7 +104,7 @@ func TestUsage_NestedIsAttributedToTheCall(t *testing.T) {
 		modelResp(functionCallOutput(t, "ask_inner", "c1", `{"input":"hi"}`)),
 		modelResp(messageOutput(t, "outer answer")),
 	}}}
-	outer.Tools = []Tool{inner.AsTool(AgentToolConfig{Name: "ask_inner"})}
+	outer.Tools = []*FunctionTool{inner.AsTool(AgentToolConfig{Name: "ask_inner"})}
 
 	res, err := RunSync(context.Background(), outer, "go", RunOptions{})
 	if err != nil {

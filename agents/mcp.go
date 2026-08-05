@@ -10,7 +10,7 @@ type MCPServer interface {
 	// Name identifies the server for tracing and tool namespacing.
 	Name() string
 	// ListTools returns the tools the server currently exposes.
-	ListTools(ctx context.Context, rc *RunContext, agent *Agent) ([]Tool, error)
+	ListTools(ctx context.Context, rc *RunContext, agent *Agent) ([]*FunctionTool, error)
 	// Close releases the server connection.
 	Close() error
 }

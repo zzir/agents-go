@@ -24,7 +24,7 @@ func TestToolLoop_AbortsOnConsecutiveAllFailedTurns(t *testing.T) {
 		responses[i] = modelResp(functionCallOutput(t, "broken", "c1", `{}`))
 	}
 	model := &fakeModel{responses: responses}
-	agent := &Agent{Name: "a", Tools: []Tool{failingTool(t, "broken")}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{failingTool(t, "broken")}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 3}},
@@ -59,7 +59,7 @@ func TestToolLoop_ASuccessClearsTheCounter(t *testing.T) {
 		responses[i] = modelResp(functionCallOutput(t, "flaky", "c1", `{}`))
 	}
 	responses[6] = modelResp(messageOutput(t, "done"))
-	agent := &Agent{Name: "a", Tools: []Tool{flaky}, ModelImpl: &fakeModel{responses: responses}}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{flaky}, ModelImpl: &fakeModel{responses: responses}}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 2}},
@@ -90,7 +90,7 @@ func TestToolLoop_NegativeLimitDisablesTheValve(t *testing.T) {
 		responses[i] = modelResp(functionCallOutput(t, "broken", "c1", `{}`))
 	}
 	responses[3] = modelResp(messageOutput(t, "gave up"))
-	agent := &Agent{Name: "a", Tools: []Tool{failingTool(t, "broken")}, ModelImpl: &fakeModel{responses: responses}}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{failingTool(t, "broken")}, ModelImpl: &fakeModel{responses: responses}}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{MaxTurns: 10, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: -1}},
@@ -116,7 +116,7 @@ func TestToolLoop_FinalTurnWithoutTools(t *testing.T) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: responses}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{MaxTurns: 2, ToolLoop: ToolLoopPolicy{FinalTurnWithoutTools: true}},
@@ -138,7 +138,7 @@ func TestToolLoop_FinalTurnIsOptIn(t *testing.T) {
 	tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "probe", "c2", `{}`)),
 	}}}
@@ -161,7 +161,7 @@ func TestTruncatedResponse_ToolCallsDoNotRun(t *testing.T) {
 	truncated.Status = "incomplete"
 	truncated.IncompleteReason = "max_output_tokens"
 	model := &fakeModel{responses: []*ModelResponse{truncated, modelResp(messageOutput(t, "resent"))}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -217,7 +217,8 @@ func TestSequentialTool_SerializesTheWholeBatch(t *testing.T) {
 		live.Add(-1)
 		return "ok", nil
 	}
-	serial := WithSequential(NewFunctionTool("serial", "", body))
+	serial := NewFunctionTool("serial", "", body)
+	serial.Sequential = true
 	parallelA := NewFunctionTool("par_a", "", body)
 	parallelB := NewFunctionTool("par_b", "", body)
 
@@ -229,7 +230,7 @@ func TestSequentialTool_SerializesTheWholeBatch(t *testing.T) {
 		}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{serial, parallelA, parallelB}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{serial, parallelA, parallelB}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -261,7 +262,7 @@ func TestSequentialTool_AbsentMeansParallel(t *testing.T) {
 		}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "x", ModelImpl: model, Tools: []Tool{
+	agent := &Agent{Name: "x", ModelImpl: model, Tools: []*FunctionTool{
 		NewFunctionTool("a", "", body), NewFunctionTool("b", "", body),
 	}}
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {

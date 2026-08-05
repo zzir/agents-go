@@ -386,7 +386,8 @@ whether the tool ran: the email may already have been sent. A tool that is safe
 to repeat says so, and is then left dangling for the next run to redo:
 
 ```go
-agent.Tools = []agents.Tool{agents.WithRetrySafe(readFile), sendEmail}
+readFile.RetrySafe = true
+agent.Tools = []*agents.FunctionTool{readFile, sendEmail}
 ```
 
 `RetrySafe` is supplied by the caller because the stored history holds a tool

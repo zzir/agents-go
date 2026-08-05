@@ -124,9 +124,10 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   types. Another backend is supported by translating inside its adapter
   (`models/anthropic`, spec §5.10) — never by a second canonical format or a
   neutral abstraction layer. Chat Completions is intentionally NOT supported.
-- **No hosted tools.** Every `Tool` is a locally-executed `FunctionTool`; the
-  `Tool` interface is sealed. Provider-hosted tools (`web_search`,
-  `file_search`, …) are deliberately not modeled — do not reintroduce them.
+- **No hosted tools.** A tool is a `*FunctionTool` **struct**, not an interface,
+  so there is nothing a hosted tool could implement. Provider-hosted tools
+  (`web_search`, `file_search`, …) are deliberately not modeled — do not
+  reintroduce them, and do not reintroduce a `Tool` interface to make room.
 
 ## Conventions
 

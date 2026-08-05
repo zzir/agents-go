@@ -38,7 +38,7 @@ func main() {
 		Name:         "researcher",
 		Instructions: agents.StaticInstructions("Research the topic thoroughly. Keep searching until you are certain."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{search},
+		Tools:        []*agents.FunctionTool{search},
 	}
 
 	res, err := agents.RunSync(ctx, researcher, "What is the airspeed velocity of an unladen swallow?", agents.RunOptions{Exec: agents.ExecOptions{MaxTurns: 2, ErrorHandlers: // deliberately too small

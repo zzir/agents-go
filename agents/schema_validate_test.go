@@ -30,7 +30,7 @@ func TestSchemaValidation_CatchesNestedRequired(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "deploy", "c1", `{"name":"web","config":{"host":"h"}}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil {
@@ -51,7 +51,7 @@ func TestSchemaValidation_CatchesNestedTypeMismatch(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "deploy", "c1", `{"name":"web","config":{"host":"h","port":"not-an-int"}}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("a nested type mismatch was accepted")
@@ -69,7 +69,7 @@ func TestSchemaValidation_ExtraKeysAreHarmless(t *testing.T) {
 		modelResp(functionCallOutput(t, "noop", "c1", `{"unexpected":"value"}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -90,7 +90,7 @@ func TestSchemaValidation_WrongKeyNameIsCaught(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "deploy", "c1", `{"deployment":"web","config":{"host":"h","port":1}}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("a required key sent under the wrong name was accepted")

@@ -45,7 +45,7 @@ func main() {
 		Name:         "reader",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Read each file the user names, then summarize what you found."),
-		Tools:        []agents.Tool{readFile},
+		Tools:        []*agents.FunctionTool{readFile},
 	}
 
 	// Cheap and lossless first, lossy only if that was not enough. A pipeline

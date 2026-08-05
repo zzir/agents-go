@@ -54,7 +54,7 @@ func main() {
 		Name:         "worker",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Fix the outdated greeting. Be brief."),
-		Tools:        []agents.Tool{readFile, writeFile},
+		Tools:        []*agents.FunctionTool{readFile, writeFile},
 	}
 
 	opts := agents.RunOptions{

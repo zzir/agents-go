@@ -98,7 +98,7 @@ func main() {
 		Name:         "assistant",
 		Instructions: agents.StaticInstructions("Answer briefly."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{weather},
+		Tools:        []*agents.FunctionTool{weather},
 	}
 
 	fmt.Fprintln(os.Stderr, "exporting spans to", where)

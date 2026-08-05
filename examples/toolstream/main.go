@@ -46,7 +46,7 @@ func main() {
 		Name:         "builder",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Build what the user asks for, then report the result in one sentence."),
-		Tools:        []agents.Tool{build},
+		Tools:        []*agents.FunctionTool{build},
 	}
 
 	stream, _ := agents.Run(ctx, agent, "Build the release target.", agents.RunOptions{

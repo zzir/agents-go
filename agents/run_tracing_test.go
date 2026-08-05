@@ -181,7 +181,7 @@ func tracingAgent(t *testing.T) (*Agent, *recordingProcessor) {
 		Model:         "fake-model",
 		Instructions:  StaticInstructions("be brief"),
 		ModelImpl:     model,
-		Tools:         []Tool{tool},
+		Tools:         []*FunctionTool{tool},
 		ModelSettings: &ModelSettings{Temperature: &temp},
 	}
 	return agent, &recordingProcessor{}
@@ -296,7 +296,7 @@ func TestFunctionSpanErrorRedaction(t *testing.T) {
 			modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 			modelResp(messageOutput(t, "done")),
 		}}
-		agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+		agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 		proc := &recordingProcessor{}
 		if _, err := RunSync(context.Background(), agent, "go", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc), IncludeSensitiveData: &include}}); err != nil {
 			t.Fatal(err)

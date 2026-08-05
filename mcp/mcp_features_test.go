@@ -92,7 +92,7 @@ func TestMCP_RequiredArgValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ft := tools[0].(*agents.FunctionTool)
+	ft := tools[0]
 	tc := &agents.ToolContext{RunContext: rc}
 	// "text" is required; an empty object must fail with a *UserError before the
 	// server is ever contacted.
@@ -146,7 +146,7 @@ func TestMCP_ToolMeta(t *testing.T) {
 	}
 	var ft *agents.FunctionTool
 	for _, tl := range tools {
-		if f := tl.(*agents.FunctionTool); f.Name == "meta_echo" {
+		if f := tl; f.Name == "meta_echo" {
 			ft = f
 		}
 	}
@@ -181,7 +181,7 @@ func TestMCP_DynamicRequireApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ft := tools[0].(*agents.FunctionTool)
+	ft := tools[0]
 	if ft.NeedsApprovalFunc == nil {
 		t.Fatal("expected NeedsApprovalFunc wired")
 	}
@@ -190,7 +190,7 @@ func TestMCP_DynamicRequireApproval(t *testing.T) {
 	}
 	// A different agent captured per ListTools call → no approval.
 	tools2, _ := server.ListTools(context.Background(), rc, &agents.Agent{Name: "other"})
-	ft2 := tools2[0].(*agents.FunctionTool)
+	ft2 := tools2[0]
 	if need, _ := ft2.NeedsApprovalFunc(context.Background(), rc, "", ""); need {
 		t.Fatal("agent 'other' should not require approval")
 	}
@@ -212,7 +212,7 @@ func TestMCP_DescriptionFallback(t *testing.T) {
 	}
 	var ft *agents.FunctionTool
 	for _, tl := range tools {
-		if f := tl.(*agents.FunctionTool); f.Name == "titled" {
+		if f := tl; f.Name == "titled" {
 			ft = f
 		}
 	}

@@ -9,13 +9,13 @@ import (
 
 // orchestratorCalling returns an orchestrator agent whose scripted model calls
 // the given tool once and then finishes.
-func orchestratorCalling(t *testing.T, tool Tool, toolName, args string) *Agent {
+func orchestratorCalling(t *testing.T, tool *FunctionTool, toolName, args string) *Agent {
 	t.Helper()
 	m := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, toolName, "c1", args)),
 		modelResp(messageOutput(t, "orch done")),
 	}}
-	return &Agent{Name: "orchestrator", Tools: []Tool{tool}, ModelImpl: m}
+	return &Agent{Name: "orchestrator", Tools: []*FunctionTool{tool}, ModelImpl: m}
 }
 
 func TestAgentToolOnStreamDeliversEvents(t *testing.T) {
@@ -231,7 +231,7 @@ func TestAgentToolModifyRunOptions(t *testing.T) {
 	innerTool := NewFunctionTool("noop", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	sub := &Agent{Name: "specialist", Tools: []Tool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	sub := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "noop", "n1", `{}`)),
 		modelResp(messageOutput(t, "never reached")),
 	}}}
@@ -286,7 +286,7 @@ func TestAgentAsToolStructuredParams(t *testing.T) {
 	sub := &Agent{Name: "searcher", ModelImpl: subModel}
 	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search", Description: "search things"})
 
-	ft := tool.(*FunctionTool)
+	ft := tool
 	props, _ := ft.ParamsJSONSchema["properties"].(map[string]any)
 	if _, ok := props["query"]; !ok {
 		t.Fatalf("schema properties = %v, want query field", props)
@@ -401,7 +401,7 @@ func TestAgentToolIsEnabledHidesTool(t *testing.T) {
 		IsEnabled: func(context.Context, *RunContext, *Agent) (bool, error) { return false, nil },
 	})
 	m := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "no tools"))}}
-	orch := &Agent{Name: "orchestrator", Tools: []Tool{tool}, ModelImpl: m}
+	orch := &Agent{Name: "orchestrator", Tools: []*FunctionTool{tool}, ModelImpl: m}
 
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)

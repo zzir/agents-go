@@ -40,22 +40,20 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 
 // enabledTools returns the agent's tools, filtered by any IsEnabled predicate
 // and augmented with the tools exposed by the agent's MCP servers.
-func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error) {
-	out := make([]Tool, 0, len(agent.Tools))
+func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*FunctionTool, error) {
+	out := make([]*FunctionTool, 0, len(agent.Tools))
 	for _, t := range agent.Tools {
-		if e, ok := ToolAs[EnableableTool](t); ok {
-			enabled, err := e.IsToolEnabled(ctx, r.rc, agent)
-			if err != nil {
-				return nil, err
-			}
-			if !enabled {
-				continue
-			}
+		enabled, err := t.enabled(ctx, r.rc, agent)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
+			continue
 		}
 		// A deferred tool waits until something discloses it. It is checked
 		// after IsEnabled so a disclosed tool that is also disabled stays
 		// hidden — disclosure opens a door, it does not force one.
-		if d, ok := ToolAs[DeferredTool](t); ok && d.IsDeferred() && !r.disclosed[t.ToolName()] {
+		if t.Deferred && !r.disclosed[t.Name] {
 			continue
 		}
 		out = append(out, t)
@@ -72,11 +70,10 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]Tool, error)
 		out = append(out, mcpTools...)
 	}
 	// Reject duplicate tool names instead of silently letting the last one
-	// shadow the others in the runner's dispatch map (the Python SDK raises a
-	// UserError for duplicates too).
+	// shadow the others in the runner's dispatch map.
 	seen := make(map[string]bool, len(out))
 	for _, t := range out {
-		name := t.ToolName()
+		name := t.Name
 		if name == "" {
 			continue
 		}

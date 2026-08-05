@@ -6,8 +6,8 @@ Tools let agents take actions. They come from three places:
 - **Agents as tools**: a whole agent exposed as a callable tool ([Agent orchestration](multi_agent.md))
 - **MCP tools**: tools served by a Model Context Protocol server ([MCP](mcp.md))
 
-All three end up as the same thing — a locally executed `FunctionTool`. The
-`Tool` interface is **sealed**, so there is exactly one execution path to reason
+All three end up as the same thing — a locally executed `*FunctionTool`. It is a
+**struct, not an interface**, so there is exactly one execution path to reason
 about, and a tool cannot quietly mean "the provider runs this".
 
 That is also why hosted OpenAI tools (web search, file search, code
@@ -33,7 +33,7 @@ runQuery := agents.NewFunctionTool("run_query", "Run a read-only SQL query.",
 		return db.Query(ctx, args.SQL, args.Limit)
 	})
 
-agent.Tools = []agents.Tool{runQuery}
+agent.Tools = []*agents.FunctionTool{runQuery}
 ```
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
@@ -90,56 +90,55 @@ t.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Age
 
 Tools can carry their own input/output guardrails — see [Guardrails](guardrails.md#placement-decides-scope).
 
-### Decorators: adding a capability to a tool you did not build
+### Adapting a tool you did not build
 
-Every capability above is also available as a wrapper, for tools you did not
-construct — one returned by `agent.AsTool(...)`, by an MCP server, or by a
-library:
-
-```go
-tool = agents.WithApprovalAlways(tool)
-tool = agents.WithTimeout(tool, 30*time.Second)
-tool = agents.WithGuardrails(tool, myGuardrail)   // appends to the tool's own
-tool = agents.WithEnabled(tool, onlyForAdmins)
-tool = agents.WithSequential(tool)
-tool = agents.WithFailureHandler(tool, agents.DefaultToolErrorFunction)
-tool = agents.WithDeferred(tool)                  // hidden until disclosed
-tool = agents.WithRetrySafe(tool)                 // safe to repeat after a crash
-```
-
-Wrappers stack in any order and compose with the tool's own settings.
-`WithGuardrails` in particular **adds** to whatever the wrapped tool already
-carries rather than replacing it, so wrapping can never silently disarm a
-tool's own checks.
-
-The runner discovers capabilities with `agents.ToolAs[T]`, which walks the
-wrapper chain the way `errors.As` walks an error chain:
+`*FunctionTool` is a struct, so a variant of a tool you did not construct — one
+returned by `agent.AsTool(...)`, by an MCP server, or by a library — is a copy
+with the fields you want changed:
 
 ```go
-if a, ok := agents.ToolAs[agents.ApprovalRequiredTool](tool); ok { ... }
+gated := *tool                 // copy; the schema and validator are shared but never mutated
+gated.NeedsApproval = true
+gated.Timeout = 30 * time.Second
+gated.Guardrails = append(gated.Guardrails, myGuardrail)  // append: never drop the tool's own
+agent.Tools = append(agent.Tools, &gated)
 ```
 
-**Use `ToolAs`, never a bare type assertion.** `tool.(ApprovalRequiredTool)`
-compiles and returns false through a wrapper — a wrapper only satisfies the
-`Tool` interface itself — so an assertion silently reports that the tool needs
-no approval. That failure mode is why the capabilities are side interfaces
-(`ApprovalRequiredTool`, `GuardedTool`, `TimeoutTool`, `SequentialTool`,
-`EnableableTool`, `FailureHandlingTool`, `InvokableTool`, `DescribableTool`)
-resolved through one accessor instead of methods on `Tool`.
+Two rules follow from the fields rather than from a framework:
 
-A wrapper you write yourself only has to embed the unexported shell's contract:
-forward `ToolName`, implement `Unwrap() Tool`, and add the one interface it
-provides.
+- **Append to `Guardrails`, do not assign.** Replacing the slice disarms the
+  checks the tool declared for itself.
+- **Capture a hook before overwriting it** when your version should compose with
+  the tool's own answer rather than replace it:
+
+  ```go
+  inner := tool.IsEnabled
+  gated.IsEnabled = func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (bool, error) {
+      if !unlocked() {
+          return false, nil
+      }
+      if inner != nil {
+          return inner(ctx, rc, a)
+      }
+      return true, nil
+  }
+  ```
+
+The runner reads these fields directly. There is nothing to unwrap and no
+capability lookup to get wrong: a tool's timeout is `tool.Timeout`, and a
+copy that did not touch it still has it.
 
 ### Progressive disclosure
 
-`agents.WithDeferred` withholds a tool from the model until another tool's
+`FunctionTool.Deferred` withholds a tool from the model until another tool's
 result names it:
 
 ```go
-agent.Tools = []agents.Tool{
+readAccount.Deferred = true             // hidden until disclosed
+
+agent.Tools = []*agents.FunctionTool{
 	authenticate,                       // always available
-	agents.WithDeferred(readAccount),   // hidden until disclosed
+	readAccount,
 }
 
 // inside authenticate:
@@ -307,7 +306,7 @@ if err != nil {
 agent := &agents.Agent{
     Name:  "research-bot",
     Model: "gpt-4o",
-    Tools: []agents.Tool{search},
+    Tools: []*agents.FunctionTool{search},
 }
 ```
 
@@ -322,7 +321,7 @@ container, or a remote host over SFTP. There is no separate local-path editor
 and no hosted OpenAI `apply_patch`.
 
 ```go
-tools := []agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+tools := []*agents.FunctionTool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
 tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)   // read_file, write_file, list_files
 tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{})) // apply_patch
 ```

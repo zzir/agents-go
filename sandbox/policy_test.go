@@ -63,11 +63,11 @@ func TestPolicy_RefusalIsAToolResult(t *testing.T) {
 	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
 	defer sb.Close()
 	tool := CodeTool(sb, CodeToolConfig{Policy: Policy{Deny: []string{`rm -rf`}}})
-	inv, ok := agents.ToolAs[agents.InvokableTool](tool)
+	inv, ok := tool, tool.OnInvoke != nil
 	if !ok {
 		t.Fatal("not invokable")
 	}
-	res, err2 := inv.Invoke(context.Background(),
+	res, err2 := inv.OnInvoke(context.Background(),
 		&agents.ToolContext{RunContext: agents.NewRunContext(nil)},
 		`{"cmd":"rm -rf /tmp/x","timeout_seconds":0,"workdir":""}`)
 	if err2 != nil {
@@ -88,8 +88,8 @@ func TestPolicy_RefusedCommandNeverRuns(t *testing.T) {
 	defer sb.Close()
 
 	tool := CodeTool(sb, CodeToolConfig{Policy: Policy{Deny: []string{`touch`}}})
-	inv, _ := agents.ToolAs[agents.InvokableTool](tool)
-	if _, err := inv.Invoke(context.Background(),
+	inv := tool
+	if _, err := inv.OnInvoke(context.Background(),
 		&agents.ToolContext{RunContext: agents.NewRunContext(nil)},
 		`{"cmd":"touch marker","timeout_seconds":0,"workdir":""}`); err != nil {
 		t.Fatal(err)

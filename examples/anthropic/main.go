@@ -29,7 +29,7 @@ func main() {
 		Name:         "claude-weather-bot",
 		Instructions: agents.StaticInstructions("Answer weather questions using the get_weather tool."),
 		Model:        "claude-opus-5",
-		Tools:        []agents.Tool{getWeather},
+		Tools:        []*agents.FunctionTool{getWeather},
 	}
 
 	stream, _ := agents.Run(context.Background(), agent, "What's the weather in Oslo?", agents.RunOptions{

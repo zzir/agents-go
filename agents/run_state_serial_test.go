@@ -88,7 +88,7 @@ func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 		modelResp(functionCallOutput(t, "delete_db", "inner_call", `{}`)),
 		modelResp(messageOutput(t, "inner finished")),
 	}}
-	inner := &Agent{Name: "specialist", Tools: []Tool{innerTool}, ModelImpl: innerModel}
+	inner := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: innerModel}
 
 	outerModel := &fakeModel{responses: []*ModelResponse{
 		{
@@ -103,7 +103,7 @@ func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 	}}
 	outer := &Agent{
 		Name:      "triage",
-		Tools:     []Tool{auto, inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
+		Tools:     []*FunctionTool{auto, inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
 		ModelImpl: outerModel,
 	}
 	opts := RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}}

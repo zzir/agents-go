@@ -71,9 +71,9 @@ func fileToolError(op, reqPath string, err error) string {
 // FileTools returns read_file, write_file and list_files tools backed by the
 // given sandbox. These complement CodeTool by giving the model structured file
 // I/O instead of piping everything through shell commands.
-func FileTools(sb Sandbox, cfg FileToolConfig) []agents.Tool {
+func FileTools(sb Sandbox, cfg FileToolConfig) []*agents.FunctionTool {
 	cfg = cfg.withDefaults()
-	return []agents.Tool{
+	return []*agents.FunctionTool{
 		ReadFileTool(sb, cfg),
 		WriteFileTool(sb, cfg),
 		ListFilesTool(sb, cfg),
@@ -86,7 +86,7 @@ type readFileArgs struct {
 
 // ReadFileTool returns a tool that reads a file from the sandbox. The file
 // content is returned as a string, truncated to MaxOutputBytes.
-func ReadFileTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
+func ReadFileTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
 	cfg = cfg.withDefaults()
 	return agents.NewFunctionTool(
 		"read_file",
@@ -109,7 +109,7 @@ type writeFileArgs struct {
 }
 
 // WriteFileTool returns a tool that writes a file into the sandbox.
-func WriteFileTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
+func WriteFileTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
 	cfg = cfg.withDefaults()
 	return agents.NewFunctionTool(
 		"write_file",
@@ -130,7 +130,7 @@ type listFilesArgs struct {
 }
 
 // ListFilesTool returns a tool that lists files in a sandbox directory.
-func ListFilesTool(sb Sandbox, cfg FileToolConfig) agents.Tool {
+func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
 	cfg = cfg.withDefaults()
 	return agents.NewFunctionTool(
 		"list_files",

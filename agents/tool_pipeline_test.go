@@ -29,7 +29,7 @@ func TestToolPipeline_HandledErrorStillProducesOutput(t *testing.T) {
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestToolPipeline_InputGuardrailRejectSkipsTheTool(t *testing.T) {
 		modelResp(messageOutput(t, "done")),
 	}}
 	var ran bool
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestToolPipeline_StoppedTurnStringifiesForPlainText(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{ShouldStopAfterTurn: stopAlways},
@@ -125,7 +125,7 @@ func TestToolPipeline_RejectedCallParticipatesInTurnResult(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	opts := RunOptions{Exec: ExecOptions{ShouldStopAfterTurn: stopAlways}}
 	res, err := RunSync(context.Background(), agent, "go", opts)
@@ -171,7 +171,7 @@ func TestToolPipeline_ConcurrentFailureDeterministicWinner(t *testing.T) {
 		},
 		Usage: NewUsage(),
 	}}}
-	agent := &Agent{Name: "a", Tools: []Tool{first, second}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{first, second}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil || !strings.Contains(err.Error(), "first-error") {
@@ -195,7 +195,7 @@ func TestToolInputGuardrailReject(t *testing.T) {
 		modelResp(functionCallOutput(t, "danger", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -227,7 +227,7 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "leaky", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	var tw *GuardrailTripwireError
@@ -245,7 +245,7 @@ func TestToolError_FeedsBackToModel(t *testing.T) {
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -277,7 +277,7 @@ func TestToolError_FatalWhenNil(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("expected run to fail when FailureErrorFunction is nil")
@@ -299,7 +299,7 @@ func TestShouldStopAfterTurn_StopsOnToolResult(t *testing.T) {
 		modelResp(functionCallOutput(t, "calc", "c1", `{}`)),
 		modelResp(messageOutput(t, "never reached")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{ShouldStopAfterTurn: func(_ context.Context, tr *TurnResult) (bool, error) {

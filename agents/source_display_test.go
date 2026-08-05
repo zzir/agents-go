@@ -29,7 +29,7 @@ func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 		},
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err != nil {
@@ -110,7 +110,7 @@ func TestSource_PropagatesThroughARun(t *testing.T) {
 	}}}
 	triage := &Agent{
 		Name:     "triage",
-		Tools:    []Tool{tool},
+		Tools:    []*FunctionTool{tool},
 		Handoffs: []Handoff{HandoffTo(billing)},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "t", "c1", `{}`)),
@@ -157,7 +157,7 @@ func TestSource_ErrorHandlerFallback(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{loop}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{loop}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{
@@ -207,7 +207,7 @@ func TestDisplay_ProjectsEveryItemKind(t *testing.T) {
 		modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"Paris"}`)),
 		modelResp(messageOutput(t, "it is sunny")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err != nil {
@@ -289,7 +289,7 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 	tool := NewFunctionTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		{Output: []TResponseOutputItem{unknown, functionCallOutput(t, "t", "c1", `{}`)}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "done")),
 	}}}

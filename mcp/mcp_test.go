@@ -50,8 +50,8 @@ func TestMCP_ListAndCallTools(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
-	ft, ok := tools[0].(*agents.FunctionTool)
-	if !ok || ft.Name != "echo" {
+	ft := tools[0]
+	if ft.Name != "echo" {
 		t.Fatalf("unexpected tool: %+v", tools[0])
 	}
 

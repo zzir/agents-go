@@ -67,7 +67,7 @@ func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 			atomic.AddInt32(&inflight, -1)
 			return "ok", nil
 		})
-	agent := &Agent{Name: "a", Tools: []Tool{slow}}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{slow}}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "slow", 3), {ResponseID: "done"}}}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxToolConcurrency: 1}, Model: ModelOptions{Override: model}})
@@ -161,7 +161,7 @@ func TestReasoningItemIDPolicy_Omit(t *testing.T) {
 			modelResp(reasoningOutput(t, "rs_1"), functionCallOutput(t, "noop", "c1", `{}`)),
 			modelResp(messageOutput(t, "done")),
 		}}
-		return model, &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+		return model, &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 	}
 
 	// Default (preserve): the reasoning id reaches the model on turn 2.

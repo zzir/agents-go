@@ -30,7 +30,7 @@ from upstream.
 | Not doing | Why |
 |---|---|
 | **Chat Completions API** | Internal item types *are* Responses types ([§5.5](#55-internal-item-types-are-responses-wire-types)). A backend that speaks another protocol is supported by translating at the model boundary ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)) — never by making a second format canonical. Chat Completions specifically was declined again 2026-07-31 in favor of a native Anthropic adapter; revisit only with a concrete backend nothing else covers. |
-| **Provider-hosted tools** (`web_search`, `file_search`, `code_interpreter`, `computer_use`, …) | `Tool` is a sealed interface; every tool is a locally executed `FunctionTool`. Hosted tools bind a tool to one backend. |
+| **Provider-hosted tools** (`web_search`, `file_search`, `code_interpreter`, `computer_use`, …) | A tool is a `*FunctionTool` struct, not an interface, so there is nothing a hosted tool could implement; every tool executes locally. Hosted tools bind a tool to one backend. |
 | **A neutral multi-provider abstraction** | No lowest-common-denominator message model. An adapter implements `Model` by translating to the canonical Responses format ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)); `models/modelkit` is shared plumbing for writing adapters, not an abstraction layer. The SDK guarantees depth of correctness for Responses semantics. |
 | **Model price or capability tables** | They change constantly and do not belong in an SDK. `Usage` exposes raw token counts; pricing is the caller's concern. |
 | **Realtime and voice** | A different interaction model, out of scope. |
@@ -758,7 +758,7 @@ cannot otherwise survive.
   nothing".
 - **An unfinished call is never retried by default.** A process killed between
   the call and its output leaves no way to tell whether the tool ran — the
-  email may already have been sent. Only a tool declaring `WithRetrySafe` is
+  email may already have been sent. Only a tool declaring `RetrySafe: true` is
   left dangling for the next run to redo.
 - `RecoveryPolicy.RetrySafe` is supplied by the **caller**, because the stored
   history holds a tool NAME and only the caller knows the agent.
@@ -894,32 +894,46 @@ that some of what a tool knows is **not for the model**:
 A tool that returns a plain value (string, struct, `ToolOutputContent`) is
 wrapped automatically, so the ordinary tool is unchanged.
 
-### 2.7c Tool capabilities are side interfaces ✅
+### 2.7c Tool capabilities are fields ✅
 
-Beyond its name, everything a tool can do is an **optional interface** rather
-than a method on `Tool`: `InvokableTool`, `DescribableTool`,
-`ApprovalRequiredTool`, `GuardedTool`, `TimeoutTool`, `SequentialTool`,
-`EnableableTool`, `FailureHandlingTool`.
+`*FunctionTool` is the only tool type, and everything a tool can do beyond
+being called is a **field** on it: `OnInvoke`, `Description`,
+`ParamsJSONSchema`, `Strict`, `NeedsApproval` / `NeedsApprovalFunc`,
+`Guardrails`, `Timeout`, `Sequential`, `IsEnabled`, `FailureErrorFunction`,
+`Deferred`, `RetrySafe`.
 
-- The runner resolves them **only** through `ToolAs[T](tool)`, which walks the
-  `Unwrap() Tool` chain the way `errors.As` walks an error chain. A tool that
-  provides nothing beyond `Tool` is legal and runs with every default.
-- A **bare type assertion is a bug**, and the reason this is specified at all:
-  `tool.(ApprovalRequiredTool)` compiles and returns false through any wrapper,
-  silently reporting that a tool needing approval needs none. Nothing in the
-  type system catches it, so the rule is "always `ToolAs`".
-- `WithApproval`, `WithTimeout`, `WithGuardrails`, `WithEnabled`,
-  `WithSequential` and `WithFailureHandler` wrap any tool. They stack in **any
-  order**, and every capability underneath stays reachable.
-- `WithGuardrails` **appends** to the wrapped tool's own guardrails. Replacing
-  them would let a wrapper disarm a tool's checks without saying so.
-- A wrapper never changes what the model is told: name, description and schema
-  come from the tool underneath.
+- The runner reads them directly. There is no capability lookup, so there is
+  nothing to get wrong: a tool's timeout is `tool.Timeout` whether the tool was
+  built here or somewhere else.
+- **Adapting a tool you did not build is copying the struct.** The schema map
+  and validator are built at construction and never mutated, so a copy shares
+  them safely:
 
-There is deliberately no `WithFatalErrors`. "Errors abort the run" is the
-absence of a failure handler, and a wrapper cannot express an absence —
-`ToolAs` would walk straight past it to the inner tool's handler. Set
-`FailureErrorFunction = nil` on the tool itself.
+  ```go
+  gated := *tool
+  gated.NeedsApproval = true
+  ```
+
+- **`Guardrails` is appended to, never assigned**, when adding checks to a tool
+  that already declares its own. Replacing the slice would disarm them silently.
+- **A hook is captured before being overwritten** when the new one should
+  compose rather than replace — `inner := tool.IsEnabled`, then call `inner`
+  from the replacement. Nothing enforces this; a caller that overwrites without
+  capturing has decided to replace, which is also legal.
+- Copying never changes what the model is told unless the copy assigns to
+  `Name`, `Description` or `ParamsJSONSchema`.
+
+"Errors abort the run" is the absence of a failure handler:
+`FailureErrorFunction = nil`. It is expressible because it is a field — an
+absence a wrapper could not have represented.
+
+**Why fields and not an interface with optional side interfaces:** that was the
+previous design, and it had exactly one concrete implementation
+(`*FunctionTool`) plus eight wrapper shells whose only job was to set what were
+already fields on it. The wrappers required a `ToolAs[T]` unwrap walker, and a
+bare type assertion through a wrapper silently reported that a tool needing
+approval needed none — a trap the design created and then had to specify around.
+A field cannot hide behind a wrapper.
 
 ### 2.7d Tool-loop safety valves ✅
 
@@ -1019,7 +1033,7 @@ Schema, not a root-level `required` check.
 
 ### 2.7i Progressive tool disclosure ✅
 
-A tool marked `WithDeferred` is withheld from the model until some
+A tool marked `Deferred: true` is withheld from the model until some
 `ToolResult.AddedTools` names it.
 
 - **Marking the tool is the opt-in**, not a run-level flag: the interesting
@@ -1592,15 +1606,18 @@ breaks every caller.
 **Responses API capability**, not a porting artifact. The two compose: a stored
 prompt provides the base, instructions append to it.
 
-### 5.4 The `Tool` interface is sealed
+### 5.4 A tool is a struct, not an interface
 
-An unexported marker method keeps the set of tool kinds closed to the package.
-This is how the "no hosted tools" decision is enforced, not an oversight.
+`*FunctionTool` is the tool type. There is no `Tool` interface, which is how the
+"no hosted tools" decision ([§1.2](#12-non-goals)) is enforced: a provider-hosted
+tool has nowhere to be introduced, because there is nothing to implement.
 
-Sealed is not the same as unextensible: a caller cannot invent a tool *kind*,
-but the `WithXxx` decorators of [§2.7c](#27c-tool-capabilities-are-side-interfaces-)
-compose freely over any tool, so behavior stays open while the wire contract
-stays closed.
+This replaced a sealed interface with an unexported marker method. The seal was
+doing the same job, but it also invited a wrapper hierarchy to carry optional
+behavior, and that hierarchy needed a lookup protocol
+([§2.7c](#27c-tool-capabilities-are-fields-)) to be usable. A struct closes the
+kind and carries the behavior in one move; behavior stays open because the
+fields are exported and a variant is a copy.
 
 ### 5.5 Internal item types are Responses wire types
 

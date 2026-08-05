@@ -41,7 +41,7 @@ func TestLogging_RecordsTheRunsShape(t *testing.T) {
 	tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}
@@ -72,7 +72,7 @@ func TestLogging_SensitiveDataIsOptIn(t *testing.T) {
 		agent := &Agent{
 			Name:         "a",
 			Instructions: StaticInstructions("SECRET-SYSTEM-PROMPT"),
-			Tools:        []Tool{tool},
+			Tools:        []*FunctionTool{tool},
 			ModelImpl: &fakeModel{responses: []*ModelResponse{
 				modelResp(functionCallOutput(t, "probe", "c1", `{"q":"SECRET-ARGS"}`)),
 				modelResp(messageOutput(t, "done")),

@@ -166,7 +166,7 @@ func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 	sb := NewLocal()
 	tool := CodeTool(sb, CodeToolConfig{
 		Name: "run_sh",
-	}).(*agents.FunctionTool)
+	})
 
 	if tool.Name != "run_sh" {
 		t.Errorf("name = %q", tool.Name)
@@ -189,7 +189,7 @@ func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 }
 
 func TestCodeTool_DefaultConfig(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{}).(*agents.FunctionTool)
+	tool := CodeTool(NewLocal(), CodeToolConfig{})
 	if tool.Name != "exec_command" {
 		t.Errorf("default name = %q, want exec_command", tool.Name)
 	}
@@ -207,7 +207,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	tc := &agents.ToolContext{}
 
 	// write_file
-	wt := tools[1].(*agents.FunctionTool)
+	wt := tools[1]
 	if wt.Name != "write_file" {
 		t.Fatalf("tools[1].Name = %q, want write_file", wt.Name)
 	}
@@ -220,7 +220,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	}
 
 	// read_file
-	rt := tools[0].(*agents.FunctionTool)
+	rt := tools[0]
 	if rt.Name != "read_file" {
 		t.Fatalf("tools[0].Name = %q, want read_file", rt.Name)
 	}
@@ -233,7 +233,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	}
 
 	// list_files
-	lt := tools[2].(*agents.FunctionTool)
+	lt := tools[2]
 	if lt.Name != "list_files" {
 		t.Fatalf("tools[2].Name = %q, want list_files", lt.Name)
 	}
@@ -248,7 +248,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 
 func TestReadFileTool_NotFound(t *testing.T) {
 	sb := NewLocal()
-	rt := ReadFileTool(sb, FileToolConfig{}).(*agents.FunctionTool)
+	rt := ReadFileTool(sb, FileToolConfig{})
 	out, err := rt.OnInvoke(context.Background(), &agents.ToolContext{}, `{"path":"/nonexistent/file"}`)
 	if err != nil {
 		t.Fatal(err)

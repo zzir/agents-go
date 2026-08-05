@@ -69,7 +69,7 @@ type stopArgs struct {
 //
 // sessionID resolves the parent session from the run context; nil uses
 // DefaultSessionID.
-func (m *Manager) Tools(sessionID SessionIDFrom) []agents.Tool {
+func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.FunctionTool {
 	if sessionID == nil {
 		sessionID = DefaultSessionID
 	}
@@ -139,7 +139,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []agents.Tool {
 			return taskResult(info), nil
 		})
 
-	return []agents.Tool{spawn, status, stop}
+	return []*agents.FunctionTool{spawn, status, stop}
 }
 
 // taskResult splits what the model reads from what a UI renders: Content is the

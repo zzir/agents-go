@@ -112,7 +112,7 @@ weather := agents.NewFunctionTool("get_weather", "Look up the current weather fo
 		return "Sunny, 23°C in " + args.City, nil
 	})
 
-mathTutor.Tools = []agents.Tool{weather}
+mathTutor.Tools = []*agents.FunctionTool{weather}
 ```
 
 ## Put it all together

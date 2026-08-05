@@ -6,27 +6,30 @@ import (
 	"time"
 )
 
-// Tool is the sealed interface implemented by every tool the SDK supports. Tools
-// are provider-agnostic: a Tool is a FunctionTool whose Go function the SDK
-// executes locally, and the same Tool works against any model backend. The SDK
-// deliberately does not model provider-hosted tools (e.g. OpenAI's server-side
-// web_search), which would couple a tool to one backend.
+// FunctionTool is a tool the agent can call: a name and JSON-schema parameters
+// shown to the model, plus the Go function the SDK runs when the model calls it.
 //
-// The unexported marker method keeps the set of tool kinds closed to this
-// package; construct tools via the provided constructors (e.g. NewFunctionTool).
-type Tool interface {
-	// ToolName returns the tool's name as exposed to the model.
-	ToolName() string
-	isTool()
-}
-
-// FunctionTool is a tool backed by a Go function. The model is shown the tool's
-// name, description and JSON-schema parameters; when the model calls the tool,
-// OnInvoke is run with the raw JSON arguments.
+// It is a STRUCT, and it is the only kind of tool there is. Everything a tool
+// can do — a timeout, an approval gate, its own guardrails, whether it may run
+// concurrently — is a field here, so configuring a tool is assigning to it and
+// deriving a variant is copying it:
 //
-// Construct function tools with NewFunctionTool, which derives ParamsJSONSchema
-// from the argument type via reflection. The struct is exported so advanced
-// callers can build one by hand.
+//	gated := *t
+//	gated.NeedsApproval = true
+//
+// A copy shares nothing that matters: the schema map and validator are built
+// once and never mutated after construction. That is what replaced a wrapper
+// hierarchy — wrappers had to be unwrapped to be inspected, and a lookup that
+// forgot to unwrap silently reported that a tool needing approval needed none.
+// A field cannot hide behind a wrapper.
+//
+// Build one with NewFunctionTool, which reflects the argument type into a
+// strict-mode schema. The struct is exported so a tool with a hand-written
+// schema (NewRawFunctionTool, an MCP bridge, a sandbox) can be built directly.
+//
+// There is deliberately no interface: a provider-hosted tool (`web_search`,
+// `file_search`, …) would bind an agent to one backend, and with a struct there
+// is nowhere for one to be introduced.
 type FunctionTool struct {
 	// Name is the tool name exposed to the model.
 	Name string
@@ -42,20 +45,36 @@ type FunctionTool struct {
 	// NewFunctionTool-built tool use NonStrict, which regenerates both.
 	Strict bool
 	// OnInvoke runs the tool. argsJSON is the raw JSON arguments string emitted
-	// by the model.
+	// by the model. A tool with no OnInvoke is a configuration error, reported
+	// when the model calls it.
 	//
 	// The result carries everything about the call, not just the model-facing
 	// value: UI data that must not reach the model, the renderer to use, token
 	// usage the tool spent itself, and whether the run should stop. Use
 	// TextResult for the common case.
 	OnInvoke func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error)
+
 	// IsEnabled, when non-nil, is consulted before exposing the tool to the
 	// model; returning false hides the tool for that run.
+	//
+	// To gate a tool you did not build without discarding its own hook, capture
+	// the field before overwriting it:
+	//
+	//	inner := t.IsEnabled
+	//	gated := *t
+	//	gated.IsEnabled = func(ctx context.Context, rc *RunContext, a *Agent) (bool, error) {
+	//	    if !unlocked() { return false, nil }
+	//	    if inner != nil { return inner(ctx, rc, a) }
+	//	    return true, nil
+	//	}
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
 
 	// Guardrails inspect this tool's calls. Only their tool stages
 	// (StageToolInput / StageToolOutput) are consulted; put run-wide guardrails
 	// on the Agent instead.
+	//
+	// Adding to a tool you did not build means appending, not assigning —
+	// replacing the slice would disarm the checks the tool declared for itself.
 	Guardrails []Guardrail
 
 	// Timeout bounds a single invocation of this tool. When it expires the
@@ -71,16 +90,44 @@ type FunctionTool struct {
 	// NeedsApprovalFunc, when non-nil, decides per call whether approval is
 	// required, taking precedence over NeedsApproval. callID is the
 	// model-assigned identifier of the specific tool call, so the predicate can
-	// distinguish concurrent calls to the same tool. It mirrors the Python SDK's
-	// needs_approval(run_context, tool_parameters, call_id).
+	// distinguish concurrent calls to the same tool.
 	NeedsApprovalFunc func(ctx context.Context, rc *RunContext, argsJSON string, callID string) (bool, error)
 
 	// FailureErrorFunction controls what happens when OnInvoke returns an error.
 	// When non-nil, its returned message is sent back to the model as the tool
-	// output (so the model can recover), matching the Python SDK's default. When
-	// nil, the error aborts the run. NewFunctionTool installs
-	// DefaultToolErrorFunction; set this field to nil to make tool errors fatal.
+	// output, so the model can recover. When nil, the error aborts the run.
+	// NewFunctionTool installs DefaultToolErrorFunction; set this field to nil
+	// to make a tool's errors fatal.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
+
+	// Sequential marks a tool that must not run concurrently with other tools
+	// in the same turn. The turn runs it alone, in order.
+	Sequential bool
+
+	// Deferred withholds the tool from the model until a ToolResult names it in
+	// AddedTools.
+	//
+	// It is progressive disclosure: an agent offered forty tools chooses worse
+	// than one offered four, and most of those forty are only relevant after
+	// something else has happened. A tool announcing the tools it unlocks says
+	// that directly, where a static list cannot.
+	//
+	// Once disclosed a tool stays available for the rest of the run; withdrawing
+	// it after one use would surprise a model that had just been told it existed.
+	Deferred bool
+
+	// RetrySafe declares the tool safe to run again after a crash interrupted it
+	// mid-execution. See RetrySafeNames and RecoveryPolicy.
+	//
+	// The default is unsafe, and deliberately so. A process killed between
+	// issuing a call and recording its output leaves no way to tell whether the
+	// tool ran: the email may already have been sent. Repeating it is a choice
+	// only the tool's author can make, and assuming otherwise would make crash
+	// recovery a source of duplicate side effects.
+	//
+	// A reader is a good candidate; anything that writes, charges or notifies is
+	// not, unless it is idempotent by construction.
+	RetrySafe bool
 
 	// validator is the compiled form of ParamsJSONSchema, used to validate
 	// model-sent arguments before they are decoded. Constructors set it
@@ -112,10 +159,39 @@ func (t *FunctionTool) NonStrict() *FunctionTool {
 	return t
 }
 
+// needsApproval resolves whether a specific call requires human approval:
+// NeedsApprovalFunc when set, NeedsApproval otherwise.
+func (t *FunctionTool) needsApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
+	if t.NeedsApprovalFunc != nil {
+		return t.NeedsApprovalFunc(ctx, rc, argsJSON, callID)
+	}
+	return t.NeedsApproval, nil
+}
+
+// enabled reports whether the model should be shown this tool for the run.
+func (t *FunctionTool) enabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error) {
+	if t.IsEnabled == nil {
+		return true, nil
+	}
+	return t.IsEnabled(ctx, rc, agent)
+}
+
+// RetrySafeNames returns a predicate for RecoveryPolicy.RetrySafe from a set of
+// tools, so a caller repairing a session does not have to restate which of its
+// tools are safe to repeat.
+func RetrySafeNames(tools []*FunctionTool) func(string) bool {
+	safe := map[string]bool{}
+	for _, t := range tools {
+		if t != nil && t.RetrySafe {
+			safe[t.Name] = true
+		}
+	}
+	return func(name string) bool { return safe[name] }
+}
+
 // DefaultToolErrorFunction is the default FailureErrorFunction: it returns a
-// generic, model-readable error message. It mirrors the Python SDK's
-// default_tool_error_function, including the dedicated wording when the model
-// sent arguments that were not decodable JSON — the message carries only the
+// generic, model-readable error message, with dedicated wording when the model
+// sent arguments that were not decodable JSON — that message carries only the
 // underlying syntax error, prompting the model to retry with valid JSON.
 func DefaultToolErrorFunction(_ context.Context, _ *ToolContext, err error) string {
 	if ae, ok := errors.AsType[*toolArgumentsJSONError](err); ok {
@@ -123,73 +199,3 @@ func DefaultToolErrorFunction(_ context.Context, _ *ToolContext, err error) stri
 	}
 	return "An error occurred while running the tool. Please try again. Error: " + err.Error()
 }
-
-// ToolName implements Tool.
-func (t *FunctionTool) ToolName() string { return t.Name }
-
-func (t *FunctionTool) isTool() {}
-
-var _ Tool = (*FunctionTool)(nil)
-
-// FunctionTool declares its capabilities through the side interfaces, so a
-// runner asks every tool the same way — ToolAs — whether the capability came
-// from a field here or from a decorator wrapped around it.
-
-// Invoke implements InvokableTool.
-func (t *FunctionTool) Invoke(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
-	if t.OnInvoke == nil {
-		return ToolResult{}, NewUserError("function tool %q has no OnInvoke", t.Name)
-	}
-	return t.OnInvoke(ctx, tc, argsJSON)
-}
-
-// ToolDescription implements DescribableTool.
-func (t *FunctionTool) ToolDescription() string { return t.Description }
-
-// ToolParamsSchema implements DescribableTool.
-func (t *FunctionTool) ToolParamsSchema() map[string]any { return t.ParamsJSONSchema }
-
-// ToolStrict implements DescribableTool.
-func (t *FunctionTool) ToolStrict() bool { return t.Strict }
-
-// NeedsToolApproval implements ApprovalRequiredTool.
-func (t *FunctionTool) NeedsToolApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
-	if t.NeedsApprovalFunc != nil {
-		return t.NeedsApprovalFunc(ctx, rc, argsJSON, callID)
-	}
-	return t.NeedsApproval, nil
-}
-
-// ToolGuardrails implements GuardedTool.
-func (t *FunctionTool) ToolGuardrails() []Guardrail { return t.Guardrails }
-
-// ToolTimeout implements TimeoutTool.
-func (t *FunctionTool) ToolTimeout() time.Duration { return t.Timeout }
-
-// IsToolEnabled implements EnableableTool.
-func (t *FunctionTool) IsToolEnabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error) {
-	if t.IsEnabled == nil {
-		return true, nil
-	}
-	return t.IsEnabled(ctx, rc, agent)
-}
-
-// HandleToolFailure implements FailureHandlingTool. A tool whose
-// FailureErrorFunction is nil deliberately does NOT satisfy the interface at
-// runtime — the runner checks for nil — so its errors abort the run.
-func (t *FunctionTool) HandleToolFailure(ctx context.Context, tc *ToolContext, err error) string {
-	if t.FailureErrorFunction == nil {
-		return ""
-	}
-	return t.FailureErrorFunction(ctx, tc, err)
-}
-
-var (
-	_ InvokableTool        = (*FunctionTool)(nil)
-	_ DescribableTool      = (*FunctionTool)(nil)
-	_ ApprovalRequiredTool = (*FunctionTool)(nil)
-	_ GuardedTool          = (*FunctionTool)(nil)
-	_ TimeoutTool          = (*FunctionTool)(nil)
-	_ EnableableTool       = (*FunctionTool)(nil)
-	_ FailureHandlingTool  = (*FunctionTool)(nil)
-)

@@ -27,7 +27,7 @@ func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 		modelResp(functionCallOutput(t, "delete_db", "call_1", `{}`)),
 		modelResp(messageOutput(t, "all done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
@@ -73,7 +73,7 @@ func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 		modelResp(functionCallOutput(t, "deploy", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -100,7 +100,7 @@ func preApprovalFixture(t *testing.T, guardrail Guardrail, ran *atomic.Int32) *A
 		modelResp(functionCallOutput(t, "send_mail", "call_1", `{}`)),
 		modelResp(messageOutput(t, "understood")),
 	}}
-	return &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 }
 
 func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
@@ -237,7 +237,7 @@ func detailsAgent(t *testing.T, result func() (ToolResult, error)) *Agent {
 		modelResp(functionCallOutput(t, "get_data", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	return &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 }
 
 func findToolOutput(items []RunItem) *ToolCallOutputItem {
@@ -348,7 +348,7 @@ func TestDetails_SurviveRunStateRoundTrip(t *testing.T) {
 		modelResp(functionCallOutput(t, "guarded", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool, gated}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool, gated}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {

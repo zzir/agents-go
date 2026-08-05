@@ -45,7 +45,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}}); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "original", RunOptions{Model: ModelOptions{InputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
 		d.Input = InputItemsFromText("REWRITTEN_BY_FILTER")
@@ -137,7 +137,7 @@ func TestTurnInput_AdvancesPerTurn(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "start", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestTurnInput_ReturnsACopy(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{}); err != nil {
 		t.Fatal(err)

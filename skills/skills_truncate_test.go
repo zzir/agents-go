@@ -28,7 +28,7 @@ func TestReadFileToolTruncationMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := skills.ReadFileTool(root).(*agents.FunctionTool)
+	tool := skills.ReadFileTool(root)
 	ctx := context.Background()
 	tc := &agents.ToolContext{}
 

@@ -113,7 +113,7 @@ func truncatedCallResults(agent *Agent, runs []toolRunFunction) []functionToolRe
 // others.
 func anySequential(runs []toolRunFunction) bool {
 	for _, run := range runs {
-		if st, ok := ToolAs[SequentialTool](run.Tool); ok && st.RunsSequentially() {
+		if run.Tool.Sequential {
 			return true
 		}
 	}

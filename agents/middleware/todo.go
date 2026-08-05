@@ -114,7 +114,7 @@ func (td Todo) Apply(agent *agents.Agent) *agents.Agent {
 		})
 	// The clone shares the Tools slice with the original agent; build a fresh
 	// slice so the caller's agent is not mutated through the shared array.
-	tools := make([]agents.Tool, 0, len(out.Tools)+1)
+	tools := make([]*agents.FunctionTool, 0, len(out.Tools)+1)
 	tools = append(tools, out.Tools...)
 	tools = append(tools, tool)
 	out.Tools = tools

@@ -49,7 +49,7 @@ func main() {
 		Name:         "researcher",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Answer using the lookup tool. Keep it to one sentence."),
-		Tools:        []agents.Tool{lookup},
+		Tools:        []*agents.FunctionTool{lookup},
 	}
 
 	attempt := 0

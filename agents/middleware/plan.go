@@ -152,27 +152,29 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	phase := &PlanPhase{}
 
 	out := agent.Clone()
-	tools := make([]agents.Tool, 0, len(out.Tools)+1)
+	tools := make([]*agents.FunctionTool, 0, len(out.Tools)+1)
 	for _, t := range out.Tools {
-		if readOnly[t.ToolName()] {
+		if readOnly[t.Name] {
 			tools = append(tools, t)
 			continue
 		}
 		// The gate COMPOSES with the tool's own enabled hook rather than
-		// shadowing it: the resolver consults only the outermost
-		// EnableableTool layer, so a bare phase gate would make every gated
-		// tool unconditionally visible after unlock — including tools the
-		// host disabled for permissions or run context.
-		inner, hasInner := agents.ToolAs[agents.EnableableTool](t)
-		tools = append(tools, agents.WithEnabled(t, func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) (bool, error) {
+		// shadowing it: a bare phase gate would make every gated tool
+		// unconditionally visible after unlock — including tools the host
+		// disabled for permissions or run context. Capturing IsEnabled before
+		// overwriting it on the copy is what keeps the tool's own answer.
+		gated := *t
+		inner := t.IsEnabled
+		gated.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) (bool, error) {
 			if !phase.Executing() {
 				return false, nil
 			}
-			if hasInner {
-				return inner.IsToolEnabled(ctx, rc, agent)
+			if inner != nil {
+				return inner(ctx, rc, agent)
 			}
 			return true, nil
-		}))
+		}
+		tools = append(tools, &gated)
 	}
 	submit := agents.NewFunctionTool(PlanToolName,
 		"Submit your plan for approval. Execution tools unlock only after the plan is approved.",
@@ -187,10 +189,11 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		})
 	// Approval-gated always: the pause IS the review. Hidden again once
 	// executing — a second submission would be noise, not a phase change.
-	tools = append(tools, agents.WithEnabled(agents.WithApprovalAlways(submit),
-		func(context.Context, *agents.RunContext, *agents.Agent) (bool, error) {
-			return !phase.Executing(), nil
-		}))
+	submit.NeedsApproval = true
+	submit.IsEnabled = func(context.Context, *agents.RunContext, *agents.Agent) (bool, error) {
+		return !phase.Executing(), nil
+	}
+	tools = append(tools, submit)
 	out.Tools = tools
 
 	// Handoffs are gated too: a handoff target keeps its own full toolset, so
@@ -239,16 +242,16 @@ type planMCP struct {
 func (m planMCP) Name() string { return m.inner.Name() }
 func (m planMCP) Close() error { return m.inner.Close() }
 
-func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]agents.Tool, error) {
+func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.FunctionTool, error) {
 	tools, err := m.inner.ListTools(ctx, rc, agent)
 	if err != nil || m.phase.Executing() {
 		return tools, err
 	}
 	// A fresh slice, never tools[:0]: the inner server may hand out a cached
 	// slice, and filtering in place would corrupt it for every later turn.
-	kept := make([]agents.Tool, 0, len(tools))
+	kept := make([]*agents.FunctionTool, 0, len(tools))
 	for _, t := range tools {
-		if m.readOnly[t.ToolName()] {
+		if m.readOnly[t.Name] {
 			kept = append(kept, t)
 		}
 	}

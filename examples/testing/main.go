@@ -35,7 +35,7 @@ func newAgent() *agents.Agent {
 		Name:         "weather assistant",
 		Instructions: agents.StaticInstructions("Answer weather questions. Use get_weather; do not guess."),
 		Model:        "gpt-4o",
-		Tools:        []agents.Tool{weatherTool},
+		Tools:        []*agents.FunctionTool{weatherTool},
 	}
 }
 

@@ -17,7 +17,7 @@ func TestToolProgress_ReachesTheStream(t *testing.T) {
 		}
 		return "built", nil
 	})
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "build", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}
@@ -63,7 +63,7 @@ func TestToolProgress_NoOpOnABlockingRun(t *testing.T) {
 		}
 		return "built", nil
 	})
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "build", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}
@@ -95,7 +95,7 @@ func TestToolProgress_IgnoredAfterTheToolReturns(t *testing.T) {
 		}()
 		return "done", nil
 	})
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "leaky", "c1", `{}`)),
 		modelResp(messageOutput(t, "ok")),
 	}}}
@@ -122,7 +122,7 @@ func TestToolProgress_IgnoredAfterTheToolReturns(t *testing.T) {
 // Several tools stream at once and the run loop yields too; an iterator's yield
 // is not safe for concurrent calls, so this is the test that would catch it.
 func TestToolProgress_ConcurrentToolsDoNotRaceTheStream(t *testing.T) {
-	mk := func(name string) Tool {
+	mk := func(name string) *FunctionTool {
 		return NewFunctionTool(name, "", func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			for i := range 50 {
 				tc.Emit(TextResult(fmt.Sprintf("%s-%d", name, i)))
@@ -138,7 +138,7 @@ func TestToolProgress_ConcurrentToolsDoNotRaceTheStream(t *testing.T) {
 		}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "x", Tools: []Tool{mk("a"), mk("b"), mk("c")}, ModelImpl: model}
+	agent := &Agent{Name: "x", Tools: []*FunctionTool{mk("a"), mk("b"), mk("c")}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
 	counts := map[string]int{}
@@ -167,7 +167,7 @@ func TestToolProgress_NestedAgentReportsThrough(t *testing.T) {
 		modelResp(functionCallOutput(t, "ask", "c1", `{"input":"hi"}`)),
 		modelResp(messageOutput(t, "outer answer")),
 	}}}
-	outer.Tools = []Tool{inner.AsTool(AgentToolConfig{Name: "ask"})}
+	outer.Tools = []*FunctionTool{inner.AsTool(AgentToolConfig{Name: "ask"})}
 
 	stream, _ := Run(context.Background(), outer, "go", RunOptions{})
 	found := false

@@ -82,7 +82,7 @@ func TestStreamReplacesTheObservationHooks(t *testing.T) {
 		modelResp(messageOutput(t, "handled")),
 	}}}
 	triage := &Agent{
-		Name: "triage", Tools: []Tool{tool}, Handoffs: []Handoff{HandoffTo(billing)},
+		Name: "triage", Tools: []*FunctionTool{tool}, Handoffs: []Handoff{HandoffTo(billing)},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 			modelResp(functionCallOutput(t, "transfer_to_billing", "h1", `{}`)),
@@ -132,7 +132,7 @@ func TestToolGuardrailReplacesToolHooks(t *testing.T) {
 			return Replace("rewritten by guardrail", nil), nil
 		},
 	}}
-	agent := &Agent{Name: "a", Tools: []Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}

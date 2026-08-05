@@ -49,7 +49,7 @@ func TestServeTools_ExposesAnSDKTool(t *testing.T) {
 			return "hello " + a.Name, nil
 		})
 
-	srv, err := mcp.NewToolServer([]agents.Tool{greet}, mcp.ServeOptions{Name: "test-server"})
+	srv, err := mcp.NewToolServer([]*agents.FunctionTool{greet}, mcp.ServeOptions{Name: "test-server"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestServeTools_ToolFailureIsAResult(t *testing.T) {
 		})
 	boom.FailureErrorFunction = nil // make it a hard failure
 
-	srv, err := mcp.NewToolServer([]agents.Tool{boom}, mcp.ServeOptions{})
+	srv, err := mcp.NewToolServer([]*agents.FunctionTool{boom}, mcp.ServeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestServeAgent_ExposesOneAskTool(t *testing.T) {
 	agent := &agents.Agent{
 		Name:               "Research Bot",
 		HandoffDescription: "Answers research questions.",
-		Tools:              []agents.Tool{inner},
+		Tools:              []*agents.FunctionTool{inner},
 		ModelImpl:          &scriptedModel{text: "the answer is 42"},
 	}
 

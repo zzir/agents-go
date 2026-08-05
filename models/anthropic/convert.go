@@ -359,19 +359,15 @@ func parseDataURL(url string) (mediaType, data string, ok bool) {
 // params. As on the OpenAI side, every tool is a locally executed function
 // tool; the strict flag has no Messages equivalent, but a strict schema is
 // still a valid schema, so it passes through unchanged.
-func convertTools(tools []agents.Tool, handoffs []agents.Handoff) ([]ant.ToolUnionParam, error) {
+func convertTools(tools []*agents.FunctionTool, handoffs []agents.Handoff) []ant.ToolUnionParam {
 	out := make([]ant.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {
-		d, ok := agents.ToolAs[agents.DescribableTool](t)
-		if !ok {
-			return nil, fmt.Errorf("anthropic: unsupported tool type %T (only function tools are supported)", t)
-		}
-		out = append(out, functionToolParam(t.ToolName(), d.ToolDescription(), d.ToolParamsSchema()))
+		out = append(out, functionToolParam(t.Name, t.Description, t.ParamsJSONSchema))
 	}
 	for _, h := range handoffs {
 		out = append(out, functionToolParam(h.ToolName, h.ToolDescription, h.InputJSONSchema))
 	}
-	return out, nil
+	return out
 }
 
 func functionToolParam(name, description string, schema map[string]any) ant.ToolUnionParam {

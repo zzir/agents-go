@@ -9,19 +9,19 @@ import (
 )
 
 // invoke calls a tool the way the runner would.
-func invoke(t *testing.T, tool agents.Tool, sessionID, argsJSON string) (agents.ToolResult, error) {
+func invoke(t *testing.T, tool *agents.FunctionTool, sessionID, argsJSON string) (agents.ToolResult, error) {
 	t.Helper()
-	inv, ok := agents.ToolAs[agents.InvokableTool](tool)
+	inv, ok := tool, tool.OnInvoke != nil
 	if !ok {
-		t.Fatalf("tool %q is not invokable", tool.ToolName())
+		t.Fatalf("tool %q is not invokable", tool.Name)
 	}
 	tc := &agents.ToolContext{RunContext: agents.NewRunContext(sessionID), ToolCallID: "call-1"}
-	return inv.Invoke(context.Background(), tc, argsJSON)
+	return inv.OnInvoke(context.Background(), tc, argsJSON)
 }
 
-func toolNamed(tools []agents.Tool, name string) agents.Tool {
+func toolNamed(tools []*agents.FunctionTool, name string) *agents.FunctionTool {
 	for _, t := range tools {
-		if t.ToolName() == name {
+		if t.Name == name {
 			return t
 		}
 	}
@@ -129,13 +129,13 @@ func stringOf(r agents.ToolResult) string {
 // the task so a UI can nest the task's wake-up run under the spawning run.
 func TestTools_SpawnRecordsTheParentRun(t *testing.T) {
 	h := newHarness(t)
-	inv, ok := agents.ToolAs[agents.InvokableTool](toolNamed(h.m.Tools(nil), "spawn_task"))
-	if !ok {
+	inv := toolNamed(h.m.Tools(nil), "spawn_task")
+	if inv.OnInvoke == nil {
 		t.Fatal("spawn_task is not invokable")
 	}
 	tc := &agents.ToolContext{RunContext: agents.NewRunContext("parent"), ToolCallID: "call-1"}
 	ctx := WithParentRunID(context.Background(), "run-42")
-	if _, err := inv.Invoke(ctx, tc, `{"agent_name":"worker","input":"do it","label":"job"}`); err != nil {
+	if _, err := inv.OnInvoke(ctx, tc, `{"agent_name":"worker","input":"do it","label":"job"}`); err != nil {
 		t.Fatal(err)
 	}
 	live, _ := h.store.ListNonTerminal(context.Background(), "parent")

@@ -85,7 +85,7 @@ func TestMCP_EmptyArgumentsSentAsEmptyObject(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("got %d tools, want 1", len(tools))
 	}
-	ft := tools[0].(*agents.FunctionTool)
+	ft := tools[0]
 
 	for _, argsJSON := range []string{"", "   ", "null", "{}"} {
 		gotArgs.Store("(unset)")

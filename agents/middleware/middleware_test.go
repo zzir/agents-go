@@ -102,7 +102,7 @@ func TestApproval_PolicyResolvesTheInterruption(t *testing.T) {
 		return "contents", nil
 	})
 	tool.NeedsApproval = true
-	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{tool}, ModelImpl: &scriptedModel{
+	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{tool}, ModelImpl: &scriptedModel{
 		responses: []*agents.ModelResponse{
 			resp(toolCall(t, "read_file", "c1")),
 			resp(message(t, "done")),
@@ -129,7 +129,7 @@ func TestApproval_UnrecognizedCallsStillPause(t *testing.T) {
 		return "gone", nil
 	})
 	tool.NeedsApproval = true
-	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{tool}, ModelImpl: &scriptedModel{
+	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{tool}, ModelImpl: &scriptedModel{
 		responses: []*agents.ModelResponse{resp(toolCall(t, "rm", "c1"))}}}
 
 	res, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
@@ -149,7 +149,7 @@ func TestApproval_DenyFeedsTheReasonBack(t *testing.T) {
 		return "", nil
 	})
 	tool.NeedsApproval = true
-	agent := &agents.Agent{Name: "a", Tools: []agents.Tool{tool}, ModelImpl: &scriptedModel{
+	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{tool}, ModelImpl: &scriptedModel{
 		responses: []*agents.ModelResponse{
 			resp(toolCall(t, "rm", "c1")),
 			resp(message(t, "understood")),

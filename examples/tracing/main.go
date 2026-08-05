@@ -44,7 +44,7 @@ func run() error {
 		Name:         "trace-demo",
 		Model:        "gpt-4o-mini",
 		Instructions: agents.StaticInstructions("Use the weather tool, then answer in one sentence."),
-		Tools:        []agents.Tool{weather},
+		Tools:        []*agents.FunctionTool{weather},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "What's the weather in Kyoto?", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}, Observe: // reads OPENAI_API_KEY

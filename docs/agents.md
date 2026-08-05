@@ -18,7 +18,7 @@ agent := &agents.Agent{
 	Name:         "Haiku agent",
 	Instructions: agents.StaticInstructions("Always respond in haiku form."),
 	Model:        "gpt-4o-mini",
-	Tools:        []agents.Tool{weather},
+	Tools:        []*agents.FunctionTool{weather},
 }
 ```
 

@@ -62,7 +62,7 @@ func TestMCP_ToolNamePrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ft := tools[0].(*agents.FunctionTool)
+	ft := tools[0]
 	if ft.Name != "test_echo" {
 		t.Errorf("exposed name = %q, want test_echo", ft.Name)
 	}
@@ -86,7 +86,7 @@ func TestMCP_RequireApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ft := tools[0].(*agents.FunctionTool)
+	ft := tools[0]
 	if ft.NeedsApprovalFunc == nil {
 		t.Fatal("expected NeedsApprovalFunc wired for ApproveTools")
 	}
