@@ -209,14 +209,24 @@ func (m *McpManager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoord
 			defer cancel()
 			// Empty origin = non-interactive: connect with the saved token or
 			// report needs-authorization without parking a popup-wait goroutine.
-			_, _ = oauth.ConnectWithOAuth(ctx, m, &cfg, &hc, "")
+			result, err := oauth.ConnectWithOAuth(ctx, m, &cfg, &hc, "")
+			switch {
+			case err != nil:
+				zerolog.Ctx(ctx).Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth reconnect after config change failed")
+			case !result.Connected:
+				zerolog.Ctx(ctx).Warn().Str("mcp", cfg.Name).Msg("mcp oauth reconnect after config change needs user authorization")
+			}
 		}()
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
 		defer cancel()
-		_ = m.Connect(ctx, &cfg)
+		// The write already returned to the client, so this log is the only
+		// trace a failed reconnect leaves.
+		if err := m.Connect(ctx, &cfg); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp reconnect after config change failed")
+		}
 	}()
 }
 

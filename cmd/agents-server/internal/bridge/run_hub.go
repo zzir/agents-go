@@ -476,13 +476,36 @@ func (e ErrRunNotResumable) Error() string {
 // replay buffer, advances the terminal status for terminal event types, and
 // fans the event out to all current subscribers.
 //
-// sendMu is held across the whole operation — seq assignment through fan-out —
-// so two concurrent publishes on one run are fully serialized and a single
-// subscriber can never receive a higher seq before a lower one. The
-// record lock (mu) is taken only briefly to mutate shared state, never during
-// the fan-out, so subscribe/info/unsubscribe stay responsive while events
-// deliver. The sinks are non-blocking (WS/SSE enqueue with a default branch),
-// so holding sendMu across delivery cannot stall other runs.
+// Three contracts hold it together:
+//
+//   - Ordering belongs to agents.Fanout.Publish, which holds one lock from
+//     sequence assignment through delivery. Concurrent publishes on one run are
+//     therefore serialized, and no subscriber can see a higher seq before a
+//     lower one. The record lock below is taken only to mutate the record,
+//     never during fan-out, so subscribe/info stay responsive while events flow.
+//   - A sink runs on its own subscriber goroutine (see SubscribeSeq), never on
+//     the publisher's. Delivery into the per-subscriber buffer is a
+//     non-blocking send, so a sink that blocks deliberately — the SSE one does,
+//     to back-pressure into that buffer instead of dropping a second time —
+//     costs only its own buffer, and overflowing it surfaces as a run.gap
+//     rather than as silent loss.
+//   - The status advance runs AFTER Publish returns, under the record lock
+//     alone: there is no lock shared with other publishers. LastSeq tolerates
+//     that because it re-reads the fanout's counter instead of this event's own
+//     number, so it cannot run backwards. Status rests on something weaker — a
+//     convention that at most one publisher emits a TERMINAL event for a run at
+//     a time. The run's own goroutine holds that role while its segment is live
+//     (the title goroutine publishes alongside it, but only
+//     session.title_updated); publishTaskCancelled takes it for a run whose
+//     segment has ended. The handover between the two is check-then-act, not
+//     locked: taskStopper.Stop reads the status through Info and publishes
+//     after, so a stop that saw RunInterrupted just before an approval resumed
+//     the run can still land a terminal event beside a live segment. What
+//     catches that is the post-resume re-check in ResolveApproval, which
+//     cancels the run it just started once the task row reads terminal — a
+//     compensation, not this lock. A new publisher able to emit a terminal
+//     event beside a live segment needs an atomic status transition here
+//     instead of a third compensation.
 func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 	h.mu.Lock()
 	rec := h.runs[runID]

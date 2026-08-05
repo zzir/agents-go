@@ -1,14 +1,19 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
@@ -224,6 +229,48 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 		case <-deadline:
 			t.Fatal("reachable server was not connected while another hung — auto-connect is serialized")
 		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// syncBuffer collects log output written by a background goroutine while the
+// test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Reconcile's reconnect runs in the background, long after the config write
+// answered its client: a failure there has nowhere to surface but the log, so
+// it must not be swallowed.
+func TestReconcileLogsFailedReconnect(t *testing.T) {
+	var logs syncBuffer
+	ctx := zerolog.New(&logs).Level(zerolog.WarnLevel).WithContext(t.Context())
+	m := NewMcpManager(ctx, nil)
+
+	m.Reconcile(&store.McpServerConfig{
+		ID: store.NewID(), Name: "broken", TransportType: "stdio", Enabled: true,
+		Config: []byte(`{"command":"agents-server-no-such-executable"}`),
+	}, nil)
+
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(logs.String(), "mcp reconnect after config change failed") {
+		select {
+		case <-deadline:
+			t.Fatalf("a failed background reconnect left no log trace; got %q", logs.String())
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }

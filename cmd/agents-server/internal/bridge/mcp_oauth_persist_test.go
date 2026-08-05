@@ -73,7 +73,7 @@ func TestPersistingTokenSourceRepersistsOnChange(t *testing.T) {
 
 	tokA := &oauth2.Token{AccessToken: "at-1", RefreshToken: "rt-1"}
 	tokB := &oauth2.Token{AccessToken: "at-2", RefreshToken: "rt-2"}
-	src := newPersistingSource(&staticSeq{toks: []*oauth2.Token{tokA, tokA, tokB}}, ocfg, id, s, tokA)
+	src := newPersistingSource(t.Context(), &staticSeq{toks: []*oauth2.Token{tokA, tokA, tokB}}, ocfg, id, s, tokA)
 
 	for range 2 { // unchanged token: nothing re-written
 		if _, err := src.Token(); err != nil {
@@ -119,7 +119,7 @@ func TestRestoredTokenSourceRefreshesExpiredGrant(t *testing.T) {
 	s, id := newOAuthTestStore(t, seed)
 	b, _ := json.Marshal(seed)
 
-	ts := restoredTokenSource(id, string(b), s, &http.Client{Timeout: 5 * time.Second})
+	ts := restoredTokenSource(t.Context(), id, string(b), s, &http.Client{Timeout: 5 * time.Second})
 	if ts == nil {
 		t.Fatal("full grant produced no token source")
 	}
@@ -151,7 +151,7 @@ func TestRestoredTokenSourceLegacyAndInvalid(t *testing.T) {
 	legacyValid, _ := json.Marshal(tokenPayload{
 		AccessToken: "at", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
 	})
-	ts := restoredTokenSource(id, string(legacyValid), s, http.DefaultClient)
+	ts := restoredTokenSource(t.Context(), id, string(legacyValid), s, http.DefaultClient)
 	if ts == nil {
 		t.Fatal("legacy valid grant should yield a static source")
 	}
@@ -167,7 +167,7 @@ func TestRestoredTokenSourceLegacyAndInvalid(t *testing.T) {
 		"empty":          "",
 		"garbage":        "{not json",
 	} {
-		if got := restoredTokenSource(id, saved, s, http.DefaultClient); got != nil {
+		if got := restoredTokenSource(t.Context(), id, saved, s, http.DefaultClient); got != nil {
 			t.Errorf("%s: want nil source, got %T", name, got)
 		}
 	}

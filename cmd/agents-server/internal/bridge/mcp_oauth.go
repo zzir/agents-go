@@ -233,13 +233,15 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		// client exist nowhere else — then keep re-persisting on every
 		// refresh. rctx is the SDK's background refresh context.
 		NewTokenSource: func(rctx context.Context, ocfg *oauth2.Config, tok *oauth2.Token) (oauth2.TokenSource, error) {
-			persistGrant(c.store, cfg.ID, ocfg, tok)
-			return newPersistingSource(ocfg.TokenSource(rctx, tok), ocfg, cfg.ID, c.store, tok), nil
+			// Persistence rides the caller's context for its logger, not rctx,
+			// which the SDK derives from its own background root.
+			persistGrant(ctx, c.store, cfg.ID, ocfg, tok)
+			return newPersistingSource(ctx, ocfg.TokenSource(rctx, tok), ocfg, cfg.ID, c.store, tok), nil
 		},
 		// A restored grant refreshes through the same persisting machinery as
 		// a live one, so the restart and live paths are a single mechanism.
 		// nil (no usable saved grant) triggers the interactive flow.
-		InitialTokenSource: restoredTokenSource(cfg.ID, cfg.OAuthToken, c.store, httpClient),
+		InitialTokenSource: restoredTokenSource(ctx, cfg.ID, cfg.OAuthToken, c.store, httpClient),
 	}
 	if preregistered != nil {
 		handlerCfg.PreregisteredClient = preregistered

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -403,7 +402,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		// it would arm a spectator.
 		armPlanUnlock(built.PlanPhase, sa)
 	}
-	tracer := newTracer(sendEvent, r.Deps.Traces, sessionID, runID)
+	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID)
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
@@ -559,10 +558,6 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 	log := zerolog.Ctx(ctx)
-	if log.GetLevel() == zerolog.Disabled {
-		nop := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
-		log = &nop
-	}
 
 	// Only name an unnamed session. Checked first so a re-run on an already-named
 	// session (every message after the first) is a cheap Get + return.

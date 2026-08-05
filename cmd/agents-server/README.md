@@ -921,10 +921,18 @@ When a change genuinely doesn't fit, update this list in the same PR.
     stop/approve claims race through the same CAS (`Finalize` vs
     `ReclaimWorking` — exactly one wins, and `hub.resume` refuses finished
     records as the second line), and `task_status` treats only the row as
-    final — a hub-terminal run whose row hasn't landed is still `working`. A
-    graceful stop marks the hub record before signalling, so its clean finish
-    lands as `cancelled` ("stopped after the current turn"), never as a
-    completion. Cancellations consume their own wake-up debt (the user did it;
+    final — a hub-terminal run whose row hasn't landed is still `working`.
+    That second line is one-directional: it rejects a resume that arrives after
+    a stop landed, but `taskStopper.Stop` reads the hub status and publishes
+    `run.cancelled` after, so the reverse interleaving — a stop that saw
+    `RunInterrupted` just before an approval resumed the run — can still put a
+    terminal event beside a live segment. The compensation is the post-resume
+    task re-check in `ResolveApproval`, which cancels the run it just started
+    when the row reads terminal. A new publisher of terminal run events must not
+    rely on the guard: give the hub an atomic status transition instead of
+    adding a third compensation. A graceful stop marks the hub record before
+    signalling, so its clean finish lands as `cancelled` ("stopped after the
+    current turn"), never as a completion. Cancellations consume their own wake-up debt (the user did it;
     completed / failed are the states worth waking the parent for). Deleting a
     session stops its run tree first (cancel + bounded wait on the done gate)
     so no write can land after the cascade.

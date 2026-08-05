@@ -6,7 +6,7 @@ import (
 	"maps"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -23,14 +23,20 @@ const maxSpanDataJSON = 512 << 10
 // version on span end, which is also the only one persisted. No batching: the
 // consumer is a local WebSocket, and liveness is the point.
 type wsProcessor struct {
+	// ctx is what span persistence runs under. tracing.Processor's hooks take
+	// no context, so it is captured here — detached from the run's
+	// cancellation (a cancelled run still ends its spans, and they must land)
+	// and carrying the configured logger.
+	ctx       context.Context
 	send      func(string, any)
 	traces    *store.TraceStore
 	sessionID string
 	runID     string
 }
 
-func newWSProcessor(send func(string, any), traces *store.TraceStore, sessionID, runID string) *wsProcessor {
+func newWSProcessor(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID string) *wsProcessor {
 	return &wsProcessor{
+		ctx:       context.WithoutCancel(ctx),
 		send:      send,
 		traces:    traces,
 		sessionID: sessionID,
@@ -122,8 +128,8 @@ func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 		StartedAt: ts.StartedAt,
 		EndedAt:   ts.EndedAt,
 	}
-	if err := p.traces.Insert(context.Background(), te); err != nil {
-		log.Warn().Err(err).Msg("failed to persist trace span")
+	if err := p.traces.Insert(p.ctx, te); err != nil {
+		zerolog.Ctx(p.ctx).Warn().Err(err).Msg("failed to persist trace span")
 	}
 }
 
@@ -132,6 +138,6 @@ func (p *wsProcessor) Shutdown(context.Context) {}
 
 var _ tracing.Processor = (*wsProcessor)(nil)
 
-func newTracer(send func(string, any), traces *store.TraceStore, sessionID, runID string) *tracing.Tracer {
-	return tracing.NewTracer(newWSProcessor(send, traces, sessionID, runID))
+func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID string) *tracing.Tracer {
+	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID))
 }
