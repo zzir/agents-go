@@ -94,8 +94,8 @@ into `tools/`, `outputs/` and `models/`, but in Go those would form an import
 cycle with the core (tool callbacks reference `RunContext`; the `Model` interface
 references `Tool`), so they are kept together in `agents/`. Provider, storage,
 tracing and MCP implementations live in subpackages that import `agents`. Items
-use the `openai-go` Responses types as the wire format, mirroring how the Python
-SDK reuses the OpenAI SDK types.
+use the `openai-go` Responses types as the wire format directly, so nothing is
+lost converting in and out of a parallel item model.
 
 ### Roadmap
 

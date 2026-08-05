@@ -6,7 +6,7 @@ Run agents with one of three entry points:
 - `agents.Run(ctx, agent, input, opts)` — the same loop as a stream you range, plus a control handle ([Streaming](streaming.md))
 - `agents.ResumeRun(ctx, state, opts)` — continues a run paused for tool approval ([Human-in-the-loop](human_in_the_loop.md))
 
-`input` is either a `string` (treated as a user message) or a `[]agents.TResponseInputItem` — the OpenAI Responses API item list, exactly as in Python.
+`input` is either a `string` (treated as a user message) or a `[]agents.TResponseInputItem` — the OpenAI Responses API item list.
 
 ```go
 res, err := agents.RunSync(ctx, agent, "Write a haiku about recursion.", agents.RunOptions{
@@ -16,7 +16,7 @@ res, err := agents.RunSync(ctx, agent, "Write a haiku about recursion.", agents.
 
 ## The agent loop
 
-`Run` executes the same loop as the Python SDK:
+`Run` executes this loop:
 
 1. Call the model for the current agent with the conversation so far.
 2. If the model produced a final output (a message with no pending tool calls, matching the agent's output type), the loop ends.
@@ -81,7 +81,7 @@ Each `Run` is one logical turn of a conversation. To carry history across runs y
 
 ## Cancellation and deadlines
 
-The `context.Context` you pass governs the whole run: cancel it to abort between turns, mid-stream, and inside tool calls (tools receive the same context). This replaces Python's `asyncio` cancellation.
+The `context.Context` you pass governs the whole run: cancel it to abort between turns, mid-stream, and inside tool calls (tools receive the same context).
 
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -357,7 +357,7 @@ classification wins, because it knows the most about the failure.
 
 ## Error handlers
 
-`RunOptions.Exec.ErrorHandlers` — the counterpart of Python's `Runner.run(..., error_handlers={...})` — turns selected failures into a normal completion with a fallback final output instead of an error:
+`RunOptions.Exec.ErrorHandlers` turns selected failures into a normal completion with a fallback final output instead of an error:
 
 - **`MaxTurns`** fires when the run exceeds its turn budget (`*MaxTurnsError`).
 - **`ModelRefusal`** fires when the model refuses to respond (`*ModelRefusalError`).
@@ -382,7 +382,7 @@ res, err := agents.RunSync(ctx, agent, "Analyze this long transcript", agents.Ru
 })
 ```
 
-The run then completes normally: output guardrails and `OnAgentEnd` hooks run on the fallback, and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session (Python's `include_in_history=True` default). For an agent with an output type, `FinalOutput` must marshal to JSON that validates against the output schema — anything else fails the run with a `*UserError`.
+The run then completes normally: output guardrails and `OnAgentEnd` hooks run on the fallback, and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session. For an agent with an output type, `FinalOutput` must marshal to JSON that validates against the output schema — anything else fails the run with a `*UserError`.
 
 Return `(nil, nil)` to decline recovery and keep the original error. A declined (or missing) `InvalidFinalOutput` handler keeps the empty-output default: when the model returns no final text for a structured output type, the runner runs the model again rather than failing.
 

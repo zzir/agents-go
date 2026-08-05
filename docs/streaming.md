@@ -29,7 +29,7 @@ _ = ctrl
 ```
 
 `RunStream` is an `iter.Seq2[StreamEvent, error]` — Go's range-over-func
-replaces Python's `async for`.
+is the whole streaming API.
 
 For the result and nothing else, use `RunSync`:
 

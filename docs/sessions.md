@@ -213,7 +213,7 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 
 ### FileSession (JSONL file)
 
-`memory.FileSession` persists history as one JSON item per line, with zero extra dependencies. It fills the "simple local persistence" niche Python covers with `SQLiteSession`, but without a database driver (for actual SQLite/Postgres, see the `sessions` module below):
+`memory.FileSession` persists history as one JSON item per line, with zero extra dependencies. It fills the "simple local persistence" niche without pulling in a database driver, but without a database driver (for actual SQLite/Postgres, see the `sessions` module below):
 
 ```go
 import "github.com/zzir/agents-go/memory"
@@ -250,7 +250,7 @@ Both store one row per entry in an `agent_entries` table — the whole entry ser
 
 ### OpenAI Conversations (server-side)
 
-`openai.ConversationsSession` stores history **server-side** under an OpenAI conversation ID — there is no local store at all. It is the Go counterpart of Python's `OpenAIConversationsSession`. The conversation is created lazily on first use unless you attach an existing one:
+`openai.ConversationsSession` stores history **server-side** under an OpenAI conversation ID — there is no local store at all. It is the server-side counterpart of a local session (`OpenAIConversationsSession`. The conversation is created lazily on first use unless you attach an existing one:
 
 ```go
 import "github.com/zzir/agents-go/models/openai"
@@ -265,7 +265,7 @@ agents.Run(ctx, agent, "remember my name is Ada",
 
 `Entries`/`Append`/`PopEntry`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `agents.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
 
-Before persistence each item is **sanitized** for the Conversations API (mirroring Python's `_sanitize_openai_conversation_item`): stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
+Before persistence each item is **sanitized** for the Conversations API: stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
 
 ### Run-level compaction
 
@@ -339,7 +339,7 @@ combine with a local `Session`.
 
 ### Automatic compaction
 
-`openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result. It is the Go counterpart of Python's `OpenAIResponsesCompactionSession`.
+`openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.
 
 ```go
 import "github.com/zzir/agents-go/models/openai"
@@ -354,7 +354,7 @@ sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
 agents.Run(ctx, agent, "…", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
 
-The runner attempts compaction once, after the final output is persisted (Python compacts per turn; Go persists items per turn but compacts once per run). "Candidate" items exclude user messages and existing compaction items, matching the Python heuristic. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
+The runner attempts compaction once, after the final output is persisted (items persist per turn, but compaction runs once per run). "Candidate" items exclude user messages and existing compaction items. It cannot wrap a `ConversationsSession` (that manages its own server-side history) and requires an OpenAI compaction model.
 
 Compaction is best-effort housekeeping: by the time it runs, the run's items are already saved and the final output produced, so a compaction failure is recorded on the run's `compaction` trace span instead of failing the run. The rewrite goes through `ReplaceStorageEntries`, so backends implementing `AtomicReplacer` swap history atomically — this is the one path that still rewrites, because the server's compact API returns a replacement rather than a decision.
 
@@ -401,7 +401,7 @@ every ordinary exit; it cannot help when the process is killed.
 
 ## Session semantics
 
-- History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (matching Python's per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run.
+- History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run.
 - When a run pauses for [tool approval](human_in_the_loop.md), the completed part of the turn is already saved; the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` to `ResumeRun`.
 - [Handoff input filters](handoffs.md#input-filters) do not affect what is saved: the session keeps the unfiltered conversation.
 - Corrections: use `PopItem` to remove the last item (e.g. let a user edit their question):

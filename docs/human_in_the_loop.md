@@ -66,7 +66,7 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 })
 ```
 
-If a guardrail rejects the call, its message is returned to the model as the tool output — no approval request is emitted and the tool never runs, sparing the human a pointless round-trip. Calls that pass still re-run the same guardrails immediately before execution after approval, so time-sensitive checks are revalidated on resume. This is the counterpart of Python's `RunConfig.tool_execution.pre_approval_tool_input_guardrails`.
+If a guardrail rejects the call, its message is returned to the model as the tool output — no approval request is emitted and the tool never runs, sparing the human a pointless round-trip. Calls that pass still re-run the same guardrails immediately before execution after approval, so time-sensitive checks are revalidated on resume.
 
 ## Approvals across processes
 
@@ -86,7 +86,7 @@ state.Approve(state.Interruptions[0], false)
 res, err := agents.ResumeRunSync(ctx, state, opts)
 ```
 
-Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** mapping agent names back to your `*Agent` values. The format round-trips Go↔Go only — it is not compatible with the Python SDK's `RunState` JSON.
+Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** mapping agent names back to your `*Agent` values. The format round-trips within this SDK only; it is not an interchange format with any other agents SDK.
 
 The state round-trips whole: input queued through `RunControl` before the pause, deferred tools already disclosed to the model, and the server-conversation cursor (`UsePreviousResponseID` / `ConversationID` deltas) all survive the JSON trip, so a cross-process resume behaves exactly like an in-process one.
 

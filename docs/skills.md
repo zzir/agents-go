@@ -31,8 +31,8 @@ agent := &agents.Agent{
 - **`RenderIndex(skills)`** builds the discovery section (each skill's name, description and path, plus how-to-use guidance) to add to an agent's instructions. The skill body is **not** loaded here — progressive disclosure keeps the context footprint small.
 - **`ReadFileTool(dir)`** is a `read_skill_file` function tool that lets the model read a file under `dir` on demand (a `SKILL.md` body, reference, asset, or script). Reads are confined to `dir` via Go's `os.Root`, so `../` traversal and symlink escapes are rejected, and each read is capped at 256 KiB.
 
-## Difference from the Python SDK
+## No sandbox dependency
 
-Python ships skills as a *sandbox capability* (`agents.sandbox.capabilities.skills`), tied to its workspace/manifest sandbox model. This module instead implements the provider-agnostic Agent Skills standard directly on `Instructions` + a function tool, with no sandbox dependency.
+Skills are implemented directly on `Instructions` plus a function tool, against the provider-agnostic Agent Skills standard. Binding them to a sandbox instead would make loading a `SKILL.md` require a container.
 
 A runnable example is in `skills/example`.

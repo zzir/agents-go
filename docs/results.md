@@ -32,7 +32,7 @@ if !ok {
 }
 ```
 
-Because handoffs can route to agents with different output types, `FinalOutput` is typed `any` — the type assertion documents which agent you expect to have answered, just like the Python SDK's `final_output_as`.
+Because handoffs can route to agents with different output types, `FinalOutput` is typed `any` — the type assertion documents which agent you expect to have answered; `FinalOutputAs[T]` is the checked form.
 
 ## New items
 

@@ -148,7 +148,7 @@ A runnable example is in `examples/fallback`.
 
 ## Model settings
 
-`ModelSettings` mirrors Python's dataclass; `nil`/zero fields mean "leave unset" (use `agents.Ptr` for pointers):
+`ModelSettings` carries the provider knobs; `nil`/zero fields mean "leave unset" (use `agents.Ptr` for pointers):
 
 ```go
 agent.ModelSettings = &agents.ModelSettings{
@@ -171,7 +171,7 @@ agent.ModelSettings = &agents.ModelSettings{
 }
 ```
 
-`RunOptions.Model.Settings` overlays per-run values over each agent's own (`Resolve` semantics, matching Python).
+`RunOptions.Model.Settings` overlays per-run values over each agent's own (`Resolve` semantics).
 
 Notes:
 
@@ -179,7 +179,7 @@ Notes:
 - `PromptCacheKey` is forwarded as the Responses API `prompt_cache_key` to improve prompt-cache hit rates. Unlike the Python SDK, the runner **never auto-generates** one ([differences](migration_from_python.md)): set it explicitly, or supply your own via `ExtraBody["prompt_cache_key"]`. Empty means unset.
 - `PromptCacheOptions` configures prompt caching: `Mode` is `"implicit"` (default) or `"explicit"`, `TTL` is the minimum cache-entry lifetime (currently only `"30m"`). With `"explicit"` mode, mark cache breakpoints on input content parts (`prompt_cache_breakpoint`) to control which prompt prefixes are cached. nil leaves it unset.
 - `ContextManagement` passes server-side context-management entries through to the Responses API — currently `ContextManagement{Type: "compaction", CompactThreshold: agents.Ptr(int64(...))}`, where a nil `CompactThreshold` leaves the threshold to the server. A nil/empty slice leaves it unset.
-- The per-run overlay replaces `ExtraHeaders` / `ExtraQuery` / `ExtraBody` **wholesale** when the override sets them (matching Python's `ModelSettings.resolve`), rather than merging per key: a run-level `ExtraBody` shadows the agent's `ExtraBody` entirely, it does not union with it.
+- The per-run overlay replaces `ExtraHeaders` / `ExtraQuery` / `ExtraBody` **wholesale** when the override sets them, rather than merging per key: a run-level `ExtraBody` shadows the agent's `ExtraBody` entirely, it does not union with it.
 
 ## Custom models
 

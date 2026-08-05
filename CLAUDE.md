@@ -97,7 +97,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   rewrite; `agents/overflow.go` turns a context-overflow error into
   compact-and-retry.
 - **Tracing** — `tracing/`: a span is a `Type` tag + `Data map[string]any`,
-  the idiomatic-Go stand-in for Python's typed SpanData. The current parent
+  rather than one Go type per span kind. The current parent
   travels on the `context`, so a subsystem outside the runner (retry, MCP,
   sandbox) opens a child without a threaded handle. `tracing/otel` maps it to
   OpenTelemetry.

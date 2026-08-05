@@ -14,7 +14,7 @@ triage := &agents.Agent{
 }
 ```
 
-`agents.HandoffTo(target)` is the Go counterpart of Python's `handoff(agent)`: it builds a no-input tool named `transfer_to_<sanitized name>` whose description includes the target's `HandoffDescription`.
+`agents.HandoffTo(target)` builds a no-input tool named `transfer_to_<sanitized name>` whose description includes the target's `HandoffDescription`.
 
 ## Customizing a handoff
 
@@ -45,7 +45,7 @@ h := agents.Handoff{
 ```
 
 > A hand-built `Handoff` is strict by default — the zero value of
-> `NonStrictSchema` matches the Python SDK's `strict_json_schema=True`. Set
+> Handoff input schemas are strict by default. Set
 > `NonStrictSchema: true` only for a schema strict mode cannot express.
 
 | Field | Purpose |
@@ -71,11 +71,11 @@ h.InputFilter = func(d agents.HandoffInputData) agents.HandoffInputData {
 
 `HandoffInputData.InputHistory` is the full conversation as input items, up to and including the handoff. The filter affects only what the next agent sees — what is saved to a [session](sessions.md) is unaffected.
 
-> Note: the Go filter receives one flattened `InputHistory` list rather than Python's three-part `input_history` / `pre_handoff_items` / `new_items` split.
+> Note: the filter receives one flattened `InputHistory` list, not a pre/post split — a filter that needs the boundary can find it by identity.
 
 ### Nesting handoff history
 
-For multi-agent chains, `agents.NestHandoffHistory` is a ready-made filter that folds the prior conversation into one compact summary message for the next agent (mirroring Python's `nest_handoff_history`), cutting tokens and tool-call noise:
+For multi-agent chains, `agents.NestHandoffHistory` is a ready-made filter that folds the prior conversation into one compact summary message for the next agent, cutting tokens and tool-call noise:
 
 ```go
 h := agents.HandoffTo(billing)
@@ -86,11 +86,11 @@ The default folds the transcript into a single assistant message wrapped in fixe
 
 - `Mapper` — a `HandoffHistoryMapper` that folds the transcript your own way (e.g. call an LLM for a real summary instead of the default JSON-per-line transcript). Only the default summary shape is flattened by later handoffs; a custom mapper's summaries are treated as opaque messages.
 
-The transcript is serialized one JSON item per line, which round-trips through `UnmarshalInputItem` when flattened — Go uses this in place of Python's looser text format for reliable nesting.
+The transcript is serialized one JSON item per line, which round-trips through `UnmarshalInputItem` when flattened — a line-delimited format nests reliably, where free text does not.
 
 ## Recommended prompts
 
-As in Python, models follow handoffs better when the instructions mention them:
+Models follow handoffs better when the instructions mention them:
 
 ```go
 triage.Instructions = agents.StaticInstructions(`You are a triage agent for a customer support system.
@@ -100,7 +100,7 @@ Transfers are seamless: do not mention or draw attention to them.`)
 
 ## Semantics worth knowing
 
-- When `InputJSONSchema` declares root-level **required** keys, the model's arguments are validated before `OnHandoff` runs: a nil, empty, non-object, or key-missing payload fails the run with a `*ModelBehaviorError` ("Handoff function expected non-null input, but got None"), matching Python. A no-input transfer (the default `HandoffTo`, whose schema requires nothing) accepts any arguments and is unaffected.
+- When `InputJSONSchema` declares root-level **required** keys, the model's arguments are validated before `OnHandoff` runs: a nil, empty, non-object, or key-missing payload fails the run with a `*ModelBehaviorError` ("Handoff function expected non-null input, but got None"). A no-input transfer (the default `HandoffTo`, whose schema requires nothing) accepts any arguments and is unaffected.
 - Function tools requested in the same turn run **before** the handoff executes.
 - If the model requests several handoffs in one turn, the **first** wins; the others receive a synthetic "Multiple handoffs detected, ignoring this one." tool output.
 - Run-level `OnHandoff` hooks and the receiving agent's `OnHandoff` agent hook both fire on every handoff.

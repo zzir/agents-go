@@ -1,6 +1,6 @@
 # Sandbox agents
 
-The `sandbox` packages run **model-generated code** in an isolated environment and expose that capability to an agent as a tool. This is a Go-specific extension — the Python SDK's hosted "code interpreter" tool runs on OpenAI's servers, while these sandboxes run in *your* infrastructure under your controls.
+The `sandbox` packages run **model-generated code** in an isolated environment and expose that capability to an agent as a tool. Unlike a provider-hosted "code interpreter", which runs on someone else's servers, these sandboxes run in *your* infrastructure under your controls.
 
 ```
 agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)

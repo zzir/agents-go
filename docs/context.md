@@ -7,7 +7,7 @@
 
 ## Local context: `RunContext`
 
-Where Python parameterizes everything on a generic `RunContextWrapper[T]`, Go splits the two concerns idiomatically:
+Two concerns that are often conflated stay separate here:
 
 - **Cancellation/deadlines** ride the standard `context.Context` passed to `Run` (and through to every tool, guardrail and hook).
 - **Your data** rides `RunContext.Context`, an `any` value you supply via `RunOptions.Context`. The SDK never inspects it.
@@ -48,7 +48,7 @@ tool := agents.NewFunctionTool("whoami", "Return the current user.",
 
 ## Agent/LLM context
 
-The LLM only sees the conversation history. To expose data to it you have the same options as Python:
+The LLM only sees the conversation history. To expose data to it:
 
 1. **Instructions** — static or computed from the run context ([dynamic instructions](agents.md#dynamic-instructions)). Good for always-relevant facts (user name, current date).
 2. **Input** — append data to the input items when calling `Run`.

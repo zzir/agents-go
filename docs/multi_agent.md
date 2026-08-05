@@ -7,7 +7,7 @@ Orchestration is deciding which agents run, in what order, and how they decide w
 
 ## Orchestrating via LLM
 
-An agent equipped with tools, [handoffs](handoffs.md) and clear instructions can plan autonomously: research with tools, delegate specialist work, write results somewhere. This is the most flexible pattern. Tactics that pay off (same as Python):
+An agent equipped with tools, [handoffs](handoffs.md) and clear instructions can plan autonomously: research with tools, delegate specialist work, write results somewhere. This is the most flexible pattern. Tactics that pay off:
 
 1. Invest in prompts: state available tools, constraints, and how to operate.
 2. Monitor with [tracing](tracing.md) and iterate.
@@ -54,7 +54,7 @@ orchestrator := &agents.Agent{
 | `IsEnabled` | Hide the tool from the model per run |
 | `NeedsApproval` / `NeedsApprovalFunc` | Make the agent tool itself a human-approval gate |
 | `FailureErrorFunction` | Override how a failed nested run is rendered back to the model |
-| `ModifyRunOptions` | Configure the nested run's `RunOptions` — session, turn budget, conversation, model, guardrails (Python's `run_config` override) |
+| `ModifyRunOptions` | Configure the nested run's `RunOptions` — session, turn budget, conversation, model, guardrails |
 | `OnStream` | Stream the nested run's events to a callback (see below) |
 | `InputBuilder` | Control how structured arguments render into the nested input (`agents.AgentToolInputWithSchema` attaches the full schema) |
 
@@ -73,13 +73,13 @@ sub.AsTool(agents.AgentToolConfig{
 
 **Streaming a nested run.** Setting `OnStream` switches the nested run to streaming: every event (raw model deltas, run items, agent updates) is delivered as an `AgentToolStreamEvent` carrying the current nested agent and the originating tool call. Events dispatch from a background goroutine so a slow callback never stalls the run; a panic in the callback is recovered, and a canceled parent does not wait for the callback backlog.
 
-**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewFunctionTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct, mirroring Python's `TypeAdapter` validation. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
+**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewFunctionTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
 
 The nested run inherits the parent's model provider, model override, model settings, tracer and log configuration through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace and its log records carry the sub-agent's name; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 
 **State isolation.** The nested run never inherits the parent run's conversation state: the sub-agent sees only the input the orchestrator passes, and nothing it does is written to the parent's `Session`. To give the nested run state of its own, set a session or conversation via `ModifyRunOptions` (one strategy at a time, same as a top-level run); to share client-side history with the parent, pass the parent's `Session` there. Python's `previous_response_id` option has no Go counterpart ([differences](migration_from_python.md)).
 
-Without a `CustomOutputExtractor`, the tool result is the nested run's final output — as a string for plain-text agents, or the JSON payload for structured ones. When the final output is empty, it falls back to the last non-empty assistant message, then the last non-empty string tool output (matching Python's `as_tool` extraction).
+Without a `CustomOutputExtractor`, the tool result is the nested run's final output — as a string for plain-text agents, or the JSON payload for structured ones. When the final output is empty, it falls back to the last non-empty assistant message, then the last non-empty string tool output.
 
 **Human-in-the-loop through an agent tool.** If a tool *inside* the sub-agent needs approval ([Human-in-the-loop](human_in_the_loop.md)), the nested run pauses and its approval **surfaces as the orchestrator run's own interruption** — `RunResult.Interruptions` carries the nested tool's approval item. Approve or reject it on `RunResult.State` and `ResumeRun` as usual; the orchestrator continues the paused nested run (applying your decision) instead of restarting it, then finishes the parent turn. The paused nested state is serialized recursively inside the parent's `RunState` JSON, so a state persisted and resumed in another process also continues the nested run mid-approval — provided the agent registry passed to `RunStateFromJSON` contains every agent involved, including the sub-agents.
 
@@ -101,7 +101,7 @@ if verdict, _ := agents.FinalOutputAs[Verdict](check); !verdict.Good {
 story, err := agents.RunSync(ctx, writer, outline.FinalOutputString(), opts)
 ```
 
-Patterns that map directly from the Python docs:
+Two more patterns worth naming:
 
 - **Structured decisions**: use [`OutputType`](agents.md#structured-output-types) to get a typed verdict you can branch on.
 - **Chaining**: feed one agent's output into the next.

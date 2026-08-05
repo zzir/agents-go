@@ -41,7 +41,7 @@ agent.Tools = []*agents.FunctionTool{runQuery}
 - `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). To observe or gate the call from outside the tool, use tool-stage [guardrails](guardrails.md) — they bracket execution with the same call identity in their payload.
 - Tools requested in the same model turn run **concurrently**; share state through the context value only if it is goroutine-safe.
 
-This replaces Python's `@function_tool` decorator: compile-time generics instead of signature inspection, struct tags instead of docstrings.
+The schema comes from compile-time generics over the argument struct and its tags, so what the model is shown and what the function decodes cannot drift apart.
 
 ### Strict mode
 
@@ -55,7 +55,7 @@ t := agents.NewFunctionTool("lookup", "…", fn).NonStrict()
 
 ### Error handling
 
-By default a tool error is fed back to the model as the tool output so it can recover (`DefaultToolErrorFunction`), matching the Python SDK. Customize the message, or make errors fatal:
+By default a tool error is fed back to the model as the tool output so it can recover (`DefaultToolErrorFunction`). Customize the message, or make errors fatal:
 
 ```go
 t.FailureErrorFunction = func(ctx context.Context, tc *agents.ToolContext, err error) string {
@@ -223,7 +223,7 @@ The three content parts mirror the Responses API:
 - `ToolOutputImage{ImageURL, FileID, Detail}` — native image input; set `ImageURL` (a URL or a base64 `data:` URL — `ToolOutputImageFromBytes(mime, bytes)` builds one) **or** `FileID` (an uploaded file).
 - `ToolOutputFile{FileData, FileURL, FileID, Filename}` — native file input (e.g. a PDF).
 
-A runnable example lives in `examples/toolimage`. This is the Go counterpart of Python's `ToolOutputText` / `ToolOutputImage` / `ToolOutputFileContent`; it is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
+A runnable example lives in `examples/toolimage`. It is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
 
 ### Returning more than a value: `ToolResult`
 

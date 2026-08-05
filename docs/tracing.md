@@ -36,11 +36,11 @@ attempt is known to have failed it has already happened, and the point is that
 it happened at all. A generation span that took eight seconds because it was
 tried three times is otherwise indistinguishable from one that was simply slow.
 
-Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner creates these via the typed constructors (`StartAgentSpan`, `StartGenerationSpan`, `StartFunctionSpan`, `StartHandoffSpan`, `StartGuardrailSpan`); the untyped `StartSpan` remains for custom spans and leaves `Type` empty. This is the idiomatic-Go stand-in for Python's typed `SpanData` subclasses — a `Type` tag plus a `Data` map rather than a sealed union.
+Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner creates these via the typed constructors (`StartAgentSpan`, `StartGenerationSpan`, `StartFunctionSpan`, `StartHandoffSpan`, `StartGuardrailSpan`); the untyped `StartSpan` remains for custom spans and leaves `Type` empty.
 
 Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own, and their agent spans are parented under the `function:` span of the tool call that triggered them, so the tree shows which call owns each nested run.
 
-`RunOptions.Observe.TraceGroupID` and `RunOptions.Observe.TraceMetadata` (the counterparts of Python's `RunConfig.group_id` / `trace_metadata`) stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
+`RunOptions.Observe.TraceGroupID` and `RunOptions.Observe.TraceMetadata` stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
 
 ### Sensitive data on generation spans
 
@@ -75,11 +75,9 @@ agents.Run(ctx, agent, input, agents.RunOptions{
 ```
 
 When the option is nil, the `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA`
-environment variable decides: anything but `false` means include. This mirrors
-the Python SDK's `RunConfig.trace_include_sensitive_data`. Opting out keeps
-ids and token usage, drops content.
+environment variable decides: anything but `false` means include. Opting out keeps ids and token usage, drops content.
 
-IDs follow the Python SDK's format (`trace_<32 hex>`, `span_<24 hex>`) and are generated from `crypto/rand`.
+IDs are `trace_<32 hex>` / `span_<24 hex>`, the shape trace backends already parse, generated from `crypto/rand`.
 
 ## Pipeline
 

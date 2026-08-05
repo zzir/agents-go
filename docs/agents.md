@@ -1,6 +1,6 @@
 # Agents
 
-Agents are the core building block. An agent is an LLM configured with instructions, tools, guardrails and handoffs. Unlike the Python SDK's dataclass, a Go agent is a plain struct literal — only `Name` is required, and zero values are sensible defaults.
+Agents are the core building block. An agent is an LLM configured with instructions, tools, guardrails and handoffs. An agent is a plain struct literal — only `Name` is required, and zero values are sensible defaults.
 
 ## Basic configuration
 
@@ -63,7 +63,7 @@ agent.Prompt = agents.StaticPrompt(agents.Prompt{
 })
 ```
 
-`agents.PromptFunc(func(ctx, rc, agent) (*agents.Prompt, error))` computes the prompt per run from the [context](context.md) — the counterpart of Python's `DynamicPromptFunction`. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.GetPrompt`), which fetch prompt *text* to use as instructions.
+`agents.PromptFunc(func(ctx, rc, agent) (*agents.Prompt, error))` computes the prompt per run from the [context](context.md). Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.GetPrompt`), which fetch prompt *text* to use as instructions.
 
 ## Structured output types
 
@@ -126,7 +126,7 @@ actually produced covers everything naming tools up front could, and the policy
 belongs to the run rather than the agent — the same agent gets reused across
 runs that want to stop at different points.
 
-To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn — the inverse of Python's `reset_tool_choice=True` default.
+To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn.
 
 ## Per-agent callbacks
 

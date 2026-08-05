@@ -172,7 +172,7 @@ reordered.
 | 1 | Publish `RunContext.TurnInput` | ✅ Set once the turn's input is final (before the model call), refreshed if `CallModelInputFilter` edits it. It is **what was actually sent** — under server-managed conversation state that is the new items only, not the whole history |
 | 2 | On resume: drop already-completed sibling calls | Prevents duplicated side effects and a second `function_call_output` for the same call id |
 | 3 | Partition calls by approval: `toRun` / `interruptions` / `rejected` | — |
-| 4 | **If any call needs approval, pause the whole turn — no tool runs** | Deliberately unlike Python, which only pauses the gated calls. Rationale: `RunState` never holds partial results |
+| 4 | **If any call needs approval, pause the whole turn — no tool runs** | Pausing only the gated calls would leave `RunState` holding partial results |
 | 5 | Run `toRun` concurrently, then merge with `rejected` in **original call order** | Result order is deterministic and independent of completion order |
 | 6 | A nested agent-as-tool interruption pauses the parent run too | Completed siblings **keep** their outputs; the interrupted call's output is **withheld** |
 | 7 | Unknown tool → feed back `Tool 'X' not found.` | Only under `ToolNotFoundReturnToModel`; otherwise it is a `*ModelBehaviorError` |
