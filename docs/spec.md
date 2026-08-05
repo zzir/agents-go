@@ -1082,8 +1082,8 @@ A response the provider marks `status="incomplete"` with reason
 
 ### 2.7h Schema validation ✅
 
-Tool arguments and structured outputs are validated against the **whole** JSON
-Schema, not a root-level `required` check.
+Tool arguments, handoff input and structured outputs are validated against the
+**whole** JSON Schema, not a root-level `required` check.
 
 - Nested `required`, nested type mismatches, enums and bounds are enforced.
   The old check meant `{"config":{"host":"x"}}` satisfied a schema requiring
@@ -1100,13 +1100,29 @@ Schema, not a root-level `required` check.
 - **A schema this SDK cannot compile skips validation** rather than failing.
   It may still be one the provider understands, and refusing to run would turn
   a missing local check into a broken feature.
-- Schemas are compiled **once per tool**, not per call.
+- Schemas are compiled **once per tool**, not per call. A handoff's schema is
+  compiled **once per invocation** instead: the runner validates a per-turn copy
+  of the `Handoff` value, so a cache on that value would never be read twice and
+  would race the moment two goroutines shared a `Handoff`.
 - **An agent tool is a tool.** `AsTool`'s `{"input": string}` and
   `AgentAsTool`'s reflected schema both face this check before the nested run
   starts, `InputBuilder` or not — a builder replaces the *rendering*, not the
   contract the tool advertises. Arguments that fail come back as a
   `*ModelBehaviorError` for the calling model to correct, instead of becoming
   the sub-agent's prompt verbatim.
+- **Handoff input carries two rules the schema cannot express.** Arguments must
+  be a JSON object — `required` and `properties` say nothing about a scalar
+  instance, so a schema omitting `"type"` would otherwise accept `5` as handoff
+  input — and absent arguments (`""`, `"null"`) are read as `{}`, rejected with
+  "Handoff function expected non-null input, but got None" when the schema
+  declares root-level `required` keys. Because neither rule needs a compiled
+  schema, both survive a schema this SDK cannot compile, which keeps them and
+  skips the rest; a nil schema skips validation entirely. Unlike a tool, a
+  rejected handoff input fails the run rather than being fed back to the model.
+- Schema `default` values are **not** applied to handoff input, though they are
+  to tool arguments: `OnHandoff`, `OnInvoke` and the session all see the model's
+  raw argument string, and a value invented during validation would not be in
+  it.
 - `EnsureStrictJSONSchema` is unaffected: it is the OpenAI strict-mode
   *transformer*, a different job from validation.
 

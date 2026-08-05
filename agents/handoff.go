@@ -24,6 +24,24 @@ type Handoff struct {
 	// ToolDescription explains when to hand off.
 	ToolDescription string
 	// InputJSONSchema is the JSON Schema for the (optional) handoff input.
+	//
+	// The model's arguments are validated against the WHOLE schema before the
+	// handoff fires — nested required keys, types, enums and bounds included —
+	// and a violation is a *ModelBehaviorError, so input the target agent could
+	// not have used never reaches it. Arguments must be a JSON object; absent
+	// ones ("" or "null") are read as "{}", which a schema declaring
+	// root-level required keys rejects and one requiring nothing (the default
+	// HandoffTo transfer) accepts.
+	//
+	// A nil schema skips validation entirely. A schema this SDK cannot compile
+	// keeps the checks that need no compilation — arguments still have to be a
+	// JSON object, and still have to be present when the schema declares
+	// required keys — and skips the rest.
+	//
+	// The schema is sent to the provider as written: unless NonStrictSchema is
+	// set it is sent as a strict-mode schema, so a hand-built one has to be in
+	// the strict subset already (see EnsureStrictJSONSchema) or the API rejects
+	// the request.
 	InputJSONSchema map[string]any
 	// NonStrictSchema opts the handoff input out of strict-mode schema
 	// validation, for schemas strict mode cannot express. The zero value is
@@ -51,29 +69,52 @@ type Handoff struct {
 }
 
 // validateHandoffInput checks the raw handoff arguments against the handoff's
-// InputJSONSchema before the handoff fires. When the schema declares
-// root-level required keys the handoff expects structured input, so a
-// nil/empty/non-object payload or one missing a required key is a
-// *ModelBehaviorError fed back to the model. A handoff with no required keys
-// (the default no-input transfer) accepts any arguments.
+// InputJSONSchema before the handoff fires, so input the target agent could not
+// have used is a *ModelBehaviorError fed back to the model instead of a silent
+// transfer with zero-valued input. The check is the whole schema, the same one
+// tool arguments get: a nested required key, a type mismatch or a violated enum
+// is caught, not only a missing root-level key.
+//
+// Arguments are checked as sent, without applying schema defaults: OnHandoff,
+// OnInvoke and the session all see the model's raw argument string, and a value
+// invented here would not be in it.
+//
+// The schema is compiled here rather than cached on the Handoff: the runner
+// validates a per-turn copy, so a cache on the value would never be read twice
+// anyway, and a lazily written field on a struct users copy freely is a race
+// waiting for its second caller. One compilation per handoff invocation is
+// nothing next to the model call that produced the arguments.
 func validateHandoffInput(h *Handoff, argsJSON string) error {
-	required, ok := h.InputJSONSchema["required"].([]any)
-	if !ok || len(required) == 0 {
+	if len(h.InputJSONSchema) == 0 {
+		// No schema is nothing to check against, not a stricter default: such a
+		// handoff's OnInvoke reads the raw argument string however it likes.
 		return nil
 	}
 	trimmed := strings.TrimSpace(argsJSON)
+	// "" and "null" are how a model spells "no input", and the empty object is
+	// the same call. Whether the handoff can accept it is read off the schema
+	// directly instead of by validating "{}", so a handoff that declares it
+	// needs input keeps saying so even for a schema we cannot compile.
 	if trimmed == "" || trimmed == "null" {
-		return NewModelBehaviorError("Handoff function expected non-null input, but got None")
-	}
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
-		return NewModelBehaviorError("invalid JSON for handoff %q input: %v", h.ToolName, err)
-	}
-	for _, k := range required {
-		key, _ := k.(string)
-		if _, present := probe[key]; !present {
-			return NewModelBehaviorError("handoff %q input missing required key %q", h.ToolName, key)
+		if required, _ := h.InputJSONSchema["required"].([]any); len(required) > 0 {
+			return NewModelBehaviorError("Handoff function expected non-null input, but got None")
 		}
+		trimmed = "{}"
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return NewModelBehaviorError("invalid input for handoff %q: invalid JSON: %v", h.ToolName, err)
+	}
+	// The schema decides everything else, but not this: `required` and
+	// `properties` say nothing about a non-object instance, so a schema that
+	// omits "type" would accept a bare scalar as handoff input — exactly the
+	// silent zero-value transfer this check exists to prevent. Function tool
+	// arguments are gated the same way.
+	if _, ok := parsed.(map[string]any); !ok {
+		return NewModelBehaviorError("invalid input for handoff %q: expected a JSON object", h.ToolName)
+	}
+	if err := newSchemaValidator(h.InputJSONSchema).Validate([]byte(trimmed)); err != nil {
+		return NewModelBehaviorError("invalid input for handoff %q: %v", h.ToolName, err)
 	}
 	return nil
 }
