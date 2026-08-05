@@ -68,13 +68,31 @@ func (p OverflowPolicy) isOverflow(err error) bool {
 //
 // It compacts from the SESSION rather than the in-flight items, for the same
 // reason the save point does: the log is the truth, and a projection of it
-// cannot fall out of step with what was stored. It reports false when nothing
-// was dropped — retrying an identical request would fail identically, and
-// spending the retry budget on that is worse than reporting the overflow.
+// cannot fall out of step with what was stored. It reports false when the pass
+// left the context as it was — retrying an identical request would fail
+// identically, and spending the retry budget on that is worse than reporting
+// the overflow.
 func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, bool) {
 	r.log.Warn(ctx, "context overflow; compacting and retrying the turn",
 		slog.String("error", err.Error()))
 	RecordDiagnostic(ctx, DiagContextOverflow, err, nil)
+
+	// Flush before rebuilding. The save point drains the injection queue AFTER
+	// its own write, so a steer taken there is still only in memory — and the
+	// retry's context comes from the log, with the in-flight items thrown away.
+	// Recovering without this hands the model a conversation the caller's words
+	// never reached, while the next write past their mark still counts them
+	// delivered. The boundary rules are unchanged: a batch ending in a call
+	// without its output stays held back, and the injection commits only once a
+	// write has genuinely covered it.
+	if perr := r.persistSessionItems(ctx); perr != nil {
+		// The rebuilt context would be missing whatever failed to land. The
+		// overflow itself is what the run reports; this is why it was not
+		// recovered from.
+		r.log.Warn(ctx, "overflow recovery abandoned: the session write failed",
+			slog.String("error", perr.Error()))
+		return nil, false
+	}
 
 	compacted, did, cerr := r.recompactAtSavePoint(ctx)
 	if cerr == nil && did {
@@ -92,8 +110,9 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, b
 
 // recoverOverflowViaStorage runs a forced RunCompaction on a session.CompactionAware
 // storage and rebuilds the turn's context from the session, reporting whether
-// the pass changed anything (an unchanged history buys no retry, same as the
-// Compactor path).
+// the pass is worth a retry: the history has to have changed — the Compactor
+// path's rule — and, since this path's pass can be abandoned mid-flight, it has
+// to have changed without growing.
 func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]InputItem, bool) {
 	sess := r.opts.Conversation.Session
 	if sess == nil {
@@ -136,7 +155,14 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context) ([]InputItem, bo
 	if err != nil {
 		return nil, false
 	}
-	if !changedEntries(before, after) {
+	// Different, and no longer than it was. Length alone is not the test — a
+	// pass may return the same COUNT with shorter content, one summary standing
+	// in for one entry — but difference alone is not either: a rewriting storage
+	// guards its replacement against concurrent appends and ABANDONS the pass
+	// when the log moved under it, and the append that made it abandon is itself
+	// enough to leave `after` unequal to `before`. Reading that as progress buys
+	// a retry of a context that only grew.
+	if len(after) > len(before) || !changedEntries(before, after) {
 		return nil, false
 	}
 	history, err := session.ProjectEntries(after, r.opts.Conversation.Projectors)

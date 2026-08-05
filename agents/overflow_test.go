@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
@@ -29,6 +30,42 @@ func (m *overflowingModel) Respond(_ context.Context, req ModelRequest) (*ModelR
 func (m *overflowingModel) StreamResponse(context.Context, ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		yield(nil, errors.New("not used"))
+	}
+}
+
+// scriptedOverflowModel answers turn by turn from a script, a nil step failing
+// with a context-length error. overflowingModel above covers "fail the first n
+// calls, then answer"; this one is for a run whose overflow lands mid-script,
+// and it keeps every request so a test can look at what the RETRY was sent.
+type scriptedOverflowModel struct {
+	steps []*ModelResponse
+	calls int
+	reqs  []ModelRequest
+}
+
+func (m *scriptedOverflowModel) next(req ModelRequest) (*ModelResponse, error) {
+	m.reqs = append(m.reqs, req)
+	i := m.calls
+	m.calls++
+	if i >= len(m.steps) || m.steps[i] == nil {
+		return nil, errors.New("400 Bad Request: This model's maximum context length is 128000 tokens")
+	}
+	return m.steps[i], nil
+}
+
+func (m *scriptedOverflowModel) Respond(_ context.Context, req ModelRequest) (*ModelResponse, error) {
+	return m.next(req)
+}
+
+func (m *scriptedOverflowModel) StreamResponse(_ context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
+	return func(yield func(*ResponseStreamEvent, error) bool) {
+		resp, err := m.next(req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		event := completedStreamEvent(resp)
+		yield(&event, nil)
 	}
 }
 
@@ -126,6 +163,74 @@ func TestOverflow_NoRetryWhenCompactionChangesNothing(t *testing.T) {
 	}
 }
 
+// A steer taken at the save point is not yet in the log: the save point writes
+// first and drains the queue after. Overflow recovery rebuilds from the log and
+// throws the in-flight items away, so recovering without flushing first hands
+// the model a conversation the caller's words never reached — while the next
+// write past their mark still counts them delivered.
+func TestOverflow_RetryKeepsInjectedInput(t *testing.T) {
+	const steer = "and check the date"
+	sess := seededSession(t, "old")
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "result", nil
+	})
+	model := &scriptedOverflowModel{steps: []*ModelResponse{
+		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
+		nil, // the turn the steer rides on overflows
+		modelResp(messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
+
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: sess},
+		Compaction:   CompactionOptions{Compactor: &recordingCompactor{drop: 1}, Points: CompactAtSavePoint},
+		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 2}},
+	})
+	var res *RunResult
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Said while the turn is still running, so the save point drains it into
+		// the turn that is about to overflow.
+		if it, ok := ev.(*RunItemStreamEvent); ok && it.Item.Kind == ItemToolCall {
+			if serr := ctrl.Steer(steer); serr != nil {
+				t.Fatal(serr)
+			}
+		}
+		if done, ok := ev.(*RunCompletedEvent); ok {
+			res = done.Result
+		}
+	}
+	if res == nil || res.FinalOutputString() != "done" {
+		t.Fatalf("the run did not survive the overflow: %+v", res)
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("model calls = %d, want 3 (the turn, its overflow, the retry)", len(model.reqs))
+	}
+	if got := inputTexts(model.reqs[2].Input); !strings.Contains(got, steer) {
+		t.Errorf("the retry lost the steer: %s", got)
+	}
+	// Delivered has to mean delivered: nothing left queued, and the log holds it
+	// once rather than twice.
+	if !ctrl.Pending().Empty() {
+		t.Errorf("the delivered steer is still queued: %+v", ctrl.Pending())
+	}
+	entries, err := sess.Entries(context.Background(), session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := 0
+	for _, e := range entries {
+		if in, ierr := e.InputItem(); ierr == nil && session.ItemText(in) == steer {
+			stored++
+		}
+	}
+	if stored != 1 {
+		t.Errorf("the steer is in the log %d times, want 1", stored)
+	}
+}
+
 // selfCompactingStorage is a session.CompactionAware storage whose forced pass drops
 // the oldest `drop` entries. Non-forced calls (after-run housekeeping) are
 // recorded but do nothing, so the test isolates the overflow path.
@@ -214,6 +319,104 @@ func TestOverflow_StorageNoopBuysNoRetry(t *testing.T) {
 	}
 	if model.calls != 1 {
 		t.Errorf("model calls = %d, want 1 — a no-op forced pass must not buy a retry", model.calls)
+	}
+}
+
+// abandoningStorage models the guarded-replace loser: something appended while
+// the forced pass was in flight, so the replacement is refused and the log ends
+// the pass longer than it started rather than shorter.
+type abandoningStorage struct {
+	session.Storage
+}
+
+func (s *abandoningStorage) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
+	if !args.Force {
+		return nil
+	}
+	entries, err := session.NewItemEntries(InputItemsFromText("arrived mid-pass"), Source{Type: SourceUser})
+	if err != nil {
+		return err
+	}
+	return s.Append(ctx, entries...)
+}
+
+// A pass that was abandoned still leaves the history DIFFERENT from what it
+// started with — the very append that made it abandon saw to that. Difference
+// alone must not buy a retry of a context that only grew.
+func TestOverflow_StorageAbandonedPassBuysNoRetry(t *testing.T) {
+	st := &abandoningStorage{Storage: session.NewInMemoryStorage("test")}
+	if err := st.Append(context.Background(), mustItemEntries(t, "one")...); err != nil {
+		t.Fatal(err)
+	}
+	model := &overflowingModel{failures: 5}
+	agent := &Agent{Name: "a", ModelImpl: model}
+	_, err := RunSync(context.Background(), agent, "now", RunOptions{
+		Conversation: ConversationOptions{Session: session.NewSession(st)},
+		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 3}},
+	})
+	if err == nil {
+		t.Fatal("expected the overflow to be reported")
+	}
+	if model.calls != 1 {
+		t.Errorf("model calls = %d, want 1 — an abandoned pass must not buy a retry", model.calls)
+	}
+}
+
+// summarizingStorage's forced pass swaps every entry for a shorter summary and
+// leaves the COUNT alone — one summary standing in for one entry, which is a
+// legal pass.
+type summarizingStorage struct {
+	session.Storage
+}
+
+func (s *summarizingStorage) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
+	if !args.Force {
+		return nil
+	}
+	entries, err := s.Entries(ctx, session.Cursor{})
+	if err != nil {
+		return err
+	}
+	summaries := make([]InputItem, 0, len(entries))
+	for range entries {
+		summaries = append(summaries, InputItemsFromText("summary")...)
+	}
+	replacement, err := session.NewItemEntries(summaries, Source{Type: SourceUser})
+	if err != nil {
+		return err
+	}
+	if err := s.Clear(ctx); err != nil {
+		return err
+	}
+	return s.Append(ctx, replacement...)
+}
+
+// Length is not the test on this path either: a pass that returns the same
+// COUNT with shorter content really did shrink the context, and reading that as
+// a no-op would throw away a recovery the storage just performed.
+func TestOverflow_StorageSameCountSummaryBuysRetry(t *testing.T) {
+	st := &summarizingStorage{Storage: session.NewInMemoryStorage("test")}
+	if err := st.Append(context.Background(), mustItemEntries(t, "one", "two")...); err != nil {
+		t.Fatal(err)
+	}
+	model := &overflowingModel{failures: 1, answer: modelResp(messageOutput(t, "recovered"))}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	res, err := RunSync(context.Background(), agent, "now", RunOptions{
+		Conversation: ConversationOptions{Session: session.NewSession(st)},
+		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 2}},
+	})
+	if err != nil {
+		t.Fatalf("a same-count summary pass was read as a no-op: %v", err)
+	}
+	if res.FinalOutputString() != "recovered" {
+		t.Errorf("final = %q", res.FinalOutputString())
+	}
+	if model.calls != 2 {
+		t.Errorf("model calls = %d, want 2 (the overflow, then the retry)", model.calls)
+	}
+	if got := inputTexts(model.lastReq.Input); !strings.Contains(got, "summary") {
+		t.Errorf("the retry was not rebuilt from the compacted history: %s", got)
 	}
 }
 

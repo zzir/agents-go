@@ -771,13 +771,28 @@ cannot otherwise survive.
   overflow.
 - Retries are counted **across the run**, not per turn: a run that overflows
   every turn is not recovering, it is looping.
+- **Recovery flushes the session before it rebuilds.** The save point writes
+  first and drains the injection queue after, so a steer taken there is in
+  memory only — and recovery rebuilds the turn's context from the log, throwing
+  the in-flight items away. Overflow recovery therefore persists the turn so far
+  before it compacts; without that the retry hands the model a conversation the
+  caller's words never reached, while the next write past their mark still
+  counts them delivered ([§2.11b](#211b-run-control-)). The write obeys the usual
+  boundary — a batch ending in a call without its output stays held back — and a
+  write that FAILS abandons the recovery: the run reports the overflow, and the
+  take stays in flight for the rollback to re-queue.
 - **A self-compacting storage recovers too.** With no run-level Compactor (or
   with one standing aside because the storage is `CompactionAware`), overflow
   recovery calls the storage's `RunCompaction` with `Force: true` and rebuilds
   the turn's context from the session. Forced, because the storage's own
   trigger normally decides when to compact and an overflow is the one moment
-  that question has already been answered — by the provider. The no-op rule is
-  unchanged: a forced pass that leaves the history identical buys no retry.
+  that question has already been answered — by the provider. The no-op rule
+  carries over, sharpened by the abandonment this path can suffer: a forced pass
+  buys a retry only if the history came back **changed and no longer than it
+  was**. Same count with shorter content is a legal pass — one summary standing
+  in for one entry — but a storage that abandons its replacement because
+  something was appended mid-pass leaves the log different AND longer, which is
+  not progress.
 - Detection matches the provider's message, because that is all a context
   overflow arrives as — a 400 with prose in it. Treating every 400 as an
   overflow would compact and retry after a malformed request, hiding a bug
