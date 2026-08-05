@@ -103,6 +103,29 @@ func (s *SessionStore) UpdateFields(ctx context.Context, id string, name *string
 	return nil
 }
 
+// BindAgentIfEmpty records which agent config a session ran with, unless it is
+// already bound to one: the first binding stands, so a later run with a
+// different agent does not silently rewrite what a reload reopens the session
+// with.
+//
+// A session that is already bound, or is not there at all, changes nothing and
+// is not an error — this is a back-fill, and the caller has a run to finish
+// either way. It leaves updated_at alone: the conversation did not change, and
+// a listing sorts by that.
+func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID string) error {
+	if agentConfigID == "" {
+		return nil
+	}
+	if _, err := s.db.NewUpdate().Model((*Session)(nil)).
+		Set("agent_config_id = ?", agentConfigID).
+		Where("id = ?", id).
+		Where("agent_config_id = '' OR agent_config_id IS NULL").
+		Exec(ctx); err != nil {
+		return fmt.Errorf("binding session %s to agent config %s: %w", id, agentConfigID, err)
+	}
+	return nil
+}
+
 // Delete removes the session with the given id together with all of its
 // messages, trace events, and pending approvals in one transaction. Background
 // tasks spawned from the session cascade: their rows and hidden child
@@ -118,7 +141,7 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			return fmt.Errorf("listing task sessions for %s: %w", id, err)
 		}
 		for _, child := range childIDs {
-			for _, model := range []any{(*entryRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil)} {
+			for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil)} {
 				if _, err := tx.NewDelete().Model(model).
 					Where("session_id = ?", child).
 					Exec(ctx); err != nil {
@@ -148,6 +171,11 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting entries for session %s: %w", id, err)
+		}
+		if _, err := tx.NewDelete().Model((*appendPointRow)(nil)).
+			Where("session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting the append point for session %s: %w", id, err)
 		}
 		if _, err := tx.NewDelete().Model((*TraceEvent)(nil)).
 			Where("session_id = ?", id).

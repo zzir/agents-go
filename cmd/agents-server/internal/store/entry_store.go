@@ -49,6 +49,37 @@ type entryRow struct {
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 }
 
+// appendPointRow is where one session stands: the branch tip, and the highest
+// sequence number it holds.
+//
+// It is stored rather than folded out of the entries because an append must not
+// cost a read of the session. The SDK persists once per TURN, so a run appends
+// many times, and folding each time made a single run cost O(entries²) — over a
+// log that only grows, since compaction soft-deletes.
+//
+// It is not a cache: every path that moves the tip or issues a sequence number
+// writes it in the same transaction as the change itself, so the two records
+// cannot come apart. foldAppendPointIn is the definition it must agree with —
+// TestAppendPointMatchesTheFold holds the paths a session walks in place,
+// TestForkCutOnAFoldedEntry the copy a fork makes, and
+// TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip a fold that takes
+// the tip with it.
+type appendPointRow struct {
+	bun.BaseModel `bun:"table:append_points,alias:ap"`
+
+	SessionID string `bun:"session_id,pk"`
+	// Gen is the generation this point belongs to — part of the key, as it is
+	// part of every other address of an entry row (see EntryStore.scoped).
+	Gen string `bun:"gen,pk"`
+	// LeafEntryID is the tip the next append links to; empty starts a root.
+	LeafEntryID string `bun:"leaf_entry_id,notnull"`
+	// LastSeq is the highest sequence number the session HOLDS, which a
+	// removal lowers. session.AppendPoint would rather have the highest ever
+	// issued; SeqFor is written so the weaker answer is still safe, because it
+	// takes the clock over this floor.
+	LastSeq int64 `bun:"last_seq,notnull"`
+}
+
 // EntryStore persists a server session's entries and serves them to the SDK.
 //
 // It implements session.Storage directly rather than adapting another
@@ -129,6 +160,26 @@ func (s *EntryStore) RunHasAnnotation(ctx context.Context, runID, kind string) (
 	return false, nil
 }
 
+// RunHasItems reports whether the run persisted any replayable item entry —
+// the user's input, or an item of a turn that completed. A caller writing a
+// fallback record of a run that died asks this first, so it does not duplicate
+// what the SDK's per-turn persistence already saved.
+//
+// Scoped like every other read of entry rows: an id alone answers for a
+// generation that was deleted and recreated under the same name, and a stray
+// "yes" from the dead one silently drops the record this caller was about to
+// write.
+func (s *EntryStore) RunHasItems(ctx context.Context, runID string) (bool, error) {
+	exists, err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).
+		Where("run_id = ?", runID).
+		Where("kind = ?", string(session.EntryKindItem)).
+		Exists(ctx)
+	if err != nil {
+		return false, fmt.Errorf("checking run %s for persisted items: %w", runID, err)
+	}
+	return exists, nil
+}
+
 // RefFor resolves the generation currently answering to a session id.
 //
 // Only "there is no such session" is absence; a cancelled context or an
@@ -207,7 +258,31 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...sessio
 	if _, err := db.NewInsert().Model(&rows).Exec(ctx); err != nil {
 		return fmt.Errorf("appending %d entries: %w", len(rows), err)
 	}
+	if err := writeAppendPoint(ctx, db, s.ref, appendPointAfter(at, prepared)); err != nil {
+		return err
+	}
 	return s.touchSessionIn(ctx, db)
+}
+
+// appendPointAfter reports where the session stands once prepared has been
+// written: the same fold session.PrepareAppend just linked them with — a leaf
+// entry moves the tip to its target, anything else becomes the tip.
+//
+// It is seeded with the previous point rather than read off the entries alone,
+// because an append of nothing but leaf moves leaves the tip where it was, and
+// says nothing about the numbers already issued.
+func appendPointAfter(at session.AppendPoint, prepared []session.Entry) session.AppendPoint {
+	for _, e := range prepared {
+		at.LastSeq = max(at.LastSeq, e.Seq)
+		if e.Kind == session.EntryKindLeaf {
+			if p, err := e.LeafPayload(); err == nil {
+				at.Leaf = p.TargetID
+			}
+			continue
+		}
+		at.Leaf = e.ID
+	}
+	return at
 }
 
 // touchSessionIn records that the session changed, on the same handle as the
@@ -242,25 +317,88 @@ func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 	return nil
 }
 
-// appendPointIn reads where the session stands: the branch tip, and the highest
-// sequence number it has issued.
+// appendPointIn reads where the session stands: one indexed row, whatever the
+// session's length (see appendPointRow).
 //
-// The high-water mark is a MAX over every row, compacted ones included — a
-// folded-away entry still consumed its position, and a number this session has
-// handed out is never handed out again.
+// No row falls back to the fold. A session that was never appended to has none,
+// and so does every session in a database written before this table existed —
+// answering "nothing here" for the second would make the next append a new root
+// and abandon the whole conversation behind it. The fold is right for both, and
+// costs one fold once per session, since the append that follows writes the row.
+//
+// The fallback cannot hide a path that forgets to maintain the point: forgetting
+// leaves a STALE row, not a missing one, and TestAppendPointMatchesTheFold still
+// catches that.
 func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
-	entries, err := s.loadIn(ctx, db, false, false)
+	row := new(appendPointRow)
+	err := db.NewSelect().Model(row).
+		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+		Scan(ctx)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return s.foldAppendPointIn(ctx, db)
+	case err != nil:
+		return session.AppendPoint{}, fmt.Errorf("reading the append point: %w", err)
+	}
+	return session.AppendPoint{Leaf: row.LeafEntryID, LastSeq: row.LastSeq}, nil
+}
+
+// foldAppendPointIn computes the append point the long way, from the rows.
+//
+// It is the definition the stored point must agree with, and the way back to
+// agreement for a change that cannot say where the tip landed without looking:
+// a pop, which deletes and relinks, or a fold, which takes rows out of the view.
+func (s *EntryStore) foldAppendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
+	// Read with cross-model adaptation OFF: the stored tree is the same tree
+	// whichever model reads it. An entry this run's backend would reject is
+	// still where the session stands, and linking the next one past it would
+	// give the branch a different shape for every model that ever ran here —
+	// adaptation is a view of the history, not a rewrite of it.
+	bare := *s
+	bare.model = ""
+	entries, err := bare.loadIn(ctx, db, false, false)
 	if err != nil {
 		return session.AppendPoint{}, err
 	}
-	var lastSeq int64
+	at := session.AppendPoint{Leaf: session.LeafOf(entries)}
+	// The high-water mark is a MAX over every row, compacted ones included — a
+	// folded-away entry still consumed its position.
 	if err := db.NewSelect().Model((*entryRow)(nil)).
 		ColumnExpr("COALESCE(MAX(seq), 0)").
 		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
-		Scan(ctx, &lastSeq); err != nil {
+		Scan(ctx, &at.LastSeq); err != nil {
 		return session.AppendPoint{}, fmt.Errorf("reading the last sequence number: %w", err)
 	}
-	return session.AppendPoint{Leaf: session.LeafOf(entries), LastSeq: lastSeq}, nil
+	return at, nil
+}
+
+// refreshAppendPointIn refolds the session and stores where it now stands, on
+// the handle that moved it.
+func (s *EntryStore) refreshAppendPointIn(ctx context.Context, db bun.IDB) error {
+	at, err := s.foldAppendPointIn(ctx, db)
+	if err != nil {
+		return err
+	}
+	return writeAppendPoint(ctx, db, s.ref, at)
+}
+
+// writeAppendPoint records where a session stands. Callers pass the handle that
+// carried the change, so the point and the rows it describes are one write.
+func writeAppendPoint(ctx context.Context, db bun.IDB, ref session.Ref, at session.AppendPoint) error {
+	row := &appendPointRow{
+		SessionID:   ref.ID,
+		Gen:         ref.Gen,
+		LeafEntryID: at.Leaf,
+		LastSeq:     at.LastSeq,
+	}
+	if _, err := db.NewInsert().Model(row).
+		On("CONFLICT (session_id, gen) DO UPDATE").
+		Set("leaf_entry_id = EXCLUDED.leaf_entry_id").
+		Set("last_seq = EXCLUDED.last_seq").
+		Exec(ctx); err != nil {
+		return fmt.Errorf("recording the append point: %w", err)
+	}
+	return nil
 }
 
 // load reads the session's entries in append order. Excluding compacted rows is
@@ -397,6 +535,12 @@ func (s *EntryStore) Clear(ctx context.Context) error {
 			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
 			return err
 		}
+		// Nothing left to stand on: the session is back where an empty one
+		// starts, numbering included — the rows that held those numbers are
+		// gone, and SeqFor's clock keeps the next one past them anyway.
+		if err := writeAppendPoint(ctx, tx, s.ref, session.AppendPoint{}); err != nil {
+			return err
+		}
 		return s.touchSessionIn(ctx, tx)
 	})
 }
@@ -471,6 +615,14 @@ func (s *EntryStore) pop(ctx context.Context, mode session.PopMode) (*session.En
 				return err
 			}
 			if err := s.unfoldIn(ctx, tx, plan.Entry); err != nil {
+				return err
+			}
+			// Where the session stands now cannot be reasoned out from the
+			// removal alone — the tip may have gone, a relink may have moved a
+			// branch pointer, an unfold may have brought entries back — so it
+			// is refolded. A removal already reads the whole session to choose
+			// what to take.
+			if err := s.refreshAppendPointIn(ctx, tx); err != nil {
 				return err
 			}
 			if err := s.touchSessionIn(ctx, tx); err != nil {
@@ -604,6 +756,10 @@ type CompactionInfo struct {
 // it; a client that re-derived it would be a second one, free to disagree. It
 // happens over the whole session before the cursor is applied, because an
 // update and the entry it amends need not land in the same page.
+//
+// Which is why this reads every row on every call, cursor or not — a known
+// cost, deliberately left. It is paid once per page a person asks for, unlike
+// the append point (see appendPointRow), which a run paid once per turn.
 func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID int64, limit int) ([]EntryView, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
@@ -863,6 +1019,16 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
 		return nil, fmt.Errorf("fork entries write: %w", err)
 	}
+	// The copy is a tree of its own — its own ids, its own numbering — so it
+	// stands where its own entries put it, not where the source stands.
+	//
+	// Folded by the definition rather than counted off the rows in hand: a fork
+	// copies compacted rows too (the UI shows what was folded), and a cut that
+	// lands on one of them would otherwise make it the destination's tip — an
+	// entry the fold has already taken out of the view.
+	if err := (&EntryStore{ref: dst}).refreshAppendPointIn(ctx, tx); err != nil {
+		return nil, err
+	}
 	return runIDs, nil
 }
 
@@ -917,7 +1083,16 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.
 // server did not create through a repo, so removing it here would destroy
 // history the caller keeps somewhere else.
 func (s *EntryStore) DeleteBySession(ctx context.Context, sessionID string) error {
-	_, err := s.db.NewDelete().Model((*entryRow)(nil)).
-		Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx)
-	return err
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
+			Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx); err != nil {
+			return err
+		}
+		// The append point describes those rows, so it goes with them: left
+		// behind, it would point a later handle on the same generation at a tip
+		// that is no longer there.
+		_, err := tx.NewDelete().Model((*appendPointRow)(nil)).
+			Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx)
+		return err
+	})
 }

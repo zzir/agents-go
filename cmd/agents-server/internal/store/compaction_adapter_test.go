@@ -320,6 +320,47 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	}
 }
 
+// The checkpoint parents at the tip the fold LEFT, whichever rows the fold took.
+// RunCompaction only ever folds a prefix, so its passes never move the tip;
+// persistCompaction folds whatever it is handed, and a fold reaching the tip
+// must carry the append point with it — otherwise the checkpoint hangs off a row
+// the fold removed from the view, and the branch ends at the checkpoint with the
+// kept history stranded behind it.
+func TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessionID := NewID()
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
+	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON, userItemJSON})
+	rows := loadRows(t, db, sessionID)
+
+	summary, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "sum"})
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	ca := NewCompactionAdapter(sa, &summaryFakeModel{}, 1, 1, "", CompactionNotifier{})
+	// A fold that takes the tail, tip included, rather than a prefix.
+	applied, err := ca.persistCompaction(ctx, []int64{rows[1].ID, rows[2].ID}, summary)
+	if err != nil {
+		t.Fatalf("persistCompaction: %v", err)
+	}
+	if !applied {
+		t.Fatal("compaction should apply when target rows exist")
+	}
+
+	entries, err := sa.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+	walk := session.PathToLeaf(entries, session.LeafOf(entries))
+	if len(walk) != 2 {
+		t.Fatalf("the branch walks %d of 2 entries (the survivor and the checkpoint)", len(walk))
+	}
+	if walk[0].ID != rows[0].EntryID {
+		t.Fatalf("the branch starts at %q, want the entry the fold left, %q", walk[0].ID, rows[0].EntryID)
+	}
+}
+
 // The trigger is token-based: real usage on the newest priced entry plus a
 // byte estimate of everything after it. Below the threshold nothing happens —
 // no summary call, no checkpoint — regardless of how many entries there are.

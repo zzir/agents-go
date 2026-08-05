@@ -35,6 +35,41 @@ func TestSessionDeleteRemovesOwningTask(t *testing.T) {
 	}
 }
 
+// The first run to bind a session to an agent config wins: the binding is what
+// a reload reopens the session with, and a later run under a different agent
+// must not rewrite it. Binding one that is not there, or binding nothing, is
+// not an error — the caller has a run to finish either way.
+func TestBindAgentIfEmptyKeepsTheFirstBinding(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+
+	sess := &Session{ID: NewID(), Name: "s"}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := sessions.BindAgentIfEmpty(ctx, sess.ID, "agent-1"); err != nil {
+		t.Fatalf("first bind: %v", err)
+	}
+	if err := sessions.BindAgentIfEmpty(ctx, sess.ID, "agent-2"); err != nil {
+		t.Fatalf("second bind: %v", err)
+	}
+	got, err := sessions.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.AgentConfigID != "agent-1" {
+		t.Fatalf("session bound to %q, want the first binding %q", got.AgentConfigID, "agent-1")
+	}
+
+	if err := sessions.BindAgentIfEmpty(ctx, sess.ID, ""); err != nil {
+		t.Fatalf("binding nothing: %v", err)
+	}
+	if err := sessions.BindAgentIfEmpty(ctx, NewID(), "agent-3"); err != nil {
+		t.Fatalf("binding a session that is not there: %v", err)
+	}
+}
+
 // regression guard: deleting the parent still cascades to the task row and
 // its hidden child session.
 func TestSessionDeleteParentCascadesTask(t *testing.T) {

@@ -309,7 +309,18 @@ func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs [
 		}
 		// The checkpoint's parent is the branch tip AFTER the fold, which is why
 		// this runs inside the same transaction: appending against the pre-fold
-		// tip would parent it at an entry it just folded away.
+		// tip would parent it at an entry it just folded away, and the branch
+		// would then walk into rows the fold removed from the view. Folding is a
+		// change of view rather than of the log, so nothing has told the stored
+		// append point about it — refold before the append reads it.
+		//
+		// RunCompaction folds a strict PREFIX of the active rows, so today the
+		// tip survives every pass and the refold is a no-op. It is here because
+		// that is a property of the strategy, not of this write: persistCompaction
+		// folds whichever rows it is handed.
+		if err := ca.refreshAppendPointIn(ctx, tx); err != nil {
+			return err
+		}
 		if err := ca.appendTo(ctx, tx, summary); err != nil {
 			return err
 		}

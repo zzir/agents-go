@@ -50,6 +50,24 @@ func quoteJSON(s string) string {
 	return string(b)
 }
 
+// markCompacted folds rows away the way the compaction adapter does: the flag
+// and the append point move together (see persistCompaction), or the next
+// append links to an entry the fold has just taken out of the view.
+func markCompacted(t *testing.T, s *EntryStore, entryIDs ...string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.db.NewUpdate().Model((*entryRow)(nil)).
+		Set("compacted = ?", true).
+		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+		Where("entry_id IN (?)", bun.List(entryIDs)).
+		Exec(ctx); err != nil {
+		t.Fatalf("mark compacted: %v", err)
+	}
+	if err := s.refreshAppendPointIn(ctx, s.db); err != nil {
+		t.Fatalf("refresh append point: %v", err)
+	}
+}
+
 // End-to-end through sqlite: annotations never replay, and switching the run
 // model drops foreign reasoning items and strips foreign ids while items from
 // the same model replay untouched.
@@ -436,12 +454,7 @@ func TestEntryStorePopItem(t *testing.T) {
 	if serr != nil || len(stored) != 2 {
 		t.Fatalf("seeded entries: %v %v", stored, serr)
 	}
-	if _, err := db.NewUpdate().Model((*entryRow)(nil)).
-		Set("compacted = ?", true).
-		Where("session_id = ?", sid).Where("entry_id = ?", stored[1].ID).
-		Exec(ctx); err != nil {
-		t.Fatalf("mark compacted: %v", err)
-	}
+	markCompacted(t, s, stored[1].ID)
 	seed(t, s, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
 		agents.Source{Type: agents.SourceErrorHandler},
@@ -497,12 +510,7 @@ func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
 
 	// What the adapter's persistCompaction does: mark folded, append the
 	// checkpoint naming it.
-	if _, err := db.NewUpdate().Model((*entryRow)(nil)).
-		Set("compacted = ?", true).
-		Where("session_id = ?", sid).Where("entry_id = ?", stored[0].ID).
-		Exec(ctx); err != nil {
-		t.Fatalf("mark compacted: %v", err)
-	}
+	markCompacted(t, s, stored[0].ID)
 	cp, err := session.NewCompactionEntry(session.CompactionPayload{
 		Summary:     "summary",
 		ExcludedIDs: []string{stored[0].ID},
@@ -792,4 +800,342 @@ func refOf(t *testing.T, db *bun.DB, id string) session.Ref {
 func storeFor(t *testing.T, db *bun.DB, id string) *EntryStore {
 	t.Helper()
 	return NewEntryStoreFor(db, refOf(t, db, id))
+}
+
+// The stored append point must say exactly what folding the whole session says,
+// after EVERY path that moves the tip or issues a sequence number — each of
+// which maintains it inside its own transaction. A path that forgets diverges
+// in silence: the next append links a new entry to a tip that is not the tip,
+// and the branch walk stops there with the conversation behind it dropped.
+func TestAppendPointMatchesTheFold(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sid := NewID()
+	s := NewEntryStoreFor(db, session.Direct(sid))
+	s.SetRunID("r1")
+
+	steps := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{"append", func(t *testing.T) {
+			t.Helper()
+			seed(t, s, userEntry(t, "one"), userEntry(t, "two"))
+		}},
+		{"append again", func(t *testing.T) {
+			t.Helper()
+			seed(t, s, userEntry(t, "three"), userEntry(t, "four"))
+		}},
+		{"annotation", func(t *testing.T) {
+			t.Helper()
+			if err := s.AppendAnnotation(ctx, s.ref, "r1", "boom"); err != nil {
+				t.Fatalf("append annotation: %v", err)
+			}
+		}},
+		{"call display update", func(t *testing.T) {
+			t.Helper()
+			if err := s.AppendCallDisplayUpdate(ctx, s.ref, "c1",
+				agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1"}); err != nil {
+				t.Fatalf("append display update: %v", err)
+			}
+		}},
+		{"branch back", func(t *testing.T) {
+			t.Helper()
+			stored, err := s.Entries(ctx, session.Cursor{})
+			if err != nil {
+				t.Fatalf("entries: %v", err)
+			}
+			if err := s.Branch(ctx, s.ref, stored[0].ID); err != nil {
+				t.Fatalf("branch: %v", err)
+			}
+		}},
+		{"append onto the branch", func(t *testing.T) {
+			t.Helper()
+			seed(t, s, userEntry(t, "five"))
+		}},
+		{"compaction pass", func(t *testing.T) {
+			t.Helper()
+			ca := NewCompactionAdapter(s, &summaryFakeModel{summary: "what came before"}, 1, 2, "", CompactionNotifier{})
+			if err := ca.RunCompaction(ctx, session.CompactionArgs{Force: true}); err != nil {
+				t.Fatalf("compaction: %v", err)
+			}
+			n, err := s.scoped(db.NewSelect().Model((*entryRow)(nil))).Where("compacted = ?", true).Count(ctx)
+			if err != nil {
+				t.Fatalf("count folded: %v", err)
+			}
+			if n == 0 {
+				t.Fatal("the pass folded nothing, so this step proves nothing about a fold")
+			}
+		}},
+		{"pop the checkpoint", func(t *testing.T) {
+			t.Helper()
+			popped, err := s.PopEntry(ctx)
+			if err != nil {
+				t.Fatalf("pop entry: %v", err)
+			}
+			if popped == nil || popped.Kind != session.EntryKindCompaction {
+				t.Fatalf("popped %+v, want the checkpoint the pass just wrote", popped)
+			}
+		}},
+		{"pop an item", func(t *testing.T) {
+			t.Helper()
+			if _, err := s.PopItem(ctx); err != nil {
+				t.Fatalf("pop item: %v", err)
+			}
+		}},
+		{"clear", func(t *testing.T) {
+			t.Helper()
+			if err := s.Clear(ctx); err != nil {
+				t.Fatalf("clear: %v", err)
+			}
+		}},
+		{"append after clear", func(t *testing.T) {
+			t.Helper()
+			seed(t, s, userEntry(t, "six"))
+		}},
+	}
+
+	for _, step := range steps {
+		t.Run(step.name, func(t *testing.T) {
+			step.run(t)
+			stored, err := s.appendPointIn(ctx, db)
+			if err != nil {
+				t.Fatalf("read the stored append point: %v", err)
+			}
+			folded, err := s.foldAppendPointIn(ctx, db)
+			if err != nil {
+				t.Fatalf("fold the append point: %v", err)
+			}
+			if stored != folded {
+				t.Fatalf("stored append point %+v, folded %+v", stored, folded)
+			}
+		})
+	}
+}
+
+// A database written before the point was materialized holds entries and no
+// point row. Reading that as "nothing here" would make the next append a new
+// root and leave the whole conversation on an abandoned branch — no error, no
+// missing table, nothing to tell anyone the history had gone.
+func TestAppendPointFallsBackToTheFold(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sid := NewID()
+	s := NewEntryStoreFor(db, session.Direct(sid))
+	s.SetRunID("r1")
+	seed(t, s, userEntry(t, "one"), userEntry(t, "two"), userEntry(t, "three"))
+
+	// What such a database holds: the entries, without the row.
+	if _, err := db.NewDelete().Model((*appendPointRow)(nil)).
+		Where("session_id = ?", sid).Where("gen = ?", "").Exec(ctx); err != nil {
+		t.Fatalf("drop the point row: %v", err)
+	}
+
+	seed(t, s, userEntry(t, "four"))
+	entries, err := s.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+	if n := len(session.PathToLeaf(entries, session.LeafOf(entries))); n != 4 {
+		t.Fatalf("the branch walks %d of 4 entries — the append started a new root", n)
+	}
+	// That append also wrote the row, so the fold is paid once per session.
+	exists, err := db.NewSelect().Model((*appendPointRow)(nil)).
+		Where("session_id = ?", sid).Where("gen = ?", "").Exists(ctx)
+	if err != nil {
+		t.Fatalf("look for the point row: %v", err)
+	}
+	if !exists {
+		t.Fatal("the append left no point row, so every later append folds again")
+	}
+}
+
+// A fork is a tree of its own — its own ids, its own numbering — so it stands
+// where its own entries put it. Inheriting the source's point would link the
+// copy's next entry to an id that only exists in the session it was forked
+// from.
+func TestForkMaterializesTheDestinationAppendPoint(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	src := &Session{ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create src: %v", err)
+	}
+	s := storeFor(t, db, src.ID)
+	s.SetRunID("r1")
+	seed(t, s, userEntry(t, "one"), userEntry(t, "two"))
+
+	dst := &Session{ID: NewID(), Name: "dst"}
+	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), 0, false); err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	forked := storeFor(t, db, dst.ID)
+
+	stored, err := forked.appendPointIn(ctx, db)
+	if err != nil {
+		t.Fatalf("read the stored append point: %v", err)
+	}
+	folded, err := forked.foldAppendPointIn(ctx, db)
+	if err != nil {
+		t.Fatalf("fold the append point: %v", err)
+	}
+	if stored != folded {
+		t.Fatalf("stored append point %+v, folded %+v", stored, folded)
+	}
+
+	// And what is appended next continues the copy's own branch.
+	forked.SetRunID("r2")
+	seed(t, forked, userEntry(t, "three"))
+	entries, err := forked.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+	if n := len(session.PathToLeaf(entries, session.LeafOf(entries))); n != 3 {
+		t.Fatalf("the fork's branch walks %d of 3 entries — the append did not continue it", n)
+	}
+}
+
+// A fork copies compacted rows too, so the destination's UI can still show what
+// was folded. Cutting ON one of them — regenerating from a message compaction
+// has since folded away — must not make it the destination's tip: the fork's
+// first entry would hang off an entry no view contains, putting folded messages
+// back on the branch with no checkpoint to explain them.
+func TestForkCutOnAFoldedEntry(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	src := &Session{ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create src: %v", err)
+	}
+	s := storeFor(t, db, src.ID)
+	s.SetRunID("r1")
+	seed(t, s, userEntry(t, "one"), userEntry(t, "two"), userEntry(t, "three"))
+
+	stored, err := s.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+	markCompacted(t, s, stored[0].ID, stored[1].ID)
+	rows := loadRows(t, db, src.ID)
+
+	dst := &Session{ID: NewID(), Name: "dst"}
+	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), rows[1].ID, false); err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	forked := storeFor(t, db, dst.ID)
+
+	got, err := forked.appendPointIn(ctx, db)
+	if err != nil {
+		t.Fatalf("read the stored append point: %v", err)
+	}
+	want, err := forked.foldAppendPointIn(ctx, db)
+	if err != nil {
+		t.Fatalf("fold the append point: %v", err)
+	}
+	if got != want {
+		t.Fatalf("stored append point %+v, folded %+v", got, want)
+	}
+
+	// Everything the fork copied was folded away, so its first entry is a root
+	// and the folded copies stay off the branch.
+	forked.SetRunID("r2")
+	seed(t, forked, userEntry(t, "regenerated"))
+	view, err := forked.GetEntries(ctx, refOf(t, db, dst.ID), 0, 10)
+	if err != nil {
+		t.Fatalf("get entries: %v", err)
+	}
+	for _, e := range view {
+		if e.Compacted && e.OnPath {
+			t.Fatalf("entry %d is folded away yet shown on the branch", e.ID)
+		}
+	}
+}
+
+// The append point is a property of the stored tree, not of the model reading
+// it. An entry this run's backend would reject is dropped from what the MODEL
+// sees, and the next entry still links behind it — otherwise the shape of the
+// branch would depend on which model happened to append to it.
+func TestAppendPointIgnoresTheRunModel(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewEntryStoreFor(db, session.Direct(NewID()))
+	s.SetRunID("r1")
+	s.SetModel("model-a")
+	seed(t, s,
+		userEntry(t, "hi"),
+		rawEntry(t, `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"think"}]}`),
+	)
+	stored, err := s.Entries(ctx, session.Cursor{})
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("seeded entries: %v %v", stored, err)
+	}
+	reasoning := stored[1]
+
+	// A run on another model: the reasoning item is not replayed to it...
+	s.SetModel("model-b")
+	items, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatalf("context items: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("replayed %d items to a foreign model, want 1 (the reasoning item is not replayable)", len(items))
+	}
+	// ...but it is still where the session stands. Read from the rows, because
+	// the same adaptation that drops the entry from the view closes the gap in
+	// the parent links it leaves behind — that is a repair of the VIEW, and the
+	// tree underneath must be the one every model shares.
+	seed(t, s, userEntry(t, "and then?"))
+	rows := loadRows(t, db, s.ref.ID)
+	if got := rows[len(rows)-1].ParentID; got != reasoning.ID {
+		t.Fatalf("the new entry hangs off %q, want the tip %q — a foreign tip must not fork the branch", got, reasoning.ID)
+	}
+}
+
+// RunHasItems answers for ONE generation of a session id. A session deleted and
+// recreated under the same name is a different session, and a stray "yes" from
+// the dead one makes the caller skip a record it is the only writer of.
+func TestRunHasItemsIsScopedToTheGeneration(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	sid := NewID()
+	if err := sessions.Create(ctx, &Session{ID: sid, Name: "first"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	dead := storeFor(t, db, sid)
+	dead.SetRunID("r1")
+	seed(t, dead, userEntry(t, "hi"))
+
+	has, err := dead.RunHasItems(ctx, "r1")
+	if err != nil {
+		t.Fatalf("run has items: %v", err)
+	}
+	if !has {
+		t.Fatal("the run's own item entry was not found")
+	}
+	// An annotation is not a replayable item, so a run that only wrote one has
+	// nothing the SDK would have persisted.
+	if err := dead.AppendAnnotation(ctx, dead.ref, "r2", "boom"); err != nil {
+		t.Fatalf("append annotation: %v", err)
+	}
+	has, err = dead.RunHasItems(ctx, "r2")
+	if err != nil {
+		t.Fatalf("run has items: %v", err)
+	}
+	if has {
+		t.Fatal("an annotation counted as a persisted item")
+	}
+
+	// The same id, a new generation: the old generation's rows are not this
+	// session's.
+	fresh := NewEntryStoreFor(db, session.Ref{ID: sid, Gen: NewID()})
+	has, err = fresh.RunHasItems(ctx, "r1")
+	if err != nil {
+		t.Fatalf("run has items: %v", err)
+	}
+	if has {
+		t.Fatal("a dead generation's entries answered for the session that replaced it")
+	}
 }

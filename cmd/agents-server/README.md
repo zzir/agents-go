@@ -941,6 +941,27 @@ When a change genuinely doesn't fit, update this list in the same PR.
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided
     deliberately). Never add ALTER TABLE migration machinery here.
+26. **Where a session stands is stored, not folded.** An append must not cost a
+    read of the session: the SDK persists once per TURN, so a run appends many
+    times, and folding the branch tip out of the entries each time made one run
+    cost O(entries²) — over a log that only grows, since compaction
+    soft-deletes. The tip and the highest sequence number live in
+    `append_points`, keyed by `(session_id, gen)` like every other address of an
+    entry row. It is not a cache: `appendTo`, `Clear`, `pop`, `ForkSession` and
+    the compaction adapter's fold each write it inside the transaction that
+    carried their change, so the two records cannot come apart, and
+    `foldAppendPointIn` stays the definition they must agree with — field for
+    field, not "close enough". `TestAppendPointMatchesTheFold` holds the paths a
+    session walks in place, `TestForkCutOnAFoldedEntry` the copy a fork makes
+    (a fork carries compacted rows too, so a cut landing on one must not make it
+    the destination's tip), and
+    `TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip` a fold that
+    takes the tip with it. A missing row falls back to the fold rather than
+    reading as an empty session — that is what a database written before this
+    table holds, and calling it empty would make the next append a new root and
+    leave the whole conversation on an abandoned branch. `GetEntries` still
+    folds the whole session on every call: a known cost, deliberately left,
+    because a person pays it once per page while a run paid it once per turn.
 
 ## Database
 
@@ -950,6 +971,7 @@ SQLite in WAL mode. Tables are created automatically on startup:
 |---------------------|-------------------------------------------------------------------------------------|
 | `sessions`          | Chat sessions                                                                       |
 | `entries`           | Session entries (the conversation, annotations and compaction checkpoints)          |
+| `append_points`     | Where each session stands: branch tip + highest sequence number (see invariant 26)  |
 | `agent_configs`     | Agent configurations                                                                |
 | `mcp_servers`       | MCP server configurations                                                           |
 | `memories`          | Agent memories                                                                      |

@@ -12,6 +12,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	models := []any{
 		(*Session)(nil),
 		(*entryRow)(nil),
+		(*appendPointRow)(nil),
 		(*AgentConfig)(nil),
 		(*McpServerConfig)(nil),
 		(*Memory)(nil),
