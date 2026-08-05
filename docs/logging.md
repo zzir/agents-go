@@ -105,7 +105,7 @@ time looks identical to one that answered first time.
 
 With a [Session](sessions.md), each diagnostic is stored on the entry for the
 turn it happened in, so the session explains itself long after any log has
-rotated. A failed run reports them too, on `RunErrorDetails.Diagnostics` — the
+rotated. A failed run reports them too, on `RunError.Result.Diagnostics` — the
 error is the last straw, the diagnostics are what led to it.
 
 Report your own from a tool or a custom `Model` decorator:

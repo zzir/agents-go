@@ -503,10 +503,8 @@ func validateRequiredArgs(serverName, toolName string, required []string, args m
 		return nil
 	}
 	sort.Strings(missing)
-	return &agents.UserError{AgentsError: agents.AgentsError{
-		Message: fmt.Sprintf("Failed to call tool %q on MCP server %q: missing required parameters: %s",
-			toolName, serverName, strings.Join(missing, ", ")),
-	}}
+	return agents.NewUserError("Failed to call tool %q on MCP server %q: missing required parameters: %s",
+		toolName, serverName, strings.Join(missing, ", "))
 }
 
 // requiredKeys extracts the string entries of a JSON schema's "required" array.

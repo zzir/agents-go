@@ -72,10 +72,10 @@ func (e *toolPanicError) Error() string {
 // captured at recover time and classifying it as CodeToolPanic. The panic
 // itself stays in the chain, so errors.As still reaches *toolPanicError.
 func (e *toolPanicError) fatalError() error {
-	return &AgentsError{
-		Code:    CodeToolPanic,
-		Message: fmt.Sprintf("%v\n\n%s", e, e.stack),
-		cause:   e,
+	return &codedError{
+		code:  CodeToolPanic,
+		msg:   fmt.Sprintf("%v\n\n%s", e, e.stack),
+		cause: e,
 	}
 }
 
@@ -499,10 +499,7 @@ func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON strin
 	}()
 
 	timeoutErr := func() error {
-		return &ToolTimeoutError{
-			AgentsError: AgentsError{Code: CodeToolTimeout, Message: fmt.Sprintf("tool %q timed out after %v", tool.Name, timeout)},
-			ToolName:    tool.Name,
-		}
+		return &ToolTimeoutError{ToolName: tool.Name, Timeout: timeout}
 	}
 	select {
 	case res := <-ch:

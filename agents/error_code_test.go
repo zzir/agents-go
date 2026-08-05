@@ -21,15 +21,14 @@ func TestCodeOf(t *testing.T) {
 	}{
 		{"nil", nil, CodeUnknown},
 		{"plain error", errors.New("boom"), CodeUnknown},
-		{"max turns", newMaxTurnsError(3), CodeMaxTurns},
+		{"max turns", &MaxTurnsError{MaxTurns: 3}, CodeMaxTurns},
 		{"model behavior", NewModelBehaviorError("bad"), CodeModelBehavior},
 		{"user error", NewUserError("misuse"), CodeUserError},
 		{"tripwire", tripwire, CodeGuardrailTripwire},
-		{"wrapped once", fmt.Errorf("tool %q failed: %w", "t", newMaxTurnsError(3)), CodeMaxTurns},
+		{"wrapped once", fmt.Errorf("tool %q failed: %w", "t", &MaxTurnsError{MaxTurns: 3}), CodeMaxTurns},
 		{"wrapped twice", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", tripwire)), CodeGuardrailTripwire},
 		{"classified", Classify(CodeMCP, errors.New("connect refused")), CodeMCP},
 		{"classified then wrapped", fmt.Errorf("x: %w", Classify(CodeSandboxExec, errors.New("exit 1"))), CodeSandboxExec},
-		{"unclassified AgentsError", &AgentsError{Message: "no code"}, CodeUnknown},
 		// Exported SDK types built as struct literals (no constructor) must
 		// still classify, or a transport silently downgrades them to generic.
 		{"struct-literal tripwire", &GuardrailTripwireError{}, CodeGuardrailTripwire},
@@ -63,7 +62,7 @@ func TestClassifyKeepsChain(t *testing.T) {
 	}
 
 	// A typed SDK error stays matchable by type.
-	tagged = Classify(CodeMCP, newMaxTurnsError(1))
+	tagged = Classify(CodeMCP, &MaxTurnsError{MaxTurns: 1})
 	var mt *MaxTurnsError
 	if !errors.As(tagged, &mt) {
 		t.Error("errors.As cannot reach *MaxTurnsError through Classify")
@@ -73,7 +72,7 @@ func TestClassifyKeepsChain(t *testing.T) {
 // The innermost classification wins: a boundary that re-tags an already-coded
 // error would replace the specific reason with its own generic one.
 func TestClassifyDoesNotOverwrite(t *testing.T) {
-	inner := newMaxTurnsError(2)
+	inner := &MaxTurnsError{MaxTurns: 2}
 	if got := CodeOf(Classify(CodeMCP, inner)); got != CodeMaxTurns {
 		t.Errorf("re-classifying overwrote the code: got %q, want %q", got, CodeMaxTurns)
 	}

@@ -82,13 +82,13 @@ res2, err := agents.RunSync(ctx, res.LastAgent, next, opts)
 
 ## Errors
 
-When a run fails, the returned error usually embeds `agents.AgentsError` with a `Details` field carrying the partial run state:
+A run that fails after its loop started returns a `*agents.RunError` wrapping the cause. Its `Result` is the partial progress in the same `*RunResult` shape a finished run reports — `FinalOutput` is nil, everything else is what the run produced before failing:
 
 ```go
 res, err := agents.RunSync(ctx, agent, input, opts)
 if err != nil {
-	if ae, ok := agents.AsAgentsError(err); ok && ae.Details != nil {
-		log.Printf("failed after %d items, usage so far: %+v", len(ae.Details.NewItems), ae.Details.Usage)
+	if re, ok := errors.AsType[*agents.RunError](err); ok {
+		log.Printf("failed after %d items, usage so far: %+v", len(re.Result.NewItems), re.Result.Usage)
 	}
 }
 ```

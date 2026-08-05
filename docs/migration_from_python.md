@@ -36,7 +36,7 @@ For what this SDK deliberately does not provide (and why), read
 | `reset_tool_choice=True` (default) | `DisableToolChoiceReset` (zero value = Python's default behavior) |
 | `max_turns=10` | `RunOptions.Exec.MaxTurns` (0 means the same default of 10) |
 | exceptions (`MaxTurnsExceeded`, …) | error values (`*MaxTurnsError`, …) matched with `errors.As` |
-| `RunErrorDetails` on exceptions | `AgentsError.Details`, reachable via `agents.AsAgentsError(err)` |
+| `RunErrorDetails` on exceptions | `RunError.Result` — a failed run's partial progress as a `*RunResult`, via `errors.AsType[*agents.RunError]` |
 | `set_default_openai_key` / globals | none — pass `openai.NewProvider(...)` explicitly in `RunOptions` |
 | `custom_data_extractor=` (function tools) | `ToolResult.Details` — the tool declares its UI data when it returns, instead of a second extraction pass ([tools](tools.md#returning-more-than-a-value-toolresult)) |
 | `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.Exec.PreApprovalToolInputGuardrails` |
@@ -49,7 +49,7 @@ For what this SDK deliberately does not provide (and why), read
 
 **Two contexts instead of one wrapper.** Python's `RunContextWrapper[T]` carries both your data and run state. Go splits them: `context.Context` handles cancellation/deadlines (and is honored mid-run, mid-stream and inside tools), while `RunContext.Context any` carries your data without generics on every type.
 
-**Errors instead of exceptions.** Every failure is a returned `error`. SDK error types embed `AgentsError`; `errors.As` matches concrete types even through `%w` wrapping, and `agents.AsAgentsError` extracts the embedded base (with `RunErrorDetails`) generically.
+**Errors instead of exceptions.** Every failure is a returned `error`. `errors.As` matches the concrete SDK error types even through `%w` wrapping; `agents.CodeOf` gives the transportable classification; a failed run's partial progress rides on `*agents.RunError` as a `*RunResult`.
 
 **Concurrency is explicit.** Tools requested in one turn run concurrently via goroutines (Python interleaves on the event loop). Hooks and shared context values must be goroutine-safe. Streaming uses `iter.Seq2` (`for event, err := range stream`) instead of `async for`, and a run executes on the consumer's goroutine — ranging the stream advances the loop.
 

@@ -384,7 +384,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []TR
 				finalTurn = true
 			} else {
 				r.log.Warn(ctx, "turn budget exhausted", slog.Int("max_turns", r.maxTurns))
-				maxErr := newMaxTurnsError(r.maxTurns)
+				maxErr := &MaxTurnsError{MaxTurns: r.maxTurns}
 				res, rerr := r.recoverMaxTurns(ctx, maxErr, originalInput, rawResponses, currentAgent)
 				if rerr != nil {
 					return nil, r.fail(rerr, originalInput, generatedItems, rawResponses, currentAgent)

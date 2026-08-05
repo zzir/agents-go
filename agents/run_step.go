@@ -341,10 +341,7 @@ func (r *runner) executeToolsAndSideEffects(
 				// ErrorHandlers.ModelRefusal), taking precedence over any text
 				// or structured content in the same message.
 				if refusal := lastMessage.refusal(); refusal != "" {
-					refErr := &ModelRefusalError{
-						AgentsError: AgentsError{Code: CodeModelRefusal, Message: "model refused to respond: " + refusal},
-						Refusal:     refusal,
-					}
+					refErr := &ModelRefusalError{Refusal: refusal}
 					rec, herr := r.resolveErrorRecovery(ctx, "model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr, agent,
 						originalInput, concatRunItems(preStepItems, newStepItems), []*ModelResponse{resp})
 					if herr != nil {

@@ -174,8 +174,11 @@ type GuardrailResult struct {
 
 // GuardrailTripwireError is returned when a guardrail trips, at any stage.
 type GuardrailTripwireError struct {
-	AgentsError
 	Result GuardrailResult
+}
+
+func (e *GuardrailTripwireError) Error() string {
+	return fmt.Sprintf("%s guardrail %s tripwire triggered", e.Result.Stage, e.Result.Guardrail.resolvedName())
 }
 
 // Stage reports where the tripwire fired, so a caller can branch without
@@ -183,13 +186,7 @@ type GuardrailTripwireError struct {
 func (e *GuardrailTripwireError) Stage() GuardrailStage { return e.Result.Stage }
 
 func newTripwireError(res GuardrailResult) *GuardrailTripwireError {
-	return &GuardrailTripwireError{
-		AgentsError: AgentsError{
-			Code:    CodeGuardrailTripwire,
-			Message: fmt.Sprintf("%s guardrail %s tripwire triggered", res.Stage, res.Guardrail.resolvedName()),
-		},
-		Result: res,
-	}
+	return &GuardrailTripwireError{Result: res}
 }
 
 // --- typed constructors -----------------------------------------------------

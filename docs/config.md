@@ -78,4 +78,4 @@ Tracing is opt-in: build a `*tracing.Tracer` and pass it in `RunOptions.Observe.
 
 ## Debugging and logging
 
-The SDK is silent by default and never writes to `slog.Default()`; opt in to its structured logging with `RunOptions.Log` — see [Logging](logging.md). Failures surface as Go errors with typed wrappers (`*agents.MaxTurnsError`, `*agents.ModelBehaviorError`, guardrail tripwire errors, …) that you can match with `errors.As`; partial run state is attached as `RunErrorDetails`. See [Results](results.md#errors).
+The SDK is silent by default and never writes to `slog.Default()`; opt in to its structured logging with `RunOptions.Log` — see [Logging](logging.md). Failures surface as Go errors with typed wrappers (`*agents.MaxTurnsError`, `*agents.ModelBehaviorError`, guardrail tripwire errors, …) that you can match with `errors.As`; a failed run's partial state rides on `*agents.RunError`. See [Results](results.md#errors).

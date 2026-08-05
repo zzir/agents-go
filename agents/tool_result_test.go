@@ -180,4 +180,4 @@ func TestToolResult_ModelOutput(t *testing.T) {
 	}
 }
 
-var errTooBad = &UserError{AgentsError{Code: CodeUserError, Message: "tool error: too bad"}}
+var errTooBad = &UserError{Message: "tool error: too bad"}

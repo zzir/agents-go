@@ -298,7 +298,7 @@ For callbacks tied to a specific agent rather than the whole run, see
 
 ## Errors
 
-All failures come back as Go errors. The SDK's typed errors embed `agents.AgentsError` and can be matched with `errors.As`:
+All failures come back as Go errors. The SDK's typed errors carry their data as plain fields and are matched with `errors.As`:
 
 | Error | Meaning |
 |---|---|
@@ -309,7 +309,7 @@ All failures come back as Go errors. The SDK's typed errors embed `agents.Agents
 | `*ToolTimeoutError` | A tool exceeded its `Tool.Timeout` |
 | `*GuardrailTripwireError` | A guardrail tripped; `Stage()` says where |
 
-Every SDK error carries `Details *RunErrorDetails` (input, items generated so far, raw responses, last agent, usage) so you can inspect partial progress — see [Results](results.md#errors).
+A run that fails after its loop started returns a `*RunError` wrapping the cause; its `Result` field is the partial progress (input, items generated so far, raw responses, last agent, usage) in the same `*RunResult` shape a finished run reports — see [Results](results.md#errors).
 
 ### Error codes
 

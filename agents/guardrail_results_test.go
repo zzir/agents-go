@@ -111,7 +111,7 @@ func TestGuardrailResults_OneGuardrailCoversManyStages(t *testing.T) {
 	}
 }
 
-func TestGuardrailResults_RunErrorDetailsCarriesResults(t *testing.T) {
+func TestGuardrailResults_RunErrorCarriesResults(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "leak"))}}
 	agent := &Agent{
 		Name:      "a",
@@ -126,16 +126,13 @@ func TestGuardrailResults_RunErrorDetailsCarriesResults(t *testing.T) {
 	}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
-	base, ok := AsAgentsError(err)
+	re, ok := errors.AsType[*RunError](err)
 	if !ok {
-		t.Fatalf("err = %T, want an SDK error", err)
+		t.Fatalf("err = %T, want a *RunError carrying partial progress", err)
 	}
-	if base.Details == nil {
-		t.Fatal("error details missing")
-	}
-	got := resultsFor(base.Details.GuardrailResults, StageOutput)
+	got := resultsFor(re.Result.GuardrailResults, StageOutput)
 	if len(got) != 1 || got[0].Guardrail.Name != "pii" {
-		t.Fatalf("details guardrail results = %+v", base.Details.GuardrailResults)
+		t.Fatalf("partial-result guardrail results = %+v", re.Result.GuardrailResults)
 	}
 }
 

@@ -43,20 +43,13 @@ func (p ToolLoopPolicy) maxConsecutiveErrorTurns() int {
 // ToolLoopError aborts a run whose tools failed on every one of the last N
 // turns.
 type ToolLoopError struct {
-	AgentsError
 	// Turns is how many consecutive all-failed turns were seen.
 	Turns int
 }
 
-func newToolLoopError(turns int) *ToolLoopError {
-	return &ToolLoopError{
-		AgentsError: AgentsError{
-			Code: CodeToolLoop,
-			Message: fmt.Sprintf("every tool call failed on %d consecutive turns; aborting rather than "+
-				"spending the rest of the turn budget rediscovering the same failure", turns),
-		},
-		Turns: turns,
-	}
+func (e *ToolLoopError) Error() string {
+	return fmt.Sprintf("every tool call failed on %d consecutive turns; aborting rather than "+
+		"spending the rest of the turn budget rediscovering the same failure", e.Turns)
 }
 
 // noteToolTurn feeds a finished turn's tool results to the consecutive-error
@@ -77,7 +70,7 @@ func (r *runner) noteToolTurn(results []functionToolResult) error {
 	r.consecutiveErrorTurns++
 	limit := r.opts.Exec.ToolLoop.maxConsecutiveErrorTurns()
 	if limit > 0 && r.consecutiveErrorTurns >= limit {
-		return newToolLoopError(r.consecutiveErrorTurns)
+		return &ToolLoopError{Turns: r.consecutiveErrorTurns}
 	}
 	return nil
 }

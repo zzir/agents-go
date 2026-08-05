@@ -193,12 +193,12 @@ func TestDiagnostics_OnAFailedRun(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the run to fail")
 	}
-	var ae *AgentsError
-	if !errors.As(err, &ae) || ae.Details == nil {
-		t.Fatalf("err = %v, want details", err)
+	re, ok := errors.AsType[*RunError](err)
+	if !ok {
+		t.Fatalf("err = %v, want a *RunError carrying partial progress", err)
 	}
 	found := false
-	for _, d := range ae.Details.Diagnostics {
+	for _, d := range re.Result.Diagnostics {
 		if d.Type == DiagToolPanic {
 			found = true
 		}

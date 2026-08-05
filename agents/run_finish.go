@@ -108,17 +108,16 @@ func (r *runner) fail(err error, input []TResponseInputItem, items []*RunItem, r
 	if len(r.sessionItems) > len(items) {
 		newItems = r.sessionItems
 	}
-	details := &RunErrorDetails{
-		Input:            input,
-		NewItems:         newItems,
-		RawResponses:     raw,
-		LastAgent:        last,
-		Usage:            r.usageSnapshot(),
-		GuardrailResults: r.snapshotGuardrailResults(),
-		Diagnostics:      r.diagnostics.All(),
+	return &RunError{
+		Result: &RunResult{
+			Input:            input,
+			NewItems:         newItems,
+			RawResponses:     raw,
+			LastAgent:        last,
+			Usage:            r.usageSnapshot(),
+			GuardrailResults: r.snapshotGuardrailResults(),
+			Diagnostics:      r.diagnostics.All(),
+		},
+		err: err,
 	}
-	if ae, ok := AsAgentsError(err); ok {
-		ae.Details = details
-	}
-	return err
 }

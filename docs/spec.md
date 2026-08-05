@@ -1178,9 +1178,23 @@ the run stops. Stopping mid-batch would leave dangling calls, which
 - Every SDK error carries a stable `ErrorCode`, read with `CodeOf(err)`. ✅
   `CodeOf` unwraps `%w` chains, so a code survives the run loop's own wrapping
   and a transport can read it off whatever `Run` returned.
-- **An SDK error type always classifies.** ✅ The constructors set `Code`, and
-  `CodeOf` falls back to the concrete type — an exported error built as a
-  struct literal still reports its code rather than degrading to `CodeUnknown`.
+- **The code is derived from the error's type — there is exactly one
+  classification.** ✅ The typed errors carry their data fields and nothing
+  else; `CodeOf` maps type → code, so an error built as a struct literal
+  classifies identically to a constructed one, and a mismatch between a code
+  field and a type cannot exist because there is no code field. (The previous
+  design carried both, and they disagreed exactly as often as a constructor
+  was bypassed — `CodeOf` needed a rescue path for it.)
+- **A run that fails after its loop started returns a `*RunError`** ✅ wrapping
+  the cause and carrying the partial progress as a `*RunResult` (nil
+  `FinalOutput`): input, generated items, raw responses, usage, guardrail
+  results, diagnostics. One shape for finished and failed runs — a failed run
+  is a run without an answer, not a different kind of object. It wraps
+  UNCONDITIONALLY: a plain error from a hook or a session write carries the
+  progress too, where the previous details-on-the-base design silently dropped
+  it for any cause that was not an SDK-typed error. Errors from before the
+  loop (bad options, unresolvable model) are returned bare — there is no
+  progress to report.
 - `Classify(code, err)` tags an error **without hiding it**: `errors.Is` and
   `errors.As` still reach the original. ✅ It is how packages outside the run
   loop (`sandbox`, `mcp`, custom tools) contribute a code.
@@ -1353,7 +1367,8 @@ A `Diagnostic` records trouble a run went through **and survived**.
   model-visible output. None of them reach an error return, so without this
   they live only in a log nobody kept, and "why was that answer bad" becomes
   unanswerable after the fact.
-- They land on `RunResult.Diagnostics`, on `RunErrorDetails.Diagnostics` when
+- They land on `RunResult.Diagnostics` — on a failed run, reached through
+  `RunError.Result` — when
   the run does fail (the error is the last straw; the diagnostics are what led
   to it), and on `SessionEntry.Diagnostics`.
 - **Each is attached to the turn it happened in**, on that batch's last entry,
@@ -1639,8 +1654,9 @@ stake and this entry has been used to close cases where it was not the point:
 - The `T`-prefixed aliases (`TResponseInputItem` and friends) spell a Python
   `TypeAlias` convention that has no Go counterpart. [§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)
   already schedules them for the next breaking window.
-- `AgentsError` stutters (`agents.AgentsError`) and carries a `nolint`
-  admitting it.
+- ~~`AgentsError` stutters (`agents.AgentsError`) and carries a `nolint`
+  admitting it.~~ Resolved by deletion: the error rework
+  ([§2.10](#210-errors-and-recovery-)) removed the base type entirely.
 
 The rule that survives is the second half: **a rename is a breaking change and
 is batched**, not taken piecemeal. The window in §5.5b is where these belong.
@@ -1981,38 +1997,15 @@ When a new case comes up that this document does not answer, add it here with
 the options under consideration. Implementing it means moving it out of this
 section and into §2 in the same change.
 
-### 6.2 Two parallel error classifications
-
-Errors carry both an exception-style hierarchy (`AgentsError` embedded into six
-concrete types) and an `ErrorCode` string. They can disagree: `CodeOf` ends in
-a fallback `switch` on the concrete type precisely because a caller building an
-exported error as a struct literal leaves `Code` at its zero value. Embedding
-(rather than wrapping) also means `errors.As` cannot reach the base, which is
-why `agentsErrorCarrier` + `base()` + `AsAgentsError` exist.
-
-Options: keep `ErrorCode` as the single classification (it survives transports,
-which is its real value) with sentinel errors for `errors.Is`, and keep a
-concrete type only where it carries extra fields (`MaxTurnsError.MaxTurns`,
-`GuardrailTripwireError.Result`) without embedding the base; or keep both and
-specify which wins.
-
-### 6.3 `RunErrorDetails` duplicates `RunResult`
-
-Seven of `RunErrorDetails`'s fields (`Input`, `NewItems`, `RawResponses`,
-`LastAgent`, `Usage`, `GuardrailResults`, `Diagnostics`) are `RunResult`'s,
-verbatim. A failed run and a completed one describe the same thing.
-
-Options: carry a `*RunResult` on the error; keep both and document the split.
-
 ### 6.4 `agents` is one package
 
 73 non-test files, ~15k lines, ~450 exported symbols — against 67 for the next
 largest package in the repo. The session/entry layer (`session_*.go`) and the
 run loop (`run_*.go`) are only weakly coupled and could separate.
 
-This is deliberately last: [§6.2](#62-two-parallel-error-classifications) and
-[§6.3](#63-runerrordetails-duplicates-runresult) both delete code, and
-splitting first would move the same code twice.
+This is deliberately last: the collapses that preceded it (tools, items,
+errors) each deleted files, and splitting first would have moved the same code
+twice. It is now the only §6 entry left.
 
 ---
 
