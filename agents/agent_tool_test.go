@@ -16,7 +16,7 @@ func TestAgentAsTool(t *testing.T) {
 		modelResp(functionCallOutput(t, "summarize", "c1", `{"input":"some long text"}`)),
 		modelResp(messageOutput(t, "done: SUMMARY: hello")),
 	}}
-	orch := &Agent{Name: "orchestrator", Tools: []*FunctionTool{summarize}, ModelImpl: orchModel}
+	orch := &Agent{Name: "orchestrator", Tools: []*Tool{summarize}, ModelImpl: orchModel}
 
 	res, err := RunSync(context.Background(), orch, "summarize this", RunOptions{})
 	if err != nil {

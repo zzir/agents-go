@@ -1,7 +1,7 @@
 // Package bravesearch provides a function tool that searches the web via the
 // Brave Search API (https://api.search.brave.com/res/v1/web/search).
 //
-// The tool is a plain, provider-agnostic agents.FunctionTool: it calls Brave's
+// The tool is a plain, provider-agnostic agents.Tool: it calls Brave's
 // REST API from Go and returns formatted results to the model, so it works with
 // any model backend. See the API reference:
 // https://api-dashboard.search.brave.com/api-reference/web/search/get
@@ -56,7 +56,7 @@ type Options struct {
 
 // New returns a function tool named "brave_search". It returns an error if no
 // API key is available (neither Options.APIKey nor BRAVE_API_KEY is set).
-func New(opts Options) (*agents.FunctionTool, error) {
+func New(opts Options) (*agents.Tool, error) {
 	apiKey := opts.APIKey
 	if apiKey == "" {
 		apiKey = os.Getenv("BRAVE_API_KEY")
@@ -82,7 +82,7 @@ func New(opts Options) (*agents.FunctionTool, error) {
 	}
 
 	c := &caller{client: client, endpoint: endpoint, apiKey: apiKey, count: count, opts: opts}
-	return agents.NewFunctionTool("brave_search",
+	return agents.NewTool("brave_search",
 		"Search the web with the Brave Search API and return the top results (title, URL, description).",
 		c.run), nil
 }

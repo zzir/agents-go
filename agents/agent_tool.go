@@ -36,7 +36,7 @@ type AgentToolConfig struct {
 
 	// FailureErrorFunction overrides how a failed nested run is rendered back to
 	// the calling model. nil keeps DefaultToolErrorFunction. To make failures
-	// fatal instead, clear the field on the returned *FunctionTool.
+	// fatal instead, clear the field on the returned *Tool.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
 	// ModifyRunOptions edits the nested run's RunOptions before it starts. It
@@ -103,7 +103,7 @@ type agentToolInput struct {
 // model settings, run-level guardrails and tracer from the run context, so the
 // sub-agent need not set its own model when the parent supplies a provider.
 // For a custom argument schema, use AgentAsTool.
-func (a *Agent) AsTool(cfg AgentToolConfig) *FunctionTool {
+func (a *Agent) AsTool(cfg AgentToolConfig) *Tool {
 	schema, err := SchemaFor[agentToolInput](true)
 	if err != nil {
 		// agentToolInput is a fixed struct; its schema cannot fail to reflect.
@@ -113,12 +113,12 @@ func (a *Agent) AsTool(cfg AgentToolConfig) *FunctionTool {
 }
 
 // AgentAsTool is AsTool with a custom argument schema: the tool's parameters
-// are reflected from Params (like NewFunctionTool), and the arguments are
+// are reflected from Params (like NewTool), and the arguments are
 // rendered into the nested run's input with the default structured rendering
 // (preamble + JSON + schema summary; see DefaultAgentToolInputBuilder) or
 // cfg.InputBuilder. A free function because Go methods cannot take type
 // parameters.
-func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *FunctionTool {
+func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *Tool {
 	name := cfg.Name
 	if name == "" {
 		name = transformToolName(a.Name)
@@ -127,7 +127,7 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *FunctionTool {
 	if err != nil {
 		panic(fmt.Sprintf("agents: AgentAsTool(%q): schema generation failed: %v", name, err))
 	}
-	// Arguments get the same whole-schema validation NewFunctionTool gives
+	// Arguments get the same whole-schema validation NewTool gives
 	// its args (spec: "validated against the whole JSON Schema") — a bare
 	// decode caught type mismatches but let a missing required key or a
 	// violated enum flow straight into the nested run's input.
@@ -139,10 +139,10 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *FunctionTool {
 	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema), validate)
 }
 
-// agentTool builds the FunctionTool shared by AsTool and AgentAsTool.
+// agentTool builds the Tool shared by AsTool and AgentAsTool.
 // validate, when non-nil, type-checks the raw arguments (AgentAsTool's Params
 // decode); nil falls back to the default {"input": string} handling.
-func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *FunctionTool {
+func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *Tool {
 	name := cfg.Name
 	if name == "" {
 		name = transformToolName(a.Name)
@@ -151,7 +151,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 	if failureFn == nil {
 		failureFn = DefaultToolErrorFunction
 	}
-	return &FunctionTool{
+	return &Tool{
 		Name:                 name,
 		Description:          cfg.Description,
 		ParamsJSONSchema:     schema,

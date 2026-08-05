@@ -21,7 +21,7 @@ type deployArgs struct {
 // value it had no way to notice.
 func TestSchemaValidation_CatchesNestedRequired(t *testing.T) {
 	var got deployArgs
-	tool := NewFunctionTool("deploy", "", func(_ context.Context, _ *ToolContext, a deployArgs) (string, error) {
+	tool := NewTool("deploy", "", func(_ context.Context, _ *ToolContext, a deployArgs) (string, error) {
 		got = a
 		return "deployed", nil
 	})
@@ -30,7 +30,7 @@ func TestSchemaValidation_CatchesNestedRequired(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "deploy", "c1", `{"name":"web","config":{"host":"h"}}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil {
@@ -44,14 +44,14 @@ func TestSchemaValidation_CatchesNestedRequired(t *testing.T) {
 }
 
 func TestSchemaValidation_CatchesNestedTypeMismatch(t *testing.T) {
-	tool := NewFunctionTool("deploy", "", func(context.Context, *ToolContext, deployArgs) (string, error) {
+	tool := NewTool("deploy", "", func(context.Context, *ToolContext, deployArgs) (string, error) {
 		return "deployed", nil
 	})
 	tool.FailureErrorFunction = nil
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "deploy", "c1", `{"name":"web","config":{"host":"h","port":"not-an-int"}}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("a nested type mismatch was accepted")
@@ -62,14 +62,14 @@ func TestSchemaValidation_CatchesNestedTypeMismatch(t *testing.T) {
 // rejecting the call would turn a harmless extra into a failed turn. A
 // misspelled key is still caught, by `required`.
 func TestSchemaValidation_ExtraKeysAreHarmless(t *testing.T) {
-	tool := NewFunctionTool("noop", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("noop", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "noop", "c1", `{"unexpected":"value"}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -83,14 +83,14 @@ func TestSchemaValidation_ExtraKeysAreHarmless(t *testing.T) {
 // A required key sent under the wrong name is still rejected — that is what
 // `required` is for.
 func TestSchemaValidation_WrongKeyNameIsCaught(t *testing.T) {
-	tool := NewFunctionTool("deploy", "", func(context.Context, *ToolContext, deployArgs) (string, error) {
+	tool := NewTool("deploy", "", func(context.Context, *ToolContext, deployArgs) (string, error) {
 		return "deployed", nil
 	})
 	tool.FailureErrorFunction = nil
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "deploy", "c1", `{"deployment":"web","config":{"host":"h","port":1}}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("a required key sent under the wrong name was accepted")

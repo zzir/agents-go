@@ -20,7 +20,7 @@ type weatherArgs struct {
 }
 
 func main() {
-	getWeather := agents.NewFunctionTool("get_weather", "Look up the current weather for a city.",
+	getWeather := agents.NewTool("get_weather", "Look up the current weather for a city.",
 		func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 			return fmt.Sprintf("It is sunny and 22°C in %s.", args.City), nil
 		})
@@ -29,7 +29,7 @@ func main() {
 		Name:         "claude-weather-bot",
 		Instructions: agents.StaticInstructions("Answer weather questions using the get_weather tool."),
 		Model:        "claude-opus-5",
-		Tools:        []*agents.FunctionTool{getWeather},
+		Tools:        []*agents.Tool{getWeather},
 	}
 
 	stream, _ := agents.Run(context.Background(), agent, "What's the weather in Oslo?", agents.RunOptions{

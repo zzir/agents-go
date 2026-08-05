@@ -15,9 +15,9 @@ type weatherArgs struct {
 	City string `json:"city"`
 }
 
-func weatherTool(t *testing.T, seen *[]string) *agents.FunctionTool {
+func weatherTool(t *testing.T, seen *[]string) *agents.Tool {
 	t.Helper()
-	return agents.NewFunctionTool("get_weather", "look up weather",
+	return agents.NewTool("get_weather", "look up weather",
 		func(_ context.Context, _ *agents.ToolContext, a weatherArgs) (string, error) {
 			*seen = append(*seen, a.City)
 			return "sunny in " + a.City, nil
@@ -52,7 +52,7 @@ func TestResponseBuilder_ToolCallThenAnswer(t *testing.T) {
 
 	agent := &agents.Agent{
 		Name:      "a",
-		Tools:     []*agents.FunctionTool{weatherTool(t, &seen)},
+		Tools:     []*agents.Tool{weatherTool(t, &seen)},
 		ModelImpl: model,
 	}
 
@@ -90,7 +90,7 @@ func TestUsageAccumulates(t *testing.T) {
 		Build()
 
 	var seen []string
-	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{weatherTool(t, &seen)}, ModelImpl: model}
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{weatherTool(t, &seen)}, ModelImpl: model}
 	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestExhaustedScript_YieldsEmptyOutput(t *testing.T) {
 	model := agentstest.NewResponseBuilder().
 		FunctionCall("get_weather", "c1", `{"city":"SF"}`).
 		Build()
-	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{weatherTool(t, &seen)}, ModelImpl: model}
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{weatherTool(t, &seen)}, ModelImpl: model}
 
 	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
 	if err != nil {
@@ -156,7 +156,7 @@ func TestStreaming_EventsAndFinalResult(t *testing.T) {
 		Build()
 
 	var seen []string
-	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{weatherTool(t, &seen)}, ModelImpl: model}
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{weatherTool(t, &seen)}, ModelImpl: model}
 
 	stream, _ := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
 	events, res := agentstest.CollectRun(t, stream)

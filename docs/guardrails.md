@@ -66,7 +66,7 @@ read a guardrail's diagnostics whether or not it fired.
 |---|---|
 | `RunOptions.Guardrails` | The whole run, consulted first at every stage. |
 | `Agent.Guardrails` | That agent's turns. Tool stages cover **every** tool the agent exposes. |
-| `FunctionTool.Guardrails` | That tool only. Only its tool stages are consulted. |
+| `Tool.Guardrails` | That tool only. Only its tool stages are consulted. |
 
 Run-level and agent-level guardrails both apply; run-level ones run first.
 

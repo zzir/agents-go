@@ -12,11 +12,11 @@ import (
 )
 
 // convertTools translates the SDK's tools and handoffs into Responses API tool
-// params. Tools are provider-agnostic: every Tool is a FunctionTool the SDK
+// params. Tools are provider-agnostic: every Tool is a Tool the SDK
 // executes locally (handoffs are modeled as function tools too), so the
 // conversion only emits function-tool params. The SDK has no provider-hosted
 // tool types.
-func convertTools(tools []*agents.FunctionTool, handoffs []agents.Handoff) []responses.ToolUnionParam {
+func convertTools(tools []*agents.Tool, handoffs []agents.Handoff) []responses.ToolUnionParam {
 	out := make([]responses.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {
 		out = append(out, functionToolParam(t.Name, t.Description, t.ParamsJSONSchema, t.Strict))

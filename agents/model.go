@@ -18,7 +18,7 @@ type ModelRequest struct {
 	// Settings holds the model configuration (temperature, etc).
 	Settings *ModelSettings
 	// Tools are the tools available to the model.
-	Tools []*FunctionTool
+	Tools []*Tool
 	// OutputSchema describes the structured output, or nil for plain text.
 	OutputSchema OutputSchema
 	// Handoffs are the handoffs available to the model.

@@ -69,7 +69,7 @@ func TestBuildParams_BasicTextInput(t *testing.T) {
 }
 
 func TestBuildParams_FunctionTool(t *testing.T) {
-	tool := &agents.FunctionTool{
+	tool := &agents.Tool{
 		Name:        "get_weather",
 		Description: "look up weather",
 		Strict:      true,
@@ -82,7 +82,7 @@ func TestBuildParams_FunctionTool(t *testing.T) {
 	}
 	req := agents.ModelRequest{
 		Input: agents.InputItemsFromText("weather in SF?"),
-		Tools: []*agents.FunctionTool{tool},
+		Tools: []*agents.Tool{tool},
 	}
 	got := marshalParams(t, req)
 
@@ -142,7 +142,7 @@ func TestBuildParams_PlainTextOutputOmitsFormat(t *testing.T) {
 func TestBuildParams_Settings(t *testing.T) {
 	req := agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),
-		Tools: []*agents.FunctionTool{{Name: "t", ParamsJSONSchema: map[string]any{"type": "object"}}},
+		Tools: []*agents.Tool{{Name: "t", ParamsJSONSchema: map[string]any{"type": "object"}}},
 		Settings: &agents.ModelSettings{
 			Temperature:       agents.Ptr(0.5),
 			MaxTokens:         agents.Ptr[int64](256),
@@ -231,7 +231,7 @@ func TestBuildParams_ParallelToolCallsExcludesHandoffs(t *testing.T) {
 	}
 
 	// With a real function tool, the flag is enabled.
-	req.Tools = []*agents.FunctionTool{{Name: "t", ParamsJSONSchema: map[string]any{"type": "object"}}}
+	req.Tools = []*agents.Tool{{Name: "t", ParamsJSONSchema: map[string]any{"type": "object"}}}
 	got = marshalParams(t, req)
 	if got["parallel_tool_calls"] != true {
 		t.Errorf("parallel_tool_calls = %v, want true when a function tool is present", got["parallel_tool_calls"])
@@ -281,13 +281,13 @@ type integArgs struct {
 }
 
 func TestBuildParams_GeneratedFunctionToolSchema(t *testing.T) {
-	tool := agents.NewFunctionTool("get_weather", "look up weather",
+	tool := agents.NewTool("get_weather", "look up weather",
 		func(ctx context.Context, tc *agents.ToolContext, a integArgs) (string, error) {
 			return "", nil
 		})
 	req := agents.ModelRequest{
 		Input: agents.InputItemsFromText("weather?"),
-		Tools: []*agents.FunctionTool{tool},
+		Tools: []*agents.Tool{tool},
 	}
 	got := marshalParams(t, req)
 	tools := got["tools"].([]any)

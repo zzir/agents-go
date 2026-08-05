@@ -12,7 +12,7 @@ import (
 func nestedApprovalSetup(t *testing.T, ran *bool) *Agent {
 	t.Helper()
 
-	innerTool := NewFunctionTool("delete_db", "dangerous",
+	innerTool := NewTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			*ran = true
 			return "deleted", nil
@@ -22,7 +22,7 @@ func nestedApprovalSetup(t *testing.T, ran *bool) *Agent {
 		modelResp(functionCallOutput(t, "delete_db", "inner_call", `{}`)),
 		modelResp(messageOutput(t, "inner finished")),
 	}}
-	inner := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: innerModel}
+	inner := &Agent{Name: "specialist", Tools: []*Tool{innerTool}, ModelImpl: innerModel}
 
 	outerModel := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "specialist", "outer_call", `{"input":"go"}`)),
@@ -30,7 +30,7 @@ func nestedApprovalSetup(t *testing.T, ran *bool) *Agent {
 	}}
 	return &Agent{
 		Name:      "triage",
-		Tools:     []*FunctionTool{inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
+		Tools:     []*Tool{inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
 		ModelImpl: outerModel,
 	}
 }
@@ -123,7 +123,7 @@ func TestAgentTool_NestedUsageAccumulatesIntoParent(t *testing.T) {
 	}
 	outer := &Agent{
 		Name:  "triage",
-		Tools: []*FunctionTool{inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
+		Tools: []*Tool{inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "specialist", "c1", `{"input":"go"}`)),
 			modelResp(messageOutput(t, "outer done")),
@@ -152,19 +152,19 @@ func TestAgentTool_NestedUsageAccumulatesIntoParent(t *testing.T) {
 // gated tool.
 func TestAgentTool_NestedStateSerializationRoundTrip(t *testing.T) {
 	var ran bool
-	innerTool := NewFunctionTool("delete_db", "dangerous",
+	innerTool := NewTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			ran = true
 			return "deleted", nil
 		})
 	innerTool.NeedsApproval = true
-	inner := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	inner := &Agent{Name: "specialist", Tools: []*Tool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "delete_db", "inner_call", `{}`)),
 		modelResp(messageOutput(t, "inner finished")),
 	}}}
 	outer := &Agent{
 		Name:  "triage",
-		Tools: []*FunctionTool{inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
+		Tools: []*Tool{inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "specialist", "outer_call", `{"input":"go"}`)),
 			modelResp(messageOutput(t, "outer finished")),

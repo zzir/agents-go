@@ -5,7 +5,7 @@ Some tools should not run without a human's sign-off. Mark a tool as requiring a
 ## Requiring approval
 
 ```go
-deleteRepo := agents.NewFunctionTool("delete_repo", "Permanently delete a repository.",
+deleteRepo := agents.NewTool("delete_repo", "Permanently delete a repository.",
 	func(ctx context.Context, tc *agents.ToolContext, args deleteArgs) (string, error) {
 		return doDelete(args.Name)
 	})

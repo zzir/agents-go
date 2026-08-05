@@ -23,7 +23,7 @@ func resultsFor(rs []GuardrailResult, stage GuardrailStage) []GuardrailResult {
 }
 
 func TestGuardrailResults_ToolStagesSurfacedOnResult(t *testing.T) {
-	tool := NewFunctionTool("echo", "echoes",
+	tool := NewTool("echo", "echoes",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "echoed", nil
 		})
@@ -47,7 +47,7 @@ func TestGuardrailResults_ToolStagesSurfacedOnResult(t *testing.T) {
 		modelResp(functionCallOutput(t, "echo", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -88,14 +88,14 @@ func TestGuardrailResults_OneGuardrailCoversManyStages(t *testing.T) {
 			return Allow(nil), nil
 		},
 	}
-	tool := NewFunctionTool("echo", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("echo", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "echoed", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "echo", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model, Guardrails: []Guardrail{scanner}}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model, Guardrails: []Guardrail{scanner}}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -140,14 +140,14 @@ func TestGuardrailResults_RunErrorDetailsCarriesResults(t *testing.T) {
 }
 
 func TestGuardrailResults_RunStateRoundTrip(t *testing.T) {
-	tool := NewFunctionTool("delete_db", "deletes",
+	tool := NewTool("delete_db", "deletes",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "deleted", nil
 		})
 	tool.NeedsApproval = true
 	agent := &Agent{
 		Name:      "a",
-		Tools:     []*FunctionTool{tool},
+		Tools:     []*Tool{tool},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "delete_db", "c1", `{}`))}},
 		Guardrails: []Guardrail{{
 			Name:     "in_gr",

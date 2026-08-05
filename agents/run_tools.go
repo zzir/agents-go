@@ -19,7 +19,7 @@ import (
 // the nested fields carry the surfaced interruptions and the paused nested
 // state (keyed by this call's id) so the parent run can pause and later resume.
 type functionToolResult struct {
-	tool                *FunctionTool
+	tool                *Tool
 	outputItem          *RunItem
 	output              any
 	callID              string
@@ -421,7 +421,7 @@ func agentApprovesToolName(agent *Agent, toolName string) bool {
 // toolGuardrails is the guardrail set consulted for one tool call: run-level
 // and agent-level guardrails first (their tool stages cover every tool), then
 // the tool's own.
-func (r *runner) toolGuardrails(agent *Agent, tool *FunctionTool) []Guardrail {
+func (r *runner) toolGuardrails(agent *Agent, tool *Tool) []Guardrail {
 	runLevel := r.runGuardrails(agent)
 	if len(runLevel) == 0 {
 		return tool.Guardrails
@@ -458,7 +458,7 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 	return replaced, msg, nil
 }
 
-// invokeTool runs a tool's OnInvoke, enforcing FunctionTool.Timeout when set.
+// invokeTool runs a tool's OnInvoke, enforcing Tool.Timeout when set.
 //
 // With a timeout, OnInvoke runs in its own goroutine so the deadline holds
 // even for tools that never check their context: when the deadline fires,
@@ -467,7 +467,7 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 // result (or panic) is delivered to a buffered channel private to this call
 // and discarded — it never touches shared state. Cancellation of the caller's
 // ctx is reported as ctx.Err(), never as a timeout.
-func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJSON string) (ToolResult, error) {
+func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON string) (ToolResult, error) {
 	if tool.OnInvoke == nil {
 		return ToolResult{}, NewUserError("tool %q has no OnInvoke", tool.Name)
 	}
@@ -529,7 +529,7 @@ func invokeTool(ctx context.Context, tool *FunctionTool, tc *ToolContext, argsJS
 // unwind straight out of the errgroup goroutine and kill the process — after
 // the deferred done() had already let the run "complete". A panicking handler
 // is reported as the fatal error it is, never re-thrown.
-func toolHandleFailure(ctx context.Context, tool *FunctionTool, tc *ToolContext, cause error) (msg string, fatal error) {
+func toolHandleFailure(ctx context.Context, tool *Tool, tc *ToolContext, cause error) (msg string, fatal error) {
 	defer func() {
 		if p := recover(); p != nil {
 			perr := newToolPanicError(tool.Name, p)

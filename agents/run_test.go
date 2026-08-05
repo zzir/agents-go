@@ -143,7 +143,7 @@ func TestRun_SingleTurnPlainText(t *testing.T) {
 
 func TestRun_ToolCallThenFinal(t *testing.T) {
 	var toolCalled bool
-	tool := NewFunctionTool("get_weather", "weather",
+	tool := NewTool("get_weather", "weather",
 		func(ctx context.Context, tc *ToolContext, args struct {
 			City string `json:"city"`
 		}) (string, error) {
@@ -158,7 +158,7 @@ func TestRun_ToolCallThenFinal(t *testing.T) {
 		modelResp(functionCallOutput(t, "get_weather", "call_1", `{"city":"SF"}`)),
 		modelResp(messageOutput(t, "it is sunny")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "weather in SF?", RunOptions{})
 	if err != nil {
@@ -205,7 +205,7 @@ func TestRun_StructuredOutput(t *testing.T) {
 
 func TestRun_MaxTurnsExceeded(t *testing.T) {
 	// Always returns a tool call, never a final output -> loops until max turns.
-	tool := NewFunctionTool("loop", "loops",
+	tool := NewTool("loop", "loops",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "again", nil
 		})
@@ -214,7 +214,7 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c3", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 2}})
 	if err == nil {
@@ -234,11 +234,11 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 // from what the turn produced covers the same case and more.
 func TestRun_ShouldStopAfterTurn(t *testing.T) {
 	newAgent := func(model *fakeModel) *Agent {
-		tool := NewFunctionTool("compute", "computes",
+		tool := NewTool("compute", "computes",
 			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 				return "the-answer", nil
 			})
-		return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+		return &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 	}
 
 	t.Run("stops at a named tool, reporting its output", func(t *testing.T) {
@@ -370,11 +370,11 @@ func TestRun_Handoff(t *testing.T) {
 
 func TestRun_ParallelTools(t *testing.T) {
 	var aCalled, bCalled bool
-	toolA := NewFunctionTool("tool_a", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+	toolA := NewTool("tool_a", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 		aCalled = true
 		return "a-done", nil
 	})
-	toolB := NewFunctionTool("tool_b", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+	toolB := NewTool("tool_b", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 		bCalled = true
 		return "b-done", nil
 	})
@@ -385,7 +385,7 @@ func TestRun_ParallelTools(t *testing.T) {
 		}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "both done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{toolA, toolB}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{toolA, toolB}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "do both", RunOptions{})
 	if err != nil {
@@ -400,14 +400,14 @@ func TestRun_ParallelTools(t *testing.T) {
 }
 
 func TestRun_IsEnabledHidesTool(t *testing.T) {
-	tool := NewFunctionTool("secret", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
+	tool := NewTool("secret", "", func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 		return "", nil
 	})
 	tool.IsEnabled = func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error) {
 		return false, nil
 	}
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -420,7 +420,7 @@ func TestRun_IsEnabledHidesTool(t *testing.T) {
 // MaxTurnsUnlimited disables the turn budget — a run that would exceed the
 // default of 10 turns completes.
 func TestRun_MaxTurnsUnlimited(t *testing.T) {
-	tool := NewFunctionTool("loop", "loops",
+	tool := NewTool("loop", "loops",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "again", nil
 		})
@@ -431,7 +431,7 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 	}
 	responses = append(responses, modelResp(messageOutput(t, "finally done")))
 	model := &fakeModel{responses: responses}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: MaxTurnsUnlimited}})
 	if err != nil {
@@ -445,7 +445,7 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 // On resume the interrupted run's budget wins; a small opts.Exec.MaxTurns does
 // not shrink it.
 func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
-	tool := NewFunctionTool("act", "acts",
+	tool := NewTool("act", "acts",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ok", nil
 		})
@@ -454,7 +454,7 @@ func TestRun_ResumeIgnoresOptsMaxTurns(t *testing.T) {
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: 5}})
 	if err != nil {

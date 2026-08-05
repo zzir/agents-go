@@ -44,14 +44,14 @@ func renderSwatch(_ context.Context, _ *agents.ToolContext, args swatchArgs) (ag
 }
 
 func main() {
-	swatch := agents.NewFunctionTool("render_swatch",
+	swatch := agents.NewTool("render_swatch",
 		"Render a 32x32 solid-color PNG swatch and return it as an image.", renderSwatch)
 
 	agent := &agents.Agent{
 		Name:         "vision-bot",
 		Instructions: agents.StaticInstructions("Use the render_swatch tool, then describe the image you get back."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{swatch},
+		Tools:        []*agents.Tool{swatch},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent,

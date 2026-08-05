@@ -6,7 +6,7 @@ Tools let agents take actions. They come from three places:
 - **Agents as tools**: a whole agent exposed as a callable tool ([Agent orchestration](multi_agent.md))
 - **MCP tools**: tools served by a Model Context Protocol server ([MCP](mcp.md))
 
-All three end up as the same thing — a locally executed `*FunctionTool`. It is a
+All three end up as the same thing — a locally executed `*Tool`. It is a
 **struct, not an interface**, so there is exactly one execution path to reason
 about, and a tool cannot quietly mean "the provider runs this".
 
@@ -20,7 +20,7 @@ a local equivalent you own: `apply_patch` and shell access run through the
 
 ## Function tools
 
-`NewFunctionTool[A, R]` turns a Go function into a tool. The argument type `A` (a struct) is reflected into a strict JSON schema; the result `R` is returned to the model (serialized to JSON unless it is already a string).
+`NewTool[A, R]` turns a Go function into a tool. The argument type `A` (a struct) is reflected into a strict JSON schema; the result `R` is returned to the model (serialized to JSON unless it is already a string).
 
 ```go
 type queryArgs struct {
@@ -28,12 +28,12 @@ type queryArgs struct {
 	Limit int    `json:"limit" jsonschema:"max rows to return"`
 }
 
-runQuery := agents.NewFunctionTool("run_query", "Run a read-only SQL query.",
+runQuery := agents.NewTool("run_query", "Run a read-only SQL query.",
 	func(ctx context.Context, tc *agents.ToolContext, args queryArgs) ([]map[string]any, error) {
 		return db.Query(ctx, args.SQL, args.Limit)
 	})
 
-agent.Tools = []*agents.FunctionTool{runQuery}
+agent.Tools = []*agents.Tool{runQuery}
 ```
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
@@ -48,10 +48,10 @@ The schema comes from compile-time generics over the argument struct and its tag
 Strict schema mode is on by default and the reflected schema is rewritten to the strict subset OpenAI requires (`additionalProperties:false`, all properties required, …). Chain `NonStrict()` when the model should be allowed to omit fields whose json tag carries `,omitempty` — it relaxes the advertised schema and the local argument validation together:
 
 ```go
-t := agents.NewFunctionTool("lookup", "…", fn).NonStrict()
+t := agents.NewTool("lookup", "…", fn).NonStrict()
 ```
 
-`NewFunctionTool` panics if the argument type cannot be reflected into a schema (not a struct, or a field no schema can express) — a deterministic programmer error, surfaced at construction like `regexp.MustCompile`. For schemas that are runtime data, `NewRawFunctionTool` returns an error instead.
+`NewTool` panics if the argument type cannot be reflected into a schema (not a struct, or a field no schema can express) — a deterministic programmer error, surfaced at construction like `regexp.MustCompile`. For schemas that are runtime data, `NewRawTool` returns an error instead.
 
 ### Error handling
 
@@ -92,7 +92,7 @@ Tools can carry their own input/output guardrails — see [Guardrails](guardrail
 
 ### Adapting a tool you did not build
 
-`*FunctionTool` is a struct, so a variant of a tool you did not construct — one
+`*Tool` is a struct, so a variant of a tool you did not construct — one
 returned by `agent.AsTool(...)`, by an MCP server, or by a library — is a copy
 with the fields you want changed:
 
@@ -130,13 +130,13 @@ copy that did not touch it still has it.
 
 ### Progressive disclosure
 
-`FunctionTool.Deferred` withholds a tool from the model until another tool's
+`Tool.Deferred` withholds a tool from the model until another tool's
 result names it:
 
 ```go
 readAccount.Deferred = true             // hidden until disclosed
 
-agent.Tools = []*agents.FunctionTool{
+agent.Tools = []*agents.Tool{
 	authenticate,                       // always available
 	readAccount,
 }
@@ -167,7 +167,7 @@ fail a run by mentioning something.
 A tool that runs for a while can push progress to a streamed run's consumer:
 
 ```go
-tool := agents.NewFunctionTool("build", "Build the project.",
+tool := agents.NewTool("build", "Build the project.",
 	func(ctx context.Context, tc *agents.ToolContext, a buildArgs) (string, error) {
 		for _, step := range steps {
 			tc.Emit(agents.TextResult(step.Name).WithDisplay("terminal"))
@@ -207,7 +207,7 @@ type chartArgs struct {
 	Metric string `json:"metric" jsonschema:"which metric to chart"`
 }
 
-renderChart := agents.NewFunctionTool("render_chart", "Render a chart as an image.",
+renderChart := agents.NewTool("render_chart", "Render a chart as an image.",
 	func(ctx context.Context, tc *agents.ToolContext, args chartArgs) ([]agents.ToolOutputContent, error) {
 		png := plot(args.Metric) // []byte
 		return []agents.ToolOutputContent{
@@ -231,7 +231,7 @@ A tool that needs to say more than "here is the answer" returns a `ToolResult`
 instead of a plain value:
 
 ```go
-agents.NewFunctionTool("query_orders", "…",
+agents.NewTool("query_orders", "…",
 	func(ctx context.Context, tc *agents.ToolContext, args Query) (agents.ToolResult, error) {
 		rows := query(args)
 		return agents.TextResult(summarize(rows)).
@@ -269,10 +269,10 @@ afterwards. The tool already knew all of it at the moment it returned.
 
 ### Hand-built tools
 
-`FunctionTool` is an exported struct, so advanced callers can build one directly with a custom `ParamsJSONSchema` and raw-JSON `OnInvoke` (which returns a `ToolResult` — use `agents.TextResult` for the common case):
+`Tool` is an exported struct, so advanced callers can build one directly with a custom `ParamsJSONSchema` and raw-JSON `OnInvoke` (which returns a `ToolResult` — use `agents.TextResult` for the common case):
 
 ```go
-t := &agents.FunctionTool{
+t := &agents.Tool{
 	Name:             "echo",
 	Description:      "Echo the arguments back.",
 	ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false},
@@ -306,7 +306,7 @@ if err != nil {
 agent := &agents.Agent{
     Name:  "research-bot",
     Model: "gpt-4o",
-    Tools: []*agents.FunctionTool{search},
+    Tools: []*agents.Tool{search},
 }
 ```
 
@@ -321,7 +321,7 @@ container, or a remote host over SFTP. There is no separate local-path editor
 and no hosted OpenAI `apply_patch`.
 
 ```go
-tools := []*agents.FunctionTool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+tools := []*agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
 tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)   // read_file, write_file, list_files
 tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{})) // apply_patch
 ```

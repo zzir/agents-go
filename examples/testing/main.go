@@ -22,7 +22,7 @@ type weatherArgs struct {
 // weatherTool is the tool under test. A real one would call a weather service;
 // what matters for the test is that the agent decides to call it and does
 // something sensible with the answer.
-var weatherTool = agents.NewFunctionTool("get_weather", "Look up the current weather for a city.",
+var weatherTool = agents.NewTool("get_weather", "Look up the current weather for a city.",
 	func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 		return "sunny, 23°C in " + args.City, nil
 	})
@@ -35,7 +35,7 @@ func newAgent() *agents.Agent {
 		Name:         "weather assistant",
 		Instructions: agents.StaticInstructions("Answer weather questions. Use get_weather; do not guess."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{weatherTool},
+		Tools:        []*agents.Tool{weatherTool},
 	}
 }
 

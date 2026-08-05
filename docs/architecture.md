@@ -110,8 +110,8 @@ meant to be replaced.
 |---|---|---|
 | Model backend | `Model`, `ModelProvider` | Talk to something other than the OpenAI Responses API |
 | Model behavior | decorators: `NewRetryModel`, `NewFallbackModel`, `RouterProvider`, `NewStreamOnlyModel` | Add retry, failover, per-prefix routing or stream-only adaptation without touching the loop |
-| Tools | `NewFunctionTool[Args, Result]` | Give the agent something to do. A tool is a `*FunctionTool` **struct**, not an interface — every tool executes locally |
-| Tool behavior | fields on `FunctionTool` | Add approval, a timeout, guardrails, sequencing — set the field, or copy the struct for a tool you did not build |
+| Tools | `NewTool[Args, Result]` | Give the agent something to do. A tool is a `*Tool` **struct**, not an interface — every tool executes locally |
+| Tool behavior | fields on `Tool` | Add approval, a timeout, guardrails, sequencing — set the field, or copy the struct for a tool you did not build |
 | Run behavior | `RunMiddleware` | Wrap a whole run: logging, approval policy, retry-the-run |
 | Storage | `SessionStorage` (+ optional `AtomicReplacer`, `EntryPopper`) | Persist entries anywhere |
 | Context shaping | `Compactor` (+ optional `CompactionCheckpointer`) | Decide what history the model sees when it gets long |

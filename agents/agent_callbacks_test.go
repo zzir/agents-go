@@ -76,13 +76,13 @@ func TestAgentCallbacks_ErrorAbortsTheRun(t *testing.T) {
 // What the removed hooks observed is now on the stream — and unlike a hook,
 // a consumer can read the raw model events too.
 func TestStreamReplacesTheObservationHooks(t *testing.T) {
-	tool := NewFunctionTool("t", "t",
+	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "out", nil })
 	billing := &Agent{Name: "billing", ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "handled")),
 	}}}
 	triage := &Agent{
-		Name: "triage", Tools: []*FunctionTool{tool}, Handoffs: []Handoff{HandoffTo(billing)},
+		Name: "triage", Tools: []*Tool{tool}, Handoffs: []Handoff{HandoffTo(billing)},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 			modelResp(functionCallOutput(t, "transfer_to_billing", "h1", `{}`)),
@@ -123,7 +123,7 @@ func TestStreamReplacesTheObservationHooks(t *testing.T) {
 // The old tool hooks could only refuse. A tool-stage guardrail can also
 // REWRITE, which is the capability the removal gained rather than lost.
 func TestToolGuardrailReplacesToolHooks(t *testing.T) {
-	tool := NewFunctionTool("t", "t",
+	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "raw output", nil })
 	tool.Guardrails = []Guardrail{{
 		Name:   "rewrite",
@@ -132,7 +132,7 @@ func TestToolGuardrailReplacesToolHooks(t *testing.T) {
 			return Replace("rewritten by guardrail", nil), nil
 		},
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}

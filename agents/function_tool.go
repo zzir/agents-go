@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// NewFunctionTool builds a FunctionTool from a typed Go function. The argument
+// NewTool builds a Tool from a typed Go function. The argument
 // type A (which must be a struct, or pointer to one) is reflected into a JSON
 // Schema shown to the model; when the model calls the tool, the raw JSON
 // arguments are validated against that schema, unmarshaled into A, and fn is
@@ -21,34 +21,34 @@ import (
 // every field. Chain NonStrict to let the model omit fields whose json tag
 // carries ",omitempty":
 //
-//	t := agents.NewFunctionTool("get_weather", "look up weather", weatherFn).NonStrict()
+//	t := agents.NewTool("get_weather", "look up weather", weatherFn).NonStrict()
 //
-// NewFunctionTool panics when A cannot be reflected into a schema (not a
+// NewTool panics when A cannot be reflected into a schema (not a
 // struct, or a field of an unsupported type) — a deterministic programmer
 // error, surfaced at construction like regexp.MustCompile. For a schema that
-// is runtime data, use NewRawFunctionTool, which returns an error instead.
+// is runtime data, use NewRawTool, which returns an error instead.
 //
 // The schema comes from reflection over A's struct tags, so the tool the model
 // is shown and the Go type it decodes into cannot drift apart.
-func NewFunctionTool[A any, R any](
+func NewTool[A any, R any](
 	name, description string,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
-) *FunctionTool {
+) *Tool {
 	// Tool parameters must serialize to a JSON object, so A must be a struct
 	// (or pointer to one).
 	if argType := reflect.TypeFor[A](); !isStructKind(argType) {
-		panic(fmt.Sprintf("agents: NewFunctionTool(%q): args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", name, argType))
+		panic(fmt.Sprintf("agents: NewTool(%q): args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", name, argType))
 	}
 	regen := func(strict bool) (map[string]any, *schemaValidator) {
 		schema, err := SchemaFor[A](strict)
 		if err != nil {
-			panic(fmt.Sprintf("agents: NewFunctionTool(%q): schema generation failed: %v", name, err))
+			panic(fmt.Sprintf("agents: NewTool(%q): schema generation failed: %v", name, err))
 		}
 		// Compiled once per tool, not per call: a schema does not change
 		// between turns.
 		return schema, newSchemaValidator(schema)
 	}
-	t := &FunctionTool{
+	t := &Tool{
 		Name:                 name,
 		Description:          description,
 		Strict:               true,
@@ -73,7 +73,7 @@ func NewFunctionTool[A any, R any](
 }
 
 // isStructKind reports whether t is a struct or a pointer to a struct — the
-// only argument shapes NewFunctionTool accepts, since tool parameters must be
+// only argument shapes NewTool accepts, since tool parameters must be
 // a JSON object.
 func isStructKind(t reflect.Type) bool {
 	if t.Kind() == reflect.Pointer {
@@ -137,26 +137,26 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 	return nil
 }
 
-// NewRawFunctionTool builds a FunctionTool from a pre-built JSON Schema map and
+// NewRawTool builds a Tool from a pre-built JSON Schema map and
 // a function that receives raw JSON arguments. Use this when the schema is
 // loaded at runtime (e.g. from a database) rather than derived from a Go type —
-// which is also why it returns an error where NewFunctionTool panics: a bad
+// which is also why it returns an error where NewTool panics: a bad
 // runtime schema is expected data, a bad argument type is a bug.
 //
 // Strict mode is enabled by default, and the schema is normalized to the
 // strict subset via EnsureStrictJSONSchema, on a deep copy, so the caller's map
 // is not mutated. To use the schema verbatim without strict mode, set
 // ParamsJSONSchema and clear Strict on the returned tool.
-func NewRawFunctionTool(
+func NewRawTool(
 	name, description string,
 	paramsSchema map[string]any,
 	fn func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error),
-) (*FunctionTool, error) {
+) (*Tool, error) {
 	normalized, err := ensureStrictSchemaCopy(paramsSchema)
 	if err != nil {
 		return nil, fmt.Errorf("raw function tool %q: strict schema normalization failed: %w", name, err)
 	}
-	return &FunctionTool{
+	return &Tool{
 		Name:                 name,
 		Description:          description,
 		ParamsJSONSchema:     normalized,

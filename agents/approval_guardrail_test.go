@@ -14,7 +14,7 @@ import (
 
 func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 	var checks, ran atomic.Int32
-	tool := NewFunctionTool("delete_db", "dangerous",
+	tool := NewTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			ran.Add(1)
 			return "deleted", nil
@@ -27,7 +27,7 @@ func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 		modelResp(functionCallOutput(t, "delete_db", "call_1", `{}`)),
 		modelResp(messageOutput(t, "all done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
 	if err != nil {
@@ -59,7 +59,7 @@ func TestApproval_CheckerSkippedWhenDecisionResolved(t *testing.T) {
 func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 	// After approval, a checker that would now fail must not fire at all.
 	var calls atomic.Int32
-	tool := NewFunctionTool("deploy", "deploys",
+	tool := NewTool("deploy", "deploys",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ok", nil
 		})
@@ -73,7 +73,7 @@ func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 		modelResp(functionCallOutput(t, "deploy", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -89,7 +89,7 @@ func TestApproval_CheckerErrorNotRaisedForApprovedCall(t *testing.T) {
 
 func preApprovalFixture(t *testing.T, guardrail Guardrail, ran *atomic.Int32) *Agent {
 	t.Helper()
-	tool := NewFunctionTool("send_mail", "sends mail",
+	tool := NewTool("send_mail", "sends mail",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			ran.Add(1)
 			return "sent", nil
@@ -100,7 +100,7 @@ func preApprovalFixture(t *testing.T, guardrail Guardrail, ran *atomic.Int32) *A
 		modelResp(functionCallOutput(t, "send_mail", "call_1", `{}`)),
 		modelResp(messageOutput(t, "understood")),
 	}}
-	return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	return &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 }
 
 func TestPreApprovalGuardrail_RejectSkipsApprovalAndExecution(t *testing.T) {
@@ -229,7 +229,7 @@ func TestPreApprovalGuardrail_TripwireHaltsRun(t *testing.T) {
 // detailsAgent builds an agent whose single tool returns the given result.
 func detailsAgent(t *testing.T, result func() (ToolResult, error)) *Agent {
 	t.Helper()
-	tool := NewFunctionTool("get_data", "returns data",
+	tool := NewTool("get_data", "returns data",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (ToolResult, error) {
 			return result()
 		})
@@ -237,7 +237,7 @@ func detailsAgent(t *testing.T, result func() (ToolResult, error)) *Agent {
 		modelResp(functionCallOutput(t, "get_data", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	return &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	return &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 }
 
 func findToolOutput(items []*RunItem) *RunItem {
@@ -333,11 +333,11 @@ func TestDetails_NonJSONCompatibleFailsRun(t *testing.T) {
 }
 
 func TestDetails_SurviveRunStateRoundTrip(t *testing.T) {
-	tool := NewFunctionTool("get_data", "returns data",
+	tool := NewTool("get_data", "returns data",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (ToolResult, error) {
 			return TextResult("tool_result").WithDetails(map[string]any{"k": "v"}), nil
 		})
-	gated := NewFunctionTool("guarded", "needs ok",
+	gated := NewTool("guarded", "needs ok",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "fine", nil
 		})
@@ -348,7 +348,7 @@ func TestDetails_SurviveRunStateRoundTrip(t *testing.T) {
 		modelResp(functionCallOutput(t, "guarded", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool, gated}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool, gated}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {

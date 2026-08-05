@@ -306,7 +306,7 @@ All failures come back as Go errors. The SDK's typed errors embed `agents.Agents
 | `*ModelBehaviorError` | The model did something invalid (unknown tool, malformed structured output, truncated stream) |
 | `*ModelRefusalError` | The model refused to respond; carries the refusal text |
 | `*UserError` | You used the SDK incorrectly (e.g. no model provider, invalid output schema) |
-| `*ToolTimeoutError` | A tool exceeded its `FunctionTool.Timeout` |
+| `*ToolTimeoutError` | A tool exceeded its `Tool.Timeout` |
 | `*GuardrailTripwireError` | A guardrail tripped; `Stage()` says where |
 
 Every SDK error carries `Details *RunErrorDetails` (input, items generated so far, raw responses, last agent, usage) so you can inspect partial progress — see [Results](results.md#errors).

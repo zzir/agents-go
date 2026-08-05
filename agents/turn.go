@@ -20,7 +20,7 @@ type TurnSnapshot struct {
 	Settings     *ModelSettings
 	Instructions string
 	Prompt       *Prompt
-	Tools        []*FunctionTool
+	Tools        []*Tool
 	Handoffs     []Handoff
 	OutputSchema OutputSchema
 	// Input is what the model is sent this turn. Under server-managed

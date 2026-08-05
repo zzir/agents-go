@@ -14,27 +14,27 @@ import (
 // function_call_output for S (a duplicate call id the Responses API rejects).
 func TestResume_SiblingToolNotReExecutedAfterNestedApproval(t *testing.T) {
 	var siblingRuns atomic.Int32
-	siblingTool := NewFunctionTool("sibling", "harmless",
+	siblingTool := NewTool("sibling", "harmless",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			siblingRuns.Add(1)
 			return "sibling-done", nil
 		})
 
 	var innerRan bool
-	innerTool := NewFunctionTool("delete_db", "dangerous",
+	innerTool := NewTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			innerRan = true
 			return "deleted", nil
 		})
 	innerTool.NeedsApproval = true
-	inner := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	inner := &Agent{Name: "specialist", Tools: []*Tool{innerTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "delete_db", "inner_call", `{}`)),
 		modelResp(messageOutput(t, "inner finished")),
 	}}}
 
 	outer := &Agent{
 		Name: "triage",
-		Tools: []*FunctionTool{
+		Tools: []*Tool{
 			siblingTool,
 			inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"}),
 		},

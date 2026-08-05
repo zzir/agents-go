@@ -87,7 +87,7 @@ func main() {
 	proc := tracing.NewBatchProcessor(otelExporter, tracing.BatchProcessorOptions{})
 	defer proc.Shutdown(ctx)
 
-	weather := agents.NewFunctionTool("get_weather", "Look up the weather for a city.",
+	weather := agents.NewTool("get_weather", "Look up the weather for a city.",
 		func(_ context.Context, _ *agents.ToolContext, args struct {
 			City string `json:"city" jsonschema:"the city to look up"`
 		}) (string, error) {
@@ -98,7 +98,7 @@ func main() {
 		Name:         "assistant",
 		Instructions: agents.StaticInstructions("Answer briefly."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{weather},
+		Tools:        []*agents.Tool{weather},
 	}
 
 	fmt.Fprintln(os.Stderr, "exporting spans to", where)

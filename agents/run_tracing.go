@@ -31,8 +31,8 @@ func (r *runner) traceIncludeSensitiveData() bool {
 }
 
 // traceTools projects the request's tools into a serializable form — the
-// function fields on FunctionTool cannot be marshaled.
-func traceTools(tools []*FunctionTool) []map[string]any {
+// function fields on Tool cannot be marshaled.
+func traceTools(tools []*Tool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		m := map[string]any{"name": t.Name}

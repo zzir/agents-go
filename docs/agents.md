@@ -9,7 +9,7 @@ type weatherArgs struct {
 	City string `json:"city" jsonschema:"the city to look up"`
 }
 
-weather := agents.NewFunctionTool("get_weather", "Look up the weather.",
+weather := agents.NewTool("get_weather", "Look up the weather.",
 	func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 		return "Sunny in " + args.City, nil
 	})
@@ -18,7 +18,7 @@ agent := &agents.Agent{
 	Name:         "Haiku agent",
 	Instructions: agents.StaticInstructions("Always respond in haiku form."),
 	Model:        "gpt-4o-mini",
-	Tools:        []*agents.FunctionTool{weather},
+	Tools:        []*agents.Tool{weather},
 }
 ```
 

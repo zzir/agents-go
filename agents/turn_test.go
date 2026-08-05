@@ -9,7 +9,7 @@ import (
 
 // A turn hook sees what the turn was resolved to, not just what it produced.
 func TestTurnSnapshot_DescribesTheResolvedTurn(t *testing.T) {
-	tool := NewFunctionTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
@@ -19,7 +19,7 @@ func TestTurnSnapshot_DescribesTheResolvedTurn(t *testing.T) {
 	agent := &Agent{
 		Name:         "a",
 		Instructions: StaticInstructions("be brief"),
-		Tools:        []*FunctionTool{tool},
+		Tools:        []*Tool{tool},
 		ModelImpl:    model,
 	}
 
@@ -55,14 +55,14 @@ func TestTurnSnapshot_DescribesTheResolvedTurn(t *testing.T) {
 // PrepareNextTurn changes the next turn without mutating the Agent, which a
 // concurrent run may be reading.
 func TestPrepareNextTurn_ReshapesTheNextTurn(t *testing.T) {
-	tool := NewFunctionTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{PrepareNextTurn: func(_ context.Context, tr *TurnResult) (*TurnSnapshot, error) {
@@ -96,10 +96,10 @@ func TestPrepareNextTurn_AppliesToOneTurnOnly(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	tool := NewFunctionTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model,
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model,
 		Instructions: InstructionsFunc(func(context.Context, *RunContext, *Agent) (string, error) {
 			calls++
 			return "resolved", nil
@@ -126,11 +126,11 @@ func TestPrepareNextTurn_AppliesToOneTurnOnly(t *testing.T) {
 }
 
 func TestPrepareNextTurn_ErrorFailsTheRun(t *testing.T) {
-	tool := NewFunctionTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{modelResp(functionCallOutput(t, "probe", "c1", `{}`))}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{PrepareNextTurn: func(context.Context, *TurnResult) (*TurnSnapshot, error) {
@@ -158,14 +158,14 @@ func TestTurnResult_ToolCallNames(t *testing.T) {
 // honoring its Input would replay that turn — the tool call and its output
 // silently missing from what the model is sent next.
 func TestPrepareNextTurn_CannotReplayTheLastTurnsInput(t *testing.T) {
-	tool := NewFunctionTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "probes", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "TOOL-RESULT", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{PrepareNextTurn: func(_ context.Context, tr *TurnResult) (*TurnSnapshot, error) {

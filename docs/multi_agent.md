@@ -15,13 +15,13 @@ An agent equipped with tools, [handoffs](handoffs.md) and clear instructions can
 4. Use specialist agents that excel at one task over one generalist.
 
 ```go
-research := &agents.Agent{Name: "Researcher", Tools: []*agents.FunctionTool{webLookup}}
+research := &agents.Agent{Name: "Researcher", Tools: []*agents.Tool{webLookup}}
 writer := &agents.Agent{Name: "Writer", Instructions: agents.StaticInstructions("Write the final report.")}
 
 planner := &agents.Agent{
 	Name:         "Planner",
 	Instructions: agents.StaticInstructions("Plan the work, research as needed, then hand off to the writer."),
-	Tools:        []*agents.FunctionTool{webLookup},
+	Tools:        []*agents.Tool{webLookup},
 	Handoffs:     []agents.Handoff{agents.HandoffTo(writer)},
 }
 ```
@@ -38,7 +38,7 @@ orchestrator := &agents.Agent{
 	Name: "orchestrator",
 	Instructions: agents.StaticInstructions(
 		"You are a translation agent. Use the tools to translate; for multiple languages, call the relevant tools."),
-	Tools: []*agents.FunctionTool{
+	Tools: []*agents.Tool{
 		spanish.AsTool(agents.AgentToolConfig{Name: "translate_to_spanish", Description: "Translate the user's message to Spanish"}),
 		french.AsTool(agents.AgentToolConfig{Name: "translate_to_french", Description: "Translate the user's message to French"}),
 	},
@@ -73,7 +73,7 @@ sub.AsTool(agents.AgentToolConfig{
 
 **Streaming a nested run.** Setting `OnStream` switches the nested run to streaming: every event (raw model deltas, run items, agent updates) is delivered as an `AgentToolStreamEvent` carrying the current nested agent and the originating tool call. Events dispatch from a background goroutine so a slow callback never stalls the run; a panic in the callback is recovered, and a canceled parent does not wait for the callback backlog.
 
-**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewFunctionTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
+**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
 
 The nested run inherits the parent's model provider, model override, model settings, tracer and log configuration through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace and its log records carry the sub-agent's name; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 

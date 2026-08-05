@@ -91,12 +91,12 @@ type weatherArgs struct {
 	City string `json:"city" jsonschema:"the city"`
 }
 
-getWeather := agents.NewFunctionTool("get_weather", "Look up the weather.",
+getWeather := agents.NewTool("get_weather", "Look up the weather.",
 	func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 		return "sunny in " + args.City, nil
 	})
 
-agent := &agents.Agent{Name: "bot", Model: "gpt-4o", Tools: []*agents.FunctionTool{getWeather}}
+agent := &agents.Agent{Name: "bot", Model: "gpt-4o", Tools: []*agents.Tool{getWeather}}
 ```
 
 Structured output is the same idea in reverse: `OutputType[T]()` on the agent,

@@ -387,7 +387,7 @@ to repeat says so, and is then left dangling for the next run to redo:
 
 ```go
 readFile.RetrySafe = true
-agent.Tools = []*agents.FunctionTool{readFile, sendEmail}
+agent.Tools = []*agents.Tool{readFile, sendEmail}
 ```
 
 `RetrySafe` is supplied by the caller because the stored history holds a tool

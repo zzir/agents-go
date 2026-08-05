@@ -29,7 +29,7 @@ func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
-	build := agents.NewFunctionTool("build", "Build a target and report the outcome.",
+	build := agents.NewTool("build", "Build a target and report the outcome.",
 		func(_ context.Context, tc *agents.ToolContext, a buildArgs) (string, error) {
 			steps := []string{"resolving dependencies", "compiling", "linking"}
 			for _, step := range steps {
@@ -46,7 +46,7 @@ func main() {
 		Name:         "builder",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Build what the user asks for, then report the result in one sentence."),
-		Tools:        []*agents.FunctionTool{build},
+		Tools:        []*agents.Tool{build},
 	}
 
 	stream, _ := agents.Run(ctx, agent, "Build the release target.", agents.RunOptions{

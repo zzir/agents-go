@@ -14,8 +14,8 @@ type weatherArgs struct {
 	Units string `json:"units,omitempty"`
 }
 
-func TestNewFunctionTool_SchemaGeneration(t *testing.T) {
-	tool := NewFunctionTool("get_weather", "look up weather",
+func TestNewTool_SchemaGeneration(t *testing.T) {
+	tool := NewTool("get_weather", "look up weather",
 		func(ctx context.Context, tc *ToolContext, args weatherArgs) (string, error) {
 			return "sunny in " + args.City, nil
 		})
@@ -45,8 +45,8 @@ func TestNewFunctionTool_SchemaGeneration(t *testing.T) {
 	}
 }
 
-func TestNewFunctionTool_Invocation(t *testing.T) {
-	tool := NewFunctionTool("get_weather", "look up weather",
+func TestNewTool_Invocation(t *testing.T) {
+	tool := NewTool("get_weather", "look up weather",
 		func(ctx context.Context, tc *ToolContext, args weatherArgs) (string, error) {
 			if tc.ToolName != "get_weather" {
 				t.Errorf("tool context name = %q", tc.ToolName)
@@ -64,8 +64,8 @@ func TestNewFunctionTool_Invocation(t *testing.T) {
 	}
 }
 
-func TestNewFunctionTool_ArgumentValidation(t *testing.T) {
-	tool := NewFunctionTool("t", "",
+func TestNewTool_ArgumentValidation(t *testing.T) {
+	tool := NewTool("t", "",
 		func(ctx context.Context, tc *ToolContext, args weatherArgs) (string, error) {
 			return "ran", nil
 		})
@@ -97,9 +97,9 @@ func TestNewFunctionTool_ArgumentValidation(t *testing.T) {
 	}
 }
 
-func TestNewFunctionTool_EmptyArgsAllOptional(t *testing.T) {
+func TestNewTool_EmptyArgsAllOptional(t *testing.T) {
 	type noArgs struct{}
-	tool := NewFunctionTool("t", "",
+	tool := NewTool("t", "",
 		func(ctx context.Context, tc *ToolContext, args noArgs) (string, error) {
 			return "ok", nil
 		})
@@ -111,8 +111,8 @@ func TestNewFunctionTool_EmptyArgsAllOptional(t *testing.T) {
 	}
 }
 
-func TestNewFunctionTool_InvalidArgs(t *testing.T) {
-	tool := NewFunctionTool("t", "",
+func TestNewTool_InvalidArgs(t *testing.T) {
+	tool := NewTool("t", "",
 		func(ctx context.Context, tc *ToolContext, args weatherArgs) (string, error) {
 			return "", nil
 		})
@@ -203,13 +203,13 @@ func TestSchemaForType_RoundTripsToJSON(t *testing.T) {
 // A tool built from an unusable schema (here an interface{} field, which
 // has no strict-mode schema) fails the run with a *UserError before the model
 // is ever called — not only when the model happens to invoke it.
-func TestNewFunctionTool_NonStructArgsPanics(t *testing.T) {
+func TestNewTool_NonStructArgsPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected construction panic for non-struct args type")
 		}
 	}()
-	NewFunctionTool("bad", "unusable",
+	NewTool("bad", "unusable",
 		func(ctx context.Context, tc *ToolContext, args string) (string, error) {
 			return "ran", nil
 		})

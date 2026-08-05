@@ -125,7 +125,7 @@ the failure, then assert that the fallback output arrived rather than an error.
 `agentstest` fakes the model. It does not fake anything else, on purpose — a
 test that stubs out the run loop is testing the stub.
 
-- **Testing a tool in isolation?** Call it directly. A `FunctionTool`'s
+- **Testing a tool in isolation?** Call it directly. A `Tool`'s
   function is an ordinary Go function; you do not need a run to exercise it.
 - **Testing against the real API?** Use a real provider and mark the test so it
   can be skipped without a key. Keep those few and separate from the fast suite.

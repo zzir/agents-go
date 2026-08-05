@@ -36,7 +36,7 @@ func main() {
 
 	// A tool with a deliberately bulky result — the shape compaction exists
 	// for: it mattered for one turn and never again.
-	readFile := agents.NewFunctionTool("read_file", "Read a file.",
+	readFile := agents.NewTool("read_file", "Read a file.",
 		func(_ context.Context, _ *agents.ToolContext, a readArgs) (string, error) {
 			return strings.Repeat("<file contents> ", 200), nil
 		})
@@ -45,7 +45,7 @@ func main() {
 		Name:         "reader",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Read each file the user names, then summarize what you found."),
-		Tools:        []*agents.FunctionTool{readFile},
+		Tools:        []*agents.Tool{readFile},
 	}
 
 	// Cheap and lossless first, lossy only if that was not enough. A pipeline

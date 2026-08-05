@@ -9,7 +9,7 @@ import (
 )
 
 // invoke calls a tool the way the runner would.
-func invoke(t *testing.T, tool *agents.FunctionTool, sessionID, argsJSON string) (agents.ToolResult, error) {
+func invoke(t *testing.T, tool *agents.Tool, sessionID, argsJSON string) (agents.ToolResult, error) {
 	t.Helper()
 	inv, ok := tool, tool.OnInvoke != nil
 	if !ok {
@@ -19,7 +19,7 @@ func invoke(t *testing.T, tool *agents.FunctionTool, sessionID, argsJSON string)
 	return inv.OnInvoke(context.Background(), tc, argsJSON)
 }
 
-func toolNamed(tools []*agents.FunctionTool, name string) *agents.FunctionTool {
+func toolNamed(tools []*agents.Tool, name string) *agents.Tool {
 	for _, t := range tools {
 		if t.Name == name {
 			return t

@@ -73,12 +73,12 @@ func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T)
 // the server never received it.
 func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 	var autoRan, gatedRan bool
-	auto := NewFunctionTool("auto_tool", "runs without approval",
+	auto := NewTool("auto_tool", "runs without approval",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			autoRan = true
 			return "auto done", nil
 		})
-	innerTool := NewFunctionTool("delete_db", "dangerous",
+	innerTool := NewTool("delete_db", "dangerous",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			gatedRan = true
 			return "deleted", nil
@@ -88,7 +88,7 @@ func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 		modelResp(functionCallOutput(t, "delete_db", "inner_call", `{}`)),
 		modelResp(messageOutput(t, "inner finished")),
 	}}
-	inner := &Agent{Name: "specialist", Tools: []*FunctionTool{innerTool}, ModelImpl: innerModel}
+	inner := &Agent{Name: "specialist", Tools: []*Tool{innerTool}, ModelImpl: innerModel}
 
 	outerModel := &fakeModel{responses: []*ModelResponse{
 		{
@@ -103,7 +103,7 @@ func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 	}}
 	outer := &Agent{
 		Name:      "triage",
-		Tools:     []*FunctionTool{auto, inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
+		Tools:     []*Tool{auto, inner.AsTool(AgentToolConfig{Name: "specialist", Description: "delegate"})},
 		ModelImpl: outerModel,
 	}
 	opts := RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}}

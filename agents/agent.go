@@ -113,7 +113,7 @@ type Agent struct {
 	ModelSettings *ModelSettings
 
 	// Tools are the function tools available to the agent.
-	Tools []*FunctionTool
+	Tools []*Tool
 
 	// MCPServers are MCP servers whose tools are exposed to the agent.
 	MCPServers []MCPServer

@@ -69,12 +69,12 @@ type stopArgs struct {
 //
 // sessionID resolves the parent session from the run context; nil uses
 // DefaultSessionID.
-func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.FunctionTool {
+func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 	if sessionID == nil {
 		sessionID = DefaultSessionID
 	}
 
-	spawn := agents.NewFunctionTool("spawn_task",
+	spawn := agents.NewTool("spawn_task",
 		"Start a background task: another agent works on the input while you continue. "+
 			"Returns a task_id immediately. When the task finishes you are notified automatically in a later turn — "+
 			"after spawning, finish your reply and END YOUR TURN instead of polling. "+
@@ -102,7 +102,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.FunctionTool {
 			return taskResult(info), nil
 		})
 
-	status := agents.NewFunctionTool("task_status",
+	status := agents.NewTool("task_status",
 		"Check a background task started with spawn_task. Statuses: working, input_required (waiting for a human approval), completed, failed, cancelled. "+
 			"For finished tasks the result field carries the FULL final output — the wake-up notification only shows a truncated summary. "+
 			"Set wait_seconds for one bounded wait instead of calling this in a loop.",
@@ -117,7 +117,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.FunctionTool {
 			return taskResult(info), nil
 		})
 
-	stop := agents.NewFunctionTool("task_stop",
+	stop := agents.NewTool("task_stop",
 		"Stop a background task started with spawn_task.",
 		func(ctx context.Context, tc *agents.ToolContext, args stopArgs) (agents.ToolResult, error) {
 			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
@@ -139,7 +139,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.FunctionTool {
 			return taskResult(info), nil
 		})
 
-	return []*agents.FunctionTool{spawn, status, stop}
+	return []*agents.Tool{spawn, status, stop}
 }
 
 // taskResult splits what the model reads from what a UI renders: Content is the

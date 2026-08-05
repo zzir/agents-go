@@ -144,7 +144,7 @@ func TestMCP_ToolMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ft *agents.FunctionTool
+	var ft *agents.Tool
 	for _, tl := range tools {
 		if f := tl; f.Name == "meta_echo" {
 			ft = f
@@ -210,7 +210,7 @@ func TestMCP_DescriptionFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ft *agents.FunctionTool
+	var ft *agents.Tool
 	for _, tl := range tools {
 		if f := tl; f.Name == "titled" {
 			ft = f

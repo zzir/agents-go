@@ -152,7 +152,7 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	phase := &PlanPhase{}
 
 	out := agent.Clone()
-	tools := make([]*agents.FunctionTool, 0, len(out.Tools)+1)
+	tools := make([]*agents.Tool, 0, len(out.Tools)+1)
 	for _, t := range out.Tools {
 		if readOnly[t.Name] {
 			tools = append(tools, t)
@@ -176,7 +176,7 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		}
 		tools = append(tools, &gated)
 	}
-	submit := agents.NewFunctionTool(PlanToolName,
+	submit := agents.NewTool(PlanToolName,
 		"Submit your plan for approval. Execution tools unlock only after the plan is approved.",
 		func(context.Context, *agents.ToolContext, planArgs) (string, error) {
 			// A failed unlock (the host could not persist its durable mark)
@@ -242,14 +242,14 @@ type planMCP struct {
 func (m planMCP) Name() string { return m.inner.Name() }
 func (m planMCP) Close() error { return m.inner.Close() }
 
-func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.FunctionTool, error) {
+func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.Tool, error) {
 	tools, err := m.inner.ListTools(ctx, rc, agent)
 	if err != nil || m.phase.Executing() {
 		return tools, err
 	}
 	// A fresh slice, never tools[:0]: the inner server may hand out a cached
 	// slice, and filtering in place would corrupt it for every later turn.
-	kept := make([]*agents.FunctionTool, 0, len(tools))
+	kept := make([]*agents.Tool, 0, len(tools))
 	for _, t := range tools {
 		if m.readOnly[t.Name] {
 			kept = append(kept, t)

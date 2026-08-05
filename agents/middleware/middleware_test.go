@@ -98,11 +98,11 @@ func TestLoop_FeedsTheAttemptBackIn(t *testing.T) {
 // A standing rule should not have to be re-litigated by every caller driving a
 // run: the policy answers on the SDK side of the pause.
 func TestApproval_PolicyResolvesTheInterruption(t *testing.T) {
-	tool := agents.NewFunctionTool("read_file", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
+	tool := agents.NewTool("read_file", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 		return "contents", nil
 	})
 	tool.NeedsApproval = true
-	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{tool}, ModelImpl: &scriptedModel{
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{tool}, ModelImpl: &scriptedModel{
 		responses: []*agents.ModelResponse{
 			resp(toolCall(t, "read_file", "c1")),
 			resp(message(t, "done")),
@@ -125,11 +125,11 @@ func TestApproval_PolicyResolvesTheInterruption(t *testing.T) {
 // A policy is a shortcut for what a human already decided, not a replacement
 // for asking: anything it does not recognize still reaches the caller.
 func TestApproval_UnrecognizedCallsStillPause(t *testing.T) {
-	tool := agents.NewFunctionTool("rm", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
+	tool := agents.NewTool("rm", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 		return "gone", nil
 	})
 	tool.NeedsApproval = true
-	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{tool}, ModelImpl: &scriptedModel{
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{tool}, ModelImpl: &scriptedModel{
 		responses: []*agents.ModelResponse{resp(toolCall(t, "rm", "c1"))}}}
 
 	res, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
@@ -144,12 +144,12 @@ func TestApproval_UnrecognizedCallsStillPause(t *testing.T) {
 }
 
 func TestApproval_DenyFeedsTheReasonBack(t *testing.T) {
-	tool := agents.NewFunctionTool("rm", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
+	tool := agents.NewTool("rm", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 		t.Error("a denied tool executed")
 		return "", nil
 	})
 	tool.NeedsApproval = true
-	agent := &agents.Agent{Name: "a", Tools: []*agents.FunctionTool{tool}, ModelImpl: &scriptedModel{
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{tool}, ModelImpl: &scriptedModel{
 		responses: []*agents.ModelResponse{
 			resp(toolCall(t, "rm", "c1")),
 			resp(message(t, "understood")),

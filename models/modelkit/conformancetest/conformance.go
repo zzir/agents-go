@@ -68,7 +68,7 @@ type TurnSpec struct {
 type Scenario struct {
 	Name     string
 	UserText string
-	Tools    []*agents.FunctionTool
+	Tools    []*agents.Tool
 	Settings *agents.ModelSettings
 	Turn     TurnSpec
 }
@@ -87,8 +87,8 @@ type lookupArgs struct {
 	Query string `json:"query"`
 }
 
-func lookupTool() *agents.FunctionTool {
-	return agents.NewFunctionTool("lookup", "Look something up.",
+func lookupTool() *agents.Tool {
+	return agents.NewTool("lookup", "Look something up.",
 		func(_ context.Context, _ *agents.ToolContext, _ lookupArgs) (string, error) {
 			return "ok", nil
 		})
@@ -120,7 +120,7 @@ func Scenarios() []Scenario {
 		{
 			Name:     "tool_call",
 			UserText: "Look up the weather.",
-			Tools:    []*agents.FunctionTool{lookupTool()},
+			Tools:    []*agents.Tool{lookupTool()},
 			Turn: TurnSpec{
 				ResponseID: "resp_tool",
 				ToolCalls:  []ToolCallSpec{{CallID: "call_1", Name: "lookup", ArgumentsJSON: `{"query":"weather"}`}},
@@ -130,7 +130,7 @@ func Scenarios() []Scenario {
 		{
 			Name:     "parallel_tool_calls",
 			UserText: "Look up two things.",
-			Tools:    []*agents.FunctionTool{lookupTool()},
+			Tools:    []*agents.Tool{lookupTool()},
 			Turn: TurnSpec{
 				ResponseID: "resp_parallel",
 				ToolCalls: []ToolCallSpec{

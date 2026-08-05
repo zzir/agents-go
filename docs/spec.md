@@ -30,7 +30,7 @@ from upstream.
 | Not doing | Why |
 |---|---|
 | **Chat Completions API** | Internal item types *are* Responses types ([§5.5](#55-internal-item-types-are-responses-wire-types)). A backend that speaks another protocol is supported by translating at the model boundary ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)) — never by making a second format canonical. Chat Completions specifically was declined again 2026-07-31 in favor of a native Anthropic adapter; revisit only with a concrete backend nothing else covers. |
-| **Provider-hosted tools** (`web_search`, `file_search`, `code_interpreter`, `computer_use`, …) | A tool is a `*FunctionTool` struct, not an interface, so there is nothing a hosted tool could implement; every tool executes locally. Hosted tools bind a tool to one backend. |
+| **Provider-hosted tools** (`web_search`, `file_search`, `code_interpreter`, `computer_use`, …) | A tool is a `*Tool` struct, not an interface, so there is nothing a hosted tool could implement; every tool executes locally. Hosted tools bind a tool to one backend. |
 | **A neutral multi-provider abstraction** | No lowest-common-denominator message model. An adapter implements `Model` by translating to the canonical Responses format ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)); `models/modelkit` is shared plumbing for writing adapters, not an abstraction layer. The SDK guarantees depth of correctness for Responses semantics. |
 | **Model price or capability tables** | They change constantly and do not belong in an SDK. `Usage` exposes raw token counts; pricing is the caller's concern. |
 | **Realtime and voice** | A different interaction model, out of scope. |
@@ -789,7 +789,7 @@ cannot otherwise survive.
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in
 `RunOptions` or on an `Agent` apply to the whole run — their tool stages cover
-every tool that agent exposes — while guardrails on a `FunctionTool` apply to
+every tool that agent exposes — while guardrails on a `Tool` apply to
 that tool only.
 
 | Stage | When | Decision space |
@@ -912,7 +912,7 @@ wrapped automatically, so the ordinary tool is unchanged.
 
 ### 2.7c Tool capabilities are fields ✅
 
-`*FunctionTool` is the only tool type, and everything a tool can do beyond
+`*Tool` is the only tool type, and everything a tool can do beyond
 being called is a **field** on it: `OnInvoke`, `Description`,
 `ParamsJSONSchema`, `Strict`, `NeedsApproval` / `NeedsApprovalFunc`,
 `Guardrails`, `Timeout`, `Sequential`, `IsEnabled`, `FailureErrorFunction`,
@@ -945,7 +945,7 @@ absence a wrapper could not have represented.
 
 **Why fields and not an interface with optional side interfaces:** that was the
 previous design, and it had exactly one concrete implementation
-(`*FunctionTool`) plus eight wrapper shells whose only job was to set what were
+(`*Tool`) plus eight wrapper shells whose only job was to set what were
 already fields on it. The wrappers required a `ToolAs[T]` unwrap walker, and a
 bare type assertion through a wrapper silently reported that a tool needing
 approval needed none — a trap the design created and then had to specify around.
@@ -1662,7 +1662,7 @@ That is a separate decision from this one, and it is open.
 
 ### 5.4 A tool is a struct, not an interface
 
-`*FunctionTool` is the tool type. There is no `Tool` interface, which is how the
+`*Tool` is the tool type. There is no `Tool` interface, which is how the
 "no hosted tools" decision ([§1.2](#12-non-goals)) is enforced: a provider-hosted
 tool has nowhere to be introduced, because there is nothing to implement.
 
@@ -1850,14 +1850,14 @@ adds none, so it stays in root.
 A constructor whose failure can only be a programmer error **panics**; a
 constructor whose input is runtime data **returns an error**.
 
-`NewFunctionTool` and `AgentAsTool` derive their schema from a Go type: for a
+`NewTool` and `AgentAsTool` derive their schema from a Go type: for a
 given type the outcome is deterministic, so a failure (non-struct args, a field
 no schema can express) is a bug that any test constructing the agent surfaces
 immediately — the `regexp.MustCompile` precedent. They panic, which also keeps
 constructors chainable inside `Agent{Tools: []Tool{...}}` literals.
-`NewRawFunctionTool` takes a schema that is data (loaded from a database or
+`NewRawTool` takes a schema that is data (loaded from a database or
 config), so a bad schema is an expected input, not a bug: it returns
-`(*FunctionTool, error)`.
+`(*Tool, error)`.
 
 The earlier design — returning a tool that errors on every invocation, surfaced
 by the runner before the first model call — deferred a deterministic bug to

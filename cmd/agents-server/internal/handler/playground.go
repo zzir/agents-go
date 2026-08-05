@@ -131,12 +131,12 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	if req.ModelSettings != nil {
 		settings = req.ModelSettings
 	}
-	var tools []*agents.FunctionTool
+	var tools []*agents.Tool
 	for _, t := range req.Tools {
 		if t.Name == "" {
 			continue
 		}
-		tools = append(tools, &agents.FunctionTool{
+		tools = append(tools, &agents.Tool{
 			Name:             t.Name,
 			Description:      t.Description,
 			ParamsJSONSchema: t.Parameters,
@@ -319,7 +319,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 	if built.PlanPhase != nil {
 		_ = built.PlanPhase.Unlock() // a fresh build has no hook armed; cannot fail
 	}
-	describe := func(t *agents.FunctionTool) playgroundTool {
+	describe := func(t *agents.Tool) playgroundTool {
 		return playgroundTool{Name: t.Name, Description: t.Description, Parameters: t.ParamsJSONSchema}
 	}
 	out := make([]playgroundTool, 0, len(built.Agent.Tools))

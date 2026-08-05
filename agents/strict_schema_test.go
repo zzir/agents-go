@@ -214,14 +214,14 @@ func TestStrict_ChainedRefWithSiblingKeys(t *testing.T) {
 	}
 }
 
-// --- NewFunctionTool non-strict validation actually relaxes required keys.
+// --- NewTool non-strict validation actually relaxes required keys.
 
-func TestNewFunctionTool_NonStrictAllowsOmittedOptional(t *testing.T) {
+func TestNewTool_NonStrictAllowsOmittedOptional(t *testing.T) {
 	type args struct {
 		City  string `json:"city" jsonschema:"the city"`
 		Units string `json:"units,omitempty"`
 	}
-	tool := NewFunctionTool("get_weather", "",
+	tool := NewTool("get_weather", "",
 		func(ctx context.Context, tc *ToolContext, a args) (string, error) {
 			return a.City, nil
 		})
@@ -275,7 +275,7 @@ func TestStrict_TypelessPropertyErrors(t *testing.T) {
 	}
 }
 
-func TestNewFunctionTool_TypelessAnyFieldPanics(t *testing.T) {
+func TestNewTool_TypelessAnyFieldPanics(t *testing.T) {
 	type badArgs struct {
 		Data any `json:"data" jsonschema:"some data"`
 	}
@@ -284,7 +284,7 @@ func TestNewFunctionTool_TypelessAnyFieldPanics(t *testing.T) {
 			t.Fatal("expected construction panic for a tagged any field (typeless schema)")
 		}
 	}()
-	NewFunctionTool("bad", "",
+	NewTool("bad", "",
 		func(ctx context.Context, tc *ToolContext, a badArgs) (string, error) {
 			return "ran", nil
 		})

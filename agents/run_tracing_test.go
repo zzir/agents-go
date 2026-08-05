@@ -168,7 +168,7 @@ func TestCompactionSpan(t *testing.T) {
 func tracingAgent(t *testing.T) (*Agent, *recordingProcessor) {
 	t.Helper()
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "final"))}}
-	tool := NewFunctionTool("get_weather", "weather lookup",
+	tool := NewTool("get_weather", "weather lookup",
 		func(ctx context.Context, tc *ToolContext, args struct {
 			City string `json:"city"`
 		}) (string, error) {
@@ -180,7 +180,7 @@ func tracingAgent(t *testing.T) (*Agent, *recordingProcessor) {
 		Model:         "fake-model",
 		Instructions:  StaticInstructions("be brief"),
 		ModelImpl:     model,
-		Tools:         []*FunctionTool{tool},
+		Tools:         []*Tool{tool},
 		ModelSettings: &ModelSettings{Temperature: &temp},
 	}
 	return agent, &recordingProcessor{}
@@ -286,7 +286,7 @@ func TestGenerationSpanEnvOptOut(t *testing.T) {
 func TestFunctionSpanErrorRedaction(t *testing.T) {
 	newRun := func(include bool) *tracing.Span {
 		t.Helper()
-		tool := NewFunctionTool("boom", "fails",
+		tool := NewTool("boom", "fails",
 			func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 				return "", errors.New("secret-arg-value leaked")
 			})
@@ -294,7 +294,7 @@ func TestFunctionSpanErrorRedaction(t *testing.T) {
 			modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 			modelResp(messageOutput(t, "done")),
 		}}
-		agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+		agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 		proc := &recordingProcessor{}
 		if _, err := RunSync(context.Background(), agent, "go", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc), IncludeSensitiveData: &include}}); err != nil {
 			t.Fatal(err)

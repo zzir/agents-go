@@ -233,8 +233,8 @@ type readArgs struct {
 // escapes are rejected. Each read is capped at 256 KiB; a capped read ends with
 // an explicit truncation marker so the model never mistakes a partial file for
 // the whole thing.
-func ReadFileTool(rootDir string) *agents.FunctionTool {
-	return agents.NewFunctionTool("read_skill_file",
+func ReadFileTool(rootDir string) *agents.Tool {
+	return agents.NewTool("read_skill_file",
 		"Read a file from the skills directory (a SKILL.md body, reference, asset, or script) to follow a skill's instructions.",
 		func(_ context.Context, _ *agents.ToolContext, args readArgs) (string, error) {
 			root, err := os.OpenRoot(rootDir)

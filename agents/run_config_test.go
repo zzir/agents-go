@@ -55,7 +55,7 @@ func TestCallModelInputFilter_EditsInputAndInstructions(t *testing.T) {
 func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 	var inflight, peak int32
 	var mu sync.Mutex
-	slow := NewFunctionTool("slow", "slow tool",
+	slow := NewTool("slow", "slow tool",
 		func(_ context.Context, _ *ToolContext, _ struct{}) (string, error) {
 			n := atomic.AddInt32(&inflight, 1)
 			mu.Lock()
@@ -67,7 +67,7 @@ func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
 			atomic.AddInt32(&inflight, -1)
 			return "ok", nil
 		})
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{slow}}
+	agent := &Agent{Name: "a", Tools: []*Tool{slow}}
 	model := &fakeModel{responses: []*ModelResponse{toolCalls(t, "slow", 3), {ResponseID: "done"}}}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxToolConcurrency: 1}, Model: ModelOptions{Override: model}})
@@ -154,14 +154,14 @@ func reasoningInputID(items []TResponseInputItem) (string, bool) {
 // later turns; the default preserves it.
 func TestReasoningItemIDPolicy_Omit(t *testing.T) {
 	build := func() (*fakeModel, *Agent) {
-		tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+		tool := NewTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 			return "ok", nil
 		})
 		model := &fakeModel{responses: []*ModelResponse{
 			modelResp(reasoningOutput(t, "rs_1"), functionCallOutput(t, "noop", "c1", `{}`)),
 			modelResp(messageOutput(t, "done")),
 		}}
-		return model, &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+		return model, &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 	}
 
 	// Default (preserve): the reasoning id reaches the model on turn 2.

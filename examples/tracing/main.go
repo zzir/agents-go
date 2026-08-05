@@ -32,7 +32,7 @@ func run() error {
 	defer processor.Shutdown(context.Background())
 	tracer := tracing.NewTracer(processor)
 
-	weather := agents.NewFunctionTool("get_weather", "Return the weather for a city.",
+	weather := agents.NewTool("get_weather", "Return the weather for a city.",
 		func(ctx context.Context, tc *agents.ToolContext, args struct {
 			City string `json:"city" jsonschema:"city name"`
 		}) (string, error) {
@@ -43,7 +43,7 @@ func run() error {
 		Name:         "trace-demo",
 		Model:        "gpt-4o-mini",
 		Instructions: agents.StaticInstructions("Use the weather tool, then answer in one sentence."),
-		Tools:        []*agents.FunctionTool{weather},
+		Tools:        []*agents.Tool{weather},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "What's the weather in Kyoto?", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}, Observe: // reads OPENAI_API_KEY

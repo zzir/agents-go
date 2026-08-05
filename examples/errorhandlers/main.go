@@ -26,7 +26,7 @@ func main() {
 	ctx := context.Background()
 
 	// --- max_turns: a research loop that cannot finish in one turn. ---
-	search := agents.NewFunctionTool("search", "Search the web for a topic.",
+	search := agents.NewTool("search", "Search the web for a topic.",
 		func(ctx context.Context, tc *agents.ToolContext, args struct {
 			Query string `json:"query"`
 		}) (string, error) {
@@ -37,7 +37,7 @@ func main() {
 		Name:         "researcher",
 		Instructions: agents.StaticInstructions("Research the topic thoroughly. Keep searching until you are certain."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{search},
+		Tools:        []*agents.Tool{search},
 	}
 
 	res, err := agents.RunSync(ctx, researcher, "What is the airspeed velocity of an unladen swallow?", agents.RunOptions{Exec: agents.ExecOptions{MaxTurns: 2, ErrorHandlers: // deliberately too small

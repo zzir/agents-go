@@ -33,7 +33,7 @@ type singleStepResult struct {
 
 // toolRunFunction pairs a function tool call with the tool that handles it.
 type toolRunFunction struct {
-	Tool *FunctionTool
+	Tool *Tool
 	Call functionCall
 }
 
@@ -102,7 +102,7 @@ func (p *processedResponse) hasToolsToRun() bool {
 // run items and pending tool/handoff actions.
 func processModelResponse(
 	agent *Agent,
-	tools []*FunctionTool,
+	tools []*Tool,
 	handoffs []Handoff,
 	resp *ModelResponse,
 	toolNotFound ToolNotFoundBehavior,
@@ -111,7 +111,7 @@ func processModelResponse(
 	for _, h := range handoffs {
 		handoffMap[h.ToolName] = h
 	}
-	functionMap := make(map[string]*FunctionTool)
+	functionMap := make(map[string]*Tool)
 	for _, t := range tools {
 		if t.OnInvoke != nil {
 			functionMap[t.Name] = t

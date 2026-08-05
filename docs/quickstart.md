@@ -100,19 +100,19 @@ other stages and for substitution.
 
 ## Add a function tool
 
-`NewFunctionTool` reflects a typed Go function into a strict JSON-schema tool. Struct tags document the parameters.
+`NewTool` reflects a typed Go function into a strict JSON-schema tool. Struct tags document the parameters.
 
 ```go
 type weatherArgs struct {
 	City string `json:"city" jsonschema:"the city to look up"`
 }
 
-weather := agents.NewFunctionTool("get_weather", "Look up the current weather for a city.",
+weather := agents.NewTool("get_weather", "Look up the current weather for a city.",
 	func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 		return "Sunny, 23°C in " + args.City, nil
 	})
 
-mathTutor.Tools = []*agents.FunctionTool{weather}
+mathTutor.Tools = []*agents.Tool{weather}
 ```
 
 ## Put it all together

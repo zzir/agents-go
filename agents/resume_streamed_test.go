@@ -39,13 +39,13 @@ func collectItemEvents(t *testing.T, stream RunStream) ([]string, *RunResult) {
 // approved tool's output and every later turn's items.
 func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 	var wroteFile, ranCommand bool
-	gated := NewFunctionTool("write_file", "gated",
+	gated := NewTool("write_file", "gated",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			wroteFile = true
 			return "written", nil
 		})
 	gated.NeedsApproval = true
-	free := NewFunctionTool("exec_command", "free",
+	free := NewTool("exec_command", "free",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			ranCommand = true
 			return "executed", nil
@@ -55,7 +55,7 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 		modelResp(messageOutput(t, "now running it"), functionCallOutput(t, "exec_command", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{gated, free}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{gated, free}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
 	interrupted, res := collectItemEvents(t, stream)
@@ -100,7 +100,7 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 // A resume that interrupts again must surface the new interruption through
 // FinalResult, mirroring the blocking ResumeRun.
 func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
-	gated := NewFunctionTool("step", "gated",
+	gated := NewTool("step", "gated",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ok", nil
 		})
@@ -110,7 +110,7 @@ func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
 		modelResp(functionCallOutput(t, "step", "call_2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{gated}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{gated}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {

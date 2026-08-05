@@ -14,7 +14,7 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 | Run (blocking) | `agents.RunSync(ctx, agent, input, opts)` |
 | Streaming | `agents.Run(...)` returns a `RunStream` (`iter.Seq2`) + `RunControl` |
 | Model backends | `openai.NewProvider()` (Responses API, native) · `anthropic.NewProvider()` (Messages API, translated — separate module) |
-| Function tools | `agents.NewFunctionTool[Args, Result](name, desc, fn)` |
+| Function tools | `agents.NewTool[Args, Result](name, desc, fn)` |
 | Structured output | `agents.OutputType[T]()` |
 | Dynamic output schema | `agents.NewDynamicOutputSchema(name, schema, strict)` (runtime JSON Schema) |
 | Multimodal tool output | `agents.ToolOutputText/ToolOutputImage/ToolOutputFile` |

@@ -17,7 +17,7 @@ type weatherArgs struct {
 }
 
 func main() {
-	getWeather := agents.NewFunctionTool("get_weather", "Look up the current weather for a city.",
+	getWeather := agents.NewTool("get_weather", "Look up the current weather for a city.",
 		func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 			// A real tool would call a weather API here.
 			return fmt.Sprintf("It is sunny and 22°C in %s.", args.City), nil
@@ -27,7 +27,7 @@ func main() {
 		Name:         "weather-bot",
 		Instructions: agents.StaticInstructions("Answer weather questions using the get_weather tool."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{getWeather},
+		Tools:        []*agents.Tool{getWeather},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "上海今天天气怎么样？", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})

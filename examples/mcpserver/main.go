@@ -38,12 +38,12 @@ func main() {
 func run() error {
 	ctx := context.Background()
 
-	toC := agents.NewFunctionTool("to_fahrenheit", "Convert Celsius to Fahrenheit.",
+	toC := agents.NewTool("to_fahrenheit", "Convert Celsius to Fahrenheit.",
 		func(_ context.Context, _ *agents.ToolContext, a unitArgs) (string, error) {
 			return fmt.Sprintf("%.1f°F", a.Celsius*9/5+32), nil
 		})
 
-	srv, err := mcp.NewToolServer([]*agents.FunctionTool{toC}, mcp.ServeOptions{
+	srv, err := mcp.NewToolServer([]*agents.Tool{toC}, mcp.ServeOptions{
 		Name:         "unit-tools",
 		Instructions: "Unit conversions.",
 	})

@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	deleteFile := agents.NewFunctionTool("delete_file", "Delete a file from disk.",
+	deleteFile := agents.NewTool("delete_file", "Delete a file from disk.",
 		func(ctx context.Context, tc *agents.ToolContext, args struct {
 			Path string `json:"path" jsonschema:"path of the file to delete"`
 		}) (string, error) {
@@ -29,7 +29,7 @@ func main() {
 		Name:         "ops",
 		Instructions: agents.StaticInstructions("Help with file operations."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{deleteFile},
+		Tools:        []*agents.Tool{deleteFile},
 	}
 
 	ctx := context.Background()

@@ -16,7 +16,7 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 	var gotCallID, gotCallName string
 	var turnInputLen int
 	agent := &Agent{Name: "a"}
-	tool := NewFunctionTool("probe", "probe",
+	tool := NewTool("probe", "probe",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			gotAgent = tc.Agent
 			gotCallID = tc.ToolCall.AsFunctionCall().CallID
@@ -28,7 +28,7 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent.Tools = []*FunctionTool{tool}
+	agent.Tools = []*Tool{tool}
 	agent.ModelImpl = model
 
 	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{}); err != nil {
@@ -55,7 +55,7 @@ func TestToolGuardrail_ReceivesTheCallIdentity(t *testing.T) {
 	var mu sync.Mutex
 	var inputCalls, outputCalls []string
 
-	tool := NewFunctionTool("probe", "probe",
+	tool := NewTool("probe", "probe",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 	tool.Guardrails = []Guardrail{{
 		Name:   "watch",
@@ -78,7 +78,7 @@ func TestToolGuardrail_ReceivesTheCallIdentity(t *testing.T) {
 		),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestToolGuardrail_ReceivesTheCallIdentity(t *testing.T) {
 // predicate receives the tool call id).
 func TestNeedsApprovalFunc_ReceivesCallID(t *testing.T) {
 	var gotCallID atomic.Value
-	tool := NewFunctionTool("deploy", "deploys",
+	tool := NewTool("deploy", "deploys",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ok", nil
 		})
@@ -115,7 +115,7 @@ func TestNeedsApprovalFunc_ReceivesCallID(t *testing.T) {
 		modelResp(functionCallOutput(t, "deploy", "call_99", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)

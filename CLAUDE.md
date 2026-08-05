@@ -75,7 +75,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   implementation must pass. Retry / fallback / routing are provider-agnostic
   decorators (`NewRetryModel`, `NewFallbackModel`, `RouterProvider`) — never
   run-loop changes.
-- **Tools** — `agents/function_tool.go`: `NewFunctionTool[Args, Result]`
+- **Tools** — `agents/function_tool.go`: `NewTool[Args, Result]`
   reflects Args into a strict-mode JSON schema. `agent.AsTool(...)` wraps an
   agent as a callable tool.
 - **Handoffs / guardrails / HITL** — `handoff.go`, `guardrail.go` (one
@@ -124,7 +124,7 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   types. Another backend is supported by translating inside its adapter
   (`models/anthropic`, spec §5.10) — never by a second canonical format or a
   neutral abstraction layer. Chat Completions is intentionally NOT supported.
-- **No hosted tools.** A tool is a `*FunctionTool` **struct**, not an interface,
+- **No hosted tools.** A tool is a `*Tool` **struct**, not an interface,
   so there is nothing a hosted tool could implement. Provider-hosted tools
   (`web_search`, `file_search`, …) are deliberately not modeled — do not
   reintroduce them, and do not reintroduce a `Tool` interface to make room.

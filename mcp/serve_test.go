@@ -44,12 +44,12 @@ type greetArgs struct {
 // rather than reimplemented for each.
 func TestServeTools_ExposesAnSDKTool(t *testing.T) {
 	ctx := context.Background()
-	greet := agents.NewFunctionTool("greet", "Greet somebody.",
+	greet := agents.NewTool("greet", "Greet somebody.",
 		func(_ context.Context, _ *agents.ToolContext, a greetArgs) (string, error) {
 			return "hello " + a.Name, nil
 		})
 
-	srv, err := mcp.NewToolServer([]*agents.FunctionTool{greet}, mcp.ServeOptions{Name: "test-server"})
+	srv, err := mcp.NewToolServer([]*agents.Tool{greet}, mcp.ServeOptions{Name: "test-server"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +87,13 @@ func TestServeTools_ExposesAnSDKTool(t *testing.T) {
 // it the connection is fine.
 func TestServeTools_ToolFailureIsAResult(t *testing.T) {
 	ctx := context.Background()
-	boom := agents.NewFunctionTool("boom", "Always fails.",
+	boom := agents.NewTool("boom", "Always fails.",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			return "", errors.New("no such path")
 		})
 	boom.FailureErrorFunction = nil // make it a hard failure
 
-	srv, err := mcp.NewToolServer([]*agents.FunctionTool{boom}, mcp.ServeOptions{})
+	srv, err := mcp.NewToolServer([]*agents.Tool{boom}, mcp.ServeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +115,13 @@ func TestServeTools_ToolFailureIsAResult(t *testing.T) {
 // own tools stay inside.
 func TestServeAgent_ExposesOneAskTool(t *testing.T) {
 	ctx := context.Background()
-	inner := agents.NewFunctionTool("secret", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
+	inner := agents.NewTool("secret", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 		return "", nil
 	})
 	agent := &agents.Agent{
 		Name:               "Research Bot",
 		HandoffDescription: "Answers research questions.",
-		Tools:              []*agents.FunctionTool{inner},
+		Tools:              []*agents.Tool{inner},
 		ModelImpl:          &scriptedModel{text: "the answer is 42"},
 	}
 

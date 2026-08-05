@@ -39,10 +39,10 @@
 //
 // # Tools
 //
-// [NewFunctionTool] builds a tool from a typed Go function; the argument
+// [NewTool] builds a tool from a typed Go function; the argument
 // struct is reflected into a strict JSON schema shown to the model (chain
-// [FunctionTool.NonStrict] to relax it). Every tool executes locally:
-// [FunctionTool] is a struct rather than an interface, so provider-hosted
+// [Tool.NonStrict] to relax it). Every tool executes locally:
+// [Tool] is a struct rather than an interface, so provider-hosted
 // tools have nowhere to be introduced. Optional behavior — approval,
 // enablement, deferral, timeout, sequencing — is a field on it, and adapting
 // a tool you did not build is copying the struct and assigning to one.

@@ -13,7 +13,7 @@ import (
 // and runs through output guardrails — the error message is a normal result.
 func TestToolPipeline_HandledErrorStillProducesOutput(t *testing.T) {
 	var guardrailSawOutput string
-	tool := NewFunctionTool("boom", "fails",
+	tool := NewTool("boom", "fails",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "", errors.New("kaboom")
 		})
@@ -29,7 +29,7 @@ func TestToolPipeline_HandledErrorStillProducesOutput(t *testing.T) {
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -55,7 +55,7 @@ func TestToolPipeline_HandledErrorStillProducesOutput(t *testing.T) {
 // A tool-input guardrail that substitutes content stops the tool from running
 // at all: the substituted message becomes the result.
 func TestToolPipeline_InputGuardrailRejectSkipsTheTool(t *testing.T) {
-	tool := NewFunctionTool("gated", "does stuff",
+	tool := NewTool("gated", "does stuff",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ran", nil
 		})
@@ -71,7 +71,7 @@ func TestToolPipeline_InputGuardrailRejectSkipsTheTool(t *testing.T) {
 		modelResp(messageOutput(t, "done")),
 	}}
 	var ran bool
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -93,14 +93,14 @@ func TestToolPipeline_StoppedTurnStringifiesForPlainText(t *testing.T) {
 	type payload struct {
 		N int `json:"n"`
 	}
-	tool := NewFunctionTool("compute", "computes",
+	tool := NewTool("compute", "computes",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (payload, error) {
 			return payload{N: 42}, nil
 		})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "compute", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{ShouldStopAfterTurn: stopAlways},
@@ -117,7 +117,7 @@ func TestToolPipeline_StoppedTurnStringifiesForPlainText(t *testing.T) {
 // turn hook that stops the run reports the rejection message as the final
 // output rather than an empty one.
 func TestToolPipeline_RejectedCallParticipatesInTurnResult(t *testing.T) {
-	tool := NewFunctionTool("act", "acts",
+	tool := NewTool("act", "acts",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "executed", nil
 		})
@@ -125,7 +125,7 @@ func TestToolPipeline_RejectedCallParticipatesInTurnResult(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	opts := RunOptions{Exec: ExecOptions{ShouldStopAfterTurn: stopAlways}}
 	res, err := RunSync(context.Background(), agent, "go", opts)
@@ -152,13 +152,13 @@ func TestToolPipeline_RejectedCallParticipatesInTurnResult(t *testing.T) {
 func TestToolPipeline_ConcurrentFailureDeterministicWinner(t *testing.T) {
 	// Tool "first" fails slowly; tool "second" fails fast. Without deterministic
 	// arbitration the fast one would win; with it, "first" (lower index) wins.
-	first := NewFunctionTool("first", "slow fail",
+	first := NewTool("first", "slow fail",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			time.Sleep(30 * time.Millisecond)
 			return "", errors.New("first-error")
 		})
 	first.FailureErrorFunction = nil // fatal
-	second := NewFunctionTool("second", "fast fail",
+	second := NewTool("second", "fast fail",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "", errors.New("second-error")
 		})
@@ -171,7 +171,7 @@ func TestToolPipeline_ConcurrentFailureDeterministicWinner(t *testing.T) {
 		},
 		Usage: NewUsage(),
 	}}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{first, second}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{first, second}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil || !strings.Contains(err.Error(), "first-error") {
@@ -180,7 +180,7 @@ func TestToolPipeline_ConcurrentFailureDeterministicWinner(t *testing.T) {
 }
 
 func TestToolInputGuardrailReject(t *testing.T) {
-	tool := NewFunctionTool("danger", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("danger", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		t.Error("tool should not run when input guardrail rejects")
 		return "ran", nil
 	})
@@ -195,7 +195,7 @@ func TestToolInputGuardrailReject(t *testing.T) {
 		modelResp(functionCallOutput(t, "danger", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -214,7 +214,7 @@ func TestToolInputGuardrailReject(t *testing.T) {
 }
 
 func TestToolOutputGuardrailRaise(t *testing.T) {
-	tool := NewFunctionTool("leaky", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("leaky", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "secret", nil
 	})
 	tool.Guardrails = []Guardrail{{
@@ -227,7 +227,7 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "leaky", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	var tw *GuardrailTripwireError
@@ -238,14 +238,14 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 
 // Tool error is fed back to the model by default.
 func TestToolError_FeedsBackToModel(t *testing.T) {
-	tool := NewFunctionTool("boom", "fails", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("boom", "fails", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "", errors.New("kaboom")
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -270,14 +270,14 @@ func TestToolError_FeedsBackToModel(t *testing.T) {
 
 // Setting FailureErrorFunction to nil makes tool errors fatal.
 func TestToolError_FatalWhenNil(t *testing.T) {
-	tool := NewFunctionTool("boom", "fails", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("boom", "fails", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "", errors.New("kaboom")
 	})
 	tool.FailureErrorFunction = nil // opt into raising
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err == nil {
 		t.Fatal("expected run to fail when FailureErrorFunction is nil")
@@ -292,14 +292,14 @@ func stopAlways(context.Context, *TurnResult) (bool, error) { return true, nil }
 // is a predicate rather than a producer: the run reports what the turn actually
 // produced, so a stopped run's final output cannot disagree with its history.
 func TestShouldStopAfterTurn_StopsOnToolResult(t *testing.T) {
-	tool := NewFunctionTool("calc", "", func(ctx context.Context, tc *ToolContext, a struct{}) (int, error) {
+	tool := NewTool("calc", "", func(ctx context.Context, tc *ToolContext, a struct{}) (int, error) {
 		return 42, nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "calc", "c1", `{}`)),
 		modelResp(messageOutput(t, "never reached")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{ShouldStopAfterTurn: func(_ context.Context, tr *TurnResult) (bool, error) {

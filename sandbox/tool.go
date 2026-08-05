@@ -55,7 +55,7 @@ type CodeToolConfig struct {
 
 	// RegisterCloser, when set, receives the closer that releases every named
 	// shell the tool's Sessions pool holds open. Without it there was no path
-	// to those shells at all: *agents.FunctionTool has no close, so a host that rebuilt
+	// to those shells at all: *agents.Tool has no close, so a host that rebuilt
 	// its tools accumulated live PTYs (and remote ssh sessions) for the life of
 	// the process. Wire it to whatever owns the sandbox's lifetime and call
 	// Close there.
@@ -92,7 +92,7 @@ type codeToolArgs struct {
 // command which is executed via bash -c; stdout, stderr and exit code are
 // returned as text. Execution errors (non-zero exit, timeout) are returned
 // to the model as output so it can correct itself.
-func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.FunctionTool {
+func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
 	// The pool exists only when named sessions do: a tool built without
 	// Sessions never uses it, and unconditionally creating and registering one
@@ -107,7 +107,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.FunctionTool {
 	}
 	schema, schemaErr := agents.SchemaFor[codeToolArgs](true)
 	if schemaErr != nil {
-		return &agents.FunctionTool{
+		return &agents.Tool{
 			Name:             cfg.Name,
 			Description:      cfg.Description,
 			ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
@@ -135,7 +135,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.FunctionTool {
 			return inner(ctx, rc, argsJSON, callID)
 		}
 	}
-	return &agents.FunctionTool{
+	return &agents.Tool{
 		Name:              cfg.Name,
 		Description:       cfg.Description,
 		ParamsJSONSchema:  schema,

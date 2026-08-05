@@ -36,7 +36,7 @@ func (o ServeOptions) withDefaults() ServeOptions {
 // reimplemented for each.
 //
 // The caller owns the transport; see ServeStdio for the common case.
-func NewToolServer(tools []*agents.FunctionTool, opts ServeOptions) (*mcpsdk.Server, error) {
+func NewToolServer(tools []*agents.Tool, opts ServeOptions) (*mcpsdk.Server, error) {
 	opts = opts.withDefaults()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    opts.Name,
@@ -54,7 +54,7 @@ func NewToolServer(tools []*agents.FunctionTool, opts ServeOptions) (*mcpsdk.Ser
 }
 
 // exportTool converts one SDK tool into its MCP declaration and handler.
-func exportTool(t *agents.FunctionTool) (*mcpsdk.Tool, mcpsdk.ToolHandler, error) {
+func exportTool(t *agents.Tool) (*mcpsdk.Tool, mcpsdk.ToolHandler, error) {
 	name := t.Name
 	if t.OnInvoke == nil {
 		return nil, nil, fmt.Errorf("mcp: tool %q has no OnInvoke and cannot be served", name)

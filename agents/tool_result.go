@@ -13,7 +13,7 @@ import "encoding/json"
 // the moment it returns.
 //
 // The zero value is a valid empty result. Most tools never build one by hand:
-// NewFunctionTool wraps an ordinary return value automatically.
+// NewTool wraps an ordinary return value automatically.
 type ToolResult struct {
 	// Content is what goes back to the model — text, images, files. Empty
 	// content sends an empty string, which is a valid answer for a tool whose

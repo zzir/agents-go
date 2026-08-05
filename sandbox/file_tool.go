@@ -71,9 +71,9 @@ func fileToolError(op, reqPath string, err error) string {
 // FileTools returns read_file, write_file and list_files tools backed by the
 // given sandbox. These complement CodeTool by giving the model structured file
 // I/O instead of piping everything through shell commands.
-func FileTools(sb Sandbox, cfg FileToolConfig) []*agents.FunctionTool {
+func FileTools(sb Sandbox, cfg FileToolConfig) []*agents.Tool {
 	cfg = cfg.withDefaults()
-	return []*agents.FunctionTool{
+	return []*agents.Tool{
 		ReadFileTool(sb, cfg),
 		WriteFileTool(sb, cfg),
 		ListFilesTool(sb, cfg),
@@ -86,9 +86,9 @@ type readFileArgs struct {
 
 // ReadFileTool returns a tool that reads a file from the sandbox. The file
 // content is returned as a string, truncated to MaxOutputBytes.
-func ReadFileTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
+func ReadFileTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
-	return agents.NewFunctionTool(
+	return agents.NewTool(
 		"read_file",
 		"Read the contents of a file in the sandbox. Returns the file content as text.",
 		func(ctx context.Context, _ *agents.ToolContext, args readFileArgs) (string, error) {
@@ -109,9 +109,9 @@ type writeFileArgs struct {
 }
 
 // WriteFileTool returns a tool that writes a file into the sandbox.
-func WriteFileTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
+func WriteFileTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
-	return agents.NewFunctionTool(
+	return agents.NewTool(
 		"write_file",
 		"Write content to a file in the sandbox. Creates parent directories as needed. Overwrites any existing file.",
 		func(ctx context.Context, _ *agents.ToolContext, args writeFileArgs) (string, error) {
@@ -130,9 +130,9 @@ type listFilesArgs struct {
 }
 
 // ListFilesTool returns a tool that lists files in a sandbox directory.
-func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.FunctionTool {
+func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
-	return agents.NewFunctionTool(
+	return agents.NewTool(
 		"list_files",
 		"List files and directories in the sandbox. Returns name, size and type for each entry.",
 		func(ctx context.Context, _ *agents.ToolContext, args listFilesArgs) (string, error) {

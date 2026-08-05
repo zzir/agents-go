@@ -38,10 +38,10 @@ func TestLogging_SilentByDefault(t *testing.T) {
 
 func TestLogging_RecordsTheRunsShape(t *testing.T) {
 	log, buf := capture(t)
-	tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}
@@ -66,13 +66,13 @@ func TestLogging_RecordsTheRunsShape(t *testing.T) {
 func TestLogging_SensitiveDataIsOptIn(t *testing.T) {
 	run := func(sensitive bool) string {
 		log, buf := capture(t)
-		tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 			return "ok", nil
 		})
 		agent := &Agent{
 			Name:         "a",
 			Instructions: StaticInstructions("SECRET-SYSTEM-PROMPT"),
-			Tools:        []*FunctionTool{tool},
+			Tools:        []*Tool{tool},
 			ModelImpl: &fakeModel{responses: []*ModelResponse{
 				modelResp(functionCallOutput(t, "probe", "c1", `{"q":"SECRET-ARGS"}`)),
 				modelResp(messageOutput(t, "done")),

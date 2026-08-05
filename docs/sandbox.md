@@ -90,7 +90,7 @@ defer sb.Close()
 
 // CodeTool runs shell commands; FileTools gives the model native read_file,
 // write_file and list_files — no shell needed.
-tools := []*agents.FunctionTool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
+tools := []*agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
 tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
 
 agent := &agents.Agent{

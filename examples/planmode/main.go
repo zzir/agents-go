@@ -40,11 +40,11 @@ func main() {
 	// read_file is on middleware.DefaultReadOnlyTools, so it stays usable
 	// while planning; write_file is not, so it is hidden until the plan is
 	// approved.
-	readFile := agents.NewFunctionTool("read_file", "Read the project notes.",
+	readFile := agents.NewTool("read_file", "Read the project notes.",
 		func(context.Context, *agents.ToolContext, readArgs) (string, error) {
 			return "NOTES: the greeting in hello.txt is outdated.", nil
 		})
-	writeFile := agents.NewFunctionTool("write_file", "Write a file.",
+	writeFile := agents.NewTool("write_file", "Write a file.",
 		func(_ context.Context, _ *agents.ToolContext, a writeArgs) (string, error) {
 			fmt.Printf("  [write_file] %s <- %q\n", a.Path, a.Text)
 			return "written", nil
@@ -54,7 +54,7 @@ func main() {
 		Name:         "worker",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Fix the outdated greeting. Be brief."),
-		Tools:        []*agents.FunctionTool{readFile, writeFile},
+		Tools:        []*agents.Tool{readFile, writeFile},
 	}
 
 	opts := agents.RunOptions{

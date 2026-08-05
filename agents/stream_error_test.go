@@ -57,7 +57,7 @@ func TestRunStream_TerminalErrorAlwaysReachesTheConsumer(t *testing.T) {
 func TestStreamedResult_StopAfterTurn(t *testing.T) {
 	released := make(chan struct{})
 	var once sync.Once
-	gate := NewFunctionTool("gate", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	gate := NewTool("gate", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		<-released
 		return "ok", nil
 	})
@@ -66,7 +66,7 @@ func TestStreamedResult_StopAfterTurn(t *testing.T) {
 		modelResp(functionCallOutput(t, "gate", "c2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{gate}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{gate}, ModelImpl: model}
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
 	var res *RunResult
@@ -241,7 +241,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 }
 
 func TestRunStreamed_Events(t *testing.T) {
-	tool := NewFunctionTool("get_weather", "", func(ctx context.Context, tc *ToolContext, a struct {
+	tool := NewTool("get_weather", "", func(ctx context.Context, tc *ToolContext, a struct {
 		City string `json:"city"`
 	}) (string, error) {
 		return "sunny", nil
@@ -250,7 +250,7 @@ func TestRunStreamed_Events(t *testing.T) {
 		modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"SF"}`)),
 		modelResp(messageOutput(t, "it is sunny")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "weather?", RunOptions{})
 	var raw, toolCalled, toolOutput, message int

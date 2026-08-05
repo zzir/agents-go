@@ -116,7 +116,7 @@ type GuardrailPayload struct {
 //
 // Placement decides scope: guardrails on an [Agent] or in [RunOptions] apply to
 // that run — including the tool stages, which then cover every tool the agent
-// exposes. Guardrails on a [FunctionTool] apply to that tool only, and only
+// exposes. Guardrails on a [Tool] apply to that tool only, and only
 // their tool stages are consulted.
 type Guardrail struct {
 	// Name identifies the guardrail in results and errors.

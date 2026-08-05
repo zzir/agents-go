@@ -27,7 +27,7 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 Every tool, guardrail, hook and dynamic-instructions function receives the same `*agents.RunContext`; type-assert your value back:
 
 ```go
-tool := agents.NewFunctionTool("whoami", "Return the current user.",
+tool := agents.NewTool("whoami", "Return the current user.",
 	func(ctx context.Context, tc *agents.ToolContext, _ struct{}) (string, error) {
 		app := tc.RunContext.Context.(*AppContext)
 		return app.UserID, nil

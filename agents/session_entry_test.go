@@ -200,9 +200,9 @@ func TestProjectEntries_UpdatesAreNotContext(t *testing.T) {
 // the run produced instead of re-deriving it from the wire item.
 func TestRunPersistsEntriesWithProvenanceAndDisplay(t *testing.T) {
 	session := NewInMemorySession()
-	tool := NewFunctionTool("t", "t",
+	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "tool out", nil })
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}

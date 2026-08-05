@@ -80,7 +80,7 @@ func TestStreamedRunWithRacingGuardrailKeepsRawEvents(t *testing.T) {
 // guard refuses in-process.
 func TestTruncatedResponseDoesNotPause(t *testing.T) {
 	executed := false
-	tool := NewFunctionTool("act", "acts",
+	tool := NewTool("act", "acts",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			executed = true
 			return "ran", nil
@@ -93,7 +93,7 @@ func TestTruncatedResponseDoesNotPause(t *testing.T) {
 		truncated,
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {
@@ -130,7 +130,7 @@ func TestSerializedResponseKeepsTruncation(t *testing.T) {
 // request onto the resumed batch — a request counted twice.
 func TestResumeDoesNotReattributeUsage(t *testing.T) {
 	ctx := context.Background()
-	tool := NewFunctionTool("act", "acts",
+	tool := NewTool("act", "acts",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "ok", nil
 		})
@@ -142,7 +142,7 @@ func TestResumeDoesNotReattributeUsage(t *testing.T) {
 	second.ResponseID = "resp_2"
 	second.Usage = &Usage{Requests: 1, InputTokens: 7, OutputTokens: 2, TotalTokens: 9}
 	model := &fakeModel{responses: []*ModelResponse{first, second}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 	sess := NewInMemorySession()
 
 	res, err := RunSync(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})

@@ -59,7 +59,7 @@ func TestRunSyncToolLoop(t *testing.T) {
 		City string `json:"city"`
 	}
 	var toolCity string
-	getWeather := agents.NewFunctionTool("get_weather", "Look up the weather.",
+	getWeather := agents.NewTool("get_weather", "Look up the weather.",
 		func(_ context.Context, _ *agents.ToolContext, args weatherArgs) (string, error) {
 			toolCity = args.City
 			return "sunny", nil
@@ -68,7 +68,7 @@ func TestRunSyncToolLoop(t *testing.T) {
 	agent := &agents.Agent{
 		Name:  "weather-bot",
 		Model: "claude-test",
-		Tools: []*agents.FunctionTool{getWeather},
+		Tools: []*agents.Tool{getWeather},
 	}
 	res, err := agents.RunSync(context.Background(), agent, "Weather in Oslo?", agents.RunOptions{
 		Model: agents.ModelOptions{

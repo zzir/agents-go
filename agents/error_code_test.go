@@ -100,7 +100,7 @@ func TestCodeSurvivesTheRunLoop(t *testing.T) {
 
 	_, err = RunSync(context.Background(), &Agent{Name: "a", ModelImpl: &fakeModel{
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "loop", "c1", `{}`))},
-	}, Tools: []*FunctionTool{NewFunctionTool("loop", "loop",
+	}, Tools: []*Tool{NewTool("loop", "loop",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })}},
 		"hi", RunOptions{Exec: ExecOptions{MaxTurns: 1}})
 	if got := CodeOf(err); got != CodeMaxTurns {
@@ -112,10 +112,10 @@ func TestCodeSurvivesTheRunLoop(t *testing.T) {
 // for the operator while the panic itself remains matchable.
 //
 // Only the fatal path is classified: with a FailureErrorFunction (which
-// NewFunctionTool installs by default) a panic becomes tool output fed back to
+// NewTool installs by default) a panic becomes tool output fed back to
 // the model, and the run does not fail at all.
 func TestToolPanicCode(t *testing.T) {
-	panicking := &FunctionTool{
+	panicking := &Tool{
 		Name:             "boom",
 		Description:      "boom",
 		ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false, "required": []any{}},
@@ -127,7 +127,7 @@ func TestToolPanicCode(t *testing.T) {
 	}
 	agent := &Agent{Name: "a", ModelImpl: &fakeModel{
 		responses: []*ModelResponse{modelResp(functionCallOutput(t, "boom", "c1", `{}`))},
-	}, Tools: []*FunctionTool{panicking}}
+	}, Tools: []*Tool{panicking}}
 
 	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err == nil {

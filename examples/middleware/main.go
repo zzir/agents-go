@@ -39,7 +39,7 @@ func main() {
 
 	// A tool that needs approval. The policy below answers for it, so this
 	// program never has to write a resume loop.
-	lookup := agents.NewFunctionTool("lookup", "Look a topic up in the archive.",
+	lookup := agents.NewTool("lookup", "Look a topic up in the archive.",
 		func(_ context.Context, _ *agents.ToolContext, a lookupArgs) (string, error) {
 			return "The archive says: " + a.Topic + " was first described in 1957.", nil
 		})
@@ -49,7 +49,7 @@ func main() {
 		Name:         "researcher",
 		Model:        "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions("Answer using the lookup tool. Keep it to one sentence."),
-		Tools:        []*agents.FunctionTool{lookup},
+		Tools:        []*agents.Tool{lookup},
 	}
 
 	attempt := 0

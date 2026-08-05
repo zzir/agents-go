@@ -48,8 +48,8 @@ func toolCallArgs(t *testing.T, name, callID, args string) agents.TResponseOutpu
 }
 
 // noopTool is a recording function tool with no behavior.
-func noopTool(name string, calls *atomic.Int32) *agents.FunctionTool {
-	return agents.NewFunctionTool(name, "test tool",
+func noopTool(name string, calls *atomic.Int32) *agents.Tool {
+	return agents.NewTool(name, "test tool",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			if calls != nil {
 				calls.Add(1)
@@ -74,7 +74,7 @@ func TestPlan_ApproveUnlocksExecutionInTheSameRun(t *testing.T) {
 	agent := &agents.Agent{
 		Name:      "a",
 		ModelImpl: model,
-		Tools:     []*agents.FunctionTool{noopTool("read_file", nil), noopTool("write_file", &writes), lockedWrite},
+		Tools:     []*agents.Tool{noopTool("read_file", nil), noopTool("write_file", &writes), lockedWrite},
 		Handoffs:  []agents.Handoff{agents.HandoffTo(&agents.Agent{Name: "other"})},
 	}
 	opts := agents.RunOptions{Middlewares: []agents.RunMiddleware{Plan{}}}
@@ -133,7 +133,7 @@ func TestPlan_RejectKeepsPlanning(t *testing.T) {
 	agent := &agents.Agent{
 		Name:      "a",
 		ModelImpl: model,
-		Tools:     []*agents.FunctionTool{noopTool("write_file", &writes)},
+		Tools:     []*agents.Tool{noopTool("write_file", &writes)},
 	}
 	res, err := agents.RunSync(context.Background(), agent, "go",
 		agents.RunOptions{Middlewares: []agents.RunMiddleware{Plan{}}})
@@ -157,18 +157,18 @@ func TestPlan_RejectKeepsPlanning(t *testing.T) {
 }
 
 // fakeMCP lists a fixed set of tools.
-type fakeMCP struct{ tools []*agents.FunctionTool }
+type fakeMCP struct{ tools []*agents.Tool }
 
 func (f fakeMCP) Name() string { return "fake" }
 func (f fakeMCP) Close() error { return nil }
-func (f fakeMCP) ListTools(context.Context, *agents.RunContext, *agents.Agent) ([]*agents.FunctionTool, error) {
+func (f fakeMCP) ListTools(context.Context, *agents.RunContext, *agents.Agent) ([]*agents.Tool, error) {
 	return slices.Clone(f.tools), nil
 }
 
 // MCP tools are listed fresh each turn; while planning only read-only names
 // survive the listing, afterwards everything does.
 func TestPlan_MCPListingIsPhaseGated(t *testing.T) {
-	inner := fakeMCP{tools: []*agents.FunctionTool{noopTool("read_file", nil), noopTool("mcp__write", nil)}}
+	inner := fakeMCP{tools: []*agents.Tool{noopTool("read_file", nil), noopTool("mcp__write", nil)}}
 	phase := &PlanPhase{}
 	m := planMCP{inner: inner, phase: phase, readOnly: map[string]bool{"read_file": true}}
 
@@ -191,7 +191,7 @@ func TestPlan_MCPListingIsPhaseGated(t *testing.T) {
 	}
 }
 
-func toolNames(tools []*agents.FunctionTool) []string {
+func toolNames(tools []*agents.Tool) []string {
 	out := make([]string, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, t.Name)

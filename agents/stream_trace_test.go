@@ -16,10 +16,10 @@ import (
 // unwinds the loop, runStream returns, and its deferred finishTrace runs. There
 // is no window in which nobody owns the trace.
 func TestTrace_ClosedWhenConsumerAbandonsStream(t *testing.T) {
-	loopTool := NewFunctionTool("loop", "loops",
+	loopTool := NewTool("loop", "loops",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })
 	newAgent := func() *Agent {
-		return &Agent{Name: "a", Tools: []*FunctionTool{loopTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+		return &Agent{Name: "a", Tools: []*Tool{loopTool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 			modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 			modelResp(messageOutput(t, "done")),

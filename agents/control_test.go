@@ -58,14 +58,14 @@ func TestSteer_ForcesAnotherTurn(t *testing.T) {
 
 // NextTurn rides along with a turn the run was going to take anyway.
 func TestNextTurn_RidesAlongWithTheNextTurn(t *testing.T) {
-	tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
 	if err := ctrl.NextTurn("also mention the weather"); err != nil {
@@ -200,7 +200,7 @@ func TestPendingInput_Empty(t *testing.T) {
 // the run was working, then an approval that takes a human a minute, must not
 // silently drop what was said.
 func TestPendingInput_SurvivesAnInterruption(t *testing.T) {
-	tool := NewFunctionTool("act", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("act", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "acted", nil
 	})
 	tool.NeedsApproval = true
@@ -208,7 +208,7 @@ func TestPendingInput_SurvivesAnInterruption(t *testing.T) {
 		modelResp(functionCallOutput(t, "act", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{})
 	var res *RunResult
@@ -365,10 +365,10 @@ func TestContinuationTake_RollsBackWhenItsPersistFails(t *testing.T) {
 // RunState's item log). A persist failure fails the attempt before any
 // RunState exists, so the take must roll back for the retry.
 func TestInterruptionTake_RollsBackWhenPersistFails(t *testing.T) {
-	probe := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	probe := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	danger := NewFunctionTool("delete_db", "dangerous", func(context.Context, *ToolContext, struct{}) (string, error) {
+	danger := NewTool("delete_db", "dangerous", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "deleted", nil
 	})
 	danger.NeedsApproval = true
@@ -376,7 +376,7 @@ func TestInterruptionTake_RollsBackWhenPersistFails(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "call_1", `{}`)),
 		modelResp(functionCallOutput(t, "delete_db", "call_2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{probe, danger}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{probe, danger}, ModelImpl: model}
 	storage := &appendFailingStorage{SessionStorage: NewInMemoryStorage("test"), failOn: "please also"}
 	sess := NewSession(storage)
 

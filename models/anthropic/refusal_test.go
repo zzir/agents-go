@@ -119,12 +119,12 @@ func TestRunSyncRefusalDropsToolCalls(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	ran := false
-	tool := agents.NewFunctionTool("rm_rf", "dangerous",
+	tool := agents.NewTool("rm_rf", "dangerous",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			ran = true
 			return "gone", nil
 		})
-	agent := &agents.Agent{Name: "a", Model: "claude-test", Tools: []*agents.FunctionTool{tool}}
+	agent := &agents.Agent{Name: "a", Model: "claude-test", Tools: []*agents.Tool{tool}}
 	_, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
 		Model: agents.ModelOptions{Provider: NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))},
 	})

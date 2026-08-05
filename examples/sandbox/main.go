@@ -50,7 +50,7 @@ func run() error {
 	// give the agent native file I/O; apply_patch applies Codex-style multi-file
 	// patches. All of them edit through the same Sandbox, so they share the
 	// filesystem exec_command runs in.
-	tools := []*agents.FunctionTool{
+	tools := []*agents.Tool{
 		sandbox.CodeTool(sb, sandbox.CodeToolConfig{
 			Name:        "exec_command",
 			Description: "Execute a shell command and return its stdout, stderr and exit code.",

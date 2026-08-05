@@ -20,7 +20,7 @@ func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 
 	// Alongside a tool call, so the run takes a second turn and resends the
 	// history — which is where a dropped item does its damage.
-	tool := NewFunctionTool("t", "t",
+	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 	model := &fakeModel{responses: []*ModelResponse{
 		{
@@ -29,7 +29,7 @@ func TestUnknownOutputItem_RoundTripsByteForByte(t *testing.T) {
 		},
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err != nil {
@@ -103,14 +103,14 @@ func TestOutputItemToInput_TypedFirstOverrideFallback(t *testing.T) {
 // Every item reports where it came from. This is what replaced the sentinel id
 // the SDK used to stamp on synthesized items.
 func TestSource_PropagatesThroughARun(t *testing.T) {
-	tool := NewFunctionTool("t", "t",
+	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "out", nil })
 	billing := &Agent{Name: "billing", ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "handled")),
 	}}}
 	triage := &Agent{
 		Name:     "triage",
-		Tools:    []*FunctionTool{tool},
+		Tools:    []*Tool{tool},
 		Handoffs: []Handoff{HandoffTo(billing)},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "t", "c1", `{}`)),
@@ -151,13 +151,13 @@ func TestSource_PropagatesThroughARun(t *testing.T) {
 // exactly what endsWithLocalItem needs to know, and what the sentinel id used
 // to encode.
 func TestSource_ErrorHandlerFallback(t *testing.T) {
-	loop := NewFunctionTool("loop", "loops",
+	loop := NewTool("loop", "loops",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "again", nil })
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "loop", "c1", `{}`)),
 		modelResp(functionCallOutput(t, "loop", "c2", `{}`)),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{loop}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{loop}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Exec: ExecOptions{
@@ -201,13 +201,13 @@ func TestSource_ErrorHandlerFallback(t *testing.T) {
 // Display is what a consumer renders from, so it must be populated without any
 // wire-format parsing on their side.
 func TestDisplay_ProjectsEveryItemKind(t *testing.T) {
-	tool := NewFunctionTool("get_weather", "w",
+	tool := NewTool("get_weather", "w",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "sunny", nil })
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"Paris"}`)),
 		modelResp(messageOutput(t, "it is sunny")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "hi", RunOptions{})
 	if err != nil {
@@ -286,10 +286,10 @@ func TestUnknownItem_ReplaysFromSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := NewInMemorySession()
-	tool := NewFunctionTool("t", "t",
+	tool := NewTool("t", "t",
 		func(context.Context, *ToolContext, struct{}) (string, error) { return "ok", nil })
 
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		{Output: []TResponseOutputItem{unknown, functionCallOutput(t, "t", "c1", `{}`)}, Usage: NewUsage()},
 		modelResp(messageOutput(t, "done")),
 	}}}

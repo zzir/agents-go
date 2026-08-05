@@ -59,10 +59,10 @@ func TestConversationIDIncrementalAcrossToolTurn(t *testing.T) {
 		{Output: []TResponseOutputItem{functionCallOutput(t, "echo", "call_1", "{}")}, Usage: NewUsage(), ResponseID: "resp_1"},
 		{Output: []TResponseOutputItem{messageOutput(t, "done")}, Usage: NewUsage(), ResponseID: "resp_2"},
 	}}
-	echo := NewFunctionTool("echo", "echo", func(context.Context, *ToolContext, struct{}) (string, error) {
+	echo := NewTool("echo", "echo", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Model: "m", Tools: []*FunctionTool{echo}}
+	agent := &Agent{Name: "a", Model: "m", Tools: []*Tool{echo}}
 
 	_, err := RunSync(context.Background(), agent, "hello", RunOptions{Conversation: ConversationOptions{ConversationID: "conv_abc"}, Model: ModelOptions{Override: model}})
 	if err != nil {
@@ -98,14 +98,14 @@ func modelRespID(id string, items ...TResponseOutputItem) *ModelResponse {
 
 // The previous_response_id mode sends only new items and chains the response ID.
 func TestPreviousResponseID(t *testing.T) {
-	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
 		modelRespID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}})
 	if err != nil {
@@ -125,14 +125,14 @@ func TestPreviousResponseID(t *testing.T) {
 
 func TestPreviousResponseID_Disabled(t *testing.T) {
 	// Without the opt-in, full history is resent and no previous_response_id set.
-	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
 		modelRespID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -148,14 +148,14 @@ func TestPreviousResponseID_Disabled(t *testing.T) {
 
 // Streaming loop also honors previous_response_id.
 func TestPreviousResponseID_Streaming(t *testing.T) {
-	tool := NewFunctionTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
+	tool := NewTool("noop", "", func(ctx context.Context, tc *ToolContext, a struct{}) (string, error) {
 		return "ok", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelRespID("resp_1", functionCallOutput(t, "noop", "c1", `{}`)),
 		modelRespID("resp_2", messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{Conversation: ConversationOptions{UsePreviousResponseID: true}})
 	_, res, err := streamRun(stream)

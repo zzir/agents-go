@@ -71,14 +71,14 @@ func TestCompaction_BeforeRunShrinksTheFirstCall(t *testing.T) {
 // tools must be able to shrink its context without waiting for the run to end.
 func TestCompaction_SavePointShrinksMidRun(t *testing.T) {
 	c := &recordingCompactor{drop: 1}
-	tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "result", nil
 	})
 	model := &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{
 		Conversation: ConversationOptions{Session: seededSession(t, "old")},
@@ -107,14 +107,14 @@ func TestCompaction_PointsSelectTheMoments(t *testing.T) {
 	run := func(t *testing.T, points CompactionPoint) int {
 		t.Helper()
 		c := &recordingCompactor{drop: 1}
-		tool := NewFunctionTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 			return "result", nil
 		})
 		model := &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 			modelResp(messageOutput(t, "done")),
 		}}
-		agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+		agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 		if _, err := RunSync(context.Background(), agent, "go", RunOptions{
 			Conversation: ConversationOptions{Session: seededSession(t, "old")},
 			Compaction:   CompactionOptions{Compactor: c, Points: points},

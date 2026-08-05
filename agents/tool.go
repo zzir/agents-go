@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// FunctionTool is a tool the agent can call: a name and JSON-schema parameters
+// Tool is a tool the agent can call: a name and JSON-schema parameters
 // shown to the model, plus the Go function the SDK runs when the model calls it.
 //
 // It is a STRUCT, and it is the only kind of tool there is. Everything a tool
@@ -23,14 +23,14 @@ import (
 // forgot to unwrap silently reported that a tool needing approval needed none.
 // A field cannot hide behind a wrapper.
 //
-// Build one with NewFunctionTool, which reflects the argument type into a
+// Build one with NewTool, which reflects the argument type into a
 // strict-mode schema. The struct is exported so a tool with a hand-written
-// schema (NewRawFunctionTool, an MCP bridge, a sandbox) can be built directly.
+// schema (NewRawTool, an MCP bridge, a sandbox) can be built directly.
 //
 // There is deliberately no interface: a provider-hosted tool (`web_search`,
 // `file_search`, …) would bind an agent to one backend, and with a struct there
 // is nowhere for one to be introduced.
-type FunctionTool struct {
+type Tool struct {
 	// Name is the tool name exposed to the model.
 	Name string
 	// Description explains to the model what the tool does.
@@ -42,7 +42,7 @@ type FunctionTool struct {
 	// strict-mode validation on the API side. It DESCRIBES the schema; setting
 	// it after construction re-derives nothing — the advertised schema and the
 	// local argument validator keep their built shape. To relax a
-	// NewFunctionTool-built tool use NonStrict, which regenerates both.
+	// NewTool-built tool use NonStrict, which regenerates both.
 	Strict bool
 	// OnInvoke runs the tool. argsJSON is the raw JSON arguments string emitted
 	// by the model. A tool with no OnInvoke is a configuration error, reported
@@ -96,7 +96,7 @@ type FunctionTool struct {
 	// FailureErrorFunction controls what happens when OnInvoke returns an error.
 	// When non-nil, its returned message is sent back to the model as the tool
 	// output, so the model can recover. When nil, the error aborts the run.
-	// NewFunctionTool installs DefaultToolErrorFunction; set this field to nil
+	// NewTool installs DefaultToolErrorFunction; set this field to nil
 	// to make a tool's errors fatal.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
@@ -136,7 +136,7 @@ type FunctionTool struct {
 	validator *schemaValidator
 
 	// regen rebuilds the schema and validator for a given strictness. Only
-	// NewFunctionTool installs it — the closure carries the argument type,
+	// NewTool installs it — the closure carries the argument type,
 	// which is how NonStrict can re-reflect without a type parameter.
 	regen func(strict bool) (map[string]any, *schemaValidator)
 }
@@ -146,12 +146,12 @@ type FunctionTool struct {
 // and the local validation of incoming arguments. It returns the tool for
 // chaining:
 //
-//	t := agents.NewFunctionTool("get_weather", "look up weather", weatherFn).NonStrict()
+//	t := agents.NewTool("get_weather", "look up weather", weatherFn).NonStrict()
 //
 // Configure it before the tool is first used in a run. On a tool that was not
-// built by NewFunctionTool it only clears Strict; the schema stays the
+// built by NewTool it only clears Strict; the schema stays the
 // caller's.
-func (t *FunctionTool) NonStrict() *FunctionTool {
+func (t *Tool) NonStrict() *Tool {
 	if t.regen != nil {
 		t.ParamsJSONSchema, t.validator = t.regen(false)
 	}
@@ -161,7 +161,7 @@ func (t *FunctionTool) NonStrict() *FunctionTool {
 
 // needsApproval resolves whether a specific call requires human approval:
 // NeedsApprovalFunc when set, NeedsApproval otherwise.
-func (t *FunctionTool) needsApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
+func (t *Tool) needsApproval(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error) {
 	if t.NeedsApprovalFunc != nil {
 		return t.NeedsApprovalFunc(ctx, rc, argsJSON, callID)
 	}
@@ -169,7 +169,7 @@ func (t *FunctionTool) needsApproval(ctx context.Context, rc *RunContext, argsJS
 }
 
 // enabled reports whether the model should be shown this tool for the run.
-func (t *FunctionTool) enabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error) {
+func (t *Tool) enabled(ctx context.Context, rc *RunContext, agent *Agent) (bool, error) {
 	if t.IsEnabled == nil {
 		return true, nil
 	}
@@ -179,7 +179,7 @@ func (t *FunctionTool) enabled(ctx context.Context, rc *RunContext, agent *Agent
 // RetrySafeNames returns a predicate for RecoveryPolicy.RetrySafe from a set of
 // tools, so a caller repairing a session does not have to restate which of its
 // tools are safe to repeat.
-func RetrySafeNames(tools []*FunctionTool) func(string) bool {
+func RetrySafeNames(tools []*Tool) func(string) bool {
 	safe := map[string]bool{}
 	for _, t := range tools {
 		if t != nil && t.RetrySafe {

@@ -58,7 +58,7 @@ sent.
 The accumulating `*Usage` lives on the [run context](context.md), so tools and hooks can read progress while the run executes:
 
 ```go
-budgetCheck := agents.NewFunctionTool("expensive_op", "…",
+budgetCheck := agents.NewTool("expensive_op", "…",
 	func(ctx context.Context, tc *agents.ToolContext, args opArgs) (string, error) {
 		if tc.RunContext.Usage.Snapshot().TotalTokens > 100_000 {
 			return "", errors.New("token budget exceeded")

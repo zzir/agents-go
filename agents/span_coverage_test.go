@@ -60,13 +60,13 @@ func TestSpans_NoTracerIsANoOp(t *testing.T) {
 func TestSpans_ToolWorkNestsUnderTheFunctionSpan(t *testing.T) {
 	proc := &recordingProcessor{}
 	var seen *tracing.SpanHandle
-	tool := NewFunctionTool("probe", "", func(ctx context.Context, _ *ToolContext, _ struct{}) (string, error) {
+	tool := NewTool("probe", "", func(ctx context.Context, _ *ToolContext, _ struct{}) (string, error) {
 		seen = tracing.SpanFrom(ctx)
 		child, _ := tracing.StartSpanFrom(ctx, "sandbox.exec", tracing.SpanTypeSandbox, nil)
 		child.Finish()
 		return "ok", nil
 	})
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}

@@ -259,11 +259,11 @@ func TestBuildParamsToolSchemaSurvives(t *testing.T) {
 	type args struct {
 		City string `json:"city"`
 	}
-	tool := agents.NewFunctionTool("weather", "Get weather.",
+	tool := agents.NewTool("weather", "Get weather.",
 		func(_ context.Context, _ *agents.ToolContext, a args) (string, error) { return "", nil })
 	wire := wireParams(t, testModel(), agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),
-		Tools: []*agents.FunctionTool{tool},
+		Tools: []*agents.Tool{tool},
 	})
 	tools := wire["tools"].([]any)
 	if len(tools) != 1 {

@@ -27,7 +27,7 @@ func main() {
 		Name:         "research-bot",
 		Instructions: agents.StaticInstructions("Answer questions using the brave_search tool, and cite the URLs you used."),
 		Model:        "gpt-4o",
-		Tools:        []*agents.FunctionTool{search},
+		Tools:        []*agents.Tool{search},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent, "What is the latest stable Go version?", agents.RunOptions{Model: agents.ModelOptions{Provider: openai.NewProvider()}})

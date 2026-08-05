@@ -6,16 +6,16 @@ import (
 	"testing"
 )
 
-// A tool that returns a plain value still works: NewFunctionTool wraps it. This
+// A tool that returns a plain value still works: NewTool wraps it. This
 // is the path almost every tool takes, and it must not have gotten heavier.
 func TestToolResult_PlainReturnValuesStillWork(t *testing.T) {
 	cases := map[string]struct {
-		tool *FunctionTool
+		tool *Tool
 		want string
 	}{
-		"string": {NewFunctionTool("t", "",
+		"string": {NewTool("t", "",
 			func(context.Context, *ToolContext, struct{}) (string, error) { return "sunny", nil }), "sunny"},
-		"struct": {NewFunctionTool("t", "",
+		"struct": {NewTool("t", "",
 			func(context.Context, *ToolContext, struct{}) (struct {
 				N int `json:"n"`
 			}, error) {
@@ -30,7 +30,7 @@ func TestToolResult_PlainReturnValuesStillWork(t *testing.T) {
 				modelResp(functionCallOutput(t, "t", "c1", `{}`)),
 				modelResp(messageOutput(t, "done")),
 			}}
-			agent := &Agent{Name: "a", Tools: []*FunctionTool{tc.tool}, ModelImpl: model}
+			agent := &Agent{Name: "a", Tools: []*Tool{tc.tool}, ModelImpl: model}
 			res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -54,7 +54,7 @@ func TestToolResult_UsageIsAttributedToTheCall(t *testing.T) {
 	}}}
 	outer := &Agent{
 		Name:  "outer",
-		Tools: []*FunctionTool{inner.AsTool(AgentToolConfig{Name: "ask_inner", Description: "ask"})},
+		Tools: []*Tool{inner.AsTool(AgentToolConfig{Name: "ask_inner", Description: "ask"})},
 		ModelImpl: &fakeModel{responses: []*ModelResponse{
 			modelResp(functionCallOutput(t, "ask_inner", "c1", `{"input":"q"}`)),
 			modelResp(messageOutput(t, "done")),
@@ -78,8 +78,8 @@ func TestToolResult_UsageIsAttributedToTheCall(t *testing.T) {
 // wanting to stop while another is still working is not a decision the SDK can
 // make for them, and stopping anyway would discard the other's result.
 func TestToolResult_TerminateRequiresUnanimity(t *testing.T) {
-	stopper := func(name string, terminate bool) *FunctionTool {
-		return NewFunctionTool(name, "",
+	stopper := func(name string, terminate bool) *Tool {
+		return NewTool(name, "",
 			func(context.Context, *ToolContext, struct{}) (ToolResult, error) {
 				r := TextResult(name + " done")
 				r.Terminate = terminate
@@ -95,7 +95,7 @@ func TestToolResult_TerminateRequiresUnanimity(t *testing.T) {
 			),
 			modelResp(messageOutput(t, "never reached")),
 		}}
-		agent := &Agent{Name: "x", Tools: []*FunctionTool{stopper("a", true), stopper("b", true)}, ModelImpl: model}
+		agent := &Agent{Name: "x", Tools: []*Tool{stopper("a", true), stopper("b", true)}, ModelImpl: model}
 
 		res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 		if err != nil {
@@ -117,7 +117,7 @@ func TestToolResult_TerminateRequiresUnanimity(t *testing.T) {
 			),
 			modelResp(messageOutput(t, "carried on")),
 		}}
-		agent := &Agent{Name: "x", Tools: []*FunctionTool{stopper("a", true), stopper("b", false)}, ModelImpl: model}
+		agent := &Agent{Name: "x", Tools: []*Tool{stopper("a", true), stopper("b", false)}, ModelImpl: model}
 
 		res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 		if err != nil {
@@ -135,7 +135,7 @@ func TestToolResult_TerminateRequiresUnanimity(t *testing.T) {
 // A handled tool failure is still a failure to a renderer, even though the
 // model sees the message and can recover.
 func TestToolResult_HandledFailureIsMarkedAsError(t *testing.T) {
-	failing := NewFunctionTool("boom", "",
+	failing := NewTool("boom", "",
 		func(context.Context, *ToolContext, struct{}) (string, error) {
 			return "", errTooBad
 		})
@@ -143,7 +143,7 @@ func TestToolResult_HandledFailureIsMarkedAsError(t *testing.T) {
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{failing}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{failing}, ModelImpl: model}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err != nil {

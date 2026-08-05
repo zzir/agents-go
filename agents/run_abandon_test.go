@@ -15,7 +15,7 @@ import (
 // propagate it.
 func TestRun_AbandonedStreamCancelsRunningTools(t *testing.T) {
 	toolCancelled := make(chan struct{})
-	tool := NewFunctionTool("slow", "blocks until cancelled",
+	tool := NewTool("slow", "blocks until cancelled",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			tc.Emit(TextResult("working"))
 			select {
@@ -30,7 +30,7 @@ func TestRun_AbandonedStreamCancelsRunningTools(t *testing.T) {
 		modelResp(functionCallOutput(t, "slow", "call_1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	stream, _ := Run(context.Background(), agent, "go", RunOptions{})
 	for ev, err := range stream {
@@ -83,13 +83,13 @@ func TestRun_FailedModelCallCancelsRacingGuardrail(t *testing.T) {
 // failure, and a lower-index tool that honors the cancellation must not win
 // the deterministic lowest-index pick over the error that caused it.
 func TestRunTools_SiblingCancellationDoesNotMaskRealError(t *testing.T) {
-	victim := NewFunctionTool("victim", "cancelled by the sibling's failure",
+	victim := NewTool("victim", "cancelled by the sibling's failure",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		})
 	victim.FailureErrorFunction = nil // fatal errors abort the run
-	culprit := NewFunctionTool("culprit", "the real failure",
+	culprit := NewTool("culprit", "the real failure",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			return "", errors.New("real boom")
 		})
@@ -100,7 +100,7 @@ func TestRunTools_SiblingCancellationDoesNotMaskRealError(t *testing.T) {
 			functionCallOutput(t, "culprit", "call_c", `{}`),
 		),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{victim, culprit}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{victim, culprit}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
 	if err == nil {

@@ -36,7 +36,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 	}
 
 	var seen []TResponseInputItem
-	tool := NewFunctionTool("probe", "probe",
+	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			seen = tc.TurnInput()
 			return "ok", nil
@@ -45,7 +45,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "new question", RunOptions{Conversation: ConversationOptions{Session: NewSession(session)}}); err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestTurnInput_IncludesSessionHistory(t *testing.T) {
 // sent rather than what the runner assembled.
 func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
 	var seen []TResponseInputItem
-	tool := NewFunctionTool("probe", "probe",
+	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			seen = tc.TurnInput()
 			return "ok", nil
@@ -71,7 +71,7 @@ func TestTurnInput_ReflectsModelInputFilter(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "original", RunOptions{Model: ModelOptions{InputFilter: func(_ context.Context, _ *RunContext, _ *Agent, d ModelInputData) (ModelInputData, error) {
 		d.Input = InputItemsFromText("REWRITTEN_BY_FILTER")
@@ -125,7 +125,7 @@ func TestTurnInput_VisibleToGuardrails(t *testing.T) {
 func TestTurnInput_AdvancesPerTurn(t *testing.T) {
 	var mu sync.Mutex
 	var perTurn [][]TResponseInputItem
-	tool := NewFunctionTool("probe", "probe",
+	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			mu.Lock()
 			perTurn = append(perTurn, tc.TurnInput())
@@ -137,7 +137,7 @@ func TestTurnInput_AdvancesPerTurn(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c2", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "start", RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestTurnInput_AdvancesPerTurn(t *testing.T) {
 // run's own view of the turn input.
 func TestTurnInput_ReturnsACopy(t *testing.T) {
 	var firstLen, secondLen int
-	tool := NewFunctionTool("probe", "probe",
+	tool := NewTool("probe", "probe",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
 			got := tc.TurnInput()
 			firstLen = len(got)
@@ -178,7 +178,7 @@ func TestTurnInput_ReturnsACopy(t *testing.T) {
 		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: model}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	if _, err := RunSync(context.Background(), agent, "hello", RunOptions{}); err != nil {
 		t.Fatal(err)

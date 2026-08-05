@@ -93,10 +93,10 @@ func TestDiagnostics_FallbackIsRecorded(t *testing.T) {
 }
 
 func TestDiagnostics_ToolPanicIsRecorded(t *testing.T) {
-	tool := NewFunctionTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		panic("nope")
 	})
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "recovered")),
 	}}}
@@ -152,10 +152,10 @@ func TestDiagnostics_LandOnTheSessionEntry(t *testing.T) {
 func TestDiagnostics_AreNotRepeatedAcrossTurns(t *testing.T) {
 	ctx := context.Background()
 	sess := NewSession(NewInMemoryStorage("test"))
-	tool := NewFunctionTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		panic("once")
 	})
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 		modelResp(messageOutput(t, "done")),
 	}}}
@@ -181,11 +181,11 @@ func TestDiagnostics_AreNotRepeatedAcrossTurns(t *testing.T) {
 // A failed run explains itself: the error is the last straw, the diagnostics
 // are what led to it.
 func TestDiagnostics_OnAFailedRun(t *testing.T) {
-	tool := NewFunctionTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	tool := NewTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		panic("fatal")
 	})
 	tool.FailureErrorFunction = nil // make the panic fatal
-	agent := &Agent{Name: "a", Tools: []*FunctionTool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(functionCallOutput(t, "boom", "c1", `{}`)),
 	}}}
 

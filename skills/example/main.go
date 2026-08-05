@@ -33,7 +33,7 @@ func main() {
 			return "You are a helpful assistant.\n\n" + skills.RenderIndex(loaded), nil
 		}),
 		Model: "gpt-4o",
-		Tools: []*agents.FunctionTool{skills.ReadFileTool(dir)},
+		Tools: []*agents.Tool{skills.ReadFileTool(dir)},
 	}
 
 	res, err := agents.RunSync(context.Background(), agent,
