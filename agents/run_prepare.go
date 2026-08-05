@@ -14,8 +14,8 @@ import (
 // (or joins) the trace and prepends session history to the model input. The
 // returned finish func ends the trace — a no-op when the trace was joined
 // (nested run) or tracing is off — and must be deferred by the caller.
-// ResumeRun has its own entry construction (it seeds from a RunState) and
-// shares only the loop.
+// ResumeRun seeds its runner from a RunState instead, so it has its own entry
+// construction and shares the loop plus observeRun.
 func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []InputItem, func(), error) {
 	maxTurns := opts.Exec.MaxTurns
 	if maxTurns == 0 {
@@ -36,28 +36,7 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	}
 
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
-	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agent.Name))
-	r.diagnostics = &DiagnosticSink{}
-
-	finishTrace := func() {}
-	if opts.parentTrace != nil {
-		// Nested run (agent-as-tool): record spans into the parent's trace
-		// rather than starting an orphan root trace. The parent finishes it.
-		r.trace = opts.parentTrace
-	} else if opts.Observe.Tracer != nil {
-		workflow := agent.Name
-		workflow = cmp.Or(workflow, "Agent workflow")
-		var topts []tracing.TraceOption
-		if opts.Observe.TraceGroupID != "" {
-			topts = append(topts, tracing.WithGroupID(opts.Observe.TraceGroupID))
-		}
-		if opts.Observe.TraceMetadata != nil {
-			topts = append(topts, tracing.WithMetadata(opts.Observe.TraceMetadata))
-		}
-		r.trace = opts.Observe.Tracer.StartTrace(workflow, topts...)
-		finishTrace = r.trace.Finish
-	}
-	rc.activeTrace = r.trace
+	finishTrace := r.observeRun(agent, false)
 
 	// With a session, prepend stored history to the model input.
 	modelInput := userInput
@@ -91,6 +70,49 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	}
 
 	return r, modelInput, finishTrace, nil
+}
+
+// observeRun wires everything a run is watched through before its first turn:
+// the run logger, the diagnostics sink and the trace. The returned func ends
+// the trace — a no-op when the trace was joined or tracing is off — and must be
+// deferred by the caller.
+//
+// ResumeRun goes through here too, so a resumed run is observed exactly like
+// the run it continues: resumed only marks the log and the trace name, and
+// every other difference between the two is a bug (a group id that reached one
+// trace but not the other left a paused/resumed pair unlinkable in exactly the
+// view built to follow it).
+func (r *runner) observeRun(agent *Agent, resumed bool) func() {
+	attrs := []slog.Attr{slog.String("agent", agent.Name)}
+	if resumed {
+		attrs = append(attrs, slog.Bool("resumed", true))
+	}
+	r.log = newRunLogger(r.opts.Log).component("run").with(attrs...)
+	r.diagnostics = &DiagnosticSink{}
+
+	finishTrace := func() {}
+	switch {
+	case r.opts.parentTrace != nil:
+		// Nested run (agent-as-tool): record spans into the parent's trace
+		// rather than starting an orphan root trace. The parent finishes it.
+		r.trace = r.opts.parentTrace
+	case r.opts.Observe.Tracer != nil:
+		workflow := cmp.Or(agent.Name, "Agent workflow")
+		if resumed {
+			workflow += " (resumed)"
+		}
+		var topts []tracing.TraceOption
+		if r.opts.Observe.TraceGroupID != "" {
+			topts = append(topts, tracing.WithGroupID(r.opts.Observe.TraceGroupID))
+		}
+		if r.opts.Observe.TraceMetadata != nil {
+			topts = append(topts, tracing.WithMetadata(r.opts.Observe.TraceMetadata))
+		}
+		r.trace = r.opts.Observe.Tracer.StartTrace(workflow, topts...)
+		finishTrace = r.trace.Finish
+	}
+	r.rc.activeTrace = r.trace
+	return finishTrace
 }
 
 // loopSeed is the state the run loop starts from: fresh for a new run, carried

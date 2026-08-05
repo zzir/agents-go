@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -43,6 +44,57 @@ func TestRun_TraceGroupIDAndMetadata(t *testing.T) {
 	}
 	if tr.Metadata["tenant"] != "acme" {
 		t.Fatalf("Metadata = %v, want tenant=acme", tr.Metadata)
+	}
+}
+
+// A resume is traced exactly like the run it continues: it starts its own root
+// trace, but with the caller's group id and metadata on it. Without them the
+// pause and the resume land in different groups — the two halves come apart in
+// the very view built to follow one conversation.
+func TestResumeRun_TraceGroupIDAndMetadata(t *testing.T) {
+	var ran bool
+	agent := approvalAgentAndModel(t, &ran)
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.State.Approve(res.Interruptions[0], false)
+
+	proc := &traceRecordingProcessor{}
+	opts := RunOptions{Observe: ObserveOptions{
+		Tracer:        tracing.NewTracer(proc),
+		TraceGroupID:  "thread-42",
+		TraceMetadata: map[string]any{"tenant": "acme"},
+	}}
+	if _, err := ResumeRunSync(context.Background(), res.State, opts); err != nil {
+		t.Fatal(err)
+	}
+	if !ran {
+		t.Fatal("approved tool did not run")
+	}
+	if len(proc.traces) != 1 {
+		t.Fatalf("want 1 trace, got %d", len(proc.traces))
+	}
+	tr := proc.traces[0]
+	if tr.GroupID != "thread-42" {
+		t.Errorf("GroupID = %q, want thread-42", tr.GroupID)
+	}
+	if tr.Metadata["tenant"] != "acme" {
+		t.Errorf("Metadata = %v, want tenant=acme", tr.Metadata)
+	}
+	if !strings.HasSuffix(tr.WorkflowName, "(resumed)") {
+		t.Errorf("WorkflowName = %q, want the resumed suffix", tr.WorkflowName)
+	}
+}
+
+// A hand-built state without an agent is a user error, not a panic — and the
+// panic used to need a Tracer to show up, so that is what this configures.
+func TestResumeRun_NilCurrentAgentIsAUserError(t *testing.T) {
+	_, err := ResumeRunSync(context.Background(), &RunState{},
+		RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(&traceRecordingProcessor{})}})
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v (%T), want a *UserError", err, err)
 	}
 }
 

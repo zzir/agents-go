@@ -1,12 +1,12 @@
 package agents
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"maps"
+	"strconv"
+	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
 
@@ -17,15 +17,30 @@ import (
 // format guarantees round-trips within this SDK; it is not an interchange
 // format with any other agents SDK.
 //
-// The version is checked for STRICT equality on decode: a state stamped with any
-// other version — older or newer — is rejected rather than best-effort decoded
-// (see RunStateFromJSON; recorded in docs/migration_from_python.md). The list below
-// is why each version bumped, not a promise of cross-version compatibility: 1.1
-// replaced the per-call approval maps with per-tool entries, 1.2 added the nested
-// agent-as-tool states and the reasoning-item id policy, 1.3 added the
-// guardrail-result slices (input, output, tool input/output), and 1.4 added the
-// pending injected input, the disclosed deferred tools and the server cursor.
+// Decoding accepts the same major, no newer than this minor and no older than
+// runStateOldestDecodableMinor; anything else is rejected rather than
+// best-effort decoded (see RunStateFromJSON). The numbers below name format
+// steps rather than releases — the constant itself has only ever read 1.0, 1.3
+// and 1.4: 1.1 replaced the per-call approval maps with per-tool entries, 1.2
+// added the nested agent-as-tool states and the reasoning-item id policy, 1.3
+// added the guardrail-result slices (input, output, tool input/output), and 1.4
+// added the pending injected input, the disclosed deferred tools and the server
+// cursor.
 const RunStateSchemaVersion = "1.4"
+
+// runStateOldestDecodableMinor is the oldest minor of the current major this
+// decoder still accepts, so that a run paused before an SDK upgrade can resume
+// after it: a state that old is missing only fields the decoder already falls
+// back for.
+//
+// It is not "the oldest minor that ever existed". Raise it to the new minor
+// whenever a bump REPLACES or reinterprets a field instead of only adding one —
+// such a state decodes successfully with its old fields silently dropped, which
+// is worse than a refusal. That is why it currently equals the minor of
+// RunStateSchemaVersion: 1.3 was stamped both before and after the four
+// separate guardrail-result keys collapsed into one, and the version string
+// cannot tell those two shapes apart.
+const runStateOldestDecodableMinor = 4
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
 // approval. Obtain one from RunResult.State, record approvals/rejections via
@@ -223,6 +238,11 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	if state == nil {
 		return nil, nil, NewUserError("ResumeRun: state must not be nil")
 	}
+	// Every state the SDK produces carries the agent it paused on; a
+	// hand-constructed one may not, and the loop dereferences it throughout.
+	if state.CurrentAgent == nil {
+		return nil, nil, NewUserError("ResumeRun: state.CurrentAgent must not be nil")
+	}
 	if err := validateServerState(opts); err != nil {
 		return nil, nil, err
 	}
@@ -267,12 +287,11 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// this ResumeRun is already consuming.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
-	agentName := ""
-	if state.CurrentAgent != nil {
-		agentName = state.CurrentAgent.Name
-	}
-	r.log = newRunLogger(opts.Log).component("run").with(slog.String("agent", agentName), slog.Bool("resumed", true))
-	r.diagnostics = &DiagnosticSink{}
+	// Same start-up a fresh run gets, trace included: a nested resume joins the
+	// parent's trace instead of opening an orphan root, and a root one carries
+	// the caller's group id and metadata.
+	finishTrace := r.observeRun(state.CurrentAgent, true)
+	defer finishTrace()
 	for _, name := range state.DisclosedTools {
 		if r.disclosed == nil {
 			r.disclosed = map[string]bool{}
@@ -291,17 +310,6 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 			r.toolsUsedBy[name] = true
 		}
 	}
-	// A nested agent-as-tool resume passes the parent's live trace: join it
-	// instead of opening an orphan "(resumed)" root trace (prepareRun parity).
-	if opts.parentTrace != nil {
-		r.trace = opts.parentTrace
-	} else if opts.Observe.Tracer != nil {
-		workflow := state.CurrentAgent.Name
-		workflow = cmp.Or(workflow, "Agent workflow")
-		r.trace = opts.Observe.Tracer.StartTrace(workflow + " (resumed)")
-		defer r.trace.Finish()
-	}
-	rc.activeTrace = r.trace
 	ctx = WithDiagnostics(ctx, r.diagnostics)
 	// Same cancellation root a fresh run installs (see runStream): emit
 	// cancels it when the consumer stops ranging mid-resume.
@@ -596,26 +604,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		})
 	}
 	if s.Approvals != nil {
-		out.ApprovalEntries = map[string]serialApprovalEntry{}
-		s.Approvals.mu.Lock()
-		for tool, e := range s.Approvals.entries {
-			se := serialApprovalEntry{
-				ApprovedAll:   e.approvedAll,
-				RejectedAll:   e.rejectedAll,
-				StickyMessage: e.stickyMessage,
-			}
-			for id := range e.approvedIDs {
-				se.ApprovedIDs = append(se.ApprovedIDs, id)
-			}
-			for id := range e.rejectedIDs {
-				se.RejectedIDs = append(se.RejectedIDs, id)
-			}
-			if len(e.messages) > 0 {
-				se.Messages = maps.Clone(e.messages)
-			}
-			out.ApprovalEntries[tool] = se
-		}
-		s.Approvals.mu.Unlock()
+		out.ApprovalEntries = s.Approvals.snapshot()
 	}
 	return json.Marshal(out)
 }
@@ -688,17 +677,57 @@ func serializeResponse(resp *ModelResponse) serialResponse {
 	return sr
 }
 
-// RunStateFromJSON rebuilds a RunState from JSON produced by MarshalJSON. The
-// registry maps agent names to *Agent so the runner can resolve the current
-// agent and item agents; it must include every agent that participated in the
-// run.
+// checkRunStateSchemaVersion decides whether a serialized state can be decoded
+// by this build: same major, no newer than RunStateSchemaVersion, no older than
+// runStateOldestDecodableMinor.
+func checkRunStateSchemaVersion(v string) error {
+	major, minor, ok := parseSchemaVersion(v)
+	if !ok {
+		return NewUserError("malformed run state schema version %q (want major.minor, e.g. %q)", v, RunStateSchemaVersion)
+	}
+	// The literal this package stamps, so it parses.
+	wantMajor, wantMinor, _ := parseSchemaVersion(RunStateSchemaVersion)
+	switch {
+	case major != wantMajor:
+		return NewUserError("run state schema version %q is from a different major version than this SDK's %q and cannot be decoded", v, RunStateSchemaVersion)
+	case minor > wantMinor:
+		return NewUserError("run state schema version %q is newer than this SDK's %q; resume it with the SDK that wrote it, or upgrade", v, RunStateSchemaVersion)
+	case minor < runStateOldestDecodableMinor:
+		return NewUserError("run state schema version %q is older than the oldest this SDK decodes (%d.%d)", v, wantMajor, runStateOldestDecodableMinor)
+	}
+	return nil
+}
+
+// parseSchemaVersion splits a "major.minor" version. Anything else — an absent
+// version, a three-part one, a non-number — is not ok.
+func parseSchemaVersion(v string) (major, minor int, ok bool) {
+	majorText, minorText, found := strings.Cut(v, ".")
+	if !found {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(majorText)
+	if err != nil || major < 0 {
+		return 0, 0, false
+	}
+	minor, err = strconv.Atoi(minorText)
+	if err != nil || minor < 0 {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+// RunStateFromJSON rebuilds a RunState from JSON produced by MarshalJSON, by
+// this SDK or by an earlier one whose schema minor this build still decodes
+// (see RunStateSchemaVersion). The registry maps agent names to *Agent so the
+// runner can resolve the current agent and item agents; it must include every
+// agent that participated in the run.
 func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error) {
 	var in serialRunState
 	if err := json.Unmarshal(data, &in); err != nil {
 		return nil, fmt.Errorf("decoding run state: %w", err)
 	}
-	if in.SchemaVersion != RunStateSchemaVersion {
-		return nil, NewUserError("unsupported run state schema version %q (want %q)", in.SchemaVersion, RunStateSchemaVersion)
+	if err := checkRunStateSchemaVersion(in.SchemaVersion); err != nil {
+		return nil, err
 	}
 	lookup := func(name string) *Agent { return registry[name] }
 
@@ -779,20 +808,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 			Agent: lookup(si.Agent), ToolName: si.ToolName, CallID: si.CallID, Arguments: si.Arguments, Raw: raw,
 		})
 	}
-	// Preferred format (schema ≥ 1.1): per-tool entries.
-	for tool, se := range in.ApprovalEntries {
-		e := st.Approvals.entryFor(tool)
-		e.approvedAll = se.ApprovedAll
-		e.rejectedAll = se.RejectedAll
-		e.stickyMessage = se.StickyMessage
-		for _, id := range se.ApprovedIDs {
-			e.approvedIDs[id] = true
-		}
-		for _, id := range se.RejectedIDs {
-			e.rejectedIDs[id] = true
-		}
-		maps.Copy(e.messages, se.Messages)
-	}
+	st.Approvals.restore(in.ApprovalEntries)
 	// Rebuild nested agent-as-tool states recursively, resolving each nested
 	// CurrentAgent via the same registry, so a resumed parent continues (not
 	// restarts) its paused nested runs. Absent (pre-1.2 states) leaves the map

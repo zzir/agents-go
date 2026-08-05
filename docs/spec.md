@@ -120,7 +120,12 @@ for turn := 1; ; turn++ {
 **A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
 server-conversation cursor included — pinned by a full-field round-trip test
-(`RunStateSchemaVersion` 1.4). The in-process resume passing the live pointer
+**A `RunState` decodes across a version window, not on strict equality.** ✅
+`RunStateFromJSON` accepts the same schema major from
+`runStateOldestDecodableMinor` up to `RunStateSchemaVersion`; anything newer,
+any other major, and anything below the floor is a `*UserError` naming which
+way it missed. A minor may only ADD fields — a bump that replaces or
+reinterprets one must raise the floor to itself. See [§5.18](#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned).
 must never be the only path that works; the serialized surface IS the
 contract. The cursor in particular rides along so a resumed run keeps sending
 deltas: the resumed turn re-processes a response the restored cursor already
@@ -2078,7 +2083,35 @@ agents with the error types it reads.
 
 Session-only names are deliberately NOT aliased: code that works with stored
 history imports the package that owns it. This was the §6.4 split, taken
-after the structural collapses so the code moved once.
+### 5.18 A RunState decodes across a version window, and the window is earned
+
+`RunStateFromJSON` accepts the same schema major from
+`runStateOldestDecodableMinor` up to `RunStateSchemaVersion`, rather than
+demanding strict equality. The reason is what a pause IS: an approval waits on
+a human, the process may be redeployed while they decide, and refusing the
+state afterwards strands the run for a reason the user had no part in. The
+field-by-field fallbacks the decoder already carries — a zero `MaxTurns`
+meaning `DefaultMaxTurns`, `UsagePending *bool` separating absent from false,
+an absent cursor meaning zero — are what make an older minor readable; under
+strict equality they were cost with no payer.
+
+The window is not free and it is not retroactive. **A minor may only ADD
+fields.** A bump that REPLACES or reinterprets one must raise
+`runStateOldestDecodableMinor` to itself, because such a state decodes
+*successfully* with its old fields silently dropped — strictly worse than a
+refusal, since the caller is told the resume is faithful.
+
+That rule is new, and the history does not satisfy it, which is why the floor
+currently equals the current minor instead of reaching back. The constant has
+only ever read `"1.0"`, `"1.3"` and `"1.4"`; `"1.3"` was stamped by released
+builds both before and after the four guardrail-result keys collapsed into a
+single `guardrail_results`, so two incompatible payloads share that one
+string. Accepting `"1.3"` would drop every recorded guardrail result from the
+older shape — and resume is the only path that carries first-turn
+input-guardrail results forward at all. The window therefore opens at the next
+purely additive bump.
+
+---
 
 ---
 

@@ -1,6 +1,8 @@
 package agents
 
 import (
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -222,6 +224,48 @@ func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, 
 		return approvalDecision{message: e.messages[callID]}, true
 	}
 	return approvalDecision{}, false
+}
+
+// snapshot lifts every recorded decision out of the store in its serialized
+// form, for RunState.MarshalJSON. The call-id lists come out sorted so two
+// otherwise identical runs serialize to identical bytes.
+func (s *ApprovalStore) snapshot() map[string]serialApprovalEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]serialApprovalEntry, len(s.entries))
+	for tool, e := range s.entries {
+		se := serialApprovalEntry{
+			ApprovedAll:   e.approvedAll,
+			RejectedAll:   e.rejectedAll,
+			ApprovedIDs:   slices.Sorted(maps.Keys(e.approvedIDs)),
+			RejectedIDs:   slices.Sorted(maps.Keys(e.rejectedIDs)),
+			StickyMessage: e.stickyMessage,
+		}
+		if len(e.messages) > 0 {
+			se.Messages = maps.Clone(e.messages)
+		}
+		out[tool] = se
+	}
+	return out
+}
+
+// restore folds a snapshot back into the store, the decode half of snapshot.
+func (s *ApprovalStore) restore(entries map[string]serialApprovalEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for tool, se := range entries {
+		e := s.entryFor(tool)
+		e.approvedAll = se.ApprovedAll
+		e.rejectedAll = se.RejectedAll
+		e.stickyMessage = se.StickyMessage
+		for _, id := range se.ApprovedIDs {
+			e.approvedIDs[id] = true
+		}
+		for _, id := range se.RejectedIDs {
+			e.rejectedIDs[id] = true
+		}
+		maps.Copy(e.messages, se.Messages)
+	}
 }
 
 // mirrorInto copies this store's decision for each of the given approval items
