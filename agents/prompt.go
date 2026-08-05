@@ -1,6 +1,9 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"maps"
+)
 
 // Prompt configures an agent to use an OpenAI stored prompt (the Responses API
 // `prompt` parameter) instead of, or alongside, inline Instructions.
@@ -9,8 +12,11 @@ type Prompt struct {
 	ID string
 	// Version optionally pins a specific version of the prompt template.
 	Version string
-	// Variables optionally substitutes values into the prompt template. String
-	// values are sent as text substitutions; non-string values are stringified.
+	// Variables optionally substitutes values into the prompt template. Only
+	// string values are supported, as text substitutions: a provider rejects a
+	// non-string value with a *UserError rather than stringifying it, because
+	// an intended image or file variable would turn into garbage text. The
+	// value type stays any so those content variables can be modeled later.
 	Variables map[string]any
 }
 
@@ -22,10 +28,13 @@ type Prompt struct {
 // implementations — an adapter layer nothing ever plugged into.)
 type PromptProvider func(ctx context.Context, rc *RunContext, agent *Agent) (*Prompt, error)
 
-// StaticPrompt returns a PromptProvider yielding a fixed Prompt.
+// StaticPrompt returns a PromptProvider yielding a fixed Prompt. Every call
+// gets its own copy, Variables included, so a caller that rewrites a variable
+// for one run neither leaks into later runs nor races with concurrent ones.
 func StaticPrompt(p Prompt) PromptProvider {
 	return func(context.Context, *RunContext, *Agent) (*Prompt, error) {
 		pp := p
+		pp.Variables = maps.Clone(p.Variables)
 		return &pp, nil
 	}
 }

@@ -39,3 +39,27 @@ func TestAgentGetPrompt(t *testing.T) {
 		t.Error("prompt without ID should error")
 	}
 }
+
+func TestStaticPromptIsolatesVariables(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	a := &Agent{
+		Name:   "a",
+		Prompt: StaticPrompt(Prompt{ID: "pmpt_1", Variables: map[string]any{"city": "Paris"}}),
+	}
+
+	first, err := a.resolvePrompt(ctx, &RunContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.resolvePrompt(ctx, &RunContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first.Variables["city"] = "Berlin"
+	if second.Variables["city"] != "Paris" {
+		t.Errorf("second run saw %v, want Paris: StaticPrompt must not share the variable map across runs", second.Variables["city"])
+	}
+}
