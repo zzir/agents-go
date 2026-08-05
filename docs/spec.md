@@ -1101,6 +1101,12 @@ Schema, not a root-level `required` check.
   It may still be one the provider understands, and refusing to run would turn
   a missing local check into a broken feature.
 - Schemas are compiled **once per tool**, not per call.
+- **An agent tool is a tool.** `AsTool`'s `{"input": string}` and
+  `AgentAsTool`'s reflected schema both face this check before the nested run
+  starts, `InputBuilder` or not — a builder replaces the *rendering*, not the
+  contract the tool advertises. Arguments that fail come back as a
+  `*ModelBehaviorError` for the calling model to correct, instead of becoming
+  the sub-agent's prompt verbatim.
 - `EnsureStrictJSONSchema` is unaffected: it is the OpenAI strict-mode
   *transformer*, a different job from validation.
 

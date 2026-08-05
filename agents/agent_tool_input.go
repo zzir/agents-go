@@ -55,9 +55,12 @@ func buildStructuredSchemaInfo(schema map[string]any) agentToolSchemaInfo {
 }
 
 // resolveAgentToolInput turns the model's JSON arguments into the nested run's
-// input text: structured
-// rendering when a builder or schema info is present, direct passthrough for
-// the default single {"input": string} shape, raw JSON otherwise.
+// input text: structured rendering when a builder or schema info is present,
+// the lifted string for the default {"input": string} shape.
+//
+// The arguments have already been validated against the tool's schema, so the
+// default shape is known to hold and the nested agent gets what the model
+// wrote rather than the JSON envelope around it.
 func resolveAgentToolInput(argsJSON string, info agentToolSchemaInfo, builder AgentToolInputBuilder) (string, error) {
 	if builder != nil || info.structured || info.summary != "" || info.jsonSchema != nil {
 		b := builder
@@ -70,13 +73,11 @@ func resolveAgentToolInput(argsJSON string, info agentToolSchemaInfo, builder Ag
 			JSONSchema: info.jsonSchema,
 		})
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &m); err == nil && len(m) == 1 {
-		if s, ok := m["input"].(string); ok {
-			return s, nil
-		}
+	var args agentToolInput
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("decoding arguments: %w", err)
 	}
-	return argsJSON, nil
+	return args.Input, nil
 }
 
 // DefaultAgentToolInputBuilder is the default rendering for structured agent

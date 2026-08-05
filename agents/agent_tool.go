@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -99,17 +98,25 @@ type agentToolInput struct {
 // handoff, the nested agent receives only the provided input (not the full
 // conversation) and returns control to the calling agent when done.
 //
+// The tool takes a single `input` string, which becomes the nested run's input
+// verbatim. For a custom argument schema, use AgentAsTool.
+//
 // The nested run inherits the parent run's model provider, model override,
 // model settings, run-level guardrails and tracer from the run context, so the
 // sub-agent need not set its own model when the parent supplies a provider.
-// For a custom argument schema, use AgentAsTool.
 func (a *Agent) AsTool(cfg AgentToolConfig) *Tool {
+	name := agentToolName(a, cfg)
 	schema, err := SchemaFor[agentToolInput](true)
 	if err != nil {
 		// agentToolInput is a fixed struct; its schema cannot fail to reflect.
 		panic(fmt.Sprintf("agents: AsTool(%q): schema generation failed: %v", a.Name, err))
 	}
-	return agentTool(a, cfg, schema, agentToolSchemaInfo{}, nil)
+	validator := newSchemaValidator(schema)
+	validate := func(argsJSON string) error {
+		var args agentToolInput
+		return decodeToolArgs(name, validator, argsJSON, &args)
+	}
+	return agentTool(a, cfg, schema, agentToolSchemaInfo{}, validate)
 }
 
 // AgentAsTool is AsTool with a custom argument schema: the tool's parameters
@@ -119,18 +126,11 @@ func (a *Agent) AsTool(cfg AgentToolConfig) *Tool {
 // cfg.InputBuilder. A free function because Go methods cannot take type
 // parameters.
 func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *Tool {
-	name := cfg.Name
-	if name == "" {
-		name = transformToolName(a.Name)
-	}
+	name := agentToolName(a, cfg)
 	schema, err := SchemaFor[Params](true)
 	if err != nil {
 		panic(fmt.Sprintf("agents: AgentAsTool(%q): schema generation failed: %v", name, err))
 	}
-	// Arguments get the same whole-schema validation NewTool gives
-	// its args (spec: "validated against the whole JSON Schema") — a bare
-	// decode caught type mismatches but let a missing required key or a
-	// violated enum flow straight into the nested run's input.
 	validator := newSchemaValidator(schema)
 	validate := func(argsJSON string) error {
 		var params Params
@@ -139,14 +139,19 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *Tool {
 	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema), validate)
 }
 
-// agentTool builds the Tool shared by AsTool and AgentAsTool.
-// validate, when non-nil, type-checks the raw arguments (AgentAsTool's Params
-// decode); nil falls back to the default {"input": string} handling.
-func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *Tool {
-	name := cfg.Name
-	if name == "" {
-		name = transformToolName(a.Name)
+// agentToolName resolves an agent tool's name: the configured one, or the
+// agent's own name sanitized into a tool name.
+func agentToolName(a *Agent, cfg AgentToolConfig) string {
+	if cfg.Name != "" {
+		return cfg.Name
 	}
+	return transformToolName(a.Name)
+}
+
+// agentTool builds the Tool shared by AsTool and AgentAsTool. validate checks
+// the raw arguments against the schema the tool advertises.
+func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *Tool {
+	name := agentToolName(a, cfg)
 	failureFn := cfg.FailureErrorFunction
 	if failureFn == nil {
 		failureFn = DefaultToolErrorFunction
@@ -190,25 +195,13 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				}
 			}
 			if !resumed {
-				// Arguments validate against their declared shape before they
-				// can influence the nested run: a malformed-argument
-				// error goes back to the
-				// model to self-correct instead of silently becoming the
-				// nested run's prompt.
-				switch {
-				case validate != nil:
-					if uerr := validate(argsJSON); uerr != nil {
-						return ToolResult{}, NewModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
-					}
-				case cfg.InputBuilder == nil && !info.structured:
-					var args agentToolInput
-					if uerr := json.Unmarshal([]byte(argsJSON), &args); uerr != nil {
-						return ToolResult{}, NewModelBehaviorError("agent tool %q: invalid arguments: %v", name, uerr)
-					}
-				default:
-					if !json.Valid([]byte(argsJSON)) {
-						return ToolResult{}, NewModelBehaviorError("agent tool %q: invalid arguments: not valid JSON", name)
-					}
+				// Arguments face the whole-schema check every tool's arguments
+				// get (spec §2.7h) before they can influence the nested run: a
+				// missing required key or a violated enum comes back as a
+				// *ModelBehaviorError the model can self-correct, instead of
+				// silently becoming the nested run's prompt.
+				if verr := validate(argsJSON); verr != nil {
+					return ToolResult{}, verr
 				}
 				input, ierr := resolveAgentToolInput(argsJSON, info, cfg.InputBuilder)
 				if ierr != nil {

@@ -56,7 +56,7 @@ orchestrator := &agents.Agent{
 | `FailureErrorFunction` | Override how a failed nested run is rendered back to the model |
 | `ModifyRunOptions` | Configure the nested run's `RunOptions` — session, turn budget, conversation, model, guardrails |
 | `OnStream` | Stream the nested run's events to a callback (see below) |
-| `InputBuilder` | Control how structured arguments render into the nested input (`agents.AgentToolInputWithSchema` attaches the full schema) |
+| `InputBuilder` | Control how arguments render into the nested input; the schema check still applies (`agents.AgentToolInputWithSchema` attaches the full schema) |
 
 The config configures the **tool surface**; everything about the nested run
 itself goes through `ModifyRunOptions`:
@@ -73,7 +73,7 @@ sub.AsTool(agents.AgentToolConfig{
 
 **Streaming a nested run.** Setting `OnStream` switches the nested run to streaming: every event (raw model deltas, run items, agent updates) is delivered as an `AgentToolStreamEvent` carrying the current nested agent and the originating tool call. Events dispatch from a background goroutine so a slow callback never stalls the run; a panic in the callback is recovered, and a canceled parent does not wait for the callback backlog.
 
-**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewTool`), and validates the model's arguments by decoding them into `Params` before the nested run — malformed arguments go back to the model as a tool error to self-correct. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
+**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params` (like `NewTool`). Both constructors validate the model's arguments against the schema the tool advertises before the nested run starts — a missing key, a wrong type or a violated enum goes back to the model as a tool error to self-correct, never through to the sub-agent as its prompt. The arguments render into the nested input with a structured preamble and the JSON payload, plus a schema summary when any field carries a description — or the full JSON schema with `InputBuilder: agents.AgentToolInputWithSchema` — or through your own `InputBuilder`.
 
 The nested run inherits the parent's model provider, model override, model settings, tracer and log configuration through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace and its log records carry the sub-agent's name; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 
