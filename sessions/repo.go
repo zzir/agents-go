@@ -2,9 +2,7 @@ package sessions
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -33,7 +31,7 @@ func NewRepo(db *bun.DB) *Repo { return &Repo{db: db} }
 func (r *Repo) Create(ctx context.Context, opts session.CreateOptions) (*session.Session, error) {
 	id := opts.ID
 	if id == "" {
-		id = newSessionID()
+		id = session.NewSessionID()
 	}
 	gen, err := session.NewGeneration()
 	if err != nil {
@@ -136,12 +134,3 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 }
 
 var _ session.Repo = (*Repo)(nil)
-
-func newSessionID() string {
-	// A random suffix beside the timestamp: two id-less Creates in one clock
-	// tick otherwise mint the same id, and the second fails for no reason the
-	// caller can see.
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), hex.EncodeToString(b[:]))
-}

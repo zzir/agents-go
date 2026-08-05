@@ -139,8 +139,20 @@ func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
 	return nil
 }
 
-// terminalSet is the SQL fragment matching terminal statuses.
-const terminalSet = "('completed', 'failed', 'cancelled')"
+// terminalStatuses is the statuses this store treats as final, for the two
+// queries that have to filter on them in SQL.
+//
+// tasks.Status.Terminal is the source of truth for what "final" means; a
+// method cannot run inside a WHERE clause, so the set is mirrored here — from
+// the tasks constants rather than as bare strings. A test drives a task into
+// each status it knows and checks the mirror against Terminal(), which catches
+// one changing sides but not a status ADDED upstream: tasks exports no
+// enumeration to walk, so a new one has to be added here and there by hand.
+var terminalStatuses = []string{
+	string(tasks.StatusCompleted),
+	string(tasks.StatusFailed),
+	string(tasks.StatusCancelled),
+}
 
 // liveParent and liveChild scope a task row to the session GENERATION that
 // answers to its session id right now. A row whose session was deleted — and
@@ -226,7 +238,7 @@ func (s *TaskStore) ListPendingNotify(ctx context.Context, parentSessionID strin
 func (s *TaskStore) ListNonTerminal(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
 	return s.query(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where("parent_session_id = ?", parentSessionID).Where(liveParent).
-			Where("status NOT IN " + terminalSet)
+			Where("status NOT IN (?)", bun.List(terminalStatuses))
 	})
 }
 
@@ -254,7 +266,7 @@ func (s *TaskStore) Finalize(ctx context.Context, id string, st tasks.Status, su
 		Set("notify_state = ?", string(tasks.NotifyPending)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
-		Where("status NOT IN " + terminalSet)
+		Where("status NOT IN (?)", bun.List(terminalStatuses))
 	if summary != "" {
 		q = q.Set("summary = ?", summary)
 	}

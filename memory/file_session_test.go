@@ -181,6 +181,178 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 	}
 }
 
+// An append reads only the file's last line to find the branch tip. A leaf move
+// is a marker rather than a node, so the tip it names is its TARGET — reading
+// the marker itself as the tip would parent the next entry on the switch, and
+// the branch the caller switched to would end there.
+func TestFileSession_AppendLinksToALeafMoveTarget(t *testing.T) {
+	ctx := context.Background()
+	sess, err := NewFileSession(t.TempDir(), "branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := session.NewItemEntries(agents.InputItemsFromText("one"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := session.NewItemEntries(agents.InputItemsFromText("two"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, first...); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, second...); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("got %d entries, want 2", len(stored))
+	}
+	rootID := stored[0].ID
+
+	// Switch the active branch back to the first entry, then extend it.
+	move, err := session.NewLeafEntry(rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, move); err != nil {
+		t.Fatal(err)
+	}
+	third, err := session.NewItemEntries(agents.InputItemsFromText("three"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, third...); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err = sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := stored[len(stored)-1]
+	if last.ParentID != rootID {
+		t.Errorf("the entry after the leaf move is parented at %q, want the move's target %q", last.ParentID, rootID)
+	}
+	branch := session.PathToLeaf(stored, session.LeafOf(stored))
+	if len(branch) != 2 || branch[0].ID != rootID || branch[1].ID != last.ID {
+		t.Errorf("branch is %d entries, want the root plus the entry appended after the switch", len(branch))
+	}
+	// Sequence numbers still climb: the leaf move carries one too, and the tip
+	// read must not hand its number out again.
+	for i := 1; i < len(stored); i++ {
+		if stored[i].Seq <= stored[i-1].Seq {
+			t.Fatalf("entry %d has seq %d, not past its predecessor's %d", i, stored[i].Seq, stored[i-1].Seq)
+		}
+	}
+}
+
+// Reads skip a line they cannot decode; the tip read must skip it the same way,
+// or an append lands parented on nothing and starts a second root.
+func TestFileSession_AppendSkipsACorruptLastLine(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	sess, err := NewFileSession(dir, "corrupt-tail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := session.NewItemEntries(agents.InputItemsFromText("one"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, first...); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID := stored[0].ID
+
+	f, err := os.OpenFile(filepath.Join(dir, "corrupt-tail.jsonl"), os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{this is not json\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := session.NewItemEntries(agents.InputItemsFromText("two"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, second...); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("got %d entries, want 2", len(stored))
+	}
+	if stored[1].ParentID != rootID {
+		t.Errorf("entry appended past a corrupt line is parented at %q, want %q", stored[1].ParentID, rootID)
+	}
+}
+
+// A leaf move whose payload will not decode names no target, so folding the log
+// leaves the tip where the entry before it put it. Nothing rejects such an entry
+// — PrepareAppend tolerates the decode failure — so the tip read has to walk
+// past it too, or the next append starts a second, detached root and the branch
+// walk returns that entry alone.
+func TestFileSession_AppendSkipsAnUndecodableLeafMove(t *testing.T) {
+	ctx := context.Background()
+	sess, err := NewFileSession(t.TempDir(), "bad-leaf-tail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := session.NewItemEntries(agents.InputItemsFromText("one"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, first...); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID := stored[0].ID
+
+	// Built by hand rather than through NewLeafEntry, so it carries no payload.
+	if err := sess.Append(ctx, session.Entry{Kind: session.EntryKindLeaf}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := session.NewItemEntries(agents.InputItemsFromText("two"), agents.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(ctx, second...); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err = sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := stored[len(stored)-1]
+	if last.ParentID != rootID {
+		t.Errorf("entry appended past a payload-less leaf move is parented at %q, want %q", last.ParentID, rootID)
+	}
+	if branch := session.PathToLeaf(stored, session.LeafOf(stored)); len(branch) != 2 {
+		t.Errorf("branch is %d entries, want both items still on it", len(branch))
+	}
+}
+
 func TestSanitizeSessionID(t *testing.T) {
 	cases := map[string]string{
 		"plain":         "plain",

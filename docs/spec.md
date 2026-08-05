@@ -522,8 +522,9 @@ next backend will answer differently.
 - **A session id names a session, not a place.** Deleting an id and creating it
   again yields a session with storage of its own. A handle to the deleted one
   can neither read what its replacement writes nor write into what it reads.
-  *Shared:* `session.Ref` is the address and `session.NewGeneration`
-  mints the discriminator. A function that takes a ref cannot be handed a bare
+  *Shared:* `session.Ref` is the address, `session.NewGeneration` mints the
+  discriminator, and `session.NewSessionID` mints the id itself for a `Create`
+  that supplied none. A function that takes a ref cannot be handed a bare
   id, which is the point — carrying the generation as a field beside the id
   made every hand-built handle, every resolve-by-id and every delete-by-name a
   chance to forget it, silently.
@@ -738,7 +739,7 @@ Writing a checkpoint is an optional capability (`CompactionCheckpointer`): a
 compactor that only reshapes the context in memory is useful and has nothing
 durable to say.
 
-**A checkpoint is bound to its pass.** `Checkpoint(compacted)` names the
+**A checkpoint is bound to its pass.** `Checkpoint(seen)` names the
 entries the caller's own `Compact` saw, and a compactor whose state no longer
 describes them — one shared across concurrent runs, re-aimed at another
 session between the pass and the checkpoint — reports nothing rather than

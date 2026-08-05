@@ -44,7 +44,7 @@ Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too;
 
 ### Sensitive data on generation spans
 
-When a run's session compacts its history (a `CompactionAwareSession`), the
+When a run's session compacts its history (a `session.CompactionAware`), the
 runner wraps the pass in a span of type `"compaction"` — opened lazily via
 `CompactionArgs.StartSpan` only when the session actually compacts, annotated
 by the session with `"before_items"`/`"after_items"`, and carrying any

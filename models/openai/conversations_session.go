@@ -16,7 +16,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// ConversationsSession is an session.Session backed by the OpenAI Conversations
+// ConversationsSession is a session.Storage backed by the OpenAI Conversations
 // API: history lives server-side under a conversation ID rather than in a
 // local store. The conversation is created lazily on first use unless an
 // existing ID is supplied via SetConversationID.
@@ -98,7 +98,7 @@ func (s *ConversationsSession) Entries(ctx context.Context, cur session.Cursor) 
 	}
 	page := session.Cursor{AfterSeq: cur.AfterSeq}
 	if cur.Limit > 0 {
-		// A positive limit is part of the SessionStorage contract too; it was
+		// A positive limit is part of the session.Storage contract too; it was
 		// once silently dropped, and a pager asking for 50 got the whole
 		// conversation.
 		page.Limit = cur.Limit
@@ -325,8 +325,8 @@ func isNonEmptyString(v any) bool {
 	return ok && s != ""
 }
 
-// PopEntry implements session.Session: it removes and returns the most recent
-// item, or nil if the conversation is empty.
+// PopEntry implements session.EntryPopper: it removes and returns the most
+// recent item, or nil if the conversation is empty.
 //
 // The mutex is held across the list AND the delete: they are one removal
 // (spec §2.5e2, selecting a row and removing it), and unserialized, two
@@ -381,7 +381,7 @@ func (s *ConversationsSession) PopItem(ctx context.Context) (*session.Entry, err
 	return s.PopEntry(ctx)
 }
 
-// Clear implements session.Session by deleting the server-side conversation. A
+// Clear implements session.Storage by deleting the server-side conversation. A
 // fresh conversation is created on the next use.
 func (s *ConversationsSession) Clear(ctx context.Context) error {
 	s.mu.Lock()

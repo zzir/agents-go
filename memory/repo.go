@@ -2,8 +2,6 @@ package memory
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -278,12 +276,7 @@ func (s *repoStorage) PopItem(ctx context.Context) (*session.Entry, error) {
 func (r *Repo) Create(_ context.Context, opts session.CreateOptions) (*session.Session, error) {
 	id := opts.ID
 	if id == "" {
-		// A random suffix beside the timestamp: two id-less Creates in one
-		// clock tick otherwise mint the same id, and the second fails with
-		// "already exists" for no reason the caller can see.
-		var b [4]byte
-		_, _ = rand.Read(b[:])
-		id = fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), hex.EncodeToString(b[:]))
+		id = session.NewSessionID()
 	}
 	if strings.ContainsAny(id, `/\`) {
 		// An id is a filename here, so a separator would escape the directory.

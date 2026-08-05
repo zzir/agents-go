@@ -18,11 +18,11 @@ A session is split into what varies and what does not.
 
 ```go
 // 1. Storage — physical reads and writes. Understands nothing about meaning.
-type SessionStorage interface {
-	Metadata(ctx context.Context) (SessionMetadata, error)
-	Append(ctx context.Context, entries ...SessionEntry) error
-	Entry(ctx context.Context, id string) (*SessionEntry, error)
-	Entries(ctx context.Context, cur Cursor) ([]SessionEntry, error)
+type Storage interface {
+	Metadata(ctx context.Context) (Metadata, error)
+	Append(ctx context.Context, entries ...Entry) error
+	Entry(ctx context.Context, id string) (*Entry, error)
+	Entries(ctx context.Context, cur Cursor) ([]Entry, error)
 	Clear(ctx context.Context) error
 }
 
@@ -32,7 +32,7 @@ sess.ContextItems(ctx, session.Cursor{})  // what the model reads
 sess.State(ctx)                          // last agent, pending tool calls
 sess.Stats(ctx)                          // counts and usage
 
-// 3. SessionRepo — lifecycles: create, open, list, delete.
+// 3. session.Repo — lifecycles: create, open, list, delete.
 ```
 
 **`Session` is a struct on purpose.** Storage varies — a file, a table, a map —
@@ -130,7 +130,7 @@ Not every store can do everything, and the interface does not pretend otherwise.
 |---|---|
 | `AtomicReplacer` | Swapping the whole history in one step, so a rewrite cannot leave the session empty |
 | `GuardedReplacer` | Swapping the whole history only while its highest sequence number is still the one the caller read, so a rewrite computed from a stale copy cannot delete what landed in between |
-| `EntryPopper` | Removing the most recent entry. **Not** in `SessionStorage`: a run never pops, and requiring it would tax stores that cannot (a server-managed conversation) |
+| `EntryPopper` | Removing the most recent entry. **Not** in `session.Storage`: a run never pops, and requiring it would tax stores that cannot (a server-managed conversation) |
 | `CompactionAware` | Compacting its own history after a run |
 
 ## Projection: what the model reads
@@ -198,7 +198,7 @@ Local compaction never rewrites: it appends a [checkpoint](#run-level-compaction
 
 ## Choosing an implementation
 
-The built-ins sit on a spectrum from "zero dependencies" to "full database". They are all `SessionStorage` backends behind the same `session.Session` semantics layer (`InMemorySession` is the pre-wrapped convenience), so you can switch later:
+The built-ins sit on a spectrum from "zero dependencies" to "full database". They are all `session.Storage` backends behind the same `session.Session` semantics layer (`InMemorySession` is the pre-wrapped convenience), so you can switch later:
 
 | Implementation | Storage | Dependencies | Module | Use when |
 |---|---|---|---|---|

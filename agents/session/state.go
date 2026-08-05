@@ -104,7 +104,6 @@ func StatsOf(entries []Entry) Stats {
 	return st
 }
 
-// AddRequestUsage accumulates src into dst.
 // AddRequestUsage accumulates src into dst, field by field. It is the one
 // definition of "sum request usage" shared by state folding and any caller
 // aggregating entries itself.

@@ -59,19 +59,6 @@ func (idx *Index) Update(entries []session.Entry) {
 	idx.group(entries[start:])
 }
 
-// prefixMatches reports whether entries still begins with exactly what the
-// index already grouped.
-// grouped returns every entry the index holds, in the order it grouped them.
-// The groups themselves ARE the record of what was indexed, so there is no
-// second copy to keep in step with them.
-func (idx *Index) grouped() []session.Entry {
-	out := make([]session.Entry, 0, len(idx.Groups))
-	for _, g := range idx.Groups {
-		out = append(out, g.Entries...)
-	}
-	return out
-}
-
 // prefixMatches reports whether entries still begins with exactly the entries
 // already grouped, and how many of them that is.
 //

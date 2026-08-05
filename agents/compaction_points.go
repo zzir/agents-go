@@ -226,7 +226,11 @@ type CompactionCheckpointer interface {
 	// durably record another conversation's exclusions — and content — in
 	// this one's log. A lost checkpoint merely costs the next run one more
 	// pass; a stolen one is a cross-session leak.
-	Checkpoint(compacted []session.Entry) (session.Entry, bool, error)
+	//
+	// seen is that preceding Compact call's INPUT, not its result: the
+	// compactor is being asked to confirm its state still describes the
+	// context it was pointed at.
+	Checkpoint(seen []session.Entry) (session.Entry, bool, error)
 }
 
 // checkpointAfterRun records the run's compaction as an append-only checkpoint,

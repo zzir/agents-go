@@ -1,9 +1,5 @@
 package session
 
-// RequestUsage is one model request's token accounting, as carried on entries
-// and reported per response id. It is the flat, serializable form; the run's
-// live accumulator (agents.Usage) produces one via its Request method.
-
 // InputTokensDetails mirrors the OpenAI Responses API usage breakdown for input
 // tokens. Only the fields the runner cares about are modeled.
 type InputTokensDetails struct {
@@ -20,7 +16,9 @@ type OutputTokensDetails struct {
 	ReasoningTokens int64 `json:"reasoning_tokens"`
 }
 
-// RequestUsage holds the token usage for a single model request.
+// RequestUsage is one model request's token accounting, as carried on entries
+// and reported per response id. It is the flat, serializable form; the run's
+// live accumulator (agents.Usage) produces one via its Request method.
 type RequestUsage struct {
 	InputTokens         int64               `json:"input_tokens"`
 	OutputTokens        int64               `json:"output_tokens"`

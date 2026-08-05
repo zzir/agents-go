@@ -2,7 +2,7 @@
 //
 // FileSession stores conversation history as a JSONL file (one entry per line),
 // with zero external dependencies. It suits single-machine, moderate-volume use;
-// for high concurrency or large histories, implement session.Session against a
+// for high concurrency or large histories, implement session.Storage against a
 // database of your choice.
 package memory
 
@@ -223,11 +223,11 @@ func (s *FileSession) Append(_ context.Context, entries ...session.Entry) error 
 	// Ids and parent links are assigned under the lock, from what the file
 	// already holds, so two concurrent appends cannot mint the same id or link
 	// to a tip that moved.
-	existing, err := s.readEntries()
+	at, err := s.appendPointLocked()
 	if err != nil {
 		return err
 	}
-	prepared := session.PrepareAppend(entries, session.AppendPointOf(existing))
+	prepared := session.PrepareAppend(entries, at)
 	var buf bytes.Buffer
 	for i := range prepared {
 		data, err := json.Marshal(prepared[i])
@@ -254,7 +254,7 @@ func (s *FileSession) Append(_ context.Context, entries ...session.Entry) error 
 	return f.Close()
 }
 
-// ReplaceEntries implements agents.EntriesReplacer: the entire history is
+// ReplaceEntries implements session.AtomicReplacer: the entire history is
 // swapped in one atomic file rewrite (temp file + fsync + rename), so a crash
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
@@ -401,6 +401,50 @@ func (s *FileSession) readEntriesStrict() ([]session.Entry, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// appendPointLocked reports the session's append point, for linking and
+// numbering an append. Callers must hold the per-path lock.
+//
+// Only the tail is decoded, not the whole file. That is enough because file
+// order IS sequence order: PrepareAppend issues strictly increasing numbers and
+// every write path appends in the order it returns them, so the newest entry
+// carries the highest sequence number this session has issued, and the tip is
+// either it or — when it is a leaf move — the entry it points at. Decoding the
+// whole file to learn the same two facts would make every append cost a full
+// read.
+//
+// The scan walks backwards past lines the fold over the whole log would have
+// walked past too: one that does not decode at all (the read paths skip it)
+// and a leaf move whose payload does not decode (LeafOf leaves the tip where
+// the entry before it put it — and nothing rejects such an entry, since
+// PrepareAppend tolerates the decode failure). Stopping on either would answer
+// with an empty tip and start a second, detached root on the next append.
+func (s *FileSession) appendPointLocked() (session.AppendPoint, error) {
+	lines, err := s.readLines()
+	if err != nil {
+		return session.AppendPoint{}, err
+	}
+	var at session.AppendPoint
+	haveSeq := false
+	for i := len(lines) - 1; i >= 0; i-- {
+		var e session.Entry
+		if json.Unmarshal(lines[i], &e) != nil {
+			continue
+		}
+		if !haveSeq {
+			at.LastSeq = e.Seq
+			haveSeq = true
+		}
+		if e.Kind == session.EntryKindLeaf {
+			if _, perr := e.LeafPayload(); perr != nil {
+				continue
+			}
+		}
+		at.Leaf = session.LeafOf([]session.Entry{e})
+		break
+	}
+	return at, nil
 }
 
 // readLines returns the non-empty lines of the session file, or nil if it does

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"time"
 )
 
 // Ref addresses one session: one generation of one id.
@@ -72,4 +73,18 @@ func NewGeneration() (string, error) {
 		return "", fmt.Errorf("agents: minting a session generation: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
+}
+
+// NewSessionID mints an id for a Repo.Create call that did not supply one.
+//
+// It is one function for the same reason NewGeneration is: every backend needs
+// an id no concurrent Create can also pick, and each one answering that
+// separately is another chance to pick an answer that can repeat. The random
+// suffix beside the timestamp is what makes two id-less Creates in one clock
+// tick differ — without it the second fails as "already exists", for no reason
+// its caller can see.
+func NewSessionID() string {
+	var buf [4]byte
+	_, _ = rand.Read(buf[:])
+	return fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), hex.EncodeToString(buf[:]))
 }

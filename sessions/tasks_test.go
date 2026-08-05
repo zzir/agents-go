@@ -180,6 +180,70 @@ func TestSQLTaskStore_Listings(t *testing.T) {
 	}
 }
 
+// ListNonTerminal filters in SQL, so its idea of "terminal" is a copy of
+// tasks.Status.Terminal rather than a call to it. This drives a task into each
+// of the statuses below and asks whether the two still agree — one that changes
+// sides upstream shows up here as a task listed as live after it finished (a
+// teardown then tries to cancel it) or dropped while it is still running (a
+// teardown leaves it behind).
+//
+// The list is written out because tasks exports no enumeration to walk, which
+// is also this test's blind spot: a status ADDED upstream has to be added here
+// and to terminalStatuses by hand.
+func TestSQLTaskStore_ListNonTerminalMatchesStatusTerminal(t *testing.T) {
+	ctx := context.Background()
+	s := newTaskStore(t)
+	all := []tasks.Status{
+		tasks.StatusWorking, tasks.StatusInputRequired,
+		tasks.StatusCompleted, tasks.StatusFailed, tasks.StatusCancelled,
+	}
+
+	want := map[string]bool{}
+	for _, st := range all {
+		id := string(st)
+		if err := s.Create(ctx, mkTask(id, "parent", "child-"+id)); err != nil {
+			t.Fatal(err)
+		}
+		switch st {
+		case tasks.StatusWorking:
+			// Created working already.
+		case tasks.StatusInputRequired:
+			if err := s.MarkInputRequired(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			if _, err := s.Finalize(ctx, id, st, "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := s.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != st {
+			t.Fatalf("task %q is at %q, want %q", id, got.Status, st)
+		}
+		if !st.Terminal() {
+			want[id] = true
+		}
+	}
+
+	live, err := s.ListNonTerminal(ctx, "parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, task := range live {
+		got[task.ID] = true
+	}
+	for _, st := range all {
+		id := string(st)
+		if got[id] != want[id] {
+			t.Errorf("status %q: listed as live = %v, but Terminal() says live = %v", st, got[id], want[id])
+		}
+	}
+}
+
 // A task paused on an approval is not an orphan: its approval persists.
 func TestSQLTaskStore_FailOrphansKeepsInputRequired(t *testing.T) {
 	ctx := context.Background()

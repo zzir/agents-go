@@ -14,6 +14,17 @@ type keepEverything struct{}
 
 func (keepEverything) Compact(context.Context, *Index) (bool, error) { return false, nil }
 
+// grouped returns every entry the index holds, in the order it grouped them.
+// The groups themselves ARE the record of what was indexed, so production code
+// reads them directly; only these tests want the flattened view.
+func (idx *Index) grouped() []session.Entry {
+	out := make([]session.Entry, 0, len(idx.Groups))
+	for _, g := range idx.Groups {
+		out = append(out, g.Entries...)
+	}
+	return out
+}
+
 // A Compactor may be configured once and reused. Entry ids are unique within a
 // SESSION — FileSession numbers them e1, e2 with no session prefix — so an
 // index that resumed on a matching id alone would hand one conversation's

@@ -195,7 +195,7 @@ func ResolveLimit(override *Settings) int {
 	return 0
 }
 
-// CompactionArgs carry the context a CompactionAwareSession needs to decide
+// CompactionArgs carry the context a CompactionAware storage needs to decide
 // whether (and how) to compact its history after a run.
 type CompactionArgs struct {
 	// ResponseID is the last model response's identifier.

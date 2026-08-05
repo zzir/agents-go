@@ -1,4 +1,4 @@
-// Package sessions provides SQL-backed session.Session implementations (SQLite
+// Package sessions provides SQL-backed session.Storage implementations (SQLite
 // and PostgreSQL) built on uptrace/bun. It is a separate Go module so the
 // database driver dependencies never reach the core SDK's dependency graph —
 // callers who use only InMemorySession or memory.FileSession pay nothing for it.
@@ -72,7 +72,7 @@ type sessionRow struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
-// Session is a bun-backed session.Session scoped to one session ID. Multiple
+// Session is a bun-backed session.Storage scoped to one session ID. Multiple
 // Sessions may share a *bun.DB with different IDs.
 type Session struct {
 	db  *bun.DB
@@ -417,7 +417,7 @@ func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan session.Removal,
 	return nil
 }
 
-// Clear implements session.Session, removing every entry for this session ID.
+// Clear implements session.Storage, removing every entry for this session ID.
 // Clearing is a change like any other: it moves the session in a listing, and
 // it holds the same write lock every other entry write holds — an unlocked
 // clear interleaving with a locked append can otherwise land between the
@@ -436,7 +436,7 @@ func (s *Session) Clear(ctx context.Context) error {
 	})
 }
 
-// ReplaceEntries implements agents.EntriesReplacer: the delete of the old
+// ReplaceEntries implements session.AtomicReplacer: the delete of the old
 // history and the insert of the new one run in a single transaction, so a
 // failure mid-rewrite rolls back to the previous history instead of leaving the
 // session empty. Only this session ID's rows are touched. The high-water mark

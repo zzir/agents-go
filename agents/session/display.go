@@ -8,7 +8,6 @@ package session
 // It is a hint, not a replacement: a consumer that ignores Display entirely
 // must still be able to render from the underlying item, which is what keeps
 // Display free to gain fields without breaking anyone.
-// ItemDisplay is an item projected into what a renderer actually needs.
 type Display struct {
 	// Kind is the item kind: message, tool_call, tool_output, reasoning,
 	// handoff, unknown. An unrecognized kind must fall back, not fail.

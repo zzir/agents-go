@@ -82,10 +82,7 @@ func UnmarshalInputItem(data []byte) (InputItem, error) {
 // It exists because the Responses API accepts content as either a bare string
 // or an array of parts, and a consumer rendering history would otherwise have
 // to know that — and handle only the shape it happened to meet first.
-func ItemText(item InputItem) string { return itemText(item) }
-
-// itemText pulls the readable text out of an input item for its display.
-func itemText(item InputItem) string {
+func ItemText(item InputItem) string {
 	raw, err := MarshalInputItem(item)
 	if err != nil {
 		return ""

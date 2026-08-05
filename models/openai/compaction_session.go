@@ -51,7 +51,7 @@ type CompactionOptions struct {
 	ShouldCompact func(candidateItemCount int) bool
 }
 
-// CompactionSession decorates any session.Session, calling the OpenAI
+// CompactionSession decorates any session.Storage, calling the OpenAI
 // responses.compact API to summarize stored history once it grows past a
 // threshold, then replacing the underlying history with the compacted result.
 //
@@ -138,7 +138,7 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 	return s.underlying.Clear(ctx)
 }
 
-// RunCompaction implements agents.CompactionAwareSession. It compacts the stored
+// RunCompaction implements session.CompactionAware. It compacts the stored
 // history via responses.compact when the decision hook (or args.Force) says so,
 // replacing the underlying session's items with the compacted output.
 //
