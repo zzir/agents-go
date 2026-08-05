@@ -51,9 +51,8 @@ func (h *TaskHandler) Stop(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req) // body is optional
 	info, err := h.runner.StopTask(c.Param("id"), req.Graceful)
 	if err != nil {
-		var final *bridge.TaskFinalError
-		switch {
-		case errors.As(err, &final):
+		switch final, isFinal := errors.AsType[*bridge.TaskFinalError](err); {
+		case isFinal:
 			conflict(c, final.Error())
 		case errors.Is(err, store.ErrNotFound):
 			notFound(c)

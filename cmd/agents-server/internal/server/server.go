@@ -15,6 +15,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 // Server wraps the gin engine and logger.
@@ -43,18 +45,18 @@ func (s *Server) registerAuthRoutes() {
 			Token string `json:"token"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "validation", "message": "invalid request"}})
+			c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation, "invalid request"))
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.token)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthorized", "message": "invalid token"}})
+			c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "invalid token"))
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 	check := func(c *gin.Context) {
 		if subtle.ConstantTimeCompare([]byte(extractToken(c)), []byte(s.token)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthorized", "message": "unauthorized"}})
+			c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -84,7 +86,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 		// Unmatched API paths are client errors, not SPA routes: answer with a
 		// JSON 404 so a removed/mistyped endpoint doesn't return index.html.
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "not found"}})
+			c.JSON(http.StatusNotFound, protocol.NewErrorResponse(protocol.CodeNotFound, "not found"))
 			return
 		}
 		p := c.Request.URL.Path[1:]

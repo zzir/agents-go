@@ -57,9 +57,14 @@ The `?token=<token>` query parameter is no longer accepted for REST — it leake
 into browser history and proxy logs. The WebSocket instead authenticates at the
 application level, via its first message (see [WebSocket protocol](#websocket-protocol)).
 
-Exempt from auth: the browser-facing OAuth callbacks, the OpenAPI document
-(`GET /api/v1/openapi.yaml`), the `/api/v1/auth/*` login/check endpoints, and
-`GET /health`.
+Exempt from auth: the MCP OAuth redirect callback
+(`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
+Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
+`/api/v1/auth/*` login/check endpoints, and `GET /health`. Every entry on that
+list must name a route this router actually serves: an exemption for a path
+nothing serves silently unauthenticates whatever gets mounted there later. The
+ChatGPT login callback is deliberately absent — its redirect lands on a
+temporary listener at 127.0.0.1:1455, never on this server.
 
 ## REST API
 
@@ -697,7 +702,7 @@ cmd/agents-server/
 │   │   └── ...                 tracing, guardrails, proxy, MCP/ChatGPT OAuth
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
 │   ├── store/                  SQLite data layer (bun ORM, 12 tables)
-│   ├── protocol/               WebSocket message types
+│   ├── protocol/               wire types — WS messages + REST error envelope
 │   └── web/                    embedded SPA static files
 └── {workspace}/skills/         agent skills managed via API (runtime dir, not in the repo)
 ```
@@ -829,7 +834,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `internal/protocol` (Go) and `src/lib/protocol.ts` (TS mirror). Emitters
     and consumers reference the constants, never string literals — a typo must
     be a compile error, not an event that silently never fires. Adding an
-    event means updating both files.
+    event means updating both files. The mirroring obligation stops at the WS
+    contract: the REST error envelope (`internal/protocol/apierror.go`) is
+    Go-only, because it has two Go emitters that cannot import each other
+    (`handler` and `server`) but only one browser consumer, and that consumer
+    reads `error.message` alone — it never branches on the code.
 16. **A streamed turn must equal its reload.** The streaming path
     (`src/lib/streamReducer.ts` pure transforms, applied by `useAgentSocket`)
     and the replay path (`buildTimeline` over persisted ENTRIES) must produce

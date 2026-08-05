@@ -146,39 +146,45 @@ func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.App
 }
 
 func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
-	var busy bridge.ErrSessionBusy
-	var deleting bridge.ErrSessionDeleting
-	var down bridge.ErrShuttingDown
-	var notResumable bridge.ErrRunNotResumable
-	var stale *bridge.StaleApprovalStateError
-	var void *bridge.ApprovalVoidError
-	var notReady *bridge.ApprovalNotReadyError
-	switch {
-	case errors.As(err, &down):
-		// Draining: retryable, not an internal failure.
+	// Draining: retryable, not an internal failure.
+	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
 		unavailable(c, down.Error())
-	case errors.As(err, &busy):
-		conflict(c, "session already has an active run: "+busy.RunID)
-	case errors.As(err, &stale):
-		// Unresumable-by-version: a clear 409 with the reason, not a masked 500.
-		// The stale record was already discarded, so the run is gone.
-		conflict(c, stale.Error())
-	case errors.As(err, &notResumable):
-		// The paused run reached a terminal state (a concurrent stop won) and
-		// cannot be continued — a state conflict, not a server fault.
-		conflict(c, notResumable.Error())
-	case errors.As(err, &void):
-		// The task was stopped/reaped before the decision landed — 409, not 500.
-		conflict(c, void.Error())
-	case errors.As(err, &notReady):
-		// The paused run had not finished settling; the row is preserved for a
-		// retry, so it is a transient conflict.
-		conflict(c, notReady.Error())
-	case errors.As(err, &deleting):
-		conflict(c, deleting.Error())
-	case errors.Is(err, store.ErrNotFound):
-		notFound(c)
-	default:
-		internalError(c, err)
+		return
 	}
+	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
+		conflict(c, "session already has an active run: "+busy.RunID)
+		return
+	}
+	// Unresumable-by-version: a clear 409 with the reason, not a masked 500.
+	// The stale record was already discarded, so the run is gone.
+	if stale, ok := errors.AsType[*bridge.StaleApprovalStateError](err); ok {
+		conflict(c, stale.Error())
+		return
+	}
+	// The paused run reached a terminal state (a concurrent stop won) and
+	// cannot be continued — a state conflict, not a server fault.
+	if notResumable, ok := errors.AsType[bridge.ErrRunNotResumable](err); ok {
+		conflict(c, notResumable.Error())
+		return
+	}
+	// The task was stopped/reaped before the decision landed — 409, not 500.
+	if void, ok := errors.AsType[*bridge.ApprovalVoidError](err); ok {
+		conflict(c, void.Error())
+		return
+	}
+	// The paused run had not finished settling; the row is preserved for a
+	// retry, so it is a transient conflict.
+	if notReady, ok := errors.AsType[*bridge.ApprovalNotReadyError](err); ok {
+		conflict(c, notReady.Error())
+		return
+	}
+	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
+		conflict(c, deleting.Error())
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		notFound(c)
+		return
+	}
+	internalError(c, err)
 }

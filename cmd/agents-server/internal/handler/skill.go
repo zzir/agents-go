@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 // SkillHandler manages skill directories, supporting listing, cloning, updating, and deletion.
@@ -165,7 +167,7 @@ func (h *SkillHandler) Clone(c *gin.Context) {
 	cmd := exec.CommandContext(c.Request.Context(), "git", "clone", "--depth=1", "--", repoURL, cloneDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		abortError(c, http.StatusBadGateway, CodeUpstream, "git clone failed: "+string(output))
+		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "git clone failed: "+string(output))
 		return
 	}
 
@@ -275,7 +277,7 @@ func (h *SkillHandler) Sync(c *gin.Context) {
 	ctx := c.Request.Context()
 	fetch := exec.CommandContext(ctx, "git", "-C", target, "fetch", "--depth=1")
 	if out, err := fetch.CombinedOutput(); err != nil {
-		abortError(c, http.StatusBadGateway, CodeUpstream, "git fetch failed: "+string(out))
+		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "git fetch failed: "+string(out))
 		return
 	}
 	reset := exec.CommandContext(ctx, "git", "-C", target, "reset", "--hard", "origin/HEAD")

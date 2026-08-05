@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 // GenerateToken returns a cryptographically random 32-character hex string.
@@ -25,14 +27,18 @@ func extractToken(c *gin.Context) string {
 }
 
 // authExempt reports whether path is reachable without a token: the login /
-// check endpoints themselves, the browser-facing OAuth redirect callbacks
+// check endpoints themselves, the browser-facing OAuth redirect callback
 // (which cannot carry an Authorization header), and the OpenAPI document.
+//
+// Every entry must name a route that exists — an exemption for a path nothing
+// serves silently unauthenticates whatever gets mounted there later. The
+// ChatGPT OAuth callback is not here for that reason: it is served by a
+// temporary listener on localhost:1455, never by this router.
 func authExempt(path string) bool {
 	for _, p := range []string{"/api/v1", "/api"} {
 		switch {
 		case strings.HasPrefix(path, p+"/auth/"),
 			path == p+"/mcp-servers/oauth/callback",
-			path == p+"/chatgpt/oauth/callback",
 			path == p+"/openapi.yaml":
 			return true
 		}
@@ -54,9 +60,8 @@ func TokenAuth(token string) gin.HandlerFunc {
 
 		provided := extractToken(c)
 		if token == "" || provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": gin.H{"code": "unauthorized", "message": "unauthorized"},
-			})
+			c.AbortWithStatusJSON(http.StatusUnauthorized,
+				protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
 			return
 		}
 		c.Next()

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -33,11 +34,13 @@ func TestRestContract(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("PUT missing agent: got %d, want 404 (body %s)", w.Code, w.Body.String())
 	}
-	var envelope struct {
-		Error APIError `json:"error"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil || envelope.Error.Code != CodeNotFound {
-		t.Errorf("error envelope wrong: %s", w.Body.String())
+	// Literal bytes, not a re-marshalled protocol.ErrorResponse — the wire
+	// shape is the contract, and comparing the envelope against itself would
+	// survive a renamed field. server/auth_test.go pins the same bytes for the
+	// 401/404s that package writes itself.
+	const wantEnvelope = `{"error":{"code":"not_found","message":"not found"}}`
+	if got := strings.TrimSpace(w.Body.String()); got != wantEnvelope {
+		t.Errorf("error envelope = %s, want %s", got, wantEnvelope)
 	}
 	if w := doJSON(t, engine, http.MethodDelete, "/agents/nope", ""); w.Code != http.StatusNotFound {
 		t.Errorf("DELETE missing agent: got %d, want 404", w.Code)

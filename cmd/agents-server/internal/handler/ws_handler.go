@@ -195,16 +195,16 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 		// session_not_found: a DB failure or a delete-in-progress is not a missing
 		// session, and busy/limit/deleting are conflicts the client should treat
 		// like session-busy (drop the optimistic bubble; the run never started).
-		var busy bridge.ErrSessionBusy
-		var limit bridge.ErrTaskLimit
-		var deleting bridge.ErrSessionDeleting
-		var down bridge.ErrShuttingDown
+		busy, isBusy := errors.AsType[bridge.ErrSessionBusy](err)
+		_, atTaskLimit := errors.AsType[bridge.ErrTaskLimit](err)
+		_, deleting := errors.AsType[bridge.ErrSessionDeleting](err)
+		_, draining := errors.AsType[bridge.ErrShuttingDown](err)
 		var runID string
 		code := protocol.CodeConfigError // a genuine server-side failure by default
 		switch {
-		case errors.As(err, &busy):
+		case isBusy:
 			code, runID = protocol.CodeSessionBusy, busy.RunID
-		case errors.As(err, &limit) || errors.As(err, &deleting) || errors.As(err, &down):
+		case atTaskLimit, deleting, draining:
 			code = protocol.CodeSessionBusy
 		case errors.Is(err, store.ErrNotFound):
 			code = protocol.CodeSessionNotFound

@@ -9,71 +9,56 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// Error codes carried in APIError.Code. Stable machine-readable identifiers;
-// the message is human-readable detail.
-const (
-	CodeValidation = "validation"
-	CodeNotFound   = "not_found"
-	CodeConflict   = "conflict"
-	CodeForbidden  = "forbidden"
-	CodeUpstream   = "upstream"
-	CodeInternal   = "internal"
-	// CodeUnavailable is a transient refusal — the server is shutting down.
-	// Distinct from internal: the request was fine and retrying elsewhere (or
-	// later) is the answer.
-	CodeUnavailable = "unavailable"
+// The error envelope is declared in internal/protocol, the layer this package
+// and the server package share. The names are kept here because they are what
+// the swagger annotations throughout this package refer to.
+type (
+	// APIError is the machine-readable error payload of every non-2xx response.
+	APIError = protocol.APIError
+	// ErrorResponse is the error envelope: {"error": {"code": ..., "message": ...}}.
+	ErrorResponse = protocol.ErrorResponse
 )
 
-// APIError is the machine-readable error payload of every non-2xx response.
-type APIError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-// ErrorResponse is the error envelope: {"error": {"code": ..., "message": ...}}.
-type ErrorResponse struct {
-	Error APIError `json:"error"`
-}
-
 func abortError(c *gin.Context, status int, code, message string) {
-	c.AbortWithStatusJSON(status, ErrorResponse{Error: APIError{Code: code, Message: message}})
+	c.AbortWithStatusJSON(status, protocol.NewErrorResponse(code, message))
 }
 
 // badRequest reports a 400 validation failure.
 func badRequest(c *gin.Context, message string) {
-	abortError(c, http.StatusBadRequest, CodeValidation, message)
+	abortError(c, http.StatusBadRequest, protocol.CodeValidation, message)
 }
 
 // notFound reports a 404 for the requested resource.
 func notFound(c *gin.Context) {
-	abortError(c, http.StatusNotFound, CodeNotFound, "not found")
+	abortError(c, http.StatusNotFound, protocol.CodeNotFound, "not found")
 }
 
 // conflict reports a 409: the request is well-formed but the resource is in
 // the wrong state for it (e.g. listing tools of a disconnected MCP server).
 func conflict(c *gin.Context, message string) {
-	abortError(c, http.StatusConflict, CodeConflict, message)
+	abortError(c, http.StatusConflict, protocol.CodeConflict, message)
 }
 
 // unavailable reports a 503: the server is draining and cannot take the
 // request. Retryable, unlike an internal error.
 func unavailable(c *gin.Context, message string) {
-	abortError(c, http.StatusServiceUnavailable, CodeUnavailable, message)
+	abortError(c, http.StatusServiceUnavailable, protocol.CodeUnavailable, message)
 }
 
 // forbidden reports a 403 for operations disabled by server policy.
 func forbidden(c *gin.Context, message string) {
-	abortError(c, http.StatusForbidden, CodeForbidden, message)
+	abortError(c, http.StatusForbidden, protocol.CodeForbidden, message)
 }
 
 // upstreamError reports a 502 for a failing upstream dependency (model
 // provider, MCP server, sandbox host). The upstream message is forwarded —
 // it's what the caller needs to fix the connection.
 func upstreamError(c *gin.Context, err error) {
-	abortError(c, http.StatusBadGateway, CodeUpstream, err.Error())
+	abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
 }
 
 // internalError reports a 500. The error detail goes to the server log only.
@@ -82,7 +67,7 @@ func internalError(c *gin.Context, err error) {
 		Str("method", c.Request.Method).
 		Str("path", c.FullPath()).
 		Msg("internal error")
-	abortError(c, http.StatusInternalServerError, CodeInternal, "internal error")
+	abortError(c, http.StatusInternalServerError, protocol.CodeInternal, "internal error")
 }
 
 // storeError maps a store failure to a response: ErrNotFound → 404, anything

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -33,8 +34,8 @@ func errMessage(t *testing.T, body []byte) string {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("response is not the error envelope: %s", body)
 	}
-	if envelope.Error.Code != CodeValidation {
-		t.Errorf("error code = %q, want %q", envelope.Error.Code, CodeValidation)
+	if envelope.Error.Code != protocol.CodeValidation {
+		t.Errorf("error code = %q, want %q", envelope.Error.Code, protocol.CodeValidation)
 	}
 	return envelope.Error.Message
 }

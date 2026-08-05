@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -47,7 +48,7 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 			return
 		}
 		// The message is actionable local detail (e.g. callback port in use).
-		abortError(c, http.StatusInternalServerError, CodeInternal, err.Error())
+		abortError(c, http.StatusInternalServerError, protocol.CodeInternal, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, result)

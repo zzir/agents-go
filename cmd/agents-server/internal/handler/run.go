@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 // RunHandler exposes the REST surface for starting and observing agent runs.
@@ -108,9 +109,9 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 			// run under the same run id.
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunInterrupted)})
 		case res.Cancelled:
-			abortError(c, http.StatusBadGateway, CodeUpstream, "run cancelled")
+			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "run cancelled")
 		case res.ErrCode != "":
-			abortError(c, http.StatusBadGateway, CodeUpstream, res.ErrMessage)
+			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, res.ErrMessage)
 		default:
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunCompleted), "final_output": res.FinalText})
 		}
@@ -118,29 +119,25 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 }
 
 func (h *RunHandler) startError(c *gin.Context, err error) {
-	var busy bridge.ErrSessionBusy
-	if errors.As(err, &busy) {
+	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
 		conflict(c, "session already has an active run: "+busy.RunID)
 		return
 	}
 	// The session exists but is already at its live-task cap: a state conflict
 	// (409), not a missing resource.
-	var limit bridge.ErrTaskLimit
-	if errors.As(err, &limit) {
+	if limit, ok := errors.AsType[bridge.ErrTaskLimit](err); ok {
 		conflict(c, limit.Error())
 		return
 	}
 	// The session's delete cascade is in progress: a state conflict (409), not a
 	// missing session.
-	var deleting bridge.ErrSessionDeleting
-	if errors.As(err, &deleting) {
+	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
 		conflict(c, deleting.Error())
 		return
 	}
 	// The server is draining: 503, not 500. The request was fine; the answer
 	// is to retry against the process that comes back.
-	var down bridge.ErrShuttingDown
-	if errors.As(err, &down) {
+	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
 		unavailable(c, down.Error())
 		return
 	}

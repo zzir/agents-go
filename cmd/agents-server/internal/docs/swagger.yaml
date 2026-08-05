@@ -423,17 +423,10 @@ components:
         tool_call_id:
           type: string
       type: object
-    handler.APIError:
-      properties:
-        code:
-          type: string
-        message:
-          type: string
-      type: object
     handler.ErrorResponse:
       properties:
         error:
-          $ref: '#/components/schemas/handler.APIError'
+          $ref: '#/components/schemas/protocol.APIError'
       type: object
     handler.SessionApproval:
       properties:
@@ -766,6 +759,13 @@ components:
       properties:
         graceful:
           type: boolean
+      type: object
+    protocol.APIError:
+      properties:
+        code:
+          type: string
+        message:
+          type: string
       type: object
     session.DiagnosticType:
       enum:
