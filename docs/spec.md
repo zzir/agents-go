@@ -429,6 +429,17 @@ count entries the model will actually see. `ProjectEntries` applies the same
 exclusions again wherever it is called, so a view built without the filter
 still cannot replay folded history.
 
+**A branch view is computed from the whole log, and the cursor only trims the
+answer.** The tree is walked by following `ParentID` links back from the leaf,
+which no backend can express as a range scan, so `ContextEntries` reads every
+entry and pages the projection afterwards — a `Cursor` passed to it saves
+nothing on the way in. A run reads once per turn, so the cost grows with the
+conversation and compaction does not bring it down: compaction shrinks what the
+model sees, not what the store holds. That is a known ceiling, accepted for now
+because the alternative is pushing the walk into every backend. The way out, if
+one is needed, is an optional capability that resolves an ancestor chain
+server-side (a recursive CTE in SQL) rather than a second canonical view.
+
 Capabilities a store may or may not have are **optional interfaces**, not
 required methods: `AtomicReplacer`, `GuardedReplacer`, `EntryPopper`,
 `CompactionAware`. Popping in particular is not in `session.Storage` because a
@@ -1919,11 +1930,20 @@ otherwise pull a heavy dependency into the core. Test helpers, small utilities
 and anything dependency-free stay in the root module regardless of how
 self-contained they are.
 
-### 5.8 Public API compatibility begins at v0.2.0
+### 5.8 Public API compatibility begins at v1.0.0
 
-Versions before v0.2.0 make no compatibility promise: the API is still being
-shaped. From v0.2.0 onward, breaking changes to exported identifiers go through
-a deprecation cycle.
+A minor release before v1.0.0 may break exported identifiers. Each one is
+recorded in the release notes with the old spelling beside the new, and they are
+batched into as few releases as the work allows, so a user absorbs one migration
+rather than a drip.
+
+**This section used to promise a deprecation cycle from v0.2.0 onward, and the
+promise was not kept**: the eleven breaking commits after v0.2.1 — the tool and
+item collapses, the naming batch, the `agents/session` split — each renamed or
+removed outright. Keeping a rule nobody follows is worse than not having it,
+because it teaches the next reader that this document describes intentions
+rather than behavior. The API is still finding its shape; the deprecation cycle
+begins when it stops, at v1.0.0.
 
 ### 5.9 A parent-linked checkpoint chain for execution state is declined
 
@@ -2233,7 +2253,30 @@ purely additive bump.
 
 ## 6. Open questions
 
-*(none currently)*
+### 6.1 What a v1.0.0 promise means while openai-go's major can move
+
+§5.5 makes the Responses wire types the canonical format, and §5.5b accepts that
+they therefore appear in nearly every exported signature by way of `InputItem`,
+`OutputItem` and `ResponseStreamEvent`. Both decisions stand. What neither
+records is the consequence for §5.8: **a `openai-go` v3 → v4 bump is
+transitively breaking for every downstream package**, not just for this one.
+Their function signatures name those aliased types, so their code stops
+compiling on the day this module's `go.mod` moves — a break this SDK causes but
+does not author.
+
+That is survivable before v1.0.0, where §5.8 already allows breaking minors. It
+is the question after: a v1 that promises compatibility is implicitly promising
+`openai-go/v3`, since honoring the promise and taking the bump cannot both
+happen. Three answers, none chosen yet:
+
+- **Take the bump as agents-go v2.** Honest, and expensive for an ecosystem that
+  has to move in lockstep with a dependency's schedule rather than ours.
+- **Fork the item types.** Buys independence at exactly the cost §5.5b declined:
+  a conversion layer that must chase every Responses API addition forever.
+- **Stay on v3 for the life of v1.** Cheapest until a provider feature only the
+  new major exposes, at which point the cost arrives all at once.
+
+Whichever is taken, it belongs in §5 before v1.0.0 is tagged, not after.
 
 When a new case comes up that this document does not answer, add it here with
 the options under consideration. Implementing it means moving it out of this
