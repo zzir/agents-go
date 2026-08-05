@@ -146,6 +146,11 @@ var ErrNotFound = errors.New("agents: session not found")
 type Repo interface {
 	Create(ctx context.Context, opts CreateOptions) (*Session, error)
 	Open(ctx context.Context, id string) (*Session, error)
+	// List returns session metadata ordered by UpdatedAt, newest first, cut to
+	// Cursor.Limit. Sessions sharing an UpdatedAt may come back in any order.
+	// Every implementation owes the same answer here — a caller that paginated
+	// correctly against one backend must not silently read the oldest sessions
+	// from another (agentstest.RepoConformance checks it).
 	List(ctx context.Context, opts ListOptions) ([]Metadata, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -166,7 +171,11 @@ type CreateOptions struct {
 type ListOptions struct {
 	// IncludeHidden returns sessions that serve other sessions too.
 	IncludeHidden bool
-	// Cursor paginates the listing.
+	// Cursor paginates the listing; only Limit is read, and anything not
+	// positive means no limit. Cursor's other reading of a negative limit —
+	// take the most recent -Limit — is for entry cursors alone: a listing is
+	// already newest first, so it would answer exactly what the positive limit
+	// answers.
 	Cursor Cursor
 }
 

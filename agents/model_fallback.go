@@ -76,7 +76,11 @@ func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelRe
 // until output commits the backend (deliverStreamAttempt, the same rule as
 // NewRetryModel), so the chain advances on a response.failed exactly like the
 // blocking path and the consumer never sees an abandoned backend's events.
-// After output, a mid-stream error is surfaced as-is.
+// After output, a mid-stream error is surfaced as-is and recorded as
+// DiagStreamError naming the committed backend. A retry wrapping that backend
+// records its own for the same break, naming the attempt instead: each
+// decorator reports the part only it can see, so a layered chain describes one
+// truncated answer twice over rather than reporting two.
 func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		var errs []error
@@ -101,7 +105,15 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 			}
 			errs = append(errs, a.err)
 			if a.committed || i == len(m.models)-1 || !m.shouldFallback(a.err) {
-				if !a.committed && !flushStreamEvents(a.pending, yield) {
+				if a.committed {
+					// A stream that broke after emitting output cannot move to
+					// the next backend — the tokens are already out. Record
+					// which one was committed, or a truncated answer is merely
+					// odd (the same rule as NewRetryModel, spec §5.16).
+					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{
+						"used_index": i, "models": len(m.models),
+					})
+				} else if !flushStreamEvents(a.pending, yield) {
 					// No further backend follows: the held-back events are
 					// this stream's last word, delivered ahead of the error.
 					return

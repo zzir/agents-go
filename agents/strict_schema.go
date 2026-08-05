@@ -65,13 +65,20 @@ func ensureStrictSchemaCopy(schema map[string]any) (map[string]any, error) {
 // json.RawMessage / []byte are deliberately not suggested as a fix: they reflect
 // to a byte-array schema (a JSON array of integers 0-255), not an arbitrary-JSON
 // schema, so they change the argument's meaning rather than relaxing it. Give
-// the field a concrete type, or disable strict mode for this tool/output.
+// the field a concrete type, or turn strict off where the schema was built.
+// That last part stays generic on purpose: the same node is reached from
+// runtime schemas too (NewRawTool, NewDynamicOutputSchema), whose switch is
+// their own. The reflected-type constructors are named as the example because
+// they are the ones users reach for, and because the obvious guess there —
+// Tool.NonStrict — runs after the strict schema has already been generated.
 func errUnconstrainedSchema(what string, path []string) error {
 	return fmt.Errorf(
 		"%s (path=%s) is an unconstrained schema: a Go any/interface{} field has no concrete "+
 			"type (it reflects to a boolean schema, or to a typeless object when it carries a "+
 			"description tag) and cannot be expressed in strict mode; give the field a concrete "+
-			"type (a struct or a specific scalar/slice/map) or disable strict mode for this tool/output",
+			"type (a struct or a specific scalar/slice/map), or turn strict off where this "+
+			"schema was built — for a Go type that means NewToolNonStrict / OutputTypeNonStrict, "+
+			"not Tool.NonStrict, which runs after the schema is generated",
 		what, strings.Join(path, "/"))
 }
 
@@ -113,7 +120,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		} else if isTruthy(node["additionalProperties"]) {
 			return fmt.Errorf(
 				"additionalProperties should not be set to true for object types in a strict schema "+
-					"(path=%s); disable strict mode for this tool/output if you need open objects",
+					"(path=%s); if you need open objects, turn strict off where this schema was "+
+					"built — for a Go type that means NewToolNonStrict / OutputTypeNonStrict",
 				strings.Join(path, "/"))
 		}
 		// OpenAI requires every object to declare "properties"; schemas for

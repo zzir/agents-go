@@ -135,8 +135,8 @@ type Tool struct {
 	// literal leaves it nil and validates in its own OnInvoke.
 	validator *schemaValidator
 
-	// regen rebuilds the schema and validator for a given strictness. Only
-	// NewTool installs it — the closure carries the argument type,
+	// regen rebuilds the schema and validator for a given strictness. NewTool
+	// and NewToolNonStrict install it — the closure carries the argument type,
 	// which is how NonStrict can re-reflect without a type parameter.
 	regen func(strict bool) (map[string]any, *schemaValidator)
 }
@@ -149,8 +149,13 @@ type Tool struct {
 //	t := agents.NewTool("get_weather", "look up weather", weatherFn).NonStrict()
 //
 // Configure it before the tool is first used in a run. On a tool that was not
-// built by NewTool it only clears Strict; the schema stays the
-// caller's.
+// built by NewTool or NewToolNonStrict it only clears Strict; the schema stays
+// the caller's.
+//
+// It relaxes a tool that already exists, which is not enough for an argument
+// type strict mode cannot express at all (an any/interface{} field, a map with
+// arbitrary keys): NewTool panics on those while generating the strict schema,
+// before there is anything to relax. Build them with NewToolNonStrict.
 func (t *Tool) NonStrict() *Tool {
 	if t.regen != nil {
 		t.ParamsJSONSchema, t.validator = t.regen(false)

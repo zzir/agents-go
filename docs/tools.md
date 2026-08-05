@@ -51,7 +51,13 @@ Strict schema mode is on by default and the reflected schema is rewritten to the
 t := agents.NewTool("lookup", "…", fn).NonStrict()
 ```
 
-`NewTool` panics if the argument type cannot be reflected into a schema (not a struct, or a field no schema can express) — a deterministic programmer error, surfaced at construction like `regexp.MustCompile`. For schemas that are runtime data, `NewRawTool` returns an error instead.
+`NewTool` panics if the argument type cannot be reflected into a strict schema (not a struct, a field no schema can express, or a shape strict mode cannot express at all — an `any`/`interface{}` field, a map with arbitrary keys) — a deterministic programmer error, surfaced at construction like `regexp.MustCompile`. For schemas that are runtime data, `NewRawTool` returns an error instead.
+
+That last shape is the one `NonStrict()` cannot rescue: the strict schema is generated during construction, so the panic happens before there is a tool to relax. Build those with `NewToolNonStrict`, which is `NewTool` without the strict rewrite — arguments are still validated against the schema the model was shown:
+
+```go
+save := agents.NewToolNonStrict("save", "Store an arbitrary JSON payload.", saveFn)
+```
 
 ### Error handling
 

@@ -16,17 +16,21 @@ import (
 // invoked. The result R is returned to the model (serialized to JSON unless it
 // is already a string).
 //
-// The schema is strict by default: every field is required and unknown
-// properties are forbidden, and the OpenAI API then guarantees the model sends
-// every field. Chain NonStrict to let the model omit fields whose json tag
-// carries ",omitempty":
+// The schema is strict: every field is required and unknown properties are
+// forbidden, and the OpenAI API then guarantees the model sends every field.
+// Chain NonStrict to let the model omit fields whose json tag carries
+// ",omitempty":
 //
 //	t := agents.NewTool("get_weather", "look up weather", weatherFn).NonStrict()
 //
-// NewTool panics when A cannot be reflected into a schema (not a
-// struct, or a field of an unsupported type) — a deterministic programmer
-// error, surfaced at construction like regexp.MustCompile. For a schema that
-// is runtime data, use NewRawTool, which returns an error instead.
+// NewTool panics when A cannot be reflected into a strict schema (not a
+// struct, a field of an unsupported type, or a shape strict mode cannot express
+// at all — an any/interface{} field, a map with arbitrary keys) — a
+// deterministic programmer error, surfaced at construction like
+// regexp.MustCompile. The strict schema is generated during construction, so
+// chaining NonStrict cannot rescue that last case: build those tools with
+// NewToolNonStrict. For a schema that is runtime data, use NewRawTool, which
+// returns an error instead.
 //
 // The schema comes from reflection over A's struct tags, so the tool the model
 // is shown and the Go type it decodes into cannot drift apart.
@@ -34,15 +38,47 @@ func NewTool[A any, R any](
 	name, description string,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
 ) *Tool {
+	return newTypedTool(name, description, true, fn)
+}
+
+// NewToolNonStrict is NewTool without the strict-mode rewrite: fields whose
+// json tag carries ",omitempty" stay optional, and a shape strict mode cannot
+// express — an any/interface{} field, a map with arbitrary keys — gets a schema
+// instead of a panic. Everything else is identical, incoming arguments included:
+// they are still validated against the schema the model was shown.
+//
+// It is the constructor for what NonStrict cannot reach. NonStrict relaxes a
+// tool that already exists, and for these argument types NewTool never gets
+// that far.
+func NewToolNonStrict[A any, R any](
+	name, description string,
+	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
+) *Tool {
+	return newTypedTool(name, description, false, fn)
+}
+
+// newTypedTool is the shared body of NewTool and NewToolNonStrict; the two
+// differ only in the strictness of the schema they generate.
+func newTypedTool[A any, R any](
+	name, description string,
+	strict bool,
+	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
+) *Tool {
+	// Strictness and constructor are one-to-one, so a panic can blame the call
+	// the programmer actually wrote.
+	ctor := "NewTool"
+	if !strict {
+		ctor = "NewToolNonStrict"
+	}
 	// Tool parameters must serialize to a JSON object, so A must be a struct
 	// (or pointer to one).
 	if argType := reflect.TypeFor[A](); !isStructKind(argType) {
-		panic(fmt.Sprintf("agents: NewTool(%q): args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", name, argType))
+		panic(fmt.Sprintf("agents: %s(%q): args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", ctor, name, argType))
 	}
 	regen := func(strict bool) (map[string]any, *schemaValidator) {
 		schema, err := SchemaFor[A](strict)
 		if err != nil {
-			panic(fmt.Sprintf("agents: NewTool(%q): schema generation failed: %v", name, err))
+			panic(fmt.Sprintf("agents: %s(%q): schema generation failed: %v", ctor, name, err))
 		}
 		// Compiled once per tool, not per call: a schema does not change
 		// between turns.
@@ -51,11 +87,11 @@ func NewTool[A any, R any](
 	t := &Tool{
 		Name:                 name,
 		Description:          description,
-		Strict:               true,
+		Strict:               strict,
 		FailureErrorFunction: DefaultToolErrorFunction,
 		regen:                regen,
 	}
-	t.ParamsJSONSchema, t.validator = regen(true)
+	t.ParamsJSONSchema, t.validator = regen(strict)
 	t.OnInvoke = func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
 		var args A
 		if err := decodeToolArgs(name, t.validator, argsJSON, &args); err != nil {
@@ -73,8 +109,8 @@ func NewTool[A any, R any](
 }
 
 // isStructKind reports whether t is a struct or a pointer to a struct — the
-// only argument shapes NewTool accepts, since tool parameters must be
-// a JSON object.
+// only argument shapes NewTool and NewToolNonStrict accept, since tool
+// parameters must be a JSON object.
 func isStructKind(t reflect.Type) bool {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -143,10 +179,16 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 // which is also why it returns an error where NewTool panics: a bad
 // runtime schema is expected data, a bad argument type is a bug.
 //
-// Strict mode is enabled by default, and the schema is normalized to the
-// strict subset via EnsureStrictJSONSchema, on a deep copy, so the caller's map
-// is not mutated. To use the schema verbatim without strict mode, set
-// ParamsJSONSchema and clear Strict on the returned tool.
+// Strict mode is enabled, and the schema is normalized to the strict subset via
+// EnsureStrictJSONSchema, on a deep copy, so the caller's map is not mutated.
+// Normalization rewrites what it accepts — every property becomes required,
+// every object gets additionalProperties:false — so to advertise the schema
+// verbatim instead, set ParamsJSONSchema and clear Strict on the returned tool.
+//
+// It runs before the tool exists, though, so a schema strict mode cannot express
+// at all yields an error and no tool to fix up. Advertising one of those means
+// building the Tool struct directly (Strict left false) and validating the
+// arguments in its OnInvoke.
 func NewRawTool(
 	name, description string,
 	paramsSchema map[string]any,

@@ -3,7 +3,9 @@ package agentstest
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
@@ -22,12 +24,15 @@ type RepoUnderTest struct {
 	Direct func(id string) (*session.Session, error)
 }
 
-// RepoConformance holds a SessionRepo to the identity half of the entry
-// lifecycle contract in docs/spec.md §2.5e2.
+// RepoConformance holds a SessionRepo to the parts of the entry lifecycle
+// contract in docs/spec.md §2.5e2 that a repo owns: how it addresses a session,
+// and what its listing says about the sessions it holds.
 //
-// What it is really checking is that a backend addresses a session by
-// session.Ref and not by its id — every one of these failed at least once
-// in a backend that carried the generation as a field some code path forgot.
+// Most of it is checking that a backend addresses a session by session.Ref and
+// not by its id — every one of those failed at least once in a backend that
+// carried the generation as a field some code path forgot. The listing checks
+// are here for the same reason: one backend did not sort its listing at all and
+// another ignored the limit, each of them fine until a caller switched.
 func RepoConformance(t *testing.T, newRepo func(t *testing.T) RepoUnderTest) {
 	t.Helper()
 	for _, c := range repoChecks {
@@ -47,6 +52,8 @@ var repoChecks = []struct {
 	{"ADeletedHandleRefusesEveryWrite", checkDeletedHandleRefusesEveryWrite},
 	{"DeleteLeavesTheDirectScopeAlone", checkDeleteVsDirect},
 	{"DirectAndRepoDoNotShareHistory", checkDirectIsolation},
+	{"ListIsNewestFirst", checkListNewestFirst},
+	{"ListHonoursLimit", checkListLimit},
 }
 
 func repoWrite(t *testing.T, sess *session.Session, text string) {
@@ -283,6 +290,100 @@ func checkDeleteVsDirect(t *testing.T, r RepoUnderTest) {
 	}
 	if got := repoTexts(t, shared); len(got) != 1 {
 		t.Fatalf("the repo's delete took the direct session's history: %v", got)
+	}
+}
+
+// repoSessionsNewestFirst creates one session per id and then writes to them in
+// REVERSE, so the order List owes back — last changed first — is the ids as
+// given, and the order they were created in is its opposite. Creating and
+// writing in one pass would make the two agree, and then a backend sorting by
+// CreatedAt would satisfy every check below without ever reading UpdatedAt.
+//
+// The pause is what makes the stamps distinct. The backends time a write by
+// three different clocks — a wall clock, a file's mtime, a database timestamp —
+// and the coarsest of them decides whether two writes microseconds apart can be
+// told apart at all. Ties are unordered by contract, so without it these checks
+// would pass on any order a backend felt like.
+func repoSessionsNewestFirst(t *testing.T, r RepoUnderTest, ids ...string) []string {
+	t.Helper()
+	ctx := context.Background()
+	handles := make([]*session.Session, len(ids))
+	for i, id := range ids {
+		sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: id})
+		if err != nil {
+			t.Fatalf("create %q: %v", id, err)
+		}
+		handles[i] = sess
+	}
+	for i := len(handles) - 1; i >= 0; i-- {
+		repoWrite(t, handles[i], "hello")
+		if i > 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	return slices.Clone(ids)
+}
+
+func metadataIDs(md []session.Metadata) []string {
+	out := make([]string, 0, len(md))
+	for _, m := range md {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+// A listing is ordered by last change, newest first — the order a sidebar shows
+// and the order Limit truncates, so a backend sorting by creation (or not at
+// all) hands the caller a different conversation than every other backend does.
+func checkListNewestFirst(t *testing.T, r RepoUnderTest) {
+	t.Helper()
+	want := repoSessionsNewestFirst(t, r, "newest", "middle", "oldest")
+
+	md, err := r.Repo.List(context.Background(), session.ListOptions{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := metadataIDs(md); !slices.Equal(got, want) {
+		t.Fatalf("List = %v, want %v (newest first)", got, want)
+	}
+	// And the stamps agree with the order: a backend that sorts by one column
+	// and reports another is right here only by coincidence.
+	for i := 1; i < len(md); i++ {
+		if md[i].UpdatedAt.After(md[i-1].UpdatedAt) {
+			t.Fatalf("List is not ordered by UpdatedAt: %s at %v precedes %s at %v",
+				md[i-1].ID, md[i-1].UpdatedAt, md[i].ID, md[i].UpdatedAt)
+		}
+	}
+}
+
+// Limit caps the listing, and it caps it from the newest end — a backend that
+// applies it before sorting, or ignores it, returns the wrong page rather than
+// a short one. Anything not positive means no limit.
+func checkListLimit(t *testing.T, r RepoUnderTest) {
+	t.Helper()
+	ctx := context.Background()
+	all := repoSessionsNewestFirst(t, r, "a", "b", "c")
+
+	for _, tc := range []struct {
+		name  string
+		limit int
+		want  []string
+	}{
+		{"a short page", 2, all[:2]},
+		{"the newest alone", 1, all[:1]},
+		{"zero is no limit", 0, all},
+		{"negative is no limit", -1, all},
+		{"more than there are", len(all) + 5, all},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md, err := r.Repo.List(ctx, session.ListOptions{Cursor: session.Cursor{Limit: tc.limit}})
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if got := metadataIDs(md); !slices.Equal(got, tc.want) {
+				t.Errorf("List(Limit=%d) = %v, want %v", tc.limit, got, tc.want)
+			}
+		})
 	}
 }
 

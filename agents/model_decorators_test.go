@@ -527,6 +527,80 @@ func TestFallbackModel_StreamCommitsAfterFirstEvent(t *testing.T) {
 	}
 }
 
+func TestFallbackModel_StreamCommittedBreakRecordsDiagnostic(t *testing.T) {
+	// A stream that broke after emitting output ends the chain — the tokens are
+	// out and no backend can take them back. NewRetryModel records that as
+	// DiagStreamError; without the same here, one truncated answer is
+	// explainable and the other is merely odd (spec §5.16).
+	for _, tc := range []struct {
+		name      string
+		chain     []streamStep
+		wantIndex int
+	}{
+		{"the primary commits", []streamStep{{1, errBoom}}, 0},
+		{"a backup commits", []streamStep{{0, errBoom}, {1, errBoom}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			models := make([]Model, 0, len(tc.chain))
+			for _, st := range tc.chain {
+				models = append(models, &scriptedStreamModel{steps: []streamStep{st}})
+			}
+			sink := &DiagnosticSink{}
+			ctx := WithDiagnostics(context.Background(), sink)
+			m := NewFallbackModel(models[0], models[1:]...)
+			if _, err := drain(m.StreamResponse(ctx, ModelRequest{})); !errors.Is(err, errBoom) {
+				t.Fatalf("err = %v, want errBoom", err)
+			}
+			// Exactly one: a chain that never produced a usable response
+			// records no DiagModelFallback, which is for a successful switch.
+			ds, _ := sink.TakeSince(0)
+			if len(ds) != 1 || ds[0].Type != DiagStreamError {
+				t.Fatalf("diagnostics = %+v, want one %s", ds, DiagStreamError)
+			}
+			if got := ds[0].Details["used_index"]; got != tc.wantIndex {
+				t.Errorf("used_index = %v, want %d", got, tc.wantIndex)
+			}
+			if got := ds[0].Details["models"]; got != len(tc.chain) {
+				t.Errorf("models = %v, want %d", got, len(tc.chain))
+			}
+		})
+	}
+}
+
+// A retry inside a fallback is the composition NewFallbackModel documents, and
+// one committed break there is recorded by both layers: the retry names the
+// attempt it could not repeat, the fallback the backend it could not leave.
+// Neither can see what the other saw, so the pair is one break described twice
+// over, not two breaks.
+func TestFallbackModel_StreamCommittedBreakIsRecordedByEveryLayer(t *testing.T) {
+	policy := RetryPolicy{MaxAttempts: 2, BaseDelay: time.Millisecond}
+	primary := NewRetryModel(&scriptedStreamModel{steps: []streamStep{{1, errBoom}}}, policy)
+	backup := NewRetryModel(&scriptedStreamModel{steps: []streamStep{{1, nil}}}, policy)
+
+	sink := &DiagnosticSink{}
+	ctx := WithDiagnostics(context.Background(), sink)
+	m := NewFallbackModel(primary, backup)
+	if _, err := drain(m.StreamResponse(ctx, ModelRequest{})); !errors.Is(err, errBoom) {
+		t.Fatalf("err = %v, want errBoom", err)
+	}
+
+	ds, _ := sink.TakeSince(0)
+	if len(ds) != 2 {
+		t.Fatalf("diagnostics = %+v, want one per layer", ds)
+	}
+	for _, d := range ds {
+		if d.Type != DiagStreamError {
+			t.Errorf("diagnostic type = %s, want %s", d.Type, DiagStreamError)
+		}
+	}
+	if _, ok := ds[0].Details["attempt"]; !ok {
+		t.Errorf("the inner retry's record = %+v, want an attempt", ds[0].Details)
+	}
+	if _, ok := ds[1].Details["used_index"]; !ok {
+		t.Errorf("the outer fallback's record = %+v, want a used_index", ds[1].Details)
+	}
+}
+
 type stubProvider struct {
 	gotModel string
 	model    Model

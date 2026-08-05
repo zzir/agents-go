@@ -2,7 +2,9 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -280,12 +282,84 @@ func TestNewTool_TypelessAnyFieldPanics(t *testing.T) {
 		Data any `json:"data" jsonschema:"some data"`
 	}
 	defer func() {
-		if recover() == nil {
+		r := recover()
+		if r == nil {
 			t.Fatal("expected construction panic for a tagged any field (typeless schema)")
+		}
+		// The panic is where the caller learns strict mode cannot express the
+		// type, so it has to name the constructor that can — the advice to relax
+		// strict mode is otherwise a dead end here.
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "NewToolNonStrict") {
+			t.Errorf("panic should point at NewToolNonStrict, got %q", msg)
 		}
 	}()
 	NewTool("bad", "",
 		func(ctx context.Context, tc *ToolContext, a badArgs) (string, error) {
+			return "ran", nil
+		})
+}
+
+// --- NewToolNonStrict builds what NewTool has to reject.
+
+func TestNewToolNonStrict_UnconstrainedFieldGetsASchema(t *testing.T) {
+	type args struct {
+		Name string `json:"name"`
+		Data any    `json:"data" jsonschema:"anything at all"`
+		Note string `json:"note,omitempty"`
+	}
+	var got args
+	tool := NewToolNonStrict("save", "",
+		func(ctx context.Context, tc *ToolContext, a args) (string, error) {
+			got = a
+			return "saved", nil
+		})
+
+	if tool.Strict {
+		t.Error("NewToolNonStrict must leave Strict false")
+	}
+	props := tool.ParamsJSONSchema["properties"].(map[string]any)
+	data, ok := props["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("data property = %#v, want the typeless object schema", props["data"])
+	}
+	if _, hasType := data["type"]; hasType {
+		t.Errorf("data property should stay unconstrained: %v", data)
+	}
+	required, _ := tool.ParamsJSONSchema["required"].([]any)
+	if slices.Contains(required, any("note")) {
+		t.Errorf("required = %v, want the omitempty field left out", required)
+	}
+
+	// Decoding and validation are the same pipeline NewTool installs: the
+	// unconstrained field arrives decoded, a required one is still enforced.
+	tc := &ToolContext{RunContext: NewRunContext(nil)}
+	out, err := tool.OnInvoke(context.Background(), tc, `{"name":"x","data":{"k":[1,2]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelOutput() != "saved" {
+		t.Errorf("out = %v, want saved", out)
+	}
+	if want := (map[string]any{"k": []any{1.0, 2.0}}); !reflect.DeepEqual(got.Data, want) {
+		t.Errorf("decoded data = %#v, want %#v", got.Data, want)
+	}
+	if _, err := tool.OnInvoke(context.Background(), tc, `{"data":1}`); err == nil {
+		t.Error("non-strict: the required 'name' field should still be enforced")
+	}
+}
+
+func TestNewToolNonStrict_NonStructArgsPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected construction panic for a non-struct args type")
+		}
+		if msg := fmt.Sprint(r); !strings.Contains(msg, `NewToolNonStrict("bad")`) {
+			t.Errorf("panic should blame the constructor that was called, got %q", msg)
+		}
+	}()
+	NewToolNonStrict("bad", "",
+		func(ctx context.Context, tc *ToolContext, a string) (string, error) {
 			return "ran", nil
 		})
 }
@@ -327,5 +401,47 @@ func TestStrict_UnconstrainedErrorMessageOmitsRawMessage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unconstrained") {
 		t.Errorf("error should describe the unconstrained schema: %q", err.Error())
+	}
+}
+
+// --- normalization errors are shared by the reflected and the runtime-schema
+// entry points, so their advice has to fit both.
+
+func TestStrict_NormalizationErrorAdviceFitsRuntimeSchemas(t *testing.T) {
+	schemas := map[string]map[string]any{
+		"unconstrained property": {
+			"type":       "object",
+			"properties": map[string]any{"blob": map[string]any{"description": "anything"}},
+		},
+		"open object": {
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": true,
+		},
+	}
+	entries := map[string]func(map[string]any) error{
+		"NewRawTool": func(s map[string]any) error {
+			_, err := NewRawTool("raw", "", s, nil)
+			return err
+		},
+		"NewDynamicOutputSchema": func(s map[string]any) error {
+			return outputSchemaError(NewDynamicOutputSchema("out", s, true))
+		},
+	}
+	for schemaName, schema := range schemas {
+		for entry, build := range entries {
+			t.Run(entry+"/"+schemaName, func(t *testing.T) {
+				err := build(schema)
+				if err == nil {
+					t.Fatal("expected a strict-normalization failure")
+				}
+				// These callers handed in a schema, not a Go type: pointing them
+				// at NewToolNonStrict / OutputTypeNonStrict alone would name two
+				// constructors they cannot use.
+				if !strings.Contains(err.Error(), "turn strict off where this schema was built") {
+					t.Errorf("advice must fit an entry point that takes a schema: %q", err)
+				}
+			})
+		}
 	}
 }

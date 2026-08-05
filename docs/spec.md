@@ -1692,7 +1692,7 @@ Defaults that callers may depend on:
 | Setting | Default | Note |
 |---|---|---|
 | `MaxTurns` | 10 | `MaxTurnsUnlimited` (-1) disables it |
-| Strict schemas | on | Chaining `NonStrict()` relaxes both the advertised schema and local validation, atomically |
+| Strict schemas | on | Chaining `NonStrict()` relaxes both the advertised schema and local validation, atomically — but only on a tool that got built; an argument type strict mode cannot express at all needs `NewToolNonStrict` ([§5.11](#511-construction-errors-split-by-data-provenance)) |
 | Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
@@ -1962,6 +1962,20 @@ constructors chainable inside `Agent{Tools: []Tool{...}}` literals.
 `NewRawTool` takes a schema that is data (loaded from a database or
 config), so a bad schema is an expected input, not a bug: it returns
 `(*Tool, error)`.
+
+One of those failures is a shape rather than a bug: strict mode cannot express
+an `any`/`interface{}` field or a map with arbitrary keys **at all**.
+`Tool.NonStrict` does not rescue it — it relaxes a tool that already exists,
+while the strict schema is generated during construction — so `NewTool` has a
+non-strict twin, `NewToolNonStrict`, mirroring the `OutputType` /
+`OutputTypeNonStrict` pair. `AgentAsTool` has no such twin: its schema is
+hard-wired strict. That is a recorded gap, not a decision — no caller has
+needed an unconstrained field in a nested run's arguments yet, and until one
+does the way out is building the `Tool` value directly. The normalization
+errors phrase their advice accordingly: they say to turn strict off *where the
+schema was built*, and name the constructors only as the Go-type example,
+because the same message is reached from `NewRawTool` and
+`NewDynamicOutputSchema`, where the switch is elsewhere.
 
 The earlier design — returning a tool that errors on every invocation, surfaced
 by the runner before the first model call — deferred a deterministic bug to
