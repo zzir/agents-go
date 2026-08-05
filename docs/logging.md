@@ -100,7 +100,7 @@ time looks identical to one that answered first time.
 | `stream_error` | A stream broke after emitting, so it could not be retried. Retry and fallback each record one for the same break — `attempt` names the attempt, `used_index` the backend |
 | `tool_panic` | A tool panicked and was recovered |
 | `tool_timeout` | A tool hit its deadline |
-| `compaction_failed` | A compaction pass failed; the run continued uncompacted |
+| `compaction_failed` | A compaction pass failed; the run continued uncompacted. `details.point` names the moment — a `CompactionPoint`, or `overflow_recovery` for a session write that abandoned an overflow recovery |
 | `response_truncated` | A response was cut off and its tool calls refused |
 
 With a [Session](sessions.md), each diagnostic is stored on the entry for the

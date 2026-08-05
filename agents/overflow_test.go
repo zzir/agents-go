@@ -231,6 +231,61 @@ func TestOverflow_RetryKeepsInjectedInput(t *testing.T) {
 	}
 }
 
+// A policy on its own recovers nothing: with no Compactor at this point and a
+// storage that does not compact itself, there is no pass to prepare for. The
+// write the two recovery paths need would only mark a drained steer delivered
+// on the way to reporting the overflow, spending a rollback the failed run is
+// about to want.
+func TestOverflow_NoRecoveryPathWritesNothing(t *testing.T) {
+	const steer = "and check the date"
+	sess := seededSession(t, "old")
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "result", nil
+	})
+	model := &scriptedOverflowModel{steps: []*ModelResponse{
+		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
+		nil, // the turn the steer rides on overflows, and nothing can shrink it
+	}}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
+
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: sess},
+		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 3}},
+	})
+	var failed error
+	for ev, err := range stream {
+		if err != nil {
+			failed = err
+			continue
+		}
+		if it, ok := ev.(*RunItemStreamEvent); ok && it.Item.Kind == ItemToolCall {
+			if serr := ctrl.Steer(steer); serr != nil {
+				t.Fatal(serr)
+			}
+		}
+	}
+	if failed == nil {
+		t.Fatal("expected the overflow to be reported")
+	}
+	if model.calls != 2 {
+		t.Errorf("model calls = %d, want 2 — nothing could shrink the context", model.calls)
+	}
+	// The take never became durable, so it is back in the queue for a retrying
+	// middleware to deliver rather than counted as said and never heard.
+	if got := ctrl.Pending().Steer; len(got) != 1 || session.ItemText(got[0]) != steer {
+		t.Errorf("the undelivered steer was not rolled back: %+v", ctrl.Pending())
+	}
+	entries, err := sess.Entries(context.Background(), session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if in, ierr := e.InputItem(); ierr == nil && session.ItemText(in) == steer {
+			t.Error("the steer was written by a recovery that never happened")
+		}
+	}
+}
+
 // selfCompactingStorage is a session.CompactionAware storage whose forced pass drops
 // the oldest `drop` entries. Non-forced calls (after-run housekeeping) are
 // recorded but do nothing, so the test isolates the overflow path.
@@ -327,12 +382,14 @@ func TestOverflow_StorageNoopBuysNoRetry(t *testing.T) {
 // the pass longer than it started rather than shorter.
 type abandoningStorage struct {
 	session.Storage
+	passes int
 }
 
 func (s *abandoningStorage) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	if !args.Force {
 		return nil
 	}
+	s.passes++
 	entries, err := session.NewItemEntries(InputItemsFromText("arrived mid-pass"), Source{Type: SourceUser})
 	if err != nil {
 		return err
@@ -362,9 +419,134 @@ func TestOverflow_StorageAbandonedPassBuysNoRetry(t *testing.T) {
 	}
 }
 
-// summarizingStorage's forced pass swaps every entry for a shorter summary and
-// leaves the COUNT alone — one summary standing in for one entry, which is a
-// legal pass.
+// A window hides growth perfectly: the appended entry pushes the oldest one out
+// of it, so the read comes back the same LENGTH and a length guard sees a
+// context that held still where one actually grew. Every retry it buys costs a
+// real compaction call as well as a model call.
+func TestOverflow_StorageAbandonedPassBuysNoRetryUnderAWindow(t *testing.T) {
+	st := &abandoningStorage{Storage: session.NewInMemoryStorage("test")}
+	if err := st.Append(context.Background(), mustItemEntries(t, "one", "two")...); err != nil {
+		t.Fatal(err)
+	}
+	model := &overflowingModel{failures: 5}
+	agent := &Agent{Name: "a", ModelImpl: model}
+	_, err := RunSync(context.Background(), agent, "now", RunOptions{
+		Conversation: ConversationOptions{
+			Session: session.NewSession(st),
+			// Two entries is all the model ever sees, and the log already holds
+			// that many: the window is saturated before the first pass runs.
+			Settings: &session.Settings{Limit: 2},
+		},
+		Exec: ExecOptions{Overflow: OverflowPolicy{MaxRetries: 3}},
+	})
+	if err == nil {
+		t.Fatal("expected the overflow to be reported")
+	}
+	if model.calls != 1 {
+		t.Errorf("model calls = %d, want 1 — a saturated window must not hide the growth", model.calls)
+	}
+	if st.passes != 1 {
+		t.Errorf("forced passes = %d, want 1 — each extra retry spends a compaction call too", st.passes)
+	}
+}
+
+// rewritingStorage models the self-compacting storage that answers with a
+// REPLACEMENT rather than a decision — openai.CompactionSession's shape, which
+// builds the replacement from the server's own response chain. Nothing produced
+// locally is on that chain, so everything in the log at the moment of the pass
+// is deleted by it.
+type rewritingStorage struct {
+	session.Storage
+}
+
+func (s *rewritingStorage) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
+	if !args.Force {
+		return nil
+	}
+	entries, err := session.NewItemEntries(InputItemsFromText("summary"), Source{Type: SourceCompaction})
+	if err != nil {
+		return err
+	}
+	if err := s.Clear(ctx); err != nil {
+		return err
+	}
+	return s.Append(ctx, entries...)
+}
+
+// The same steer as TestOverflow_RetryKeepsInjectedInput, on the other recovery
+// path — the one whose pass rewrites the log instead of projecting it. Flushing
+// first is what the Compactor path needs and exactly what this one cannot
+// survive: the steer would be written, counted delivered by that write, and
+// then deleted by the replacement, with nothing left in flight to roll back.
+// The pass therefore runs first and the write lands on top of it.
+func TestOverflow_StorageRecoveryKeepsInjectedInput(t *testing.T) {
+	const steer = "and check the date"
+	st := &rewritingStorage{Storage: session.NewInMemoryStorage("test")}
+	if err := st.Append(context.Background(), mustItemEntries(t, strings.Repeat("history ", 32))...); err != nil {
+		t.Fatal(err)
+	}
+	sess := session.NewSession(st)
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "result", nil
+	})
+	model := &scriptedOverflowModel{steps: []*ModelResponse{
+		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
+		nil, // the turn the steer rides on overflows
+		modelResp(messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
+
+	// No Compactor: a self-compacting storage is the whole recovery here.
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: sess},
+		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 2}},
+	})
+	var res *RunResult
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if it, ok := ev.(*RunItemStreamEvent); ok && it.Item.Kind == ItemToolCall {
+			if serr := ctrl.Steer(steer); serr != nil {
+				t.Fatal(serr)
+			}
+		}
+		if done, ok := ev.(*RunCompletedEvent); ok {
+			res = done.Result
+		}
+	}
+	if res == nil || res.FinalOutputString() != "done" {
+		t.Fatalf("the run did not survive the overflow: %+v", res)
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("model calls = %d, want 3 (the turn, its overflow, the retry)", len(model.reqs))
+	}
+	if got := inputTexts(model.reqs[2].Input); !strings.Contains(got, steer) {
+		t.Errorf("the retry lost the steer: %s", got)
+	}
+	// Written, and still there: a steer the run counted as delivered has to
+	// have a durable home, and a replacement that deletes it is not one.
+	if !ctrl.Pending().Empty() {
+		t.Errorf("the delivered steer is still queued: %+v", ctrl.Pending())
+	}
+	entries, err := sess.Entries(context.Background(), session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := 0
+	for _, e := range entries {
+		if in, ierr := e.InputItem(); ierr == nil && session.ItemText(in) == steer {
+			stored++
+		}
+	}
+	if stored != 1 {
+		t.Errorf("the steer is in the log %d times, want 1", stored)
+	}
+}
+
+// summarizingStorage's forced pass swaps every entry for a genuinely shorter
+// summary and leaves the COUNT alone — one summary standing in for one entry,
+// which is a legal pass.
 type summarizingStorage struct {
 	session.Storage
 }
@@ -391,12 +573,14 @@ func (s *summarizingStorage) RunCompaction(ctx context.Context, args session.Com
 	return s.Append(ctx, replacement...)
 }
 
-// Length is not the test on this path either: a pass that returns the same
-// COUNT with shorter content really did shrink the context, and reading that as
-// a no-op would throw away a recovery the storage just performed.
+// The entry COUNT is not the test on this path: a pass that returns the same
+// number of entries with shorter content really did shrink the context, and
+// reading that as a no-op would throw away a recovery the storage just
+// performed.
 func TestOverflow_StorageSameCountSummaryBuysRetry(t *testing.T) {
 	st := &summarizingStorage{Storage: session.NewInMemoryStorage("test")}
-	if err := st.Append(context.Background(), mustItemEntries(t, "one", "two")...); err != nil {
+	long := strings.Repeat("a long stretch of conversation ", 8)
+	if err := st.Append(context.Background(), mustItemEntries(t, long+"one", long+"two")...); err != nil {
 		t.Fatal(err)
 	}
 	model := &overflowingModel{failures: 1, answer: modelResp(messageOutput(t, "recovered"))}

@@ -785,16 +785,31 @@ cannot otherwise survive.
   overflow.
 - Retries are counted **across the run**, not per turn: a run that overflows
   every turn is not recovering, it is looping.
-- **Recovery flushes the session before it rebuilds.** The save point writes
-  first and drains the injection queue after, so a steer taken there is in
-  memory only — and recovery rebuilds the turn's context from the log, throwing
-  the in-flight items away. Overflow recovery therefore persists the turn so far
-  before it compacts; without that the retry hands the model a conversation the
-  caller's words never reached, while the next write past their mark still
-  counts them delivered ([§2.11b](#211b-run-control-)). The write obeys the usual
-  boundary — a batch ending in a call without its output stays held back — and a
-  write that FAILS abandons the recovery: the run reports the overflow, and the
-  take stays in flight for the rollback to re-queue.
+- **Recovery writes the turn to the session, on the side of the pass the pass
+  can survive.** The save point writes first and drains the injection queue
+  after, so a steer taken there is in memory only — and recovery rebuilds the
+  turn's context from the log, throwing the in-flight items away. The write
+  therefore has to happen, or the retry hands the model a conversation the
+  caller's words never reached while the next write past their mark still
+  counts them delivered ([§2.11b](#211b-run-control-)). **When** it happens is
+  decided by which recovery applies, and the two want opposite answers. A
+  `Compactor` reads the log and returns a projection of it, so the turn has to
+  be IN the log before the pass runs. A `CompactionAware` storage may answer
+  with a replacement built from its own response chain — nothing produced
+  locally is on that chain — so a write made first is a write the pass deletes:
+  stored, counted delivered by that very write, then gone, with nothing left in
+  flight to roll back. That path writes after the pass and reads the log once
+  more, so the turn stands on top of the compacted history. Which path applies
+  is decided up front, from whether the storage compacts itself, rather than by
+  trying one and falling through.
+- The write obeys the usual boundary — a batch ending in a call without its
+  output stays held back — and a write that FAILS abandons the recovery: the
+  run reports the overflow, the failure is recorded as a `compaction_failed`
+  diagnostic so the caller sees WHY it was not recovered from, and the take
+  stays in flight for the rollback to re-queue. A run with no recovery
+  available at all — no `Compactor` at this point and a storage that does not
+  compact itself — writes nothing: there is no pass to prepare for, and the
+  write would only spend the rollback the failing run is about to want.
 - **A self-compacting storage recovers too.** With no run-level Compactor (or
   with one standing aside because the storage is `CompactionAware`), overflow
   recovery calls the storage's `RunCompaction` with `Force: true` and rebuilds
@@ -802,11 +817,21 @@ cannot otherwise survive.
   trigger normally decides when to compact and an overflow is the one moment
   that question has already been answered — by the provider. The no-op rule
   carries over, sharpened by the abandonment this path can suffer: a forced pass
-  buys a retry only if the history came back **changed and no longer than it
-  was**. Same count with shorter content is a legal pass — one summary standing
-  in for one entry — but a storage that abandons its replacement because
-  something was appended mid-pass leaves the log different AND longer, which is
-  not progress.
+  buys a retry only if the context came back **weighing strictly less** — the
+  summed byte length of the entries' stored bodies, over the same windowed read
+  the model is handed. Neither the entry count nor "did anything change" can
+  decide it. The read is windowed (`Conversation.Settings.Limit`), and a
+  saturated window hides growth perfectly: a storage that abandons its
+  replacement because something was appended mid-pass leaves one extra entry
+  behind, which pushes the oldest out of the window and comes back the same
+  LENGTH — while that same append is exactly what makes the history "changed".
+  Weight sees both, and still allows the case a count was there to allow: the
+  same number of entries with genuinely shorter content, one summary standing in
+  for one entry, is a real compaction. An unchanged history weighs what it
+  weighed, so demanding strictly less rules the no-op out on its own. Bytes are
+  a proxy for tokens, and deliberately a conservative one: a pass whose result
+  does not weigh less costs a retry the run would have spent on a request that
+  already failed.
 - Detection matches the provider's message, because that is all a context
   overflow arrives as — a 400 with prose in it. Treating every 400 as an
   overflow would compact and retry after a malformed request, hiding a bug
