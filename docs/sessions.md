@@ -112,6 +112,11 @@ Two things it fixes:
 - **`Hidden` marks a session that serves another one** — a background task's
   private history. Listings exclude them by default, so every caller stops
   maintaining that filter and stops forgetting it.
+- **Every backend answers a listing the same way** — newest change first, cut
+  to `Cursor.Limit` after the hidden filter, a limit that is not positive
+  meaning no limit. `agentstest.RepoConformance` holds all four to it, so
+  moving from the in-memory repo to SQL does not quietly change which
+  conversations a sidebar shows.
 
 **Opening a session that does not exist is an error**, never an empty one:
 `session.ErrNotFound`. A typo in an id would otherwise look like a fresh

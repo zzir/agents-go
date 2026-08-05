@@ -97,7 +97,7 @@ time looks identical to one that answered first time.
 |---|---|
 | `model_retry` | A model call failed and was retried |
 | `model_fallback` | A backup model or provider answered |
-| `stream_error` | A stream broke after emitting, so it could not be retried |
+| `stream_error` | A stream broke after emitting, so it could not be retried. Retry and fallback each record one for the same break — `attempt` names the attempt, `used_index` the backend |
 | `tool_panic` | A tool panicked and was recovered |
 | `tool_timeout` | A tool hit its deadline |
 | `compaction_failed` | A compaction pass failed; the run continued uncompacted |

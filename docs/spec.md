@@ -624,6 +624,13 @@ next backend will answer differently.
   time.
 - **A session's metadata and the listing's are the same answer**, read through
   one path. *Shared.*
+- **A listing is that record's order, newest first**, and `Cursor.Limit` cuts
+  it from the newest end, after the hidden filter — a background task's
+  transcript must not eat a slot the caller asked for. A limit that is not
+  positive is no limit; `Cursor`'s other reading of a negative one belongs to
+  entry cursors, which have an oldest end to take from. Sessions sharing a
+  time may come back in either order. *Shared contract
+  (`agentstest.RepoConformance`); ordering per backend.*
 
 #### What must be one step
 
@@ -2086,7 +2093,10 @@ Three rules govern a stream that dies before its terminal event:
   span and a `DiagModelRetry` diagnostic as the only trace of the failed
   attempt. Pending events are flushed when the attempt turns out to be the
   stream's last word — the first output event commits it (from there, errors
-  pass through, recorded as `DiagStreamError`), and a clean all-pending
+    pass through, recorded as `DiagStreamError` by every decorator that saw
+  them — the retry naming the attempt it could not repeat, the fallback the
+  backend it could not leave, so a nested chain accounts for one break once
+  per layer), and a clean all-pending
   finish or a terminal failure delivers them before the verdict. A nil event
   neither commits nor buffers (dropped, as the runner does), and a consumer
   that stops mid-flush ends everything — no further events, no diagnostics.
