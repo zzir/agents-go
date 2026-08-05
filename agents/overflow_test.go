@@ -457,12 +457,17 @@ func TestOverflow_StorageAbandonedPassBuysNoRetryUnderAWindow(t *testing.T) {
 // is deleted by it.
 type rewritingStorage struct {
 	session.Storage
+	// offChain records what each forced pass was told about items the response
+	// chain never carried, since that is what decides whether such a storage
+	// may build its replacement from the chain at all.
+	offChain []bool
 }
 
 func (s *rewritingStorage) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	if !args.Force {
 		return nil
 	}
+	s.offChain = append(s.offChain, args.OffChainItems)
 	entries, err := session.NewItemEntries(InputItemsFromText("summary"), Source{Type: SourceCompaction})
 	if err != nil {
 		return err
@@ -636,5 +641,48 @@ func TestDetectContextOverflow(t *testing.T) {
 		if got := DetectContextOverflow(tc.err); got != tc.want {
 			t.Errorf("DetectContextOverflow(%v) = %v, want %v", tc.err, got, tc.want)
 		}
+	}
+}
+
+// The forced pass on the overflow path is told about items the response chain
+// never carried, exactly as the after-run pass is. A steer drained at the save
+// point is in the log and in no model request, so a storage that rebuilds from
+// the chain would answer with a replacement that deletes it — the silent loss
+// the flag exists to prevent.
+func TestOverflow_StorageRecoveryReportsOffChainItems(t *testing.T) {
+	st := &rewritingStorage{Storage: session.NewInMemoryStorage("test")}
+	if err := st.Append(context.Background(), mustItemEntries(t, strings.Repeat("history ", 32))...); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		return "result", nil
+	})
+	model := &scriptedOverflowModel{steps: []*ModelResponse{
+		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
+		nil, // the turn the steer rides on overflows
+		modelResp(messageOutput(t, "done")),
+	}}
+	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
+
+	stream, ctrl := Run(context.Background(), agent, "go", RunOptions{
+		Conversation: ConversationOptions{Session: session.NewSession(st)},
+		Exec:         ExecOptions{Overflow: OverflowPolicy{MaxRetries: 2}},
+	})
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if it, ok := ev.(*RunItemStreamEvent); ok && it.Item.Kind == ItemToolCall {
+			if serr := ctrl.Steer("and check the date"); serr != nil {
+				t.Fatal(serr)
+			}
+		}
+	}
+	if len(st.offChain) != 1 {
+		t.Fatalf("forced passes = %d, want 1", len(st.offChain))
+	}
+	if !st.offChain[0] {
+		t.Error("the forced pass was told the chain covers the whole log, " +
+			"while the log held a steer no model call had seen")
 	}
 }
