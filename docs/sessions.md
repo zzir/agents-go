@@ -302,6 +302,11 @@ agents.Run(ctx, agent, "…", agents.RunOptions{
 `compaction.ContextWindowStrategy` derives both thresholds from the model's own
 limits, so you do not have to pick numbers that depend on the model anyway.
 
+`TruncationStrategy` drops from the oldest end but skips system groups whatever
+their age, since instructions apply to the whole conversation rather than to the
+turn that carried them. Set `DropSystem: true` to drop them too — appropriate
+when the instructions are re-sent on every run anyway.
+
 **Nothing is deleted.** A strategy marks groups excluded and may leave a folded
 summary behind; the stored log stays whole, and the context the model sees is a
 projection of it. That is what lets a compacted session still be forked, read

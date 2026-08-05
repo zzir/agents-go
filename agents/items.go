@@ -20,6 +20,11 @@ type (
 	// Responses format.
 	OutputItem = responses.ResponseOutputItemUnion
 
+	// FunctionToolCall is the function-call view of an output item, in OpenAI
+	// Responses format: the tool name, its JSON arguments and the call ID that
+	// ties it to its output.
+	FunctionToolCall = responses.ResponseFunctionToolCall
+
 	// ResponseStreamEvent is a single streaming event from the Responses API.
 	ResponseStreamEvent = responses.ResponseStreamEventUnion
 )

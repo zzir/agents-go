@@ -241,9 +241,9 @@ func (i *RunItem) refusal() string {
 
 // FunctionCall returns the underlying function tool call view, for
 // ItemToolCall and ItemHandoffCall. It is the zero value for other kinds.
-func (i *RunItem) FunctionCall() responses.ResponseFunctionToolCall {
+func (i *RunItem) FunctionCall() FunctionToolCall {
 	if i.Raw == nil {
-		return responses.ResponseFunctionToolCall{}
+		return FunctionToolCall{}
 	}
 	return i.Raw.AsFunctionCall()
 }

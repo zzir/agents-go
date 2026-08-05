@@ -134,6 +134,19 @@ func TestTruncationStrategy_KeepsSystemContent(t *testing.T) {
 	}
 }
 
+// The opt-out: a caller whose instructions are re-sent every run (the agent's
+// own Instructions are, for one) does not need the stored copy kept alive.
+func TestTruncationStrategy_DropSystemOptsOut(t *testing.T) {
+	idx := NewIndex(conversation(t), nil)
+	s := &TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1, DropSystem: true}
+	if _, err := s.Compact(context.Background(), idx); err != nil {
+		t.Fatal(err)
+	}
+	if got := projected(t, idx); strings.Contains(got, "be brief") {
+		t.Errorf("DropSystem did not drop the system instructions:\n%s", got)
+	}
+}
+
 // Order is the design: fold tool output before dropping content, because the
 // first is free and the second is not.
 func TestPipeline_TriesTheCheapThingFirst(t *testing.T) {

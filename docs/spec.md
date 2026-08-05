@@ -2264,13 +2264,12 @@ purely additive bump.
 ### 6.1 What a v1.0.0 promise means while openai-go's major can move
 
 §5.5 makes the Responses wire types the canonical format, and §5.5b accepts that
-they therefore appear in nearly every exported signature by way of `InputItem`,
-`OutputItem` and `ResponseStreamEvent`. Both decisions stand. What neither
-records is the consequence for §5.8: **a `openai-go` v3 → v4 bump is
-transitively breaking for every downstream package**, not just for this one.
-Their function signatures name those aliased types, so their code stops
-compiling on the day this module's `go.mod` moves — a break this SDK causes but
-does not author.
+they therefore appear in nearly every exported signature by way of `InputItem`
+and friends. Both decisions stand. What neither records is the consequence for
+§5.8: **an `openai-go` v3 → v4 bump is transitively breaking for every
+downstream package**, not just for this one. Their function signatures name
+those aliased types, so their code stops compiling on the day this module's
+`go.mod` moves — a break this SDK causes but does not author.
 
 That is survivable before v1.0.0, where §5.8 already allows breaking minors. It
 is the question after: a v1 that promises compatibility is implicitly promising

@@ -220,10 +220,11 @@ type TruncationStrategy struct {
 	Target  Trigger
 	// MinimumPreservedGroups keeps this many groups at the end. Defaults to 2.
 	MinimumPreservedGroups int
-	// PreserveSystem keeps system groups regardless of age, since instructions
-	// apply to the whole conversation rather than to the turn that carried
-	// them. Defaults to true.
-	PreserveSystem *bool
+	// DropSystem lets truncation drop system groups too. The zero value keeps
+	// them regardless of age, since instructions apply to the whole
+	// conversation rather than to the turn that carried them — the field is
+	// named for the opt-out so that the useful default is the zero value.
+	DropSystem bool
 }
 
 // Compact implements Strategy.
@@ -235,7 +236,7 @@ func (s *TruncationStrategy) Compact(_ context.Context, idx *Index) (bool, error
 	if preserve <= 0 {
 		preserve = 2
 	}
-	keepSystem := s.PreserveSystem == nil || *s.PreserveSystem
+	keepSystem := !s.DropSystem
 
 	changed := false
 	limit := len(idx.Groups) - preserve
