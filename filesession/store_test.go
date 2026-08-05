@@ -1,4 +1,4 @@
-package memory
+package filesession
 
 import (
 	"context"
@@ -11,20 +11,20 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-func TestFileSession_RoundTrip(t *testing.T) {
+func TestStore_RoundTrip(t *testing.T) {
 	ctx := context.Background()
-	sess, err := NewFileSession(t.TempDir(), "conv-1")
+	store, err := New(t.TempDir(), "conv-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	items := agents.InputItemsFromText("hello")
 	items = append(items, agents.InputItemsFromText("world")...)
-	if err := session.NewSession(sess).AppendItems(ctx, items, agents.Source{}); err != nil {
+	if err := session.NewSession(store).AppendItems(ctx, items, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	got, err := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	}
 
 	// Limit returns the most recent N, oldest-first.
-	last, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{Limit: -1})
+	last, err := session.NewSession(store).ContextItems(ctx, session.Cursor{Limit: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	}
 
 	// Pop removes the most recent.
-	popped, err := sess.PopEntry(ctx)
+	popped, err := store.PopEntry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,26 +56,26 @@ func TestFileSession_RoundTrip(t *testing.T) {
 	if popped == nil || poppedItem.OfMessage.Content.OfString.Value != "world" {
 		t.Errorf("popped = %+v", popped)
 	}
-	remaining, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	remaining, _ := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if len(remaining) != 1 {
 		t.Errorf("after pop: %d items, want 1", len(remaining))
 	}
 
 	// Clear empties the session.
-	if err := sess.Clear(ctx); err != nil {
+	if err := store.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
-	empty, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	empty, _ := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if len(empty) != 0 {
 		t.Errorf("after clear: %d items, want 0", len(empty))
 	}
 }
 
-func TestFileSession_PersistsAcrossInstances(t *testing.T) {
+func TestStore_PersistsAcrossInstances(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	a, err := NewFileSession(dir, "user-1")
+	a, err := New(dir, "user-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestFileSession_PersistsAcrossInstances(t *testing.T) {
 	}
 
 	// A fresh instance pointing at the same dir/session must see the history.
-	b, err := NewFileSession(dir, "user-1")
+	b, err := New(dir, "user-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +94,11 @@ func TestFileSession_PersistsAcrossInstances(t *testing.T) {
 	}
 }
 
-func TestFileSession_IsolationBySessionID(t *testing.T) {
+func TestStore_IsolationBySessionID(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	a, _ := NewFileSession(dir, "a")
-	b, _ := NewFileSession(dir, "b")
+	a, _ := New(dir, "a")
+	b, _ := New(dir, "b")
 
 	if err := session.NewSession(a).AppendItems(ctx, agents.InputItemsFromText("for-a"), agents.Source{}); err != nil {
 		t.Fatal(err)
@@ -109,10 +109,10 @@ func TestFileSession_IsolationBySessionID(t *testing.T) {
 	}
 }
 
-func TestFileSession_PopOnEmpty(t *testing.T) {
+func TestStore_PopOnEmpty(t *testing.T) {
 	ctx := context.Background()
-	sess, _ := NewFileSession(t.TempDir(), "empty")
-	item, err := sess.PopEntry(ctx)
+	store, _ := New(t.TempDir(), "empty")
+	item, err := store.PopEntry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,10 +126,10 @@ func TestFileSession_PopOnEmpty(t *testing.T) {
 // So a pop on a file with a corrupt line REFUSES (spec §2.5e2: reading what is
 // being removed and removing it are one step), and the file — corrupt line
 // included — stays exactly as it was.
-func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
+func TestStore_PopRefusesOnCorruptLine(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	sess, err := NewFileSession(dir, "corrupt")
+	store, err := New(dir, "corrupt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, entries...); err != nil {
+	if err := store.Append(ctx, entries...); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,10 +158,10 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := sess.PopEntry(ctx); err == nil {
+	if _, err := store.PopEntry(ctx); err == nil {
 		t.Fatal("pop on a corrupt file succeeded; it would have silently destroyed the corrupt line")
 	}
-	if _, err := sess.PopItem(ctx); err == nil {
+	if _, err := store.PopItem(ctx); err == nil {
 		t.Fatal("item pop on a corrupt file succeeded; it would have silently destroyed the corrupt line")
 	}
 
@@ -175,7 +175,7 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 
 	// Reading stays lenient: one bad record must not make the session
 	// unreadable, and nothing is destroyed by a read.
-	got, err := sess.Entries(ctx, session.Cursor{})
+	got, err := store.Entries(ctx, session.Cursor{})
 	if err != nil || len(got) != 2 {
 		t.Fatalf("lenient read after corruption: %d entries, err=%v", len(got), err)
 	}
@@ -185,9 +185,9 @@ func TestFileSession_PopRefusesOnCorruptLine(t *testing.T) {
 // is a marker rather than a node, so the tip it names is its TARGET — reading
 // the marker itself as the tip would parent the next entry on the switch, and
 // the branch the caller switched to would end there.
-func TestFileSession_AppendLinksToALeafMoveTarget(t *testing.T) {
+func TestStore_AppendLinksToALeafMoveTarget(t *testing.T) {
 	ctx := context.Background()
-	sess, err := NewFileSession(t.TempDir(), "branch")
+	store, err := New(t.TempDir(), "branch")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,14 +199,14 @@ func TestFileSession_AppendLinksToALeafMoveTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, first...); err != nil {
+	if err := store.Append(ctx, first...); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, second...); err != nil {
+	if err := store.Append(ctx, second...); err != nil {
 		t.Fatal(err)
 	}
 
-	stored, err := sess.Entries(ctx, session.Cursor{})
+	stored, err := store.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,18 +220,18 @@ func TestFileSession_AppendLinksToALeafMoveTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, move); err != nil {
+	if err := store.Append(ctx, move); err != nil {
 		t.Fatal(err)
 	}
 	third, err := session.NewItemEntries(agents.InputItemsFromText("three"), agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, third...); err != nil {
+	if err := store.Append(ctx, third...); err != nil {
 		t.Fatal(err)
 	}
 
-	stored, err = sess.Entries(ctx, session.Cursor{})
+	stored, err = store.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,10 +254,10 @@ func TestFileSession_AppendLinksToALeafMoveTarget(t *testing.T) {
 
 // Reads skip a line they cannot decode; the tip read must skip it the same way,
 // or an append lands parented on nothing and starts a second root.
-func TestFileSession_AppendSkipsACorruptLastLine(t *testing.T) {
+func TestStore_AppendSkipsACorruptLastLine(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	sess, err := NewFileSession(dir, "corrupt-tail")
+	store, err := New(dir, "corrupt-tail")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,10 +265,10 @@ func TestFileSession_AppendSkipsACorruptLastLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, first...); err != nil {
+	if err := store.Append(ctx, first...); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := sess.Entries(ctx, session.Cursor{})
+	stored, err := store.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,10 +289,10 @@ func TestFileSession_AppendSkipsACorruptLastLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, second...); err != nil {
+	if err := store.Append(ctx, second...); err != nil {
 		t.Fatal(err)
 	}
-	stored, err = sess.Entries(ctx, session.Cursor{})
+	stored, err = store.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,9 +309,9 @@ func TestFileSession_AppendSkipsACorruptLastLine(t *testing.T) {
 // — PrepareAppend tolerates the decode failure — so the tip read has to walk
 // past it too, or the next append starts a second, detached root and the branch
 // walk returns that entry alone.
-func TestFileSession_AppendSkipsAnUndecodableLeafMove(t *testing.T) {
+func TestStore_AppendSkipsAnUndecodableLeafMove(t *testing.T) {
 	ctx := context.Background()
-	sess, err := NewFileSession(t.TempDir(), "bad-leaf-tail")
+	store, err := New(t.TempDir(), "bad-leaf-tail")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,28 +319,28 @@ func TestFileSession_AppendSkipsAnUndecodableLeafMove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, first...); err != nil {
+	if err := store.Append(ctx, first...); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := sess.Entries(ctx, session.Cursor{})
+	stored, err := store.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rootID := stored[0].ID
 
 	// Built by hand rather than through NewLeafEntry, so it carries no payload.
-	if err := sess.Append(ctx, session.Entry{Kind: session.EntryKindLeaf}); err != nil {
+	if err := store.Append(ctx, session.Entry{Kind: session.EntryKindLeaf}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := session.NewItemEntries(agents.InputItemsFromText("two"), agents.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(ctx, second...); err != nil {
+	if err := store.Append(ctx, second...); err != nil {
 		t.Fatal(err)
 	}
 
-	stored, err = sess.Entries(ctx, session.Cursor{})
+	stored, err = store.Entries(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,13 +377,13 @@ func TestSanitizeSessionID(t *testing.T) {
 // Two instances opened on the same path must share a lock: concurrent
 // AddItems (O_APPEND) and PopItem (read+rename) from separate instances used
 // to drop appended lines silently.
-func TestFileSession_ConcurrentInstancesShareLock(t *testing.T) {
+func TestStore_ConcurrentInstancesShareLock(t *testing.T) {
 	dir := t.TempDir()
-	a, err := NewFileSession(dir, "shared")
+	a, err := New(dir, "shared")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := NewFileSession(dir, "shared")
+	b, err := New(dir, "shared")
 	if err != nil {
 		t.Fatal(err)
 	}

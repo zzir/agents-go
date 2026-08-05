@@ -1,4 +1,4 @@
-package memory
+package filesession
 
 import (
 	"context"
@@ -62,8 +62,8 @@ func (r *Repo) sidecarPath(id string) string {
 // The generation is part of the NAME, so a session and the one that replaced it
 // are two files and no code path can reach the wrong one by holding an id. The
 // direct scope — an empty generation — is <id>.jsonl, which is exactly what
-// NewFileSession(dir, id) opens, and is also where a session stored before
-// generations existed already is.
+// [New] names, and is also where a session stored before generations existed
+// already is.
 func (r *Repo) entriesPath(ref session.Ref) string {
 	name := sanitizeSessionID(ref.ID)
 	if !ref.IsDirect() {
@@ -74,19 +74,19 @@ func (r *Repo) entriesPath(ref session.Ref) string {
 
 // session builds the storage for a ref, decorated with the sidecar's metadata.
 func (r *Repo) session(meta sidecar) (*session.Session, error) {
-	fs, err := OpenFileSession(r.entriesPath(meta.ref()))
+	store, err := NewAtPath(r.entriesPath(meta.ref()))
 	if err != nil {
 		return nil, err
 	}
-	return session.NewSession(&repoStorage{FileSession: fs, repo: r, meta: meta}), nil
+	return session.NewSession(&repoStorage{Store: store, repo: r, meta: meta}), nil
 }
 
 // repoStorage is a repo session's storage: the entries file plus the sidecar.
 //
-// The FileSession alone cannot answer Metadata — title, hidden and created-at
-// live in the sidecar it knows nothing about — so a session opened through the
-// repo used to lose them, and the listing and the opened session gave two
-// different answers about the same session. This wrapper is the one path (spec
+// The Store alone cannot answer Metadata — title, hidden and created-at live in
+// the sidecar it knows nothing about — so a session opened through the repo
+// used to lose them, and the listing and the opened session gave two different
+// answers about the same session. This wrapper is the one path (spec
 // §2.5e2, "the change record"): Metadata merges the sidecar in, and every
 // successful mutation stamps the sidecar's updated_at.
 //
@@ -95,7 +95,7 @@ func (r *Repo) session(meta sidecar) (*session.Session, error) {
 // staying quiet is listing order, while what is lost by reporting is a write
 // that in fact succeeded.
 type repoStorage struct {
-	*FileSession
+	*Store
 	repo *Repo
 	// meta is the sidecar as of when the handle was BUILT. A handle is bound
 	// then, not on first use: after a delete-and-recreate under the same id,
@@ -105,11 +105,10 @@ type repoStorage struct {
 	meta sidecar
 }
 
-// Every write in these capabilities is overridden below. The embedded
-// FileSession promotes its own, and a promoted write is one that never took the
-// repo lock and never proved the session still exists — a capability added to
-// FileSession lands here on its own, so this list is the reminder to follow it
-// with an override.
+// Every write in these capabilities is overridden below. The embedded Store
+// promotes its own, and a promoted write is one that never took the repo lock
+// and never proved the session still exists — a capability added to Store lands
+// here on its own, so this list is the reminder to follow it with an override.
 var (
 	_ session.Storage         = (*repoStorage)(nil)
 	_ session.AtomicReplacer  = (*repoStorage)(nil)
@@ -123,9 +122,8 @@ var (
 // unserialized, a delete raced a live handle's append and the append recreated
 // the just-removed entries file as an orphan no listing reaches and no Delete
 // can ever remove — and a metadata stamp's read-modify-write could resurrect a
-// deleted sidecar wholesale. Distinct from the FileSession's own per-path lock
-// (repo lock is taken first; the file lock nests inside), so the two never
-// deadlock.
+// deleted sidecar wholesale. Distinct from the Store's own per-path lock (repo
+// lock is taken first; the file lock nests inside), so the two never deadlock.
 func (r *Repo) lockKey(id string) string {
 	return lockKeyFor(r.sidecarPath(id)) + "\x00repo"
 }
@@ -155,7 +153,7 @@ func (s *repoStorage) alive() error {
 // describes somebody else, and the metadata bound at build time answers
 // instead.
 func (s *repoStorage) Metadata(ctx context.Context) (session.Metadata, error) {
-	md, err := s.FileSession.Metadata(ctx)
+	md, err := s.Store.Metadata(ctx)
 	if err != nil {
 		return md, err
 	}
@@ -200,7 +198,7 @@ func (s *repoStorage) Append(ctx context.Context, entries ...session.Entry) erro
 	if err := s.alive(); err != nil {
 		return err
 	}
-	if err := s.FileSession.Append(ctx, entries...); err != nil {
+	if err := s.Store.Append(ctx, entries...); err != nil {
 		return err
 	}
 	s.touch()
@@ -213,7 +211,7 @@ func (s *repoStorage) Clear(ctx context.Context) error {
 	if err := s.alive(); err != nil {
 		return err
 	}
-	if err := s.FileSession.Clear(ctx); err != nil {
+	if err := s.Store.Clear(ctx); err != nil {
 		return err
 	}
 	s.touch()
@@ -226,7 +224,7 @@ func (s *repoStorage) ReplaceEntries(ctx context.Context, entries ...session.Ent
 	if err := s.alive(); err != nil {
 		return err
 	}
-	if err := s.FileSession.ReplaceEntries(ctx, entries...); err != nil {
+	if err := s.Store.ReplaceEntries(ctx, entries...); err != nil {
 		return err
 	}
 	s.touch()
@@ -239,7 +237,7 @@ func (s *repoStorage) ReplaceEntriesIf(ctx context.Context, expect int64, entrie
 	if err := s.alive(); err != nil {
 		return false, err
 	}
-	replaced, err := s.FileSession.ReplaceEntriesIf(ctx, expect, entries...)
+	replaced, err := s.Store.ReplaceEntriesIf(ctx, expect, entries...)
 	if err == nil && replaced {
 		s.touch()
 	}
@@ -252,7 +250,7 @@ func (s *repoStorage) PopEntry(ctx context.Context) (*session.Entry, error) {
 	if err := s.alive(); err != nil {
 		return nil, err
 	}
-	e, err := s.FileSession.PopEntry(ctx)
+	e, err := s.Store.PopEntry(ctx)
 	if err == nil && e != nil {
 		s.touch()
 	}
@@ -265,7 +263,7 @@ func (s *repoStorage) PopItem(ctx context.Context) (*session.Entry, error) {
 	if err := s.alive(); err != nil {
 		return nil, err
 	}
-	e, err := s.FileSession.PopItem(ctx)
+	e, err := s.Store.PopItem(ctx)
 	if err == nil && e != nil {
 		s.touch()
 	}
@@ -398,7 +396,9 @@ func (r *Repo) readSidecar(id string) (sidecar, error) {
 	return meta, nil
 }
 
-// Open returns an existing session, or an error when there is none.
+// Open returns an existing session, or [session.ErrNotFound] when there is
+// none. This is the one constructor in the package that requires the session to
+// exist: [New] and [NewAtPath] happily hand back a store over a missing file.
 func (r *Repo) Open(_ context.Context, id string) (*session.Session, error) {
 	meta, err := r.readSidecar(id)
 	if err != nil {
@@ -474,7 +474,7 @@ func (r *Repo) Delete(_ context.Context, id string) error {
 	case os.IsNotExist(err):
 		// No sidecar, so this repo has no such session and there is nothing of
 		// its own to remove. It must NOT fall back to the id-derived name:
-		// that is the direct scope, where NewFileSession(dir, id) keeps its
+		// that is the direct scope, where a plain New(dir, id) keeps its
 		// history, and a repo does not delete what it never created.
 		return nil
 	case err != nil:

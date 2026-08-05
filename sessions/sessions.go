@@ -1,7 +1,7 @@
 // Package sessions provides SQL-backed session.Storage implementations (SQLite
 // and PostgreSQL) built on uptrace/bun. It is a separate Go module so the
 // database driver dependencies never reach the core SDK's dependency graph —
-// callers who use only InMemorySession or memory.FileSession pay nothing for it.
+// callers who use only InMemorySession or filesession.Store pay nothing for it.
 //
 // Session entries are stored one row per entry, the whole entry serialized as
 // JSON in a single column. Entry kinds and their payloads are an open set, so a

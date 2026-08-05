@@ -531,7 +531,7 @@ next backend will answer differently.
 - **A handle is bound when it is BUILT**, never on first use. A handle created,
   held, and first touched after its session was deleted and recreated still
   refers to the one it was built for. *Shared.*
-- **A constructor where the id names the STORAGE** (`memory.NewFileSession`,
+- **A constructor where the id names the STORAGE** (`filesession.New`,
   `sessions.New`) is a different thing and keeps its meaning: opening it twice
   is the same conversation, and it cannot tell "reopened" from "recreated". It
   does not share storage with a repo's sessions **in either direction** — a repo

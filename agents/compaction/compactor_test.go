@@ -26,7 +26,7 @@ func (idx *Index) grouped() []session.Entry {
 }
 
 // A Compactor may be configured once and reused. Entry ids are unique within a
-// SESSION — FileSession numbers them e1, e2 with no session prefix — so an
+// SESSION — the filesession store numbers them e1, e2 with no prefix — so an
 // index that resumed on a matching id alone would hand one conversation's
 // history to another.
 func TestCompactorReusedAcrossSessionsKeepsThemApart(t *testing.T) {

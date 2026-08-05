@@ -30,7 +30,7 @@ import (
 // # The empty generation
 //
 // A ref with no generation is the scope of the constructors where the id names
-// the STORAGE — memory.NewFileSession, sessions.New. Opening one twice is the
+// the STORAGE — filesession.New, sessions.New. Opening one twice is the
 // same conversation, by design; it cannot tell "reopened" from "recreated", and
 // that is what it is for.
 //

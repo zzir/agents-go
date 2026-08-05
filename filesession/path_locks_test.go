@@ -1,4 +1,4 @@
-package memory
+package filesession
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// TestPathLocks_ConcurrentAddItemsSamePath opens one FileSession per goroutine
+// TestPathLocks_ConcurrentAddItemsSamePath opens one Store per goroutine
 // on the same path and appends concurrently: the per-path lock must serialize
 // the writes so none are lost.
 func TestPathLocks_ConcurrentAddItemsSamePath(t *testing.T) {
@@ -23,23 +23,23 @@ func TestPathLocks_ConcurrentAddItemsSamePath(t *testing.T) {
 	for i := range goroutines {
 		go func() {
 			defer wg.Done()
-			sess, err := NewFileSession(dir, "same-path")
+			store, err := New(dir, "same-path")
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			if err := session.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText(fmt.Sprintf("msg-%d", i)), agents.Source{}); err != nil {
+			if err := session.NewSession(store).AppendItems(ctx, agents.InputItemsFromText(fmt.Sprintf("msg-%d", i)), agents.Source{}); err != nil {
 				t.Error(err)
 			}
 		}()
 	}
 	wg.Wait()
 
-	sess, err := NewFileSession(dir, "same-path")
+	store, err := New(dir, "same-path")
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	items, err := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,20 +64,20 @@ func TestPathLocks_TableShrinksToZero(t *testing.T) {
 	for i := range sessions {
 		go func() {
 			defer wg.Done()
-			sess, err := NewFileSession(dir, fmt.Sprintf("conv-%d", i))
+			store, err := New(dir, fmt.Sprintf("conv-%d", i))
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			if err := session.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
+			if err := session.NewSession(store).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 				t.Error(err)
 				return
 			}
-			if _, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{}); err != nil {
+			if _, err := session.NewSession(store).ContextItems(ctx, session.Cursor{}); err != nil {
 				t.Error(err)
 				return
 			}
-			if err := sess.Clear(ctx); err != nil {
+			if err := store.Clear(ctx); err != nil {
 				t.Error(err)
 			}
 		}()

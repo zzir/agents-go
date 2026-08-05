@@ -17,7 +17,7 @@ type RepoUnderTest struct {
 	Repo session.Repo
 
 	// Direct opens a session by id through the backend's NON-repo constructor
-	// — memory.NewFileSession, sessions.New — where the id names the storage
+	// — filesession.New, sessions.New — where the id names the storage
 	// outright. A backend without one leaves this nil and those checks skip.
 	//
 	// It is the scope a repo must never reach, in either direction.

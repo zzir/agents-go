@@ -33,7 +33,7 @@ See [Sessions](sessions.md) and [Context management](context.md).
 
 | Capability | API |
 |---|---|
-| Sessions | `session.Session`, `InMemorySession`, `memory.FileSession` (JSONL), `sessions` module (SQLite/Postgres) |
+| Sessions | `session.Session`, `InMemorySession`, `filesession.Store` (JSONL), `sessions` module (SQLite/Postgres) |
 | Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
 | History compaction | `RunOptions.Compaction` + `agents/compaction` strategies (local, append-only checkpoints), `openai.CompactionSession` (server-side `responses.compact`) |
 | Session forking | `session.Fork` |
@@ -74,7 +74,7 @@ Core module path: `github.com/zzir/agents-go`.
 | `agents` | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
 | `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
 | `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
-| `memory` | `FileSession` (JSONL file store, zero dependencies) |
+| `filesession` | `Store` (JSONL file store) + `Repo` (a directory of them), zero dependencies |
 | `tracing` | Traces, spans, processors and exporters |
 | `mcp` | Model Context Protocol client |
 | `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |

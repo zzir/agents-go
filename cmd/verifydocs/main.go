@@ -55,6 +55,13 @@ import (
 // sdkPackages maps the import alias a snippet would use to the directory that
 // defines it. A reference through one of these aliases is checked; anything
 // else is assumed to be stdlib or a third-party package and left alone.
+//
+// Renaming a key is therefore a blind spot: the OLD alias drops off this list
+// and every snippet still using it is silently reclassified as third-party
+// rather than reported. A package rename must update the docs by hand — this
+// tool will not fail for the ones that were missed. (Making it fail means
+// resolving each github.com/zzir/agents-go/… import literal against the tree,
+// which is worth doing and is not what this map does.)
 var sdkPackages = map[string]string{
 	"agents":      "agents",
 	"agentstest":  "agentstest",
@@ -66,7 +73,7 @@ var sdkPackages = map[string]string{
 	"agentsotel":  "tracing/otel", // a bare otel. is the OpenTelemetry SDK's own package
 	"sandbox":     "sandbox",
 	"mcp":         "mcp",
-	"memory":      "memory",
+	"filesession": "filesession",
 	"anthropic":   "models/anthropic",
 	"modelkit":    "models/modelkit",
 	"openai":      "models/openai",

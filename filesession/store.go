@@ -1,10 +1,16 @@
-// Package memory provides persistent Session implementations for the agents SDK.
+// Package filesession stores conversation history as JSONL files, one entry per
+// line, with zero external dependencies.
 //
-// FileSession stores conversation history as a JSONL file (one entry per line),
-// with zero external dependencies. It suits single-machine, moderate-volume use;
-// for high concurrency or large histories, implement session.Storage against a
-// database of your choice.
-package memory
+// [Store] is a [session.Storage] backend over a single file; wrap it in
+// [session.NewSession] to get the semantics layer. [Repo] is a directory of
+// them, adding the title/hidden metadata a bare file cannot express. It suits
+// single-machine, moderate-volume use; for high concurrency or large histories,
+// implement session.Storage against a database of your choice — the sessions
+// module does exactly that for SQLite and PostgreSQL.
+//
+// The in-memory backends are NOT here: they are session.NewInMemoryStorage and
+// session.NewInMemoryRepo, in the session package itself.
+package filesession
 
 import (
 	"bytes"
@@ -23,8 +29,8 @@ import (
 )
 
 // pathLocks shares one mutex per session file path, so independently opened
-// FileSession instances on the same file serialize their access. Keys are
-// absolute cleaned paths.
+// Store instances on the same file serialize their access. Keys are absolute
+// cleaned paths.
 //
 // Entries are reference-counted: acquire registers interest before locking and
 // release drops it after unlocking, deleting the entry once no holder or
@@ -84,24 +90,31 @@ func lockTableSize() int {
 	return len(pathLocks)
 }
 
-// FileSession is a Session backed by a JSONL file: each conversation item is one
-// line of JSON. One file holds one session; pass a directory plus a session ID
-// to keep multiple conversations side by side. It is goroutine-safe within a
-// process — including across multiple FileSession instances opened on the same
-// path, which share a per-path lock. Cross-process access is not locked.
-type FileSession struct {
+// Store is a [session.Storage] backed by a JSONL file: each conversation item
+// is one line of JSON. One file holds one session; pass a directory plus a
+// session ID to keep multiple conversations side by side. It is goroutine-safe
+// within a process — including across multiple Store instances opened on the
+// same path, which share a per-path lock. Cross-process access is not locked.
+//
+// A Store is the storage layer alone. Pass it to [session.NewSession] for the
+// layer that turns entries into model input.
+type Store struct {
 	path    string
 	lockKey string
 }
 
-// NewFileSession returns a session stored at dir/<sessionID>.jsonl, creating dir
-// if needed. The session ID is sanitized for use as a filename; an id the
-// sanitizer had to alter also gets a fingerprint of the ORIGINAL id in the
-// name, so two different ids can never share a file. ("team a" and "team+a"
-// both sanitize to team_a — and any two ids in a non-Latin script collapse to
-// underscores — which silently interleaved two conversations in one file. Ids
-// that are already clean filenames keep their exact historical path.)
-func NewFileSession(dir, sessionID string) (*FileSession, error) {
+// New returns a store at dir/<sessionID>.jsonl, creating dir if needed. The
+// session ID is sanitized for use as a filename; an id the sanitizer had to
+// alter also gets a fingerprint of the ORIGINAL id in the name, so two
+// different ids can never share a file. ("team a" and "team+a" both sanitize
+// to team_a — and any two ids in a non-Latin script collapse to underscores —
+// which silently interleaved two conversations in one file. Ids that are
+// already clean filenames keep their exact historical path.)
+//
+// The file itself need not exist: a store over a missing file reads as empty
+// and materializes it on the first append. Use [Repo] instead if you need
+// "does this session exist?" to be answerable.
+func New(dir, sessionID string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating session dir: %w", err)
 	}
@@ -113,7 +126,7 @@ func NewFileSession(dir, sessionID string) (*FileSession, error) {
 		name += "-" + idFingerprint(sessionID)
 	}
 	path := filepath.Join(dir, name+".jsonl")
-	return &FileSession{path: path, lockKey: lockKeyFor(path)}, nil
+	return &Store{path: path, lockKey: lockKeyFor(path)}, nil
 }
 
 // idFingerprint is a short stable digest of an original session id, appended
@@ -123,15 +136,20 @@ func idFingerprint(id string) string {
 	return hex.EncodeToString(sum[:4])
 }
 
-// OpenFileSession returns a session stored at the exact file path (one
-// conversation per file), creating parent directories as needed.
-func OpenFileSession(path string) (*FileSession, error) {
+// NewAtPath returns a store at the exact file path (one conversation per file),
+// creating parent directories as needed. It is [New] without the dir-plus-id
+// layout, for a caller that already knows the filename it wants.
+//
+// It is deliberately not called Open: like [New] it neither requires nor checks
+// that the file exists, whereas [Repo.Open] reports [session.ErrNotFound] for a
+// session that was never created.
+func NewAtPath(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating session dir: %w", err)
 		}
 	}
-	return &FileSession{path: path, lockKey: lockKeyFor(path)}, nil
+	return &Store{path: path, lockKey: lockKeyFor(path)}, nil
 }
 
 // sanitizeSessionID maps a session ID to a safe filename component, replacing
@@ -156,7 +174,7 @@ func sanitizeSessionID(id string) string {
 
 // Entries implements session.Storage, returning entries in append order
 // paginated by cursor.
-func (s *FileSession) Entries(_ context.Context, cur session.Cursor) ([]session.Entry, error) {
+func (s *Store) Entries(_ context.Context, cur session.Cursor) ([]session.Entry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -178,7 +196,7 @@ func (s *FileSession) Entries(_ context.Context, cur session.Cursor) ([]session.
 }
 
 // Metadata implements session.Storage.
-func (s *FileSession) Metadata(_ context.Context) (session.Metadata, error) {
+func (s *Store) Metadata(_ context.Context) (session.Metadata, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	md := session.Metadata{ID: s.path}
@@ -194,7 +212,7 @@ func (s *FileSession) Metadata(_ context.Context) (session.Metadata, error) {
 }
 
 // Entry implements session.Storage.
-func (s *FileSession) Entry(_ context.Context, id string) (*session.Entry, error) {
+func (s *Store) Entry(_ context.Context, id string) (*session.Entry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	lines, err := s.readLines()
@@ -213,7 +231,7 @@ func (s *FileSession) Entry(_ context.Context, id string) (*session.Entry, error
 // Append adds entries to the session file. The batch is marshaled up
 // front and written with a single write call, so a marshal failure writes
 // nothing and a crash cannot interleave half-written lines from this batch.
-func (s *FileSession) Append(_ context.Context, entries ...session.Entry) error {
+func (s *Store) Append(_ context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -258,7 +276,7 @@ func (s *FileSession) Append(_ context.Context, entries ...session.Entry) error 
 // swapped in one atomic file rewrite (temp file + fsync + rename), so a crash
 // or write failure can never leave the session empty or half-written. An empty
 // list removes the file, matching Clear.
-func (s *FileSession) ReplaceEntries(_ context.Context, entries ...session.Entry) error {
+func (s *Store) ReplaceEntries(_ context.Context, entries ...session.Entry) error {
 	// The lock covers the read: the high-water mark below is only right if the
 	// file cannot grow between reading it and the rewrite. Outside the lock, a
 	// concurrent append lands after the read and the rewrite both discards its
@@ -272,7 +290,7 @@ func (s *FileSession) ReplaceEntries(_ context.Context, entries ...session.Entry
 // ReplaceEntriesIf implements session.GuardedReplacer. The file the guard reads
 // is the file the rewrite publishes: both happen under the per-path lock every
 // append takes, so an append cannot slip between them.
-func (s *FileSession) ReplaceEntriesIf(_ context.Context, expect int64, entries ...session.Entry) (bool, error) {
+func (s *Store) ReplaceEntriesIf(_ context.Context, expect int64, entries ...session.Entry) (bool, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	return s.replaceLocked(entries, &expect)
@@ -281,7 +299,7 @@ func (s *FileSession) ReplaceEntriesIf(_ context.Context, expect int64, entries 
 // replaceLocked rewrites the file to hold exactly entries, reporting whether it
 // wrote. A non-nil expect makes the rewrite conditional on the file's highest
 // sequence number still being that one. Callers hold the per-path lock.
-func (s *FileSession) replaceLocked(entries []session.Entry, expect *int64) (bool, error) {
+func (s *Store) replaceLocked(entries []session.Entry, expect *int64) (bool, error) {
 	// A replace does not restart the numbering: a cursor outlives the entries
 	// it pointed at, and a history renumbered from the beginning would land
 	// entirely before one and be skipped in full. What is on disk now is read
@@ -311,12 +329,12 @@ func (s *FileSession) replaceLocked(entries []session.Entry, expect *int64) (boo
 
 // PopEntry removes and returns the most recent entry, or nil if the session is
 // empty. The file is rewritten atomically.
-func (s *FileSession) PopEntry(_ context.Context) (*session.Entry, error) {
+func (s *Store) PopEntry(_ context.Context) (*session.Entry, error) {
 	return s.pop(session.PopLast)
 }
 
 // PopItem implements session.ItemPopper.
-func (s *FileSession) PopItem(_ context.Context) (*session.Entry, error) {
+func (s *Store) PopItem(_ context.Context) (*session.Entry, error) {
 	return s.pop(session.PopLastItem)
 }
 
@@ -329,7 +347,7 @@ func (s *FileSession) PopItem(_ context.Context) (*session.Entry, error) {
 // every line that failed to decode — the only copy of whatever those lines
 // held. Refusing is the contract (spec §2.5e2, "what must be one step"): a
 // record that cannot be read cannot be part of deciding a removal.
-func (s *FileSession) pop(mode session.PopMode) (*session.Entry, error) {
+func (s *Store) pop(mode session.PopMode) (*session.Entry, error) {
 	release := acquire(s.lockKey)
 	defer release()
 	entries, err := s.readEntriesStrict()
@@ -356,7 +374,7 @@ func (s *FileSession) pop(mode session.PopMode) (*session.Entry, error) {
 }
 
 // Clear removes all entries in the session.
-func (s *FileSession) Clear(_ context.Context) error {
+func (s *Store) Clear(_ context.Context) error {
 	release := acquire(s.lockKey)
 	defer release()
 	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
@@ -370,7 +388,7 @@ func (s *FileSession) Clear(_ context.Context) error {
 // the per-path lock. A caller about to REWRITE the file from the result must
 // use readEntriesStrict instead: writing back a lenient read destroys the
 // skipped lines.
-func (s *FileSession) readEntries() ([]session.Entry, error) {
+func (s *Store) readEntries() ([]session.Entry, error) {
 	lines, err := s.readLines()
 	if err != nil {
 		return nil, err
@@ -387,7 +405,7 @@ func (s *FileSession) readEntries() ([]session.Entry, error) {
 
 // readEntriesStrict decodes the file's entries, failing on the first line that
 // cannot be decoded. Callers must hold the per-path lock.
-func (s *FileSession) readEntriesStrict() ([]session.Entry, error) {
+func (s *Store) readEntriesStrict() ([]session.Entry, error) {
 	lines, err := s.readLines()
 	if err != nil {
 		return nil, err
@@ -420,7 +438,7 @@ func (s *FileSession) readEntriesStrict() ([]session.Entry, error) {
 // the entry before it put it — and nothing rejects such an entry, since
 // PrepareAppend tolerates the decode failure). Stopping on either would answer
 // with an empty tip and start a second, detached root on the next append.
-func (s *FileSession) appendPointLocked() (session.AppendPoint, error) {
+func (s *Store) appendPointLocked() (session.AppendPoint, error) {
 	lines, err := s.readLines()
 	if err != nil {
 		return session.AppendPoint{}, err
@@ -449,7 +467,7 @@ func (s *FileSession) appendPointLocked() (session.AppendPoint, error) {
 
 // readLines returns the non-empty lines of the session file, or nil if it does
 // not exist yet. Callers must hold the per-path lock.
-func (s *FileSession) readLines() ([][]byte, error) {
+func (s *Store) readLines() ([][]byte, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -469,7 +487,7 @@ func (s *FileSession) readLines() ([][]byte, error) {
 
 // writeLines atomically replaces the session file with the given lines,
 // preserving its permissions. Callers must hold the per-path lock.
-func (s *FileSession) writeLines(lines [][]byte) error {
+func (s *Store) writeLines(lines [][]byte) error {
 	if len(lines) == 0 {
 		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -521,9 +539,9 @@ func (s *FileSession) writeLines(lines [][]byte) error {
 }
 
 var (
-	_ session.Storage         = (*FileSession)(nil)
-	_ session.AtomicReplacer  = (*FileSession)(nil)
-	_ session.GuardedReplacer = (*FileSession)(nil)
-	_ session.EntryPopper     = (*FileSession)(nil)
-	_ session.ItemPopper      = (*FileSession)(nil)
+	_ session.Storage         = (*Store)(nil)
+	_ session.AtomicReplacer  = (*Store)(nil)
+	_ session.GuardedReplacer = (*Store)(nil)
+	_ session.EntryPopper     = (*Store)(nil)
+	_ session.ItemPopper      = (*Store)(nil)
 )

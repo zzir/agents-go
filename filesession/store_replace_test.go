@@ -1,4 +1,4 @@
-package memory
+package filesession
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-func TestFileSession_ReplaceEntries(t *testing.T) {
+func TestStore_ReplaceEntries(t *testing.T) {
 	ctx := context.Background()
-	sess, err := NewFileSession(t.TempDir(), "replace-1")
+	store, err := New(t.TempDir(), "replace-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,17 +20,17 @@ func TestFileSession_ReplaceEntries(t *testing.T) {
 	old := agents.InputItemsFromText("old-1")
 	old = append(old, agents.InputItemsFromText("old-2")...)
 	old = append(old, agents.InputItemsFromText("old-3")...)
-	if err := session.NewSession(sess).AppendItems(ctx, old, agents.Source{}); err != nil {
+	if err := session.NewSession(store).AppendItems(ctx, old, agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
 
 	repl := agents.InputItemsFromText("new-1")
 	repl = append(repl, agents.InputItemsFromText("new-2")...)
-	if err := session.ReplaceEntries(ctx, sess, mustEntries(t, repl)...); err != nil {
+	if err := session.ReplaceEntries(ctx, store, mustEntries(t, repl)...); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	got, err := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestFileSession_ReplaceEntries(t *testing.T) {
 	}
 
 	// No stale content may survive on disk — the file holds exactly the new lines.
-	raw, err := os.ReadFile(sess.path)
+	raw, err := os.ReadFile(store.path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,19 +58,19 @@ func TestFileSession_ReplaceEntries(t *testing.T) {
 	}
 }
 
-func TestFileSession_ReplaceEntriesEmptyClears(t *testing.T) {
+func TestStore_ReplaceEntriesEmptyClears(t *testing.T) {
 	ctx := context.Background()
-	sess, err := NewFileSession(t.TempDir(), "replace-empty")
+	store, err := New(t.TempDir(), "replace-empty")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
+	if err := session.NewSession(store).AppendItems(ctx, agents.InputItemsFromText("hello"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ReplaceEntries(ctx, sess, mustEntries(t, nil)...); err != nil {
+	if err := session.ReplaceEntries(ctx, store, mustEntries(t, nil)...); err != nil {
 		t.Fatal(err)
 	}
-	got, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	got, err := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,24 +79,24 @@ func TestFileSession_ReplaceEntriesEmptyClears(t *testing.T) {
 	}
 }
 
-func TestFileSession_ReplaceSessionItemsUsesAtomicPath(t *testing.T) {
+func TestStore_ReplaceSessionItemsUsesAtomicPath(t *testing.T) {
 	// The package-level assertion enforces this at compile time; keep a
 	// behavioral check that the generic helper routes through it too.
 	ctx := context.Background()
-	sess, err := NewFileSession(t.TempDir(), "replace-helper")
+	store, err := New(t.TempDir(), "replace-helper")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := any(sess).(session.AtomicReplacer); !ok {
-		t.Fatal("FileSession must implement session.AtomicReplacer")
+	if _, ok := any(store).(session.AtomicReplacer); !ok {
+		t.Fatal("Store must implement session.AtomicReplacer")
 	}
-	if err := session.NewSession(sess).AppendItems(ctx, agents.InputItemsFromText("before"), agents.Source{}); err != nil {
+	if err := session.NewSession(store).AppendItems(ctx, agents.InputItemsFromText("before"), agents.Source{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ReplaceEntries(ctx, sess, mustEntries(t, agents.InputItemsFromText("after"))...); err != nil {
+	if err := session.ReplaceEntries(ctx, store, mustEntries(t, agents.InputItemsFromText("after"))...); err != nil {
 		t.Fatal(err)
 	}
-	got, err := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	got, err := session.NewSession(store).ContextItems(ctx, session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

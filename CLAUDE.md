@@ -88,7 +88,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   entries into model input), and `session.Projector` (which kinds reach the
   model). The shared value types (`Source`, `ItemDisplay`, `RequestUsage`,
   `Diagnostic`, `ErrorCode`) live in session and are aliased in agents. Storage is
-  `InMemoryStorage` / `memory.FileSession` in core, SQL in the `sessions`
+  `InMemoryStorage` / `filesession.Store` in core, SQL in the `sessions`
   module, server-side variants in `openai` (Conversations, Compaction,
   `UsePreviousResponseID` / `ConversationID`).
 - **Entries are append-only** — `agents/session/entry.go`. A session is a TREE:

@@ -109,7 +109,7 @@ type Manager struct {
 	// execute concurrently, so without this they all see room and all create.
 	//
 	// Entries are reference-counted and removed when the last holder releases,
-	// the same shape memory.FileSession uses for its per-path locks. A map
+	// the same shape filesession.Store uses for its per-path locks. A map
 	// keyed on session id that only ever grows is a leak in a server: sessions
 	// churn, and a parent that does not exist, one over the cap and one whose
 	// launch failed each leave an entry behind just for asking.

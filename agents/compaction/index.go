@@ -64,8 +64,8 @@ func (idx *Index) Update(entries []session.Entry) {
 //
 // The comparison is against the entries the groups already hold, field for
 // field, rather than against a digest of some of their fields. An id alone
-// would not do: entry ids are unique within a SESSION, not globally —
-// FileSession numbers them e1, e2 with no session prefix at all — so a
+// would not do: entry ids are unique within a SESSION, not globally — the
+// filesession store numbers them e1, e2 with no session prefix at all — so a
 // Compactor reused across sessions would see a matching id, treat the second
 // conversation as a continuation of the first, and return one session's history
 // to the other. Nor would a subset of the fields: ContextTokens reads Usage,

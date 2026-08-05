@@ -1,18 +1,19 @@
-package memory_test
+package filesession_test
 
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/memory"
+	"github.com/zzir/agents-go/filesession"
 )
 
 func TestRepo(t *testing.T) {
 	ctx := context.Background()
-	repo, err := memory.NewRepo(t.TempDir())
+	repo, err := filesession.NewRepo(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func runRepoContract(ctx context.Context, t *testing.T, repo session.Repo) {
 // so overwriting the sidecar adopts that history rather than starting fresh.
 func TestRepoCreateRefusesADuplicateID(t *testing.T) {
 	ctx := context.Background()
-	repo, err := memory.NewRepo(t.TempDir())
+	repo, err := filesession.NewRepo(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestRepoCreateRefusesADuplicateID(t *testing.T) {
 // another's history.
 func TestRepoRejectsSanitizationCollisions(t *testing.T) {
 	ctx := context.Background()
-	repo, err := memory.NewRepo(t.TempDir())
+	repo, err := filesession.NewRepo(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestRepoRejectsSanitizationCollisions(t *testing.T) {
 
 // An id with no usable filename form would collide with every other such id.
 func TestRepoRejectsIDWithNoFilenameForm(t *testing.T) {
-	repo, err := memory.NewRepo(t.TempDir())
+	repo, err := filesession.NewRepo(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +165,45 @@ func TestRepoRejectsIDWithNoFilenameForm(t *testing.T) {
 		if _, err := repo.Create(context.Background(), session.CreateOptions{ID: id}); err == nil {
 			t.Errorf("Create(%q) succeeded; it has no filename to live under", id)
 		}
+	}
+}
+
+// The package has three constructors and only one of them cares whether the
+// session already exists. That is why the store constructors are New and
+// NewAtPath rather than New and Open: a package-level Open next to Repo.Open
+// would read like os.Open — "the file had better be there" — while in fact it
+// hands back a store over nothing at all.
+func TestMissingSessionOnlyFailsThroughTheRepo(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	for name, open := range map[string]func() (session.Storage, error){
+		"New": func() (session.Storage, error) { return filesession.New(dir, "never-created") },
+		"NewAtPath": func() (session.Storage, error) {
+			return filesession.NewAtPath(filepath.Join(dir, "never-created-either.jsonl"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, err := open()
+			if err != nil {
+				t.Fatalf("%s over a missing file: %v", name, err)
+			}
+			entries, err := store.Entries(ctx, session.Cursor{})
+			if err != nil {
+				t.Fatalf("Entries: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("Entries = %d, want 0", len(entries))
+			}
+		})
+	}
+
+	repo, err := filesession.NewRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Open(ctx, "never-created"); !errors.Is(err, session.ErrNotFound) {
+		t.Errorf("Repo.Open on a missing session = %v, want ErrNotFound", err)
 	}
 }
 

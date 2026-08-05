@@ -71,7 +71,7 @@
 // a branch instead of deleting it, and compaction appends a checkpoint
 // instead of rewriting. Which entry kinds reach the model is a projection
 // decided by session.Projector. Storage is pluggable: an in-memory store is
-// built in, the memory package stores entries in JSONL files, and the
+// built in, the filesession package stores entries in JSONL files, and the
 // sessions module adds SQLite and PostgreSQL. Wire it to a run through
 // [ConversationOptions].
 //
