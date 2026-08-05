@@ -48,7 +48,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -56,27 +56,34 @@ import (
 // defines it. A reference through one of these aliases is checked; anything
 // else is assumed to be stdlib or a third-party package and left alone.
 var sdkPackages = map[string]string{
-	"agents":     "agents",
-	"agentstest": "agentstest",
-	"compaction": "agents/compaction",
-	"middleware": "agents/middleware",
-	"tasks":      "agents/tasks",
-	"tracing":    "tracing",
-	"sandbox":    "sandbox",
-	"mcp":        "mcp",
-	"memory":     "memory",
-	"openai":     "models/openai",
-	"sessions":   "sessions",
-	"skills":     "skills",
-	"docker":     "sandbox/docker",
-	"ssh":        "sandbox/ssh",
+	"agents":      "agents",
+	"agentstest":  "agentstest",
+	"compaction":  "agents/compaction",
+	"middleware":  "agents/middleware",
+	"session":     "agents/session",
+	"tasks":       "agents/tasks",
+	"tracing":     "tracing",
+	"agentsotel":  "tracing/otel", // a bare otel. is the OpenTelemetry SDK's own package
+	"sandbox":     "sandbox",
+	"mcp":         "mcp",
+	"memory":      "memory",
+	"anthropic":   "models/anthropic",
+	"modelkit":    "models/modelkit",
+	"openai":      "models/openai",
+	"sessions":    "sessions",
+	"skills":      "skills",
+	"bravesearch": "tools/bravesearch",
+	"docker":      "sandbox/docker",
+	"sshsb":       "sandbox/ssh", // a bare ssh. is golang.org/x/crypto/ssh
 }
 
 var (
-	goBlock     = regexp.MustCompile("(?s)```go\n(.*?)```")
-	lineComment = regexp.MustCompile(`//.*`)
-	stringLit   = regexp.MustCompile(`"[^"]*"`)
-	qualified   = regexp.MustCompile(`\b([a-z][a-zA-Z0-9]*)\.([A-Z][A-Za-z0-9_]*)`)
+	goBlock = regexp.MustCompile("(?s)```go\n(.*?)```")
+	// A line comment or a string literal, matched in one alternation so that
+	// whichever opens first swallows the other: a // inside a literal, and a
+	// lone " inside a comment, each stay part of the construct already open.
+	commentOrString = regexp.MustCompile(`"[^"]*"|//[^\n]*`)
+	qualified       = regexp.MustCompile(`\b([a-z][a-zA-Z0-9]*)\.([A-Z][A-Za-z0-9_]*)`)
 	// x := agents.NewFoo(…)  |  x, err := …  |  x, y, err := …
 	// Anchored at the line start and binding only the FIRST name: the others
 	// are the constructor's later results, which are different types.
@@ -160,7 +167,7 @@ func main() {
 		fmt.Println("verifydocs: OK")
 		return
 	}
-	sort.Strings(problems)
+	slices.Sort(problems)
 	for _, p := range problems {
 		fmt.Fprintln(os.Stderr, p)
 	}
@@ -170,8 +177,14 @@ func main() {
 
 // checkBlock reports every reference in one snippet that names nothing.
 func checkBlock(file, block string, pkgs map[string]*pkgInfo) []string {
-	// Comments and string literals are prose, not references.
-	clean := stringLit.ReplaceAllString(lineComment.ReplaceAllString(block, ""), `""`)
+	// Comments and string literals are prose, not references. A literal is
+	// blanked rather than dropped so that what surrounds it stays separated.
+	clean := commentOrString.ReplaceAllStringFunc(block, func(s string) string {
+		if s[0] == '"' {
+			return `""`
+		}
+		return ""
+	})
 
 	seen := map[string]bool{}
 	var out []string
@@ -318,7 +331,7 @@ func checkDocGo(root string, pkgs map[string]*pkgInfo) (problems []string, links
 	for a := range sdkPackages {
 		aliases = append(aliases, a)
 	}
-	sort.Strings(aliases)
+	slices.Sort(aliases)
 	for _, alias := range aliases {
 		path := filepath.Join(root, sdkPackages[alias], "doc.go")
 		src, rerr := os.ReadFile(path)
@@ -410,7 +423,7 @@ func goFiles(dir string) ([]string, error) {
 		}
 		out = append(out, filepath.Join(dir, name))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 
@@ -548,7 +561,7 @@ func docFiles(root string) ([]string, error) {
 	}
 	out = append(out, filepath.Join(root, "README.md"))
 	out = append(out, filepath.Join(root, "cmd", "agents-server", "README.md"))
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 
