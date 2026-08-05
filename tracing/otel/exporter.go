@@ -88,13 +88,16 @@ type Exporter struct {
 	// span whose trace was never seen still exports — with the workflow
 	// attributes missing rather than dropped.
 	//
-	// An entry is released when the trace's root span is exported, which is
-	// the only span that reads it. A long-lived server would otherwise
-	// accumulate one record per run for its whole life.
+	// A record is NOT released once a root span has read it: one trace can have
+	// several roots. A handoff finishes the current agent span and opens the
+	// next one under the same (top-level, empty) parent, so an N-handoff run
+	// contributes N+1 root spans, arriving in separate batches. Releasing at
+	// the first would leave every agent after the first handoff without a
+	// workflow name.
 	traces map[string]*tracing.Trace
-	// traceOrder is insertion order, for evicting the oldest when a trace's
-	// root never arrives — a run abandoned mid-flight, or one whose root was
-	// dropped. Without it those entries are immortal.
+	// traceOrder is insertion order, for evicting the oldest record once the
+	// ceiling is reached. Since no record is released on its own, this is the
+	// only thing keeping the map bounded.
 	traceOrder []string
 }
 
@@ -132,34 +135,23 @@ func NewTracerProvider(sdkOpts ...sdktrace.TracerProviderOption) (*sdktrace.Trac
 	return tp, exp, nil
 }
 
-// maxPendingTraces bounds the metadata held for traces whose root span has not
-// arrived. A run that is abandoned, or whose root is dropped by a full batch
-// queue, never releases its record on its own; without a ceiling those
-// accumulate for the life of the process.
+// maxRetainedTraces bounds the metadata held for traces. A record is never
+// released on arrival of a root span — a trace can have several (see the traces
+// field) — so eviction is the only reclamation.
 //
-// Sized so an ordinary burst of concurrent runs never evicts: only a leak
-// reaches it, and reaching it costs the workflow name on a stale trace, not
-// the span.
-const maxPendingTraces = 4096
-
-// forgetTrace releases a trace's metadata. The caller holds e.mu.
-func (e *Exporter) forgetTrace(traceID string) {
-	if _, ok := e.traces[traceID]; !ok {
-		return
-	}
-	delete(e.traces, traceID)
-	for i, id := range e.traceOrder {
-		if id == traceID {
-			e.traceOrder = append(e.traceOrder[:i], e.traceOrder[i+1:]...)
-			break
-		}
-	}
-}
+// That makes the ceiling a sliding window over the most recently started
+// traces, not a high-water mark for concurrency: a long-lived process settles
+// into evicting one record per new trace. What it must stay wider than is the
+// number of traces started while one run is still opening root spans — below
+// that, a record is gone before its own post-handoff root arrives. Order is by
+// insertion, not by last use, so the run at risk is an unusually long one, and
+// the cost is the workflow attributes on that root, not the span.
+const maxRetainedTraces = 4096
 
 // evictOldestTraces drops the oldest records once the map exceeds its ceiling.
 // The caller holds e.mu.
 func (e *Exporter) evictOldestTraces() {
-	for len(e.traceOrder) > maxPendingTraces {
+	for len(e.traceOrder) > maxRetainedTraces {
 		oldest := e.traceOrder[0]
 		e.traceOrder = e.traceOrder[1:]
 		delete(e.traces, oldest)
@@ -223,9 +215,12 @@ func (e *Exporter) emit(s *tracing.Span) {
 		if tr.GroupID != "" {
 			attrs = append(attrs, attribute.String(attrTraceGroupID, tr.GroupID))
 		}
-		// The root is the only span that reads this, so the record has done
-		// its job. Holding it would make the map grow with every run.
-		e.forgetTrace(s.TraceID)
+		for k, v := range tr.Metadata {
+			// Rendered, not typed: metadata is free-form user data, so a key
+			// whose value changes shape between runs would otherwise change
+			// attribute type under a backend that indexes by key.
+			attrs = append(attrs, attribute.String(attrMetadataPrefix+k, fmt.Sprint(v)))
+		}
 	}
 
 	_, otelSpan := e.tracer.Start(ctx, name,
@@ -348,9 +343,21 @@ func describe(s *tracing.Span, provider string) (string, []attribute.KeyValue) {
 
 	// An untyped span (tracing.StartSpan) carries whatever the caller put in
 	// Data; pass it through under an agents. prefix rather than dropping it.
+	// Only the scalar kinds have an attribute equivalent — a map or a slice
+	// would export as Go syntax, which is worse than not exporting it.
 	for k, v := range s.Data {
-		if sv, ok := v.(string); ok {
-			attrs = append(attrs, attribute.String("agents."+k, sv))
+		key := "agents." + k
+		switch v := v.(type) {
+		case string:
+			attrs = append(attrs, attribute.String(key, v))
+		case bool:
+			attrs = append(attrs, attribute.Bool(key, v))
+		case int:
+			attrs = append(attrs, attribute.Int(key, v))
+		case int64:
+			attrs = append(attrs, attribute.Int64(key, v))
+		case float64:
+			attrs = append(attrs, attribute.Float64(key, v))
 		}
 	}
 	name := s.Name

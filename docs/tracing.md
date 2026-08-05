@@ -215,8 +215,15 @@ Concepts with no GenAI equivalent use an `agents.` prefix rather than a
 `codes.Error` plus `error.type`, carrying the SDK's `ErrorCode` — a stable,
 low-cardinality value, which is what the convention asks for.
 
-The workflow name and trace group id land on the trace's **root span only**;
-repeating them on every child would multiply a constant across the trace.
+The workflow name, the trace group id and each `tracing.WithMetadata` entry (as
+`agents.metadata.<key>`) land on **root spans only** — repeating them on every
+child would multiply a constant across the trace. Metadata values are rendered
+as strings rather than typed: the same key may hold a different shape on the
+next run, and a backend indexing by key would see the attribute type drift.
+
+A trace has a root span per **agent**, not one per trace. A handoff ends the
+current agent span and starts the next one at the top level, so every agent in a
+handoff chain carries these attributes.
 
 ## Instrumenting your own code
 

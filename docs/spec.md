@@ -1839,6 +1839,14 @@ invariants fall out and must hold:
 - **The exporter requires a batch processor.** Pinning is stateful, so `Export`
   serializes; it is not a synchronous per-span processor.
 
+A trace has **one root span per agent**, not one per trace. A handoff finishes
+the current agent span and opens the next one under the same (empty) top-level
+parent, so an N-handoff run contributes N+1 parentless spans, arriving in
+separate export batches. `tracing/otel` therefore keeps a trace's workflow
+metadata after stamping a root span and reclaims it by bounded eviction:
+releasing it at the first root would leave every agent after a handoff without a
+workflow name.
+
 The alternative — making the core emit OTel spans directly — was rejected:
 it puts a heavy, fast-moving dependency in every consumer's build for a feature
 most do not use.

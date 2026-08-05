@@ -50,4 +50,6 @@ const (
 	// Trace-level, stamped on the root span of each trace.
 	attrWorkflowName = "agents.workflow.name"
 	attrTraceGroupID = "agents.trace.group_id"
+	// Prefix for tracing.WithMetadata entries: one attribute per key.
+	attrMetadataPrefix = "agents.metadata."
 )

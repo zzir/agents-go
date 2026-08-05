@@ -40,10 +40,11 @@ func span(traceID, spanID, parentID, typ, name string, data map[string]any) *tra
 }
 
 const (
-	traceA   = "trace_0af7651916cd43dd8448eb211c80319c"
-	spanRoot = "span_b9c7c989f97918e1"
-	spanKid  = "span_b7ad6b7169203331"
-	spanKid2 = "span_b7ad6b7169203332"
+	traceA    = "trace_0af7651916cd43dd8448eb211c80319c"
+	spanRoot  = "span_b9c7c989f97918e1"
+	spanRoot2 = "span_b9c7c989f97918e2"
+	spanKid   = "span_b7ad6b7169203331"
+	spanKid2  = "span_b7ad6b7169203332"
 )
 
 // The whole reason this package exists: our spans are flat records exported
@@ -164,6 +165,52 @@ func TestGenerationPrefersTheModelActuallyCalled(t *testing.T) {
 	}
 }
 
+// An untyped span (tracing.StartSpan) carries whatever the caller put in Data.
+// Exporting only its string values would drop the counters and flags that are
+// the usual reason for opening one by hand.
+func TestUntypedSpanExportsScalarData(t *testing.T) {
+	exp, rec := newTestExporter(t)
+	exp.Export([]tracing.Item{
+		span(traceA, spanRoot, "", "", "cache_lookup", map[string]any{
+			"backend": "redis",
+			"hits":    7,
+			"misses":  int64(2),
+			"ratio":   0.75,
+			"warm":    true,
+			"detail":  map[string]any{"shard": 1},
+		}),
+	})
+
+	got := rec.Ended()[0]
+	if got.Name() != "cache_lookup" {
+		t.Fatalf("span name = %q, want the caller's name", got.Name())
+	}
+	for _, tc := range []struct {
+		key  string
+		want attribute.Value
+	}{
+		{"agents.backend", attribute.StringValue("redis")},
+		{"agents.hits", attribute.IntValue(7)},
+		{"agents.misses", attribute.Int64Value(2)},
+		{"agents.ratio", attribute.Float64Value(0.75)},
+		{"agents.warm", attribute.BoolValue(true)},
+	} {
+		v, ok := attrOf(got, tc.key)
+		if !ok {
+			t.Errorf("missing attribute %s", tc.key)
+			continue
+		}
+		if v.Type() != tc.want.Type() || v.Emit() != tc.want.Emit() {
+			t.Errorf("%s = %s(%s), want %s(%s)", tc.key, v.Type(), v.Emit(), tc.want.Type(), tc.want.Emit())
+		}
+	}
+	// A nested value has no attribute equivalent; rendering it as Go syntax
+	// would be worse than leaving it out.
+	if has(got, "agents.detail") {
+		t.Error("a non-scalar Data value was exported anyway")
+	}
+}
+
 // The workflow name belongs on the root span only — repeating it on every child
 // would multiply a constant across the whole trace.
 func TestWorkflowAttributesOnRootOnly(t *testing.T) {
@@ -179,6 +226,54 @@ func TestWorkflowAttributesOnRootOnly(t *testing.T) {
 	assertAttr(t, got["invoke_agent a"], attrTraceGroupID, "thread-7")
 	if has(got["execute_tool t"], attrWorkflowName) {
 		t.Error("workflow name repeated on a child span")
+	}
+}
+
+// A handoff finishes the agent span and opens the next one under the same
+// (empty) parent, so one trace has a root span per agent — arriving in separate
+// batches. Every one of them must carry the workflow attributes, or the second
+// half of a handoff chain vanishes from a workflow-filtered query.
+func TestEveryRootAfterHandoffCarriesWorkflowAttributes(t *testing.T) {
+	exp, rec := newTestExporter(t)
+	exp.Export([]tracing.Item{
+		&tracing.Trace{TraceID: traceA, WorkflowName: "my workflow", GroupID: "thread-7"},
+		span(traceA, spanRoot, "", tracing.SpanTypeAgent, "", map[string]any{"name": "triage"}),
+		span(traceA, spanKid, spanRoot, tracing.SpanTypeHandoff, "", map[string]any{"name": "transfer_to_billing"}),
+	})
+	exp.Export([]tracing.Item{
+		span(traceA, spanRoot2, "", tracing.SpanTypeAgent, "", map[string]any{"name": "billing"}),
+	})
+
+	got := indexByName(rec.Ended())
+	for _, agent := range []string{"invoke_agent triage", "invoke_agent billing"} {
+		if got[agent] == nil {
+			t.Fatalf("missing %q; got %v", agent, names(rec.Ended()))
+		}
+		assertAttr(t, got[agent], attrWorkflowName, "my workflow")
+		assertAttr(t, got[agent], attrTraceGroupID, "thread-7")
+	}
+}
+
+// tracing.WithMetadata exists to reach the observability backend; dropping it
+// here would make the option a no-op for the only exporter that ships one.
+func TestTraceMetadataLandsOnTheRoot(t *testing.T) {
+	exp, rec := newTestExporter(t)
+	exp.Export([]tracing.Item{
+		&tracing.Trace{
+			TraceID: traceA, WorkflowName: "wf",
+			Metadata: map[string]any{"tenant": "acme", "attempt": 2},
+		},
+		span(traceA, spanRoot, "", tracing.SpanTypeAgent, "", map[string]any{"name": "a"}),
+		span(traceA, spanKid, spanRoot, tracing.SpanTypeFunction, "", map[string]any{"name": "t"}),
+	})
+	got := indexByName(rec.Ended())
+
+	assertAttr(t, got["invoke_agent a"], attrMetadataPrefix+"tenant", "acme")
+	// Rendered rather than typed: the same key may hold a different shape on
+	// the next run.
+	assertAttr(t, got["invoke_agent a"], attrMetadataPrefix+"attempt", "2")
+	if has(got["execute_tool t"], attrMetadataPrefix+"tenant") {
+		t.Error("metadata repeated on a child span")
 	}
 }
 
@@ -431,47 +526,29 @@ func assertInt(t *testing.T, s sdktrace.ReadOnlySpan, key string, want int64) {
 	}
 }
 
-// A trace's metadata exists to stamp its root span. Holding it afterwards
-// makes the map grow with every run a long-lived server executes.
-func TestExporterReleasesTraceMetadataAtTheRoot(t *testing.T) {
+// No record is released on its own — a trace can produce a root span at any
+// later point — so the ceiling is the only thing between a long-lived server
+// and a map that grows with every run.
+func TestExporterBoundsRetainedTraces(t *testing.T) {
 	tp, exp, err := NewTracerProvider()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = tp.Shutdown(context.Background()) }()
 
-	tr := &tracing.Trace{TraceID: tracing.NewTraceID(), WorkflowName: "w"}
-	root := &tracing.Span{
-		TraceID: tr.TraceID, SpanID: tracing.NewSpanID(),
-		Type: "agent", StartedAt: time.Now(), EndedAt: time.Now(),
-	}
-	exp.Export([]tracing.Item{tr, root})
-
-	exp.mu.Lock()
-	held := len(exp.traces)
-	exp.mu.Unlock()
-	if held != 0 {
-		t.Fatalf("%d trace record(s) still held after the root span exported", held)
-	}
-}
-
-// A trace whose root never arrives — an abandoned run, or a root dropped by a
-// full queue — would otherwise be immortal.
-func TestExporterBoundsTracesWithNoRoot(t *testing.T) {
-	tp, exp, err := NewTracerProvider()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tp.Shutdown(context.Background()) }()
-
-	for i := 0; i < maxPendingTraces+100; i++ {
-		exp.Export([]tracing.Item{&tracing.Trace{TraceID: tracing.NewTraceID(), WorkflowName: "w"}})
+	for range maxRetainedTraces + 100 {
+		tr := &tracing.Trace{TraceID: tracing.NewTraceID(), WorkflowName: "w"}
+		root := &tracing.Span{
+			TraceID: tr.TraceID, SpanID: tracing.NewSpanID(),
+			Type: tracing.SpanTypeAgent, StartedAt: time.Now(), EndedAt: time.Now(),
+		}
+		exp.Export([]tracing.Item{tr, root})
 	}
 
 	exp.mu.Lock()
 	held := len(exp.traces)
 	exp.mu.Unlock()
-	if held > maxPendingTraces {
-		t.Fatalf("holding %d trace records, ceiling is %d", held, maxPendingTraces)
+	if held > maxRetainedTraces {
+		t.Fatalf("holding %d trace records, ceiling is %d", held, maxRetainedTraces)
 	}
 }
