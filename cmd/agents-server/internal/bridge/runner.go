@@ -72,12 +72,14 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 // how the resume path once dropped HandoffInputFilter and
 // ToolNotFoundBehavior. runContext is the Context value (the exec_command
 // approval gate reads a trusted session id from it).
-func runOptionsFor(built *BuildResult, session *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any) agents.RunOptions {
+func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any) agents.RunOptions {
 	opts := agents.RunOptions{
 		Context: runContext,
 		Conversation: agents.ConversationOptions{
-			Session:  session,
-			Settings: sessionSettingsFor(built.HistoryLimit),
+			Session: sess,
+			// A non-positive HistoryLimit already means "no limit" on both
+			// sides, so it needs no translation.
+			Settings: session.Settings{Limit: built.HistoryLimit},
 		},
 		Exec: agents.ExecOptions{
 			MaxTurns:              built.MaxTurns,
@@ -100,15 +102,6 @@ func runOptionsFor(built *BuildResult, session *session.Session, provider agents
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
 	return opts
-}
-
-// sessionSettingsFor returns the run-level SessionSettings for a history-item
-// cap, or nil to leave the full history loaded (limit <= 0).
-func sessionSettingsFor(limit int) *session.Settings {
-	if limit > 0 {
-		return &session.Settings{Limit: limit}
-	}
-	return nil
 }
 
 // wrapCompaction wraps sa with the compaction adapter when the agent config

@@ -456,8 +456,8 @@ func (r *Repo) List(_ context.Context, opts session.ListOptions) ([]session.Meta
 		out = append(out, md)
 	}
 	sortByUpdatedDesc(out)
-	if opts.Cursor.Limit > 0 && opts.Cursor.Limit < len(out) {
-		out = out[:opts.Cursor.Limit]
+	if opts.Limit > 0 && opts.Limit < len(out) {
+		out = out[:opts.Limit]
 	}
 	return out, nil
 }

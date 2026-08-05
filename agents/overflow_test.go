@@ -435,7 +435,7 @@ func TestOverflow_StorageAbandonedPassBuysNoRetryUnderAWindow(t *testing.T) {
 			Session: session.NewSession(st),
 			// Two entries is all the model ever sees, and the log already holds
 			// that many: the window is saturated before the first pass runs.
-			Settings: &session.Settings{Limit: 2},
+			Settings: session.Settings{Limit: 2},
 		},
 		Exec: ExecOptions{Overflow: OverflowPolicy{MaxRetries: 3}},
 	})

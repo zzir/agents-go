@@ -641,13 +641,15 @@ next backend will answer differently.
   time.
 - **A session's metadata and the listing's are the same answer**, read through
   one path. *Shared.*
-- **A listing is that record's order, newest first**, and `Cursor.Limit` cuts
-  it from the newest end, after the hidden filter — a background task's
+- **A listing is that record's order, newest first**, and `ListOptions.Limit`
+  cuts it from the newest end, after the hidden filter — a background task's
   transcript must not eat a slot the caller asked for. A limit that is not
-  positive is no limit; `Cursor`'s other reading of a negative one belongs to
-  entry cursors, which have an oldest end to take from. Sessions sharing a
-  time may come back in either order. *Shared contract
-  (`agentstest.RepoConformance`); ordering per backend.*
+  positive is no limit. It is a plain count rather than a `Cursor`: a listing
+  has no sequence number to resume from, and `Cursor`'s other reading of a
+  negative limit — take the most recent N — belongs to entry cursors, which
+  have an oldest end to take from. Sessions sharing a time may come back in
+  either order. *Shared contract (`agentstest.RepoConformance`); ordering per
+  backend.*
 
 #### What must be one step
 
@@ -2205,12 +2207,18 @@ Names inside dropped their `Session` prefix (`session.Entry`,
 `session.ErrNotFound`); `session.Session` keeps the stutter the way
 `context.Context` does, because the concept IS the package.
 
-The value types shared by both layers — `Source`, `Display`, `RequestUsage`,
-`Diagnostic`, `ErrorCode` — live in session (entries persist them) and are
-**aliased** in agents (`agents.Source = session.Source`), because they are
-equally part of the runner's surface: every `RunItem` carries a `Source`,
-every result reports `RequestUsage`. An alias is transparent — one type, two
-import paths — so neither layer's API is second-class. `ErrorCode`
+The value types shared by both layers — `Source`, `ItemDisplay`,
+`RequestUsage`, `Diagnostic`, `ErrorCode` — live in session (entries persist
+them) and are **aliased** in agents (`agents.Source = session.Source`),
+because they are equally part of the runner's surface: every `RunItem` carries
+a `Source`, every result reports `RequestUsage`. An alias is transparent — one
+type, two import paths — so neither layer's API is second-class. **Each alias
+keeps the name it aliases.** ✅ A renamed alias stops being transparent the
+moment anything spells the type out: the compile error, the godoc and the
+reflected name all say the session name while the code says the agents one.
+(`agents.ItemDisplay = session.Display` was the one that drifted; session's
+type was renamed to `ItemDisplay` to close it, which is also the more accurate
+name there — what it projects is an item.) `ErrorCode`
 specifically: the *vocabulary* sits in session because entries and
 diagnostics persist codes; the *derivation* (`CodeOf`, `Classify`) stays in
 agents with the error types it reads.

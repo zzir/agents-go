@@ -79,8 +79,8 @@ func (a *SessionRepoAdapter) List(ctx context.Context, opts session.ListOptions)
 	}
 	// After the filter, so a hidden session does not consume a slot the caller
 	// asked for. The store already orders newest first.
-	if opts.Cursor.Limit > 0 && opts.Cursor.Limit < len(out) {
-		out = out[:opts.Cursor.Limit]
+	if opts.Limit > 0 && opts.Limit < len(out) {
+		out = out[:opts.Limit]
 	}
 	return out, nil
 }

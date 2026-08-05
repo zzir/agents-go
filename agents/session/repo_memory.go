@@ -60,9 +60,9 @@ func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
 	return NewSession(st), nil
 }
 
-// List implements Repo, newest first and honouring Cursor.Limit — the same
-// answer the file and SQL repos give, so a caller written against one backend
-// reads the same listing from another.
+// List implements Repo, newest first and honouring ListOptions.Limit — the
+// same answer the file and SQL repos give, so a caller written against one
+// backend reads the same listing from another.
 func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, error) {
 	r.mu.Lock()
 	stores := make([]*InMemoryStorage, 0, len(r.order))
@@ -87,8 +87,8 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, 
 	slices.SortStableFunc(out, func(a, b Metadata) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
-	if opts.Cursor.Limit > 0 && opts.Cursor.Limit < len(out) {
-		out = out[:opts.Cursor.Limit]
+	if opts.Limit > 0 && opts.Limit < len(out) {
+		out = out[:opts.Limit]
 	}
 	return out, nil
 }

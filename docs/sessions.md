@@ -113,7 +113,7 @@ Two things it fixes:
   private history. Listings exclude them by default, so every caller stops
   maintaining that filter and stops forgetting it.
 - **Every backend answers a listing the same way** — newest change first, cut
-  to `Cursor.Limit` after the hidden filter, a limit that is not positive
+  to `ListOptions.Limit` after the hidden filter, a limit that is not positive
   meaning no limit. `agentstest.RepoConformance` holds all four to it, so
   moving from the in-memory repo to SQL does not quietly change which
   conversations a sidebar shows.
@@ -424,15 +424,9 @@ res, _ := agents.RunSync(ctx, agent, correctedQuestion, agents.RunOptions{Conver
 
 A run loads the session's stored history and appends the new input to it. What the model reads out of that history is shaped by [projection](#projection-what-the-model-reads) and [compaction](#run-level-compaction), not by rewriting the load; one knob adjusts how much is loaded:
 
-- **`SessionSettings{Limit}`** — caps how many of the most recent items are loaded at run start (`0`, the default, loads the full history). An explicit `RunOptions.Conversation.Settings` wins; otherwise a `Session` may supply its own default by implementing the optional `SessionSettingsAware` capability:
+- **`session.Settings{Limit}`** — caps how many of the most recent entries are loaded at run start, counting from the newest end. Anything not positive (including `0`, the zero value) loads the full history: `agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess, Settings: session.Settings{Limit: 50}}}`.
 
-  ```go
-  type SessionSettingsAware interface {
-      DefaultSessionSettings() SessionSettings // e.g. SessionSettings{Limit: 50}
-  }
-  ```
-
-Both are ignored when no `Session` is set.
+It is ignored when no `Session` is set.
 
 ## Branching
 

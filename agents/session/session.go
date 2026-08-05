@@ -147,7 +147,7 @@ type Repo interface {
 	Create(ctx context.Context, opts CreateOptions) (*Session, error)
 	Open(ctx context.Context, id string) (*Session, error)
 	// List returns session metadata ordered by UpdatedAt, newest first, cut to
-	// Cursor.Limit. Sessions sharing an UpdatedAt may come back in any order.
+	// ListOptions.Limit. Sessions sharing an UpdatedAt may come back in any order.
 	// Every implementation owes the same answer here — a caller that paginated
 	// correctly against one backend must not silently read the oldest sessions
 	// from another (agentstest.RepoConformance checks it).
@@ -171,26 +171,33 @@ type CreateOptions struct {
 type ListOptions struct {
 	// IncludeHidden returns sessions that serve other sessions too.
 	IncludeHidden bool
-	// Cursor paginates the listing; only Limit is read, and anything not
-	// positive means no limit. Cursor's other reading of a negative limit —
-	// take the most recent -Limit — is for entry cursors alone: a listing is
-	// already newest first, so it would answer exactly what the positive limit
-	// answers.
-	Cursor Cursor
+	// Limit cuts the listing from the newest end, after the hidden filter.
+	// Anything not positive (the zero value included) means no limit.
+	//
+	// It is a plain count rather than a Cursor: a listing has no sequence
+	// number to resume from, and Cursor's negative limit — take the most
+	// recent -Limit — would mean here exactly what the positive one already
+	// means, since the listing is newest first to begin with.
+	Limit int
 }
 
 // Settings configures how a run reads a Session.
 type Settings struct {
-	// Limit caps how many of the most recent entries GetEntries loads at run
-	// start. Zero (the default) means no limit — the full history is loaded.
+	// Limit caps how many of the most recent entries a run loads at start.
+	// Anything not positive (the zero value included) means no limit — the
+	// full history is loaded.
 	Limit int
 }
 
 // ResolveLimit resolves how many of the most recent entries a run loads.
 // Zero means no limit.
-func ResolveLimit(override *Settings) int {
-	if override != nil && override.Limit > 0 {
-		return override.Limit
+//
+// The clamp is the point: Cursor spells "the most recent N" as a NEGATIVE
+// limit, so a negative Settings.Limit passed through would come back out of
+// the call site's negation as a positive one and load the OLDEST entries.
+func ResolveLimit(s Settings) int {
+	if s.Limit > 0 {
+		return s.Limit
 	}
 	return 0
 }

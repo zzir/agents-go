@@ -376,7 +376,7 @@ func checkListLimit(t *testing.T, r RepoUnderTest) {
 		{"more than there are", len(all) + 5, all},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			md, err := r.Repo.List(ctx, session.ListOptions{Cursor: session.Cursor{Limit: tc.limit}})
+			md, err := r.Repo.List(ctx, session.ListOptions{Limit: tc.limit})
 			if err != nil {
 				t.Fatalf("list: %v", err)
 			}

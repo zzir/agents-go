@@ -82,7 +82,7 @@ type Entry struct {
 	Payload json.RawMessage `json:"payload,omitzero"`
 
 	// Display is the entry's UI projection, when it has one.
-	Display *Display `json:"display,omitzero"`
+	Display *ItemDisplay `json:"display,omitzero"`
 	// Usage is the token usage of the model call this entry belongs to — a call
 	// on THIS conversation. Exactly one entry per response carries it, so
 	// summing over entries counts each request once.
@@ -134,7 +134,7 @@ type UpdatePayload struct {
 	// find nothing, retry — which is what this mechanism exists to remove.
 	TargetCallID string `json:"target_call_id,omitzero"`
 	// Display is merged over the target's display. Only non-zero fields apply.
-	Display Display `json:"display"`
+	Display ItemDisplay `json:"display"`
 }
 
 // NewItemEntry builds an entry holding a Responses item.
@@ -161,7 +161,7 @@ func NewItemEntries(items []InputItem, src Source) ([]Entry, error) {
 
 // NewAnnotationEntry builds an entry that is shown to people but never sent to
 // the model: an error banner, a cancellation notice, partial output.
-func NewAnnotationEntry(display Display, src Source) Entry {
+func NewAnnotationEntry(display ItemDisplay, src Source) Entry {
 	return Entry{Kind: EntryKindAnnotation, Source: src, Display: &display}
 }
 
@@ -214,7 +214,7 @@ func (e Entry) LeafPayload() (LeafPayload, error) {
 }
 
 // NewUpdateEntry builds an entry amending an earlier entry's display.
-func NewUpdateEntry(targetID string, display Display) (Entry, error) {
+func NewUpdateEntry(targetID string, display ItemDisplay) (Entry, error) {
 	return newUpdate(UpdatePayload{TargetID: targetID, Display: display})
 }
 
@@ -223,7 +223,7 @@ func NewUpdateEntry(targetID string, display Display) (Entry, error) {
 //
 // It is what a long-running thing reports through: the caller knows the call it
 // was started by, and the entry id belongs to storage.
-func NewCallUpdateEntry(callID string, display Display) (Entry, error) {
+func NewCallUpdateEntry(callID string, display ItemDisplay) (Entry, error) {
 	return newUpdate(UpdatePayload{TargetCallID: callID, Display: display})
 }
 
@@ -256,7 +256,7 @@ func (e Entry) UpdatePayload() (UpdatePayload, error) {
 }
 
 // merge overlays a non-zero field of other onto d.
-func (d *Display) merge(other Display) {
+func (d *ItemDisplay) merge(other ItemDisplay) {
 	if other.Kind != "" {
 		d.Kind = other.Kind
 	}
@@ -337,7 +337,7 @@ func equalUsage(a, b *RequestUsage) bool {
 	return *a == *b
 }
 
-func equalDisplay(a, b *Display) bool {
+func equalDisplay(a, b *ItemDisplay) bool {
 	if a == nil || b == nil {
 		return a == b
 	}

@@ -57,11 +57,11 @@ func TestInMemoryRepoListOrderAndLimit(t *testing.T) {
 	}{
 		{"newest first", session.ListOptions{}, visible},
 		{"hidden included, still newest first", session.ListOptions{IncludeHidden: true}, []string{"last", "task", "first"}},
-		{"limit takes the newest", session.ListOptions{Cursor: session.Cursor{Limit: 1}}, []string{"last"}},
-		{"limit counts visible sessions", session.ListOptions{Cursor: session.Cursor{Limit: 2}}, visible},
-		{"limit past the end", session.ListOptions{Cursor: session.Cursor{Limit: 9}}, visible},
-		{"zero is no limit", session.ListOptions{Cursor: session.Cursor{Limit: 0}}, visible},
-		{"negative is no limit", session.ListOptions{Cursor: session.Cursor{Limit: -1}}, visible},
+		{"limit takes the newest", session.ListOptions{Limit: 1}, []string{"last"}},
+		{"limit counts visible sessions", session.ListOptions{Limit: 2}, visible},
+		{"limit past the end", session.ListOptions{Limit: 9}, visible},
+		{"zero is no limit", session.ListOptions{Limit: 0}, visible},
+		{"negative is no limit", session.ListOptions{Limit: -1}, visible},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			md, err := repo.List(ctx, tc.opts)

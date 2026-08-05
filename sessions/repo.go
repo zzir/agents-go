@@ -71,8 +71,8 @@ func (r *Repo) List(ctx context.Context, opts session.ListOptions) ([]session.Me
 	if !opts.IncludeHidden {
 		q = q.Where("hidden = ?", false)
 	}
-	if opts.Cursor.Limit > 0 {
-		q = q.Limit(opts.Cursor.Limit)
+	if opts.Limit > 0 {
+		q = q.Limit(opts.Limit)
 	}
 	var rows []sessionRow
 	if err := q.Scan(ctx, &rows); err != nil {

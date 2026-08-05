@@ -294,7 +294,7 @@ func TestSessionSettings_Limit(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "new", RunOptions{Conversation: ConversationOptions{Session: sess, Settings: &session.Settings{Limit: 1}}})
+	_, err := RunSync(context.Background(), agent, "new", RunOptions{Conversation: ConversationOptions{Session: sess, Settings: session.Settings{Limit: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}

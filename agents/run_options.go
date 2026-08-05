@@ -114,10 +114,10 @@ type ConversationOptions struct {
 	// saved after the run completes.
 	Session *session.Session
 
-	// session.Settings overrides how the run reads the Session (e.g. how many
-	// recent items to load). Non-zero fields take precedence over a Session-level
-	// default. Ignored without a Session.
-	Settings *session.Settings
+	// Settings tunes how the run reads the Session — how many recent entries
+	// to load. The zero value reads the whole history. Ignored without a
+	// Session.
+	Settings session.Settings
 
 	// UsePreviousResponseID opts into server-managed conversation state: instead
 	// of resending the full history each turn, the runner chains calls via the

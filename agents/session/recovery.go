@@ -122,7 +122,7 @@ func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (Recover
 			if err != nil {
 				return report, fmt.Errorf("recovering call %q: %w", callID, err)
 			}
-			e.Display = &Display{Kind: DisplayToolOutput, CallID: callID, Output: msg, IsError: true}
+			e.Display = &ItemDisplay{Kind: DisplayToolOutput, CallID: callID, Output: msg, IsError: true}
 			repair = append(repair, e)
 			report.Repaired = append(report.Repaired, callID)
 		}

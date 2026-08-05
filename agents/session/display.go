@@ -1,14 +1,14 @@
 package session
 
-// Display is an item projected into what a renderer actually needs. It is
+// ItemDisplay is an item projected into what a renderer actually needs. It is
 // produced by the layer that knows the wire format — the runner for live
 // items, the projection for stored entries — rather than by each consumer
 // parsing the wire again.
 //
-// It is a hint, not a replacement: a consumer that ignores Display entirely
-// must still be able to render from the underlying item, which is what keeps
-// Display free to gain fields without breaking anyone.
-type Display struct {
+// It is a hint, not a replacement: a consumer that ignores ItemDisplay
+// entirely must still be able to render from the underlying item, which is
+// what keeps ItemDisplay free to gain fields without breaking anyone.
+type ItemDisplay struct {
 	// Kind is the item kind: message, tool_call, tool_output, reasoning,
 	// handoff, unknown. An unrecognized kind must fall back, not fail.
 	Kind string `json:"kind"`

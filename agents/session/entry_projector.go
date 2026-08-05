@@ -310,7 +310,7 @@ func FoldUpdates(entries []Entry) []Entry {
 		if !ok {
 			continue
 		}
-		merged := Display{}
+		merged := ItemDisplay{}
 		if out[i].Display != nil {
 			merged = *out[i].Display
 		}

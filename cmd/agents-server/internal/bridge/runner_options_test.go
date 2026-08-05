@@ -36,8 +36,8 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 	if opts.Exec.ShouldStopAfterTurn == nil {
 		t.Fatal("StopAtTools must set Exec.ShouldStopAfterTurn")
 	}
-	if opts.Conversation.Settings == nil {
-		t.Fatal("HistoryLimit must set Conversation.Settings")
+	if opts.Conversation.Settings.Limit != 25 {
+		t.Fatalf("HistoryLimit not carried: Conversation.Settings = %+v", opts.Conversation.Settings)
 	}
 	if len(opts.Guardrails) != 1 || opts.Guardrails[0].Name != "g1" {
 		t.Fatalf("run guardrails not carried: %+v", opts.Guardrails)

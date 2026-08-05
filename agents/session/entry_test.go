@@ -18,7 +18,7 @@ func TestProjectEntries_OnlyContextKindsReachTheModel(t *testing.T) {
 	}
 	entries := []Entry{
 		item,
-		NewAnnotationEntry(Display{Kind: DisplayMessage, Text: "run cancelled"}, Source{}),
+		NewAnnotationEntry(ItemDisplay{Kind: DisplayMessage, Text: "run cancelled"}, Source{}),
 		{Kind: EntryKindTerminal, Payload: json.RawMessage(`{"output":"ls -la"}`)},
 		{Kind: EntryKindCustom, CustomType: "sticky_note", Payload: json.RawMessage(`{}`)},
 		{Kind: "a_kind_from_the_future", Payload: json.RawMessage(`{}`)},
@@ -83,13 +83,13 @@ func TestFoldUpdates(t *testing.T) {
 	target := Entry{
 		ID:      "e1",
 		Kind:    EntryKindItem,
-		Display: &Display{Kind: DisplayToolCall, ToolName: "spawn_task", Text: "running"},
+		Display: &ItemDisplay{Kind: DisplayToolCall, ToolName: "spawn_task", Text: "running"},
 	}
-	first, err := NewUpdateEntry("e1", Display{Text: "still running", Extra: map[string]any{"pct": 40}})
+	first, err := NewUpdateEntry("e1", ItemDisplay{Text: "still running", Extra: map[string]any{"pct": 40}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewUpdateEntry("e1", Display{Text: "done", Extra: map[string]any{"pct": 100}})
+	second, err := NewUpdateEntry("e1", ItemDisplay{Text: "done", Extra: map[string]any{"pct": 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,11 @@ func TestFoldUpdates(t *testing.T) {
 // and projection associates them by id regardless of order — which removes the
 // race rather than retrying around it.
 func TestFoldUpdates_UpdateMayPrecedeItsTarget(t *testing.T) {
-	update, err := NewUpdateEntry("e1", Display{Text: "finished first"})
+	update, err := NewUpdateEntry("e1", ItemDisplay{Text: "finished first"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := Entry{ID: "e1", Kind: EntryKindItem, Display: &Display{Kind: DisplayToolCall}}
+	target := Entry{ID: "e1", Kind: EntryKindItem, Display: &ItemDisplay{Kind: DisplayToolCall}}
 
 	got := FoldUpdates([]Entry{update, target})
 	if len(got) != 1 || got[0].Display.Text != "finished first" {
@@ -139,9 +139,9 @@ func TestFoldUpdates_DoesNotWriteThroughToStorage(t *testing.T) {
 	target := Entry{
 		ID:      "e1",
 		Kind:    EntryKindItem,
-		Display: &Display{Kind: DisplayToolCall, CallID: "c1", Extra: map[string]any{"pct": float64(40)}},
+		Display: &ItemDisplay{Kind: DisplayToolCall, CallID: "c1", Extra: map[string]any{"pct": float64(40)}},
 	}
-	update, err := NewUpdateEntry("e1", Display{Extra: map[string]any{"pct": float64(100), "done": true}})
+	update, err := NewUpdateEntry("e1", ItemDisplay{Extra: map[string]any{"pct": float64(100), "done": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestFoldUpdates_DoesNotWriteThroughToStorage(t *testing.T) {
 // folded the target away, and failing a whole read over a stale pointer would
 // make history unloadable.
 func TestFoldUpdates_MissingTargetIsIgnored(t *testing.T) {
-	update, err := NewUpdateEntry("nobody", Display{Text: "orphan"})
+	update, err := NewUpdateEntry("nobody", ItemDisplay{Text: "orphan"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestFoldUpdates_MissingTargetIsIgnored(t *testing.T) {
 // Updates never reach the model — they amend a display, and a display is not
 // something anyone said.
 func TestProjectEntries_UpdatesAreNotContext(t *testing.T) {
-	update, err := NewUpdateEntry("e1", Display{Text: "amended"})
+	update, err := NewUpdateEntry("e1", ItemDisplay{Text: "amended"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestUpdateEntry_TargetsACallID(t *testing.T) {
 	call.ID = "e2"
 	call.ResponseID = "resp_1"
 
-	upd, err := NewCallUpdateEntry("call-9", Display{
+	upd, err := NewCallUpdateEntry("call-9", ItemDisplay{
 		Extra: map[string]any{"task_status": "completed"},
 	})
 	if err != nil {
@@ -277,7 +277,7 @@ func TestUpdateEntry_TargetsACallID(t *testing.T) {
 func TestUpdateEntry_UnknownCallIDIsIgnored(t *testing.T) {
 	call := toolCallEntry(t, "probe", "call-1")
 	call.ID = "e1"
-	upd, err := NewCallUpdateEntry("call-does-not-exist", Display{Text: "ghost"})
+	upd, err := NewCallUpdateEntry("call-does-not-exist", ItemDisplay{Text: "ghost"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +304,6 @@ func toolCallEntry(t *testing.T, name, callID string) Entry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.Display = &Display{Kind: DisplayToolCall, ToolName: name, CallID: callID, Arguments: "{}"}
+	e.Display = &ItemDisplay{Kind: DisplayToolCall, ToolName: name, CallID: callID, Arguments: "{}"}
 	return e
 }
