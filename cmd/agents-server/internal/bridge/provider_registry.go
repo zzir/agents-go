@@ -87,7 +87,14 @@ func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, p
 	if proxyClient != nil {
 		opts = append(opts, option.WithHTTPClient(proxyClient))
 	}
-	return openaiProvider.NewProvider(opts...)
+	p := openaiProvider.NewProvider(opts...)
+	if creds != nil {
+		// The Codex backend rejects non-streaming requests (400), so blocking
+		// GetResponse callers — title gen, compaction summaries, playground —
+		// are served by an internal stream instead.
+		return agents.NewStreamOnlyProvider(p)
+	}
+	return p
 }
 
 func newAnthropicModelProvider(apiKey, baseURL string, proxyClient *http.Client) agents.ModelProvider {

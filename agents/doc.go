@@ -84,8 +84,9 @@
 //
 // [Model] and [ModelProvider] are the backend seam; the models/openai
 // subpackage implements them for the OpenAI Responses API. [NewRetryModel],
-// [NewFallbackModel] and [RouterProvider] add retry, failover and routing as
-// provider-agnostic decorators, never as run-loop changes.
+// [NewFallbackModel], [RouterProvider] and [NewStreamOnlyModel] add retry,
+// failover, routing and stream-only backend adaptation as provider-agnostic
+// decorators, never as run-loop changes.
 //
 // # Observability
 //

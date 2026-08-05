@@ -71,7 +71,7 @@ Each agent's name is resolved through the run's provider. Two overrides bypass t
 
 ## Retries, fallback, and multiple providers
 
-Three provider-agnostic decorators compose for resilience and multi-backend routing. None touch the run loop — they wrap a `Model` (or `ModelProvider`).
+A family of provider-agnostic decorators composes for resilience, multi-backend routing, and backend adaptation. None touch the run loop — they wrap a `Model` (or `ModelProvider`).
 
 **Retry** — `agents.NewRetryModel(inner, policy)` retries transient failures with exponential backoff and jitter:
 
@@ -134,6 +134,15 @@ agents.Run(ctx, agent, input, agents.RunOptions{Model: agents.ModelOptions{Provi
 ```
 
 > **Streaming caveat:** retry and fallback can only switch backends *before the first event is emitted*. Once tokens start streaming a later error is passed through unchanged — already-sent output cannot be rolled back. Blocking `GetResponse` has no such limit, so it retries and falls back on any failure.
+
+**Stream-only backends** — `agents.NewStreamOnlyModel(inner)` / `agents.NewStreamOnlyProvider(inner)` adapt a backend that rejects non-streaming requests (the ChatGPT Codex backend answers a non-streaming POST with 400): `GetResponse` runs the request as an internal stream and assembles the final `ModelResponse` from the terminal event; `StreamResponse` passes through. Compose it innermost, directly on the backend it adapts — decorators above it then see blocking-call failures as ordinary `GetResponse` errors:
+
+```go
+provider := agents.NewRetryProvider(
+    agents.NewStreamOnlyProvider(codexBackend), // innermost, next to the backend
+    policy,
+)
+```
 
 A runnable example is in `examples/fallback`.
 

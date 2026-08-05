@@ -1839,6 +1839,26 @@ only view the model ever sees) and are translated to their host-side names,
 and anything else fails with `sandbox.ErrOutsideWorkDir` — an explicit
 "outside the working directory" to the model, never a silent re-rooting.
 
+### 5.15 Streaming-only backends adapt with a Model decorator
+
+Some backends accept **only** streaming requests — the ChatGPT Codex backend
+(`chatgpt.com/backend-api/codex`) rejects a non-streaming POST with 400. The
+adaptation is `NewStreamOnlyModel` / `NewStreamOnlyProvider`: a
+provider-agnostic decorator whose `GetResponse` runs the request as an
+internal `StreamResponse` and assembles the final `ModelResponse` from the
+terminal event; `StreamResponse` passes through untouched.
+
+It is a **Model decorator, not an HTTP middleware**, because forcing
+`"stream": true` at the transport layer would hand an SSE body to a caller
+that parses a JSON response — the request shape and the response parser must
+switch together, which only the model boundary sees. Assembly is shared with
+the runner's own streaming path (one `responseAssembler`), so the two paths
+cannot drift; like that path, the assembled response carries no `RequestID`
+and treats a length-truncated `response.incomplete` as an arrived (not
+failed) response. Compose it **innermost**, directly on the backend it
+adapts: decorators above it (retry, fallback, routing) then see a severed
+stream as an ordinary `GetResponse` error and handle it normally.
+
 ---
 
 ## 6. Open questions

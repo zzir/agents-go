@@ -109,7 +109,7 @@ meant to be replaced.
 | Seam | Interface | Use it to |
 |---|---|---|
 | Model backend | `Model`, `ModelProvider` | Talk to something other than the OpenAI Responses API |
-| Model behavior | decorators: `NewRetryModel`, `NewFallbackModel`, `RouterProvider` | Add retry, failover or per-prefix routing without touching the loop |
+| Model behavior | decorators: `NewRetryModel`, `NewFallbackModel`, `RouterProvider`, `NewStreamOnlyModel` | Add retry, failover, per-prefix routing or stream-only adaptation without touching the loop |
 | Tools | `NewFunctionTool[Args, Result]` | Give the agent something to do. The `Tool` interface is **sealed** — every tool executes locally |
 | Tool capabilities | side interfaces, reached with `ToolAs[T]` | Add behavior (approval, timeout, sequential execution) that survives decorator stacking |
 | Run behavior | `RunMiddleware` | Wrap a whole run: logging, approval policy, retry-the-run |

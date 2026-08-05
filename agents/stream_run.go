@@ -38,8 +38,7 @@ func usageFromStreamResponse(resp *responses.Response) *Usage {
 // The first event's arrival is stamped on the generation span as
 // time_to_first_token_ms.
 func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest) (*ModelResponse, error) {
-	var final *ModelResponse
-	acc := &streamAccumulator{}
+	asm := &responseAssembler{}
 	start := time.Now()
 	first := false
 	// The stamp waits for the first DELTA — the first actual token. Earlier
@@ -68,32 +67,53 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 		if !r.emit(&RawResponsesStreamEvent{Data: event}) {
 			return nil, errConsumerStopped
 		}
-		acc.processEvent(event)
-		switch event.Type {
-		case "response.completed":
-			completed := event.AsResponseCompleted()
-			final = &ModelResponse{
-				Output:     completed.Response.Output,
-				Usage:      usageFromStreamResponse(&completed.Response),
-				ResponseID: completed.Response.ID,
-				Status:     string(completed.Response.Status),
-			}
-		case "response.incomplete":
-			// A response cut off at the output-token limit still arrived. It is
-			// assembled like any other so the runner can see it is truncated
-			// and refuse to run its tool calls; treating it as "no response"
-			// would throw the turn away over a length limit.
-			inc := event.AsResponseIncomplete()
-			final = &ModelResponse{
-				Output:           inc.Response.Output,
-				Usage:            usageFromStreamResponse(&inc.Response),
-				ResponseID:       inc.Response.ID,
-				Status:           string(inc.Response.Status),
-				IncompleteReason: inc.Response.IncompleteDetails.Reason,
-			}
+		asm.observe(event)
+	}
+	return asm.result()
+}
+
+// responseAssembler assembles the final ModelResponse from a raw Responses
+// event stream. It is the one place stream events become a ModelResponse —
+// the runner's streaming path and the stream-only adapter (NewStreamOnlyModel)
+// both feed it, so the two paths cannot drift.
+type responseAssembler struct {
+	final *ModelResponse
+	items []TResponseOutputItem
+}
+
+func (a *responseAssembler) observe(event *TResponseStreamEvent) {
+	switch event.Type {
+	case "response.output_item.done":
+		// Collected as a fallback for backends (e.g. ChatGPT with store=false)
+		// whose terminal event carries an empty Output array.
+		done := event.AsResponseOutputItemDone()
+		a.items = append(a.items, done.Item)
+	case "response.completed":
+		completed := event.AsResponseCompleted()
+		a.final = &ModelResponse{
+			Output:     completed.Response.Output,
+			Usage:      usageFromStreamResponse(&completed.Response),
+			ResponseID: completed.Response.ID,
+			Status:     string(completed.Response.Status),
+		}
+	case "response.incomplete":
+		// A response cut off at the output-token limit still arrived. It is
+		// assembled like any other so the runner can see it is truncated
+		// and refuse to run its tool calls; treating it as "no response"
+		// would throw the turn away over a length limit.
+		inc := event.AsResponseIncomplete()
+		a.final = &ModelResponse{
+			Output:           inc.Response.Output,
+			Usage:            usageFromStreamResponse(&inc.Response),
+			ResponseID:       inc.Response.ID,
+			Status:           string(inc.Response.Status),
+			IncompleteReason: inc.Response.IncompleteDetails.Reason,
 		}
 	}
-	if final == nil {
+}
+
+func (a *responseAssembler) result() (*ModelResponse, error) {
+	if a.final == nil {
 		// No response.completed event arrived: the stream ended early or with a
 		// terminal failure event. Surfacing this is essential — fabricating an
 		// empty response would make a failed run "succeed" with empty output.
@@ -102,25 +122,8 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 	// Some backends (e.g. ChatGPT with store=false) return an empty Output
 	// array in the completed event. Fall back to output assembled from
 	// streaming deltas so the run produces a usable final result.
-	if len(final.Output) == 0 {
-		final.Output = acc.buildOutput()
+	if len(a.final.Output) == 0 {
+		a.final.Output = a.items
 	}
-	return final, nil
-}
-
-// streamAccumulator collects output items from streaming events so they can
-// be used as a fallback when the completed response has an empty Output array.
-type streamAccumulator struct {
-	items []TResponseOutputItem
-}
-
-func (a *streamAccumulator) processEvent(event *TResponseStreamEvent) {
-	if event.Type == "response.output_item.done" {
-		done := event.AsResponseOutputItemDone()
-		a.items = append(a.items, done.Item)
-	}
-}
-
-func (a *streamAccumulator) buildOutput() []TResponseOutputItem {
-	return a.items
+	return a.final, nil
 }

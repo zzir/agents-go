@@ -49,6 +49,7 @@ See [Models](models.md).
 | Retry | `agents.NewRetryModel(...)` / `agents.NewRetryProvider(...)` (backoff + jitter) |
 | Fallback | `agents.NewFallbackModel(...)` / `agents.NewFallbackProvider(...)` (try backends in order) |
 | Multi-provider routing | `agents.NewRouterProvider(...)` (per-agent backend by model-name prefix) |
+| Stream-only backends | `agents.NewStreamOnlyModel(...)` / `agents.NewStreamOnlyProvider(...)` (serve blocking calls via an internal stream) |
 
 ## Integrations
 

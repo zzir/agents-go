@@ -49,6 +49,10 @@ func main() {
 	// transient failures (429/5xx/network) try the backup — a deterministic
 	// 400 (bad schema, context too long) fails fast instead of burning a
 	// doomed call on every backend.
+	//
+	// A streaming-only backend (one that rejects non-streaming requests, like
+	// the ChatGPT Codex backend) is adapted innermost, before the other
+	// decorators: primary = agents.NewStreamOnlyModel(primary)
 	model := agents.NewFallbackModel(
 		agents.NewRetryModel(primary, policy),
 		agents.NewRetryModel(backup, policy),

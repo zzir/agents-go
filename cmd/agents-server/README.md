@@ -540,6 +540,15 @@ Login, logout, and status are per-agent, under the agent resource — see
 [Agents](#agents--apiv1agents). The browser OAuth redirect lands on a temporary
 listener at the fixed ChatGPT port (localhost:1455), not on an API route.
 
+A `chatgpt_login` agent talks to the Codex backend
+(`chatgpt.com/backend-api/codex`), which differs from the standard API in two
+ways the bridge absorbs: request bodies are rewritten (`store: false`, no
+`previous_response_id`, input sanitized to the fields the backend accepts),
+and **only streaming requests are accepted** — the provider is wrapped in
+`agents.NewStreamOnlyProvider`, so blocking callers (title generation,
+compaction summaries, playground) are served by an internal stream instead of
+a non-streaming POST the backend would 400.
+
 ### Secret handling
 
 Secret fields are **write-only**. GET responses return them masked as `********`;
