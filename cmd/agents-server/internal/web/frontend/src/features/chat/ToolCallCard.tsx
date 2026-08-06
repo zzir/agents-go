@@ -146,20 +146,29 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task, progress } = toolCall;
 
   // A spawn_task card is the task's anchor in the timeline: the terminal
-  // display projection carries the id; while live, it's in the tool output.
+  // display projection carries the id on the call side; before that lands, the
+  // result's Details bag does (taskResult puts task_id there so no UI has to
+  // parse the model-facing text back into fields).
   let inspectTaskId = task?.id || '';
-  if (!inspectTaskId && tool_name === 'spawn_task' && output) {
-    try { inspectTaskId = (JSON.parse(output) as { task_id?: string }).task_id || ''; } catch { /* not JSON */ }
+  if (!inspectTaskId && tool_name === 'spawn_task' && typeof toolCall.extra?.task_id === 'string') {
+    inspectTaskId = toolCall.extra.task_id;
   }
 
   const sepIdx = tool_name.indexOf('__');
   const mcpServer = sepIdx > 0 ? tool_name.substring(0, sepIdx) : null;
-  const displayName = sepIdx > 0 ? tool_name.substring(sepIdx + 2) : tool_name;
+  // The tool's own heading wins over its name, per the display contract
+  // (Title is "a card heading, when the tool name is not it").
+  const displayTitle = (toolCall.title || '').trim();
+  const displayName = displayTitle || (sepIdx > 0 ? tool_name.substring(sepIdx + 2) : tool_name);
 
   // The spawn label, shown next to the name so the wide spawn_task card carries
   // real information instead of blank space: terminal from the display
   // projection, pre-terminal from the live run event. Empty for non-task tools.
   const taskTitle = (task?.label || liveTaskLabel || '').trim();
+  // The tool's one-line account of what happened ("3 files changed"), from its
+  // result's display. Outranks everything inferred from the arguments below:
+  // the tool said what it did, so the card need not guess from what was asked.
+  const resultSummary = (toolCall.summary || '').trim();
 
   const body = primaryArg(tool_name, args);
   const patchFileList = body.kind === 'patch' ? patchFiles(body.text) : [];
@@ -170,11 +179,13 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       ? `${patchFileList[0]} +${patchFileList.length - 1}`
       : '';
 
-  // One-line title for the header: the spawn label, else the patched file(s),
-  // else a per-tool arg summary, else the task a task_status/task_stop targets.
-  // At most one applies — it makes the collapsed card self-describing.
+  // One-line title for the header: the spawn label, else the tool's own result
+  // summary, else the patched file(s), else a per-tool arg summary, else the
+  // task a task_status/task_stop targets. At most one applies — it makes the
+  // collapsed card self-describing.
   let headerSummary: { text: string; mono: boolean } | null = null;
   if (taskTitle) headerSummary = { text: taskTitle, mono: false };
+  else if (resultSummary) headerSummary = { text: resultSummary, mono: false };
   else if (fileHint) headerSummary = { text: fileHint, mono: true };
   else if (mcpServer) headerSummary = mcpArgSummary(args);
   else {
@@ -201,13 +212,19 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
   // A card with live output opens itself: a spinner the user has to click to
   // see through defeats the point of streaming it.
 
-  const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning;
-  const statusLabel = status === 'approved' ? 'approved'
-    : status === 'rejected' ? 'rejected'
+  // A result that reported failure gets a badge even on cards that would
+  // otherwise stay quiet. It outranks 'approved' (the outcome over the
+  // process) but not 'rejected' — a rejection notice is not the tool failing.
+  const failed = !!toolCall.is_error && status !== 'rejected';
+  const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning || failed;
+  const statusLabel = status === 'rejected' ? 'rejected'
+    : failed ? 'error'
+    : status === 'approved' ? 'approved'
     : pendingApproval ? 'pending'
     : 'running…';
-  const statusVariant = status === 'approved' ? 'success'
-    : status === 'rejected' ? 'danger'
+  const statusVariant = status === 'rejected' ? 'danger'
+    : failed ? 'danger'
+    : status === 'approved' ? 'success'
     : pendingApproval ? 'attention'
     : 'accent';
 

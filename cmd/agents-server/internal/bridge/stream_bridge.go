@@ -146,13 +146,22 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 			}
 		case "tool_output":
 			if e.Item.Kind == agents.ItemToolCallOutput {
+				// The display rendering, not %v: a multimodal output is a
+				// content list, and Go syntax for it would not match what
+				// the same item reads back as from the stored session. The
+				// rest of the display travels too, so the live card carries
+				// the same Title/Summary/Renderer/IsError a reload rebuilds
+				// from the stored entry.
+				d := e.Item.Display()
 				send(protocol.EventRunToolResult, protocol.RunToolResult{
 					RunID:      runID,
 					ToolCallID: e.Item.CallID(),
-					// The display rendering, not %v: a multimodal output is a
-					// content list, and Go syntax for it would not match what
-					// the same item reads back as from the stored session.
-					Output: e.Item.Display().Output,
+					Output:     d.Output,
+					Title:      d.Title,
+					Summary:    d.Summary,
+					Renderer:   d.Renderer,
+					IsError:    d.IsError,
+					Extra:      d.Extra,
 				})
 			}
 		case "handoff_requested":

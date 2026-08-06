@@ -636,7 +636,7 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 | `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text}`                            |
 | `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
 | `run.tool_progress`     | Partial output from a running tool — `{run_id, call_id, tool_name, delta, renderer?}`; `delta` appends to what the client holds for the call, `renderer` is a display hint (e.g. `terminal`) |
-| `run.tool_result`       | Tool output — `{run_id, tool_call_id, output}`                                                                                                          |
+| `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds |
 | `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |
 | `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |

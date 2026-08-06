@@ -317,10 +317,30 @@ type RunToolCall struct {
 }
 
 // RunToolResult carries the output of a completed tool call back to the client.
+//
+// The display fields mirror the stored entry's ItemDisplay (same JSON names),
+// so the live card and the one rebuilt from history render from the same
+// data. Omitting them here was how Title/Summary only appeared after a reload.
 type RunToolResult struct {
 	RunID      string `json:"run_id"`
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output"`
+	// Title and Summary are the tool's display overrides (ToolResult.Title /
+	// .Summary): a card heading when the tool name is not it, a one-line
+	// account of what happened. Empty means the card keeps its fallbacks.
+	Title   string `json:"title,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Renderer is the tool's rendering hint for the output ("diff",
+	// "terminal", …), same contract as RunToolProgress.
+	Renderer string `json:"renderer,omitempty"`
+	// IsError marks a result that reports a failure.
+	IsError bool `json:"is_error,omitempty"`
+	// Extra carries whatever the tool attached via ToolResult.Details — the
+	// card's data as opposed to the model's text (a task result's task_id, an
+	// exec_command's command). It reaches history readers through the stored
+	// entry's display; omitting it here left live clients parsing Output text
+	// for fields the tool had already provided structured.
+	Extra map[string]any `json:"extra,omitempty"`
 }
 
 // RunHandoff is emitted when control transfers from one agent to another.

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef } from 'react';
 import { WSClient } from '@/lib/ws';
 import { EV, ERR, type RunDiagnostic } from '@/lib/protocol';
 import type { TaskStatus } from '@/lib/protocol';
-import { buildTimeline, type EntryView } from '@/lib/timeline';
+import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendToolProgress, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, appendToolProgress, appendHandoffPart,
+  TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
 import { toast } from '@/lib/toast';
@@ -451,7 +452,21 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       if (!meta) return false;
       updateSS(meta.parentSid, s => {
         const cur = s.tasks[meta.taskId] || { taskId: meta.taskId, label: meta.label, status: 'working' as TaskStatus, toolCallId: meta.toolCallId };
-        return { ...s, tasks: { ...s.tasks, [meta.taskId]: { ...cur, updatedAt: Date.now(), ...patch } } };
+        let next = { ...s, tasks: { ...s.tasks, [meta.taskId]: { ...cur, updatedAt: Date.now(), ...patch } } };
+        // A terminal outcome also folds into the spawn card, so the timeline
+        // shows "task completed" and the result summary without a reload —
+        // the live counterpart of the call-display UPDATE the server appends
+        // for replay (applyTaskTerminal ignores non-terminal statuses).
+        if (meta.toolCallId && patch.status) {
+          const msgs = applyTaskTerminal(next.messages, meta.toolCallId, {
+            id: meta.taskId,
+            label: cur.label || meta.label,
+            status: patch.status,
+            summary: patch.summary ?? cur.summary,
+          });
+          if (msgs) next = { ...next, messages: msgs };
+        }
+        return next;
       });
       return true;
     };
@@ -758,7 +773,20 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // isomorphism test pins this).
       const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval || undefined, status: null as string | null, output: null as string | null };
       updateSS(sid, s => {
-        const msgs = appendToolCall(s.messages, tc, flushed);
+        let msgs = appendToolCall(s.messages, tc, flushed);
+        // The spawned task may already be terminal: parent and task runs are
+        // delivered on independent subscriptions with no cross-run ordering
+        // (a reconnect replays both buffers), so updateTask's terminal fold
+        // can run before this card exists and find nothing to patch. The
+        // outcome is still in s.tasks — fold it onto the card it was for.
+        if (msgs) {
+          for (const t of Object.values(s.tasks)) {
+            if (t.toolCallId === p.tool_call_id && TERMINAL_TASK_STATUSES.has(t.status)) {
+              msgs = applyTaskTerminal(msgs, p.tool_call_id, { id: t.taskId, label: t.label, status: t.status, summary: t.summary }) ?? msgs;
+              break;
+            }
+          }
+        }
         return msgs ? { ...s, messages: msgs, streaming: '' } : s;
       });
     });
@@ -786,11 +814,11 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
 
     // Single registration: WSClient.on is overwrite-semantics (one handler per
     // event type), so the task branch must live INSIDE the chat handler.
-    ws.on(EV.runToolResult, (p: { run_id: string; tool_call_id: string; output: string }) => {
+    ws.on(EV.runToolResult, (p: { run_id: string; tool_call_id: string; output: string; title?: string; summary?: string; renderer?: string; is_error?: boolean; extra?: DisplayExtra }) => {
       if (taskRunsRef.current[p.run_id]) {
         updateTask(p.run_id, { pendingCallId: undefined, pendingToolName: undefined });
         updateTaskView(p.run_id, v => {
-          const msgs = applyToolResult(v.messages, p.tool_call_id, p.output);
+          const msgs = applyToolResult(v.messages, p.tool_call_id, p.output, p);
           return msgs ? { ...v, messages: msgs } : v;
         });
         return;
@@ -798,7 +826,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
-        const msgs = applyToolResult(s.messages, p.tool_call_id, p.output);
+        const msgs = applyToolResult(s.messages, p.tool_call_id, p.output, p);
         return msgs ? { ...s, messages: msgs } : s;
       });
     });

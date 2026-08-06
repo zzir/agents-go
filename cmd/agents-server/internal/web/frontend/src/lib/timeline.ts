@@ -20,13 +20,18 @@ interface ItemDisplay {
   // amends onto a card afterwards: a guardrail block's name/stage, a spawned
   // task's id and terminal status (the durable truth the task card is rebuilt
   // from on reload, since the hub run is GC'd).
-  extra?: {
-    guardrail?: string;
-    stage?: string;
-    task_id?: string;
-    task_status?: string;
-    [k: string]: unknown;
-  };
+  extra?: DisplayExtra;
+}
+
+// DisplayExtra is the shape of a display's `extra` bag wherever it travels:
+// the stored entry's display, the live run.tool_result event, and the ToolCall
+// both fold it into. One name, so the three cannot drift.
+interface DisplayExtra {
+  guardrail?: string;
+  stage?: string;
+  task_id?: string;
+  task_status?: string;
+  [k: string]: unknown;
 }
 
 // Display kinds. Mirrors agents/run_items.go — keep in sync.
@@ -100,6 +105,17 @@ interface ToolCall {
   output: string | null;
   status: string | null;
   needs_approval?: boolean;
+  // title/summary are the tool's display overrides from its result (a card
+  // heading over the tool name, a one-line account of what happened). Set by
+  // both paths — the live run.tool_result event and the stored output entry's
+  // display — so the card reads the same before and after a reload.
+  title?: string;
+  summary?: string;
+  // is_error marks a result that reports a failure.
+  is_error?: boolean;
+  // extra is the result's Details bag (a task result's task_id, an
+  // exec_command's command), folded from the same two paths as title/summary.
+  extra?: DisplayExtra;
   // Terminal task outcome for a spawn_task call, from the display projection.
   task?: { id?: string; label?: string; status?: string; summary?: string };
   // progress is live output the tool pushed while still running — a command's
@@ -209,9 +225,14 @@ interface ToolCallPatch {
   needs_approval?: boolean;
   progress?: string;
   renderer?: string;
+  title?: string;
+  summary?: string;
+  is_error?: boolean;
+  extra?: DisplayExtra;
+  task?: ToolCall['task'];
 }
 
-export type { EntryView, ItemDisplay, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
+export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
 export { DISPLAY };
 
 // buildTimeline folds a session's entries into the rendered timeline.
@@ -368,8 +389,19 @@ function assemble(
       case DISPLAY.toolOutput: {
         if (turn && e.id) (turn as TurnEntry).messageId = e.id;
         if (d.call_id && pendingTC[d.call_id]) {
-          pendingTC[d.call_id].output = d.output || e.content || '';
-          pendingTC[d.call_id].status = 'completed';
+          const tc = pendingTC[d.call_id];
+          tc.output = d.output || e.content || '';
+          tc.status = 'completed';
+          // The output entry's display carries the tool's word on how to
+          // present the result. Applied conditionally, mirroring the live
+          // path (applyToolResult) — the isomorphism test compares the two.
+          if (d.title) tc.title = d.title;
+          if (d.summary) tc.summary = d.summary;
+          if (d.renderer) tc.renderer = d.renderer;
+          if (d.is_error) tc.is_error = true;
+          // Non-empty only: the wire omits an empty bag (omitempty), so an
+          // empty stored one must fold to nothing too or the paths diverge.
+          if (d.extra && Object.keys(d.extra).length) tc.extra = d.extra;
         }
         continue;
       }

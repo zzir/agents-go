@@ -12,7 +12,7 @@
 // their existing state object in that case.
 
 import { patchToolCall, findToolCall } from '@/lib/timeline';
-import type { TimelineEntry, TurnEntry, TurnPart, ToolCall, ToolCallPatch, ErrorPart, UserEntry } from '@/lib/timeline';
+import type { TimelineEntry, TurnEntry, TurnPart, ToolCall, ToolCallPatch, DisplayExtra, ErrorPart, UserEntry } from '@/lib/timeline';
 
 // Loose message shape: live state mixes TimelineEntry rows with optimistic
 // entries, so transforms only assume `role` and (for turns) `parts`.
@@ -202,10 +202,21 @@ export function appendToolCall(msgs: Msgs, tc: ToolCall, flushed: string): Msgs 
   return withParts(msgs, turn, parts);
 }
 
+// ToolResultDisplay is the display portion of a run.tool_result event: the
+// tool's own word on how to present the result, mirroring the stored output
+// entry's display fields.
+export interface ToolResultDisplay {
+  title?: string;
+  summary?: string;
+  renderer?: string;
+  is_error?: boolean;
+  extra?: DisplayExtra;
+}
+
 // applyToolResult records a call's output. A user-rejected call keeps its
 // terminal 'rejected' status: the resumed run still emits a tool_output (the
 // rejection notice) that would otherwise clobber the red badge to 'completed'.
-export function applyToolResult(msgs: Msgs, toolCallId: string, output: string): Msgs | null {
+export function applyToolResult(msgs: Msgs, toolCallId: string, output: string, display?: ToolResultDisplay): Msgs | null {
   const cur = findToolCall(msgs, toolCallId);
   const status = cur?.status === 'rejected' ? 'rejected' : 'completed';
   // The result REPLACES any live progress: progress was how the tool got here,
@@ -217,7 +228,39 @@ export function applyToolResult(msgs: Msgs, toolCallId: string, output: string):
   // so, and it caught exactly this.
   const patch: ToolCallPatch = { output, status };
   if (cur?.progress) patch.progress = '';
+  // Display fields patch conditionally for the same reason: buildTimeline sets
+  // them only when the stored display carries them, and the two paths must
+  // produce identical timelines.
+  if (display?.title) patch.title = display.title;
+  if (display?.summary) patch.summary = display.summary;
+  if (display?.renderer) patch.renderer = display.renderer;
+  if (display?.is_error) patch.is_error = true;
+  if (display?.extra && Object.keys(display.extra).length) patch.extra = display.extra;
   return patchToolCall(msgs, toolCallId, patch);
+}
+
+// TERMINAL_TASK_STATUSES mirrors the server's isTerminalTaskStatus — the three
+// states a task cannot leave.
+export const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+// applyTaskTerminal folds a task's terminal outcome into its spawn card — the
+// live counterpart of the call-display UPDATE the server appends for reload
+// (bridge onTaskUpdate), same shape as buildTimeline's fold, so the card
+// renders identically before and after a refresh.
+//
+// Terminal only: pre-terminal states stay on the card's liveTaskStatus props —
+// an early `task` object would take over the badge path and bypass ChatView's
+// identity-stable memo. And a card already terminal keeps its outcome: a late
+// or replayed event must not move it, mirroring the server's own
+// no-move-backwards guard.
+export function applyTaskTerminal(msgs: Msgs, toolCallId: string, task: { id: string; label?: string; status: string; summary?: string }): Msgs | null {
+  if (!TERMINAL_TASK_STATUSES.has(task.status)) return null;
+  const cur = findToolCall(msgs, toolCallId);
+  if (!cur || (cur.task?.status && TERMINAL_TASK_STATUSES.has(cur.task.status))) return null;
+  const t: NonNullable<ToolCall['task']> = { id: task.id, status: task.status };
+  if (task.label) t.label = task.label;
+  if (task.summary) t.summary = task.summary;
+  return patchToolCall(msgs, toolCallId, { task: t });
 }
 
 // appendToolProgress accumulates the live output a running tool pushed.

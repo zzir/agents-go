@@ -22,7 +22,7 @@ import { describe, it, expect } from 'vitest';
 import { buildTimeline, type EntryView, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, appendHandoffPart,
 } from '@/lib/streamReducer';
 
 const RUN = 'run-1';
@@ -73,6 +73,109 @@ describe('stream/replay isomorphism', () => {
       { type: 'text', content: 'the answer' },
     ]);
     expect(replayParts).toEqual(streamParts);
+  });
+
+  it('tool result display overrides: title/summary/renderer/error travel both paths', () => {
+    // The tool's result declared how to present itself (ToolResult.Title/
+    // Summary/Display/IsError). run.tool_result carries these live and the
+    // stored output entry's display carries them on replay — dropping them on
+    // either side is how a card renders differently after a refresh.
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'apply_patch', arguments: '{}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    live = applyToolResult(live, 'c1', 'patch failed', {
+      title: 'Apply patch', summary: '0 of 3 hunks applied', renderer: 'diff', is_error: true,
+      extra: { command: 'apply', partial: true },
+    })!;
+
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'apply_patch({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'apply_patch', arguments: '{}' } },
+      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'patch failed', display: { kind: 'tool_output', call_id: 'c1', output: 'patch failed', title: 'Apply patch', summary: '0 of 3 hunks applied', renderer: 'diff', is_error: true, extra: { command: 'apply', partial: true } } },
+    ];
+
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      {
+        type: 'tools',
+        toolCalls: [{
+          tool_call_id: 'c1', tool_name: 'apply_patch', arguments: '{}', status: 'completed',
+          output: 'patch failed', title: 'Apply patch', summary: '0 of 3 hunks applied',
+          renderer: 'diff', is_error: true, extra: { command: 'apply', partial: true },
+        }],
+      },
+    ]);
+    expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  it('task terminal outcome: live fold equals the replayed call-display update', () => {
+    // When a task finishes, the server appends a call-display UPDATE to the
+    // spawn entry (title=label, summary, extra.task_id/task_status) and replay
+    // folds it into ToolCall.task. applyTaskTerminal is the live counterpart,
+    // fed from the task's run events — the spawn card must show the same
+    // "task completed" badge and result summary without a reload.
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{"agent":"researcher"}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    live = applyToolResult(live, 'c1', 'task_id: t1\nstatus: working')!;
+    // A pre-terminal update stays off the card (liveTaskStatus props own it).
+    expect(applyTaskTerminal(live, 'c1', { id: 't1', label: 'Research topic', status: 'working' })).toBeNull();
+    live = applyTaskTerminal(live, 'c1', { id: 't1', label: 'Research topic', status: 'completed', summary: 'Found 3 sources' })!;
+    // A late event cannot move a terminal card.
+    expect(applyTaskTerminal(live, 'c1', { id: 't1', status: 'failed' })).toBeNull();
+
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({"agent":"researcher"})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{"agent":"researcher"}', title: 'Research topic', summary: 'Found 3 sources', extra: { task_id: 't1', task_status: 'completed' } } },
+      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'task_id: t1\nstatus: working', display: { kind: 'tool_output', call_id: 'c1', output: 'task_id: t1\nstatus: working' } },
+    ];
+
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      {
+        type: 'tools',
+        toolCalls: [{
+          tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{"agent":"researcher"}',
+          status: 'completed', output: 'task_id: t1\nstatus: working',
+          task: { id: 't1', label: 'Research topic', status: 'completed', summary: 'Found 3 sources' },
+        }],
+      },
+    ]);
+    expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  it('task terminal before its spawn card: the fold is recoverable after append', () => {
+    // Parent and task runs are delivered on independent subscriptions with no
+    // cross-run ordering (a reconnect replays both buffers), so a fast task's
+    // terminal event can precede the parent's run.tool_call. The early fold
+    // finds no card and reports null — nothing patched, nothing invented; the
+    // socket layer re-folds from s.tasks right after appending the card. This
+    // pins that recovery: append-then-fold lands the same parts as replay.
+    let live = ensureLiveTurn([], RUN)!;
+    expect(applyTaskTerminal(live, 'c1', { id: 't1', label: 'Quick job', status: 'failed', summary: 'boom' })).toBeNull();
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    live = applyTaskTerminal(live, 'c1', { id: 't1', label: 'Quick job', status: 'failed', summary: 'boom' })!;
+
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Quick job', summary: 'boom', extra: { task_id: 't1', task_status: 'failed' } } },
+    ];
+
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      {
+        type: 'tools',
+        toolCalls: [{
+          tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', status: null, output: null,
+          task: { id: 't1', label: 'Quick job', status: 'failed', summary: 'boom' },
+        }],
+      },
+    ]);
+    expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
   });
 
   it('guardrail-blocked turn: thinking → typed error card', () => {
