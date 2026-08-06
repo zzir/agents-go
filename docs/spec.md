@@ -2370,15 +2370,29 @@ fields.** A bump that REPLACES or reinterprets one must raise
 *successfully* with its old fields silently dropped — strictly worse than a
 refusal, since the caller is told the resume is faithful.
 
-That rule is new, and the history does not satisfy it, which is why the floor
-currently equals the current minor instead of reaching back. The constant has
-only ever read `"1.0"`, `"1.3"` and `"1.4"`; `"1.3"` was stamped by released
-builds both before and after the four guardrail-result keys collapsed into a
-single `guardrail_results`, so two incompatible payloads share that one
-string. Accepting `"1.3"` would drop every recorded guardrail result from the
-older shape — and resume is the only path that carries first-turn
-input-guardrail results forward at all. The window therefore opens at the next
-purely additive bump.
+The floor sits at 4 and does not reach back further: `"1.3"` was stamped by
+released builds both before and after the four guardrail-result keys collapsed
+into a single `guardrail_results`, so two incompatible payloads share that one
+string, and accepting it would drop every recorded guardrail result from the
+older shape — resume is the only path that carries first-turn input-guardrail
+results forward at all. The bumps since have been purely additive (1.5 the
+off-chain-history flag, 1.6 the host extra map), so the window is now real: a
+1.4 state decodes under a 1.6 SDK.
+
+A consumer triaging stored states must apply the same window, via
+`RunStateVersionSupported`, never string equality against
+`RunStateSchemaVersion` — an equality gate destroys states an additive bump
+resumes fine (agents-server's approval pre-flight did exactly that until it
+switched).
+
+`RunState.Extra` (1.6) is host-owned state riding the pause: the SDK marshals
+and unmarshals it verbatim and never reads a key. It exists because a
+build-time agent transform (`middleware.Plan.Apply`) returns fresh state on
+rebuild, so what the transform knew — a plan phase's unlock — must travel with
+the pause or the host invents a side channel. It covers pause→resume only: a
+fact that must survive a crash mid-run needs the host's own durable write at
+the moment it happens (`PlanPhase.OnUnlock`), and the two records answer
+different questions.
 
 ---
 

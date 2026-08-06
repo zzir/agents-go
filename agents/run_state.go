@@ -21,12 +21,13 @@ import (
 // runStateOldestDecodableMinor; anything else is rejected rather than
 // best-effort decoded (see RunStateFromJSON). The numbers below name format
 // steps rather than releases — the constant itself has only ever read 1.0, 1.3,
-// 1.4 and 1.5: 1.1 replaced the per-call approval maps with per-tool entries,
-// 1.2 added the nested agent-as-tool states and the reasoning-item id policy,
-// 1.3 added the guardrail-result slices (input, output, tool input/output), 1.4
-// added the pending injected input, the disclosed deferred tools and the server
-// cursor, and 1.5 added the off-chain-history flag.
-const RunStateSchemaVersion = "1.5"
+// 1.4, 1.5 and 1.6: 1.1 replaced the per-call approval maps with per-tool
+// entries, 1.2 added the nested agent-as-tool states and the reasoning-item id
+// policy, 1.3 added the guardrail-result slices (input, output, tool
+// input/output), 1.4 added the pending injected input, the disclosed deferred
+// tools and the server cursor, 1.5 added the off-chain-history flag, and 1.6
+// added the host extra map.
+const RunStateSchemaVersion = "1.6"
 
 // runStateOldestDecodableMinor is the oldest minor of the current major this
 // decoder still accepts, so that a run paused before an SDK upgrade can resume
@@ -38,8 +39,8 @@ const RunStateSchemaVersion = "1.5"
 // such a state decodes successfully with its old fields silently dropped, which
 // is worse than a refusal. It sits at 4 for that reason: 1.3 was stamped both
 // before and after the four separate guardrail-result keys collapsed into one,
-// and the version string cannot tell those two shapes apart. 1.5 only ADDED a
-// field, so a 1.4 state still decodes.
+// and the version string cannot tell those two shapes apart. 1.5 and 1.6 only
+// ADDED fields, so a 1.4 state still decodes.
 const runStateOldestDecodableMinor = 4
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
@@ -129,6 +130,20 @@ type RunState struct {
 	// is their only source. Serialized lossily: the guardrail's live Run func
 	// does not round-trip, so a decoded result carries a name-only stub.
 	GuardrailResults []GuardrailResult
+
+	// Extra is host-owned state riding the pause. The SDK carries it verbatim —
+	// marshals it, unmarshals it, never reads or writes a key — so whatever a
+	// host must remember across pause and resume (a Plan phase's unlock, a
+	// build-time rewrite's progress) travels inside the state instead of in a
+	// side channel next to it. Keys are the host's; a prefix ("plan:phase")
+	// avoids collisions. Absent in states from before schema 1.6 → nil.
+	//
+	// It covers pause→resume, not crashes: a value lands here only when a
+	// pause serializes the state. A fact that must survive a crash mid-run —
+	// the moment a plan unlocked, say — needs the host's own durable write at
+	// that moment (PlanPhase.OnUnlock exists for exactly that), and the two
+	// records answer different questions.
+	Extra map[string]json.RawMessage
 
 	// cursor is the server-managed-conversation cursor at the pause: what the
 	// server already holds, so a resumed run keeps sending deltas. Without it a
@@ -411,6 +426,7 @@ type serialRunState struct {
 	ApprovalEntries       map[string]serialApprovalEntry `json:"approval_entries,omitempty"`
 	Usage                 *Usage                         `json:"usage,omitempty"`
 	ReasoningItemIDPolicy string                         `json:"reasoning_item_id_policy,omitempty"`
+	Extra                 map[string]json.RawMessage     `json:"extra,omitempty"`
 	// NestedToolStates holds the serialized paused RunState of each agent-as-tool
 	// nested run, keyed by the parent tool call id. Each value is a full RunState
 	// JSON that round-trips through RunStateFromJSON with the same agent registry.
@@ -555,6 +571,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		Usage:                 s.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyToString(s.ReasoningItemIDPolicy),
 		GuardrailResults:      toSerialGuardrailResults(s.GuardrailResults),
+		Extra:                 s.Extra,
 		UsagePending:          &s.usagePending,
 	}
 	if s.CurrentAgent != nil {
@@ -700,6 +717,17 @@ func serializeResponse(resp *ModelResponse) serialResponse {
 // checkRunStateSchemaVersion decides whether a serialized state can be decoded
 // by this build: same major, no newer than RunStateSchemaVersion, no older than
 // runStateOldestDecodableMinor.
+// RunStateVersionSupported reports whether a serialized state stamped with
+// version can be decoded by this SDK: same major, minor no newer than
+// RunStateSchemaVersion and no older than the oldest this decoder still
+// accepts. It answers from the version string alone, so a host triaging a
+// stored state (resume it, refuse it, discard it) can decide without a
+// registry or a full decode — and without hard-coding equality, which would
+// reject states this SDK decodes fine.
+func RunStateVersionSupported(version string) bool {
+	return checkRunStateSchemaVersion(version) == nil
+}
+
 func checkRunStateSchemaVersion(v string) error {
 	major, minor, ok := parseSchemaVersion(v)
 	if !ok {
@@ -762,6 +790,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		Usage:                 in.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyFromString(in.ReasoningItemIDPolicy),
 		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),
+		Extra:                 in.Extra,
 		Approvals:             NewApprovalStore(),
 		// Absent (a pre-flag state) resumes with the old always-re-arm
 		// behavior: those states almost certainly paused with the usage

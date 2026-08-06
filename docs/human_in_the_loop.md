@@ -92,6 +92,45 @@ The state round-trips whole: input queued through `RunControl` before the pause,
 
 The state also carries the original run's `MaxTurns`, so a run started with a raised budget (say 20) that pauses on turn 12 resumes under the same budget even in a fresh process — `ResumeRun` uses `opts.MaxTurns` when set, else the serialized budget, else the default. Note that on a resumed result, `NewItems` items carry their replayed input form rather than the original model item: `Kind` and `Display()` survive, `Raw` is nil.
 
+### Rebuilding transformed agents
+
+The registry holds **your** `*Agent` values, so an agent that was transformed
+at build time must be rebuilt the same way — `middleware.Plan.Apply`, tool
+injection, whatever produced the agent the paused run was using. What a
+rebuild does NOT restore is the transform's own progress: `Plan.Apply` returns
+a fresh, **locked** `PlanPhase`, so a run that paused after its plan was
+approved (an `exec_command` approval, say) would resume without its write
+tools. Re-arm it from your own record before resuming — the durable answer to
+"is this run past its plan phase" is whatever your `PlanPhase.OnUnlock` hook
+wrote, and nothing else.
+
+`RunState.Extra` is where such state rides the pause: a
+`map[string]json.RawMessage` the SDK carries verbatim (never reads, never
+writes), so what you must remember lives inside the state instead of in a
+side channel next to it. Prefix your keys (`"plan:phase"`) to avoid
+collisions.
+
+```go
+// Pausing: ride the phase state along.
+res.State.Extra = map[string]json.RawMessage{
+	"plan:unlocked": json.RawMessage(fmt.Sprintf("%t", phase.Executing())),
+}
+data, _ := json.Marshal(res.State)
+
+// Resuming: rebuild, then re-arm before ResumeRun.
+agent, phase := middleware.Plan{}.Apply(baseAgent)
+state, _ := agents.RunStateFromJSON(data, map[string]*agents.Agent{agent.Name: agent})
+if string(state.Extra["plan:unlocked"]) == "true" {
+	_ = phase.Unlock()
+}
+```
+
+`Extra` covers pause→resume, not crashes: a value lands there only when a
+pause serializes the state. A fact that must survive a crash mid-run — the
+moment the plan unlocked — needs your own durable write at that moment, which
+is exactly what `PlanPhase.OnUnlock` is for; the two records answer different
+questions.
+
 ## Sessions and approvals
 
 When the run uses a [Session](sessions.md), the user input and every completed turn are already persisted by the time the run pauses; only the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` in `ResumeRun`'s options.

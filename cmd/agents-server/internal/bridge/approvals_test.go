@@ -150,8 +150,8 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 		PendingApprovals: approvals,
 	})
 
-	// A state stamped with an older schema version — the current binary can
-	// never decode it (RunStateFromJSON enforces strict version equality).
+	// A state stamped below the SDK's decode floor — the current binary can
+	// never decode it, whatever else moves.
 	staleState := `{"schema_version":"1.1","current_agent":"approver","interruptions":[]}`
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-old", ToolName: "shell"}})
 	if err := approvals.Save(ctx, &store.PendingApproval{
@@ -174,6 +174,68 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	}
 	if _, err := approvals.Get(ctx, "paused-old"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("stale pending row should be discarded, got %v", err)
+	}
+}
+
+// A state from an older minor INSIDE the SDK's decode window (1.5 under a 1.6
+// binary) is resumable, so the pre-flight must not report it stale — and above
+// all must not delete it. The gate is the SDK's window, not string equality:
+// an equality gate here destroyed states a purely additive SDK bump resumes
+// fine, which is exactly the failure this test pins.
+func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	agentConfigs := store.NewAgentConfigStore(db)
+	approvals := store.NewPendingApprovalStore(db)
+	sessions := store.NewSessionStore(db)
+
+	ac := &store.AgentConfig{Name: "approver", Model: "gpt-test"}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatalf("create agent config: %v", err)
+	}
+	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	runner := NewRunner(ctx, db, &AgentDeps{
+		AgentConfigs:     agentConfigs,
+		Sessions:         sessions,
+		Settings:         store.NewSettingStore(db),
+		Memories:         store.NewMemoryStore(db),
+		PendingApprovals: approvals,
+	})
+
+	if !agents.RunStateVersionSupported("1.5") {
+		t.Fatal("precondition: 1.5 must be inside the SDK's decode window")
+	}
+	olderState := `{"schema_version":"1.5","current_agent":"approver","current_turn":1,` +
+		`"original_input":[],"generated_items":[],"model_responses":[],` +
+		`"interrupted_response":null,"interruptions":[]}`
+	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-15", ToolName: "shell"}})
+	if err := approvals.Save(ctx, &store.PendingApproval{
+		RunID:         "paused-15",
+		SessionID:     sess.ID,
+		AgentConfigID: ac.ID,
+		State:         olderState,
+		ToolCalls:     calls,
+	}); err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+
+	// The resolve fails later (the minimal state holds no matching
+	// interruption) — what matters is HOW: not as stale, and without
+	// consuming the row.
+	_, _, err := runner.ResolveApproval(ctx, "call-15", true, ApprovalOnce, "", nil)
+	if err == nil {
+		t.Fatal("expected an error from the minimal state")
+	}
+	var stale *StaleApprovalStateError
+	if errors.As(err, &stale) {
+		t.Fatalf("a decodable 1.5 state was reported stale: %v", err)
+	}
+	if _, err := approvals.Get(ctx, "paused-15"); err != nil {
+		t.Errorf("the decodable pending row must survive, got %v", err)
 	}
 }
 

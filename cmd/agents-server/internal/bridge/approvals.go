@@ -141,6 +141,11 @@ func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore) {
 // nothing has been claimed yet, so failing here leaves the pending approval
 // intact for a retry — silently resuming in the planning phase would strip a
 // mid-execution run of its write tools.
+//
+// The annotation stays the truth here even though agents.RunState.Extra could
+// carry the same bit: the marker is written the moment the unlock EXECUTES
+// (OnUnlock persists as a precondition), so it survives a crash with no pause
+// — a window Extra, written only when a pause serializes state, cannot cover.
 func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sessionID, runID string) error {
 	if phase == nil {
 		return nil
@@ -189,12 +194,14 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// state changed, which is safe to retry.
 	mctx := context.WithoutCancel(ctx)
 
-	// A RunState written by an older server binary can never be resumed — its
-	// schema version no longer matches, and RunStateFromJSON enforces strict
-	// equality. Detect that up front so it surfaces as a clear, actionable error
-	// instead of a masked 500, and discard the stale row so it stops wedging the
-	// session (a masked 500 on every approve/reject retry, row never deleted).
-	if v := pendingStateSchemaVersion(pending.State); v != agents.RunStateSchemaVersion {
+	// A RunState outside the SDK's decode window can never be resumed. Detect
+	// that up front so it surfaces as a clear, actionable error instead of a
+	// masked 500, and discard the stale row so it stops wedging the session (a
+	// masked 500 on every approve/reject retry, row never deleted). The check
+	// is the SDK's own window — same major, minor within what it still
+	// decodes — NOT string equality: an equality check here would destroy
+	// states a purely additive SDK bump (1.5 → 1.6) resumes fine.
+	if v := pendingStateSchemaVersion(pending.State); !agents.RunStateVersionSupported(v) {
 		if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
 			zerolog.Ctx(ctx).Error().Err(delErr).Str("run_id", pending.RunID).Msg("discarding stale pending approval")
 		}

@@ -21,6 +21,13 @@ const PlanToolName = "submit_plan"
 // tool-output guardrail, and an approval record can outlive an execution
 // that failed (argument validation) — every one of those proxies has
 // produced a wrong unlock.
+//
+// The same record is what re-arms a RESUMED run: Apply returns a fresh,
+// locked PlanPhase, so rebuilding the agent for agents.RunStateFromJSON
+// resets the phase, and a run that paused mid-execution would come back
+// without its write tools. Consult your unlock record (or the copy a pause
+// carried in agents.RunState.Extra) and call Unlock before ResumeRun — see
+// docs/human_in_the_loop.md "Rebuilding transformed agents".
 
 // DefaultReadOnlyTools are the tool names Plan leaves usable while planning.
 // Read-only-ness is a NAME CONVENTION, not a tool capability: tools carry no
