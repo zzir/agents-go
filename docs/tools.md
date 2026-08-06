@@ -251,9 +251,16 @@ agents.NewTool("query_orders", "…",
 | `Content` | What the model sees — text, images, files |
 | `Details` | Structured data for the UI and logs. **Never reaches the model.** Lands on `Display().Extra` |
 | `Display` | The renderer you would like: `"diff"`, `"terminal"`, `"table"`, `"json"`, `"markdown"`. A hint — an unknown name falls back to text |
+| `Title` | The card heading, when the tool name is not it ("Apply patch" over `apply_patch`). Empty falls back to the tool name |
+| `Summary` | A one-line account of what happened ("3 files changed"), for where the full output would drown the timeline |
 | `Usage` | Tokens the tool spent on model calls **of its own** (an agent-as-tool's nested run, a summarization step) |
 | `Terminate` | Ask the run to stop after this batch |
 | `IsError` | Render as a failure. The content still goes to the model, so it can recover |
+
+`Title` and `Summary` (with builders `WithTitle`/`WithSummary`) follow the
+display contract: overrides, never required — a consumer ignoring them still
+renders a correct card from the tool name and output. Neither reaches the
+model.
 
 Everything else keeps working: a tool returning a `string`, a struct, or a
 `[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is

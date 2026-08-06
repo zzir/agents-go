@@ -351,7 +351,7 @@ describe('stream/replay isomorphism', () => {
     // contract does not extend to these fields.
     const timeline = buildTimeline([
       { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'spawn something' },
-      { id: 2, run_id: RUN, kind: 'item', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', extra: { task_id: 't1', task_label: 'audit', task_status: 'completed', task_summary: 'all green' } } },
+      { id: 2, run_id: RUN, kind: 'item', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'audit', summary: 'all green', extra: { task_id: 't1', task_status: 'completed' } } },
       { id: 3, run_id: RUN, kind: 'item', role: 'tool', display: { kind: 'tool_output', call_id: 'c1', output: '{"task_id":"t1"}' } },
     ]);
     const turn = timeline[1] as TurnEntry;

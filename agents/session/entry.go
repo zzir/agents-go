@@ -263,6 +263,12 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 	if other.Renderer != "" {
 		d.Renderer = other.Renderer
 	}
+	if other.Title != "" {
+		d.Title = other.Title
+	}
+	if other.Summary != "" {
+		d.Summary = other.Summary
+	}
 	if other.Text != "" {
 		d.Text = other.Text
 	}

@@ -64,7 +64,7 @@ const (
 //	ItemHandoffCall     Raw
 //	ItemReasoning       Raw
 //	ItemUnknown         Raw
-//	ItemToolCallOutput  RawInput, Output, Renderer, IsError, Extra, NestedUsage
+//	ItemToolCallOutput  RawInput, Output, Renderer, Title, Summary, IsError, Extra, NestedUsage
 //	ItemHandoffOutput   RawInput, HandoffFrom, HandoffTo
 //	ItemInjectedInput   RawInput
 //
@@ -92,6 +92,12 @@ type RunItem struct {
 	Output any
 	// Renderer is the tool's requested renderer, from ToolResult.Display.
 	Renderer string
+	// Title and Summary are the tool's display overrides, from
+	// ToolResult.Title/Summary: a card heading when the tool name is not it,
+	// and a one-line account of what happened. Empty falls back (to the tool
+	// name, to the existing rendering); neither reaches the model.
+	Title   string
+	Summary string
 	// IsError marks a tool result that reports a failure. The content still
 	// reaches the model, which is how a tool that failed usefully lets the
 	// model recover; the tool-loop circuit breaker counts these.
@@ -155,6 +161,8 @@ func (i *RunItem) Display() ItemDisplay {
 		return ItemDisplay{
 			Kind:     DisplayToolOutput,
 			Renderer: i.Renderer,
+			Title:    i.Title,
+			Summary:  i.Summary,
 			Output:   stringifyToolOutput(i.Output),
 			IsError:  i.IsError,
 			Extra:    i.Extra,

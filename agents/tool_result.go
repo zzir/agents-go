@@ -33,6 +33,19 @@ type ToolResult struct {
 	// the name falls back to plain text rather than failing.
 	Display string
 
+	// Title is the card heading a renderer shows for this call, when the tool
+	// name is not it ("Apply patch" over "apply_patch", a task's label over
+	// "task_spawn"). Empty means the consumer falls back to the tool name —
+	// like every display field, an override, never required. It never reaches
+	// the model.
+	Title string
+
+	// Summary is the one-line account of what happened ("3 files changed"),
+	// shown where the full output would drown the timeline. Empty means the
+	// consumer renders what it already renders today. It never reaches the
+	// model.
+	Summary string
+
 	// Usage accounts for model calls the tool made itself: an agent-as-tool's
 	// nested run, a summarization step, a sub-agent. Without it that spend
 	// lands in the run total with nothing to attribute it to.
@@ -74,6 +87,18 @@ func (r ToolResult) WithDetails(details map[string]any) ToolResult {
 // WithDisplay names the renderer for a result.
 func (r ToolResult) WithDisplay(renderer string) ToolResult {
 	r.Display = renderer
+	return r
+}
+
+// WithTitle sets the card heading for a result.
+func (r ToolResult) WithTitle(title string) ToolResult {
+	r.Title = title
+	return r
+}
+
+// WithSummary sets the one-line account for a result.
+func (r ToolResult) WithSummary(summary string) ToolResult {
+	r.Summary = summary
 	return r
 }
 

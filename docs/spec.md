@@ -1112,6 +1112,12 @@ that some of what a tool knows is **not for the model**:
 
 - `Content` reaches the model. `Details` never does — it lands on the item's
   `Display().Extra`, for the UI and for logs.
+- `Title` and `Summary` are display **overrides** on the same never-reaches-
+  the-model side: a card heading when the tool name is not it, and a one-line
+  account of what happened. Empty means fall back (to the tool name, to the
+  existing rendering) — the display contract's "a consumer that ignores the
+  hint must still render correctly" is what keeps them optional, and it is why
+  neither is ever required.
 - `Details` must survive a JSON round-trip. A value that cannot fails the run
   **at the tool call**, while it is still identifiable, not at persistence time.
   An empty map normalizes to nil.

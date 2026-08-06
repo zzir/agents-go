@@ -144,6 +144,8 @@ field list follows the SDK, not this document. Today that is:
 "display": {
   "kind":      "tool_output",  // message | tool_call | tool_output | reasoning | handoff | error | cancelled | unknown
   "renderer":  "diff",         // ToolResult.Display; unknown renderer → "text" fallback
+  "title":     "Apply patch",  // card heading override; empty → fall back to tool_name
+  "summary":   "3 files changed", // one-line account; empty → render the other fields
   "text":      "…",            // a message's text, a reasoning summary
   "call_id":   "call_1",       // ties a tool call to its output
   "tool_name": "edit_file",
@@ -156,7 +158,9 @@ field list follows the SDK, not this document. Today that is:
 
 (An earlier draft of this section froze a `title`/`summary`/`detail` shape
 that never shipped; what shipped — deliberately — is the SDK type itself, so
-the two sides cannot drift.)
+the two sides cannot drift. `title`/`summary` later became real SDK fields —
+by growing `ItemDisplay`, not a second vocabulary. The task card reads them
+in place of its old `extra.task_label`/`extra.task_summary` convention keys.)
 
 **Frozen invariant:** `display` is a *rendering hint*. A client that ignores it
 entirely must still produce a correct, readable timeline from `payload` alone.

@@ -16,6 +16,14 @@ type ItemDisplay struct {
 	// from ToolResult.Display. A consumer that does not know the name falls
 	// back to plain text rather than failing.
 	Renderer string `json:"renderer,omitzero"`
+	// Title is the card heading, when the tool name is not it — a task's
+	// label, "Apply patch" over "apply_patch". Empty means fall back to
+	// ToolName: an override, never required, per the display contract.
+	Title string `json:"title,omitzero"`
+	// Summary is the one-line account of what happened ("3 files changed"),
+	// for where the full Output would drown the timeline. Empty means render
+	// what the other fields already carry.
+	Summary string `json:"summary,omitzero"`
 	// Text is the human-readable body: a message's text, a reasoning summary.
 	Text string `json:"text,omitzero"`
 	// CallID ties a tool call to its output.

@@ -5,23 +5,26 @@
 interface ItemDisplay {
   kind: string;
   renderer?: string;
+  // title/summary are the producer's card heading and one-liner (a task's
+  // label, "3 files changed"); empty falls back to tool_name / the existing
+  // rendering, per the display contract.
+  title?: string;
+  summary?: string;
   text?: string;
   call_id?: string;
   tool_name?: string;
   arguments?: string;
   output?: string;
   is_error?: boolean;
-  // extra is whatever a tool's custom-data extractor produced, plus the fields
-  // the server amends onto a card afterwards: a guardrail block's name/stage, a
-  // spawned task's terminal outcome (the durable truth the task card is rebuilt
+  // extra is whatever a tool attached via Details, plus the fields the server
+  // amends onto a card afterwards: a guardrail block's name/stage, a spawned
+  // task's id and terminal status (the durable truth the task card is rebuilt
   // from on reload, since the hub run is GC'd).
   extra?: {
     guardrail?: string;
     stage?: string;
     task_id?: string;
-    task_label?: string;
     task_status?: string;
-    task_summary?: string;
     [k: string]: unknown;
   };
 }
@@ -355,7 +358,7 @@ function assemble(
         anchor(e);
         const x = d.extra;
         const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.tool_name || '', arguments: d.arguments || '', output: null, status: null };
-        if (x?.task_id || x?.task_status) tc.task = { id: x.task_id, label: x.task_label, status: x.task_status, summary: x.task_summary };
+        if (x?.task_id || x?.task_status) tc.task = { id: x.task_id, label: d.title, status: x.task_status, summary: d.summary };
         pendingTC[d.call_id] = tc;
         const last = turn!.parts[turn!.parts.length - 1];
         if (last && last.type === 'tools') { (last as ToolsPart).toolCalls.push(tc); }

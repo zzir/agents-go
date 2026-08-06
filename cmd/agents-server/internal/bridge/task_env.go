@@ -159,13 +159,17 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 			return
 		}
 	}
-	extra := map[string]any{
-		"task_id":     t.ID,
-		"task_label":  t.Label,
-		"task_status": string(t.Status),
-	}
-	if t.Summary != "" {
-		extra["task_summary"] = t.Summary
+	// The card's heading and one-liner are display's first-class fields; the
+	// id and status stay in Extra as task-renderer state the generic path does
+	// not read. Empty Summary merges as absent (merge applies non-zero fields
+	// only), so a later update cannot blank an earlier summary.
+	display := agents.ItemDisplay{
+		Title:   t.Label,
+		Summary: t.Summary,
+		Extra: map[string]any{
+			"task_id":     t.ID,
+			"task_status": string(t.Status),
+		},
 	}
 	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
 	if rerr != nil {
@@ -173,8 +177,7 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 		return
 	}
 	entries := store.NewEntryStoreFor(r.db, ref)
-	if err := entries.AppendCallDisplayUpdate(ctx, ref, t.ToolCallID,
-		agents.ItemDisplay{Extra: extra}); err != nil {
+	if err := entries.AppendCallDisplayUpdate(ctx, ref, t.ToolCallID, display); err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", t.ID).Msg("recording task display update")
 	}
 }
