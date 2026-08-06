@@ -177,7 +177,9 @@ apply it is an [update entry](sessions.md#entries-are-append-only):
 ```go
 OnTaskUpdate: func(ctx context.Context, t *tasks.Task) {
 	e, _ := session.NewUpdateEntry(spawnEntryID, agents.ItemDisplay{
-		Extra: map[string]any{"task_status": string(t.Status), "task_summary": t.Summary},
+		Title:   t.Label,
+		Summary: t.Summary,
+		Extra:   map[string]any{"task_id": t.ID, "task_status": string(t.Status)},
 	})
 	sess.Append(ctx, e)
 },
