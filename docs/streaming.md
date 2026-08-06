@@ -116,6 +116,16 @@ final result without guessing.
 `sandbox.CodeTool` streams stdout this way, and an agent-as-tool forwards its
 nested agent's messages.
 
+### The persistence event
+
+`*ItemsPersistedEvent` reports that every item the stream showed before it is
+now in the session. It fires at each persist boundary that leaves nothing
+behind — the per-turn save, a handoff, the final save — so a consumer
+buffering streamed content against a crash can drop what the event just
+guaranteed. The implication is one-way: no event does not mean nothing
+persisted (a run without a session never emits it, and a save that held back
+an interruption's pending calls stays silent).
+
 ### The completion event
 
 `*RunCompletedEvent` is terminal and carries the finished `*RunResult`. It is

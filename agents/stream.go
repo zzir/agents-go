@@ -74,6 +74,22 @@ type ToolProgressEvent struct {
 
 func (*ToolProgressEvent) streamEvent() {}
 
+// ItemsPersistedEvent reports that every run item that appeared on the stream
+// before it has been written to the session. It fires at each persist boundary
+// that leaves nothing behind — the per-turn save, a handoff, overflow
+// recovery, the final save — so a consumer buffering streamed content against
+// a crash can drop what this event just guaranteed, instead of inferring the
+// SDK's persist timing from raw response events.
+//
+// The implication is one-way: no event does not mean nothing persisted. A run
+// without a session never emits it; history restored on resume was persisted
+// before the stream began; and a save that held items back (an interruption's
+// pending calls persist only on resume) is not announced, precisely because
+// the stream has shown items the store does not yet hold.
+type ItemsPersistedEvent struct{}
+
+func (*ItemsPersistedEvent) streamEvent() {}
+
 // RunStream is a run in progress. Ranging over it executes the run: events are
 // produced as the loop reaches them, and the loop advances only as they are
 // consumed.

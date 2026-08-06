@@ -12,37 +12,29 @@ import (
 // protocol envelopes. Nothing here decides anything about the run, which is
 // why it sits apart from the execution pipeline in runner.go.
 
-// drainStream forwards a streamed run's events to the hub and accumulates only
-// the CURRENT turn's reasoning/text so an abort can persist them as
+// drainStream forwards a streamed run's events to the hub and accumulates the
+// still-unpersisted reasoning/text so an abort can persist them as
 // display-only annotations (a cancel during the thinking phase still shows what
 // the model was doing). A terminal error on the event channel stops
 // consumption; the caller reads the run's outcome from FinalResult.
 //
-// The reset is aligned with the SDK's real per-turn persist boundary, NOT with
-// response.completed. The SDK saves a turn's items only AFTER its tool calls
-// have run (agents/run.go stepRunAgain / stepHandoff persist post-tool-exec).
-// response.completed fires when the model finishes generating — before the
-// tools run — so resetting there loses this turn's streamed text/reasoning if
-// the run is cancelled DURING tool execution (the SDK has not persisted it yet
-// either, so a reload would then show nothing). Instead, mark the turn
-// committed at response.completed and defer the reset until the NEXT turn's
-// first delta arrives: by then the SDK has persisted the previous turn (its
-// stepRunAgain ran before the next model call), so the buffer correctly holds
-// only the still-unpersisted in-flight turn.
+// The buffer resets on ItemsPersistedEvent — the SDK's own statement that
+// everything the stream showed so far is in the store — so what remains is
+// exactly what a reload could not recover. Persist timing is the SDK's to
+// announce, not this bridge's to reverse-engineer from raw response events;
+// deltas cannot race the reset because the SDK persists between model calls,
+// where no delta is in flight.
 func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any)) (res *agents.RunResult, streamedText, streamedReasoning string, runErr error) {
 	var text, reasoning strings.Builder
-	turnCommitted := false // response.completed seen; the SDK will persist this turn after its tools run
-	startNextTurn := func() {
-		if turnCommitted {
-			text.Reset()
-			reasoning.Reset()
-			turnCommitted = false
-		}
-	}
 	for event, err := range stream {
 		if err != nil {
 			runErr = err
 			break
+		}
+		if _, ok := event.(*agents.ItemsPersistedEvent); ok {
+			text.Reset()
+			reasoning.Reset()
+			continue
 		}
 		if done, ok := event.(*agents.RunCompletedEvent); ok {
 			// The stream's terminal event carries the finished run; it is the
@@ -64,19 +56,9 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 		}
 		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
 			switch raw.Data.Type {
-			case "response.created":
-				// A new turn is starting: drop the previous (committed) turn's
-				// buffer here, not on the first text/reasoning delta. A turn that
-				// emits only a function call produces no delta, so waiting for one
-				// would keep the prior turn's text and re-annotate it on cancel.
-				startNextTurn()
-			case "response.completed":
-				turnCommitted = true
 			case "response.output_text.delta":
-				startNextTurn()
 				text.WriteString(raw.Data.Delta)
 			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-				startNextTurn()
 				reasoning.WriteString(raw.Data.Delta)
 			}
 		}

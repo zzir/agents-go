@@ -363,6 +363,16 @@ untouched and costs nothing; a racing one (the default) trips while the model
 call is in flight, so the input is persisted and the request was made. Both
 entry points answer identically.
 
+A save that leaves nothing behind is announced on the stream as
+`ItemsPersistedEvent`. The implication is **one-way**: the event guarantees
+that every item the stream showed before it is in the store; its absence
+promises nothing (a run without a session never emits it, history restored on
+resume predates the stream, and a save that held items back — an
+interruption's pending calls — stays silent, precisely because the stream has
+shown items the store does not yet hold). Consumers mirror persisted state
+from this event rather than inferring the SDK's persist timing from raw
+response events.
+
 **Core invariant — `safePersistBoundary`:** the stored conversation never
 contains a function call without its output. When a run pauses for approval, the
 pending `function_call` items are **withheld** and written together with their

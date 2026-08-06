@@ -54,6 +54,15 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 			return err
 		}
 		r.log.Debug(ctx, "turn persisted", slog.Int("entries", len(toSave)))
+		if end == len(r.sessionItems) {
+			// Everything the stream has shown is now in the store, which is
+			// exactly what ItemsPersistedEvent promises — a boundary that held
+			// items back (a pending call awaiting approval) stays silent. The
+			// write itself already landed, so a consumer that stopped ranging
+			// is not an unwind here: emit's own guard drops the yield, and the
+			// next item emit ends the run as usual.
+			_ = r.emit(&ItemsPersistedEvent{})
+		}
 	}
 	r.persistedSessionItems = end
 	// Injected input taken from the control is delivered once a write has

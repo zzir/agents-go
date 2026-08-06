@@ -422,7 +422,7 @@ every ordinary exit; it cannot help when the process is killed.
 
 ## Session semantics
 
-- History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run.
+- History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run. A save that leaves nothing behind is announced on the stream as `agents.ItemsPersistedEvent`, so a consumer mirroring the run can tell buffered from persisted without inferring the SDK's timing (see [streaming](streaming.md#the-persistence-event)).
 - When a run pauses for [tool approval](human_in_the_loop.md), the completed part of the turn is already saved; the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` to `ResumeRun`.
 - [Handoff input filters](handoffs.md#input-filters) do not affect what is saved: the session keeps the unfiltered conversation.
 - Corrections: use `PopItem` to remove the last item (e.g. let a user edit their question):
