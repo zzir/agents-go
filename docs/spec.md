@@ -324,6 +324,12 @@ points.
 ### 2.4 Handoffs ✅
 
 - A handoff is expressed as a **function call**; to the model it is just a tool.
+- On the stream it surfaces as **both** `tool_called` and `handoff_requested` —
+  the model's view and the runner's. The `tool_called` wrapper carries
+  `RunItem.IsHandoff = true`: it has no paired `tool_output` (the handoff
+  switches agents instead of returning), and the flag is what lets a consumer
+  drop or badge the wrapped form without keeping a list of every handoff tool
+  name in the graph.
 - The target resolves from `OnInvoke` when set — the runtime authority, free to
   pick an agent from the arguments — else from `Target`, the static declaration
   `HandoffTo` fills. Neither set fails the run with a `*UserError`. `Target` is

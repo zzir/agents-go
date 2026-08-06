@@ -159,7 +159,7 @@ func (r *runner) emit(event StreamEvent) bool {
 // view, where the handoff is a tool call.
 func (r *runner) emitItem(it *RunItem) bool {
 	if it.Kind == ItemHandoffCall {
-		wrapped := &RunItem{Kind: ItemToolCall, Agent: it.Agent, Raw: it.Raw}
+		wrapped := &RunItem{Kind: ItemToolCall, Agent: it.Agent, Raw: it.Raw, IsHandoff: true}
 		if !r.emit(&RunItemStreamEvent{Name: "tool_called", Item: wrapped}) {
 			return false
 		}

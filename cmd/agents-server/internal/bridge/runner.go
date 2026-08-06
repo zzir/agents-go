@@ -453,7 +453,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// terminal event, or a terminal error. There is no second place to consult
 	// — the old API kept the error on the side of the event channel, where a
 	// cancellation race could drop it from one and leave it only in the other.
-	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, built.HandoffToolNames, sendEvent)
+	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, sendEvent)
 	if err != nil {
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}

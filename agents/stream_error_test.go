@@ -148,9 +148,17 @@ func TestStreamedResult_HandoffEmitsToolCalled(t *testing.T) {
 		case "tool_called":
 			if ie.Item.Kind == ItemToolCall && ie.Item.FunctionCall().CallID == "h1" {
 				toolCalledHandoff++
+				// The wrapper says what it wraps, so a consumer can drop or
+				// badge it without a list of every handoff tool name.
+				if !ie.Item.IsHandoff {
+					t.Error("handoff tool_called wrapper has IsHandoff=false, want true")
+				}
 			}
 		case "handoff_requested":
 			handoffRequested++
+			if ie.Item.IsHandoff {
+				t.Error("handoff_requested item has IsHandoff=true; the flag belongs to the tool_called wrapper alone")
+			}
 		}
 	}
 	if toolCalledHandoff != 1 {

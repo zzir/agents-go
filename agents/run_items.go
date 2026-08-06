@@ -60,7 +60,7 @@ const (
 // Which fields carry meaning depends on Kind:
 //
 //	ItemMessage         Raw
-//	ItemToolCall        Raw
+//	ItemToolCall        Raw, IsHandoff
 //	ItemHandoffCall     Raw
 //	ItemReasoning       Raw
 //	ItemUnknown         Raw
@@ -109,6 +109,13 @@ type RunItem struct {
 	// spent on a different conversation entirely, and folding them in would
 	// make the context look larger than anything ever sent.
 	NestedUsage *Usage
+
+	// IsHandoff marks the tool_called stream event that wraps a handoff call
+	// (ItemToolCall): the model called a tool, and that tool was a handoff.
+	// The same call also arrives as its own handoff_requested event; the flag
+	// is what lets a consumer drop or badge the wrapped form without knowing
+	// every handoff tool name in the graph.
+	IsHandoff bool
 
 	// HandoffFrom and HandoffTo name the agents a handoff moved between
 	// (ItemHandoffOutput).

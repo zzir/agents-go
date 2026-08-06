@@ -29,7 +29,7 @@ import (
 // first delta arrives: by then the SDK has persisted the previous turn (its
 // stepRunAgain ran before the next model call), so the buffer correctly holds
 // only the still-unpersisted in-flight turn.
-func (r *Runner) drainStream(stream agents.RunStream, runID string, handoffNames map[string]bool, send func(string, any)) (res *agents.RunResult, streamedText, streamedReasoning string, runErr error) {
+func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any)) (res *agents.RunResult, streamedText, streamedReasoning string, runErr error) {
 	var text, reasoning strings.Builder
 	turnCommitted := false // response.completed seen; the SDK will persist this turn after its tools run
 	startNextTurn := func() {
@@ -80,7 +80,7 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, handoffNames
 				reasoning.WriteString(raw.Data.Delta)
 			}
 		}
-		r.handleStreamEvent(event, runID, handoffNames, send)
+		r.handleStreamEvent(event, runID, send)
 	}
 	return res, text.String(), reasoning.String(), runErr
 }
@@ -107,7 +107,7 @@ func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	return e
 }
 
-func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, handoffNames map[string]bool, send func(string, any)) {
+func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any)) {
 	switch e := event.(type) {
 	case *agents.RawResponsesStreamEvent:
 		if e.Data == nil {
@@ -147,14 +147,14 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, hando
 			}
 		case "tool_called":
 			if e.Item.Kind == agents.ItemToolCall {
-				fc := e.Item.FunctionCall()
 				// The SDK emits tool_called for a handoff too (wrapping the
-				// transfer_to_X call); it has no tool_output, so a run.tool_call
-				// here would leave a tool card spinning forever. run.handoff already
-				// conveys the transfer, so drop it.
-				if handoffNames[fc.Name] {
+				// transfer_to_X call, marked IsHandoff); it has no tool_output,
+				// so a run.tool_call here would leave a tool card spinning
+				// forever. run.handoff already conveys the transfer, so drop it.
+				if e.Item.IsHandoff {
 					return
 				}
+				fc := e.Item.FunctionCall()
 				send(protocol.EventRunToolCall, protocol.RunToolCall{
 					RunID:      runID,
 					ToolCallID: fc.CallID,

@@ -90,7 +90,9 @@ progress, ignoring per-token noise. Names: `message_output_created`,
 `reasoning_item_created`, `injected_input_created`.
 
 A handoff surfaces as **both** `tool_called` and `handoff_requested`: the model
-called a tool, and that tool was a handoff.
+called a tool, and that tool was a handoff. The `tool_called` wrapper carries
+`Item.IsHandoff = true`, so a consumer rendering tool calls can drop or badge
+it without keeping a list of every handoff tool name.
 
 `*AgentUpdatedStreamEvent` fires once for the starting agent, then on each
 handoff.

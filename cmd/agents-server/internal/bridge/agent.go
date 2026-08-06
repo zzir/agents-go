@@ -104,12 +104,6 @@ type BuildResult struct {
 	// Derived: Behavior stores it as one comma-separated string.
 	StopAtTools []string
 
-	// HandoffToolNames is the set of every transfer_to_* tool name across the
-	// whole built agent graph (root + all reachable handoff targets). The stream
-	// bridge uses it to drop the tool_called event the SDK now emits for a
-	// handoff, which would otherwise render as a tool card that never completes.
-	HandoffToolNames map[string]bool
-
 	// RunGuardrails are the entry (root) agent's guardrails, lifted to the RUN
 	// level so they cover the whole run — crucially, the final output regardless
 	// of which agent produced it after a handoff. Handoff-target agents keep
@@ -148,19 +142,6 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	if err != nil {
 		return nil, err
 	}
-	// Collect every handoff transfer tool name across the whole graph — the cache
-	// holds each built agent (root + shared/diamond descendants) exactly once —
-	// so the stream bridge can suppress the SDK's handoff tool_called at any depth.
-	handoffNames := map[string]bool{}
-	for _, br := range bc.cache {
-		if br.Agent == nil {
-			continue
-		}
-		for _, h := range br.Agent.Handoffs {
-			handoffNames[h.ToolName] = true
-		}
-	}
-	result.HandoffToolNames = handoffNames
 	// Lift the entry agent's guardrails to the run level so they protect the
 	// whole conversation — the final output is checked even after a handoff to an
 	// agent that carries no guardrails of its own. Cleared off the root agent so
