@@ -292,7 +292,15 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		rc.Approvals = state.Approvals
 	}
 	if state.Usage != nil {
-		rc.Usage = state.Usage
+		// A COPY, not the state's own accumulator: the resumed run keeps adding
+		// to rc.Usage on every model call, and adopting the pointer would write
+		// those additions through into the RunState the caller still holds — a
+		// second resume of the same state (a Retry middleware over ResumeRun)
+		// would then start from the first attempt's inflated counters. Same
+		// contract as nestedToolStates below: the pause snapshot stays intact
+		// for every attempt.
+		u := state.Usage.Snapshot()
+		rc.Usage = &u
 	}
 	// Re-install any paused agent-as-tool nested states so a resumed AsTool call
 	// continues its nested run. These survive a JSON round-trip (schema ≥ 1.2),

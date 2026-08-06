@@ -55,6 +55,40 @@ func TestHITL_InterruptThenApprove(t *testing.T) {
 	}
 }
 
+// The pause snapshot must survive the resume it feeds: ResumeRun adopts a COPY
+// of state.Usage, so the resumed run's accumulation cannot write through into
+// the RunState the caller still holds. A Retry middleware resuming the same
+// state twice would otherwise start its second attempt from the first attempt's
+// inflated counters, and re-serializing the state after a resume would persist
+// them.
+func TestHITL_ResumeLeavesPauseStateUsageIntact(t *testing.T) {
+	var ran bool
+	agent := approvalAgentAndModel(t, &ran)
+
+	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := res.State.Usage.Snapshot()
+
+	res.State.Approve(res.Interruptions[0], false)
+	res2, err := ResumeRunSync(context.Background(), res.State, RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The resumed run billed its second model call on top of the carried
+	// counters...
+	if got := res2.Usage.Requests; got != before.Requests+1 {
+		t.Errorf("resumed run Requests = %d, want %d", got, before.Requests+1)
+	}
+	// ...without touching the pause state it started from.
+	after := res.State.Usage.Snapshot()
+	if after.Requests != before.Requests || after.TotalTokens != before.TotalTokens {
+		t.Errorf("pause state usage mutated by resume: before %d req / %d tok, after %d req / %d tok",
+			before.Requests, before.TotalTokens, after.Requests, after.TotalTokens)
+	}
+}
+
 func TestHITL_InterruptThenReject(t *testing.T) {
 	var ran bool
 	tool := NewTool("delete_db", "dangerous",
