@@ -119,6 +119,36 @@ func TestPersistentExecStreamTimeout(t *testing.T) {
 	waitGone(t, sb, "sleep 20")
 }
 
+// A persistent exec that floods BOTH output streams past the cap and then
+// keeps running must not be mistaken for a finished one. Exec and ExecStream
+// share one core that reads the attach stream to its end; the exec-only path
+// used to stop as soon as both capped sinks were full and then read the exit
+// code of a still-running exec — reporting "exit 0" while the command kept
+// running in the container, unkilled.
+func TestPersistentExecFloodedStreamsKeepRunning(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
+
+	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+		// Both streams overshoot MaxOutputBytes, then the process goes quiet
+		// without exiting.
+		Cmd:            []string{"sh", "-c", "yes o | head -c 20000; yes e | head -c 20000 >&2; exec sleep 20"},
+		Timeout:        3 * time.Second,
+		MaxOutputBytes: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut || res.ExitCode != -1 {
+		t.Errorf("TimedOut = %v, exit = %d; want true, -1 (a still-running exec must never report an exit code)",
+			res.TimedOut, res.ExitCode)
+	}
+	if len(res.Stdout) != 1024 || len(res.Stderr) != 1024 {
+		t.Errorf("stdout = %d bytes, stderr = %d bytes; want both capped at 1024", len(res.Stdout), len(res.Stderr))
+	}
+	// The timeout path must also have killed it, rather than leaving it behind.
+	waitGone(t, sb, "sleep 20")
+}
+
 // ReadFile through the persistent (CopyFromContainer) path must enforce
 // MaxReadFileBytes.
 func TestPersistentReadFileLimit(t *testing.T) {

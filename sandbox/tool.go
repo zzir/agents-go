@@ -40,6 +40,13 @@ type CodeToolConfig struct {
 	// Off by default because a held-open shell is a resource with a lifetime,
 	// and a caller that never closes one leaks it. Requires a backend that
 	// supports interactive terminals.
+	//
+	// The names are the TOOL's, not a run's: one *Tool used by several
+	// concurrent runs gives all of them the same pool, so two runs of the same
+	// agent that both open "build" share one shell — their commands interleave
+	// in one PTY and one run's `cd` moves the other. Build the tool per run to
+	// isolate them. Closing the pool (see RegisterCloser) is final: a named
+	// command afterwards fails instead of opening a shell nobody will close.
 	Sessions bool
 	// Policy filters commands before they reach a human or the sandbox. It runs
 	// BEFORE the approval gate: a person asked to judge forty commands an hour

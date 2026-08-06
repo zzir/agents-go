@@ -260,10 +260,27 @@ func (s *ShellSession) closeLocked() error {
 // It belongs to the tool rather than the sandbox because the names are the
 // model's: two agents sharing a sandbox should not collide on "build", and a
 // pool per tool gives each its own namespace for free.
+//
+// The namespace is per TOOL, not per run: a *Tool built once and used by
+// several concurrent runs gives all of them the same pool, so two runs of the
+// same agent that both open "build" get the SAME shell — their commands
+// interleave in one PTY, and one run's `cd` moves the other. A host that runs
+// an agent concurrently and wants isolation builds the tool per run.
 type sessionPool struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// closed is the pool's terminal state. It exists because the open runs
+	// outside the lock (see session): without it, a shell that landed after
+	// Close emptied the map would be held by a pool nobody closes again — the
+	// leaked PTY (a remote ssh session on that backend) that
+	// CodeToolConfig.RegisterCloser exists to prevent.
+	closed   bool
 	sessions map[string]*ShellSession
 }
+
+// errSessionPoolClosed is what a named command gets once the pool's owner has
+// released its shells: the sandbox is being torn down, so opening a fresh shell
+// on it would only leak one.
+var errSessionPoolClosed = errors.New("sandbox: session pool is closed")
 
 func newSessionPool() *sessionPool {
 	return &sessionPool{sessions: map[string]*ShellSession{}}
@@ -276,18 +293,10 @@ func newSessionPool() *sessionPool {
 // middle of the next one. Reopening costs a shell startup; getting two
 // commands' output interleaved costs the model's trust in every result.
 func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, timeout time.Duration) (string, int, error) {
-	p.mu.Lock()
-	s, ok := p.sessions[name]
-	if !ok {
-		var err error
-		s, err = OpenShellSession(ctx, sb, TerminalOptions{})
-		if err != nil {
-			p.mu.Unlock()
-			return "", -1, err
-		}
-		p.sessions[name] = s
+	s, err := p.session(ctx, sb, name)
+	if err != nil {
+		return "", -1, err
 	}
-	p.mu.Unlock()
 
 	out, code, err := s.Run(ctx, cmd, timeout)
 	if err != nil {
@@ -301,10 +310,58 @@ func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, tim
 	return out, code, err
 }
 
-// Close ends every session in the pool.
+// session returns the named session, opening one on first use.
+//
+// The open runs OUTSIDE p.mu: on the ssh backend it is a network round-trip
+// plus a PTY handshake and a settle command, and holding the lock across it
+// stalls every OTHER name's command for that whole time. Under the lock there
+// is only a map lookup and a map write. Two callers racing the same NEW name
+// therefore both open a shell; the loser closes its own and takes the winner's,
+// so the pool still holds exactly one session per name.
+//
+// The same window lets Close run while a shell is being opened, which is why
+// the second critical section re-checks p.closed: Close only reaches the
+// sessions the map holds, so one landing after it has to close itself.
+func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*ShellSession, error) {
+	p.mu.Lock()
+	s, ok := p.sessions[name]
+	closed := p.closed
+	p.mu.Unlock()
+	if closed {
+		return nil, errSessionPoolClosed
+	}
+	if ok {
+		return s, nil
+	}
+
+	opened, err := OpenShellSession(ctx, sb, TerminalOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		_ = opened.Close()
+		return nil, errSessionPoolClosed
+	}
+	if existing, ok := p.sessions[name]; ok {
+		p.mu.Unlock()
+		_ = opened.Close()
+		return existing, nil
+	}
+	p.sessions[name] = opened
+	p.mu.Unlock()
+	return opened, nil
+}
+
+// Close ends every session in the pool, and is final: a command that arrives
+// afterwards fails rather than opening a shell on a sandbox whose owner has
+// already let go of it.
 func (p *sessionPool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closed = true
 	var errs []error
 	for name, s := range p.sessions {
 		if err := s.Close(); err != nil {

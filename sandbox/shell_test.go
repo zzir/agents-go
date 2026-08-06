@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -282,5 +283,174 @@ func TestShellSession_ClosedSessionRefuses(t *testing.T) {
 	// Close is idempotent.
 	if err := s.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
+	}
+}
+
+// fakeTerminalSandbox is a Sandbox that only knows how to open terminals — the
+// one method the session pool uses. The first open can be parked on release, to
+// hold one session's setup while another name is served.
+type fakeTerminalSandbox struct {
+	Sandbox // the pool never calls anything else
+
+	started   chan struct{}
+	opens     atomic.Int64
+	firstOpen sync.Once
+	release   chan struct{}
+
+	mu    sync.Mutex
+	terms []*fakeTerminal
+}
+
+func (f *fakeTerminalSandbox) OpenTerminal(ctx context.Context, _ TerminalOptions) (Terminal, error) {
+	first := false
+	f.firstOpen.Do(func() { first = true })
+	f.opens.Add(1)
+	f.started <- struct{}{}
+	if first && f.release != nil {
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	term := newFakeTerminal(func(string) (string, int) { return "", 0 })
+	f.mu.Lock()
+	f.terms = append(f.terms, term)
+	f.mu.Unlock()
+	return term, nil
+}
+
+// openTerminals reports how many of the terminals handed out are still open.
+func (f *fakeTerminalSandbox) openTerminals() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, term := range f.terms {
+		term.mu.Lock()
+		if !term.closed {
+			n++
+		}
+		term.mu.Unlock()
+	}
+	return n
+}
+
+// Opening a session is a network round-trip plus a PTY handshake on the ssh
+// backend. It must not run under the pool lock: every OTHER named session's
+// command would queue behind it.
+func TestSessionPool_SlowOpenDoesNotBlockOtherNames(t *testing.T) {
+	sb := &fakeTerminalSandbox{started: make(chan struct{}, 8), release: make(chan struct{})}
+	p := newSessionPool()
+	defer p.Close()
+	// Released before p.Close runs (defers are LIFO): a held-open session would
+	// otherwise leave the pool lock taken and turn a failure into a hang.
+	release := sync.OnceFunc(func() { close(sb.release) })
+	defer release()
+
+	parked := make(chan error, 1)
+	go func() {
+		_, _, err := p.run(context.Background(), sb, "slow", "echo hi", 5*time.Second)
+		parked <- err
+	}()
+	<-sb.started // the first open is in flight and held
+
+	served := make(chan error, 1)
+	go func() {
+		_, _, err := p.run(context.Background(), sb, "other", "echo hi", 5*time.Second)
+		served <- err
+	}()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("second session: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a command in a second session queued behind the first session's open")
+	}
+
+	release()
+	if err := <-parked; err != nil {
+		t.Fatalf("first session: %v", err)
+	}
+}
+
+// Opening outside the lock means two callers can race the same new name. The
+// pool must still end up with exactly one session under it.
+func TestSessionPool_ConcurrentSameNameKeepsOneSession(t *testing.T) {
+	sb := &fakeTerminalSandbox{started: make(chan struct{}, 64)}
+	p := newSessionPool()
+	defer p.Close()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := p.run(context.Background(), sb, "build", "echo hi", 5*time.Second); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("run: %v", err)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.sessions) != 1 {
+		t.Errorf("pool holds %d sessions for one name, want 1", len(p.sessions))
+	}
+}
+
+// Close is a barrier: a session whose open was in flight must be closed too.
+// Opening outside the pool lock is what makes this possible at all — the open
+// lands in a pool that Close has already emptied, and the PTY (a remote ssh
+// session on that backend) would be held for the life of the process, which is
+// the leak CodeToolConfig.RegisterCloser exists to prevent.
+func TestSessionPool_CloseClosesASessionOpenedConcurrently(t *testing.T) {
+	sb := &fakeTerminalSandbox{started: make(chan struct{}, 8), release: make(chan struct{})}
+	p := newSessionPool()
+
+	ran := make(chan error, 1)
+	go func() {
+		_, _, err := p.run(context.Background(), sb, "build", "echo hi", 5*time.Second)
+		ran <- err
+	}()
+	<-sb.started // the open is in flight, parked before it hands back a terminal
+
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	close(sb.release) // the parked open now lands in a closed pool
+
+	if err := <-ran; err == nil {
+		t.Error("a command ran in a session the pool opened after Close")
+	}
+	if n := sb.openTerminals(); n != 0 {
+		t.Errorf("%d terminals still open after Close, want 0", n)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.sessions) != 0 {
+		t.Errorf("pool holds %d sessions after Close, want 0", len(p.sessions))
+	}
+}
+
+// The steady state: a named session is opened once and reused.
+func TestSessionPool_ReusesTheNamedSession(t *testing.T) {
+	sb := &fakeTerminalSandbox{started: make(chan struct{}, 8)}
+	p := newSessionPool()
+	defer p.Close()
+
+	for range 3 {
+		if _, _, err := p.run(context.Background(), sb, "build", "echo hi", 5*time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := sb.opens.Load(); got != 1 {
+		t.Errorf("opened %d terminals for one name, want 1", got)
 	}
 }

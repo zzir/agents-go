@@ -1301,6 +1301,20 @@ an activated environment survive between calls.
 - Reading happens on a background goroutine, because `Terminal` has no read
   deadline and a blocked `Read` on the calling goroutine cannot be interrupted
   by any timer.
+- **Opening a shell happens outside the pool lock**, because on the ssh backend
+  it is a network round-trip plus a PTY handshake: under the lock, every OTHER
+  name's command queued behind it. Two callers racing the same new name both
+  open one; the loser closes its own and takes the winner's, so a name still
+  maps to exactly one shell.
+- **Closing the pool is final.** It is what keeps opening outside the lock safe:
+  a shell landing after `Close` emptied the map would be held by a pool nobody
+  closes again — precisely the leaked PTY (a remote ssh session on that backend)
+  that the tool's closer exists to prevent. A named command that arrives
+  afterwards fails instead, rather than opening a shell on a sandbox whose owner
+  has already let go of it.
+- **The named shells belong to the tool, not the run.** Two concurrent runs of
+  the same agent share one pool, so both `"build"` sessions are the same shell;
+  a host that wants isolation builds the tool per run.
 
 ### 2.8 Nested agent-as-tool attribution ✅
 

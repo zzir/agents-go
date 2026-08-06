@@ -3,10 +3,13 @@ package docker
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 
@@ -196,6 +199,95 @@ func TestBuildConfig_CommandRunsAsEntrypoint(t *testing.T) {
 	}
 	if len(cfg.Cmd) != 0 {
 		t.Errorf("cmd = %v, want empty (image CMD must not leak in)", cfg.Cmd)
+	}
+}
+
+// The live attach stream, unlike a finished container log, must be read to its
+// end even after both sinks are full: there "no more output wanted" is not
+// "the process exited". Ending the read at a full sink handed a still-running
+// exec to ExecInspect, which reports ExitCode 0 for it — a command flooding
+// both streams was reported as a clean exit while it kept running.
+func TestCopyAttached_KeepsReadingWhenSinksAreFull(t *testing.T) {
+	pr, pw := io.Pipe()
+	go func() {
+		var mux bytes.Buffer
+		muxWrite(&mux, stdcopy.Stdout, bytes.Repeat([]byte("o"), 4096))
+		muxWrite(&mux, stdcopy.Stderr, bytes.Repeat([]byte("e"), 4096))
+		_, _ = pw.Write(mux.Bytes())
+		// The writer stays open on purpose: the process is still running, it
+		// has merely stopped talking.
+	}()
+
+	stdout := &sandbox.CappedBuffer{Max: 8}
+	stderr := &sandbox.CappedBuffer{Max: 8}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	severed := errors.New("severed")
+	done := make(chan error, 1)
+	go func() {
+		done <- copyAttached(ctx, pr, func() { _ = pr.CloseWithError(severed) }, stdout, stderr)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("copyAttached returned (%v) while the stream was still open; a full sink must not end the read", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	cancel() // only the deadline (or cancellation) may end the read
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("copyAttached did not return after the context fired")
+	}
+	if stdout.String() != strings.Repeat("o", 8) || stderr.String() != strings.Repeat("e", 8) {
+		t.Errorf("stdout = %q, stderr = %q; want each capped at 8 bytes", stdout.String(), stderr.String())
+	}
+}
+
+// refusingWriter is a sink that rejects every write — a caller's writer whose
+// consumer has gone away (a disconnected client, a closed file).
+type refusingWriter struct{ err error }
+
+func (w refusingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// refusingReader ends a stream with the given error, standing in for the
+// severed attach connection.
+type refusingReader struct{ err error }
+
+func (r refusingReader) Read([]byte) (int, error) { return 0, r.err }
+
+// A copy that ended for a real reason is reported, because on a live attach the
+// stream IS the process-lifetime signal: ExecInspect would answer for a process
+// that may still be running. Both Exec and ExecStream share this core, so a
+// refused write fails the call rather than being dropped. (The ephemeral log
+// copy deliberately differs — ContainerWait tells it the exit status
+// independently, so there the same failure costs only output bytes.)
+func TestCopyAttached_ReportsARefusedWrite(t *testing.T) {
+	var mux bytes.Buffer
+	muxWrite(&mux, stdcopy.Stdout, []byte("hello"))
+
+	boom := errors.New("boom")
+	err := copyAttached(context.Background(), &mux, func() {}, refusingWriter{boom}, io.Discard)
+	if !errors.Is(err, boom) {
+		t.Errorf("copyAttached err = %v, want the sink's error (%v)", err, boom)
+	}
+}
+
+// A stream that ends mid-frame is truncation, not failure: the bytes that did
+// arrive are the result, and the exit status is still worth reading.
+func TestCopyAttached_TruncatedStreamIsNotAnError(t *testing.T) {
+	var mux bytes.Buffer
+	muxWrite(&mux, stdcopy.Stdout, []byte("hello"))
+	torn := io.MultiReader(&mux, refusingReader{io.ErrUnexpectedEOF})
+
+	var out bytes.Buffer
+	if err := copyAttached(context.Background(), torn, func() {}, &out, io.Discard); err != nil {
+		t.Fatalf("copyAttached err = %v, want nil for a truncated stream", err)
+	}
+	if out.String() != "hello" {
+		t.Errorf("stdout = %q, want the bytes that did arrive", out.String())
 	}
 }
 
