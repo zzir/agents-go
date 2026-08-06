@@ -133,21 +133,30 @@ four `GuardrailStage` values (`input` / `output` / `tool_input` /
 
 ## F4 · `display` is a structured projection, not a string
 
-Today `run.tool_result` is `{output: string}` and the frontend parses text to
-decide how to render. The SDK's `ItemDisplay` + `ToolResult.Display`
-replace that with a projection the producer chooses.
+Before this, `run.tool_result` was `{output: string}` and the frontend parsed
+text to decide how to render. `display` replaced that with a projection the
+producer chooses.
 
-**Frozen:**
+**What `display` is:** the SDK's `agents.ItemDisplay`, serialized as-is — the
+field list follows the SDK, not this document. Today that is:
 
 ```jsonc
 "display": {
-  "renderer": "diff",        // hint only; unknown renderer → "text" fallback
-  "title":    "edit_file",
-  "summary":  "3 files changed",
-  "detail":   "...",          // optional long form, collapsed by default
-  "extra":    { }             // renderer-specific, opaque to the generic path
+  "kind":      "tool_output",  // message | tool_call | tool_output | reasoning | handoff | error | cancelled | unknown
+  "renderer":  "diff",         // ToolResult.Display; unknown renderer → "text" fallback
+  "text":      "…",            // a message's text, a reasoning summary
+  "call_id":   "call_1",       // ties a tool call to its output
+  "tool_name": "edit_file",
+  "arguments": "{…}",          // raw JSON the model passed
+  "output":    "…",            // a tool result rendered as text
+  "is_error":  false,
+  "extra":     { }             // ToolResult.Details; renderer-specific, opaque to the generic path
 }
 ```
+
+(An earlier draft of this section froze a `title`/`summary`/`detail` shape
+that never shipped; what shipped — deliberately — is the SDK type itself, so
+the two sides cannot drift.)
 
 **Frozen invariant:** `display` is a *rendering hint*. A client that ignores it
 entirely must still produce a correct, readable timeline from `payload` alone.
