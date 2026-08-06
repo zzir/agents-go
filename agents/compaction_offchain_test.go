@@ -245,3 +245,71 @@ func TestCompactAfterRun_ResumeAnswersForThePausedRun(t *testing.T) {
 		}
 	})
 }
+
+// A projector decides which entries become model input. One that sends nothing
+// for an item entry leaves it stored and on no request — the same standing as
+// what a window cut off, except that it can sit anywhere in the log rather than
+// only at the front, so neither position nor the read length can see it.
+//
+// This is the one criterion a caller opts into by CONFIGURATION rather than by
+// what the run did, which is why it has to be measured per entry: reporting
+// "a projector is installed" would never clear, and a caller who pinned a
+// chain-based compaction mode would never compact again.
+func TestCompactAfterRun_WithheldItemsAreOffTheChain(t *testing.T) {
+	run := func(t *testing.T, projectors map[session.EntryKind]session.Projector) session.CompactionArgs {
+		t.Helper()
+		store := &offChainRecorder{Storage: session.NewInMemoryStorage("t")}
+		seedHistory(t, store, 3)
+		agent := &agents.Agent{Name: "a", ModelImpl: agentstest.TextModel("answer")}
+		if _, err := agents.RunSync(t.Context(), agent, "go", agents.RunOptions{
+			Conversation: agents.ConversationOptions{
+				Session:    session.NewSession(store),
+				Projectors: projectors,
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return store.onlyCall(t)
+	}
+
+	t.Run("a projector that sends nothing", func(t *testing.T) {
+		got := run(t, map[session.EntryKind]session.Projector{
+			session.EntryKindItem: func(session.Entry) ([]agents.InputItem, error) { return nil, nil },
+		})
+		if !got.OffChainItems {
+			t.Error("OffChainItems = false; the stored items reached no request")
+		}
+	})
+
+	t.Run("the kind mapped to nil", func(t *testing.T) {
+		got := run(t, map[session.EntryKind]session.Projector{session.EntryKindItem: nil})
+		if !got.OffChainItems {
+			t.Error("OffChainItems = false; mapping the kind to nil suppresses it outright")
+		}
+	})
+
+	// A rewrite is not a withholding: the model read something in the entry's
+	// place, so the summary stands for it the way it stands for anything else
+	// it folded. Reporting this would strand every caller who reshapes history.
+	t.Run("a projector that rewrites", func(t *testing.T) {
+		got := run(t, map[session.EntryKind]session.Projector{
+			session.EntryKindItem: func(session.Entry) ([]agents.InputItem, error) {
+				return agents.InputItemsFromText("redacted"), nil
+			},
+		})
+		if got.OffChainItems {
+			t.Error("OffChainItems = true; every entry reached the model, in rewritten form")
+		}
+	})
+
+	t.Run("a projector for another kind", func(t *testing.T) {
+		got := run(t, map[session.EntryKind]session.Projector{
+			session.EntryKindTerminal: func(session.Entry) ([]agents.InputItem, error) {
+				return agents.InputItemsFromText("$ ls"), nil
+			},
+		})
+		if got.OffChainItems {
+			t.Error("OffChainItems = true; projecting a kind that was not sent before only ADDS to the request")
+		}
+	})
+}

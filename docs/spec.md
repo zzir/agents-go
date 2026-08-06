@@ -782,8 +782,8 @@ server's compact API returns a replacement rather than a decision.
 saw.** The last response holds everything that stood in front of the model when
 it answered — its own output, and every tool output, handoff acknowledgement and
 steer before it. Those are on the chain, and a summary that folds them away read
-them first. A log outgrows that chain in three ways, and the runner reports all
-three through the single flag `CompactionArgs.OffChainItems`:
+them first. A log outgrows that chain in four ways, and the runner reports all
+four through the single flag `CompactionArgs.OffChainItems`:
 
 - **Position.** What came AFTER the last model-produced item: a terminating
   tool's output, an error handler's fallback message, input injected past the
@@ -801,8 +801,16 @@ three through the single flag `CompactionArgs.OffChainItems`:
   filter apart means comparing CONTENT, since one that redacts in place leaves
   the length untouched, and a comparison that got it wrong deletes the original
   unread.
+- **A projector that withholds an item.** `Conversation.Projectors` decides what
+  becomes model input; one returning nothing for an `item` entry leaves it
+  stored and on no request, anywhere in the log. Only item entries can be lost
+  this way — a rewrite carries every other kind over verbatim, and item entries
+  are exactly what the summary replaces. Measured per entry, not per config: a
+  projector that REWRITES an item is not withholding it, since the model read
+  something in its place and the summary stands for it, and reporting merely
+  that a projector is installed would never clear.
 
-The last two are facts about the run's past that nothing later undoes, so they
+The last three are facts about the run's past that nothing later undoes, so they
 ride across an interrupt/resume on `RunState.OffChainHistory`. A resumed run
 re-reads no history and re-runs no filter; answering from its own options
 instead would be silently false whenever the caller did not repeat

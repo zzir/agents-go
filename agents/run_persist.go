@@ -171,8 +171,8 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 // response chain rooted at lastResponseID cannot know about — what a storage
 // compacting from that chain would delete without ever having read.
 //
-// A log outgrows the chain in three ways, and only the run knows about all
-// three:
+// A log outgrows the chain in four ways, and only the run knows about all
+// four:
 //
 //   - Items produced after the last model call — hasOffChainItems, a question
 //     about POSITION, answered fresh from the run's items every time.
@@ -182,8 +182,11 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 //     FRONT.
 //   - A handoff input filter: what it dropped stays in the log and reaches no
 //     later model call. Position cannot see that either.
+//   - A projector that withholds an ITEM entry — withheldItemEntries. Anywhere
+//     in the log, and the only one of the four a caller opts into by config
+//     rather than by what the run did.
 //
-// The last two are recorded as they happen, in offChainHistory, because both
+// The last three are recorded as they happen, in offChainHistory, because all
 // are facts about the run's past that nothing later can undo.
 //
 // Only the filter answers conservatively: a filter that RAN sets the flag, with
@@ -226,6 +229,9 @@ func (r *runner) offChainItems() bool {
 // because nothing else can. Provenance alone cannot answer the question — a
 // steer taken after the final output is external (the caller wrote it) and yet
 // reached no model call.
+//
+// See withheldItemEntries for the fourth way, which is about configuration
+// rather than about what the run did.
 func hasOffChainItems(items []*RunItem) bool {
 	for i := len(items) - 1; i >= 0; i-- {
 		if items[i].Source.Type == SourceModel {
@@ -235,4 +241,49 @@ func hasOffChainItems(items []*RunItem) bool {
 	// No model output at all, so nothing anchors these items to a response and
 	// none of them can be on its chain.
 	return len(items) > 0
+}
+
+// withheldItemEntries reports whether the caller's projectors keep an ITEM
+// entry out of the model input.
+//
+// Only item entries can be lost this way. A rewrite carries every other kind
+// over verbatim — annotations, terminal output, custom kinds are stored for
+// someone other than the model and survive untouched — while item entries are
+// exactly what the summary replaces. An item nobody sent is therefore an item
+// the summary was written without and the replacement deletes.
+//
+// A projector that REWRITES an item is not withholding it: the model read
+// something in its place, so the summary stands for it, the way a summary
+// stands for anything else it folded. Only an empty result means the entry
+// reached no request at all, which is what Projector documents returning none
+// to mean. That line is what keeps this from being "a projector is installed",
+// which never clears — the standoff the window criterion is measured to avoid.
+//
+// The projector runs a second time here. That is not a new hazard: a run
+// already projects the same entries at the save point and again on overflow
+// recovery, so one more call cannot be the thing that makes an impure projector
+// misbehave.
+func withheldItemEntries(entries []session.Entry, projectors map[session.EntryKind]session.Projector) bool {
+	project, overridden := projectors[session.EntryKindItem]
+	if !overridden {
+		// The default projection sends every item entry.
+		return false
+	}
+	for _, e := range entries {
+		if e.Kind != session.EntryKindItem {
+			continue
+		}
+		// A nil projector suppresses the kind outright, so the first item entry
+		// settles it.
+		if project == nil {
+			return true
+		}
+		items, err := project(e)
+		// An error fails the projection this run is about to do anyway; report
+		// it as withheld rather than reading a failure as consent.
+		if err != nil || len(items) == 0 {
+			return true
+		}
+	}
+	return false
 }

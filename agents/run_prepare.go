@@ -68,6 +68,13 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
+		// A projector that sends nothing for an item entry keeps it out of every
+		// request while leaving it in the log — the same standing as what a
+		// window cut off, and invisible to position, since a withheld entry can
+		// sit anywhere (see offChainItems).
+		if withheldItemEntries(entries, opts.Conversation.Projectors) {
+			r.offChainHistory = true
+		}
 		if len(history) > 0 {
 			modelInput = make([]InputItem, 0, len(history)+len(userInput))
 			modelInput = append(modelInput, history...)
