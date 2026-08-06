@@ -18,7 +18,7 @@ import (
 )
 
 // fakeSchema is a minimal OutputSchema for exercising response_format building
-// before the reflection-based implementation lands in Phase 2.
+// without reflecting a Go type, so a test can state the shape it wants directly.
 type fakeSchema struct {
 	plain  bool
 	strict bool
