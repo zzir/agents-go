@@ -349,7 +349,8 @@ func equalDisplay(a, b *ItemDisplay) bool {
 	}
 	// Extra holds arbitrary values, so it is the one field that cannot be
 	// compared structurally here.
-	return a.Kind == b.Kind && a.Renderer == b.Renderer && a.Text == b.Text &&
+	return a.Kind == b.Kind && a.Renderer == b.Renderer && a.Title == b.Title &&
+		a.Summary == b.Summary && a.Text == b.Text &&
 		a.CallID == b.CallID && a.ToolName == b.ToolName && a.Arguments == b.Arguments &&
 		a.Output == b.Output && a.IsError == b.IsError &&
 		maps.EqualFunc(a.Extra, b.Extra, reflect.DeepEqual)

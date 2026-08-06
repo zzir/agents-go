@@ -92,6 +92,35 @@ func TestEqualCoversEverySessionEntryField(t *testing.T) {
 	}
 }
 
+// Every field of ItemDisplay must take part in Equal too. The walk above
+// cannot see inside the Display pointer — it flips the whole struct at once,
+// which any one compared field detects — so a display field missing from
+// equalDisplay (Title and Summary were, once) still passed it, and an UPDATE
+// entry settling only that field compared equal to the entry it amended.
+func TestEqualCoversEveryDisplayField(t *testing.T) {
+	typ := reflect.TypeOf(ItemDisplay{})
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		t.Run(field.Name, func(t *testing.T) {
+			val, ok := nonZeroFor(field.Type)
+			if !ok {
+				t.Fatalf("no non-zero value known for %s (%s); teach nonZeroFor about it", field.Name, field.Type)
+			}
+			base := Entry{Display: &ItemDisplay{}}
+			mutated := Entry{Display: &ItemDisplay{}}
+			reflect.ValueOf(mutated.Display).Elem().Field(i).Set(val)
+			if base.Equal(mutated) {
+				t.Fatalf("Equal ignores Display.%s: a change to it is invisible", field.Name)
+			}
+			same := Entry{Display: &ItemDisplay{}}
+			reflect.ValueOf(same.Display).Elem().Field(i).Set(val)
+			if !mutated.Equal(same) {
+				t.Fatalf("Equal is not reflexive for Display.%s", field.Name)
+			}
+		})
+	}
+}
+
 // An entry that has round-tripped through storage loses its monotonic clock
 // reading. It is still the same entry, and Equal must say so — this is why
 // CreatedAt is compared with time.Time.Equal and not with ==.
