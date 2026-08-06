@@ -10,6 +10,7 @@ dist/
 # not deliverables — the decisions that survive land in docs/spec.md, and the
 # execution order in ROADMAP.md is local scheduling.
 /plan*.md
+/*plan.md
 /ROADMAP.md
 
 # Executables built in place. `go build ./...` inside a main package writes the
