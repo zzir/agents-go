@@ -25,7 +25,7 @@ go run ./examples/hello
 | [`examples/steering`](../examples/steering/main.go) | `RunControl`'s three queues: steer, next-turn, follow-up |
 | [`examples/branching`](../examples/branching/main.go) | A session is a tree: branch from an earlier point without deleting the attempt |
 | [`examples/projector`](../examples/projector/main.go) | `EntryProjector`: deciding what the model gets to read |
-| [`examples/mcpserver`](../examples/mcpserver/main.go) | Serving SDK tools over MCP to an editor or another agent |
+| [`examples/mcpserver`](../examples/mcpserver/main.go) | Serving SDK tools over MCP to an editor or another agent (separate module) |
 | [`examples/tasks`](../examples/tasks/main.go) | Background sub-agents: spawn, the wake-up debt, and the parent woken with the result |
 | [`examples/middleware`](../examples/middleware/main.go) | Run middleware: `Retry` + `Approval` policy + evaluator-driven `Loop`, stacked |
 | [`examples/planmode`](../examples/planmode/main.go) | Plan mode + todo list: read-only exploration, a `submit_plan` approval pause, then execution in the same run |
@@ -45,6 +45,7 @@ Most examples only need `OPENAI_API_KEY`. The exceptions:
 
 - `examples/prompt` — a stored prompt ID: `OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt`
 - `examples/anthropic` — `ANTHROPIC_API_KEY=... go run .` (from its directory; separate module)
+- `examples/mcpserver` — `go run .` (from its directory; separate module, no API key)
 - `examples/bravesearch` — `BRAVE_API_KEY=... go run ./examples/bravesearch`
 - `examples/sandbox` — the host needs `python3`
 - Examples in the optional submodules run from their module directory:

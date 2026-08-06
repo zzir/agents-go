@@ -1,6 +1,13 @@
 // Package mcp provides a Model Context Protocol (MCP) client that exposes a
 // server's tools to an agent. It implements agents.MCPServer over the official
 // modelcontextprotocol/go-sdk, supporting stdio and streamable HTTP transports.
+//
+// This is a separate Go module, so that the go-sdk and its transitive closure
+// (uritemplate, x/oauth2, x/time, x/tools, the segmentio pair) stay out of
+// every build that does not speak MCP — see docs/spec.md §5.7. The import path
+// is unchanged; using it costs one extra require:
+//
+//	go get github.com/zzir/agents-go/mcp
 package mcp
 
 import (

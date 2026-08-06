@@ -76,9 +76,9 @@ Core module path: `github.com/zzir/agents-go`.
 | `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
 | `filesession` | `Store` (JSONL file store) + `Repo` (a directory of them), zero dependencies |
 | `tracing` | Traces, spans, processors and exporters |
-| `mcp` | Model Context Protocol client |
 | `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
 | `tools/bravesearch` | Brave Search web-search tool |
+| `mcp` | **separate module** — Model Context Protocol client and server (modelcontextprotocol/go-sdk) |
 | `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
 | `tracing/otel` | **separate module** — OpenTelemetry exporter for the vendor-neutral tracing core |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
@@ -92,8 +92,9 @@ Core module path: `github.com/zzir/agents-go`.
 The core lives in a single `agents/` package. The original plan split it further
 into `tools/`, `outputs/` and `models/`, but in Go those would form an import
 cycle with the core (tool callbacks reference `RunContext`; the `Model` interface
-references `Tool`), so they are kept together in `agents/`. Provider, storage,
-tracing and MCP implementations live in subpackages that import `agents`. Items
+references `Tool`), so they are kept together in `agents/`. Provider, storage and
+tracing implementations live in subpackages that import `agents`; MCP does the
+same from a nested module, so its go-sdk dependency stays out of the core. Items
 use the `openai-go` Responses types as the wire format directly, so nothing is
 lost converting in and out of a parallel item model.
 

@@ -14,6 +14,7 @@ require (
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 	github.com/uptrace/bun/driver/sqliteshim v1.2.18
 	github.com/zzir/agents-go v0.0.0
+	github.com/zzir/agents-go/mcp v0.0.0
 	github.com/zzir/agents-go/models/anthropic v0.0.0
 	github.com/zzir/agents-go/sandbox/docker v0.0.0
 	github.com/zzir/agents-go/sandbox/ssh v0.0.0
@@ -126,6 +127,7 @@ require (
 
 replace (
 	github.com/zzir/agents-go => ../..
+	github.com/zzir/agents-go/mcp => ../../mcp
 	github.com/zzir/agents-go/models/anthropic => ../../models/anthropic
 	github.com/zzir/agents-go/sandbox/docker => ../../sandbox/docker
 	github.com/zzir/agents-go/sandbox/ssh => ../../sandbox/ssh

@@ -9,7 +9,10 @@
 // This program connects a client to it in-process instead, so it terminates and
 // prints what a client would see.
 //
-// Run with: go run ./examples/mcpserver   (no API key needed)
+// The MCP SDK lives in its own module so it stays out of the core, so both the
+// mcp package and this example have their own go.mod:
+//
+//	cd examples/mcpserver && go run .   (no API key needed)
 package main
 
 import (

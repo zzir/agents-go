@@ -36,8 +36,8 @@ on its own — behavior is [specified](docs/spec.md), not inherited.
   routing as composable model decorators; tracing spans for every step.
 - **Testable without a key** — `agentstest` scripts the model, so your agent's
   tools and decisions are covered by fast offline tests.
-- **Dependency-light core** — one small module. Docker/SSH sandboxes, SQL
-  sessions, and skills are opt-in submodules.
+- **Dependency-light core** — one small module. The MCP client, Docker/SSH
+  sandboxes, SQL sessions, and skills are opt-in submodules.
 - **Batteries included** — MCP client *and* server, code-execution sandboxes,
   web search, Agent Skills, and a full web app on top of the SDK.
 

@@ -1932,6 +1932,13 @@ otherwise pull a heavy dependency into the core. Test helpers, small utilities
 and anything dependency-free stay in the root module regardless of how
 self-contained they are.
 
+`mcp` is a module for that reason and no other: `modelcontextprotocol/go-sdk`
+brought seven of the root module's eleven indirect requirements with it
+(uritemplate, `x/oauth2`, `x/time`, `x/tools`, `x/sys` and the segmentio pair),
+taxing every build that never speaks MCP. The core does not import it —
+`agents.MCPServer` is the inversion that lets an `Agent` hold servers without
+the dependency — so the split cost one `go.mod` and moved no import path.
+
 ### 5.8 Public API compatibility begins at v1.0.0
 
 A minor release before v1.0.0 may break exported identifiers. Each one is
