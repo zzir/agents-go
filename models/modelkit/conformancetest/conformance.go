@@ -353,11 +353,11 @@ func assertUsage(t *testing.T, spec UsageSpec, u *agents.Usage) {
 //
 // It is built from the agents.Event* constants — the one place the vocabulary
 // is spelled — so a name here cannot drift from the name the runner switches
-// on. The trade is that this set no longer restates the wire strings
-// independently of the adapters it checks: it and the modelkit constructors
-// read the same constant, so a wrong value would satisfy both. Pinning the
-// constants to their wire strings is agents/stream_events_test.go's job; what
-// this set still checks is that an adapter emits nothing outside them.
+// on. So this set does not independently pin the wire strings: it and the
+// modelkit constructors read the same constant, and a wrong value would satisfy
+// both. Pinning the constants to their wire strings is
+// agents/stream_events_test.go's job; what this set checks is that an adapter
+// emits nothing outside them.
 //
 // response.queued and the three failure events are deliberately absent:
 //
@@ -535,13 +535,12 @@ func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.OutputItem) {
 // response (stream_run.go) — same "no usage block means zero requests" guard,
 // same shared mapping — so the suite asserts what the run would record.
 //
-// Calling the shared mapping instead of hand-copying it does not weaken the
-// suite. What is under test here is the ADAPTER: does its terminal event
-// report the tokens its backend reported, in Responses semantics (§5.10)?
-// That is checked by assertUsage against the scenario's expected numbers. A
-// second hand-written copy of the field list would only assert that two copies
-// of the same code agree — while silently going stale the day a detail field
-// is added, which is the failure mode this suite exists to catch.
+// Sharing that mapping rather than restating it here is deliberate. What is
+// under test is the ADAPTER — does its terminal event report the tokens its
+// backend reported, in Responses semantics (§5.10)? — and assertUsage checks
+// that against the scenario's expected numbers. A hand-written copy of the
+// field list here would assert only that two copies agree, and would go stale
+// the day a detail field is added.
 func usageFromFinal(resp *responses.Response) *agents.Usage {
 	if !resp.JSON.Usage.Valid() {
 		return agents.NewUsage()

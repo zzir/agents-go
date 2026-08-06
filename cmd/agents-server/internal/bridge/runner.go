@@ -164,9 +164,8 @@ func (r *Runner) Hub() *RunHub { return r.hub }
 
 // RunOutcome is how one run SEGMENT ended, in the terms the server's terminal
 // bookkeeping needs: the final text or the failure, plus the interruption an
-// approval decision resumes from. It is deliberately not named after
-// agents.RunResult — that is the SDK's result of a finished run, and
-// finishResult is what turns one into the other.
+// approval decision resumes from. Distinct from agents.RunResult, the SDK's
+// result of a finished run; finishResult turns one into the other.
 type RunOutcome struct {
 	FinalText     string
 	RunID         string
@@ -626,10 +625,10 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	})
 }
 
-// partialTurn is what savePartialTurn writes. A struct because these are ten
-// strings in a row: passed positionally, a caller that slips one out of place
-// gets no complaint from the compiler, only a mislabelled turn in the
-// transcript.
+// partialTurn is what savePartialTurn writes. A struct rather than a parameter
+// list, and one to build with keyed fields: all ten are strings, so an unkeyed
+// literal that slips a pair out of order compiles clean, draws nothing from go
+// vet, and surfaces only as a mislabelled turn in someone's transcript.
 type partialTurn struct {
 	sessionID string
 	runID     string

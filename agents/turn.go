@@ -79,16 +79,12 @@ func (tr *TurnResult) ToolCallNames() []string {
 // before the next model call — so a run that stops here has its full history
 // saved and needs no unwinding.
 //
-// It takes the finished turn as a TurnResult rather than as its parts: that is
-// what the hook is handed, and building it here from five parameters meant the
-// save point assembling the very same value a second line later.
-//
-// The hook gets its OWN copy of that value. TurnResult is exported and passed
-// by pointer, so writing to it is a legal thing for a hook to do — and with the
+// The hook gets its OWN copy of the TurnResult. It is exported and passed by
+// pointer, so writing to it is a legal thing for a hook to do — and with the
 // caller's pointer handed straight through, a hook that cleared NewItems would
 // blank the run's final output below and hand PrepareNextTurn a turn that never
-// happened. The copy is shallow, which is exactly the isolation the caller had
-// when this function built the value itself.
+// happened. The copy is shallow: it isolates the fields, not what they point
+// at.
 func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, tr *TurnResult) (bool, any, error) {
 	hook := r.opts.Exec.ShouldStopAfterTurn
 	if hook == nil {

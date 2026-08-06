@@ -168,9 +168,7 @@ func (r *runner) finishStream(res *RunResult, err error) {
 // agent currently holding the turn.
 //
 // The four live as one value because every way a run reports itself — a
-// result, a failure, a pause state — reads all of them. They used to travel as
-// four parameters through twenty-odd call sites, and being two slices of
-// pointers, a slice and a pointer, a transposed pair compiled clean.
+// result, a failure, a pause state — reads all of them.
 //
 // Two stages replace fields wholesale rather than appending: a handoff input
 // filter and a recompaction (mid-run or after an overflow) rewrite

@@ -18,24 +18,15 @@ func (r *runner) usageSnapshot() *Usage {
 // accumulators. Each ending then adds only what makes it different —
 // FinalOutput, StoppedEarly, Interruptions plus State.
 //
-// It exists because those fields were assembled by hand at four returns, and
-// each field added since (GuardrailResults, then Diagnostics) had to be added
-// at all four or go silently missing from one ending.
+// Every ending goes through here, so a field added to RunResult is added once
+// rather than at four returns, where missing one leaves it silently absent
+// from that ending alone.
 //
 // NewItems is the unfiltered log (r.sessionItems), never the loop's
 // generatedItems: a handoff input filter and a mid-run recompaction reset the
-// model's view, while the result reports what the run produced. Three of the
-// four endings always read it that way; only the failure path picked between
-// the two lists by length, and it picked the same CONTENT — generatedItems is
-// reset to a prefix of sessionItems and never gains an item the log lacks, so
-// equal lengths mean equal items.
-//
-// It did differ in one respect, and the difference is a nil, not an item: a run
-// that fails before its first step has an empty-but-allocated generatedItems and
-// a still-nil sessionItems, so the old failure path reported []*RunItem{} where
-// this reports nil. Callers range and len it, which read the same either way,
-// and nil was already what a run reaching its final output with nothing
-// generated reported.
+// model's view, while the result reports what the run produced. It is nil for
+// a fresh run that failed before producing anything; a resume seeds it from
+// the paused state.
 func (r *runner) baseResult() *RunResult {
 	return &RunResult{
 		Input:            r.state.originalInput,

@@ -42,9 +42,8 @@ type Policy struct {
 	Deny []string
 }
 
-// Compile reports a malformed pattern. It validates and nothing more — the
-// compiled form is not kept, since a Policy is configuration a caller copies
-// around freely.
+// Compile reports a malformed pattern. It validates and nothing more: the
+// compiled form is not kept.
 //
 // It is separate from evaluation so a malformed pattern fails when the policy
 // is configured rather than on the first command it would have stopped —
@@ -64,11 +63,10 @@ func (p *Policy) Empty() bool { return len(p.Allow) == 0 && len(p.Deny) == 0 }
 // tries variations; told which rule stopped it, it can ask for something else
 // or explain to the user why it cannot proceed.
 //
-// The patterns are compiled per call — nothing next to executing a command,
-// and the price of a Policy that is an inert value rather than a cache several
-// goroutines take turns filling. There is deliberately no exported compiled
-// form: CodeTool keeps one because it is inside the package, and no caller
-// checks often enough for the difference to be measurable.
+// The patterns are compiled per call — nothing next to the cost of executing a
+// command, and the price of a Policy that is an inert value rather than a cache
+// several goroutines take turns filling. CodeTool, inside the package, keeps a
+// compiled form for the tool's lifetime.
 func (p *Policy) Check(cmd string) error {
 	if p.Empty() {
 		return nil

@@ -11,8 +11,8 @@ package agents
 // one list, so an event name exists in exactly one place and a misspelled
 // REFERENCE is a compile error rather than a branch that silently never fires.
 //
-// A misspelled VALUE is not, and it is no longer a conformance failure either:
-// the synthesized events and the closed set that checks them read the same
+// A misspelled VALUE is neither, and not a conformance failure either: the
+// synthesized events and the closed set that checks them read the same
 // constant, so they agree on a wrong name as readily as a right one. That is
 // what stream_events_test.go is for — it pins every name below to its wire
 // string, spelled independently. Adding a constant here means adding a row

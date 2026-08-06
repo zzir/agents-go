@@ -186,11 +186,11 @@ func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 	case err == nil && info.Container.State != nil && info.Container.State.Running:
 		return id, nil
 	case err != nil && !cerrdefs.IsNotFound(err):
-		// A failure to LOOK is not "the container is dead". Treating it as
-		// dead force-removed a healthy container — packages, processes and
-		// the workspace volume — on a daemon hiccup, or merely because the
-		// caller's ctx was already cancelled when inspect ran. Only a
-		// positive answer (inspected: not running / not found) may retire it.
+		// A failure to LOOK is not "the container is dead": retiring one on
+		// a daemon hiccup, or merely because the caller's ctx was already
+		// cancelled, destroys a healthy container's packages, processes and
+		// workspace volume. Only a positive answer (inspected: not running
+		// / not found) may retire it.
 		return "", fmt.Errorf("inspecting persistent container: %w", err)
 	}
 
@@ -381,9 +381,9 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 //
 // Reading continues to the end of the stream even once the sinks stop keeping
 // bytes: on a live attach "no more output wanted" is not "the process exited".
-// Ending the read at a full sink used to hand a still-running exec to
-// ExecInspect, which reports ExitCode 0 for it — a command that flooded both
-// streams was reported as a clean exit while it kept running in the container.
+// Ending the read at a full sink would hand a still-running exec to
+// ExecInspect, which reports ExitCode 0 for it: a command that flooded both
+// streams would come back as a clean exit while it kept running.
 // Memory stays bounded because the sinks discard beyond their cap.
 //
 // A frame cut in half surfaces as ErrUnexpectedEOF, which only means the output
@@ -489,10 +489,8 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 
 	// A copy error here costs output, not correctness, so it is dropped: the
 	// exit status comes from ContainerWait below, which does not depend on the
-	// log stream at all. The persistent core cannot be as relaxed — there the
-	// attach stream ending IS the signal that the process finished, so a copy
-	// that stopped early makes the inspected exit code untrustworthy and
-	// copyAttached reports the error instead.
+	// log stream at all. (The persistent core cannot be as relaxed — see
+	// copyAttached.)
 	_, _ = stdcopy.StdCopy(stdout, stderr, rc)
 
 	res := &sandbox.ExecResult{}

@@ -143,9 +143,10 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 			// Whether anything in the log postdates that response. The storage
 			// decides what to do about it: a chain-based one compacts from the
 			// stored history instead, one that never looks at a chain ignores
-			// it. Deciding here — by skipping the pass — was wrong in both
-			// directions: it starved a storage that had no chain to be wrong
-			// about, and it missed the items that actually get erased.
+			// it. Deciding here — by skipping the pass — cannot be right in
+			// both directions: it would starve a storage that has no chain to
+			// be wrong about, and it would miss the items that actually get
+			// erased.
 			OffChainItems: hasOffChainItems(r.sessionItems),
 			StartSpan: func() *tracing.SpanHandle {
 				cspan = r.trace.StartCompactionSpan(r.agentParentID())
@@ -183,8 +184,7 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 // It answers by provenance in one direction only: SourceModel marks the frontier
 // because nothing else can. Provenance alone cannot answer the question — a
 // steer taken after the final output is external (the caller wrote it) and yet
-// reached no model call, which is exactly the item the old last-item-is-local
-// test let through.
+// reached no model call.
 func hasOffChainItems(items []*RunItem) bool {
 	for i := len(items) - 1; i >= 0; i-- {
 		if items[i].Source.Type == SourceModel {

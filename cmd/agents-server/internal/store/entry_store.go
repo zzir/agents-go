@@ -54,8 +54,8 @@ type entryRow struct {
 //
 // It is stored rather than folded out of the entries because an append must not
 // cost a read of the session. The SDK persists once per TURN, so a run appends
-// many times, and folding each time made a single run cost O(entries²) — over a
-// log that only grows, since compaction soft-deletes.
+// many times, and folding each time would make a single run cost O(entries²) —
+// over a log that only grows, since compaction soft-deletes.
 //
 // It is not a cache: every path that moves the tip or issues a sequence number
 // writes it in the same transaction as the change itself, so the two records
@@ -758,8 +758,7 @@ type CompactionInfo struct {
 // update and the entry it amends need not land in the same page.
 //
 // Which is why this reads every row on every call, cursor or not — a known
-// cost, deliberately left. It is paid once per page a person asks for, unlike
-// the append point (see appendPointRow), which a run paid once per turn.
+// cost, deliberately left: it is paid once per page a person asks for.
 func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID int64, limit int) ([]EntryView, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).

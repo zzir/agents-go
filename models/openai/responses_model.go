@@ -278,11 +278,10 @@ func responseErrorEventFailure(eventType string, e responses.ResponseErrorEvent)
 
 // usageFromResponse maps a blocking response's usage block, which the
 // Responses API omits for some responses — nil then counts as zero requests,
-// the same rule the streaming path applies. The nil arrives from the same
-// predicate the streaming path uses, resp.JSON.Usage.Valid() at the call site
-// above; only the plumbing differs (a pointer here, a *responses.Response
-// there). The mapping itself is shared (agents.UsageFromResponseUsage) so the
-// two paths cannot report different numbers for the same response.
+// the same rule the streaming path applies through the same
+// resp.JSON.Usage.Valid() predicate at the call site above. The mapping itself
+// is shared (agents.UsageFromResponseUsage) so the two paths cannot report
+// different numbers for the same response.
 func usageFromResponse(u *responses.ResponseUsage) *agents.Usage {
 	if u == nil {
 		return agents.NewUsage()

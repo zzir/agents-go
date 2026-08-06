@@ -76,12 +76,12 @@ func (p OverflowPolicy) isOverflow(err error) bool {
 // landed.
 //
 // The two recovery paths write the session at OPPOSITE moments, which is why
-// the choice between them is made here rather than by trying one and falling
-// through to the other. A Compactor reads the log and returns a projection of
-// it, so the turn's in-flight items have to be in the log before the pass runs.
-// A self-compacting storage may REPLACE the log with what its own pass
-// produced, so anything written before it is exactly what the replacement
-// erases; that path writes afterwards. Falling through cannot express both.
+// the choice between them is made up front. A Compactor reads the log and
+// returns a projection of it, so the turn's in-flight items have to be in the
+// log before the pass runs. A self-compacting storage may REPLACE the log with
+// what its own pass produced, so anything written before it is exactly what the
+// replacement erases; that path writes afterwards. Trying one and falling
+// through to the other cannot express both.
 func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, bool) {
 	r.log.Warn(ctx, "context overflow; compacting and retrying the turn",
 		slog.String("error", err.Error()))
@@ -230,7 +230,7 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 // it either, and for the same reason: that append is exactly what made it
 // different.
 //
-// Bytes answer both, and keep the case a count was there to allow — the same
+// Bytes answer both, and still see the case a count would miss — the same
 // number of entries with shorter content, one summary standing in for one
 // entry, is a real compaction. An unchanged history weighs exactly what it
 // weighed, so demanding strictly less rules the no-op out on its own.

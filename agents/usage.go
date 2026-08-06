@@ -45,7 +45,7 @@ func NewUsage() *Usage { return &Usage{} }
 // streaming runner, the blocking OpenAI path and the modelkit conformance
 // suite all go through it, so a detail field the Responses API adds later is
 // picked up by all three at once instead of drifting in whichever hand-copy
-// was missed.
+// gets missed.
 //
 // Whether the response carries a usage block AT ALL stays the caller's
 // question. Not because the three ask it differently — they all ask

@@ -79,9 +79,9 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 //
 // ResumeRun goes through here too, so a resumed run is observed exactly like
 // the run it continues: resumed only marks the log and the trace name, and
-// every other difference between the two is a bug (a group id that reached one
-// trace but not the other left a paused/resumed pair unlinkable in exactly the
-// view built to follow it).
+// every other difference between the two is a bug — a group id reaching one
+// trace but not the other leaves a paused/resumed pair unlinkable in exactly
+// the view built to follow it.
 func (r *runner) observeRun(agent *Agent, resumed bool) func() {
 	attrs := []slog.Attr{slog.String("agent", agent.Name)}
 	if resumed {

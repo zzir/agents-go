@@ -84,8 +84,8 @@ func (r *Repo) session(meta sidecar) (*session.Session, error) {
 // repoStorage is a repo session's storage: the entries file plus the sidecar.
 //
 // The Store alone cannot answer Metadata — title, hidden and created-at live in
-// the sidecar it knows nothing about — so a session opened through the repo
-// used to lose them, and the listing and the opened session gave two different
+// the sidecar it knows nothing about — so handing a bare Store to a repo caller
+// loses them, and the listing and the opened session then give two different
 // answers about the same session. This wrapper is the one path (spec
 // §2.5e2, "the change record"): Metadata merges the sidecar in, and every
 // successful mutation stamps the sidecar's updated_at.

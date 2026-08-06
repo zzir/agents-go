@@ -31,8 +31,8 @@ type RepoUnderTest struct {
 // Most of it is checking that a backend addresses a session by session.Ref and
 // not by its id — every one of those failed at least once in a backend that
 // carried the generation as a field some code path forgot. The listing checks
-// are here for the same reason: one backend did not sort its listing at all and
-// another ignored the limit, each of them fine until a caller switched.
+// are here for the same reason: an order or a limit that only one backend
+// honours is fine until a caller switches.
 func RepoConformance(t *testing.T, newRepo func(t *testing.T) RepoUnderTest) {
 	t.Helper()
 	for _, c := range repoChecks {

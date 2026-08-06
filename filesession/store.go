@@ -7,9 +7,6 @@
 // single-machine, moderate-volume use; for high concurrency or large histories,
 // implement session.Storage against a database of your choice — the sessions
 // module does exactly that for SQLite and PostgreSQL.
-//
-// The in-memory backends are NOT here: they are session.NewInMemoryStorage and
-// session.NewInMemoryRepo, in the session package itself.
 package filesession
 
 import (

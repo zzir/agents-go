@@ -61,8 +61,7 @@ func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
 //
 // A backend that assembles an "sh -c" command line must pass every interpolated
 // value — path, argument, environment entry — through it, so nothing in the
-// value can be read as shell syntax. It lives here so the escaping has one
-// definition across the backends rather than one copy per module.
+// value can be read as shell syntax.
 func ShellQuote(s string) string {
 	if s == "" {
 		return "''"
