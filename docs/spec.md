@@ -2035,7 +2035,18 @@ in-repo providers run it):
   `response.incomplete` — reason `max_output_tokens` is the one recoverable
   truncation (§2.7e). Text streams as `response.output_text.delta`, raw
   reasoning text as `response.reasoning_text.delta`. These names are
-  load-bearing: the agents-server UI renders exactly these events.
+  load-bearing: the agents-server UI renders exactly these events. They are
+  spelled ONCE, as the exported `agents.Event*` constants: the runner's
+  classifiers, `modelkit`'s event constructors, the OpenAI adapter's
+  terminal-event switch and `conformancetest`'s closed set all build from that
+  one list, so a misspelled reference is a compile error rather than a branch
+  that silently never fires. `agents/stream_events_test.go` is the one place
+  that restates the wire strings by hand and pins the constants to them.
+  `response.queued` belongs to the vocabulary — lifecycle preamble the runner
+  tolerates wherever `response.created` / `response.in_progress` appear — but
+  only a pass-through backend emits it: a synthesized stream has no queue to
+  report, so `modelkit` offers no constructor for it and the conformance closed
+  set deliberately leaves it out.
 - **Usage** is Responses semantics: `InputTokens` is the TOTAL input count,
   cache reads and writes included; `CachedTokens` / `CacheWriteTokens` are
   informational subsets. A backend that reports uncached input separately

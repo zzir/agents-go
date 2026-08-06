@@ -111,8 +111,8 @@ while the compaction checkpoint itself arrives as a `run.entry` with
 ## F3 · `run.error.code` mirrors the SDK `ErrorCode`
 
 Today six codes are hand-written in `protocol` and hand-mapped in
-`bridge/runner.go`. The SDK now owns the vocabulary and the bridge
-calls `agents.CodeOf(err)`.
+`bridge/stream_bridge.go`. The SDK now owns the vocabulary and the
+bridge calls `agents.CodeOf(err)`.
 
 **Frozen split:**
 

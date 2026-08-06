@@ -79,14 +79,14 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 			Session: sess,
 			// A non-positive HistoryLimit already means "no limit" on both
 			// sides, so it needs no translation.
-			Settings: session.Settings{Limit: built.HistoryLimit},
+			Settings: session.Settings{Limit: built.Session.HistoryLimit},
 		},
 		Exec: agents.ExecOptions{
-			MaxTurns:              built.MaxTurns,
-			MaxToolConcurrency:    built.MaxToolConcurrency,
+			MaxTurns:              built.Behavior.MaxTurns,
+			MaxToolConcurrency:    built.Behavior.MaxToolConcurrency,
 			ErrorHandlers:         built.ErrorHandlers,
 			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
-			ToolNotFoundBehavior:  agents.ParseToolNotFoundBehavior(built.ToolNotFoundBehavior),
+			ToolNotFoundBehavior:  agents.ParseToolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
 			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
 			// Context overflow → forced compaction pass → retry the turn. Only
 			// bites when the session is compaction-aware (the agent has
@@ -98,7 +98,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		Model:      agents.ModelOptions{Provider: provider},
 		Observe:    agents.ObserveOptions{Tracer: tracer, IncludeSensitiveData: built.TraceIncludeSensitive},
 	}
-	if built.HandoffInputFilter == "nest_history" {
+	if built.Behavior.HandoffInputFilter == "nest_history" {
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
 	return opts
@@ -108,17 +108,17 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 // enables it. An empty summary model falls back to the agent's own model, so
 // leaving the field blank does not silently disable compaction.
 func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *session.Session {
-	if !built.CompactionEnabled || provider == nil {
+	if !built.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
 	}
-	modelName := built.CompactionModel
+	modelName := built.Compaction.Model
 	modelName = cmp.Or(modelName, built.Agent.Model)
 	summaryModel, err := provider.Model(modelName)
 	if err != nil || summaryModel == nil {
 		return session.NewSession(sa)
 	}
 	return session.NewSession(store.NewCompactionAdapter(sa, summaryModel,
-		built.CompactionThreshold, built.CompactionWindow, built.CompactionPrompt,
+		built.Compaction.Threshold, built.Compaction.Window, built.Compaction.Prompt,
 		compactionNotifier(send, runID),
 	))
 }
@@ -768,213 +768,6 @@ func (r *Runner) CancelRun(runID string) {
 	r.hub.Cancel(runID)
 }
 
-// drainStream forwards a streamed run's events to the hub and accumulates only
-// the CURRENT turn's reasoning/text so an abort can persist them as
-// display-only annotations (a cancel during the thinking phase still shows what
-// the model was doing). A terminal error on the event channel stops
-// consumption; the caller reads the run's outcome from FinalResult.
-//
-// The reset is aligned with the SDK's real per-turn persist boundary, NOT with
-// response.completed. The SDK saves a turn's items only AFTER its tool calls
-// have run (agents/run.go stepRunAgain / stepHandoff persist post-tool-exec).
-// response.completed fires when the model finishes generating — before the
-// tools run — so resetting there loses this turn's streamed text/reasoning if
-// the run is cancelled DURING tool execution (the SDK has not persisted it yet
-// either, so a reload would then show nothing). Instead, mark the turn
-// committed at response.completed and defer the reset until the NEXT turn's
-// first delta arrives: by then the SDK has persisted the previous turn (its
-// stepRunAgain ran before the next model call), so the buffer correctly holds
-// only the still-unpersisted in-flight turn.
-func (r *Runner) drainStream(stream agents.RunStream, runID string, handoffNames map[string]bool, send func(string, any)) (res *agents.RunResult, streamedText, streamedReasoning string, runErr error) {
-	var text, reasoning strings.Builder
-	turnCommitted := false // response.completed seen; the SDK will persist this turn after its tools run
-	startNextTurn := func() {
-		if turnCommitted {
-			text.Reset()
-			reasoning.Reset()
-			turnCommitted = false
-		}
-	}
-	for event, err := range stream {
-		if err != nil {
-			runErr = err
-			break
-		}
-		if done, ok := event.(*agents.RunCompletedEvent); ok {
-			// The stream's terminal event carries the finished run; it is the
-			// loop's own bookkeeping and not something the client renders.
-			res = done.Result
-			// Except the diagnostics: a run that answered after three retries
-			// or on a fallback model looks identical to one that answered
-			// first time, and the difference is what explains the latency.
-			for _, d := range res.Diagnostics {
-				send(protocol.EventRunDiagnostic, protocol.RunDiagnostic{
-					RunID:   runID,
-					Type:    string(d.Type),
-					Code:    string(d.Code),
-					Message: d.Message,
-					Details: d.Details,
-				})
-			}
-			continue
-		}
-		if raw, ok := event.(*agents.RawResponsesStreamEvent); ok && raw.Data != nil {
-			switch raw.Data.Type {
-			case "response.created":
-				// A new turn is starting: drop the previous (committed) turn's
-				// buffer here, not on the first text/reasoning delta. A turn that
-				// emits only a function call produces no delta, so waiting for one
-				// would keep the prior turn's text and re-annotate it on cancel.
-				startNextTurn()
-			case "response.completed":
-				turnCommitted = true
-			case "response.output_text.delta":
-				startNextTurn()
-				text.WriteString(raw.Data.Delta)
-			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-				startNextTurn()
-				reasoning.WriteString(raw.Data.Delta)
-			}
-		}
-		r.handleStreamEvent(event, runID, handoffNames, send)
-	}
-	return res, text.String(), reasoning.String(), runErr
-}
-
-// runErrorFor builds the run.error for a terminal run failure. The code comes
-// from the SDK (agents.CodeOf) so this stays correct as the SDK's vocabulary
-// grows — there is deliberately no mapping table here. An error the SDK did not
-// classify keeps the caller's transport-level fallback code.
-//
-// A guardrail tripwire additionally carries the guardrail name and the stage it
-// fired at, which no code can express: the UI renders "blocked by guardrail X"
-// instead of a generic red error and, on an output trip, marks the answer that
-// already streamed as retracted.
-func runErrorFor(runID string, err error, fallback string) protocol.RunError {
-	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
-	if code := agents.CodeOf(err); code != agents.CodeUnknown {
-		e.Code = string(code)
-	}
-	var tw *agents.GuardrailTripwireError
-	if errors.As(err, &tw) {
-		e.Guardrail = tw.Result.Guardrail.Name
-		e.Stage = string(tw.Stage())
-	}
-	return e
-}
-
-func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, handoffNames map[string]bool, send func(string, any)) {
-	switch e := event.(type) {
-	case *agents.RawResponsesStreamEvent:
-		if e.Data == nil {
-			return
-		}
-		switch e.Data.Type {
-		case "response.output_text.delta":
-			if e.Data.Delta != "" {
-				send(protocol.EventRunStep, protocol.RunStep{RunID: runID, Delta: e.Data.Delta})
-			}
-		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-			if e.Data.Delta != "" {
-				send(protocol.EventRunReasoning, protocol.RunReasoning{RunID: runID, Delta: e.Data.Delta})
-			}
-		}
-
-	case *agents.RunItemStreamEvent:
-		switch e.Name {
-		case "message_output_created":
-			// The completed turn text, authoritative over the run.step deltas
-			// that previewed it. Interim messages between tool calls only exist
-			// as deltas plus this event — resumed segments and backends that
-			// stream no deltas rely on it entirely.
-			if e.Item.Kind == agents.ItemMessage {
-				if text := e.Item.Text(); text != "" {
-					send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
-				}
-			}
-		case "reasoning_item_created":
-			// The completed thinking block, authoritative over the run.reasoning
-			// deltas that previewed it — and the only thinking signal when the
-			// backend streams no reasoning deltas or the segment was resumed.
-			if e.Item.Kind == agents.ItemReasoning {
-				if text := e.Item.Text(); text != "" {
-					send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
-				}
-			}
-		case "tool_called":
-			if e.Item.Kind == agents.ItemToolCall {
-				fc := e.Item.FunctionCall()
-				// The SDK emits tool_called for a handoff too (wrapping the
-				// transfer_to_X call); it has no tool_output, so a run.tool_call
-				// here would leave a tool card spinning forever. run.handoff already
-				// conveys the transfer, so drop it.
-				if handoffNames[fc.Name] {
-					return
-				}
-				send(protocol.EventRunToolCall, protocol.RunToolCall{
-					RunID:      runID,
-					ToolCallID: fc.CallID,
-					ToolName:   fc.Name,
-					Arguments:  fc.Arguments,
-				})
-			}
-		case "tool_output":
-			if e.Item.Kind == agents.ItemToolCallOutput {
-				send(protocol.EventRunToolResult, protocol.RunToolResult{
-					RunID:      runID,
-					ToolCallID: e.Item.CallID(),
-					// The display rendering, not %v: a multimodal output is a
-					// content list, and Go syntax for it would not match what
-					// the same item reads back as from the stored session.
-					Output: e.Item.Display().Output,
-				})
-			}
-		case "handoff_requested":
-			if e.Item.Kind == agents.ItemHandoffCall && e.Item.Agent != nil {
-				send(protocol.EventRunHandoff, protocol.RunHandoff{
-					RunID: runID,
-					From:  e.Item.Agent.Name,
-				})
-			}
-		case "injected_input_created":
-			// Input injected into a live run (run.inject) is a USER entry, and
-			// no live event carries one: run.started.Input covers only the
-			// prompt a run begins with, and PROTOCOL.md F2's run.entry — the
-			// event that will — has not shipped. The client that injected it
-			// already has the text, and the SDK persists the item, so every
-			// other connection picks it up on its next history load. Named
-			// here rather than left out of the switch: the drop is a decision,
-			// and this is where run.entry lands once it ships.
-		case "handoff_occured":
-			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
-				send(protocol.EventRunHandoff, protocol.RunHandoff{
-					RunID: runID,
-					From:  e.Item.HandoffFrom.Name,
-					To:    e.Item.HandoffTo.Name,
-				})
-			}
-		}
-
-	case *agents.ToolProgressEvent:
-		// A tool that runs for two minutes leaves the UI with nothing but a
-		// spinner otherwise. This is not the tool's answer — that arrives as
-		// run.tool_result — so the client renders it as live output.
-		send(protocol.EventRunToolProgress, protocol.RunToolProgress{
-			RunID:    runID,
-			CallID:   e.CallID,
-			ToolName: e.ToolName,
-			Delta:    e.Result.Text(),
-			Renderer: e.Result.Display,
-		})
-
-	case *agents.AgentUpdatedStreamEvent:
-		send(protocol.EventRunAgentStart, protocol.RunAgentStart{
-			RunID:     runID,
-			AgentName: e.NewAgent.Name,
-		})
-	}
-}
-
 // stopAtTools builds the turn hook for the agent config's stop_at_tools list:
 // the run ends after a turn that called any of the named tools. It returns nil
 // for an empty list so an unconfigured agent pays nothing.
@@ -994,13 +787,4 @@ func stopAtTools(names []string) func(context.Context, *agents.TurnResult) (bool
 		}
 		return false, nil
 	}
-}
-
-// rawItemID returns the model-assigned id of the item's raw form, or "" when
-// the item carries none (a rebuilt or synthesized item).
-func rawItemID(it *agents.RunItem) string {
-	if it.Raw == nil {
-		return ""
-	}
-	return it.Raw.ID
 }

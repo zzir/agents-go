@@ -57,7 +57,7 @@ func ResponseCreatedEvent(responseID string) (agents.ResponseStreamEvent, error)
 			Status string `json:"status"`
 			Output []any  `json:"output"`
 		} `json:"response"`
-	}{Type: "response.created", Response: struct {
+	}{Type: agents.EventResponseCreated, Response: struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 		Output []any  `json:"output"`
@@ -82,7 +82,7 @@ func OutputItemAddedEvent(outputIndex int, itemType, itemID, callID, name string
 		item["arguments"] = ""
 	}
 	return marshalEvent(map[string]any{
-		"type":            "response.output_item.added",
+		"type":            agents.EventResponseOutputItemAdded,
 		"sequence_number": 0,
 		"output_index":    outputIndex,
 		"item":            item,
@@ -93,7 +93,7 @@ func OutputItemAddedEvent(outputIndex int, itemType, itemID, callID, name string
 // streaming text consumers (including the agents-server UI) render from.
 func OutputTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(map[string]any{
-		"type":            "response.output_text.delta",
+		"type":            agents.EventResponseOutputTextDelta,
 		"sequence_number": 0,
 		"item_id":         itemID,
 		"output_index":    outputIndex,
@@ -108,7 +108,7 @@ func OutputTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.
 // text (content, not summary).
 func ReasoningTextDeltaEvent(itemID string, outputIndex int, delta string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(map[string]any{
-		"type":            "response.reasoning_text.delta",
+		"type":            agents.EventResponseReasoningTextDelta,
 		"sequence_number": 0,
 		"item_id":         itemID,
 		"output_index":    outputIndex,
@@ -121,7 +121,7 @@ func ReasoningTextDeltaEvent(itemID string, outputIndex int, delta string) (agen
 // response.function_call_arguments.delta for incremental tool-call arguments.
 func FunctionCallArgumentsDeltaEvent(itemID string, outputIndex int, delta string) (agents.ResponseStreamEvent, error) {
 	return marshalEvent(map[string]any{
-		"type":            "response.function_call_arguments.delta",
+		"type":            agents.EventResponseFunctionCallArgumentsDelta,
 		"sequence_number": 0,
 		"item_id":         itemID,
 		"output_index":    outputIndex,
@@ -138,7 +138,7 @@ func OutputItemDoneEvent(outputIndex int, item agents.OutputItem) (agents.Respon
 		return agents.ResponseStreamEvent{}, fmt.Errorf("modelkit: output item has no raw JSON (construct it with the modelkit item builders)")
 	}
 	return marshalEvent(map[string]any{
-		"type":            "response.output_item.done",
+		"type":            agents.EventResponseOutputItemDone,
 		"sequence_number": 0,
 		"output_index":    outputIndex,
 		"item":            json.RawMessage(raw),
@@ -207,7 +207,7 @@ func terminalEvent(eventType, status string, fr FinalResponse, incompleteReason 
 // assembles its final ModelResponse from this event, so the output list and
 // usage here are what the run records — deltas are presentation only.
 func CompletedEvent(fr FinalResponse) (agents.ResponseStreamEvent, error) {
-	return terminalEvent("response.completed", "completed", fr, "")
+	return terminalEvent(agents.EventResponseCompleted, "completed", fr, "")
 }
 
 // IncompleteEvent synthesizes the response.incomplete terminal event. Use
@@ -218,5 +218,5 @@ func IncompleteEvent(fr FinalResponse, reason string) (agents.ResponseStreamEven
 	if reason == "" {
 		return agents.ResponseStreamEvent{}, fmt.Errorf("modelkit: IncompleteEvent requires a reason")
 	}
-	return terminalEvent("response.incomplete", "incomplete", fr, reason)
+	return terminalEvent(agents.EventResponseIncomplete, "incomplete", fr, reason)
 }

@@ -51,24 +51,36 @@ type AgentDeps struct {
 
 // BuildResult contains the built agent and its resolved model provider.
 type BuildResult struct {
-	Agent                *agents.Agent
-	Provider             agents.ModelProvider
-	MaxTurns             int
-	HandoffInputFilter   string
-	MaxToolConcurrency   int
-	ToolNotFoundBehavior string
+	Agent    *agents.Agent
+	Provider agents.ModelProvider
+
+	// Behavior, Compaction and Session are the agent config's own groups,
+	// carried whole rather than copied knob by knob: a new knob is one field
+	// on one group struct, with no mirror field here and no copy line in the
+	// builder.
+	//
+	// They hold the values AS STORED. A knob that needed converting was
+	// converted during the build and has a "Derived:" field below — read that
+	// one. Two of them keep their name and change type, so reading the group
+	// copy quietly yields the unconverted value: StopAtTools (comma-separated
+	// string here, []string below) and ReasoningItemIDPolicy (string here,
+	// enum below). Other group fields are already spent when the build
+	// returns — HandoffDescription, DisableToolChoiceReset and
+	// Session.PromptID/PromptVersion live on Agent from then on.
+	//
+	// Compaction.Threshold is in tokens, Compaction.Window in entries — see
+	// store.NewCompactionAdapter for the defaults and the sizing rule.
+	Behavior   store.BehaviorGroup
+	Compaction store.CompactionGroup
+	Session    store.SessionGroup
+
 	// ProviderType is the normalized backend selector this agent was built
 	// for ("openai" / "anthropic"). Handoff wiring uses it to refuse a
 	// keyless target that would silently inherit a different backend.
 	ProviderType string
 	// ErrorHandlers are the run-level recovery handlers built from the
 	// top-level config's error_handlers field (zero value when unconfigured).
-	ErrorHandlers     agents.RunErrorHandlers
-	CompactionEnabled bool
-	// CompactionThreshold is in tokens, CompactionWindow in entries — see
-	// store.NewCompactionAdapter for the defaults and the sizing rule.
-	CompactionThreshold int
-	CompactionWindow    int
+	ErrorHandlers agents.RunErrorHandlers
 
 	// TraceIncludeSensitive gates whether generation spans record request and
 	// response content (the global trace_include_sensitive_data setting).
@@ -77,27 +89,19 @@ type BuildResult struct {
 	// seed from, by design.
 	TraceIncludeSensitive *bool
 
-	// PlanMode / TodoList mirror behavior.plan_mode / behavior.todo_list —
-	// whether the entry agent was rewritten for the plan / todo workflow.
-	PlanMode bool
-	TodoList bool
 	// PlanPhase is set when the agent was built in plan mode: the run starts
 	// read-only and the approved submit_plan unlocks it. A resume that
 	// already executed submit_plan in this run calls Unlock() so the rebuilt
 	// run continues executing instead of demanding a second plan.
-	PlanPhase        *middleware.PlanPhase
-	CompactionModel  string
-	CompactionPrompt string
-
-	// HistoryLimit caps how many recent session items each turn loads (0 = all).
-	HistoryLimit int
+	PlanPhase *middleware.PlanPhase
 
 	// ReasoningItemIDPolicy controls whether reasoning-item ids survive across
-	// turns (default preserve).
+	// turns (default preserve). Derived: Behavior stores it as a string.
 	ReasoningItemIDPolicy agents.ReasoningItemIDPolicy
 
 	// StopAtTools ends the run after a turn that called any of these tools.
 	// Empty means the run continues until the model stops on its own.
+	// Derived: Behavior stores it as one comma-separated string.
 	StopAtTools []string
 
 	// HandoffToolNames is the set of every transfer_to_* tool name across the
@@ -176,10 +180,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// above. Task runs are excluded: nobody sits on the other side of a
 	// background task's plan review.
 	if !taskRun && result.Agent != nil {
-		if result.TodoList {
+		if result.Behavior.TodoList {
 			result.Agent = middleware.Todo{}.Apply(result.Agent)
 		}
-		if result.PlanMode {
+		if result.Behavior.PlanMode {
 			result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
 		}
 	}
@@ -228,18 +232,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		HandoffDescription:     ac.Behavior.HandoffDescription,
 		DisableToolChoiceReset: ac.Behavior.DisableToolChoiceReset,
 	}
-	result.MaxTurns = ac.Behavior.MaxTurns
-	result.PlanMode = ac.Behavior.PlanMode
-	result.TodoList = ac.Behavior.TodoList
-	result.HandoffInputFilter = ac.Behavior.HandoffInputFilter
-	result.MaxToolConcurrency = ac.Behavior.MaxToolConcurrency
-	result.ToolNotFoundBehavior = ac.Behavior.ToolNotFoundBehavior
-	result.CompactionEnabled = ac.Compaction.Enabled
-	result.CompactionThreshold = ac.Compaction.Threshold
-	result.CompactionWindow = ac.Compaction.Window
-	result.CompactionModel = ac.Compaction.Model
-	result.CompactionPrompt = ac.Compaction.Prompt
-	result.HistoryLimit = ac.Session.HistoryLimit
+	result.Behavior = ac.Behavior
+	result.Compaction = ac.Compaction
+	result.Session = ac.Session
 	if ac.Behavior.ReasoningItemIDPolicy == "omit" {
 		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
 	}

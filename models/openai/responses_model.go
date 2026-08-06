@@ -143,11 +143,11 @@ func (m *ResponsesModel) Respond(ctx context.Context, req agents.ModelRequest) (
 	// other incomplete reason, and a failed response, is terminal.
 	switch resp.Status {
 	case responses.ResponseStatusFailed:
-		return nil, responseTerminalFailure("response.failed", string(resp.Status),
+		return nil, responseTerminalFailure(agents.EventResponseFailed, string(resp.Status),
 			string(resp.Error.Code), resp.Error.Message, "")
 	case responses.ResponseStatusIncomplete:
 		if resp.IncompleteDetails.Reason != "max_output_tokens" {
-			return nil, responseTerminalFailure("response.incomplete", string(resp.Status),
+			return nil, responseTerminalFailure(agents.EventResponseIncomplete, string(resp.Status),
 				"", "", resp.IncompleteDetails.Reason)
 		}
 	}
@@ -185,15 +185,15 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 			// typed *ModelBehaviorError so a failed run cannot end as an empty
 			// success.
 			switch event.Type {
-			case "error", "response.error":
+			case agents.EventError, agents.EventResponseError:
 				e := event.AsError()
 				yield(nil, responseErrorEventFailure(event.Type, e))
 				return
-			case "response.failed":
+			case agents.EventResponseFailed:
 				r := event.AsResponseFailed().Response
 				yield(nil, responseTerminalFailure(event.Type, string(r.Status), string(r.Error.Code), r.Error.Message, ""))
 				return
-			case "response.incomplete":
+			case agents.EventResponseIncomplete:
 				r := event.AsResponseIncomplete().Response
 				if r.IncompleteDetails.Reason == "max_output_tokens" {
 					// Not a failure: the response arrived, it is just cut off.
@@ -205,7 +205,7 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 				}
 				yield(nil, responseTerminalFailure(event.Type, string(r.Status), "", "", r.IncompleteDetails.Reason))
 				return
-			case "response.completed":
+			case agents.EventResponseCompleted:
 				sawTerminal = true
 			}
 		}
@@ -276,21 +276,18 @@ func responseErrorEventFailure(eventType string, e responses.ResponseErrorEvent)
 	return agents.NewModelBehaviorError("%s", msg)
 }
 
+// usageFromResponse maps a blocking response's usage block, which the
+// Responses API omits for some responses — nil then counts as zero requests,
+// the same rule the streaming path applies. The nil arrives from the same
+// predicate the streaming path uses, resp.JSON.Usage.Valid() at the call site
+// above; only the plumbing differs (a pointer here, a *responses.Response
+// there). The mapping itself is shared (agents.UsageFromResponseUsage) so the
+// two paths cannot report different numbers for the same response.
 func usageFromResponse(u *responses.ResponseUsage) *agents.Usage {
 	if u == nil {
 		return agents.NewUsage()
 	}
-	return &agents.Usage{
-		Requests:     1,
-		InputTokens:  u.InputTokens,
-		OutputTokens: u.OutputTokens,
-		TotalTokens:  u.TotalTokens,
-		InputTokensDetails: agents.InputTokensDetails{
-			CachedTokens:     u.InputTokensDetails.CachedTokens,
-			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
-		},
-		OutputTokensDetails: agents.OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ReasoningTokens},
-	}
+	return agents.UsageFromResponseUsage(*u)
 }
 
 func settingsToolChoice(s *agents.ModelSettings) agents.ToolChoice {

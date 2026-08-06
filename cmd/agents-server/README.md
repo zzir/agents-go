@@ -694,6 +694,7 @@ cmd/agents-server/
 │   ├── bridge/                 business logic
 │   │   ├── agent.go            assemble a full agent from DB config
 │   │   ├── runner.go           stream execution, resume after approval
+│   │   ├── stream_bridge.go    SDK stream events → protocol envelopes
 │   │   ├── run_hub.go          per-run event hub (buffering, seq resume, status)
 │   │   ├── approvals.go        HITL approval persistence & resolution
 │   │   ├── mcp_manager.go      MCP server connection lifecycle

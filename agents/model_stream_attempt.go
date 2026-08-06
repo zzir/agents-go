@@ -2,30 +2,6 @@ package agents
 
 import "iter"
 
-// streamLifecycleEvent reports whether a stream event type is pre-output
-// lifecycle preamble: the response exists but nothing has been generated yet.
-func streamLifecycleEvent(t string) bool {
-	switch t {
-	case "response.created", "response.in_progress", "response.queued":
-		return true
-	}
-	return false
-}
-
-// streamFailureEvent reports whether a stream event type announces a terminal
-// failure. Like the lifecycle preamble it carries nothing the model generated,
-// so it must not commit an attempt: the whole point of retry/fallback is to
-// replace an attempt that ends in one of these. (response.incomplete is NOT
-// here: a length-truncated response is output that arrived — committing on it
-// is what stops a retry from throwing that output away.)
-func streamFailureEvent(t string) bool {
-	switch t {
-	case "error", "response.error", "response.failed":
-		return true
-	}
-	return false
-}
-
 // streamAttempt is the outcome of deliverStreamAttempt — one inner stream
 // delivered to a consumer with pre-commit events held back. It is how
 // NewRetryModel and NewFallbackModel share one commit rule without duplicating

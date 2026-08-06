@@ -3,6 +3,8 @@ package agents
 import (
 	"sync"
 
+	"github.com/openai/openai-go/v3/responses"
+
 	"github.com/zzir/agents-go/agents/session"
 )
 
@@ -35,6 +37,36 @@ type Usage struct {
 
 // NewUsage returns a zero-valued Usage ready to accumulate.
 func NewUsage() *Usage { return &Usage{} }
+
+// UsageFromResponseUsage translates a Responses usage block into a Usage
+// counted as ONE request.
+//
+// This is the single place that field-by-field translation lives. The
+// streaming runner, the blocking OpenAI path and the modelkit conformance
+// suite all go through it, so a detail field the Responses API adds later is
+// picked up by all three at once instead of drifting in whichever hand-copy
+// was missed.
+//
+// Whether the response carries a usage block AT ALL stays the caller's
+// question. Not because the three ask it differently — they all ask
+// resp.JSON.Usage.Valid() and they all answer NewUsage, zero requests, so a
+// backend that never reports usage does not inflate the request count — but
+// because this mapping is total: an all-zero usage block is a real request
+// that spent no tokens, and only the caller, holding the Response envelope,
+// can tell that apart from a response that reported nothing.
+func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
+	return &Usage{
+		Requests:     1,
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+		InputTokensDetails: InputTokensDetails{
+			CachedTokens:     u.InputTokensDetails.CachedTokens,
+			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
+		},
+		OutputTokensDetails: OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ReasoningTokens},
+	}
+}
 
 // Snapshot returns a point-in-time copy of u's counters taken under the same
 // lock Add uses, so it is safe to call while other goroutines accumulate into u

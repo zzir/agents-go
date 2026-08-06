@@ -12,24 +12,14 @@ import (
 
 // usageFromStreamResponse extracts token usage from a streamed final Response.
 // When the response carries no usage block it counts as zero requests (matching
-// the blocking path's usageFromResponse), so a
-// backend that omits usage does not inflate the request count.
+// the blocking path's usageFromResponse), so a backend that omits usage does
+// not inflate the request count. The mapping itself is
+// UsageFromResponseUsage, shared with the blocking path.
 func usageFromStreamResponse(resp *responses.Response) *Usage {
 	if !resp.JSON.Usage.Valid() {
 		return NewUsage()
 	}
-	u := resp.Usage
-	return &Usage{
-		Requests:     1,
-		InputTokens:  u.InputTokens,
-		OutputTokens: u.OutputTokens,
-		TotalTokens:  u.TotalTokens,
-		InputTokensDetails: InputTokensDetails{
-			CachedTokens:     u.InputTokensDetails.CachedTokens,
-			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
-		},
-		OutputTokensDetails: OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ReasoningTokens},
-	}
+	return UsageFromResponseUsage(resp.Usage)
 }
 
 // streamOneModelCall streams a single model call, forwarding each raw event to
@@ -61,7 +51,7 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 			continue
 		}
 		if strings.HasSuffix(event.Type, ".delta") ||
-			event.Type == "response.completed" || event.Type == "response.incomplete" {
+			event.Type == EventResponseCompleted || event.Type == EventResponseIncomplete {
 			stamp()
 		}
 		if !r.emit(&RawResponsesStreamEvent{Data: event}) {
@@ -83,12 +73,12 @@ type responseAssembler struct {
 
 func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 	switch event.Type {
-	case "response.output_item.done":
+	case EventResponseOutputItemDone:
 		// Collected as a fallback for backends (e.g. ChatGPT with store=false)
 		// whose terminal event carries an empty Output array.
 		done := event.AsResponseOutputItemDone()
 		a.items = append(a.items, done.Item)
-	case "response.completed":
+	case EventResponseCompleted:
 		completed := event.AsResponseCompleted()
 		a.final = &ModelResponse{
 			Output:     completed.Response.Output,
@@ -96,7 +86,7 @@ func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 			ResponseID: completed.Response.ID,
 			Status:     string(completed.Response.Status),
 		}
-	case "response.incomplete":
+	case EventResponseIncomplete:
 		// A response cut off at the output-token limit still arrived. It is
 		// assembled like any other so the runner can see it is truncated
 		// and refuse to run its tool calls; treating it as "no response"

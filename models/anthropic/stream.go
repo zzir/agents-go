@@ -166,7 +166,9 @@ func blockItemID(msgID string, index int) string {
 }
 
 // responseUsage maps Messages usage onto the canonical terminal-event
-// accounting, mirroring usageFromMessage.
+// accounting. It owns the summation rule for this adapter — canonical
+// InputTokens is uncached + cache-read + cache-write — and the blocking path's
+// usageFromMessage (convert.go) is built on it rather than repeating it.
 func responseUsage(u ant.Usage) modelkit.ResponseUsage {
 	in := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	return modelkit.ResponseUsage{

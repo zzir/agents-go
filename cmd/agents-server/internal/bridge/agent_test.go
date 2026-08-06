@@ -40,8 +40,8 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 		t.Fatalf("a legacy row with the stale key must build: %v", err)
 	}
 	// The keys that survived the removal still decode.
-	if built.HistoryLimit != 5 {
-		t.Errorf("history_limit = %d, want 5 — the rest of the session group must still load", built.HistoryLimit)
+	if built.Session.HistoryLimit != 5 {
+		t.Errorf("history_limit = %d, want 5 — the rest of the session group must still load", built.Session.HistoryLimit)
 	}
 }
 

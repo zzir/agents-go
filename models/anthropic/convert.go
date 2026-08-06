@@ -549,21 +549,25 @@ func statusFromStopReason(reason ant.StopReason) (status, incompleteReason strin
 	}
 }
 
-// usageFromMessage maps Messages usage onto canonical accounting. Anthropic
-// reports uncached, cache-read and cache-write input separately; canonical
-// InputTokens is their sum (Responses semantics: the total, with the cache
-// numbers as informational subsets).
+// usageFromMessage maps Messages usage onto canonical accounting for the
+// blocking path, counted as one request.
+//
+// The arithmetic — Anthropic reports uncached, cache-read and cache-write
+// input separately, canonical InputTokens is their sum (Responses semantics:
+// the total, with the cache numbers as informational subsets) — is
+// responseUsage's, in stream.go. This only widens that result, so the blocking
+// and streaming paths cannot report different totals for the same message.
 func usageFromMessage(u ant.Usage) *agents.Usage {
-	in := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+	ru := responseUsage(u)
 	return &agents.Usage{
 		Requests:     1,
-		InputTokens:  in,
-		OutputTokens: u.OutputTokens,
-		TotalTokens:  in + u.OutputTokens,
+		InputTokens:  ru.InputTokens,
+		OutputTokens: ru.OutputTokens,
+		TotalTokens:  ru.TotalTokens,
 		InputTokensDetails: agents.InputTokensDetails{
-			CachedTokens:     u.CacheReadInputTokens,
-			CacheWriteTokens: u.CacheCreationInputTokens,
+			CachedTokens:     ru.CachedTokens,
+			CacheWriteTokens: ru.CacheWriteTokens,
 		},
-		OutputTokensDetails: agents.OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ThinkingTokens},
+		OutputTokensDetails: agents.OutputTokensDetails{ReasoningTokens: ru.ReasoningTokens},
 	}
 }

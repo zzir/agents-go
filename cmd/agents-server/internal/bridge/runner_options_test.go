@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // runOptionsFor is the single constructor both the fresh-run and resume paths
@@ -14,13 +15,15 @@ import (
 // This pins that every configured policy actually lands in the options.
 func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 	built := &BuildResult{
-		MaxTurns:             7,
-		MaxToolConcurrency:   3,
-		HandoffInputFilter:   "nest_history",
-		ToolNotFoundBehavior: "continue",
-		StopAtTools:          []string{"final_answer"},
-		HistoryLimit:         25,
-		RunGuardrails:        []agents.Guardrail{{Name: "g1"}},
+		Behavior: store.BehaviorGroup{
+			MaxTurns:             7,
+			MaxToolConcurrency:   3,
+			HandoffInputFilter:   "nest_history",
+			ToolNotFoundBehavior: "continue",
+		},
+		Session:       store.SessionGroup{HistoryLimit: 25},
+		StopAtTools:   []string{"final_answer"},
+		RunGuardrails: []agents.Guardrail{{Name: "g1"}},
 	}
 	opts := runOptionsFor(built, nil, nil, nil, "trust-ctx")
 
@@ -50,7 +53,7 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 	}
 
 	// Without nest_history the filter stays nil — the SDK default.
-	built.HandoffInputFilter = ""
+	built.Behavior.HandoffInputFilter = ""
 	if got := runOptionsFor(built, nil, nil, nil, ""); got.Exec.HandoffInputFilter != nil {
 		t.Fatal("empty HandoffInputFilter must leave the SDK default")
 	}

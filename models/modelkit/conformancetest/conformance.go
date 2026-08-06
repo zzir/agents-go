@@ -350,25 +350,45 @@ func assertUsage(t *testing.T, spec UsageSpec, u *agents.Usage) {
 // runner switches on a few of these and forwards the rest to consumers; an
 // event name outside the Responses vocabulary would leak the backend's own
 // protocol into every downstream consumer.
+//
+// It is built from the agents.Event* constants — the one place the vocabulary
+// is spelled — so a name here cannot drift from the name the runner switches
+// on. The trade is that this set no longer restates the wire strings
+// independently of the adapters it checks: it and the modelkit constructors
+// read the same constant, so a wrong value would satisfy both. Pinning the
+// constants to their wire strings is agents/stream_events_test.go's job; what
+// this set still checks is that an adapter emits nothing outside them.
+//
+// response.queued and the three failure events are deliberately absent:
+//
+//   - agents.EventResponseQueued: real lifecycle preamble that a pass-through
+//     backend emits and the runner tolerates wherever created/in_progress
+//     appear, but a synthesized stream has no queue to report, so modelkit
+//     offers no constructor for it and no scenario here produces one.
+//   - the failure events (agents.EventError / EventResponseError /
+//     EventResponseFailed): every scenario in Scenarios() drives a response
+//     that arrives, whole or length-truncated. Terminal failures are not part
+//     of this matrix, so an adapter emitting one here is answering a scenario
+//     it was not asked.
 var allowedEventTypes = map[string]bool{
-	"response.created":                       true,
-	"response.in_progress":                   true,
-	"response.output_item.added":             true,
-	"response.output_item.done":              true,
-	"response.content_part.added":            true,
-	"response.content_part.done":             true,
-	"response.output_text.delta":             true,
-	"response.output_text.done":              true,
-	"response.reasoning_text.delta":          true,
-	"response.reasoning_text.done":           true,
-	"response.reasoning_summary_part.added":  true,
-	"response.reasoning_summary_part.done":   true,
-	"response.reasoning_summary_text.delta":  true,
-	"response.reasoning_summary_text.done":   true,
-	"response.function_call_arguments.delta": true,
-	"response.function_call_arguments.done":  true,
-	"response.completed":                     true,
-	"response.incomplete":                    true,
+	agents.EventResponseCreated:                    true,
+	agents.EventResponseInProgress:                 true,
+	agents.EventResponseOutputItemAdded:            true,
+	agents.EventResponseOutputItemDone:             true,
+	agents.EventResponseContentPartAdded:           true,
+	agents.EventResponseContentPartDone:            true,
+	agents.EventResponseOutputTextDelta:            true,
+	agents.EventResponseOutputTextDone:             true,
+	agents.EventResponseReasoningTextDelta:         true,
+	agents.EventResponseReasoningTextDone:          true,
+	agents.EventResponseReasoningSummaryPartAdded:  true,
+	agents.EventResponseReasoningSummaryPartDone:   true,
+	agents.EventResponseReasoningSummaryTextDelta:  true,
+	agents.EventResponseReasoningSummaryTextDone:   true,
+	agents.EventResponseFunctionCallArgumentsDelta: true,
+	agents.EventResponseFunctionCallArgumentsDone:  true,
+	agents.EventResponseCompleted:                  true,
+	agents.EventResponseIncomplete:                 true,
 }
 
 // consumeStream drains StreamResponse, enforcing the stream contract, and
@@ -398,36 +418,36 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 		if !allowedEventTypes[event.Type] {
 			t.Fatalf("event type %q is outside the Responses stream vocabulary", event.Type)
 		}
-		if len(events) == 0 && event.Type != "response.created" {
+		if len(events) == 0 && event.Type != agents.EventResponseCreated {
 			t.Errorf("first event = %q, want response.created", event.Type)
 		}
 		events = append(events, event)
 		switch event.Type {
-		case "response.output_item.done":
+		case agents.EventResponseOutputItemDone:
 			done := event.AsResponseOutputItemDone()
 			doneItems = append(doneItems, done.Item)
 			if done.Item.ID != "" {
 				doneItemIDs[done.Item.ID] = true
 			}
-		case "response.output_text.delta":
+		case agents.EventResponseOutputTextDelta:
 			d := event.AsResponseOutputTextDelta()
 			if doneItemIDs[d.ItemID] {
 				t.Errorf("output_text.delta for item %q after its output_item.done", d.ItemID)
 			}
 			textDeltas.WriteString(d.Delta)
-		case "response.reasoning_text.delta":
+		case agents.EventResponseReasoningTextDelta:
 			d := event.AsResponseReasoningTextDelta()
 			if doneItemIDs[d.ItemID] {
 				t.Errorf("reasoning_text.delta for item %q after its output_item.done", d.ItemID)
 			}
 			reasonDeltas.WriteString(d.Delta)
-		case "response.reasoning_summary_text.delta":
+		case agents.EventResponseReasoningSummaryTextDelta:
 			d := event.AsResponseReasoningSummaryTextDelta()
 			if doneItemIDs[d.ItemID] {
 				t.Errorf("reasoning_summary_text.delta for item %q after its output_item.done", d.ItemID)
 			}
 			reasonDeltas.WriteString(d.Delta)
-		case "response.function_call_arguments.delta":
+		case agents.EventResponseFunctionCallArgumentsDelta:
 			d := event.AsResponseFunctionCallArgumentsDelta()
 			if doneItemIDs[d.ItemID] {
 				t.Errorf("function_call_arguments.delta for item %q after its output_item.done", d.ItemID)
@@ -438,7 +458,7 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 				argsDeltas[d.ItemID] = b
 			}
 			b.WriteString(d.Delta)
-		case "response.completed":
+		case agents.EventResponseCompleted:
 			terminalSeen = true
 			completed := event.AsResponseCompleted()
 			final = &agents.ModelResponse{
@@ -447,7 +467,7 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 				ResponseID: completed.Response.ID,
 				Status:     string(completed.Response.Status),
 			}
-		case "response.incomplete":
+		case agents.EventResponseIncomplete:
 			terminalSeen = true
 			inc := event.AsResponseIncomplete()
 			final = &agents.ModelResponse{
@@ -511,24 +531,22 @@ func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.OutputItem) {
 	}
 }
 
-// usageFromFinal mirrors the runner's own extraction from a streamed terminal
-// response (stream_run.go), so the suite asserts what the run would record.
+// usageFromFinal performs the runner's own extraction from a streamed terminal
+// response (stream_run.go) — same "no usage block means zero requests" guard,
+// same shared mapping — so the suite asserts what the run would record.
+//
+// Calling the shared mapping instead of hand-copying it does not weaken the
+// suite. What is under test here is the ADAPTER: does its terminal event
+// report the tokens its backend reported, in Responses semantics (§5.10)?
+// That is checked by assertUsage against the scenario's expected numbers. A
+// second hand-written copy of the field list would only assert that two copies
+// of the same code agree — while silently going stale the day a detail field
+// is added, which is the failure mode this suite exists to catch.
 func usageFromFinal(resp *responses.Response) *agents.Usage {
 	if !resp.JSON.Usage.Valid() {
 		return agents.NewUsage()
 	}
-	u := resp.Usage
-	return &agents.Usage{
-		Requests:     1,
-		InputTokens:  u.InputTokens,
-		OutputTokens: u.OutputTokens,
-		TotalTokens:  u.TotalTokens,
-		InputTokensDetails: agents.InputTokensDetails{
-			CachedTokens:     u.InputTokensDetails.CachedTokens,
-			CacheWriteTokens: u.InputTokensDetails.CacheWriteTokens,
-		},
-		OutputTokensDetails: agents.OutputTokensDetails{ReasoningTokens: u.OutputTokensDetails.ReasoningTokens},
-	}
+	return agents.UsageFromResponseUsage(resp.Usage)
 }
 
 func jsonEqual(a, b string) bool {
