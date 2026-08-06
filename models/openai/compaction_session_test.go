@@ -12,6 +12,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/agentstest"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -280,6 +281,70 @@ func TestRunCompactionPinnedChainModeSkipsOffChainItems(t *testing.T) {
 	if len(items) != 3 {
 		t.Errorf("history len = %d, want 3 — a skipped pass rewrites nothing", len(items))
 	}
+}
+
+// A read window (session.Settings.Limit) is a permanent setting, not a passing
+// condition, so what a windowed run reports about its chain decides whether a
+// caller who PINNED previous_response_id ever compacts again. These two drive a
+// whole run into a real CompactionSession, because that consequence is invisible
+// at the runner boundary where the flag is produced.
+func TestRunCompactionPinnedChainModeUnderAReadWindow(t *testing.T) {
+	// windowedRun runs one turn against a pinned-mode CompactionSession holding
+	// seeded entries, and returns the compact request bodies it made.
+	windowedRun := func(t *testing.T, seed, limit int) []map[string]any {
+		t.Helper()
+		var bodies []map[string]any
+		srv := recordingCompactStub(t, &bodies)
+		under := session.NewInMemoryStorage("test")
+		cs, err := NewCompactionSession(under,
+			CompactionOptions{Model: "gpt-4.1", Threshold: 1, Mode: CompactionModePreviousResponseID},
+			option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess := session.NewSession(cs)
+		var seeded []agents.InputItem
+		for range seed {
+			seeded = append(seeded, mustInput(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old","annotations":[]}]}`))
+		}
+		if err := sess.AppendItems(t.Context(), seeded, agents.Source{}); err != nil {
+			t.Fatal(err)
+		}
+		agent := &agents.Agent{Name: "a", ModelImpl: agentstest.TextModel("answer")}
+		if _, err := agents.RunSync(t.Context(), agent, "go", agents.RunOptions{
+			Conversation: agents.ConversationOptions{
+				Session: sess, Settings: session.Settings{Limit: limit},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return bodies
+	}
+
+	// The window never truncated the read, so the chain saw the whole log and
+	// the pinned mode is safe. Reporting a configured window as off-chain
+	// regardless would abandon this pass — and every later one, since a window
+	// never clears.
+	t.Run("log inside the window", func(t *testing.T) {
+		bodies := windowedRun(t, 2, 50)
+		if len(bodies) != 1 {
+			t.Fatalf("compact calls = %d, want 1", len(bodies))
+		}
+		if _, ok := bodies[0]["previous_response_id"]; !ok {
+			t.Errorf("compacted from %v, want the pinned chain", bodies[0])
+		}
+	})
+
+	// Past the window the conflict is real and permanent: the pinned mode
+	// rewrites from a chain that never carried the oldest entries, and only the
+	// caller can resolve it (by unpinning the mode or dropping the window). The
+	// pass is abandoned every run, which is the deliberate trade — a rewrite
+	// that deleted them unread is the alternative.
+	t.Run("log past the window", func(t *testing.T) {
+		if bodies := windowedRun(t, 6, 2); len(bodies) != 0 {
+			t.Errorf("compact calls = %d, want 0 — the chain never carried the pre-window entries", len(bodies))
+		}
+	})
 }
 
 func mustInput(t *testing.T, raw string) agents.InputItem {

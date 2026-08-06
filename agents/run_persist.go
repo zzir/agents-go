@@ -140,14 +140,14 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
 			ResponseID: r.lastResponseID,
 			Store:      r.lastStore,
-			// Whether anything in the log postdates that response. The storage
-			// decides what to do about it: a chain-based one compacts from the
-			// stored history instead, one that never looks at a chain ignores
-			// it. Deciding here — by skipping the pass — cannot be right in
-			// both directions: it would starve a storage that has no chain to
-			// be wrong about, and it would miss the items that actually get
-			// erased.
-			OffChainItems: hasOffChainItems(r.sessionItems),
+			// Whether the log holds anything that response's chain never saw.
+			// The storage decides what to do about it: a chain-based one
+			// compacts from the stored history instead, one that never looks at
+			// a chain ignores it. Deciding here — by skipping the pass — cannot
+			// be right in both directions: it would starve a storage that has
+			// no chain to be wrong about, and it would miss the items that
+			// actually get erased.
+			OffChainItems: r.offChainItems(),
 			StartSpan: func() *tracing.SpanHandle {
 				cspan = r.trace.StartCompactionSpan(r.agentParentID())
 				return cspan
@@ -167,19 +167,60 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	}
 }
 
-// hasOffChainItems reports whether the run's items include any the server-side
-// response chain cannot hold — what a storage compacting from lastResponseID
-// would delete without ever having read.
+// offChainItems reports whether the stored log holds anything the server-side
+// response chain rooted at lastResponseID cannot know about — what a storage
+// compacting from that chain would delete without ever having read.
 //
-// A run with a local Session resends its whole input every turn
-// (UsePreviousResponseID refuses to combine with one), so the last response
-// holds everything that stood in front of the model when it answered: its own
-// output, and every tool output, handoff acknowledgement and steer that came
-// before it. Those are on the chain, and a summary that folds them away read
-// them first. What the chain cannot hold is what came AFTER — a terminating
-// tool's output, an error handler's fallback message, input injected past the
-// last model call. Position is the whole question, which is why this counts
-// from the last model item rather than asking each item where it came from.
+// A log outgrows the chain in three ways, and only the run knows about all
+// three:
+//
+//   - Items produced after the last model call — hasOffChainItems, a question
+//     about POSITION, answered fresh from the run's items every time.
+//   - A WINDOWED read (Conversation.Settings.Limit) that truncated: the run
+//     sent the model only the newest entries, so anything older is in the log
+//     and on no request. Position cannot see it — those entries sit at the
+//     FRONT.
+//   - A handoff input filter: what it dropped stays in the log and reaches no
+//     later model call. Position cannot see that either.
+//
+// The last two are recorded as they happen, in offChainHistory, because both
+// are facts about the run's past that nothing later can undo.
+//
+// Only the filter answers conservatively: a filter that RAN sets the flag, with
+// no look at what it returned. Telling an identity filter from a real one means
+// comparing CONTENT, since one that redacts in place leaves the length
+// untouched, and a comparison that got it wrong would fail by deleting the
+// original unread — the direction this whole path exists to close. The cost of
+// that over-report is bounded and loud: the pass compacts from the stored items
+// instead, a larger request that either succeeds or fails visibly.
+//
+// The window is measured rather than assumed for a reason that does not apply
+// to the filter: a filter is per-run, while a window is a permanent setting.
+// Answering "a window is configured" would make this permanently true, and a
+// caller who pinned a chain-based compaction mode gets their pass SKIPPED on a
+// true answer — so they would never compact again, on a log that only grows.
+// Past a window that really did truncate, that standoff is real and only the
+// caller can end it (unpin the mode, or drop the window); inside one, there is
+// nothing to stand off about.
+func (r *runner) offChainItems() bool {
+	return r.offChainHistory || hasOffChainItems(r.sessionItems)
+}
+
+// hasOffChainItems reports whether the run's items include any that POSTDATE
+// the last model response.
+//
+// The last response holds everything that stood in front of the model when it
+// answered: its own output, and every tool output, handoff acknowledgement and
+// steer that came before it. Those are on the chain, and a summary that folds
+// them away read them first. What the chain cannot hold is what came AFTER — a
+// terminating tool's output, an error handler's fallback message, input
+// injected past the last model call. Position is the whole question here, which
+// is why this counts from the last model item rather than asking each item
+// where it came from.
+//
+// It is only ONE of the ways a log outgrows the chain, and the one that clears
+// on its own; offChainHistory holds the two that do not, and offChainItems is
+// where the three meet.
 //
 // It answers by provenance in one direction only: SourceModel marks the frontier
 // because nothing else can. Provenance alone cannot answer the question — a

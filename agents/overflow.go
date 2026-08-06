@@ -165,10 +165,12 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 		Store:      r.lastStore,
 		// A continuation taken at the final output is appended and stored
 		// before the turn that overflows, so the log can already hold items no
-		// model call ever saw. Recovery costs a bigger compact request when it
-		// does — and a request that fails is loud, where a replacement built
-		// without them is not.
-		OffChainItems: hasOffChainItems(r.sessionItems),
+		// model call ever saw — as it does under a read window that
+		// truncated the log, or once a handoff filter has dropped part of the
+		// conversation. Recovery costs a
+		// bigger compact request when it does — and a request that fails is
+		// loud, where a replacement built without them is not.
+		OffChainItems: r.offChainItems(),
 		StartSpan: func() *tracing.SpanHandle {
 			cspan = r.trace.StartCompactionSpan(r.agentParentID())
 			return cspan

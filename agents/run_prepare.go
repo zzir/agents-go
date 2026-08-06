@@ -45,10 +45,20 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 		// the projection renders each checkpoint's summary in the folded
 		// history's place. An annotation or terminal entry is recorded but not
 		// sent unless Conversation.Projectors says otherwise.
-		cur := session.Cursor{Limit: -session.ResolveLimit(opts.Conversation.Settings)}
-		entries, herr := opts.Conversation.Session.ContextEntries(ctx, cur)
+		limit := session.ResolveLimit(opts.Conversation.Settings)
+		entries, herr := opts.Conversation.Session.ContextEntries(ctx, session.Cursor{Limit: -limit})
 		if herr != nil {
 			return nil, nil, nil, herr
+		}
+		// A read that came back FULL is one the window truncated: what it left
+		// behind is stored, entered no request, and is therefore on no response
+		// chain (see offChainItems). Measuring it here — from the read the run
+		// was making anyway — is what keeps the answer from being "a window is
+		// configured", which never clears and would strand a caller who pinned
+		// a chain-based compaction mode. A log exactly the window's size reads
+		// full too, so this errs toward reporting; that is the safe direction.
+		if limit > 0 && len(entries) >= limit {
+			r.offChainHistory = true
 		}
 		// Compact before projecting: the compactor reasons about entries —
 		// their kinds, their turns, their usage — and projection is what turns

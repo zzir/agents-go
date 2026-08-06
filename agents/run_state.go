@@ -20,13 +20,13 @@ import (
 // Decoding accepts the same major, no newer than this minor and no older than
 // runStateOldestDecodableMinor; anything else is rejected rather than
 // best-effort decoded (see RunStateFromJSON). The numbers below name format
-// steps rather than releases — the constant itself has only ever read 1.0, 1.3
-// and 1.4: 1.1 replaced the per-call approval maps with per-tool entries, 1.2
-// added the nested agent-as-tool states and the reasoning-item id policy, 1.3
-// added the guardrail-result slices (input, output, tool input/output), and 1.4
+// steps rather than releases — the constant itself has only ever read 1.0, 1.3,
+// 1.4 and 1.5: 1.1 replaced the per-call approval maps with per-tool entries,
+// 1.2 added the nested agent-as-tool states and the reasoning-item id policy,
+// 1.3 added the guardrail-result slices (input, output, tool input/output), 1.4
 // added the pending injected input, the disclosed deferred tools and the server
-// cursor.
-const RunStateSchemaVersion = "1.4"
+// cursor, and 1.5 added the off-chain-history flag.
+const RunStateSchemaVersion = "1.5"
 
 // runStateOldestDecodableMinor is the oldest minor of the current major this
 // decoder still accepts, so that a run paused before an SDK upgrade can resume
@@ -36,10 +36,10 @@ const RunStateSchemaVersion = "1.4"
 // It is not "the oldest minor that ever existed". Raise it to the new minor
 // whenever a bump REPLACES or reinterprets a field instead of only adding one —
 // such a state decodes successfully with its old fields silently dropped, which
-// is worse than a refusal. That is why it currently equals the minor of
-// RunStateSchemaVersion: 1.3 was stamped both before and after the four
-// separate guardrail-result keys collapsed into one, and the version string
-// cannot tell those two shapes apart.
+// is worse than a refusal. It sits at 4 for that reason: 1.3 was stamped both
+// before and after the four separate guardrail-result keys collapsed into one,
+// and the version string cannot tell those two shapes apart. 1.5 only ADDED a
+// field, so a 1.4 state still decodes.
 const runStateOldestDecodableMinor = 4
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
@@ -92,6 +92,18 @@ type RunState struct {
 	// re-marks itself when its response is re-processed, so only cross-agent
 	// hand-back loses the reset.
 	ToolsUsed []string
+
+	// OffChainHistory records that by the time the run paused, its stored log
+	// already held items no model call had carried — entries a read window
+	// (Conversation.Settings.Limit) truncated away, or a conversation a handoff
+	// input filter dropped. The resumed run re-reads no history and re-runs no
+	// filter, so this is the only way it can answer for the half it did not
+	// perform, and getting it wrong lets a chain-based compaction delete those
+	// items unread (see runner.offChainItems).
+	//
+	// Absent in states serialized before this field existed (schema < 1.5) →
+	// false, which is what those states already meant in effect.
+	OffChainHistory bool
 
 	// DisclosedTools names the deferred tools opened up before the pause, so a
 	// resumed run does not re-hide a tool the model has already been told
@@ -302,6 +314,12 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	// RunResult still reports the pre-pause results. First-turn input guardrails
 	// are not re-run on resume, so this is the only way they survive.
 	r.guardrailResults = state.GuardrailResults
+	// Likewise for what the paused half left off the response chain: a resume
+	// makes no windowed read and applies no handoff filter, so the state is its
+	// only source. Answering it from opts instead would be wrong twice over —
+	// silently false when the caller does not repeat Conversation.Settings, and
+	// needlessly true when they repeat a window the log never reached.
+	r.offChainHistory = state.OffChainHistory
 	// Restore the tool-use tracker so tool_choice stays reset for every agent
 	// that had used tools before the pause (not only the interrupted one).
 	if len(state.ToolsUsed) > 0 {
@@ -383,6 +401,7 @@ type serialRunState struct {
 	SessionItems          []serialItem                   `json:"session_items,omitempty"`
 	PersistedSessionItems int                            `json:"persisted_session_items,omitempty"`
 	ToolsUsed             []string                       `json:"tools_used,omitempty"`
+	OffChainHistory       bool                           `json:"off_chain_history,omitempty"`
 	DisclosedTools        []string                       `json:"disclosed_tools,omitempty"`
 	PendingInput          *serialPendingInput            `json:"pending_input,omitempty"`
 	ServerCursor          *serialServerCursor            `json:"server_cursor,omitempty"`
@@ -531,6 +550,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		MaxTurns:              s.MaxTurns,
 		PersistedSessionItems: s.PersistedSessionItems,
 		ToolsUsed:             s.ToolsUsed,
+		OffChainHistory:       s.OffChainHistory,
 		DisclosedTools:        s.DisclosedTools,
 		Usage:                 s.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyToString(s.ReasoningItemIDPolicy),
@@ -737,6 +757,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		MaxTurns:              in.MaxTurns,
 		PersistedSessionItems: in.PersistedSessionItems,
 		ToolsUsed:             in.ToolsUsed,
+		OffChainHistory:       in.OffChainHistory,
 		DisclosedTools:        in.DisclosedTools,
 		Usage:                 in.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyFromString(in.ReasoningItemIDPolicy),

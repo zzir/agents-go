@@ -321,6 +321,20 @@ type runner struct {
 	lastResponseID string
 	lastStore      *bool
 
+	// offChainHistory records that the stored log already holds items no model
+	// call in this run carried: a read window (Conversation.Settings.Limit) cut
+	// the oldest entries out of every request, or a handoff input filter
+	// dropped part of the conversation on its way to the next agent. See
+	// offChainItems.
+	//
+	// MONOTONE, unlike the positional rule it joins there — neither the entries
+	// a window skipped nor the items a filter dropped can come back onto the
+	// chain later. That is why it rides on RunState (OffChainHistory) across a
+	// pause rather than being recomputed on resume: a resumed run re-reads no
+	// history and re-runs no filter, so it would be answering for a half of the
+	// run it never performed.
+	offChainHistory bool
+
 	// guardrailMu guards guardrailResults: the tool stages record from the
 	// concurrent per-tool-call goroutines in runFunctionTools, while the input
 	// and output stages record from the main loop.
@@ -700,6 +714,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 					}
 					st.originalInput = filtered
 					st.generatedItems = nil
+					r.offChainHistory = true
 				}
 			}
 			r.log.Info(ctx, "handoff",
@@ -912,6 +927,7 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 		CurrentTurn:           turn,
 		MaxTurns:              r.maxTurns,
 		ToolsUsed:             sortedKeys(r.toolsUsedBy),
+		OffChainHistory:       r.offChainHistory,
 		PendingInput:          r.ctrl.Pending(),
 		DisclosedTools:        sortedKeys(r.disclosed),
 		ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,

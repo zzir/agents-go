@@ -34,6 +34,7 @@ func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T)
 	}
 	state.DisclosedTools = []string{"deferred_a", "deferred_b"}
 	state.cursor = serverCursor{responseID: "resp_42", itemCount: 3, conversationActive: true}
+	state.OffChainHistory = true
 
 	data, err := state.MarshalJSON()
 	if err != nil {
@@ -48,6 +49,11 @@ func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T)
 	}
 	if restored.cursor != state.cursor {
 		t.Errorf("cursor = %+v, want %+v", restored.cursor, state.cursor)
+	}
+	// Lose this one across processes and a chain-based compaction on the resumed
+	// run summarizes away what the paused half never sent — deleted unread.
+	if !restored.OffChainHistory {
+		t.Error("OffChainHistory = false; the paused run's log held items no model call carried")
 	}
 	queues := []struct {
 		name      string

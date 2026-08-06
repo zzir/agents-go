@@ -212,9 +212,12 @@ type CompactionArgs struct {
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
 	// OffChainItems reports that the stored history holds items the
-	// server-side chain rooted at ResponseID cannot know about: whatever the
-	// run produced AFTER that response — a terminating tool's output, an error
-	// handler's fallback message, input injected past the last model call.
+	// server-side chain rooted at ResponseID cannot know about. Three shapes:
+	// what the run produced AFTER that response (a terminating tool's output,
+	// an error handler's fallback message, input injected past the last model
+	// call); what a read window (Settings.Limit) left out of every request,
+	// which is the OLDEST part of the log rather than the newest; and what a
+	// handoff input filter dropped on its way to the next agent.
 	//
 	// A storage that answers by REPLACING the log with something built from
 	// that chain must not do so while this is set: the replacement would delete

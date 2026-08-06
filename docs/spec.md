@@ -123,7 +123,16 @@ for turn := 1; ; turn++ {
 **A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
 server-conversation cursor included — pinned by a full-field round-trip test
-(`RunStateSchemaVersion` 1.4). The in-process resume passing the live pointer
+**A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
+wire format — the pending injected input, the disclosed deferred tools, the
+server-conversation cursor and the off-chain-history flag included — pinned by a
+full-field round-trip test (`RunStateSchemaVersion` 1.5). The in-process resume
+passing the live pointer must never be the only path that works; the serialized
+surface IS the contract. The cursor in particular rides along so a resumed run
+keeps sending deltas: the resumed turn re-processes a response the restored
+cursor already accounts for and does not advance it — re-deriving the cursor
+there marked pre-pause sibling tool outputs as already served, and a
+server-managed conversation never received them.
 must never be the only path that works; the serialized surface IS the
 contract. The cursor in particular rides along so a resumed run keeps sending
 deltas: the resumed turn re-processes a response the restored cursor already
@@ -770,6 +779,50 @@ The one path that still rewrites is `openai.CompactionSession`, because the
 server's compact API returns a replacement rather than a decision.
 
 **A rewrite built from the response chain never deletes what that chain never
+saw.** The last response holds everything that stood in front of the model when
+it answered — its own output, and every tool output, handoff acknowledgement and
+steer before it. Those are on the chain, and a summary that folds them away read
+them first. A log outgrows that chain in three ways, and the runner reports all
+three through the single flag `CompactionArgs.OffChainItems`:
+
+- **Position.** What came AFTER the last model-produced item: a terminating
+  tool's output, an error handler's fallback message, input injected past the
+  last model call. Decided by position and not by provenance, since a steer
+  taken after the final output is external and yet reached no model call.
+- **A truncated read.** `Conversation.Settings.Limit` sends the model only the
+  newest entries, so what the window cut off is stored and on no request — at
+  the FRONT of the log, where position cannot see it. Reported only when the
+  prepare-time read came back FULL, which is what says the window actually
+  truncated; a log exactly the window's size reads full too, so it errs toward
+  reporting.
+- **A handoff input filter.** What it dropped stays in the log and reaches no
+  later model call, mid-log where position cannot see it either. Reported
+  whenever a filter RAN, without inspecting its output: telling an identity
+  filter apart means comparing CONTENT, since one that redacts in place leaves
+  the length untouched, and a comparison that got it wrong deletes the original
+  unread.
+
+The last two are facts about the run's past that nothing later undoes, so they
+ride across an interrupt/resume on `RunState.OffChainHistory`. A resumed run
+re-reads no history and re-runs no filter; answering from its own options
+instead would be silently false whenever the caller did not repeat
+`Conversation.Settings`, which is the one direction this flag must never fail
+in. Position is the opposite case — it clears between runs — so it is
+recomputed every time and never carried.
+
+`openai.CompactionSession` answers the flag by compacting from the stored items
+instead of `previous_response_id`: the same conversation, minus the deletion. A
+caller who PINNED `CompactionModePreviousResponseID` gets the pass skipped and
+`abandoned: off_chain_items` on the span instead, because the mode is the one
+thing they configured. For position that skip is transient — the next run starts
+clean. Past a truncating window it is NOT: a window does not clear, so the pass
+is abandoned every run while the log grows. Pinning the chain mode and
+configuring a read window is a conflict only the caller can resolve, by dropping
+one of the two — which is why the window half is measured rather than assumed,
+so a log that never reached its window is never mistaken for that conflict.
+**The runner does not decide this by skipping the pass.** It used to, and that
+took the decision away from a storage with no chain to be wrong about: an agent
+that always finishes through a terminating tool never compacted at all.
 saw.** A run with a local `Session` resends its whole input every turn
 (`UsePreviousResponseID` refuses to combine with one), so the last response
 holds everything that stood in front of the model when it answered — its own
