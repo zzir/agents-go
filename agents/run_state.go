@@ -714,9 +714,6 @@ func serializeResponse(resp *ModelResponse) serialResponse {
 	return sr
 }
 
-// checkRunStateSchemaVersion decides whether a serialized state can be decoded
-// by this build: same major, no newer than RunStateSchemaVersion, no older than
-// runStateOldestDecodableMinor.
 // RunStateVersionSupported reports whether a serialized state stamped with
 // version can be decoded by this SDK: same major, minor no newer than
 // RunStateSchemaVersion and no older than the oldest this decoder still
@@ -728,6 +725,9 @@ func RunStateVersionSupported(version string) bool {
 	return checkRunStateSchemaVersion(version) == nil
 }
 
+// checkRunStateSchemaVersion decides whether a serialized state can be decoded
+// by this build: same major, no newer than RunStateSchemaVersion, no older than
+// runStateOldestDecodableMinor.
 func checkRunStateSchemaVersion(v string) error {
 	major, minor, ok := parseSchemaVersion(v)
 	if !ok {

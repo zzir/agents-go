@@ -13,7 +13,7 @@ import (
 // arrives, and nothing else would notice.
 func TestItemDisplayMergeCoversEveryField(t *testing.T) {
 	typ := reflect.TypeFor[ItemDisplay]()
-	for i := 0; i < typ.NumField(); i++ {
+	for i := range typ.NumField() {
 		f := typ.Field(i)
 		t.Run(f.Name, func(t *testing.T) {
 			var other ItemDisplay

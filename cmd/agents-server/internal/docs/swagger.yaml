@@ -77,9 +77,21 @@ components:
             from ToolResult.Display. A consumer that does not know the name falls
             back to plain text rather than failing.
           type: string
+        summary:
+          description: |-
+            Summary is the one-line account of what happened ("3 files changed"),
+            for where the full Output would drown the timeline. Empty means render
+            what the other fields already carry.
+          type: string
         text:
           description: 'Text is the human-readable body: a message''s text, a reasoning
             summary.'
+          type: string
+        title:
+          description: |-
+            Title is the card heading, when the tool name is not it — a task's
+            label, "Apply patch" over "apply_patch". Empty means fall back to
+            ToolName: an override, never required, per the display contract.
           type: string
         tool_name:
           description: ToolName is the tool being called, or the handoff tool.
