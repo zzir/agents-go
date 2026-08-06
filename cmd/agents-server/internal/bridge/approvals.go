@@ -95,15 +95,11 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxI
 		}
 		registry[a.Name] = a
 		for _, ho := range a.Handoffs {
-			if ho.OnInvoke == nil {
-				continue
-			}
-			// The bridge builds every handoff via agents.HandoffTo, whose
-			// OnInvoke returns the target regardless of context/args.
-			target, err := ho.OnInvoke(ctx, nil, "")
-			if err == nil {
-				walk(target)
-			}
+			// Target is the static declaration HandoffTo fills; the bridge
+			// builds every handoff that way. A dynamic handoff (Target nil)
+			// cannot be enumerated without invoking user code, so it is
+			// skipped — nil is how it declares that.
+			walk(ho.Target)
 		}
 	}
 	walk(built.Agent)

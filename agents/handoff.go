@@ -50,8 +50,21 @@ type Handoff struct {
 	// AgentName is the name of the target agent, used for tracing.
 	AgentName string
 
-	// OnInvoke is called by the runner when the handoff is selected; it returns
-	// the agent to switch to.
+	// Target is the agent this handoff switches to, declared as data: HandoffTo
+	// fills it, and a consumer enumerating the handoff graph — an approval UI,
+	// the agent registry RunStateFromJSON wants — walks Target fields without
+	// invoking user code. When OnInvoke is nil the runner switches to Target
+	// directly, so a hand-built static handoff needs no callback.
+	//
+	// A dynamic handoff sets OnInvoke instead, and leaves Target nil rather
+	// than declaring a target it may not honor: nil is how it says "not
+	// statically enumerable".
+	Target *Agent
+
+	// OnInvoke, when non-nil, resolves the handoff target at runtime — it may
+	// pick an agent from the arguments — and takes precedence over Target.
+	// When nil, the runner uses Target; a Handoff with neither fails the run
+	// with a *UserError when the model selects it.
 	OnInvoke func(ctx context.Context, rc *RunContext, argsJSON string) (*Agent, error)
 
 	// OnHandoff, when non-nil, is invoked when the handoff fires, before control
@@ -128,7 +141,9 @@ func transformToolName(name string) string {
 }
 
 // HandoffTo builds a Handoff that delegates the run to target. The resulting
-// tool is named "transfer_to_<target>" (sanitized) and takes no input.
+// tool is named "transfer_to_<target>" (sanitized) and takes no input. The
+// target is declared statically (Target), not wrapped in an OnInvoke closure,
+// so the built handoff is plain data a consumer can enumerate.
 //
 // To customize the tool name/description or require input, construct a Handoff
 // struct directly.
@@ -142,8 +157,6 @@ func HandoffTo(target *Agent) Handoff {
 		ToolDescription: desc,
 		InputJSONSchema: emptyStrictSchema(),
 		AgentName:       target.Name,
-		OnInvoke: func(context.Context, *RunContext, string) (*Agent, error) {
-			return target, nil
-		},
+		Target:          target,
 	}
 }

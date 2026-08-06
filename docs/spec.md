@@ -324,6 +324,13 @@ points.
 ### 2.4 Handoffs ✅
 
 - A handoff is expressed as a **function call**; to the model it is just a tool.
+- The target resolves from `OnInvoke` when set — the runtime authority, free to
+  pick an agent from the arguments — else from `Target`, the static declaration
+  `HandoffTo` fills. Neither set fails the run with a `*UserError`. `Target` is
+  what keeps the handoff graph statically enumerable: a consumer rebuilding an
+  agent registry (for `RunStateFromJSON`, an approval UI) walks `Target` fields
+  without invoking user code, and a dynamic handoff declares itself
+  non-enumerable by leaving `Target` nil.
 - Multiple handoffs in one response → the **first** wins, the rest are ignored.
 - Handoff alongside regular tools → **all tools execute first**, then the agent
   switches (step 8 of [§2.2](#22-ordering-within-a-turn-)).

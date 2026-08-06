@@ -25,9 +25,8 @@ func mkAgent(t *testing.T, s *store.AgentConfigStore, name string, handoffIDs ..
 func handoffNames(built *BuildResult) []string {
 	var names []string
 	for _, h := range built.Agent.Handoffs {
-		target, err := h.OnInvoke(context.Background(), nil, "")
-		if err == nil && target != nil {
-			names = append(names, target.Name)
+		if h.Target != nil {
+			names = append(names, h.Target.Name)
 		}
 	}
 	return names
@@ -60,7 +59,7 @@ func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 	// same D instance.
 	var bTarget, cTarget *BuildResult
 	for _, h := range built.Agent.Handoffs {
-		tgt, _ := h.OnInvoke(ctx, nil, "")
+		tgt := h.Target
 		switch tgt.Name {
 		case "B":
 			bTarget = &BuildResult{Agent: tgt}
@@ -131,7 +130,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 		t.Fatalf("A handoffs = %v, want [B]", got)
 	}
 	for _, h := range built.Agent.Handoffs {
-		tgt, _ := h.OnInvoke(ctx, nil, "")
+		tgt := h.Target
 		if tgt.Name == "B" {
 			if got := handoffNames(&BuildResult{Agent: tgt}); len(got) != 0 {
 				t.Errorf("B handoffs = %v, want [] (back-edge to A dropped)", got)

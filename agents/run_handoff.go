@@ -29,15 +29,22 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 		span.SetError(verr.Error(), map[string]any{"details": "invalid handoff input"})
 		return nil, verr
 	}
-	if run.Handoff.OnInvoke == nil {
-		return nil, NewUserError("handoff %q has no OnInvoke", run.Handoff.ToolName)
-	}
-	target, err := run.Handoff.OnInvoke(ctx, r.rc, run.Call.Arguments)
-	if err != nil {
-		return nil, fmt.Errorf("handoff %q failed: %w", run.Handoff.ToolName, err)
-	}
-	if target == nil {
-		return nil, NewModelBehaviorError("handoff %q returned a nil agent", run.Handoff.ToolName)
+	// OnInvoke is the runtime authority when set — it may pick a target from
+	// the arguments; Target is the static declaration HandoffTo fills. Neither
+	// is a configuration error: the handoff was offered to the model but cannot
+	// deliver anyone to switch to.
+	target := run.Handoff.Target
+	if run.Handoff.OnInvoke != nil {
+		var err error
+		target, err = run.Handoff.OnInvoke(ctx, r.rc, run.Call.Arguments)
+		if err != nil {
+			return nil, fmt.Errorf("handoff %q failed: %w", run.Handoff.ToolName, err)
+		}
+		if target == nil {
+			return nil, NewModelBehaviorError("handoff %q returned a nil agent", run.Handoff.ToolName)
+		}
+	} else if target == nil {
+		return nil, NewUserError("handoff %q has neither Target nor OnInvoke", run.Handoff.ToolName)
 	}
 	if run.Handoff.OnHandoff != nil {
 		if err := run.Handoff.OnHandoff(ctx, r.rc, run.Call.Arguments); err != nil {

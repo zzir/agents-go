@@ -32,9 +32,7 @@ h := agents.Handoff{
 	ToolDescription: "Escalate the conversation for human review.",
 	InputJSONSchema: schema,
 	AgentName:       escalation.Name,
-	OnInvoke: func(ctx context.Context, rc *agents.RunContext, argsJSON string) (*agents.Agent, error) {
-		return escalation, nil // may pick a target dynamically
-	},
+	Target:          escalation,
 	OnHandoff: func(ctx context.Context, rc *agents.RunContext, argsJSON string) error {
 		var in escalationInput
 		_ = json.Unmarshal([]byte(argsJSON), &in)
@@ -44,18 +42,28 @@ h := agents.Handoff{
 }
 ```
 
+A handoff whose target depends on the arguments sets `OnInvoke` instead of
+`Target` — it runs when the model selects the handoff and its return value is
+the agent switched to. Leave `Target` nil in that case: it is the *static*
+declaration, and a consumer enumerating the handoff graph (an approval UI
+rebuilding an agent registry, say) trusts it without invoking any callback.
+
 > A hand-built `Handoff` is strict by default — the zero value of
-> Handoff input schemas are strict by default. Set
-> `NonStrictSchema: true` only for a schema strict mode cannot express.
+> `NonStrictSchema` opts in to strict mode. Set `NonStrictSchema: true`
+> only for a schema strict mode cannot express.
 
 | Field | Purpose |
 |---|---|
 | `ToolName` / `ToolDescription` | What the model sees |
 | `InputJSONSchema` / `NonStrictSchema` | Optional typed handoff input (strict by default) |
-| `OnInvoke` | Returns the agent to switch to (required) |
+| `Target` | The agent switched to, as a static declaration (`HandoffTo` fills it) |
+| `OnInvoke` | Resolves the target at runtime; overrides `Target` when set |
 | `OnHandoff` | Side-effect callback when the handoff fires (e.g. prefetch data) |
 | `InputFilter` | Rewrites the conversation the next agent sees (below) |
 | `IsEnabled` | Gates whether the handoff is offered to the model this run |
+
+A `Handoff` with neither `Target` nor `OnInvoke` has no one to switch to;
+selecting it fails the run with a `*UserError`.
 
 ## Input filters
 
