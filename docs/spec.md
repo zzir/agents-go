@@ -110,7 +110,10 @@ for turn := 1; ; turn++ {
 
 **Termination conditions**, highest precedence first:
 
-1. `ctx` cancelled → return `ctx.Err()` immediately.
+1. `ctx` cancelled → the run ends there, and `ctx.Err()` reaches the caller
+   wrapped in a `*RunError` carrying the turns that did complete. ✅ A
+   cancellation noticed inside the loop is a failure like any other; only
+   failures from *before* the loop are returned bare.
 2. Budget exhausted → with `ToolLoop.FinalTurnWithoutTools`, call the model
    once more **without tools** so it can close out in prose. Otherwise return
    `*MaxTurnsError`. ✅
@@ -297,6 +300,10 @@ two:
 - It is a **predicate, not a producer**. The final output is derived from the
   turn, so a stopped run's result cannot disagree with its saved history. A
   caller wanting something else computes it from `RunResult.NewItems`.
+- The `*TurnResult` a hook is handed is **its own to read**. ✅ Writes to its
+  fields reach neither the run nor the next hook, so a hook that clears
+  `NewItems` can neither blank the stopped run's final output nor hide the
+  turn from `PrepareNextTurn`.
 - Both survive `ResumeRun`: an approved run carries the same stop policy, or it
   would sail past the point it was configured to stop at.
 

@@ -9,14 +9,18 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// prepareRun builds the runner shared by Run and RunSync: it normalizes
-// the input, validates server-state options, wires the run context, starts
-// (or joins) the trace and prepends session history to the model input. The
-// returned finish func ends the trace — a no-op when the trace was joined
-// (nested run) or tracing is off — and must be deferred by the caller.
-// ResumeRun seeds its runner from a RunState instead, so it has its own entry
-// construction and shares the loop plus observeRun.
-func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (*runner, []InputItem, func(), error) {
+// prepareRun builds the runner shared by Run and RunSync: it validates
+// server-state options, wires the run context, starts (or joins) the trace and
+// prepends session history to the model input. The returned finish func ends
+// the trace — a no-op when the trace was joined (nested run) or tracing is off
+// — and must be deferred by the caller. ResumeRun seeds its runner from a
+// RunState instead, so it has its own entry construction and shares the loop
+// plus observeRun.
+//
+// userInput is the run's new input, already normalized by runViaMiddleware —
+// the one place a string or an []InputItem becomes an item list, so a
+// middleware edits the very list the loop then uses.
+func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts RunOptions) (*runner, []InputItem, func(), error) {
 	maxTurns := opts.Exec.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
@@ -27,10 +31,6 @@ func prepareRun(ctx context.Context, agent *Agent, input any, opts RunOptions) (
 	rc := NewRunContext(opts.Context)
 	rc.inheritedOpts = &opts
 
-	userInput, err := normalizeInput(input)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	if err := validateServerState(opts); err != nil {
 		return nil, nil, nil, err
 	}

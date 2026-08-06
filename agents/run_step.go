@@ -165,23 +165,32 @@ func processModelResponse(
 	return pr, nil
 }
 
+// stepProgress is the run as this turn found it: the input it started from, the
+// items generated before this turn, and the response being executed. The three
+// travel as one value because they are only ever read together — to drop the
+// already-completed calls of a resumed turn, and to build the RunErrorData an
+// ErrorHandlers recovery is handed.
+type stepProgress struct {
+	originalInput []InputItem
+	preStepItems  []*RunItem
+	resp          *ModelResponse
+}
+
 // executeToolsAndSideEffects runs the tools and handoffs requested by a model
 // response and determines the next step.
 //
 // resumed marks the first turn after a HITL resume: the interrupted response's
 // own items were already recorded before the run paused, so they must not be
-// appended a second time. originalInput, preStepItems and resp feed the
-// RunErrorData snapshot when an ErrorHandlers recovery fires.
+// appended a second time.
 func (r *runner) executeToolsAndSideEffects(
 	ctx context.Context,
 	agent *Agent,
 	pr *processedResponse,
 	outputSchema OutputSchema,
 	resumed bool,
-	originalInput []InputItem,
-	preStepItems []*RunItem,
-	resp *ModelResponse,
+	prog stepProgress,
 ) (*singleStepResult, error) {
+	resp := prog.resp
 	newStepItems := make([]*RunItem, 0, len(pr.NewItems))
 	if !resumed {
 		newStepItems = append(newStepItems, pr.NewItems...)
@@ -197,7 +206,7 @@ func (r *runner) executeToolsAndSideEffects(
 	// stay in the item log). Mirrors openai-agents-python 3229/3259.
 	functions := pr.Functions
 	if resumed {
-		functions = dropCompletedResumedCalls(functions, preStepItems)
+		functions = dropCompletedResumedCalls(functions, prog.preStepItems)
 	}
 
 	// Human-in-the-loop: partition function calls into those ready to run, those
@@ -330,80 +339,102 @@ func (r *runner) executeToolsAndSideEffects(
 
 	// Determine whether the model produced a final output this turn.
 	lastMessage := lastMessageItem(newStepItems)
-	if !pr.hasToolsToRun() {
-		// Tool activity without any message (e.g. only rejected calls): the
-		// results must go back to the model.
-		hasToolActivityWithoutMessage := lastMessage == nil && len(pr.ToolsUsed) > 0
-		if !hasToolActivityWithoutMessage {
-			var text string
-			if lastMessage != nil {
-				text = lastMessage.Text()
-				// A refusal fails the run (recoverable via
-				// ErrorHandlers.ModelRefusal), taking precedence over any text
-				// or structured content in the same message.
-				if refusal := lastMessage.refusal(); refusal != "" {
-					refErr := &ModelRefusalError{Refusal: refusal}
-					rec, herr := r.resolveErrorRecovery(ctx, "model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr, agent,
-						originalInput, slices.Concat(preStepItems, newStepItems), []*ModelResponse{resp})
-					if herr != nil {
-						return nil, herr
-					}
-					if rec == nil {
-						return nil, refErr
-					}
-					if rec.message != nil {
-						newStepItems = append(newStepItems, rec.message)
-					}
-					return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: rec.finalOutput}, nil
-				}
-			}
-			if outputSchema != nil && !outputSchema.IsPlainText() {
-				var final any
-				if text != "" {
-					var err error
-					final, err = outputSchema.ValidateJSON(text)
-					if err != nil {
-						mbErr := NewModelBehaviorError("failed to parse structured output: %v", err)
-						rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
-							originalInput, slices.Concat(preStepItems, newStepItems), []*ModelResponse{resp})
-						if herr != nil {
-							return nil, herr
-						}
-						if rec == nil {
-							return nil, mbErr
-						}
-						if rec.message != nil {
-							newStepItems = append(newStepItems, rec.message)
-						}
-						final = rec.finalOutput
-					}
-				} else {
-					// No final text for a structured output type: recover via the
-					// handler, or run the model again — never a hard failure.
-					mbErr := NewModelBehaviorError("model returned no final output for the structured output type")
-					rec, herr := r.resolveErrorRecovery(ctx, "invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr, agent,
-						originalInput, slices.Concat(preStepItems, newStepItems), []*ModelResponse{resp})
-					if herr != nil {
-						return nil, herr
-					}
-					if rec == nil {
-						return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
-					}
-					if rec.message != nil {
-						newStepItems = append(newStepItems, rec.message)
-					}
-					final = rec.finalOutput
-				}
-				return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
-			}
-			// Plain text: the message text (or "", when the model produced
-			// nothing actionable at all) is the final output.
-			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: text}, nil
-		}
+	// Tool activity without any message (e.g. only rejected calls): the results
+	// must go back to the model.
+	hasToolActivityWithoutMessage := lastMessage == nil && len(pr.ToolsUsed) > 0
+	if !pr.hasToolsToRun() && !hasToolActivityWithoutMessage {
+		return r.decideFinalOutput(ctx, agent, outputSchema, lastMessage, newStepItems, prog)
 	}
 
 	// Otherwise, feed tool results back to the model for another turn.
 	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
+}
+
+// decideFinalOutput reads a tool-free turn's last message as the run's final
+// output. newStepItems is the turn's items so far; a recovery handler's
+// synthesized message joins them, which is why the whole step result is built
+// here rather than just the output value.
+//
+// Three ways the message is not simply the answer, each recoverable through
+// ExecOptions.ErrorHandlers instead of failing the run outright:
+//
+//   - a refusal, which outranks any text or structured content in the same
+//     message;
+//   - text that does not validate against a structured output type;
+//   - no text at all for a structured output type — where a handler that
+//     declines means running the model again, never a hard failure.
+func (r *runner) decideFinalOutput(
+	ctx context.Context,
+	agent *Agent,
+	outputSchema OutputSchema,
+	lastMessage *RunItem,
+	newStepItems []*RunItem,
+	prog stepProgress,
+) (*singleStepResult, error) {
+	// recoverVia asks an ErrorHandlers hook to turn a failed final output into a
+	// completed run, showing it the run's progress including this turn.
+	recoverVia := func(kind string, handler RunErrorHandler, cause error) (*errorRecovery, error) {
+		return r.resolveErrorRecovery(ctx, kind, handler, cause, agent,
+			prog.originalInput, slices.Concat(prog.preStepItems, newStepItems), []*ModelResponse{prog.resp})
+	}
+
+	var text string
+	if lastMessage != nil {
+		text = lastMessage.Text()
+		if refusal := lastMessage.refusal(); refusal != "" {
+			refErr := &ModelRefusalError{Refusal: refusal}
+			rec, herr := recoverVia("model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr)
+			if herr != nil {
+				return nil, herr
+			}
+			if rec == nil {
+				return nil, refErr
+			}
+			if rec.message != nil {
+				newStepItems = append(newStepItems, rec.message)
+			}
+			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: rec.finalOutput}, nil
+		}
+	}
+	if outputSchema == nil || outputSchema.IsPlainText() {
+		// Plain text: the message text (or "", when the model produced nothing
+		// actionable at all) is the final output.
+		return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: text}, nil
+	}
+
+	var final any
+	if text != "" {
+		var err error
+		final, err = outputSchema.ValidateJSON(text)
+		if err != nil {
+			mbErr := NewModelBehaviorError("failed to parse structured output: %v", err)
+			rec, herr := recoverVia("invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr)
+			if herr != nil {
+				return nil, herr
+			}
+			if rec == nil {
+				return nil, mbErr
+			}
+			if rec.message != nil {
+				newStepItems = append(newStepItems, rec.message)
+			}
+			final = rec.finalOutput
+		}
+	} else {
+		mbErr := NewModelBehaviorError("model returned no final output for the structured output type")
+		rec, herr := recoverVia("invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr)
+		if herr != nil {
+			return nil, herr
+		}
+		if rec == nil {
+			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
+		}
+		if rec.message != nil {
+			newStepItems = append(newStepItems, rec.message)
+		}
+		final = rec.finalOutput
+	}
+	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
 }
 
 // orderToolResults merges the executed and rejected tool results back into the

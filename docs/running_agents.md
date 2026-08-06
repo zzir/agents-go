@@ -189,6 +189,10 @@ opts.Exec.PrepareNextTurn = func(ctx context.Context, tr *agents.TurnResult) (*a
 changes the run without mutating the `Agent`, which a concurrent run may be
 reading.
 
+The `*TurnResult` a hook receives is a **read-only view of the finished turn**.
+Writing to its fields changes nothing — not the run's final output, not what
+the other hook sees. To shape the next turn, return a `TurnSnapshot`.
+
 **The runner owns `Snapshot.Input`** and replaces whatever a returned snapshot
 carries. A prepared snapshot is nearly always a copy of the previous turn's, so
 honoring its input would replay that turn with the tool call and its output

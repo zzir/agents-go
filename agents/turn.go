@@ -40,7 +40,9 @@ type TurnSnapshot struct {
 //
 // It is what the turn-boundary hooks are handed, so a caller can decide what
 // happens next from what actually happened rather than from agent-level
-// configuration set before the run began.
+// configuration set before the run began. Every hook sees the turn as it
+// happened: assigning to a field of the value one was handed reaches neither
+// the run nor the next hook.
 type TurnResult struct {
 	// Turn is the 1-based turn number within the run.
 	Turn int
@@ -76,16 +78,28 @@ func (tr *TurnResult) ToolCallNames() []string {
 // It is called at the turn boundary — after the turn's items are persisted,
 // before the next model call — so a run that stops here has its full history
 // saved and needs no unwinding.
-func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, turn int, resp *ModelResponse, snap *TurnSnapshot, items []*RunItem) (bool, any, error) {
+//
+// It takes the finished turn as a TurnResult rather than as its parts: that is
+// what the hook is handed, and building it here from five parameters meant the
+// save point assembling the very same value a second line later.
+//
+// The hook gets its OWN copy of that value. TurnResult is exported and passed
+// by pointer, so writing to it is a legal thing for a hook to do — and with the
+// caller's pointer handed straight through, a hook that cleared NewItems would
+// blank the run's final output below and hand PrepareNextTurn a turn that never
+// happened. The copy is shallow, which is exactly the isolation the caller had
+// when this function built the value itself.
+func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, tr *TurnResult) (bool, any, error) {
 	hook := r.opts.Exec.ShouldStopAfterTurn
 	if hook == nil {
 		return false, nil, nil
 	}
-	stop, err := hook(ctx, &TurnResult{Turn: turn, Response: resp, NewItems: items, Snapshot: snap})
+	forHook := *tr
+	stop, err := hook(ctx, &forHook)
 	if err != nil || !stop {
 		return false, nil, err
 	}
-	return true, turnFinalOutput(agent, items), nil
+	return true, turnFinalOutput(agent, tr.NewItems), nil
 }
 
 // turnFinalOutput is what a run stopped at a turn boundary reports as its final
@@ -203,7 +217,7 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 
 	tr := &TurnResult{Turn: in.Turn, Response: in.Response, NewItems: in.NewItems, Snapshot: in.Snapshot}
 
-	stop, final, err := r.stopAfterTurn(ctx, in.Agent, in.Turn, in.Response, in.Snapshot, in.NewItems)
+	stop, final, err := r.stopAfterTurn(ctx, in.Agent, tr)
 	if err != nil {
 		return out, err
 	}

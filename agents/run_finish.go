@@ -13,12 +13,48 @@ func (r *runner) usageSnapshot() *Usage {
 	return &u
 }
 
+// baseResult fills the fields every RunResult carries however the run ended:
+// the input, the item log, the responses, the last agent, and the three
+// accumulators. Each ending then adds only what makes it different —
+// FinalOutput, StoppedEarly, Interruptions plus State.
+//
+// It exists because those fields were assembled by hand at four returns, and
+// each field added since (GuardrailResults, then Diagnostics) had to be added
+// at all four or go silently missing from one ending.
+//
+// NewItems is the unfiltered log (r.sessionItems), never the loop's
+// generatedItems: a handoff input filter and a mid-run recompaction reset the
+// model's view, while the result reports what the run produced. Three of the
+// four endings always read it that way; only the failure path picked between
+// the two lists by length, and it picked the same CONTENT — generatedItems is
+// reset to a prefix of sessionItems and never gains an item the log lacks, so
+// equal lengths mean equal items.
+//
+// It did differ in one respect, and the difference is a nil, not an item: a run
+// that fails before its first step has an empty-but-allocated generatedItems and
+// a still-nil sessionItems, so the old failure path reported []*RunItem{} where
+// this reports nil. Callers range and len it, which read the same either way,
+// and nil was already what a run reaching its final output with nothing
+// generated reported.
+func (r *runner) baseResult() *RunResult {
+	return &RunResult{
+		Input:            r.state.originalInput,
+		NewItems:         r.sessionItems,
+		RawResponses:     r.state.rawResponses,
+		LastAgent:        r.state.agent,
+		Usage:            r.usageSnapshot(),
+		GuardrailResults: r.snapshotGuardrailResults(),
+		Diagnostics:      r.diagnostics.All(),
+	}
+}
+
 // finishRun is the final-output tail shared by the normal completion path and
 // a max-turns recovery. Order: the agent-end hook fires FIRST, before output
 // guardrails, so a tripped guardrail does not suppress it; then output
 // guardrails; then session persistence and compaction, so a guardrail-tripped
 // final output is never persisted.
-func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []InputItem, raw []*ModelResponse, finalOutput any) (*RunResult, error) {
+func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, error) {
+	agent := r.state.agent
 	if agent.OnEnd != nil {
 		if err := agent.OnEnd(ctx, r.rc, finalOutput); err != nil {
 			return nil, err
@@ -52,24 +88,15 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []In
 		return nil, err
 	}
 	r.compactAfterRun(ctx)
-	return &RunResult{
-		Input: originalInput,
-		// The unfiltered item log: a handoff input filter rewrites the model's view
-		// (generatedItems) but never what the result reports.
-		NewItems:         r.sessionItems,
-		RawResponses:     raw,
-		FinalOutput:      finalOutput,
-		LastAgent:        agent,
-		Usage:            r.usageSnapshot(),
-		GuardrailResults: r.snapshotGuardrailResults(),
-		Diagnostics:      r.diagnostics.All(),
-		// A run can also reach its final output on the very turn the stop was
-		// asked for — a single-turn agent always does, and each Loop attempt
-		// starts at turn one, so the turn-boundary check above never fires for
-		// them. The flag answers "did the caller stop this", not "where did it
-		// stop", so it is set wherever the request is live.
-		StoppedEarly: r.ctrl.stopRequested(),
-	}, nil
+	res := r.baseResult()
+	res.FinalOutput = finalOutput
+	// A run can also reach its final output on the very turn the stop was asked
+	// for — a single-turn agent always does, and each Loop attempt starts at
+	// turn one, so the loop's turn-boundary check never fires for them. The
+	// flag answers "did the caller stop this", not "where did it stop", so it
+	// is set wherever the request is live.
+	res.StoppedEarly = r.ctrl.stopRequested()
+	return res, nil
 }
 
 // recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn a turn-budget
@@ -79,10 +106,11 @@ func (r *runner) finishRun(ctx context.Context, agent *Agent, originalInput []In
 // message joins the run's items and session unless the handler opted out, and
 // the run finishes through the same guardrail/persist/hook tail as a normal
 // final output.
-func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, originalInput []InputItem, rawResponses []*ModelResponse, agent *Agent) (*RunResult, error) {
+func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError) (*RunResult, error) {
 	// Handlers see the session view of the run (never reset by handoff input
 	// filters).
-	rec, err := r.resolveErrorRecovery(ctx, "max_turns", r.opts.Exec.ErrorHandlers.MaxTurns, cause, agent, originalInput, r.sessionItems, rawResponses)
+	rec, err := r.resolveErrorRecovery(ctx, "max_turns", r.opts.Exec.ErrorHandlers.MaxTurns, cause,
+		r.state.agent, r.state.originalInput, r.sessionItems, r.state.rawResponses)
 	if err != nil || rec == nil {
 		return nil, err
 	}
@@ -95,29 +123,15 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError, orig
 			return nil, errConsumerStopped
 		}
 	}
-	return r.finishRun(ctx, agent, originalInput, rawResponses, rec.finalOutput)
+	return r.finishRun(ctx, rec.finalOutput)
 }
 
-func (r *runner) fail(err error, input []InputItem, items []*RunItem, raw []*ModelResponse, last *Agent) error {
+// fail is how every failure inside the loop leaves it: the cause wrapped in a
+// *RunError carrying the run's progress so far, so a caller reaches the
+// completed turns through RunError.Result instead of getting a bare error.
+func (r *runner) fail(err error) error {
 	// Mark the current agent span failed so the error is visible in traces;
 	// child spans (generation, function) set their own errors at the source.
 	r.agentSpan.SetError(err.Error(), nil)
-	// Report the unfiltered item log when a handoff input filter has reset the
-	// caller's generatedItems view. Without a filter the two are identical.
-	newItems := items
-	if len(r.sessionItems) > len(items) {
-		newItems = r.sessionItems
-	}
-	return &RunError{
-		Result: &RunResult{
-			Input:            input,
-			NewItems:         newItems,
-			RawResponses:     raw,
-			LastAgent:        last,
-			Usage:            r.usageSnapshot(),
-			GuardrailResults: r.snapshotGuardrailResults(),
-			Diagnostics:      r.diagnostics.All(),
-		},
-		err: err,
-	}
+	return &RunError{Result: r.baseResult(), err: err}
 }
