@@ -521,7 +521,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 // run so it must carry the same policies.
 func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, segmentSpec{
-		input:    userInputText(state.UserInput),
+		input:    session.UserText(state.UserInput),
 		failCode: "resume_error",
 		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			return agents.ResumeRun(ctx, state, opts)

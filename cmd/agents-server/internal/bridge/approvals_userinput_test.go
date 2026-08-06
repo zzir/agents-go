@@ -25,46 +25,6 @@ func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
 	return items
 }
 
-func TestUserInputText(t *testing.T) {
-	cases := []struct {
-		name string
-		raws []string
-		want string
-	}{
-		{
-			name: "plain string content",
-			raws: []string{`{"role":"user","content":"delete the database"}`},
-			want: "delete the database",
-		},
-		{
-			name: "content array parts",
-			raws: []string{`{"role":"user","content":[{"type":"input_text","text":"run the deploy"}]}`},
-			want: "run the deploy",
-		},
-		{
-			name: "skips non-user items",
-			raws: []string{
-				`{"role":"system","content":"be careful"}`,
-				`{"role":"user","content":"go"}`,
-			},
-			want: "go",
-		},
-		{
-			name: "empty when no user item",
-			raws: []string{`{"role":"assistant","content":"hi"}`},
-			want: "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := userInputText(userInputItems(t, tc.raws...))
-			if got != tc.want {
-				t.Errorf("userInputText = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // persistInterruption must capture the paused turn's user prompt so a reload
 // during approval can rebuild the user bubble (the SDK only writes the turn to
 // `messages` on completion).

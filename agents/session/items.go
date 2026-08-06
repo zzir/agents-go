@@ -87,6 +87,42 @@ func ItemText(item InputItem) string {
 	if err != nil {
 		return ""
 	}
+	return textFromRaw(raw)
+}
+
+// UserText returns the user-authored text in items: the text of every
+// role=="user" message, trimmed, with the non-empty ones joined by newlines.
+// "" when items carry no user text at all.
+//
+// It answers "what did the user say in this input slice" — the string a user
+// bubble shows — for a consumer holding input items rather than rendered
+// history: a paused run's pending input, a run's original input. Item by item
+// it reads the same text ItemText does, so the joined result matches what the
+// same items produce once stored and rendered individually.
+func UserText(items []InputItem) string {
+	var parts []string
+	for _, item := range items {
+		raw, err := MarshalInputItem(item)
+		if err != nil {
+			continue
+		}
+		var probe struct {
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(raw, &probe) != nil || probe.Role != "user" {
+			continue
+		}
+		if txt := strings.TrimSpace(textFromRaw(raw)); txt != "" {
+			parts = append(parts, txt)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// textFromRaw extracts the readable text of a serialized item: its "content"
+// as either a bare string or an array of text parts, the two shapes the
+// Responses API accepts.
+func textFromRaw(raw []byte) string {
 	var probe struct {
 		Content json.RawMessage `json:"content"`
 	}

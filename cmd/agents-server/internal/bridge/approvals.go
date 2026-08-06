@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -69,40 +68,11 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		SandboxID:     result.SandboxID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
-		UserInput:     userInputText(result.SDKState.UserInput),
+		// The user-authored text of the paused turn's new input, so the UI can
+		// rebuild the user bubble on reload — the SDK only writes the turn to
+		// the session once it completes.
+		UserInput: session.UserText(result.SDKState.UserInput),
 	})
-}
-
-// userInputText renders the user-authored text of a paused turn's new input so
-// the UI can rebuild the user bubble on reload. It reuses the same item→role/
-// content extraction the messages table uses, so the reconstructed bubble is
-// byte-identical to the one the SDK persists once the turn completes.
-func userInputText(items []agents.InputItem) string {
-	raw, err := session.MarshalItems(items)
-	if err != nil {
-		return ""
-	}
-	var arr []json.RawMessage
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		return ""
-	}
-	var parts []string
-	for _, it := range arr {
-		var probe struct {
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(it, &probe) != nil || probe.Role != "user" {
-			continue
-		}
-		item, err := session.UnmarshalInputItem(it)
-		if err != nil {
-			continue
-		}
-		if txt := strings.TrimSpace(session.ItemText(item)); txt != "" {
-			parts = append(parts, txt)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 // buildAgentRegistry builds the agent from its config and returns a name→agent

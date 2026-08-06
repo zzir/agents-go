@@ -95,6 +95,12 @@ A field maintained in parallel with the log has to be updated on every write and
 can disagree with the log after a crash, a concurrent writer, or a fork. A fold
 cannot.
 
+Two smaller reads work on items rather than entries: `session.ItemText` returns
+one input item's readable text (content arrives as either a bare string or an
+array of parts — this is the one place that knows both shapes), and
+`session.UserText` joins the user-authored text of an input slice — what a user
+bubble shows when rebuilding a view from a paused run's pending input.
+
 ## Managing many sessions
 
 A `SessionRepo` owns which sessions exist, separately from what each one holds.
