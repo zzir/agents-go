@@ -533,8 +533,8 @@ field is masked on read — see [Secret handling](#secret-handling).
 
 Every response carries a computed `terminal` boolean — whether the sandbox can
 host an interactive web terminal (`ssh` always, `docker` only with
-`persistent: true`, `local` never, by design). The chat composer shows the
-terminal toggle only when the selected sandbox advertises it; the session
+`persistent: true`, `local` never, by design). The chat top bar's terminal
+button is enabled only when some sandbox advertises it; the session
 itself runs over [`/ws/terminal`](#terminal-endpoint--get-wsterminal).
 
 ### Playground — `/api/v1/playground`
@@ -922,7 +922,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `task_status` read, or → delivered by the wake-up run), written in the
     same UPDATE as the terminal status — the auto-wake survives restarts via
     the startup sweep. The notification is ordinary user-role input identified by its text
-    prefix. It never renders in the timeline — the composer's task indicator
+    prefix. It never renders in the timeline — the chat top bar's Tasks button
     and the Inspector are the human-facing surfaces; the model reads the text
     verbatim. The prefix carries no privileged behavior: a user typing it
     merely hides their own message from the transcript view.

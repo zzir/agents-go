@@ -8,6 +8,36 @@
   overflow: hidden;
 }
 
+/* Chat column top bar — sits on the same 48px line as .sidebar-actions and
+   .side-panel-header. Lives inside .chat-content so an open Inspector panel
+   (row layout) keeps its own header beside this one. */
+.chat-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8);
+  height: var(--topbar-height);
+  padding: 8px 16px; /* match .side-panel-header */
+  border-bottom: 1px solid var(--borderColor-muted);
+  flex-shrink: 0;
+}
+
+.chat-topbar-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600; /* match .side-panel-title */
+}
+
+.chat-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 /* Message fork button */
 .message-forkable {
   flex-direction: column;
@@ -704,21 +734,6 @@
   .chat-messages { padding: var(--base-size-8) var(--base-size-16); }
   .chat-input-container { padding: var(--base-size-8) var(--base-size-16) var(--base-size-4); }
 }
-
-/* ---- Task indicator (composer toolbar) + Inspector task lenses ---- */
-
-.task-ind { font-size: 12px; color: var(--fgColor-muted); }
-.task-ind::before {
-  content: '';
-  display: inline-block;
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  margin-right: 6px;
-  background: var(--fgColor-muted);
-  vertical-align: 1px;
-}
-.task-ind-working::before { background: var(--fgColor-accent); }
-.task-ind-attention::before { background: var(--fgColor-attention); }
 
 /* State groups: a small muted header per non-empty state bucket. */
 .task-group-title {

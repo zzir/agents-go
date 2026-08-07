@@ -58,6 +58,12 @@ a:hover {
     text-decoration: underline;
 }
 
+/* One shared height for every top bar: mobile header, sidebar actions row,
+   chat top bar, and side-panel header — they must sit on the same 48px line. */
+:root {
+    --topbar-height: 48px;
+}
+
 .app-layout {
     display: flex;
     flex-direction: column;
@@ -71,7 +77,7 @@ a:hover {
     align-items: center;
     gap: var(--base-size-8);
     padding: var(--base-size-4) var(--base-size-8);
-    height: 48px;
+    height: var(--topbar-height);
     flex-shrink: 0;
     border-bottom: 1px solid var(--borderColor-muted);
     background: var(--bgColor-default);
@@ -171,10 +177,22 @@ a:hover {
     min-height: 0;
 }
 
-/* Fixed action group at the top of the sidebar (New Chat, etc.) */
+/* Fixed action row at the top of the sidebar: search box + new-chat button.
+   Height is explicit — the old ActionList content reached 48px only through
+   its own inset paddings. */
 .sidebar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-4);
+    height: var(--topbar-height);
+    padding: 0 var(--base-size-8);
     flex-shrink: 0;
     border-bottom: 1px solid var(--borderColor-muted);
+}
+
+.sidebar-actions .sidebar-search {
+    flex: 1;
+    min-width: 0;
 }
 
 /* Session/file list scrollable area inside the body */
@@ -235,7 +253,7 @@ a:hover {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    max-height: 48px;
+    height: var(--topbar-height);
     padding: 8px 16px;
     border-bottom: 1px solid var(--borderColor-muted);
     flex-shrink: 0;
@@ -259,7 +277,7 @@ a:hover {
 @media (max-width: 767px) {
     .side-panel {
         position: fixed;
-        inset: 48px 0 0;
+        inset: var(--topbar-height) 0 0;
         width: 100%;
         z-index: 40;
     }

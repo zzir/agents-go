@@ -18,7 +18,8 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
-import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, StackIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon, TerminalIcon } from '@primer/octicons-react';
+import { ChatTopBar } from '@/features/chat/ChatTopBar';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -893,6 +894,8 @@ function Greeting() {
 
 interface ChatViewProps {
   sessionId: string | null;
+  // The session's display name for the top bar ('' until known).
+  sessionName?: string;
   messages: ChatMessage[];
   // The session's raw entries, including the ones no longer on the active
   // branch. The rendered timeline drops those; the trace panel still lists
@@ -945,7 +948,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, messages, entries, loaded, streaming, reasoning, running, compacting, diagnostics,
+  sessionId, sessionName, messages, entries, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
   onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onRegenerate, settingsReloadKey,
@@ -1280,21 +1283,41 @@ export function ChatView({
     onRegenerate(messageId, content, regenConfigRef.current.agentConfigId, regenConfigRef.current.sandboxId);
   }, [onRegenerate]);
 
+  const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
+  const topBar = (
+    <ChatTopBar
+      sessionName={sessionName || ''}
+      sessionId={sessionId}
+      panel={panel}
+      onPanelChange={onPanelChange}
+      tasks={tasks}
+      traceCount={Object.keys(traceRuns).length}
+      terminalEnabled={!!onTerminalOpen && !!sandboxConfigs?.some(s => s.terminal)}
+      onTerminalOpen={onTerminalOpen
+        ? () => onTerminalOpen(selectedSandbox?.terminal ? { id: selectedSandbox.id, name: selectedSandbox.name } : undefined)
+        : undefined}
+    />
+  );
+
   if (!sessionId) {
     return (
-      <div className="chat-empty">
-        <Blankslate>
-          <Blankslate.Visual>
-            <CommentDiscussionIcon size={24} />
-          </Blankslate.Visual>
-          <Blankslate.Heading>Start a conversation</Blankslate.Heading>
-          <Blankslate.Description>Pick a chat from the sidebar, or create a new one to begin.</Blankslate.Description>
-        </Blankslate>
+      <div className="chat-main">
+        <div className="chat-content">
+          {topBar}
+          <div className="chat-empty">
+            <Blankslate>
+              <Blankslate.Visual>
+                <CommentDiscussionIcon size={24} />
+              </Blankslate.Visual>
+              <Blankslate.Heading>Start a conversation</Blankslate.Heading>
+              <Blankslate.Description>Pick a chat from the sidebar, or create a new one to begin.</Blankslate.Description>
+            </Blankslate>
+          </div>
+        </div>
       </div>
     );
   }
 
-  const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
   const selectedSandboxLabel = selectedSandbox?.name || 'Sandbox';
   const selectedAgentLabel = agentConfigs?.find(a => a.id === agentConfigId)?.name || 'Agent';
 
@@ -1325,35 +1348,6 @@ export function ChatView({
             </ActionMenu.Overlay>
           </ActionMenu>
         )}
-        {onTerminalOpen && sandboxConfigs?.some(s => s.terminal) && (
-          <IconButton
-            icon={TerminalIcon}
-            variant="invisible"
-            size="small"
-            aria-label="Open terminal panel"
-            onClick={() => onTerminalOpen(
-              selectedSandbox?.terminal ? { id: selectedSandbox.id, name: selectedSandbox.name } : undefined,
-            )}
-          />
-        )}
-              {tasks && Object.keys(tasks).length > 0 && (() => {
-          const list = Object.values(tasks);
-          const working = list.some(t => t.status === 'working');
-          const attention = list.some(t => t.status === 'input_required');
-          return (
-            <Button
-              size="small"
-              variant="invisible"
-              leadingVisual={StackIcon}
-              onClick={() => onPanelChange(panel?.kind === 'tasks' ? null : { kind: 'tasks' })}
-              aria-label="Background tasks"
-            >
-              <span className={'task-ind' + (attention ? ' task-ind-attention' : working ? ' task-ind-working' : '')}>
-                {list.length} task{list.length > 1 ? 's' : ''}{attention ? ' · needs approval' : ''}
-              </span>
-            </Button>
-          );
-        })()}
       </div>
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (
@@ -1381,23 +1375,32 @@ export function ChatView({
   const isEmpty = loaded && messages.length === 0;
 
   if (!loaded && messages.length === 0) {
-    return <div className="chat-main" />;
+    return (
+      <div className="chat-main">
+        <div className="chat-content">
+          {topBar}
+        </div>
+      </div>
+    );
   }
 
   if (isEmpty) {
     return (
       <div className="chat-main">
-        <div className="chat-content chat-content-centered">
-          <Greeting key={`greeting-${sessionId}`} />
-          <MessageInput
-            key={`input-${sessionId}`}
-            sessionId={sessionId}
-            onSend={handleSend}
-            onCancel={handleCancel}
-            disabled={running || awaiting || !agentConfigId}
-            running={running}
-            toolbar={inputToolbar}
-          />
+        <div className="chat-content">
+          {topBar}
+          <div className="chat-content chat-content-centered">
+            <Greeting key={`greeting-${sessionId}`} />
+            <MessageInput
+              key={`input-${sessionId}`}
+              sessionId={sessionId}
+              onSend={handleSend}
+              onCancel={handleCancel}
+              disabled={running || awaiting || !agentConfigId}
+              running={running}
+              toolbar={inputToolbar}
+            />
+          </div>
         </div>
       </div>
     );
@@ -1406,6 +1409,7 @@ export function ChatView({
   return (
     <div className={'chat-main' + (panel ? ' trace-open' : '')}>
       <div className="chat-content">
+        {topBar}
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
           {hasMore && (

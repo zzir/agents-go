@@ -228,6 +228,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
+  // The active session's display name for the chat top bar. Captured from the
+  // existence-check fetch below and kept fresh by the title_updated event; the
+  // id guards against a stale response landing after a session switch.
+  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string } | null>(null);
   // Global terminal panel: session-agnostic, opened from the composer (the
   // button only ever opens; closing/collapsing lives on the panel itself).
   // everOpened defers mounting (and the xterm chunk) until first use, after
@@ -319,6 +323,7 @@ export default function App() {
   }, [updateSS]);
 
   useEffect(() => {
+    setSessionMeta(null);
     if (!activeSession) return;
     let cancelled = false;
     // The session id can come from the URL hash and may not exist (stale link,
@@ -328,7 +333,11 @@ export default function App() {
     // starts a new chat instead of running against a non-existent session.
     const tryLoad = () => loadSession(activeSession).catch(() => toast.error('Could not load conversation'));
     api.sessions.get(activeSession)
-      .then(() => { if (!cancelled) tryLoad(); })
+      .then((sess) => {
+        if (cancelled) return;
+        setSessionMeta({ id: activeSession, name: (sess as { name?: string })?.name || '' });
+        tryLoad();
+      })
       .catch((e: { status?: number }) => {
         if (cancelled) return;
         if (e?.status === 404) setActiveSession(null);
@@ -339,8 +348,14 @@ export default function App() {
 
   useEffect(() => {
     if (!wsRef.current) return;
-    wsRef.current.on(EV.sessionTitleUpdated, () => {
+    // Single handler for the event — WSClient.on replaces per type, so the
+    // sidebar reload and the top-bar title update must live in one body.
+    wsRef.current.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
       setSessionReloadKey(k => k + 1);
+      if (p?.session_id && typeof p.title === 'string') {
+        const title = p.title;
+        setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
+      }
     });
   }, [wsRef]);
 
@@ -563,6 +578,7 @@ export default function App() {
   const main = (
     <MemoizedChatView
       sessionId={activeSession}
+      sessionName={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.name : ''}
       messages={currentSS.messages}
       entries={currentSS.entries}
       loaded={currentSS.loaded}

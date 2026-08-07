@@ -1,9 +1,10 @@
 import './sessions.css';
 import { useState, useEffect, useRef, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
-import { ActionList, ActionMenu } from '@primer/react';
-import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
+import { ActionList, ActionMenu, IconButton, TextInput } from '@primer/react';
+import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
+import { filterSessionsByName } from '@/lib/sessionFilter';
 import { toast } from '@/lib/toast';
 
 interface Session {
@@ -106,6 +107,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
     if (reloadKey) reload(); // auto-refresh: does not throw
   }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
 
   // For every mutation: optimistically update the cached list AND migrate active
   // state as soon as the server call succeeds, then reconcile with a background
@@ -161,9 +163,13 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
     reload();
   };
 
-  const pinned = sessions ? sessions.filter(s => s.pinned) : [];
-  const recents = sessions ? sessions.filter(s => !s.pinned) : [];
+  // Search filters before the pinned/recents split so both groups narrow
+  // together and the group-collapse logic below keeps working.
+  const visible = sessions ? filterSessionsByName(sessions, query) : [];
+  const pinned = visible.filter(s => s.pinned);
+  const recents = visible.filter(s => !s.pinned);
   const loaded = sessions !== null;
+  const emptyText = query.trim() ? 'No matching chats' : 'No conversations yet';
 
   const renderItem = (s: Session) => (
     <SessionItem
@@ -182,12 +188,22 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   return (
     <>
       <div className="sidebar-actions">
-        <ActionList>
-          <ActionList.Item onSelect={handleCreate} disabled={creating}>
-            <ActionList.LeadingVisual><PlusIcon size={16} /></ActionList.LeadingVisual>
-            New Chat
-          </ActionList.Item>
-        </ActionList>
+        <TextInput
+          className="sidebar-search"
+          size="medium"
+          leadingVisual={SearchIcon}
+          placeholder="Search"
+          aria-label="Search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+        />
+        <IconButton
+          icon={PlusIcon}
+          variant="invisible"
+          aria-label="New"
+          onClick={handleCreate}
+          disabled={creating}
+        />
       </div>
       <div className="sidebar-scroll">
         {loaded && (
@@ -205,13 +221,13 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
                 <ActionList.GroupHeading as="h3">Recents</ActionList.GroupHeading>
                 {recents.length > 0
                   ? recents.map(renderItem)
-                  : <div className="blankslate">No conversations yet</div>
+                  : <div className="blankslate">{emptyText}</div>
                 }
               </ActionList.Group>
             ) : (
               recents.length > 0
                 ? recents.map(renderItem)
-                : <div className="blankslate">No conversations yet</div>
+                : <div className="blankslate">{emptyText}</div>
             )}
           </ActionList>
         )}

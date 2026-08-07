@@ -202,7 +202,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
           ))}
           <ActionMenu>
             <ActionMenu.Anchor>
-              <IconButton icon={PlusIcon} variant="invisible" size="small" aria-label="New terminal" />
+              <IconButton icon={PlusIcon} variant="invisible" size="small" aria-label="New" />
             </ActionMenu.Anchor>
             <ActionMenu.Overlay>
               <ActionList>
@@ -241,7 +241,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
               />
             </>
           )}
-          <IconButton icon={XIcon} variant="invisible" size="small" aria-label="Hide terminal panel" onClick={onClose} />
+          <IconButton icon={XIcon} variant="invisible" size="small" aria-label="Close" onClick={onClose} />
         </div>
       </div>
       {tabs.length === 0 ? (
