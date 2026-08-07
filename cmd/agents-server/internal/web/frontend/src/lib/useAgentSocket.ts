@@ -5,7 +5,7 @@ import type { TaskStatus } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, appendToolProgress, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, appendToolProgress, appendHandoffPart,
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
@@ -20,6 +20,8 @@ export interface TaskState {
   taskId: string;
   label: string;
   status: TaskStatus;
+  // Which run of the task this is: 1 for the original, more after a retry.
+  attempt?: number;
   childSessionId?: string;
   toolCallId?: string;
   // The run that spawned this task — lets the trace panel nest the wake-up
@@ -282,7 +284,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.
-    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
+    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; attempt?: number; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
       .then(rows => {
         if (!rows || rows.length === 0) return;
         updateSS(sid, s => {
@@ -300,6 +302,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
                 toolCallId: cur.toolCallId || row.tool_call_id,
                 childSessionId: cur.childSessionId || row.child_session_id,
                 parentRunId: cur.parentRunId || row.parent_run_id,
+                attempt: cur.attempt || row.attempt,
                 summary: cur.summary ?? row.summary,
                 createdAt: created || cur.createdAt,
                 // For a terminal task the row's updated_at IS the finish time
@@ -313,7 +316,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
             tasks[row.task_id] = {
               taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id,
               childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
-              status: (row.status || 'working') as TaskState['status'], summary: row.summary,
+              status: (row.status || 'working') as TaskState['status'], attempt: row.attempt, summary: row.summary,
               createdAt: created, updatedAt: updated,
             };
           }
@@ -372,7 +375,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       toast.error('Session expired — please sign in again');
     };
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string; attempt?: number }) => {
       // A background task run: track it under its parent session's task list
       // and keep it out of every chat-timeline path. Task identity (task_id)
       // and run attempt (run_id) are separate: events route by run id through
@@ -380,10 +383,20 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       if (p.parent_session_id) {
         const taskId = p.task_id || p.run_id;
         taskRunsRef.current[p.run_id] = { parentSid: p.parent_session_id, label: p.label || '', taskId, toolCallId: p.tool_call_id };
-        updateSS(p.parent_session_id, s => ({
-          ...s,
-          tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', status: 'working' as TaskStatus, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now() } },
-        }));
+        updateSS(p.parent_session_id, s => {
+          // A retry: the spawn card is showing an outcome that belongs to the
+          // attempt before this one. Re-arm it, or the card keeps a stale
+          // "failed" badge with a live Retry button, and the new outcome is
+          // dropped by applyTaskTerminal's no-move-backwards guard.
+          const rearmed = p.tool_call_id && p.attempt
+            ? startTaskAttempt(s.messages, p.tool_call_id, p.attempt)
+            : null;
+          return {
+            ...s,
+            messages: rearmed || s.messages,
+            tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', status: 'working' as TaskStatus, attempt: p.attempt || s.tasks[taskId]?.attempt, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now(), summary: undefined } },
+          };
+        });
         // A resume segment of the watched task re-announces itself; make sure
         // the view has a live turn to stream into.
         updateTaskView(p.run_id, view => ({ ...view, messages: ensureLiveTurn(view.messages, p.run_id) || view.messages }));
@@ -965,7 +978,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // the hub entirely) — re-pull the durable rows so statuses that changed
       // during the outage land in the chips.
       for (const sid of loadedRef.current) {
-        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
+        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; attempt?: number; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
           .then(rows => {
             if (!rows || rows.length === 0) return;
             updateSS(sid, s => {

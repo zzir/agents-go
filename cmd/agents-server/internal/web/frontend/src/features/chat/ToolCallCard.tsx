@@ -1,5 +1,5 @@
 import { Button, Label } from '@primer/react';
-import { ToolsIcon, StackIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
+import { ToolsIcon, StackIcon, SyncIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
@@ -15,6 +15,9 @@ interface ToolCallCardProps {
   // taskId → task label, so task_status / task_stop cards can show the readable
   // title of the task they act on instead of the opaque id.
   taskLabelById?: Record<string, string>;
+  // Resumes the failed task this spawn call started. Absent where a retry has
+  // nowhere to report to.
+  onRetryTask?: (taskId: string) => void;
   toolCall: ToolCall;
   live?: boolean;
   onApprove?: (id: string, scope?: string) => void;
@@ -142,7 +145,7 @@ function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
   }
 }
 
-export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
+export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, onRetryTask, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task, progress } = toolCall;
 
   // A spawn_task card is the task's anchor in the timeline: the terminal
@@ -244,6 +247,18 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       {mcpServer && <Label>{mcpServer}</Label>}
       {task?.status && <Label variant={task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : task.status === 'cancelled' ? 'secondary' : 'accent'}>{'task ' + task.status.replace('_', ' ')}</Label>}
       {!task?.status && liveTaskStatus && <Label variant={liveTaskStatus === 'input_required' ? 'attention' : 'accent'}>{'task ' + liveTaskStatus.replace('_', ' ')}</Label>}
+      {(task?.attempt ?? 0) > 1 && <Label variant="secondary">{'attempt ' + task!.attempt}</Label>}
+      {/* Only on a card whose task is FAILED: a retry needs something to
+          resume, and the badge above is the card's own word on that. */}
+      {task?.status === 'failed' && inspectTaskId && onRetryTask && (
+        <button
+          className="ToolCallCard-inspect"
+          title="Retry task"
+          onClick={e => { e.stopPropagation(); onRetryTask(inspectTaskId); }}
+        >
+          <SyncIcon size={14} />
+        </button>
+      )}
       {inspectTaskId && onInspectTask && (
         <button
           className="ToolCallCard-inspect"

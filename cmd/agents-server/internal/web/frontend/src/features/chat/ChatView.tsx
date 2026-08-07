@@ -392,6 +392,7 @@ interface ProcessTimelineProps {
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
+  onRetryTask?: (taskId: string) => void;
   liveTaskStatusByCallId?: Record<string, string>;
   liveTaskLabelByCallId?: Record<string, string>;
   taskLabelById?: Record<string, string>;
@@ -400,7 +401,7 @@ interface ProcessTimelineProps {
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
-function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, diagnostics, onApprove, onReject, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
+function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, diagnostics, onApprove, onReject, onInspectTask, onRetryTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
 
@@ -471,6 +472,7 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, di
                   onApprove={onApprove}
                   onReject={onReject}
                   onInspectTask={onInspectTask}
+                  onRetryTask={onRetryTask}
                   liveTaskStatus={liveTaskStatusByCallId?.[tc.tool_call_id]}
                   liveTaskLabel={liveTaskLabelByCallId?.[tc.tool_call_id]}
                   taskLabelById={taskLabelById}
@@ -542,12 +544,13 @@ interface TurnBlockProps {
   onSwitchBranch?: (tipEntryId: string) => void;
   onFork?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
+  onRetryTask?: (taskId: string) => void;
   liveTaskStatusByCallId?: Record<string, string>;
   liveTaskLabelByCallId?: Record<string, string>;
   taskLabelById?: Record<string, string>;
 }
 
-const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, branches, onSwitchBranch, onFork, onInspectTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, branches, onSwitchBranch, onFork, onInspectTask, onRetryTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
@@ -583,6 +586,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           ? <TextContent key={'seg-' + i} content={seg.content} />
           : <ProcessTimeline
               onInspectTask={onInspectTask}
+              onRetryTask={onRetryTask}
               liveTaskStatusByCallId={liveTaskStatusByCallId}
               liveTaskLabelByCallId={liveTaskLabelByCallId}
               taskLabelById={taskLabelById}
@@ -600,6 +604,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
       {liveTail && (
         <ProcessTimeline
           onInspectTask={onInspectTask}
+          onRetryTask={onRetryTask}
           liveTaskStatusByCallId={liveTaskStatusByCallId}
           liveTaskLabelByCallId={liveTaskLabelByCallId}
           taskLabelById={taskLabelById}
@@ -1140,6 +1145,20 @@ export function ChatView({
       .catch((e: Error) => toast.error(e.message || 'Stop failed'));
   }, [sessionId, onPatchTask]);
 
+  const retryTask = useCallback((taskId: string) => {
+    (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number }>)
+      .then(info => {
+        // The confirmed state, applied without waiting for the broadcast — the
+        // same reason stopTask does: the answer is already in hand, and a
+        // button that stays on "failed" invites a second click that will be
+        // refused. The failed attempt's summary goes with it.
+        if (sessionId && info?.status) {
+          onPatchTask?.(sessionId, taskId, { status: info.status as TaskStatus, attempt: info.attempt, summary: undefined });
+        }
+      })
+      .catch((e: Error) => toast.error(e.message || 'Retry failed'));
+  }, [sessionId, onPatchTask]);
+
   // The task-detail lens is live: tell the socket layer which task to tail.
   const inspectedTaskId = panel?.kind === 'task' ? panel.taskId : null;
   useEffect(() => {
@@ -1398,6 +1417,7 @@ export function ChatView({
                 <TurnBlock
                   key={entryKey(m, i, 'turn')}
                   onInspectTask={openTaskDetail}
+                  onRetryTask={retryTask}
                   parts={m.parts || []}
                   streaming={isLive ? streaming : null}
                   reasoning={isLive ? reasoning : null}
@@ -1482,6 +1502,7 @@ export function ChatView({
           onApprove={onApprove}
           onReject={onReject}
           onStop={stopTask}
+          onRetry={retryTask}
         />
       )}
       {panel?.kind === 'task' && tasks?.[panel.taskId] && (
@@ -1493,6 +1514,7 @@ export function ChatView({
           onApprove={onApprove}
           onReject={onReject}
           onStop={stopTask}
+          onRetry={retryTask}
         />
       )}
     </div>

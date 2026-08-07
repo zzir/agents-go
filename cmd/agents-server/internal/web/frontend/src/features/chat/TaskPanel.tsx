@@ -53,13 +53,14 @@ interface TaskListPanelProps {
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onStop: (taskId: string) => void;
+  onRetry: (taskId: string) => void;
 }
 
 // TaskListPanel is the Inspector's "tasks" lens: tasks grouped by state
 // (Active first, then terminal kinds), newest first inside each group. State
 // is the row's leading dot + its group header; the right-hand label is the
 // task's duration (ticking while live). Rows open the detail lens.
-export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject, onStop }: TaskListPanelProps) {
+export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject, onStop, onRetry }: TaskListPanelProps) {
   const list = Object.values(tasks);
   const hasActive = list.some(t => t.status === 'working' || t.status === 'input_required');
   // Live durations tick once a second while anything is active.
@@ -93,6 +94,12 @@ export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject,
                 {taskDuration(t, now) && <span className="task-row-duration">{taskDuration(t, now)}</span>}
               </div>
               {t.status === 'failed' && t.summary && <div className="task-row-error">{t.summary}</div>}
+              {t.status === 'failed' && (
+                <div className="task-row-actions" onClick={e => e.stopPropagation()}>
+                  {(t.attempt || 1) > 1 && <span className="task-row-activity">attempt {t.attempt}</span>}
+                  <Button size="small" className="task-row-stop" onClick={() => onRetry(t.taskId)}>Retry</Button>
+                </div>
+              )}
               {(t.status === 'working' || t.status === 'input_required') && (
                 <div className="task-row-actions" onClick={e => e.stopPropagation()}>
                   {t.status === 'input_required' && t.pendingCallId && onApprove && onReject && (
@@ -127,11 +134,12 @@ interface TaskDetailPanelProps {
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onStop: (taskId: string) => void;
+  onRetry: (taskId: string) => void;
 }
 
 // TaskDetailPanel is the Inspector's "task" lens: the child session's
 // transcript (read-only, live-tailing while the task runs) and its trace.
-export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReject, onStop }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReject, onStop, onRetry }: TaskDetailPanelProps) {
   const [tab, setTab] = useState<'transcript' | 'trace'>('transcript');
   const [traceExpanded, setTraceExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -161,6 +169,9 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
           </>
         )}
         {live && <Button size="small" onClick={() => onStop(task.taskId)}>Stop</Button>}
+        {/* The transcript below is what a retry resumes from, so the action
+            belongs beside it. */}
+        {task.status === 'failed' && <Button size="small" onClick={() => onRetry(task.taskId)}>Retry</Button>}
       </div>
       <div className="task-detail-tabs">
         <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>

@@ -253,14 +253,34 @@ export const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled
 // identity-stable memo. And a card already terminal keeps its outcome: a late
 // or replayed event must not move it, mirroring the server's own
 // no-move-backwards guard.
-export function applyTaskTerminal(msgs: Msgs, toolCallId: string, task: { id: string; label?: string; status: string; summary?: string }): Msgs | null {
+export function applyTaskTerminal(msgs: Msgs, toolCallId: string, task: { id: string; label?: string; status: string; summary?: string; attempt?: number }): Msgs | null {
   if (!TERMINAL_TASK_STATUSES.has(task.status)) return null;
   const cur = findToolCall(msgs, toolCallId);
   if (!cur || (cur.task?.status && TERMINAL_TASK_STATUSES.has(cur.task.status))) return null;
   const t: NonNullable<ToolCall['task']> = { id: task.id, status: task.status };
   if (task.label) t.label = task.label;
   if (task.summary) t.summary = task.summary;
+  if (task.attempt) t.attempt = task.attempt;
   return patchToolCall(msgs, toolCallId, { task: t });
+}
+
+// startTaskAttempt re-arms a spawn card for a retry: the outcome it is showing
+// belongs to an attempt that is over, and the task is running again.
+//
+// Clearing `task` rather than overwriting it with a working state is what makes
+// applyTaskTerminal accept the NEW outcome — its no-move-backwards guard reads
+// the card's own terminal status — and it puts the badge back on the live
+// status path, which is where a running task belongs. The label survives,
+// because the card is still that task's.
+//
+// Guarded by attempt so a replayed run.started cannot wipe a real outcome: only
+// a run BEYOND the one the card describes is a new attempt.
+export function startTaskAttempt(msgs: Msgs, toolCallId: string, attempt: number): Msgs | null {
+  const cur = findToolCall(msgs, toolCallId);
+  if (!cur?.task?.status || !TERMINAL_TASK_STATUSES.has(cur.task.status)) return null;
+  if (!attempt || attempt <= (cur.task.attempt ?? 1)) return null;
+  const label = cur.task.label;
+  return patchToolCall(msgs, toolCallId, { task: label ? { label } : undefined });
 }
 
 // appendToolProgress accumulates the live output a running tool pushed.

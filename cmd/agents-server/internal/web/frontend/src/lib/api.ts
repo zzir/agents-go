@@ -208,6 +208,7 @@ export const api = {
   },
   tasks: {
     stop: (id: string | number, graceful = false) => request(`/tasks/${id}/stop`, { method: 'POST', body: JSON.stringify({ graceful }) }),
+    retry: (id: string | number) => request(`/tasks/${id}/retry`, { method: 'POST' }),
   },
   sandboxes: {
     ...crud('/sandboxes'),

@@ -27,6 +27,28 @@ describe('parseTaskNotification', () => {
     expect(got!.taskId).toBe('a1b2c3');
   });
 
+  // A batch with a failed task carries a retry hint. It is its own line rather
+  // than text inside a task line precisely so this stays true: the parser
+  // skips what does not match, and the hint invents no task.
+  it('ignores the retry hint line', () => {
+    const msg =
+      TASK_NOTIFICATION_PREFIX +
+      'Task "index the docs" (a1b2c3) completed. Result: indexed 412 files\n' +
+      'Task "check links" (d4e5f6) failed. Result: 3 dead links ' +
+      '[truncated — call task_status(d4e5f6) for the full result]\n' +
+      '(task_retry can resume a failed task from where it stopped)';
+
+    const got = parseTaskNotification(msg);
+    expect(got!.items).toHaveLength(2);
+    expect(got!.items[1]).toEqual({
+      label: 'check links',
+      taskId: 'd4e5f6',
+      status: 'failed',
+      summary: '3 dead links',
+      truncated: true,
+    });
+  });
+
   it('reports truncation and strips its marker', () => {
     const msg =
       TASK_NOTIFICATION_PREFIX +

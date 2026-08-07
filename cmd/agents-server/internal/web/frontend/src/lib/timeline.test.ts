@@ -22,7 +22,7 @@ import { describe, it, expect } from 'vitest';
 import { buildTimeline, type EntryView, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, appendHandoffPart,
 } from '@/lib/streamReducer';
 
 const RUN = 'run-1';
@@ -176,6 +176,53 @@ describe('stream/replay isomorphism', () => {
       },
     ]);
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  it('task retry: the card re-arms and the new outcome lands, matching replay', () => {
+    // A retry reopens a task the card already reported as failed. Without
+    // re-arming, applyTaskTerminal's no-move-backwards guard drops the second
+    // outcome and the card keeps a stale failure — while the Tasks panel and a
+    // reload both show it completed.
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    live = applyTaskTerminal(live, 'c1', { id: 't1', label: 'Flaky job', status: 'failed', summary: 'rate limited', attempt: 1 })!;
+    // The new attempt's run.started.
+    live = startTaskAttempt(live, 'c1', 2)!;
+    // A replayed run.started for the attempt already shown cannot wipe an
+    // outcome: only a run BEYOND the card's attempt is a new one.
+    expect(startTaskAttempt(live, 'c1', 2)).toBeNull();
+    live = applyTaskTerminal(live, 'c1', { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 })!;
+
+    const rows: EntryView[] = [
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'done', extra: { task_id: 't1', task_status: 'completed', task_attempt: 2 } } },
+    ];
+
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      {
+        type: 'tools',
+        toolCalls: [{
+          tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', status: null, output: null,
+          task: { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 },
+        }],
+      },
+    ]);
+    expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  it('task retry: a card that never finished is left alone', () => {
+    // Re-arming is for a card showing an outcome. A working card has none, and
+    // its badge already comes from the live status props.
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    expect(startTaskAttempt(live, 'c1', 2)).toBeNull();
+    expect(startTaskAttempt(live, 'nope', 2)).toBeNull();
   });
 
   it('guardrail-blocked turn: thinking → typed error card', () => {

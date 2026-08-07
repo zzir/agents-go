@@ -31,6 +31,10 @@ interface DisplayExtra {
   stage?: string;
   task_id?: string;
   task_status?: string;
+  // Which run of the task this describes: 1 for the original, more after a
+  // retry. A card showing a finished task uses it to tell a NEW attempt from a
+  // replay of the one it already has.
+  task_attempt?: number;
   [k: string]: unknown;
 }
 
@@ -117,7 +121,7 @@ interface ToolCall {
   // exec_command's command), folded from the same two paths as title/summary.
   extra?: DisplayExtra;
   // Terminal task outcome for a spawn_task call, from the display projection.
-  task?: { id?: string; label?: string; status?: string; summary?: string };
+  task?: { id?: string; label?: string; status?: string; summary?: string; attempt?: number };
   // progress is live output the tool pushed while still running — a command's
   // stdout as it appears, a sub-agent thinking out loud. It is NOT the result:
   // `output` is, and it replaces this when it lands. Live-only, so a reload
@@ -379,7 +383,7 @@ function assemble(
         anchor(e);
         const x = d.extra;
         const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.tool_name || '', arguments: d.arguments || '', output: null, status: null };
-        if (x?.task_id || x?.task_status) tc.task = { id: x.task_id, label: d.title, status: x.task_status, summary: d.summary };
+        if (x?.task_id || x?.task_status) tc.task = { id: x.task_id, label: d.title, status: x.task_status, summary: d.summary, attempt: x.task_attempt };
         pendingTC[d.call_id] = tc;
         const last = turn!.parts[turn!.parts.length - 1];
         if (last && last.type === 'tools') { (last as ToolsPart).toolCalls.push(tc); }
