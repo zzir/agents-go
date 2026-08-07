@@ -141,7 +141,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Finalize owes the wake-up on the row (notify_state = pending).
-	if won, err := tasks.Finalize(ctx, task.ID, protocol.TaskCompleted, "all green", ""); err != nil || !won {
+	if won, err := tasks.Finalize(ctx, task.ID, task.RunID, protocol.TaskCompleted, "all green", ""); err != nil || !won {
 		t.Fatalf("Finalize won=%v err=%v", won, err)
 	}
 

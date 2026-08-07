@@ -209,6 +209,11 @@ type RunStarted struct {
 	TaskID     string `json:"task_id,omitempty"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	Label      string `json:"label,omitempty"`
+	// Attempt is which run of the task this is: 1 for the original, more after
+	// a retry. A client whose card shows the task as finished uses it to tell a
+	// NEW attempt from a replay, and to stop rendering the previous attempt's
+	// outcome over a task that is running again.
+	Attempt int `json:"attempt,omitempty"`
 }
 
 // Task status vocabulary, aligned with the MCP Tasks (SEP-1686) five-state

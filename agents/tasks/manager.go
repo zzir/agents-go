@@ -875,7 +875,26 @@ func (m *Manager) DrainPending(ctx context.Context, parentSessionID string) {
 // Recover reconciles after a restart: tasks recorded as running can never
 // progress (their run died with the process), so they are failed, and every
 // parent then owed a wake-up is drained.
+//
+// A host that can serve requests while this runs should call the two halves
+// itself instead — see FailOrphans for the ordering that matters.
 func (m *Manager) Recover(ctx context.Context) error {
+	if err := m.FailOrphans(ctx); err != nil {
+		return err
+	}
+	return m.DrainAllPending(ctx)
+}
+
+// FailOrphans is the first half of Recover: every task still recorded as
+// running is failed, which owes its parent a wake-up.
+//
+// It must complete BEFORE the host accepts a retry. The sweep has no notion of
+// a live run — it fails every working row there is — so a retry that got in
+// first would have its fresh run declared dead, its parent woken with a failure
+// that never happened, and the real result thrown away when the run finally
+// lands. Nothing in the store can arbitrate that: the retry has already won its
+// claim by the time the sweep looks.
+func (m *Manager) FailOrphans(ctx context.Context) error {
 	n, err := m.cfg.Store.FailOrphans(ctx)
 	if err != nil {
 		return fmt.Errorf("tasks: failing orphaned tasks: %w", err)
@@ -883,6 +902,13 @@ func (m *Manager) Recover(ctx context.Context) error {
 	if n > 0 {
 		m.log.InfoContext(ctx, "failed tasks orphaned by a restart", slog.Int64("count", n))
 	}
+	return nil
+}
+
+// DrainAllPending is the second half of Recover: every parent owed a wake-up
+// is drained. It starts runs, so a host with its own startup ordering runs it
+// once the rest of the machinery is in place.
+func (m *Manager) DrainAllPending(ctx context.Context) error {
 	parents, err := m.cfg.Store.PendingNotifyParents(ctx)
 	if err != nil {
 		return fmt.Errorf("tasks: listing notify-pending parents: %w", err)

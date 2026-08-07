@@ -52,6 +52,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	{
 		tasks := api.Group("/tasks")
 		tasks.POST("/:id/stop", h.Tasks.Stop)
+		tasks.POST("/:id/retry", h.Tasks.Retry)
 
 		approvals := api.Group("/approvals")
 		approvals.POST("/:tool_call_id/approve", h.Approvals.Approve)

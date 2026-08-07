@@ -91,6 +91,10 @@ type TaskMeta struct {
 	ParentRunID     string `json:"parent_run_id,omitempty"`
 	ToolCallID      string `json:"tool_call_id,omitempty"`
 	Label           string `json:"label,omitempty"`
+	// Attempt is which run of the task this is: 1 for the original, more after
+	// a retry. It rides on run.started so a client showing a finished task's
+	// card can tell a NEW attempt from a replay of the old one.
+	Attempt int `json:"attempt,omitempty"`
 }
 
 // RunInfo is a snapshot of a run's identity and state for status queries.
@@ -309,6 +313,26 @@ func (h *RunHub) SessionDeleting(sessionID string) bool {
 	return h.deleting[sessionID]
 }
 
+// deletingLocked refuses a run whose session — or, for a task run, whose PARENT
+// session — is being torn down. Callers hold h.mu.
+//
+// The parent half exists because a teardown marks the parent id and stops the
+// tasks it can see, and a FAILED task is invisible to both: its run is over and
+// its hidden child session was never marked. A retry landing between the mark
+// and the delete cascade would start a run that writes into rows the cascade is
+// removing — the exact outliving-run the marker exists to prevent. Checking
+// here rather than before the call is what makes it a decision instead of a
+// guess: the mark is taken under this same lock.
+func (h *RunHub) deletingLocked(sessionID string, task *TaskMeta) error {
+	if h.deleting[sessionID] {
+		return ErrSessionDeleting{SessionID: sessionID}
+	}
+	if task != nil && task.ParentSessionID != "" && h.deleting[task.ParentSessionID] {
+		return ErrSessionDeleting{SessionID: task.ParentSessionID}
+	}
+	return nil
+}
+
 // ErrSessionDeleting is returned by register/resume when the session is being
 // torn down by a delete cascade — a new run must not be started on it.
 type ErrSessionDeleting struct{ SessionID string }
@@ -351,8 +375,8 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 	if h.draining {
 		return nil, nil, ErrShuttingDown{}
 	}
-	if h.deleting[sessionID] {
-		return nil, nil, ErrSessionDeleting{SessionID: sessionID}
+	if err := h.deletingLocked(sessionID, task); err != nil {
+		return nil, nil, err
 	}
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, ErrSessionBusy{RunID: existing}
@@ -411,8 +435,8 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 	if h.draining {
 		return nil, nil, ErrShuttingDown{}
 	}
-	if h.deleting[sessionID] {
-		return nil, nil, ErrSessionDeleting{SessionID: sessionID}
+	if err := h.deletingLocked(sessionID, task); err != nil {
+		return nil, nil, err
 	}
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, ErrSessionBusy{RunID: existing}

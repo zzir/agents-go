@@ -145,14 +145,21 @@ func run(_ *cobra.Command, _ []string) error {
 	taskHandler := handler.NewTaskHandler(taskStore, runner)
 	wsHandler := handler.NewWSHandler(runner)
 
-	// AFTER the handlers: NewWSHandler is what installs runner.OnRunAttach, an
-	// ordinary field with no synchronization, and this sweep starts runs on
-	// another goroutine — every restart that owes a wake-up would read the field
-	// while the main goroutine was still writing it.
+	// The restart reconciliation, in two halves that have opposite ordering
+	// needs.
 	//
-	// One sweep does both halves of the restart reconciliation: tasks the
-	// process interrupted are failed — which owes their parents a wake-up —
-	// and every owed parent is then drained.
+	// Failing what the process interrupted is a pure UPDATE and runs FIRST,
+	// synchronously, before anything can serve a request: the sweep has no
+	// notion of a live run, so it fails every row still recorded as working —
+	// and a retry that slipped in ahead of it would have its fresh run declared
+	// dead, its parent woken with a failure that did not happen, and the real
+	// result discarded when the run finally lands.
+	//
+	// Draining the wake-ups it owes starts runs, so it stays on its own
+	// goroutine and AFTER the handlers: NewWSHandler installs
+	// runner.OnRunAttach, an ordinary field with no synchronization, and a run
+	// starting here would read it while the main goroutine was still writing.
+	runner.FailOrphanedTasks(ctx)
 	go runner.DrainPendingTaskNotifications(ctx)
 
 	token := flagToken

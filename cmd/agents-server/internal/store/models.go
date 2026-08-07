@@ -40,10 +40,9 @@ type Task struct {
 	bun.BaseModel `bun:"table:tasks,alias:t"`
 
 	ID string `bun:"id,pk"                json:"task_id"`
-	// RunID is the id of the task's current run attempt. Today a task has
-	// exactly one attempt (retries would update this and add an attempts
-	// table); it is deliberately distinct from the task id so the public
-	// model does not lock the two together.
+	// RunID is the id of the task's CURRENT attempt: a retry replaces it. It is
+	// distinct from the task id because the task is the durable entity and a
+	// run is one try at it — which is what makes a retry expressible at all.
 	RunID           string `bun:"run_id"               json:"run_id,omitempty"`
 	ParentSessionID string `bun:"parent_session_id,notnull" json:"parent_session_id"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
@@ -65,6 +64,10 @@ type Task struct {
 	// report depth 0, so MaxDepth — the documented backstop against a task
 	// spawning tasks forever — could never trip on this host.
 	Depth int `bun:"depth" json:"depth,omitempty"`
+	// Attempt counts this task's runs: 1 for the original, one more per retry.
+	// Zero reads as the first attempt, so a row written before retries existed
+	// needs no migration to mean what it already meant.
+	Attempt int `bun:"attempt" json:"attempt,omitempty"`
 	// ParentAgentConfigID / ParentSandboxID snapshot the spawning run's
 	// configuration so the completion notification can start a parent run with
 	// the same setup.

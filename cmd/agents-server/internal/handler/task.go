@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -51,19 +52,66 @@ func (h *TaskHandler) Stop(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req) // body is optional
 	info, err := h.runner.StopTask(c.Param("id"), req.Graceful)
 	if err != nil {
-		switch final, isFinal := errors.AsType[*bridge.TaskFinalError](err); {
-		case isFinal:
-			conflict(c, final.Error())
-		case errors.Is(err, store.ErrNotFound):
-			notFound(c)
-		default:
-			// A store failure is a server fault, not a resource conflict —
-			// details go to the log, not the wire (error-envelope invariant).
-			internalError(c, err)
-		}
+		h.stopError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, info)
+}
+
+// stopError maps a stop failure. The not-found sentinel is the SDK's, not the
+// store's: every lookup goes through the task adapter, which maps its own to
+// that one — matching store.ErrNotFound here caught nothing, so an unknown id
+// used to answer 500.
+func (h *TaskHandler) stopError(c *gin.Context, err error) {
+	switch final, isFinal := errors.AsType[*bridge.TaskFinalError](err); {
+	case isFinal:
+		conflict(c, final.Error())
+	case errors.Is(err, tasks.ErrNotFound), errors.Is(err, store.ErrNotFound):
+		notFound(c)
+	default:
+		// A store failure is a server fault, not a resource conflict —
+		// details go to the log, not the wire (error-envelope invariant).
+		internalError(c, err)
+	}
+}
+
+// Retry resumes a failed background task: the same task and session, a new
+// run, continuing from where the failed attempt stopped.
+//
+//	@Summary		Retry a failed background task
+//	@Description	Starts a new attempt at a failed task, resuming its existing conversation. Errors if the task is not failed or has used every attempt.
+//	@Tags			tasks
+//	@Produce		json
+//	@Param			id	path		string	true	"Task ID"
+//	@Success		200	{object}	bridge.TaskInfo
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/tasks/{id}/retry [post]
+func (h *TaskHandler) Retry(c *gin.Context) {
+	info, err := h.runner.RetryTask(c.Param("id"))
+	if err != nil {
+		h.retryError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, info)
+}
+
+// retryError maps a retry failure. A refusal by the task's own state — it is
+// not failed, it is out of attempts, or its session is at the live-task
+// ceiling — is a conflict rather than a fault, and its reason goes on the wire
+// because the caller can act on it.
+func (h *TaskHandler) retryError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, tasks.ErrNotFound), errors.Is(err, store.ErrNotFound):
+		notFound(c)
+	case errors.As(err, new(tasks.ErrNotRetryable)),
+		errors.As(err, new(tasks.ErrRetryLimit)),
+		errors.As(err, new(tasks.ErrTaskLimit)):
+		conflict(c, err.Error())
+	default:
+		internalError(c, err)
+	}
 }
 
 // ListBySession responds with the session's background tasks, newest first.

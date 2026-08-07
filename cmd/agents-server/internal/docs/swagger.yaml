@@ -405,6 +405,10 @@ components:
       properties:
         agent:
           type: string
+        attempt:
+          description: 'Attempt counts the task''s runs: 1 for the original, one more
+            per retry.'
+          type: integer
         label:
           type: string
         result:
@@ -424,6 +428,12 @@ components:
         Task is set for background task runs (SessionID is then the task's own
         hidden session; Task carries the parent linkage).
       properties:
+        attempt:
+          description: |-
+            Attempt is which run of the task this is: 1 for the original, more after
+            a retry. It rides on run.started so a client showing a finished task's
+            card can tell a NEW attempt from a replay of the old one.
+          type: integer
         label:
           type: string
         parent_run_id:
@@ -1203,6 +1213,12 @@ components:
       properties:
         agent_config_id:
           type: string
+        attempt:
+          description: |-
+            Attempt counts this task's runs: 1 for the original, one more per retry.
+            Zero reads as the first attempt, so a row written before retries existed
+            needs no migration to mean what it already meant.
+          type: integer
         child_session_id:
           type: string
         created_at:
@@ -1222,10 +1238,9 @@ components:
           type: string
         run_id:
           description: |-
-            RunID is the id of the task's current run attempt. Today a task has
-            exactly one attempt (retries would update this and add an attempts
-            table); it is deliberately distinct from the task id so the public
-            model does not lock the two together.
+            RunID is the id of the task's CURRENT attempt: a retry replaces it. It is
+            distinct from the task id because the task is the durable entity and a
+            run is one try at it — which is what makes a retry expressible at all.
           type: string
         status:
           type: string
@@ -3653,6 +3668,41 @@ paths:
       summary: Get skill content
       tags:
       - skills
+  /tasks/{id}/retry:
+    post:
+      description: Starts a new attempt at a failed task, resuming its existing conversation.
+        Errors if the task is not failed or has used every attempt.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bridge.TaskInfo'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Conflict
+      security:
+      - BearerAuth: []
+      summary: Retry a failed background task
+      tags:
+      - tasks
   /tasks/{id}/stop:
     post:
       description: Cancels a running task, or discards the pending approval of a paused

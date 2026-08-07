@@ -310,6 +310,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		started.TaskID = task.TaskID
 		started.ToolCallID = task.ToolCallID
 		started.Label = task.Label
+		started.Attempt = task.Attempt
 	}
 	sendEvent(protocol.EventRunStarted, started)
 

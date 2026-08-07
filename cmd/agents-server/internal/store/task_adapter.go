@@ -68,9 +68,15 @@ func toSDK(t *Task) *tasks.Task {
 		ToolCallID:      t.ToolCallID,
 		ChildSessionID:  t.ChildSessionID,
 		Depth:           t.Depth,
+		Attempt:         t.Attempt,
+		// All three, including the task's own agent: a retry launches from the
+		// snapshot read back off the row, not from a fresh resolve, so an
+		// Inherit that lost TaskAgentID here would start the new attempt with
+		// no agent config at all.
 		Inherit: EncodeInherit(Inherit{
 			AgentConfigID: t.ParentAgentConfigID,
 			SandboxID:     t.ParentSandboxID,
+			TaskAgentID:   t.AgentConfigID,
 		}),
 		Status:      tasks.Status(t.Status),
 		NotifyState: tasks.NotifyState(t.NotifyState),
@@ -107,6 +113,7 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		AgentConfigID:       inherit.TaskAgentID,
 		ParentAgentConfigID: inherit.AgentConfigID,
 		ParentSandboxID:     inherit.SandboxID,
+		Attempt:             t.Attempt,
 		Status:              string(t.Status),
 		NotifyState:         string(t.NotifyState),
 		Summary:             t.Summary,
@@ -147,8 +154,14 @@ func (a *TaskAdapter) ListByParent(ctx context.Context, parentSessionID string) 
 }
 
 // Finalize implements tasks.Store.
-func (a *TaskAdapter) Finalize(ctx context.Context, id string, st tasks.Status, summary, result string) (bool, error) {
-	return a.store.Finalize(ctx, id, string(st), summary, result)
+func (a *TaskAdapter) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string) (bool, error) {
+	return a.store.Finalize(ctx, id, runID, string(st), summary, result)
+}
+
+// RetryClaim implements tasks.Store.
+func (a *TaskAdapter) RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (bool, error) {
+	won, err := a.store.RetryClaim(ctx, id, newRunID, maxAttempts)
+	return won, mapNotFound(err)
 }
 
 // MarkInputRequired implements tasks.Store.
@@ -162,13 +175,13 @@ func (a *TaskAdapter) ReclaimWorking(ctx context.Context, id string) (bool, erro
 }
 
 // ConsumeNotify implements tasks.Store.
-func (a *TaskAdapter) ConsumeNotify(ctx context.Context, id string) error {
-	return a.store.ConsumeNotify(ctx, id)
+func (a *TaskAdapter) ConsumeNotify(ctx context.Context, id, runID string) error {
+	return a.store.ConsumeNotify(ctx, id, runID)
 }
 
 // MarkNotifyDelivered implements tasks.Store.
-func (a *TaskAdapter) MarkNotifyDelivered(ctx context.Context, id string) error {
-	return a.store.MarkNotifyDelivered(ctx, id)
+func (a *TaskAdapter) MarkNotifyDelivered(ctx context.Context, id, runID string) error {
+	return a.store.MarkNotifyDelivered(ctx, id, runID)
 }
 
 // ListPendingNotify implements tasks.Store.

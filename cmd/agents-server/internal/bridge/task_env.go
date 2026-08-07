@@ -167,8 +167,9 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 		Title:   t.Label,
 		Summary: t.Summary,
 		Extra: map[string]any{
-			"task_id":     t.ID,
-			"task_status": string(t.Status),
+			"task_id":      t.ID,
+			"task_status":  string(t.Status),
+			"task_attempt": t.AttemptNo(),
 		},
 	}
 	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
@@ -192,6 +193,7 @@ func taskInfoFrom(i *tasks.Info) *TaskInfo {
 		Label:   i.Label,
 		Agent:   i.Agent,
 		Status:  string(i.Status),
+		Attempt: i.Attempt,
 		Summary: i.Summary,
 		Result:  i.Result,
 	}

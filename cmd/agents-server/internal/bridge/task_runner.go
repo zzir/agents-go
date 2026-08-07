@@ -112,12 +112,17 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 		// input_required while the run executes.
 		return nil, fmt.Errorf("resolving task for session %s: %w", sessionID, err)
 	}
+	attempt := task.Attempt
+	if attempt < 1 {
+		attempt = 1
+	}
 	return &TaskMeta{
 		TaskID:          task.ID,
 		ParentSessionID: task.ParentSessionID,
 		ParentRunID:     task.ParentRunID,
 		ToolCallID:      task.ToolCallID,
 		Label:           task.Label,
+		Attempt:         attempt,
 	}, nil
 }
 
@@ -149,6 +154,23 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	return taskInfoFrom(info), nil
 }
 
+// RetryTask resumes a failed background task on behalf of the REST endpoint,
+// with the same semantics as the model-facing task_retry tool.
+//
+// The hub's root context, not the request's: the run it starts outlives the
+// HTTP call that asked for it, and cancelling on response would kill the
+// attempt the caller was told had started.
+func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
+	if r.tasks == nil {
+		return nil, fmt.Errorf("task_retry: tasks are not configured")
+	}
+	info, err := r.tasks.Retry(r.hub.rootCtx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return taskInfoFrom(info), nil
+}
+
 // postRun runs after every run segment terminates. It hands the outcome to the
 // task manager, which advances a task's state or — for an ordinary chat session
 // — drains the wake-ups that queued while it was busy.
@@ -162,6 +184,9 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 		return
 	}
 	out := tasks.RunOutcome{
+		// The attempt that finished, so a task retried while this run was in
+		// flight keeps the new attempt rather than this one's outcome.
+		RunID:        runID,
 		Status:       taskStatusFromRun(info.Status),
 		Text:         result.FinalText,
 		Err:          result.ErrMessage,
@@ -170,14 +195,29 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	r.tasks.OnRunFinished(ctx, sessionID, out)
 }
 
-// DrainPendingTaskNotifications is the startup reconciliation sweep: tasks the
-// restart interrupted are failed (which owes their parents a wake-up) and every
-// owed parent is drained, so the auto-wake survives a restart.
+// FailOrphanedTasks is the first half of the restart reconciliation: tasks the
+// restart interrupted are failed, which owes their parents a wake-up.
+//
+// It runs synchronously at startup, before the server can accept a request:
+// the sweep fails every row recorded as working, so a retry that arrived first
+// would have its fresh run declared dead and its result discarded.
+func (r *Runner) FailOrphanedTasks(ctx context.Context) {
+	if r.tasks == nil {
+		return
+	}
+	if err := r.tasks.FailOrphans(ctx); err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("failing tasks orphaned by the restart")
+	}
+}
+
+// DrainPendingTaskNotifications is the second half: every parent owed a wake-up
+// is drained, so the auto-wake survives a restart. It starts runs, which is why
+// it is separate from the sweep above.
 func (r *Runner) DrainPendingTaskNotifications(ctx context.Context) {
 	if r.tasks == nil {
 		return
 	}
-	if err := r.tasks.Recover(ctx); err != nil {
+	if err := r.tasks.DrainAllPending(ctx); err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("task recovery sweep")
 	}
 }

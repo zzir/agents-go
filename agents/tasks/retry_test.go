@@ -105,28 +105,32 @@ func TestRetry_PromptFallsBackToTheSummary(t *testing.T) {
 // stopped on purpose.
 func TestRetry_RefusesEveryStatusButFailed(t *testing.T) {
 	ctx := context.Background()
+	// Each case drives the task to the status it is named for, using only the
+	// task and its child session — no *testing.T, so these stay plain drivers
+	// rather than helpers.
 	for _, tc := range []struct {
-		name  string
-		drive func(*harness, *testing.T, string)
+		status Status
+		drive  func(h *harness, id, child string)
 	}{
-		{"working", func(*harness, *testing.T, string) {}},
-		{"completed", func(h *harness, t *testing.T, id string) {
-			h.m.OnRunFinished(ctx, h.childOf(t, id), RunOutcome{Status: StatusCompleted, Text: "done"})
+		{StatusWorking, func(*harness, string, string) {}},
+		{StatusCompleted, func(h *harness, _, child string) {
+			h.m.OnRunFinished(ctx, child, RunOutcome{Status: StatusCompleted, Text: "done"})
 		}},
-		{"cancelled", func(h *harness, t *testing.T, id string) {
-			if _, err := h.m.Stop(ctx, id, false); err != nil {
-				t.Fatal(err)
-			}
+		{StatusCancelled, func(h *harness, id, _ string) {
+			_, _ = h.m.Stop(ctx, id, false)
 		}},
-		{"input_required", func(h *harness, t *testing.T, id string) {
-			h.m.OnRunFinished(ctx, h.childOf(t, id), RunOutcome{Status: StatusInputRequired})
+		{StatusInputRequired, func(h *harness, _, child string) {
+			h.m.OnRunFinished(ctx, child, RunOutcome{Status: StatusInputRequired})
 		}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(string(tc.status), func(t *testing.T) {
 			h := newHarness(t)
 			info := h.spawn(t)
-			tc.drive(h, t, info.TaskID)
+			tc.drive(h, info.TaskID, h.childOf(t, info.TaskID))
 			before := h.get(t, info.TaskID)
+			if before.Status != tc.status {
+				t.Fatalf("task is %s, want the case's own %s", before.Status, tc.status)
+			}
 
 			got, err := h.m.Retry(ctx, info.TaskID)
 			var refusal ErrNotRetryable
