@@ -95,6 +95,8 @@ type TaskMeta struct {
 	// a retry. It rides on run.started so a client showing a finished task's
 	// card can tell a NEW attempt from a replay of the old one.
 	Attempt int `json:"attempt,omitempty"`
+	// MaxAttempts is the ceiling Attempt is measured against.
+	MaxAttempts int `json:"max_attempts,omitempty"`
 }
 
 // RunInfo is a snapshot of a run's identity and state for status queries.

@@ -10,7 +10,7 @@ import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
 import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
-import type { TaskState, TaskViewState } from '@/lib/useAgentSocket';
+import { taskRetryable, type TaskState, type TaskViewState } from '@/lib/useAgentSocket';
 import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
@@ -1151,7 +1151,7 @@ export function ChatView({
   }, [sessionId, onPatchTask]);
 
   const retryTask = useCallback((taskId: string) => {
-    (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number; retryable?: boolean }>)
+    (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number; max_attempts?: number }>)
       .then(info => {
         // The confirmed state, applied without waiting for the broadcast — the
         // same reason stopTask does: the answer is already in hand, and a
@@ -1160,9 +1160,7 @@ export function ChatView({
         if (sessionId && info?.status) {
           onPatchTask?.(sessionId, taskId, {
             status: info.status as TaskStatus, attempt: info.attempt,
-            // The server's own answer, so a task that just used its last
-            // attempt stops offering one.
-            retryable: !!info.retryable, summary: undefined,
+            maxAttempts: info.max_attempts, summary: undefined,
           });
         }
       })
@@ -1224,7 +1222,7 @@ export function ChatView({
   const retryableByCallId = useMemo(() => {
     const next: Record<string, boolean> = {};
     for (const t of Object.values(tasks || {})) {
-      if (t.toolCallId && t.retryable) next[t.toolCallId] = true;
+      if (t.toolCallId && taskRetryable(t)) next[t.toolCallId] = true;
     }
     return next;
   }, [tasks]);

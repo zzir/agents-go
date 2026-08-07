@@ -1905,14 +1905,17 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
 - **A retry takes a concurrency slot** like a spawn — exempting it would make
   retry the way around the cap — and a launch that fails puts the task back to
   failed with its debt consumed, since the caller is being told to its face.
-- **A stop reports what it DID**, not whether it errored. A host asked to stop
-  a run it has never heard of — the ordinary state during a launch — has
-  nothing to report but success, and reading that as "the run will wind itself
-  up" answers a graceful stop with acceptance while the task runs to completion
-  and nobody records anything. `StopAfterTurn` is the only answer that lets the
-  Manager stand back, and only a graceful stop may give it; a run that is
-  already over is not a cancellation to announce, since publishing one would
-  rewrite an outcome every client has seen.
+- **A stop reports what it DID**, not whether it errored, and the four answers
+  are not interchangeable. A host asked to stop a run it has never heard of —
+  the ordinary state during a launch — has nothing to report but success, and
+  reading that as "the run will wind itself up" answers a graceful stop with
+  acceptance while the task runs to completion and nobody records anything.
+  **`StopAfterTurn` and `StopAlreadyFinished` are the two answers that leave
+  the ending to the run**: the first is still going, the second ended before
+  the stop arrived — a host marks a run finished before its outcome reaches the
+  task row, so that window is ordinary, and recording a cancellation in it
+  overwrites a real completion, or a failure along with the retry it had
+  earned. Neither is a cancellation to announce.
 - **Whether a run reported is the Manager's own knowledge, not the row's.** A
   run that finished the instant it started and a run something ended while the
   host could not reach it leave the SAME row: terminal, on that run id.
@@ -1920,15 +1923,26 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   about that run — because cancelling on the row alone cancels tasks that
   simply finished quickly, which is the common case when a run fails its
   pre-flight.
-- **A finished task's debt is consumed on the MODEL's path only.** When a task
-  ends before the call that started it returns, its result is in the tool
-  output the model is about to read, so the wake-up owes nothing — the rule
-  `task_status` already followed. A person reading the same result over an HTTP
-  response has told the model nothing, so a host API must not consume it.
-- **Retryability is the Manager's answer, not the status's.** A failed task
-  that has used every attempt looks exactly like one that has not, so a caller
-  offering a retry asks (`Retryable`) rather than inferring — otherwise the
-  offer is a button that can only be refused.
+- **A finished task's debt is consumed on the MODEL's path only, and only for
+  the result the model is actually handed.** When a task ends before the call
+  that started it returns, its result is in the tool output the model is about
+  to read, so the wake-up owes nothing — the rule `task_status` already
+  followed. Two bounds keep that from swallowing news instead: a task still
+  reported as running owes its wake-up however the row reads by the time the
+  debt is written, because a result that landed after the answer was decided is
+  one the model has not seen; and the attempt is checked, since a retry in
+  between makes the pending debt a different attempt's. A person reading the
+  same result over an HTTP response has told the model nothing, so a host API
+  must not consume it at all.
+- **Retryability is about the task's own state, and the ceiling is the
+  Manager's.** A failed task that has used every attempt looks exactly like one
+  that has not, so a caller offering a retry needs the ceiling — `Retryable`
+  answers for state in hand, `MaxAttempts` hands over the parameter for a
+  client tracking tasks live, whose answer must move with the status rather
+  than lag a round trip behind it. **Capacity is deliberately excluded**: the
+  parent's live-task limit can change between an offer being rendered and
+  someone taking it, so a precomputed answer would be wrong as often as right —
+  that refusal arrives as `ErrTaskLimit`, which explains itself.
 - **Starting a run is two steps, and a terminator can land between them.** The
   row is claimed (created, or reopened by `RetryClaim`) before the host is told
   to start the run, so a stop arriving inside that window cancels a run the host

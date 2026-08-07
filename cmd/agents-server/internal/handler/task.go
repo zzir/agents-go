@@ -146,10 +146,11 @@ func (h *TaskHandler) ListBySession(c *gin.Context) {
 			}
 		}
 	}
-	// After the overlay, so a task the hub still shows as running is not
-	// offered a retry it would refuse.
+	// The ceiling travels with every row, so a client can answer "could this be
+	// retried" from the status it already tracks live.
+	ceiling := h.runner.MaxTaskAttempts()
 	for i := range tasks {
-		tasks[i].Retryable = h.runner.TaskRetryable(tasks[i].Status, tasks[i].Attempt)
+		tasks[i].MaxAttempts = ceiling
 	}
 	c.JSON(http.StatusOK, tasks)
 }

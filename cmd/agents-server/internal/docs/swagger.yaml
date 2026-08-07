@@ -411,17 +411,18 @@ components:
           type: integer
         label:
           type: string
+        max_attempts:
+          description: |-
+            MaxAttempts is the ceiling Attempt is measured against: a client offering
+            a retry compares the two rather than being told the answer, so its offer
+            follows the status it already tracks. Capacity is not part of it — a
+            retry can still be refused when the parent session is full.
+          type: integer
         result:
           description: |-
             Result carries the task's full final output (task_status only — the
             wake notification and the UI card stay on the truncated Summary).
           type: string
-        retryable:
-          description: |-
-            Retryable reports whether task_retry would be accepted right now — a
-            failed task with attempts left. A client offering the action asks rather
-            than inferring it from the status.
-          type: boolean
         status:
           type: string
         summary:
@@ -442,6 +443,9 @@ components:
           type: integer
         label:
           type: string
+        max_attempts:
+          description: MaxAttempts is the ceiling Attempt is measured against.
+          type: integer
         parent_run_id:
           type: string
         parent_session_id:
@@ -1238,16 +1242,19 @@ components:
           type: integer
         label:
           type: string
+        max_attempts:
+          description: |-
+            MaxAttempts is the ceiling this row's attempt is measured against —
+            filled for the wire, not stored, because it is the task manager's
+            configuration rather than a fact about the task. Clients take the
+            PARAMETER rather than a precomputed "retryable", so their answer moves
+            with the status they are already tracking instead of lagging a round trip
+            behind it.
+          type: integer
         parent_run_id:
           type: string
         parent_session_id:
           type: string
-        retryable:
-          description: |-
-            Retryable is computed for the wire, not stored: whether task_retry would
-            be accepted right now. The row knows its status and attempt; only the
-            task manager knows the ceiling they are measured against.
-          type: boolean
         run_id:
           description: |-
             RunID is the id of the task's CURRENT attempt: a retry replaces it. It is

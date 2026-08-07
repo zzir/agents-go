@@ -214,6 +214,11 @@ type RunStarted struct {
 	// NEW attempt from a replay, and to stop rendering the previous attempt's
 	// outcome over a task that is running again.
 	Attempt int `json:"attempt,omitempty"`
+	// MaxAttempts is the ceiling Attempt is measured against, so a client can
+	// answer "could this be retried" from state it already tracks — the answer
+	// then changes with the status, instead of being fixed at whatever it was
+	// when the last REST call happened to return.
+	MaxAttempts int `json:"max_attempts,omitempty"`
 }
 
 // Task status vocabulary, aligned with the MCP Tasks (SEP-1686) five-state

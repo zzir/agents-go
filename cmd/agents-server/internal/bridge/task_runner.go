@@ -123,6 +123,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 		ToolCallID:      task.ToolCallID,
 		Label:           task.Label,
 		Attempt:         attempt,
+		MaxAttempts:     r.MaxTaskAttempts(),
 	}, nil
 }
 
@@ -151,7 +152,7 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 		}
 		return nil, err
 	}
-	return taskInfoFrom(info), nil
+	return r.taskInfoFrom(info), nil
 }
 
 // RetryTask resumes a failed background task on behalf of the REST endpoint,
@@ -168,16 +169,18 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return taskInfoFrom(info), nil
+	return r.taskInfoFrom(info), nil
 }
 
-// TaskRetryable reports whether a task in this state would be accepted by
-// RetryTask, so a client can offer the action only when it would work.
-func (r *Runner) TaskRetryable(status string, attempt int) bool {
+// MaxTaskAttempts is the ceiling a task's attempt count is measured against.
+// Clients get the parameter rather than a precomputed "can I retry": theirs
+// then moves with the status they track live, instead of being stale from the
+// moment the status changes.
+func (r *Runner) MaxTaskAttempts() int {
 	if r.tasks == nil {
-		return false
+		return 0
 	}
-	return r.tasks.Retryable(tasks.Status(status), attempt)
+	return r.tasks.MaxAttempts()
 }
 
 // postRun runs after every run segment terminates. It hands the outcome to the

@@ -79,13 +79,13 @@ has debts waiting, and its own run boundary is where they can finally be paid.
 | `Launcher` | "Start a run." (`Wake: true` marks the parent's notification run) |
 | `WakeGuard` | "May this parent be woken right now?" |
 
-A `Stopper` reports **what it did**, not just whether it errored.
-`StopAfterTurn` — the run is still going and will record its own ending — is
-the one answer that lets the Manager stand back, and only a graceful stop may
-give it. A host that has never heard of the run says `StopUnknownRun`: a task
-claims its run before the launch registers it, so this is a real state, and
-answering "fine" for having done nothing is how a stop gets reported as
-accepted while the task runs to completion.
+A `Stopper` reports **what it did**, not just whether it errored. Two answers
+leave the ending to the run: `StopAfterTurn` (still going, will record its own
+ending — only a graceful stop may get this) and `StopAlreadyFinished` (it ended
+before the stop arrived, and its outcome is on its way). A host that has never
+heard of the run says `StopUnknownRun`: a task claims its run before the launch
+registers it, so this is a real state, and answering "fine" for having done
+nothing is how a stop gets reported as accepted while the task runs on.
 
 A `WakeGuard` **must return false when it cannot answer**. A failed query is "I
 cannot prove this is safe" — returning true on error makes every outage a source

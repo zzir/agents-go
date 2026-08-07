@@ -6,7 +6,7 @@ import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
 import { useAsyncMarkdown } from '@/lib/markdown';
-import type { TaskState, TaskViewState } from '@/lib/useAgentSocket';
+import { taskRetryable, type TaskState, type TaskViewState } from '@/lib/useAgentSocket';
 import type { TurnPart } from '@/lib/timeline';
 
 // statusDot carries the task state as color (with the words in the
@@ -94,12 +94,12 @@ export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject,
                 {taskDuration(t, now) && <span className="task-row-duration">{taskDuration(t, now)}</span>}
               </div>
               {t.status === 'failed' && t.summary && <div className="task-row-error">{t.summary}</div>}
-              {t.status === 'failed' && ((t.attempt || 1) > 1 || t.retryable) && (
+              {t.status === 'failed' && ((t.attempt || 1) > 1 || taskRetryable(t)) && (
                 <div className="task-row-actions" onClick={e => e.stopPropagation()}>
                   {(t.attempt || 1) > 1 && <span className="task-row-activity">attempt {t.attempt}</span>}
                   {/* Only when the server says it would take one: a task that
                       has used every attempt looks the same from here. */}
-                  {t.retryable && <Button size="small" className="task-row-stop" onClick={() => onRetry(t.taskId)}>Retry</Button>}
+                  {taskRetryable(t) && <Button size="small" className="task-row-stop" onClick={() => onRetry(t.taskId)}>Retry</Button>}
                 </div>
               )}
               {(t.status === 'working' || t.status === 'input_required') && (
@@ -173,7 +173,7 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
         {live && <Button size="small" onClick={() => onStop(task.taskId)}>Stop</Button>}
         {/* The transcript below is what a retry resumes from, so the action
             belongs beside it. */}
-        {task.retryable && <Button size="small" onClick={() => onRetry(task.taskId)}>Retry</Button>}
+        {taskRetryable(task) && <Button size="small" onClick={() => onRetry(task.taskId)}>Retry</Button>}
       </div>
       <div className="task-detail-tabs">
         <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>

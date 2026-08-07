@@ -73,9 +73,16 @@ const (
 	// long gone. Nothing was cancelled, so the ending is the Manager's to
 	// record.
 	StopUnknownRun StopOutcome = iota
-	// StopCancelled means the run is not going to continue: it was cancelled,
-	// or it had already finished. Either way nothing more will come from it.
+	// StopCancelled means this call cancelled the run.
 	StopCancelled
+	// StopAlreadyFinished means the run had ended on its own before the stop
+	// arrived, and its outcome is on its way through OnRunFinished.
+	//
+	// It is a separate answer from StopCancelled because the ending is not this
+	// call's: a host finishes a run before its report reaches the task row, and
+	// a Manager treating the two alike records a cancellation over a task that
+	// completed — or one that failed, which also costs it its retry.
+	StopAlreadyFinished
 	// StopAfterTurn means the run is still going and will stop at the end of
 	// its current turn, reporting its own ending through OnRunFinished. Only a
 	// graceful stop can be answered this way, and it is the one answer that

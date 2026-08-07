@@ -488,14 +488,26 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	return m.infoOf(updated, ""), nil
 }
 
-// Retryable reports whether a task in this state would be accepted by Retry.
+// Retryable reports whether a task's OWN state allows a retry: it failed, and
+// it has attempts left. A host offering a retry asks rather than infers —
+// "failed" alone does not answer it, since the ceiling is this Manager's
+// configuration and a task that has used every attempt looks the same from
+// outside.
 //
-// A host offering a retry asks rather than infers: "failed" alone does not
-// answer it, because the ceiling is this Manager's configuration and a task
-// that has used every attempt looks exactly the same from outside.
+// It deliberately says nothing about capacity. Retry also refuses when the
+// parent is at its live-task ceiling, and that is a transient condition which
+// can change between an offer being rendered and someone taking it — a
+// precomputed answer would be wrong as often as it was right. Such a refusal
+// is ErrTaskLimit, and it explains itself.
 func (m *Manager) Retryable(status Status, attempt int) bool {
 	return status == StatusFailed && max(attempt, 1) < m.cfg.MaxAttemptsPerTask
 }
+
+// MaxAttempts is the configured ceiling on a task's runs. A host that has to
+// answer "would a retry be allowed" about state it holds itself — a UI
+// tracking tasks live — takes the parameter rather than asking per task, so
+// its answer moves with the state instead of lagging a round trip behind it.
+func (m *Manager) MaxAttempts() int { return m.cfg.MaxAttemptsPerTask }
 
 // notRetryable explains why a task cannot be retried, or returns nil.
 func (m *Manager) notRetryable(t *Task) error {
@@ -566,13 +578,33 @@ func retryPrompt(t *Task, limit int) string {
 // Bound to the attempt just read: between that read and this write a retry can
 // reopen the task, and consuming then would cancel the NEW attempt's debt on
 // the strength of the old one's result.
-// A task still running owes nothing yet, so it is a no-op — callers may hand
-// it anything they have just reported to the model.
-func (m *Manager) modelHasResult(ctx context.Context, taskID string) {
-	t, err := m.cfg.Store.Get(ctx, taskID)
-	if err != nil || !t.Status.Terminal() {
+// info is what the caller is ABOUT to hand the model, and the debt is
+// cancelled only if that is genuinely the news: a task still shown as running
+// owes its wake-up however the row reads by now, because a result that landed
+// after the call was decided is a result the model has not seen. Consuming on
+// the row instead swallowed exactly that — the model was told "working", the
+// wake-up was cancelled, and the answer reached nobody.
+//
+// The attempt is checked for the same reason in the other direction: a retry
+// between the decision and this write makes the pending debt a different
+// attempt's, and that one is nobody's to cancel.
+func (m *Manager) modelHasResult(ctx context.Context, info *Info) {
+	if info == nil || !info.Status.Terminal() {
 		return
 	}
+	t, err := m.cfg.Store.Get(ctx, info.TaskID)
+	if err != nil {
+		return
+	}
+	if t.AttemptNo() != info.Attempt || !t.Status.Terminal() {
+		return
+	}
+	m.consumeNotify(ctx, t)
+}
+
+// consumeNotify cancels a finished task's wake-up debt, bound to the attempt
+// the caller read.
+func (m *Manager) consumeNotify(ctx context.Context, t *Task) {
 	if err := m.cfg.Store.ConsumeNotify(ctx, t.ID, t.RunID); err != nil {
 		m.log.WarnContext(ctx, "consuming task notification",
 			slog.String("task_id", t.ID), slog.String("error", err.Error()))
@@ -691,7 +723,9 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 			return nil, err
 		}
 		if t.Status.Terminal() {
-			m.modelHasResult(ctx, taskID)
+			// The row is in hand and it IS what the model is about to read, so
+			// the bound write needs no re-read.
+			m.consumeNotify(ctx, t)
 			return m.infoOf(t, ""), nil
 		}
 		remaining := time.Until(deadline)
@@ -790,15 +824,20 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 		return out
 	}
 	if !paused {
-		// Only a run that is actually still going can wind itself up. A host
-		// that has never heard of this run — because it is still being
-		// launched — would otherwise have its "nothing to do" read as "it will
-		// take care of itself", and the task would run on with a stop reported
-		// as accepted.
-		if stopRun() == StopAfterTurn {
-			// The run finishes its turn and reports through OnRunFinished,
-			// which records the cancellation. Finalizing here would race it.
+		// Two answers mean the ending is not this call's to write, and both
+		// leave it to the run's own report: it is winding up gracefully, or it
+		// had already finished before the stop arrived. Recording a
+		// cancellation over the second would overwrite a real outcome — and
+		// for a failure, cost the task the retry it had earned.
+		//
+		// Everything else falls through, including a host that has never heard
+		// of this run because it is still being launched: reading its "nothing
+		// to do" as "it will take care of itself" is how a stop gets reported
+		// as accepted while the task runs on.
+		switch stopRun() {
+		case StopAfterTurn, StopAlreadyFinished:
 			return true, false, nil
+		case StopUnknownRun, StopCancelled:
 		}
 	}
 

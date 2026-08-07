@@ -667,6 +667,120 @@ func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
 	})
 }
 
+// The wake-up is cancelled only when the result is genuinely what the model is
+// being handed. A task that finishes AFTER the call was decided still owes it:
+// the model was told "working", so consuming on the row instead would swallow
+// the answer and nobody would ever deliver it.
+func TestTools_ResultLandingAfterTheCallStillOwesAWakeUp(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.canWake = false // hold the debt still, so this is about consumption
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+	// Consume the first failure's debt so the assertion below is about the
+	// retry's.
+	if _, err := h.m.Status(ctx, info.TaskID, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// The task finishes between the launch settling and the tool returning —
+	// after Retry decided what to report.
+	h.launcher.beforeLaunch = func(req LaunchRequest) {
+		h.launcher.beforeLaunch = nil
+		go func() {
+			// Ordering is what matters, not timing: the retry's own settle has
+			// to read "working" first.
+			for range 100 {
+				if h.get(t, info.TaskID).Status == StatusWorking {
+					break
+				}
+			}
+			h.m.OnRunFinished(ctx, req.SessionID, RunOutcome{
+				RunID: req.RunID, Status: StatusCompleted, Text: "landed late",
+			})
+		}()
+	}
+
+	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+		`{"task_id":"`+info.TaskID+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Whatever the tool reported, the model must not be left without the
+	// result: either it is in this output, or a wake-up still owes it.
+	told := strings.Contains(stringOf(res), "landed late")
+	// Wait for the late finish to land before reading the debt.
+	for range 1000 {
+		if h.get(t, info.TaskID).Status.Terminal() {
+			break
+		}
+	}
+	owed := h.get(t, info.TaskID).NotifyState == NotifyPending
+	if !told && !owed {
+		t.Errorf("the model was told %q and is owed nothing — the result reaches nobody", stringOf(res))
+	}
+}
+
+// A stop that arrives after the run ended on its own must not overwrite the
+// outcome: the host marks a run finished before its report reaches the row, so
+// this window is ordinary — and recording a cancellation there loses a
+// completion, or a failure along with the retry it had earned.
+func TestStop_AfterTheRunAlreadyFinishedKeepsTheOutcome(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+
+	// The host: this run is over, its report is on its way.
+	h.m.cfg.Stopper = StopperFunc(func(_ context.Context, runID string, _ bool) (StopOutcome, error) {
+		h.mu.Lock()
+		h.stopped = append(h.stopped, runID)
+		h.mu.Unlock()
+		return StopAlreadyFinished, nil
+	})
+
+	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.get(t, info.TaskID).Status; got != StatusWorking {
+		t.Errorf("status = %s, want the row left for the run's own report", got)
+	}
+
+	// Which then lands, and stands.
+	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
+		RunID: h.get(t, info.TaskID).RunID, Status: StatusFailed, Err: "the real failure",
+	})
+	after := h.get(t, info.TaskID)
+	if after.Status != StatusFailed {
+		t.Errorf("status = %s, want failed — a stop overwrote a real outcome", after.Status)
+	}
+	// And a failure keeps the retry it earned.
+	if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
+		t.Errorf("the task lost its retry to a stop that cancelled nothing: %v", err)
+	}
+}
+
+// Retryable is about the task's own state. Capacity is deliberately not part
+// of it: the parent's ceiling can change between an offer being rendered and
+// someone taking it, so a precomputed answer would be wrong as often as right.
+func TestRetryable_IsAboutTheTaskNotTheParentsCapacity(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = 2 })
+	first := h.spawn(t)
+	h.fail(t, first.TaskID, "boom")
+	h.spawn(t)
+	h.spawn(t) // the parent is now full
+
+	if !h.m.Retryable(StatusFailed, 1) {
+		t.Error("a failed task with attempts left is not retryable")
+	}
+	if _, err := h.m.Retry(ctx, first.TaskID); !errors.As(err, new(ErrTaskLimit)) {
+		t.Fatalf("err = %v, want the capacity refusal to arrive at call time", err)
+	}
+	if h.m.MaxAttempts() != DefaultMaxAttemptsPerTask {
+		t.Errorf("MaxAttempts = %d, want the configured ceiling", h.m.MaxAttempts())
+	}
+}
+
 // A task that does not exist is a different answer from one that cannot be
 // claimed, and both shipped stores must agree — a caller written against one
 // backend has to be right on the other.

@@ -85,12 +85,15 @@ type Task struct {
 	// "delivered" (wake-up run injected). Persisted so the auto-wake
 	// survives restarts.
 	NotifyState string `bun:"notify_state,nullzero" json:"-"`
-	// Retryable is computed for the wire, not stored: whether task_retry would
-	// be accepted right now. The row knows its status and attempt; only the
-	// task manager knows the ceiling they are measured against.
-	Retryable bool      `bun:"-" json:"retryable,omitempty"`
-	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+	// MaxAttempts is the ceiling this row's attempt is measured against —
+	// filled for the wire, not stored, because it is the task manager's
+	// configuration rather than a fact about the task. Clients take the
+	// PARAMETER rather than a precomputed "retryable", so their answer moves
+	// with the status they are already tracking instead of lagging a round trip
+	// behind it.
+	MaxAttempts int       `bun:"-" json:"max_attempts,omitempty"`
+	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // AgentConfig is the persisted definition of an agent: model, instructions,

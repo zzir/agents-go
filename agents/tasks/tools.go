@@ -108,8 +108,9 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			// conversation later to repeat the news would burn a turn. Same
 			// rule task_status follows, and the reason it belongs here rather
 			// than in Spawn — a person reading the same result over the REST
-			// API has told the model nothing.
-			m.modelHasResult(ctx, info.TaskID)
+			// API has told the model nothing. It is a no-op for the ordinary
+			// case, where what the model is handed is a task still running.
+			m.modelHasResult(ctx, info)
 			return taskResult(info), nil
 		})
 
@@ -148,7 +149,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			}
 			// As with spawn_task: an attempt that finished this fast reports
 			// its result here, so nothing is owed.
-			m.modelHasResult(ctx, info.TaskID)
+			m.modelHasResult(ctx, info)
 			return taskResult(info), nil
 		})
 

@@ -108,10 +108,12 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 		return tasks.StopUnknownRun, nil
 	}
 	if isTerminalRunStatus(info.Status) {
-		// Already finished. Publishing a cancellation would rewrite an outcome
-		// every watching client has already seen — and it is not one: nothing
-		// was cancelled, the run simply ended first.
-		return tasks.StopCancelled, nil
+		// The run ended on its own before this stop arrived — the hub marks a
+		// run finished before its outcome reaches the task row, so this window
+		// is ordinary. Nothing was cancelled: publishing one would rewrite an
+		// outcome every watching client has seen, and recording one would
+		// overwrite the result already on its way to the row.
+		return tasks.StopAlreadyFinished, nil
 	}
 	t.r.publishTaskCancelled(runID)
 	return tasks.StopCancelled, nil
@@ -195,19 +197,23 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 }
 
 // taskInfoFrom converts the SDK's task view to this server's API shape.
-func taskInfoFrom(i *tasks.Info) *TaskInfo {
+//
+// MaxAttempts comes from the Runner rather than the Info: it is the manager's
+// configuration, and every response carries it so a client never has to guess
+// whether a retry is still on the table.
+func (r *Runner) taskInfoFrom(i *tasks.Info) *TaskInfo {
 	if i == nil {
 		return nil
 	}
 	return &TaskInfo{
-		TaskID:    i.TaskID,
-		Label:     i.Label,
-		Agent:     i.Agent,
-		Status:    string(i.Status),
-		Attempt:   i.Attempt,
-		Retryable: i.Retryable,
-		Summary:   i.Summary,
-		Result:    i.Result,
+		TaskID:      i.TaskID,
+		Label:       i.Label,
+		Agent:       i.Agent,
+		Status:      string(i.Status),
+		Attempt:     i.Attempt,
+		MaxAttempts: r.MaxTaskAttempts(),
+		Summary:     i.Summary,
+		Result:      i.Result,
 	}
 }
 

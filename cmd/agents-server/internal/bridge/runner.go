@@ -311,6 +311,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		started.ToolCallID = task.ToolCallID
 		started.Label = task.Label
 		started.Attempt = task.Attempt
+		started.MaxAttempts = task.MaxAttempts
 	}
 	sendEvent(protocol.EventRunStarted, started)
 

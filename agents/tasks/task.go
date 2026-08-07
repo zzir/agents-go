@@ -135,10 +135,10 @@ type Info struct {
 	Agent   string `json:"agent,omitzero"`
 	Status  Status `json:"status"`
 	Attempt int    `json:"attempt,omitzero"`
-	// Retryable reports whether task_retry would be accepted right now: the
-	// task is failed and has attempts left. A caller offering a retry should
-	// ask rather than infer, since the ceiling is the Manager's policy and not
-	// something the status alone can answer.
+	// Retryable reports whether the task's own state allows a retry: it failed
+	// and has attempts left. The ceiling is the Manager's policy, which a
+	// status alone cannot answer — but capacity is not included, so a retry can
+	// still be refused when the parent is full (see Manager.Retryable).
 	Retryable bool   `json:"retryable,omitzero"`
 	Summary   string `json:"summary,omitzero"`
 	Result    string `json:"result,omitzero"`

@@ -22,10 +22,12 @@ export interface TaskState {
   status: TaskStatus;
   // Which run of the task this is: 1 for the original, more after a retry.
   attempt?: number;
-  // Whether the server would accept a retry right now. Computed there, because
-  // the attempt ceiling is its policy — a client inferring it from "failed"
-  // offers a button that answers 409.
-  retryable?: boolean;
+  // The ceiling `attempt` is measured against — the server's policy, sent as a
+  // PARAMETER so the offer can be derived here (taskRetryable) whenever the
+  // status changes. Being told the answer instead left it fixed at whatever it
+  // was when the last REST call returned: a retry that failed again offered
+  // nothing, and a task that had just started still offered a Retry.
+  maxAttempts?: number;
   childSessionId?: string;
   toolCallId?: string;
   // The run that spawned this task — lets the trace panel nest the wake-up
@@ -103,6 +105,15 @@ interface TimelinePage {
 }
 
 type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionState) => void;
+
+// taskRetryable answers "would a retry be accepted" from the task state a
+// client already tracks: it failed, and it has attempts left against the
+// ceiling the server sent. Capacity is NOT part of it — the parent's live-task
+// limit is transient and can change between rendering an offer and taking it,
+// so that refusal arrives as a 409 carrying its own explanation.
+export function taskRetryable(t: TaskState): boolean {
+  return t.status === 'failed' && !!t.maxAttempts && (t.attempt || 1) < t.maxAttempts;
+}
 
 // staleTaskRow reports whether a durable row describes an OLDER state than the
 // one already on screen: an earlier attempt, or the same attempt walked back
@@ -300,7 +311,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.
-    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; attempt?: number; retryable?: boolean; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
+    (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; attempt?: number; max_attempts?: number; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
       .then(rows => {
         if (!rows || rows.length === 0) return;
         updateSS(sid, s => {
@@ -319,7 +330,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
                 childSessionId: cur.childSessionId || row.child_session_id,
                 parentRunId: cur.parentRunId || row.parent_run_id,
                 attempt: cur.attempt || row.attempt,
-                retryable: row.retryable,
+                maxAttempts: row.max_attempts ?? cur.maxAttempts,
                 summary: cur.summary ?? row.summary,
                 createdAt: created || cur.createdAt,
                 // For a terminal task the row's updated_at IS the finish time
@@ -334,7 +345,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
               taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id,
               childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
               status: (row.status || 'working') as TaskState['status'], attempt: row.attempt,
-              retryable: row.retryable, summary: row.summary,
+              maxAttempts: row.max_attempts, summary: row.summary,
               createdAt: created, updatedAt: updated,
             };
           }
@@ -393,7 +404,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       toast.error('Session expired — please sign in again');
     };
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string; attempt?: number }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
       // A background task run: track it under its parent session's task list
       // and keep it out of every chat-timeline path. Task identity (task_id)
       // and run attempt (run_id) are separate: events route by run id through
@@ -412,7 +423,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           return {
             ...s,
             messages: rearmed || s.messages,
-            tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', status: 'working' as TaskStatus, attempt: p.attempt || s.tasks[taskId]?.attempt, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now(), summary: undefined } },
+            tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', status: 'working' as TaskStatus, attempt: p.attempt || s.tasks[taskId]?.attempt, maxAttempts: p.max_attempts || s.tasks[taskId]?.maxAttempts, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now(), summary: undefined } },
           };
         });
         // A resume segment of the watched task re-announces itself; make sure
@@ -1002,7 +1013,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // the hub entirely) — re-pull the durable rows so statuses that changed
       // during the outage land in the chips.
       for (const sid of loadedRef.current) {
-        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; attempt?: number; retryable?: boolean; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
+        (api.sessions.tasks(sid) as Promise<Array<{ task_id: string; parent_run_id?: string; label?: string; status?: string; attempt?: number; max_attempts?: number; summary?: string; tool_call_id?: string; child_session_id?: string; created_at?: string; updated_at?: string }>>)
           .then(rows => {
             if (!rows || rows.length === 0) return;
             updateSS(sid, s => {
@@ -1020,7 +1031,8 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
                   ...(cur || { taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id }),
                   childSessionId: cur?.childSessionId || row.child_session_id,
                   parentRunId: cur?.parentRunId || row.parent_run_id,
-                  status, attempt: row.attempt ?? cur?.attempt, retryable: row.retryable,
+                  status, attempt: row.attempt ?? cur?.attempt,
+                  maxAttempts: row.max_attempts ?? cur?.maxAttempts,
                   summary: row.summary ?? cur?.summary,
                   createdAt: (row.created_at ? Date.parse(row.created_at) : undefined) || cur?.createdAt,
                   updatedAt: (row.updated_at ? Date.parse(row.updated_at) : undefined) || cur?.updatedAt,
