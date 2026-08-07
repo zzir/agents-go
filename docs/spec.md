@@ -1879,10 +1879,43 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   treating them alike makes one transient query error a way past the limit.
   `MetaFor` reports the failure rather than resolving it to "no".
 - Defaults: depth 1 (a task cannot spawn tasks), 6 concurrent tasks per parent,
-  300-rune summaries, a 120s bound on `task_status`'s wait.
+  300-rune summaries, a 120s bound on `task_status`'s wait, 3 attempts per task.
 - **A notification is a user-role entry** the model reads verbatim; a UI renders
   it as a card. Formatting and parsing ship together, so the format is defined
   once.
+- **A failed task can be retried in place** — `failed → working`, the only
+  transition out of a terminal state, and a compare-and-set like `Finalize`:
+  the new run id, the incremented attempt and the cleared summary, result and
+  wake-up debt land with the status, only while the task is failed and under
+  the attempt ceiling. The debt is cleared because the task is no longer
+  finished; the next ending owes a fresh one. **The ceiling is a store
+  predicate**, not only a Manager check, so two processes cannot both claim the
+  last attempt. Resuming is sound because the session is: persistence stops at
+  a boundary that never leaves a call without its output (§2.5), so the tail of
+  a failed attempt is valid model input.
+- **A finalizer names the attempt it observed.** Reopening a terminal task
+  removes the invariant the rest rested on — "the row is non-terminal" no
+  longer says WHICH run a writer looked at — so `Finalize`, `ConsumeNotify` and
+  `MarkNotifyDelivered` carry a run id and lose when it is not the current one.
+  A stop that read the row just before a retry would otherwise cancel the new
+  attempt while its run kept executing, unkillable, its own outcome discarded
+  for losing the CAS. `MarkInputRequired` / `ReclaimWorking` are exempt: both
+  move between NON-terminal states, which only the current attempt can reach.
+  A stop chases **one** retry, since it names the task rather than the run.
+- **A retry takes a concurrency slot** like a spawn — exempting it would make
+  retry the way around the cap — and a launch that fails puts the task back to
+  failed with its debt consumed, since the caller is being told to its face.
+- **The restart sweep cannot arbitrate a retry**, so ordering must. `FailOrphans`
+  fails every row recorded as working and has no notion of a live run; a retry
+  that claimed first would have its fresh run declared dead, its parent woken
+  with a failure that did not happen, and the real result dropped for losing the
+  CAS. The sweep is therefore a separate call from the drain, to run **before**
+  the host accepts requests. Two processes sharing one store keep the race —
+  the same exposure the concurrency cap already documents.
+- **The retry hint in a notification is its own line.** A task line is a record
+  consumers parse, and text appended inside one is read as part of that task's
+  result — the same reasoning that makes the label and summary escape their
+  delimiters.
 
 ---
 

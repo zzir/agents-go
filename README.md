@@ -177,7 +177,8 @@ with `agents.RunStateFromJSON(data, registry)` for cross-process approvals.
 - [Logging](docs/logging.md) — structured `slog` records, off by default, with
   conversation content behind a second opt-in
 - [Background tasks](docs/tasks.md) — sub-agents that outlive the turn that
-  started them, waking the parent with their result
+  started them, waking the parent with their result; a failed one resumes from
+  where it stopped
 - [Testing](docs/testing.md) — `agentstest` scripts the model, so an agent's
   tools and decisions are covered offline
 

@@ -262,14 +262,18 @@ notification into the parent session (see the SDK's
 |--------|-----------------------|--------------------------------------------------------------------------------|
 | GET    | `/sessions/:id/tasks` | List the session's tasks, newest first                                         |
 | POST   | `/tasks/:id/stop`     | Stop a task — cancels a running one, discards a paused one's pending approval  |
+| POST   | `/tasks/:id/retry`    | Resume a FAILED task: same session and progress, a new run                     |
 
 A task row carries `task_id` (the durable identity clients key state by),
 `run_id` (the current attempt's execution id — events route by it), plus
-`parent_session_id`, `parent_run_id`, `tool_call_id`, `label` and status.
-Status uses the MCP Tasks five-state vocabulary; it is read live from the hub
-for a running task and from the store after it ends. `stop` returns `200` with
-the task info, `409` if the task is already final. The per-session live-task
-cap is the `--max-tasks` flag.
+`parent_session_id`, `parent_run_id`, `tool_call_id`, `label`, `attempt` (1 for
+the original run, one more per retry) and status. Status uses the MCP Tasks
+five-state vocabulary; it is read live from the hub for a running task and from
+the store after it ends. `stop` returns `200` with the task info, `409` if the
+task is already final. `retry` returns `200` with the reopened task, `409` when
+the task is not failed, has used every attempt (3 by default), or its session is
+at the live-task cap — which is the `--max-tasks` flag, and which a retry
+queues behind like a spawn.
 
 ### Agents — `/api/v1/agents`
 
@@ -882,8 +886,9 @@ When a change genuinely doesn't fit, update this list in the same PR.
 20. **A task is a durable entity; a run is one execution of it.** `spawn_task`
     mints separate ids: the task row carries `run_id` (its current attempt),
     and `run.started` / `RunInfo.task` carry `task_id` — clients route events
-    by run id and key task state by task id (a future retry mints a new run id
-    on the same task row). The transcript lives in a hidden child session. The
+    by run id and key task state by task id — `task_retry` mints a new run id
+    on the same task row, and `run.started` carries the `attempt` so a client
+    whose card shows a finished task can tell a new attempt from a replay. The transcript lives in a hidden child session. The
     spawn target is an agent config by name; an empty `agent_name` (or the
     `default` / `self` / `current` aliases) runs the task with the spawning
     run's own agent — a config actually named that way wins. Task events use

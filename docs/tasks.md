@@ -15,7 +15,7 @@ parent run
      parent is woken with the result in a later turn
 ```
 
-`agents/tasks` provides the state machine, the wake-up bookkeeping and the three
+`agents/tasks` provides the state machine, the wake-up bookkeeping and the four
 tools. What it deliberately does not know is your environment, which arrives
 through three injection points.
 
@@ -57,6 +57,16 @@ mgr.OnRunFinished(ctx, sessionID, out)    // when ANY run ends
 mgr.StopTree(ctx, sessionID)              // before deleting a session
 ```
 
+A host that can serve requests while it starts up should call `Recover`'s two
+halves itself instead: `FailOrphans` **before** anything can accept a retry, and
+`DrainAllPending` once the rest of the machinery is in place (it starts runs).
+The sweep fails every task recorded as running and has no notion of a live run,
+so a retry that got in first would have its fresh run declared dead.
+
+Set `RunOutcome.RunID` if your host identifies its runs. It names the attempt
+that finished, so a task retried while that run was in flight keeps the new
+attempt rather than being overwritten by the old one's outcome.
+
 `OnRunFinished` is the only entry point that advances state, and it takes every
 session — not just task sessions. A parent that was busy while a task finished
 has debts waiting, and its own run boundary is where they can finally be paid.
@@ -80,7 +90,17 @@ reason, and a Manager configured with no guard never wakes at all.
 |---|---|
 | `spawn_task` | Start a task; returns a `task_id` immediately |
 | `task_status` | Read one, optionally waiting for it to finish |
+| `task_retry` | Resume a FAILED one from where it stopped |
 | `task_stop` | Cancel one |
+
+`task_retry` starts a new run on the task's existing session, so the model
+continues from the progress the failed attempt made instead of paying for it
+again. Only a **failed** task can be resumed — a completed one has its answer, a
+cancelled one was stopped on purpose — and only up to
+`MaxAttemptsPerTask` (default 3, counting the original run). It is a different
+job from a model-level retry decorator: that one retries a request the provider
+refused, blind to what the run was doing; this one is the parent deciding, with
+the failure in front of it, that the work is worth resuming.
 
 `task_status(wait_seconds:)` blocks server-side for up to `MaxStatusWait`
 (default 120s). It is one blocked goroutine instead of the model's polling loop,
@@ -116,7 +136,12 @@ that owes it one:
 ```
 [task-notification] Task "index the docs" (a1b2) completed. Result: indexed 412 files… [truncated — call task_status(a1b2) for the full result]
 Task "check links" (c3d4) failed. Result: 3 dead links
+(task_retry can resume a failed task from where it stopped)
 ```
+
+The hint appears when the batch contains a failed task, on a **line of its
+own**: a task line is a record consumers parse, and text appended inside one
+would be read as part of that task's result.
 
 It is a **user-role entry**: the model reads it verbatim, which is the point —
 it is news the model has to act on. A UI should detect the
@@ -134,7 +159,8 @@ These are the boundaries the design exists for. Each is a test in
 `agents/tasks`.
 
 **Identity.** `Task.ID` and `Task.RunID` are separate: the task is the durable
-entity, a run is one attempt at it.
+entity, a run is one attempt at it. That separation is what makes `task_retry`
+expressible without inventing a second task.
 
 **Finalization is a compare-and-set.** Status, result and the wake-up debt land
 in one atomic transition, and only while the task is still non-terminal. Two
@@ -143,6 +169,26 @@ without this a terminal state gets overwritten, or `task_status` sees a finished
 task whose result has not arrived. This is why tasks require a **transactional
 store**; there is no file-backed implementation.
 
+**A retry is one transition too**, `failed → working`: the new run id, the
+attempt count and the cleared debt land with the status, only while the task is
+failed and under the ceiling. The ceiling is enforced by the store rather than
+only by the Manager that checked it, so two processes asking at once cannot both
+get an attempt.
+
+**Every finalizer names the attempt it observed.** Since a task can now leave a
+terminal state, "the row is non-terminal" no longer identifies WHICH run a
+writer was looking at — so `Finalize`, `ConsumeNotify` and
+`MarkNotifyDelivered` take a run id and lose when it is not the current one.
+Without that, a stop that read the row just before a retry would cancel the new
+attempt while its run kept executing, unkillable, its own result discarded.
+`MarkInputRequired` and `ReclaimWorking` do not: both move between non-terminal
+states, which only the current attempt can reach.
+
+**A retry takes a concurrency slot**, like a spawn: it is a task coming back to
+life, and exempting it would make retry the way around
+`MaxConcurrentPerParent`. If its run fails to start, the task goes back to
+failed and its debt is consumed — the caller was told to its face.
+
 **Four reasons not to wake**, all of which must be clear: the session is being
 deleted, it already has a live run, it is paused on a human decision, or the
 guard could not tell. A refused wake keeps the debt, and the next run boundary
@@ -150,7 +196,9 @@ re-drains it.
 
 **A cancellation never wakes.** The user initiated it, the UI already shows it,
 and a wake-up run would only restate it. The same for a result the model already
-pulled with `task_status`.
+pulled with `task_status`. A retry clears the debt instead: the task is not
+finished any more, so nothing is owed until it is again — and the next ending
+owes a fresh one.
 
 **The wake-up runs under the configuration snapshotted at spawn**, not resolved
 fresh: the parent may be configured differently by the time it fires.
