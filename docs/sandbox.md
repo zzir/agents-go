@@ -109,7 +109,9 @@ agent := &agents.Agent{
 }
 ```
 
-The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) are normal tool output; *infrastructure* failures (daemon down, missing image) abort the run.
+The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) and malformed arguments are normal tool output the model can correct; *infrastructure* failures (daemon down, missing image) abort the run.
+
+String arguments (`workdir`, `session_id`) decode leniently: a model running on a backend that does not enforce strict schemas sometimes fills an unused field with `0` or `null` instead of `""`, and those decode as `"0"` / `""` rather than failing the call.
 
 ## CodeTool configuration
 

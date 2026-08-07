@@ -1402,6 +1402,30 @@ an activated environment survive between calls.
   that the tool's closer exists to prevent. A named command that arrives
   afterwards fails instead, rather than opening a shell on a sandbox whose owner
   has already let go of it.
+
+### 2.7l Sandbox tool argument decoding ✅
+
+`exec_command` decodes its own arguments — it is a hand-built tool, not a
+`NewTool` wrapper, so nothing upstream of `OnInvoke` catches a malformed call.
+Two rules keep one from costing more than the call:
+
+- **Malformed arguments are refused as text, not returned as an error.**
+  CodeTool sets no `FailureErrorFunction`, so an error return aborts the whole
+  run (§2.7) — the wrong blast radius for the model's own spelling slip, which
+  it can correct on the next call. The refusal is an `IsError` result carrying
+  the decode error, the same shape as a policy veto. The error return stays
+  reserved for sandbox *infrastructure* failure (a dead daemon, a broken
+  connection), where feeding text back would have the model retry against a
+  sandbox that is gone.
+- **String arguments decode leniently**: a JSON number or boolean lands as its
+  literal text (`0` → `"0"`), `null` as `""`. A backend that does not enforce
+  strict schemas (Anthropic, ChatGPT) lets the model fill an unused required
+  field with a zero-value sentinel — `session_id: 0` for "no session" — and
+  strict mode is what made the field required in the first place. The schema
+  still advertises plain `string`; objects and arrays still refuse, because
+  there is no literal text the model plausibly meant.
+- The approval gate treats undecodable arguments like a policy veto (§2.7j): a
+  call `OnInvoke` will refuse as text never reaches a human.
 - **The named shells belong to the tool, not the run.** Two concurrent runs of
   the same agent share one pool, so both `"build"` sessions are the same shell;
   a host that wants isolation builds the tool per run.

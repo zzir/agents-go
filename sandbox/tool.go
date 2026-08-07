@@ -88,11 +88,36 @@ func (c CodeToolConfig) withDefaults() CodeToolConfig {
 	return c
 }
 
+// lenientString is a string that also accepts a JSON number, boolean or null,
+// decoding to the literal's text ("" for null). The schema still says string —
+// but a backend that does not enforce strict schemas (Anthropic, ChatGPT) lets
+// the model fill an unused required field with a zero-value sentinel like 0,
+// and a whole run is not worth losing over that spelling of "none".
+type lenientString string
+
+func (s *lenientString) UnmarshalJSON(data []byte) error {
+	var v string
+	if err := json.Unmarshal(data, &v); err == nil {
+		*s = lenientString(v)
+		return nil
+	}
+	lit := string(bytes.TrimSpace(data))
+	switch {
+	case lit == "null":
+		*s = ""
+	case lit == "" || lit[0] == '{' || lit[0] == '[':
+		return fmt.Errorf("cannot decode %s as a string", lit)
+	default:
+		*s = lenientString(lit) // number or boolean: keep the literal text
+	}
+	return nil
+}
+
 type codeToolArgs struct {
-	Cmd            string `json:"cmd"             jsonschema:"the shell command to execute (passed to bash -c)"`
-	TimeoutSeconds int    `json:"timeout_seconds" jsonschema:"execution timeout in seconds; 0 uses the default"`
-	Workdir        string `json:"workdir"         jsonschema:"working directory for the command; empty uses the sandbox default"`
-	SessionID      string `json:"session_id"      jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
+	Cmd            string        `json:"cmd"             jsonschema:"the shell command to execute (passed to bash -c)"`
+	TimeoutSeconds int           `json:"timeout_seconds" jsonschema:"execution timeout in seconds; 0 uses the default"`
+	Workdir        lenientString `json:"workdir"         jsonschema:"working directory for the command; empty uses the sandbox default"`
+	SessionID      lenientString `json:"session_id"      jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
 }
 
 // CodeTool wraps a Sandbox as a function tool. The model supplies a shell
@@ -132,10 +157,10 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		}
 		return compiled.check(cmd)
 	}
-	// The policy veto precedes the approval gate (spec §2.7j): a command the
-	// policy refuses must never reach a human — the runner would ask, get a
-	// yes, and then refuse anyway, which wastes the approval and teaches the
-	// user their answers change nothing. A refused command reports "no
+	// A call OnInvoke will refuse as text — a policy veto (spec §2.7j) or
+	// malformed arguments — must never reach a human: the runner would ask,
+	// get a yes, and then refuse anyway, which wastes the approval and
+	// teaches the user their answers change nothing. Such a call reports "no
 	// approval needed" here and OnInvoke refuses it as text the model can act
 	// on.
 	needsApproval := cfg.NeedsApprovalFunc
@@ -143,8 +168,8 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		inner := needsApproval
 		needsApproval = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
 			var args codeToolArgs
-			if json.Unmarshal([]byte(argsJSON), &args) == nil && checkPolicy(args.Cmd) != nil {
-				return false, nil //nolint:nilerr // the veto is deliberate: OnInvoke refuses this command as text
+			if json.Unmarshal([]byte(argsJSON), &args) != nil || checkPolicy(args.Cmd) != nil {
+				return false, nil //nolint:nilerr // the veto is deliberate: OnInvoke refuses this call as text
 			}
 			return inner(ctx, rc, argsJSON, callID)
 		}
@@ -158,7 +183,15 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-				return agents.ToolResult{}, agents.Classify(agents.CodeModelBehavior, fmt.Errorf("code tool %q: invalid arguments: %w", cfg.Name, err))
+				// Refused as TEXT like a policy veto, not an error: malformed
+				// arguments are the model's own mistake to correct on its next
+				// call, and CodeTool sets no FailureErrorFunction — an error
+				// here would abort the whole run over a spelling slip. The
+				// error return below (sandbox infrastructure failure) is the
+				// one that stays fatal.
+				res := agents.TextResult(fmt.Sprintf("invalid arguments: %v", err))
+				res.IsError = true
+				return res, nil
 			}
 
 			timeout := cfg.Timeout
@@ -180,7 +213,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 
 			cmd := args.Cmd
 			if args.Workdir != "" {
-				cmd = "cd " + ShellQuote(args.Workdir) + " && " + cmd
+				cmd = "cd " + ShellQuote(string(args.Workdir)) + " && " + cmd
 			}
 
 			// Instrumented here rather than in each backend: this is the one
@@ -194,19 +227,19 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			// call is stateless, which a model experiences as its `cd` being
 			// ignored — and the workaround it reaches for, chaining everything
 			// into one enormous `&&` line, is worse to read and worse to fail.
-			if cfg.Sessions && args.SessionID != "" {
-				out, code, err := sessions.run(ctx, sb, args.SessionID, cmd, timeout)
+			if session := string(args.SessionID); cfg.Sessions && session != "" {
+				out, code, err := sessions.run(ctx, sb, session, cmd, timeout)
 				if err != nil {
-					return agents.TextResult(fmt.Sprintf("session %q: %v", args.SessionID, err)).
+					return agents.TextResult(fmt.Sprintf("session %q: %v", session, err)).
 						WithDisplay("terminal").
-						WithDetails(map[string]any{"command": cmd, "session_id": args.SessionID}), nil
+						WithDetails(map[string]any{"command": cmd, "session_id": session}), nil
 				}
 				return agents.TextResult(formatSessionResult(out, code, cfg.MaxOutputBytes)).
 					WithDisplay("terminal").
 					WithDetails(map[string]any{
 						"command":    cmd,
 						"exit_code":  code,
-						"session_id": args.SessionID,
+						"session_id": session,
 					}), nil
 			}
 
