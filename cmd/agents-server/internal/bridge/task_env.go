@@ -185,6 +185,16 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 			"task_attempt": t.AttemptNo(),
 		},
 	}
+	if t.Summary != "" {
+		// Because a later update cannot blank a summary, a retry's working
+		// update leaves the previous attempt's failure text in the fold beside
+		// the new attempt's status. Extra merges per key, so recording WHOSE
+		// summary this is survives every later update that carries none — and
+		// lets the timeline drop a summary from an earlier attempt than the
+		// one the card is on, instead of showing a voided failure as the
+		// current result.
+		display.Extra["task_summary_attempt"] = t.AttemptNo()
+	}
 	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
 	if rerr != nil {
 		zerolog.Ctx(ctx).Warn().Err(rerr).Str("task_id", t.ID).Msg("recording task display update")

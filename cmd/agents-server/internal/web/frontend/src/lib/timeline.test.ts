@@ -197,7 +197,9 @@ describe('stream/replay isomorphism', () => {
     live = applyTaskTerminal(live, 'c1', { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 })!;
 
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'done', extra: { task_id: 't1', task_status: 'completed', task_attempt: 2 } } },
+      // task_summary_attempt mirrors the server's terminal update: the fold's
+      // summary belongs to attempt 2, so replay keeps it.
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'done', extra: { task_id: 't1', task_status: 'completed', task_attempt: 2, task_summary_attempt: 2 } } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -211,6 +213,34 @@ describe('stream/replay isomorphism', () => {
       },
     ]);
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  it('task retry: a summary from a voided attempt is dropped on replay', () => {
+    // The fold keeps the last NON-EMPTY summary (merge cannot blank), so after
+    // a retry the previous attempt's failure text survives in the display
+    // beside the new attempt's status. task_summary_attempt is its provenance:
+    // older than the card's attempt means a retry voided it, and rendering it
+    // would show "Task result: <old failure>" against a task that is working
+    // again — or against a later attempt that finished with nothing to say.
+    const spawnRow = (extra: Record<string, unknown>): EntryView[] => ([
+      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'rate limited', extra } },
+    ]);
+    const taskOf = (rows: EntryView[]) => {
+      const parts = partsOf(buildTimeline(rows));
+      return (parts[0] as { toolCalls: Array<{ task?: { status?: string; summary?: string } }> }).toolCalls[0].task;
+    };
+
+    // Reload mid-retry: attempt 2 running, attempt 1's failure still in the fold.
+    expect(taskOf(spawnRow({ task_id: 't1', task_status: 'working', task_attempt: 2, task_summary_attempt: 1 })))
+      .toEqual({ id: 't1', label: 'Flaky job', status: 'working', summary: undefined, attempt: 2 });
+    // Attempt 2 finished with an empty summary: the leftover must not pose as
+    // its result.
+    expect(taskOf(spawnRow({ task_id: 't1', task_status: 'completed', task_attempt: 2, task_summary_attempt: 1 })))
+      .toEqual({ id: 't1', label: 'Flaky job', status: 'completed', summary: undefined, attempt: 2 });
+    // A row written before attempts existed carries neither key and keeps its
+    // summary — the legacy shape must not regress.
+    expect(taskOf(spawnRow({ task_id: 't1', task_status: 'failed' })))
+      .toEqual({ id: 't1', label: 'Flaky job', status: 'failed', summary: 'rate limited', attempt: undefined });
   });
 
   it('task retry: a folded outcome carries its attempt, so a replay cannot wipe it', () => {

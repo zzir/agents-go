@@ -35,6 +35,11 @@ interface DisplayExtra {
   // retry. A card showing a finished task uses it to tell a NEW attempt from a
   // replay of the one it already has.
   task_attempt?: number;
+  // Which attempt wrote the folded summary. The fold keeps the last NON-EMPTY
+  // summary (a later update cannot blank one), so after a retry the previous
+  // attempt's failure text survives beside the new attempt's status — this is
+  // the provenance that lets assemble drop it.
+  task_summary_attempt?: number;
   [k: string]: unknown;
 }
 
@@ -383,7 +388,15 @@ function assemble(
         anchor(e);
         const x = d.extra;
         const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.tool_name || '', arguments: d.arguments || '', output: null, status: null };
-        if (x?.task_id || x?.task_status) tc.task = { id: x.task_id, label: d.title, status: x.task_status, summary: d.summary, attempt: x.task_attempt };
+        if (x?.task_id || x?.task_status) {
+          // A summary from an earlier attempt than the card's is a leftover a
+          // retry voided, not the current result — the fold cannot blank it
+          // (only non-empty fields merge), so compare its provenance instead.
+          // Rows written before attempts existed carry neither key and keep
+          // their summary.
+          const stale = typeof x.task_attempt === 'number' && (x.task_summary_attempt ?? 0) < x.task_attempt;
+          tc.task = { id: x.task_id, label: d.title, status: x.task_status, summary: stale ? undefined : d.summary, attempt: x.task_attempt };
+        }
         pendingTC[d.call_id] = tc;
         const last = turn!.parts[turn!.parts.length - 1];
         if (last && last.type === 'tools') { (last as ToolsPart).toolCalls.push(tc); }

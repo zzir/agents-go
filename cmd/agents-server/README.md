@@ -900,7 +900,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     server APPENDS an update entry addressed to the spawn call's id — the
     label and summary on display's first-class Title/Summary,
     `task_id`/`task_status` in Extra as renderer state — and the read folds it
-    into that call's display. Appending is what removed the retry loop: a fast
+    into that call's display. The fold merges non-empty fields only, so a
+    retry's working update cannot blank the failed attempt's summary — a
+    summary-carrying update therefore also records `task_summary_attempt`
+    (Extra merges per key), and the timeline drops a folded summary older than
+    the card's `task_attempt` rather than show a voided failure as the current
+    attempt's result. Appending is what removed the retry loop: a fast
     task can finish before the turn that spawned it is persisted, and the old
     rewrite hunted for a row that did not exist yet. An update may be stored
     BEFORE its target; folding associates them by call id afterwards. A
