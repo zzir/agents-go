@@ -261,8 +261,17 @@ func TestRetry_LaunchFailurePutsTheTaskBack(t *testing.T) {
 	h.fail(t, info.TaskID, "boom")
 
 	h.launcher.err = errors.New("session is being deleted")
-	if _, err := h.m.Retry(ctx, info.TaskID); err == nil {
+	cur, err := h.m.Retry(ctx, info.TaskID)
+	if err == nil {
 		t.Fatal("retry reported success with no run started")
+	}
+	// The state travels with the error, so the caller can report what the
+	// task now is — the tool path needs it to hand the model the failure.
+	if cur == nil {
+		t.Fatal("no task state came back with the launch failure")
+	}
+	if cur.Status != StatusFailed || cur.Attempt != 2 {
+		t.Errorf("reported %s attempt %d, want failed attempt 2", cur.Status, cur.Attempt)
 	}
 
 	after := h.get(t, info.TaskID)
@@ -272,17 +281,84 @@ func TestRetry_LaunchFailurePutsTheTaskBack(t *testing.T) {
 	if !strings.Contains(after.Summary, "retry could not start") {
 		t.Errorf("summary = %q, want it to say the retry never started", after.Summary)
 	}
-	// The caller was told to its face, so there is no news to wake anyone
-	// with: a drain that could deliver finds nothing owed.
-	if after.NotifyState != NotifyConsumed {
-		t.Errorf("notify state = %q, want consumed", after.NotifyState)
+	// The debt survives: whether the MODEL has heard is the caller's
+	// knowledge, and Retry alone (the host-API path) has told it nothing. The
+	// immediate drain could not deliver either — the launcher that failed the
+	// run fails the wake-up too — so the news is still owed...
+	if after.NotifyState != NotifyPending {
+		t.Errorf("notify state = %q, want pending", after.NotifyState)
 	}
+	// ...and the next boundary that can deliver does.
 	h.launcher.err = nil
 	before := len(h.launcher.wakes())
 	h.m.DrainPending(ctx, "parent")
-	if len(h.launcher.wakes()) != before {
-		t.Error("a failed retry left a wake-up owed")
+	wakes := h.launcher.wakes()
+	if len(wakes) != before+1 {
+		t.Fatalf("%d wake-ups after the drain, want %d — the failed retry's news never left", len(wakes), before+1)
 	}
+	if got := wakes[len(wakes)-1].Input; !strings.Contains(got, "retry could not start") {
+		t.Errorf("the wake-up does not carry the failure: %q", got)
+	}
+}
+
+// The wake-up debt a failed retry-launch opens follows the modelHasResult
+// line: the task_retry tool hands the model the failure in its result and
+// settles the debt in hand; a retry over a host API tells only a person, so
+// the model keeps its wake-up — immediately, when the parent is idle.
+func TestRetry_LaunchFailureDebtFollowsTheCaller(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the tool reports the failure and settles the debt", func(t *testing.T) {
+		h := newHarness(t)
+		h.canWake = false // the parent is mid-run while its tool call executes
+		info := h.spawn(t)
+		h.fail(t, info.TaskID, "boom")
+		h.launcher.err = errors.New("nope")
+
+		res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+			`{"task_id":"`+info.TaskID+`"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Error("a retry that never started reported success")
+		}
+		if s := stringOf(res); !strings.Contains(s, "retry could not start") {
+			t.Fatalf("the model was not told why: %q", s)
+		}
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
+			t.Errorf("notify state = %q, want consumed — the model just read the failure", got)
+		}
+	})
+
+	t.Run("a host-API retry wakes an idle parent at once", func(t *testing.T) {
+		h := newHarness(t)
+		info := h.spawn(t)
+		h.fail(t, info.TaskID, "boom") // wake #1: the original failure
+		// Only the retry's own run fails to start; the wake-up that follows
+		// can go out. The hook runs on the launching goroutine, so flipping
+		// err per request is ordered, not raced.
+		h.launcher.beforeLaunch = func(req LaunchRequest) {
+			if req.Wake {
+				h.launcher.err = nil
+			} else {
+				h.launcher.err = errors.New("nope")
+			}
+		}
+		if _, err := h.m.Retry(ctx, info.TaskID); err == nil {
+			t.Fatal("retry reported success with no run started")
+		}
+		wakes := h.launcher.wakes()
+		if len(wakes) != 2 {
+			t.Fatalf("%d wake-ups, want 2: the original failure and the failed retry", len(wakes))
+		}
+		if got := wakes[1].Input; !strings.Contains(got, "retry could not start") {
+			t.Errorf("the wake-up does not carry the failure: %q", got)
+		}
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyDelivered {
+			t.Errorf("notify state = %q, want delivered", got)
+		}
+	})
 }
 
 // The waiters a failed retry leaves behind are the ones that were watching the

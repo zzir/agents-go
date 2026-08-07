@@ -471,7 +471,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 		Input:     prompt,
 		Inherit:   t.Inherit,
 	}); err != nil {
-		return nil, m.retryLaunchFailed(ctx, taskID, runID, err)
+		return m.retryLaunchFailed(ctx, taskID, runID, err)
 	}
 
 	// A stop that arrived while this run was being launched has already
@@ -521,13 +521,18 @@ func (m *Manager) notRetryable(t *Task) error {
 }
 
 // retryLaunchFailed puts a claimed task back to failed after its new run never
-// started, and returns the error to report.
+// started, and reports the task as it now stands alongside the error.
 //
 // Unlike Spawn's rollback there is no row to remove: the task existed before
 // this call and its history is real. What must not survive is the working
-// status — nothing is going to advance it — nor a wake-up debt for news the
-// caller is being told to its face.
-func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, cause error) error {
+// status — nothing is going to advance it.
+//
+// The wake-up debt the new ending opens is deliberately left standing. Whether
+// the MODEL has heard is the caller's knowledge, not this function's: the
+// task_retry tool reports the failure in its result and settles the debt it
+// just paid, while a host API's caller is a person — telling them tells the
+// model nothing, which is the same line modelHasResult draws.
+func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, cause error) (*Info, error) {
 	// Detached for the same reason as settleLaunch: the likeliest cause of a
 	// launch failing is a session being torn down, which has already cancelled
 	// the caller's context — and a task left working because its rollback was
@@ -541,18 +546,24 @@ func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, c
 			slog.String("task_id", taskID), slog.String("error", err.Error()))
 	}
 	if won {
-		// Only the winner consumes: on a loss the debt belongs to whoever
-		// recorded the ending, and cancelling it would bury their news.
-		if cerr := m.cfg.Store.ConsumeNotify(ctx, taskID, runID); cerr != nil {
-			m.log.WarnContext(ctx, "consuming task notification",
-				slog.String("task_id", taskID), slog.String("error", cerr.Error()))
-		}
 		m.finished(taskID)
 	}
-	if t, gerr := m.cfg.Store.Get(ctx, taskID); gerr == nil {
-		m.notifyUpdate(ctx, t)
+	wrapped := fmt.Errorf("tasks: restarting task run: %w", cause)
+	t, gerr := m.cfg.Store.Get(ctx, taskID)
+	if gerr != nil {
+		return nil, wrapped
 	}
-	return fmt.Errorf("tasks: restarting task run: %w", cause)
+	m.notifyUpdate(ctx, t)
+	if won {
+		// The ending just recorded owes the parent its wake-up, exactly as the
+		// same failure arriving through OnRunFinished would. On the tool path
+		// this is a no-op — the parent is mid-run, so the guard refuses and
+		// the tool settles the debt with the result it returns — but a host
+		// API's retry has no turn in flight, and without the drain an idle
+		// parent would not hear the failure until something else ended a run.
+		m.DrainPending(ctx, t.ParentSessionID)
+	}
+	return m.infoOf(t, ""), wrapped
 }
 
 // retryPrompt is what a retried run is asked to do.

@@ -1904,7 +1904,10 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   A stop chases **one** retry, since it names the task rather than the run.
 - **A retry takes a concurrency slot** like a spawn — exempting it would make
   retry the way around the cap — and a launch that fails puts the task back to
-  failed with its debt consumed, since the caller is being told to its face.
+  failed. The debt that ending opens follows the model-path rule below: the
+  `task_retry` tool reports the failure and settles it in hand, while a retry
+  over a host API told only a person, so the model keeps its wake-up — and the
+  parent is drained at once, so an idle conversation hears it immediately.
 - **A stop reports what it DID**, not whether it errored, and the four answers
   are not interchangeable. A host asked to stop a run it has never heard of —
   the ordinary state during a launch — has nothing to report but success, and
@@ -1934,9 +1937,12 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   reported as running owes its wake-up however the row reads by the time the
   debt is written, because a result that landed after the answer was decided is
   one the model has not seen; and the attempt is checked, since a retry in
-  between makes the pending debt a different attempt's. A person reading the
-  same result over an HTTP response has told the model nothing, so a host API
-  must not consume it at all.
+  between makes the pending debt a different attempt's. The rule covers
+  refusals too: `task_retry` answers every call that has task state with that
+  state — success, refusal, or a launch that never started — and whatever
+  terminal result the report carries is thereby in the model's hands. A person
+  reading the same result over an HTTP response has told the model nothing, so
+  a host API must not consume it at all.
 - **Retryability is about the task's own state, and the ceiling is the
   Manager's.** A failed task that has used every attempt looks exactly like one
   that has not, so a caller offering a retry needs the ceiling — `Retryable`

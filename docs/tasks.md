@@ -197,7 +197,10 @@ states, which only the current attempt can reach.
 **A retry takes a concurrency slot**, like a spawn: it is a task coming back to
 life, and exempting it would make retry the way around
 `MaxConcurrentPerParent`. If its run fails to start, the task goes back to
-failed and its debt is consumed — the caller was told to its face.
+failed, and the wake-up debt that ending opens follows the model-path rule:
+the `task_retry` tool reports the failure in its result and settles the debt in
+hand, while a retry over a host API told only a person — the parent is drained
+at once, so an idle conversation still hears what it is owed.
 
 **Four reasons not to wake**, all of which must be clear: the session is being
 deleted, it already has a live run, it is paused on a human decision, or the

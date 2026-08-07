@@ -140,12 +140,18 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			}
 			info, err := m.Retry(ctx, args.TaskID)
 			if err != nil {
-				// A refusal is news the model can act on — spawn instead, or
-				// leave it alone — rather than a failure it should retry.
-				if info != nil && isRetryRefusal(err) {
-					return refusalResult(info, err), nil
+				if info == nil {
+					// A store failure: the host's problem, with no task state
+					// to report on.
+					return agents.ToolResult{}, err
 				}
-				return agents.ToolResult{}, err
+				// A refusal, a lost race or a launch that never started: the
+				// task's state travels with the error, so the model can decide
+				// — try again, spawn fresh, or leave it. Reporting that state
+				// hands over whatever result it carries, which settles the
+				// wake-up debt the same way a success settles it.
+				m.modelHasResult(ctx, info)
+				return refusalResult(info, err), nil
 			}
 			// As with spawn_task: an attempt that finished this fast reports
 			// its result here, so nothing is owed.
@@ -176,15 +182,6 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 		})
 
 	return []*agents.Tool{spawn, status, retry, stop}
-}
-
-// isRetryRefusal reports whether err is a retry the task's own state refuses —
-// as opposed to a store or launch failure, which is the host's problem and not
-// something the model can do anything about.
-func isRetryRefusal(err error) bool {
-	return errors.As(err, new(ErrNotRetryable)) ||
-		errors.As(err, new(ErrRetryLimit)) ||
-		errors.As(err, new(ErrTaskLimit))
 }
 
 // taskResult splits what the model reads from what a UI renders: Content is the
