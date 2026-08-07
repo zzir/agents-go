@@ -110,7 +110,10 @@ func main() {
 					log.Println("open session:", err)
 					return
 				}
-				out := tasks.RunOutcome{Status: tasks.StatusCompleted}
+				// RunID names the attempt: a task retried while this run was
+				// in flight must not have its new attempt overwritten by this
+				// one's outcome.
+				out := tasks.RunOutcome{RunID: req.RunID, Status: tasks.StatusCompleted}
 				res, err := agents.RunSync(context.Background(), agent, req.Input, agents.RunOptions{
 					Model:        agents.ModelOptions{Provider: provider},
 					Conversation: agents.ConversationOptions{Session: sess},

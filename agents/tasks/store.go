@@ -28,15 +28,44 @@ type Store interface {
 	ListByParent(ctx context.Context, parentSessionID string) ([]Task, error)
 
 	// Finalize records a terminal status, its result and the wake-up debt in
-	// ONE atomic transition, and only while the task is still non-terminal.
+	// ONE atomic transition, and only while the task is still non-terminal AND
+	// still on the attempt named by runID.
 	//
-	// won=false means another finalizer already owned the transition; the
-	// caller must do nothing further. Writing the three parts separately would
-	// let task_status observe a terminal task whose result is not there yet.
-	Finalize(ctx context.Context, id string, st Status, summary, result string) (won bool, err error)
+	// won=false means another finalizer already owned the transition, or the
+	// attempt being finalized is no longer the current one; the caller must do
+	// nothing further. Writing the three parts separately would let task_status
+	// observe a terminal task whose result is not there yet.
+	//
+	// The runID predicate is what RetryClaim costs: a task can leave a terminal
+	// state now, so "the row is non-terminal" no longer identifies WHICH
+	// attempt a finalizer observed. Without it, a stop that read the row before
+	// a retry would cancel the new attempt — while its run keeps executing,
+	// unkillable, its own result discarded for losing the CAS.
+	Finalize(ctx context.Context, id, runID string, st Status, summary, result string) (won bool, err error)
+
+	// RetryClaim reopens a failed task for another attempt, in one atomic
+	// transition and only while the task is failed and under maxAttempts
+	// (which counts the original run; <= 0 means no limit): status returns to
+	// working, run_id becomes newRunID, attempt increments, and the previous
+	// attempt's summary, result and wake-up debt are cleared — the debt because
+	// this task is no longer finished, so nothing is owed until it is again.
+	//
+	// won=false means the row exists but could not be claimed: it is not
+	// failed, it is out of attempts, or another retry won the race. A task that
+	// does not exist is ErrNotFound, which is a different answer and must not
+	// be collapsed into won=false.
+	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
 
 	// MarkInputRequired flips working → input_required. Best-effort: a
 	// concurrent terminal transition wins.
+	//
+	// It and ReclaimWorking take no runID, unlike Finalize and the notify pair.
+	// Both move between NON-terminal states, which one attempt can only reach
+	// while it is the current one: a retry needs the task failed, so the
+	// previous attempt is finished before the next exists. Only a second
+	// process running a task this one has already declared dead could
+	// interleave them, which is the multi-process exposure Manager already
+	// documents rather than one this predicate would close.
 	MarkInputRequired(ctx context.Context, id string) error
 	// ReclaimWorking flips input_required → working when an approval resumes
 	// the run. false means the task went terminal meanwhile and the resume
@@ -44,9 +73,14 @@ type Store interface {
 	ReclaimWorking(ctx context.Context, id string) (bool, error)
 
 	// ConsumeNotify cancels the wake-up debt: the model already has the result.
-	ConsumeNotify(ctx context.Context, id string) error
-	// MarkNotifyDelivered records that a wake-up run carried the result.
-	MarkNotifyDelivered(ctx context.Context, id string) error
+	// It applies only while runID is the task's current attempt — a consume
+	// decided against the previous attempt must not swallow the debt of the
+	// one that replaced it.
+	ConsumeNotify(ctx context.Context, id, runID string) error
+	// MarkNotifyDelivered records that a wake-up run carried the result, with
+	// the same attempt bound as ConsumeNotify: a drain spans a Launch call, and
+	// a retry can land inside it.
+	MarkNotifyDelivered(ctx context.Context, id, runID string) error
 	// ListPendingNotify returns the parent's tasks still owed a wake-up,
 	// oldest first — the notification lists them in that order.
 	ListPendingNotify(ctx context.Context, parentSessionID string) ([]Task, error)
@@ -139,14 +173,14 @@ func (s *InMemoryStore) ListByParent(_ context.Context, parentSessionID string) 
 
 // Finalize implements Store. The whole transition happens under one lock, so a
 // reader can never see a terminal task whose result has not landed.
-func (s *InMemoryStore) Finalize(_ context.Context, id string, st Status, summary, result string) (bool, error) {
+func (s *InMemoryStore) Finalize(_ context.Context, id, runID string, st Status, summary, result string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.tasks[id]
 	if !ok {
 		return false, ErrNotFound
 	}
-	if t.Status.Terminal() {
+	if t.Status.Terminal() || t.RunID != runID {
 		return false, nil
 	}
 	t.Status = st
@@ -157,6 +191,31 @@ func (s *InMemoryStore) Finalize(_ context.Context, id string, st Status, summar
 	if result != "" {
 		t.Result = result
 	}
+	t.UpdatedAt = time.Now().UTC()
+	return true, nil
+}
+
+// RetryClaim implements Store.
+func (s *InMemoryStore) RetryClaim(_ context.Context, id, newRunID string, maxAttempts int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if t.Status != StatusFailed || (maxAttempts > 0 && t.AttemptNo() >= maxAttempts) {
+		return false, nil
+	}
+	t.Status = StatusWorking
+	t.RunID = newRunID
+	t.Attempt = t.AttemptNo() + 1
+	// The previous attempt's account of itself, cleared: it describes a run
+	// that is no longer this task's, and a card showing "failed: rate limited"
+	// beside a working badge reads as a task failing right now.
+	t.Summary, t.Result = "", ""
+	// No longer finished, so nothing is owed. The next terminal state opens a
+	// fresh debt.
+	t.NotifyState = NotifyNone
 	t.UpdatedAt = time.Now().UTC()
 	return true, nil
 }
@@ -191,21 +250,20 @@ func (s *InMemoryStore) ReclaimWorking(_ context.Context, id string) (bool, erro
 // ConsumeNotify and MarkNotifyDelivered deliberately leave UpdatedAt alone. For
 // a terminal task that column is when it FINISHED — created→updated is the
 // duration a UI shows — and delivery can happen minutes later.
-func (s *InMemoryStore) ConsumeNotify(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if t, ok := s.tasks[id]; ok && t.NotifyState == NotifyPending {
-		t.NotifyState = NotifyConsumed
-	}
-	return nil
+func (s *InMemoryStore) ConsumeNotify(_ context.Context, id, runID string) error {
+	return s.setNotify(id, runID, NotifyConsumed)
 }
 
 // MarkNotifyDelivered implements Store.
-func (s *InMemoryStore) MarkNotifyDelivered(_ context.Context, id string) error {
+func (s *InMemoryStore) MarkNotifyDelivered(_ context.Context, id, runID string) error {
+	return s.setNotify(id, runID, NotifyDelivered)
+}
+
+func (s *InMemoryStore) setNotify(id, runID string, to NotifyState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[id]; ok && t.NotifyState == NotifyPending {
-		t.NotifyState = NotifyDelivered
+	if t, ok := s.tasks[id]; ok && t.NotifyState == NotifyPending && t.RunID == runID {
+		t.NotifyState = to
 	}
 	return nil
 }

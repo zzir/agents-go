@@ -61,7 +61,11 @@ type stopArgs struct {
 	Graceful bool   `json:"graceful" jsonschema:"Finish the current turn before stopping instead of aborting immediately"`
 }
 
-// Tools returns spawn_task, task_status and task_stop.
+type retryArgs struct {
+	TaskID string `json:"task_id" jsonschema:"The id of the failed task to resume"`
+}
+
+// Tools returns spawn_task, task_status, task_retry and task_stop.
 //
 // A task's own run must NOT be given these — that is what bounds recursion —
 // so a host attaching them should first ask MetaFor whether the session is a
@@ -117,6 +121,27 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			return taskResult(info), nil
 		})
 
+	retry := agents.NewTool("task_retry",
+		"Resume a FAILED background task from where it stopped: same conversation, same progress, a new attempt. "+
+			"Prefer this over spawning a fresh task after a transient failure (a rate limit, a dropped connection) — "+
+			"a new task starts from nothing and pays again for everything this one already did. "+
+			"Only a failed task can be resumed, and only a limited number of times; when the failure is one a rerun cannot fix, spawn a new task instead.",
+		func(ctx context.Context, tc *agents.ToolContext, args retryArgs) (agents.ToolResult, error) {
+			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
+				return agents.ToolResult{}, err
+			}
+			info, err := m.Retry(ctx, args.TaskID)
+			if err != nil {
+				// A refusal is news the model can act on — spawn instead, or
+				// leave it alone — rather than a failure it should retry.
+				if info != nil && isRetryRefusal(err) {
+					return refusalResult(info, err), nil
+				}
+				return agents.ToolResult{}, err
+			}
+			return taskResult(info), nil
+		})
+
 	stop := agents.NewTool("task_stop",
 		"Stop a background task started with spawn_task.",
 		func(ctx context.Context, tc *agents.ToolContext, args stopArgs) (agents.ToolResult, error) {
@@ -139,7 +164,16 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			return taskResult(info), nil
 		})
 
-	return []*agents.Tool{spawn, status, stop}
+	return []*agents.Tool{spawn, status, retry, stop}
+}
+
+// isRetryRefusal reports whether err is a retry the task's own state refuses —
+// as opposed to a store or launch failure, which is the host's problem and not
+// something the model can do anything about.
+func isRetryRefusal(err error) bool {
+	return errors.As(err, new(ErrNotRetryable)) ||
+		errors.As(err, new(ErrRetryLimit)) ||
+		errors.As(err, new(ErrTaskLimit))
 }
 
 // taskResult splits what the model reads from what a UI renders: Content is the
@@ -148,17 +182,38 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 func taskResult(info *Info) agents.ToolResult {
 	return agents.TextResult(describe(info)).
 		WithDisplay("task").
-		WithDetails(map[string]any{
-			"task_id":     info.TaskID,
-			"task_label":  info.Label,
-			"task_status": string(info.Status),
-			"task_agent":  info.Agent,
-			"task_result": info.Result,
-		})
+		WithDetails(taskDetails(info))
+}
+
+// refusalResult is a taskResult whose text leads with why the call was
+// refused. The state alone does not explain a refusal the way it does for
+// task_stop, where "already completed" IS the reason.
+func refusalResult(info *Info, err error) agents.ToolResult {
+	r := agents.TextResult(err.Error() + "\n" + describe(info)).
+		WithDisplay("task").
+		WithDetails(taskDetails(info))
+	r.IsError = true
+	return r
+}
+
+func taskDetails(info *Info) map[string]any {
+	return map[string]any{
+		"task_id":      info.TaskID,
+		"task_label":   info.Label,
+		"task_status":  string(info.Status),
+		"task_agent":   info.Agent,
+		"task_attempt": info.Attempt,
+		"task_result":  info.Result,
+	}
 }
 
 func describe(info *Info) string {
 	out := fmt.Sprintf("task_id: %s\nstatus: %s", info.TaskID, info.Status)
+	// Only once it means something: every task has a first attempt, and saying
+	// so on all of them teaches the model to ignore the line.
+	if info.Attempt > 1 {
+		out += fmt.Sprintf("\nattempt: %d", info.Attempt)
+	}
 	if info.Label != "" {
 		out += "\nlabel: " + info.Label
 	}

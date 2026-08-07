@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -108,12 +109,83 @@ func TestTools_StopOfAFinishedTaskIsAResult(t *testing.T) {
 	}
 }
 
-func TestTools_ExposesTheThree(t *testing.T) {
+func TestTools_ExposesTheFour(t *testing.T) {
 	tools := newHarness(t).m.Tools(nil)
-	for _, name := range []string{"spawn_task", "task_status", "task_stop"} {
+	for _, name := range []string{"spawn_task", "task_status", "task_retry", "task_stop"} {
 		if toolNamed(tools, name) == nil {
 			t.Errorf("missing tool %q", name)
 		}
+	}
+}
+
+// A retry the task's state refuses is news the model can act on — spawn a new
+// task, or leave it alone — not a failure it should call again.
+func TestTools_RetryRefusalIsAResult(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
+
+	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+		`{"task_id":"`+info.TaskID+`"}`)
+	if err != nil {
+		t.Fatalf("err = %v, want the refusal as a result", err)
+	}
+	if !res.IsError {
+		t.Error("the result is not marked as an error for the UI")
+	}
+	out := stringOf(res)
+	// The reason AND the state: "cannot retry" alone leaves the model guessing
+	// at what the task actually is.
+	if !strings.Contains(out, "only a failed task can be retried") || !strings.Contains(out, "completed") {
+		t.Errorf("output = %q, want the reason and the task's state", out)
+	}
+}
+
+// A task id that leaked into another conversation reads as nonexistent there.
+// A retry is the same boundary as status and stop: it starts a run, on someone
+// else's work.
+func TestTools_RetryRefusesAForeignTask(t *testing.T) {
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+
+	if _, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "someone-else",
+		`{"task_id":"`+info.TaskID+`"}`); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if got := h.get(t, info.TaskID); got.Status != StatusFailed {
+		t.Errorf("status = %s, want the task untouched", got.Status)
+	}
+}
+
+// The attempt reaches the card as a field and the model as a line — but only
+// once it means something.
+func TestTools_RetryReportsTheAttempt(t *testing.T) {
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+
+	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+		`{"task_id":"`+info.TaskID+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Details["task_attempt"]; got != 2 {
+		t.Errorf("details task_attempt = %v, want 2", got)
+	}
+	if out := stringOf(res); !strings.Contains(out, "attempt: 2") {
+		t.Errorf("output = %q, want the attempt named", out)
+	}
+	// The first attempt says nothing: every task has one, and a line on all of
+	// them is a line the model learns to skip.
+	first, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent",
+		`{"task_id":"`+h.spawn(t).TaskID+`","wait_seconds":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stringOf(first), "attempt:") {
+		t.Errorf("output = %q, want no attempt line on a first attempt", stringOf(first))
 	}
 }
 

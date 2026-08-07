@@ -88,6 +88,12 @@ type Task struct {
 	// recursion: a task that can spawn tasks can spawn them forever.
 	Depth int `json:"depth,omitzero"`
 
+	// Attempt counts the runs this task has had: 1 for the original, one more
+	// for each retry. Zero reads as 1 — a row written before retries existed
+	// had exactly one attempt, and inventing a migration to say so would be
+	// writing down what the zero value already means.
+	Attempt int `json:"attempt,omitzero"`
+
 	// Inherit is configuration snapshotted from the spawning run and handed
 	// back to the Launcher verbatim — agent config, sandbox, tenant. The SDK
 	// does not interpret it.
@@ -113,12 +119,22 @@ type Task struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// AttemptNo is the task's attempt count, reading the zero value as the first
+// attempt. Every caller wants this rather than the raw field.
+func (t *Task) AttemptNo() int {
+	if t.Attempt <= 0 {
+		return 1
+	}
+	return t.Attempt
+}
+
 // Info is the public view of a task, returned by the tools.
 type Info struct {
 	TaskID  string `json:"task_id"`
 	Label   string `json:"label,omitzero"`
 	Agent   string `json:"agent,omitzero"`
 	Status  Status `json:"status"`
+	Attempt int    `json:"attempt,omitzero"`
 	Summary string `json:"summary,omitzero"`
 	Result  string `json:"result,omitzero"`
 }
@@ -129,6 +145,7 @@ func infoFrom(t *Task, agent string) *Info {
 		Label:   t.Label,
 		Agent:   agent,
 		Status:  t.Status,
+		Attempt: t.AttemptNo(),
 		Summary: t.Summary,
 		Result:  t.Result,
 	}

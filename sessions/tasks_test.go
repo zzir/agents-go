@@ -82,7 +82,7 @@ func TestSQLTaskStore_FinalizeIsCompareAndSet(t *testing.T) {
 			if i%2 == 0 {
 				st = tasks.StatusFailed
 			}
-			won, err := s.Finalize(ctx, "t1", st, "s", "r")
+			won, err := s.Finalize(ctx, "t1", "t1-run", st, "s", "r")
 			if err != nil {
 				t.Error(err)
 				return
@@ -116,14 +116,14 @@ func TestSQLTaskStore_DeliveryDoesNotTouchUpdatedAt(t *testing.T) {
 	if err := s.Create(ctx, mkTask("t1", "parent", "child-1")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Finalize(ctx, "t1", tasks.StatusCompleted, "s", "r"); err != nil {
+	if _, err := s.Finalize(ctx, "t1", "t1-run", tasks.StatusCompleted, "s", "r"); err != nil {
 		t.Fatal(err)
 	}
 	finished, err := s.Get(ctx, "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkNotifyDelivered(ctx, "t1"); err != nil {
+	if err := s.MarkNotifyDelivered(ctx, "t1", "t1-run"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := s.Get(ctx, "t1")
@@ -146,7 +146,7 @@ func TestSQLTaskStore_Listings(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.Finalize(ctx, "t2", tasks.StatusCompleted, "done", "done"); err != nil {
+	if _, err := s.Finalize(ctx, "t2", "t2-run", tasks.StatusCompleted, "done", "done"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +212,7 @@ func TestSQLTaskStore_ListNonTerminalMatchesStatusTerminal(t *testing.T) {
 				t.Fatal(err)
 			}
 		default:
-			if _, err := s.Finalize(ctx, id, st, "", ""); err != nil {
+			if _, err := s.Finalize(ctx, id, id+"-run", st, "", ""); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -296,7 +296,7 @@ func TestSQLTaskStore_ReclaimWorking(t *testing.T) {
 	}
 	// A task that went terminal meanwhile cannot be reclaimed — the resume
 	// must be abandoned.
-	if _, err := s.Finalize(ctx, "t1", tasks.StatusCancelled, "", ""); err != nil {
+	if _, err := s.Finalize(ctx, "t1", "t1-run", tasks.StatusCancelled, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := s.ReclaimWorking(ctx, "t1"); ok {

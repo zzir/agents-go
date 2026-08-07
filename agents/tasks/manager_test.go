@@ -198,6 +198,8 @@ func TestNotify_ConcurrentFinalizersProduceOneWinner(t *testing.T) {
 	h := newHarness(t)
 	info := h.spawn(t)
 
+	runID := h.get(t, info.TaskID).RunID
+
 	var wins int
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -209,7 +211,7 @@ func TestNotify_ConcurrentFinalizersProduceOneWinner(t *testing.T) {
 			if i%2 == 0 {
 				st = StatusFailed
 			}
-			won, err := h.store.Finalize(ctx, info.TaskID, st, "s", "r")
+			won, err := h.store.Finalize(ctx, info.TaskID, runID, st, "s", "r")
 			if err != nil {
 				t.Error(err)
 				return
@@ -779,11 +781,12 @@ func TestStatus_WaitNoticesAFinalizeItDidNotMake(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	info := h.spawn(t)
+	runID := h.get(t, info.TaskID).RunID
 
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		// Straight to the store, as another process would.
-		if _, err := h.store.Finalize(ctx, info.TaskID, StatusCompleted, "done", "full"); err != nil {
+		if _, err := h.store.Finalize(ctx, info.TaskID, runID, StatusCompleted, "done", "full"); err != nil {
 			t.Error(err)
 		}
 	}()

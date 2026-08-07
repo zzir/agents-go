@@ -39,6 +39,9 @@ type taskRow struct {
 	ChildSessionID   string `bun:"child_session_id,notnull"`
 	ChildSessionGen  string `bun:"child_session_gen"`
 	Depth            int    `bun:"depth,notnull"`
+	// Attempt counts this task's runs. Zero reads as the first attempt, which
+	// is what a row written before retries existed had.
+	Attempt int `bun:"attempt"`
 
 	Inherit string `bun:"inherit"`
 
@@ -61,6 +64,7 @@ func (r *taskRow) toTask() tasks.Task {
 		ToolCallID:      r.ToolCallID,
 		ChildSessionID:  r.ChildSessionID,
 		Depth:           r.Depth,
+		Attempt:         r.Attempt,
 		Status:          tasks.Status(r.Status),
 		NotifyState:     tasks.NotifyState(r.NotifyState),
 		Summary:         r.Summary,
@@ -84,6 +88,7 @@ func rowFrom(t *tasks.Task) *taskRow {
 		ToolCallID:      t.ToolCallID,
 		ChildSessionID:  t.ChildSessionID,
 		Depth:           t.Depth,
+		Attempt:         t.Attempt,
 		Inherit:         string(t.Inherit),
 		Status:          string(t.Status),
 		NotifyState:     string(t.NotifyState),
@@ -260,12 +265,16 @@ func (s *TaskStore) query(ctx context.Context, apply func(*bun.SelectQuery) *bun
 // still non-terminal. Writing them separately would let a reader see a terminal
 // task whose result has not arrived — which is exactly what task_status must be
 // able to rely on.
-func (s *TaskStore) Finalize(ctx context.Context, id string, st tasks.Status, summary, result string) (bool, error) {
+// The run_id predicate is the other half: a task can leave a terminal state
+// now (RetryClaim), so non-terminality alone no longer says WHICH attempt the
+// finalizer looked at.
+func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(st)).
 		Set("notify_state = ?", string(tasks.NotifyPending)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
+		Where("run_id = ?", runID).
 		Where("status NOT IN (?)", bun.List(terminalStatuses))
 	if summary != "" {
 		q = q.Set("summary = ?", summary)
@@ -279,6 +288,50 @@ func (s *TaskStore) Finalize(ctx context.Context, id string, st tasks.Status, su
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// RetryClaim implements tasks.Store as one conditional UPDATE, so the attempt
+// ceiling holds across processes rather than only within the Manager that
+// checked it.
+//
+// The generation predicate is the same one every by-session read carries: a row
+// whose sessions were deleted must not come back to life and launch a run onto
+// an id that now answers to a different session.
+func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (bool, error) {
+	q := s.db.NewUpdate().Model((*taskRow)(nil)).
+		Set("status = ?", string(tasks.StatusWorking)).
+		Set("run_id = ?", newRunID).
+		// Zero counts as the first attempt, here as everywhere.
+		Set("attempt = CASE WHEN attempt < 1 THEN 2 ELSE attempt + 1 END").
+		Set("summary = ?", "").
+		Set("result = ?", "").
+		Set("notify_state = ?", string(tasks.NotifyNone)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("status = ?", string(tasks.StatusFailed)).
+		Where(liveParent).Where(liveChild)
+	if maxAttempts > 0 {
+		q = q.Where("CASE WHEN attempt < 1 THEN 1 ELSE attempt END < ?", maxAttempts)
+	}
+	res, err := q.Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("claiming a retry of task %q: %w", id, err)
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	// Zero rows is "could not claim" or "no such task", and the two mean
+	// different things to a caller — the same disambiguation ReclaimWorking
+	// makes, for the same reason: two shipped Stores must not answer one call
+	// differently.
+	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
+	if eerr != nil {
+		return false, fmt.Errorf("claiming a retry of task %q: %w", id, eerr)
+	}
+	if !exists {
+		return false, tasks.ErrNotFound
+	}
+	return false, nil
 }
 
 // MarkInputRequired implements tasks.Store. Best-effort CAS: a concurrent
@@ -328,19 +381,20 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id string) (bool, error)
 // ConsumeNotify and MarkNotifyDelivered deliberately leave updated_at alone:
 // for a terminal task it is when the task FINISHED (created→updated is the
 // duration a UI shows), and delivery can happen much later.
-func (s *TaskStore) ConsumeNotify(ctx context.Context, id string) error {
-	return s.setNotify(ctx, id, tasks.NotifyConsumed)
+func (s *TaskStore) ConsumeNotify(ctx context.Context, id, runID string) error {
+	return s.setNotify(ctx, id, runID, tasks.NotifyConsumed)
 }
 
 // MarkNotifyDelivered implements tasks.Store.
-func (s *TaskStore) MarkNotifyDelivered(ctx context.Context, id string) error {
-	return s.setNotify(ctx, id, tasks.NotifyDelivered)
+func (s *TaskStore) MarkNotifyDelivered(ctx context.Context, id, runID string) error {
+	return s.setNotify(ctx, id, runID, tasks.NotifyDelivered)
 }
 
-func (s *TaskStore) setNotify(ctx context.Context, id string, to tasks.NotifyState) error {
+func (s *TaskStore) setNotify(ctx context.Context, id, runID string, to tasks.NotifyState) error {
 	_, err := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("notify_state = ?", string(to)).
 		Where("id = ?", id).
+		Where("run_id = ?", runID).
 		Where("notify_state = ?", string(tasks.NotifyPending)).
 		Exec(ctx)
 	if err != nil {

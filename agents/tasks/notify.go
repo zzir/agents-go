@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -34,6 +35,13 @@ func DefaultNotifyFormatter(ts []Task) string {
 			}
 		}
 		lines = append(lines, line)
+	}
+	// A parent told only that a task failed reaches for spawn_task, and throws
+	// away everything the task did before it failed. The hint is its OWN line:
+	// a task line is a machine-readable record whose shape consumers parse, and
+	// text appended inside one is read as part of the result.
+	if slices.ContainsFunc(ts, func(t Task) bool { return t.Status == StatusFailed }) {
+		lines = append(lines, "(task_retry can resume a failed task from where it stopped)")
 	}
 	return NotificationPrefix + strings.Join(lines, "\n")
 }

@@ -30,6 +30,10 @@ const (
 	// an ordinary session is depth 1, so the default of 1 means a task cannot
 	// spawn tasks — recursion is a real use case, but not a default.
 	DefaultMaxDepth = 1
+	// DefaultMaxAttemptsPerTask bounds the runs one task may have, the original
+	// included. A model that can retry without limit will keep retrying a
+	// failure that was never going to succeed.
+	DefaultMaxAttemptsPerTask = 3
 )
 
 // ErrTaskLimit reports that a parent session already has its maximum tasks in
@@ -51,6 +55,23 @@ func (e ErrDepthLimit) Error() string {
 type ErrAlreadyFinal struct{ Status Status }
 
 func (e ErrAlreadyFinal) Error() string { return "tasks: task already " + string(e.Status) }
+
+// ErrNotRetryable reports a retry of a task that is not failed. It is a
+// separate answer from ErrAlreadyFinal, whose problem is the opposite one: a
+// retry REQUIRES a finished task, and only the one kind of ending it can
+// resume from.
+type ErrNotRetryable struct{ Status Status }
+
+func (e ErrNotRetryable) Error() string {
+	return fmt.Sprintf("tasks: cannot retry a task that is %s; only a failed task can be retried", e.Status)
+}
+
+// ErrRetryLimit reports a task that has used every attempt it is allowed.
+type ErrRetryLimit struct{ Limit int }
+
+func (e ErrRetryLimit) Error() string {
+	return fmt.Sprintf("tasks: this task has already used its %d attempts; start a new task instead", e.Limit)
+}
 
 // Config configures a Manager. Store, Sessions, Resolver and Launcher are
 // required.
@@ -76,7 +97,11 @@ type Config struct {
 	SummaryLimit           int
 	MaxStatusWait          time.Duration
 	MaxDepth               int
-	NotifyFormatter        func([]Task) string
+	// MaxAttemptsPerTask bounds Retry: how many runs one task may have, the
+	// original included. Zero uses DefaultMaxAttemptsPerTask; 1 disables
+	// retrying.
+	MaxAttemptsPerTask int
+	NotifyFormatter    func([]Task) string
 
 	// NewID mints task, run and session ids. Nil uses a built-in generator.
 	NewID func() string
@@ -185,6 +210,9 @@ func New(cfg Config) *Manager {
 	}
 	if cfg.MaxDepth <= 0 {
 		cfg.MaxDepth = DefaultMaxDepth
+	}
+	if cfg.MaxAttemptsPerTask <= 0 {
+		cfg.MaxAttemptsPerTask = DefaultMaxAttemptsPerTask
 	}
 	if cfg.NotifyFormatter == nil {
 		cfg.NotifyFormatter = DefaultNotifyFormatter
@@ -311,6 +339,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		ToolCallID:      req.ToolCallID,
 		ChildSessionID:  childID,
 		Depth:           depth,
+		Attempt:         1,
 		Inherit:         spec.Inherit,
 		Status:          StatusWorking,
 	}
@@ -352,6 +381,143 @@ type SpawnRequest struct {
 	ToolCallID  string
 }
 
+// Retry runs a failed task again, from where it stopped.
+//
+// The task keeps its id, its session and everything that session already
+// holds; only the run is new. That is the whole point: a failed task has often
+// done most of its work, and the alternative a parent reaches for — spawning a
+// fresh task with the same prompt — pays for all of it a second time.
+//
+// Resuming is sound because the session is: persistence stops at a boundary
+// that never leaves a tool call without its output, so the tail of a failed
+// attempt is valid model input.
+func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
+	t, err := m.cfg.Store.Get(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	// The parent's spawn lock, for the same reason Spawn holds it: a retry
+	// takes a concurrency slot back, and counting then claiming is a
+	// read-then-write two retries would both pass.
+	defer m.lockParent(t.ParentSessionID)()
+	// Re-read under the lock — the row could have finished, been stopped or
+	// been retried between the first read and here.
+	if t, err = m.cfg.Store.Get(ctx, taskID); err != nil {
+		return nil, err
+	}
+	if rerr := m.notRetryable(t); rerr != nil {
+		// The task's own state travels with the refusal, so a caller can show
+		// what it actually is instead of only why it said no.
+		return infoFrom(t, ""), rerr
+	}
+
+	live, err := m.cfg.Store.ListNonTerminal(ctx, t.ParentSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
+	}
+	if len(live) >= m.cfg.MaxConcurrentPerParent {
+		// A retry is a task coming back to life, so it queues behind the same
+		// ceiling a spawn does; exempting it would make retry the way around
+		// the cap.
+		return infoFrom(t, ""), ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
+	}
+
+	// Read the failure BEFORE the claim clears it: it is what tells the next
+	// attempt why it is starting over.
+	prompt := retryPrompt(t, m.cfg.SummaryLimit)
+	runID := m.cfg.NewID()
+	won, err := m.cfg.Store.RetryClaim(ctx, taskID, runID, m.cfg.MaxAttemptsPerTask)
+	if err != nil {
+		return nil, err
+	}
+	if !won {
+		cur, gerr := m.cfg.Store.Get(ctx, taskID)
+		if gerr != nil {
+			return nil, gerr
+		}
+		if rerr := m.notRetryable(cur); rerr != nil {
+			return infoFrom(cur, ""), rerr
+		}
+		return infoFrom(cur, ""), errors.New("tasks: another writer claimed this task first; try again")
+	}
+
+	if err := m.cfg.Launcher.Launch(ctx, LaunchRequest{
+		RunID:     runID,
+		SessionID: t.ChildSessionID,
+		Input:     prompt,
+		Inherit:   t.Inherit,
+	}); err != nil {
+		return nil, m.retryLaunchFailed(ctx, taskID, runID, err)
+	}
+
+	updated, err := m.cfg.Store.Get(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	// The card is showing a failed task with a failure on it. Say now that it
+	// is working again, rather than at the end of a run that may take minutes.
+	m.notifyUpdate(ctx, updated)
+	return infoFrom(updated, ""), nil
+}
+
+// notRetryable explains why a task cannot be retried, or returns nil.
+func (m *Manager) notRetryable(t *Task) error {
+	if t.Status != StatusFailed {
+		return ErrNotRetryable{Status: t.Status}
+	}
+	if t.AttemptNo() >= m.cfg.MaxAttemptsPerTask {
+		return ErrRetryLimit{Limit: m.cfg.MaxAttemptsPerTask}
+	}
+	return nil
+}
+
+// retryLaunchFailed puts a claimed task back to failed after its new run never
+// started, and returns the error to report.
+//
+// Unlike Spawn's rollback there is no row to remove: the task existed before
+// this call and its history is real. What must not survive is the working
+// status — nothing is going to advance it — nor a wake-up debt for news the
+// caller is being told to its face.
+func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, cause error) error {
+	full := "retry could not start: " + cause.Error()
+	won, err := m.cfg.Store.Finalize(ctx, taskID, runID, StatusFailed,
+		truncateRunes(full, m.cfg.SummaryLimit), full)
+	if err != nil {
+		m.log.WarnContext(ctx, "failing a task whose retry never started",
+			slog.String("task_id", taskID), slog.String("error", err.Error()))
+	}
+	if won {
+		// Only the winner consumes: on a loss the debt belongs to whoever
+		// recorded the ending, and cancelling it would bury their news.
+		if cerr := m.cfg.Store.ConsumeNotify(ctx, taskID, runID); cerr != nil {
+			m.log.WarnContext(ctx, "consuming task notification",
+				slog.String("task_id", taskID), slog.String("error", cerr.Error()))
+		}
+		m.finished(taskID)
+	}
+	if t, gerr := m.cfg.Store.Get(ctx, taskID); gerr == nil {
+		m.notifyUpdate(ctx, t)
+	}
+	return fmt.Errorf("tasks: restarting task run: %w", cause)
+}
+
+// retryPrompt is what a retried run is asked to do.
+//
+// The session already holds everything the failed attempt did, so this is not
+// the task's prompt again — it is the reason the run woke up. Naming the
+// failure is what lets the model route around it instead of walking back into
+// it, and saying "do not redo what worked" is what keeps a resumed run from
+// starting over out of politeness.
+func retryPrompt(t *Task, limit int) string {
+	reason := truncateRunes(strings.TrimSpace(cmp.Or(t.Result, t.Summary)), limit)
+	if reason == "" {
+		reason = "no reason was recorded"
+	}
+	return "A previous attempt at this task failed: " + reason + ". " +
+		"The conversation above is the progress made so far. Review it and continue the task to " +
+		"completion; avoid repeating work that already succeeded."
+}
+
 func (m *Manager) cleanupSession(ctx context.Context, id string) {
 	if err := m.cfg.Sessions.Delete(ctx, id); err != nil {
 		m.log.WarnContext(ctx, "orphan task session cleanup",
@@ -376,7 +542,10 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 			return nil, err
 		}
 		if t.Status.Terminal() {
-			if err := m.cfg.Store.ConsumeNotify(ctx, taskID); err != nil {
+			// Bound to the attempt just read: between this read and the write a
+			// retry can reopen the task, and consuming then would cancel the
+			// NEW attempt's debt on the strength of the old one's result.
+			if err := m.cfg.Store.ConsumeNotify(ctx, taskID, t.RunID); err != nil {
 				m.log.WarnContext(ctx, "consuming task notification",
 					slog.String("task_id", taskID), slog.String("error", err.Error()))
 			}
@@ -398,15 +567,58 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 }
 
 // Stop cancels a task.
+//
+// A stop names the TASK, so it chases one retry: a task that was reopened
+// between the read and the claim is stopped on its new attempt rather than
+// reported as still running. One extra pass, not a loop — the caller can ask
+// again, and an unbounded chase never ends against a retry storm.
 func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info, error) {
+	for pass := range 2 {
+		t, err := m.cfg.Store.Get(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if t.Status.Terminal() {
+			if pass > 0 {
+				// The first pass lost the CAS and this one finds the task
+				// finished: whoever won recorded its ending, which stands.
+				return infoFrom(t, ""), nil
+			}
+			return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
+		}
+
+		early, won, err := m.stopAttempt(ctx, t, graceful)
+		if err != nil {
+			return nil, err
+		}
+		if early {
+			return infoFrom(t, ""), nil
+		}
+		if !won {
+			// A retry reopened the task on a new run between the read and the
+			// claim. Go round once against that attempt.
+			continue
+		}
+		updated, err := m.cfg.Store.Get(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		m.notifyUpdate(ctx, updated)
+		return infoFrom(updated, ""), nil
+	}
+	// Two passes, two losses. Report the task as it stands rather than
+	// insisting: it is live, and saying otherwise would be a lie the UI shows.
 	t, err := m.cfg.Store.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
-	if t.Status.Terminal() {
-		return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
-	}
+	return infoFrom(t, ""), nil
+}
 
+// stopAttempt cancels the one attempt t names. early reports that the run took
+// a graceful stop and will record the ending itself; won reports that this call
+// owns the terminal transition.
+func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (early, won bool, err error) {
 	// A paused task has no running goroutine, so finalizing IS the exclusive
 	// claim: a concurrent approval's ReclaimWorking (input_required → working)
 	// and this Finalize (non-terminal → cancelled) cannot both win. Claim it
@@ -426,9 +638,9 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 		if m.cfg.Stopper == nil {
 			return false
 		}
-		if err := m.cfg.Stopper.Stop(ctx, t.RunID, graceful); err != nil {
+		if serr := m.cfg.Stopper.Stop(ctx, t.RunID, graceful); serr != nil {
 			m.log.WarnContext(ctx, "stopping task run",
-				slog.String("task_id", taskID), slog.String("error", err.Error()))
+				slog.String("task_id", t.ID), slog.String("error", serr.Error()))
 			return false
 		}
 		return true
@@ -438,7 +650,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 		if graceful && accepted {
 			// The run finishes its turn and reports through OnRunFinished,
 			// which records the cancellation. Finalizing here would race it.
-			return infoFrom(t, ""), nil
+			return true, false, nil
 		}
 		// Not accepted: fall through and finalize here, which is what
 		// Config.Stopper promises when there is no Stopper to interrupt with.
@@ -448,9 +660,9 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 	if paused {
 		reason = "stopped while awaiting approval"
 	}
-	won, err := m.cfg.Store.Finalize(ctx, taskID, StatusCancelled, reason, "")
+	won, err = m.cfg.Store.Finalize(ctx, t.ID, t.RunID, StatusCancelled, reason, "")
 	if err != nil {
-		return nil, err
+		return false, false, err
 	}
 	if paused {
 		// Told after the claim, so the host discards the approval only once
@@ -460,22 +672,24 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 	if won {
 		// A cancellation never wakes the parent: the user initiated it, the UI
 		// already shows it, and a wake-up run would only restate it.
-		if err := m.cfg.Store.ConsumeNotify(ctx, taskID); err != nil {
+		if cerr := m.cfg.Store.ConsumeNotify(ctx, t.ID, t.RunID); cerr != nil {
 			m.log.WarnContext(ctx, "consuming cancelled task notification",
-				slog.String("task_id", taskID), slog.String("error", err.Error()))
+				slog.String("task_id", t.ID), slog.String("error", cerr.Error()))
 		}
-		m.finished(taskID)
+		m.finished(t.ID)
 	}
-	updated, err := m.cfg.Store.Get(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	m.notifyUpdate(ctx, updated)
-	return infoFrom(updated, ""), nil
+	return false, won, nil
 }
 
 // RunOutcome is what a finished run reports.
 type RunOutcome struct {
+	// RunID names the attempt that finished. A host that can identify its runs
+	// should set it: the task may have been retried since this run started, and
+	// an outcome recorded against the attempt that REPLACED it would overwrite
+	// a live run's row with a dead one's result. Empty means "whichever attempt
+	// the row names" — the answer for a host with no run identity of its own,
+	// and the behavior before retries existed.
+	RunID string
 	// Status is the run's terminal state as the host sees it.
 	Status Status
 	// Text is the run's final output.
@@ -563,19 +777,23 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 		return
 	}
 
-	won, err := m.cfg.Store.Finalize(ctx, task.ID, status, summary, full)
+	// The attempt this outcome belongs to: what the host reported, or — for a
+	// host that does not identify runs — whichever one the row names.
+	runID := cmp.Or(out.RunID, task.RunID)
+	won, err := m.cfg.Store.Finalize(ctx, task.ID, runID, status, summary, full)
 	if err != nil {
 		m.log.WarnContext(ctx, "finalizing task",
 			slog.String("task_id", task.ID), slog.String("error", err.Error()))
 		return
 	}
 	if !won {
-		// Another finalizer owned the transition — a stop, or a startup sweep.
-		// Its state stands.
+		// Another finalizer owned the transition — a stop, a startup sweep, or
+		// a retry that has already moved the task past this attempt. Its state
+		// stands.
 		return
 	}
 	if status == StatusCancelled {
-		if err := m.cfg.Store.ConsumeNotify(ctx, task.ID); err != nil {
+		if err := m.cfg.Store.ConsumeNotify(ctx, task.ID, runID); err != nil {
 			m.log.WarnContext(ctx, "consuming cancelled task notification",
 				slog.String("task_id", task.ID), slog.String("error", err.Error()))
 		}
@@ -644,7 +862,10 @@ func (m *Manager) DrainPending(ctx context.Context, parentSessionID string) {
 		return
 	}
 	for i := range pending {
-		if err := m.cfg.Store.MarkNotifyDelivered(ctx, pending[i].ID); err != nil {
+		// Bound to the attempt whose result this run carries: the Launch above
+		// is long enough for a retry to reopen one of these tasks, and marking
+		// THAT delivered would bury a wake-up nobody has heard.
+		if err := m.cfg.Store.MarkNotifyDelivered(ctx, pending[i].ID, pending[i].RunID); err != nil {
 			m.log.WarnContext(ctx, "marking task notification delivered",
 				slog.String("task_id", pending[i].ID), slog.String("error", err.Error()))
 		}
