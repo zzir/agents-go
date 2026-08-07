@@ -1,7 +1,7 @@
 import './sessions.css';
 import { useState, useEffect, useRef, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
 import { ActionList, ActionMenu } from '@primer/react';
-import { StackIcon, KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
+import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, TrashIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
@@ -186,10 +186,6 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
           <ActionList.Item onSelect={handleCreate} disabled={creating}>
             <ActionList.LeadingVisual><PlusIcon size={16} /></ActionList.LeadingVisual>
             New Chat
-          </ActionList.Item>
-          <ActionList.Item disabled>
-            <ActionList.LeadingVisual><StackIcon size={16} /></ActionList.LeadingVisual>
-            Tasks
           </ActionList.Item>
         </ActionList>
       </div>
