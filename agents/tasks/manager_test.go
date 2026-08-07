@@ -719,17 +719,17 @@ func TestStop_PausedTaskIsClaimedBeforeTheHostIsTold(t *testing.T) {
 	info := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusInputRequired})
 
-	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) error {
+	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) (StopOutcome, error) {
 		// By the time the host is told, the row must already be cancelled —
 		// otherwise a racing approve could still reclaim it.
 		task, err := h.store.Get(ctx, info.TaskID)
 		if err != nil {
-			return err
+			return StopUnknownRun, err
 		}
 		mu.Lock()
 		order = append(order, string(task.Status))
 		mu.Unlock()
-		return nil
+		return StopCancelled, nil
 	})
 
 	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
@@ -756,13 +756,13 @@ func TestStop_WorkingTaskCancelsTheRunFirstThenAgain(t *testing.T) {
 	var saw []string
 	h := newHarness(t)
 	info := h.spawn(t)
-	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) error {
+	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) (StopOutcome, error) {
 		task, err := h.store.Get(ctx, info.TaskID)
 		if err != nil {
-			return err
+			return StopUnknownRun, err
 		}
 		saw = append(saw, string(task.Status))
-		return nil
+		return StopCancelled, nil
 	})
 
 	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
@@ -852,8 +852,8 @@ func TestGracefulStopFinalizesWhenNothingTookTheStop(t *testing.T) {
 	}{
 		{"no stopper", func(c *Config) { c.Stopper = nil }},
 		{"stopper fails", func(c *Config) {
-			c.Stopper = StopperFunc(func(context.Context, string, bool) error {
-				return errors.New("run already gone")
+			c.Stopper = StopperFunc(func(context.Context, string, bool) (StopOutcome, error) {
+				return StopUnknownRun, errors.New("run already gone")
 			})
 		}},
 	} {

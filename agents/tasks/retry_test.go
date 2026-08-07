@@ -418,7 +418,7 @@ func TestStop_ChasesOneRetry(t *testing.T) {
 	var stopper func(runID string)
 	h := newHarness(t, func(c *Config) {
 		inner := c.Stopper
-		c.Stopper = StopperFunc(func(ctx context.Context, runID string, graceful bool) error {
+		c.Stopper = StopperFunc(func(ctx context.Context, runID string, graceful bool) (StopOutcome, error) {
 			if stopper != nil {
 				stopper(runID)
 			}
@@ -531,6 +531,140 @@ func TestSpawn_TeardownInsideTheLaunchWindow(t *testing.T) {
 	if !slices.Contains(h.stopped, newRun) {
 		t.Errorf("run %s was launched into a torn-down session and never stopped (stopped: %v)", newRun, h.stopped)
 	}
+}
+
+// unknownRunStopper is a host that answers honestly about a run it has never
+// heard of — which is what every host is during the window between a task
+// claiming its run and the launch registering it.
+func unknownRunStopper(h *harness, known map[string]bool) StopperFunc {
+	return func(_ context.Context, runID string, _ bool) (StopOutcome, error) {
+		h.mu.Lock()
+		h.stopped = append(h.stopped, runID)
+		h.mu.Unlock()
+		if !known[runID] {
+			return StopUnknownRun, nil
+		}
+		return StopCancelled, nil
+	}
+}
+
+// A graceful stop may only leave the ending to the run when there IS a run to
+// leave it to. A host that has never heard of it has nothing to report but
+// success, and reading that as "it will wind itself up" tells the caller the
+// task was stopped while it runs to completion with nobody recording anything.
+func TestStop_GracefulInsideTheLaunchWindow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	known := map[string]bool{}
+	h.m.cfg.Stopper = unknownRunStopper(h, known)
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+
+	var stopped *Info
+	h.launcher.beforeLaunch = func(LaunchRequest) {
+		h.launcher.beforeLaunch = nil
+		var err error
+		if stopped, err = h.m.Stop(ctx, info.TaskID, true); err != nil {
+			t.Errorf("staging the graceful stop: %v", err)
+		}
+	}
+
+	if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if stopped == nil || stopped.Status != StatusCancelled {
+		t.Fatalf("graceful stop reported %+v, want the cancellation it had to record itself", stopped)
+	}
+	if row := h.get(t, info.TaskID); row.Status != StatusCancelled {
+		t.Errorf("row = %s, want cancelled — nobody else was going to record it", row.Status)
+	}
+}
+
+// A run that finishes before the launch call returns is ordinary — a
+// pre-flight failure is nearly instant — and it leaves the same row a stop in
+// the window does: terminal, on this run. Cancelling then would cancel
+// something already over, and a host that keeps finished runs would rewrite
+// the outcome its clients just saw.
+func TestRetry_RunFinishingInsideTheLaunchWindowIsNotCancelled(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+
+	h.mu.Lock()
+	before := len(h.stopped)
+	h.mu.Unlock()
+	h.launcher.beforeLaunch = func(req LaunchRequest) {
+		h.launcher.beforeLaunch = nil
+		h.m.OnRunFinished(ctx, req.SessionID, RunOutcome{
+			RunID: req.RunID, Status: StatusCompleted, Text: "done fast",
+		})
+	}
+
+	got, err := h.m.Retry(ctx, info.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCompleted {
+		t.Errorf("retry reported %s, want the completed state it settled on", got.Status)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.stopped) != before {
+		t.Errorf("a run that completed normally was told to cancel: %v", h.stopped[before:])
+	}
+}
+
+// When a task finishes that fast, its result is in the tool output the model
+// is about to read — so the wake-up owes nothing. Consuming belongs to the
+// MODEL path: a person reading the same result over REST has told the model
+// nothing, and its wake-up must survive.
+func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
+	ctx := context.Background()
+	finishOnLaunch := func(h *harness) {
+		h.launcher.beforeLaunch = func(req LaunchRequest) {
+			h.launcher.beforeLaunch = nil
+			h.m.OnRunFinished(ctx, req.SessionID, RunOutcome{
+				RunID: req.RunID, Status: StatusCompleted, Text: "done fast",
+			})
+		}
+	}
+
+	t.Run("model path consumes", func(t *testing.T) {
+		h := newHarness(t)
+		h.canWake = false // hold the debt still so the assertion is about consumption
+		info := h.spawn(t)
+		h.fail(t, info.TaskID, "boom")
+		finishOnLaunch(h)
+
+		res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+			`{"task_id":"`+info.TaskID+`"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stringOf(res), "done fast") {
+			t.Fatalf("the model was not handed the result: %q", stringOf(res))
+		}
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
+			t.Errorf("notify state = %q, want consumed — the model already read it", got)
+		}
+	})
+
+	t.Run("host path keeps the debt", func(t *testing.T) {
+		h := newHarness(t)
+		h.canWake = false
+		info := h.spawn(t)
+		h.fail(t, info.TaskID, "boom")
+		finishOnLaunch(h)
+
+		// Retry called directly, as a REST endpoint does.
+		if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
+			t.Errorf("notify state = %q, want pending — the model has heard nothing", got)
+		}
+	})
 }
 
 // A task that does not exist is a different answer from one that cannot be

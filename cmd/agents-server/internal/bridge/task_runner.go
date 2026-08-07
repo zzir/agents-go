@@ -171,6 +171,15 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	return taskInfoFrom(info), nil
 }
 
+// TaskRetryable reports whether a task in this state would be accepted by
+// RetryTask, so a client can offer the action only when it would work.
+func (r *Runner) TaskRetryable(status string, attempt int) bool {
+	if r.tasks == nil {
+		return false
+	}
+	return r.tasks.Retryable(tasks.Status(status), attempt)
+}
+
 // postRun runs after every run segment terminates. It hands the outcome to the
 // task manager, which advances a task's state or — for an ordinary chat session
 // — drains the wake-ups that queued while it was busy.

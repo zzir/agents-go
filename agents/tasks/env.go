@@ -58,19 +58,45 @@ type LaunchRequest struct {
 	Wake bool
 }
 
+// StopOutcome is what a host did with a stop request.
+//
+// "No error" is not enough to act on: a host asked to stop a run it has never
+// heard of has nothing to report but success, and a Manager reading that as
+// "the run will wind itself up" leaves a task running that it has just told
+// someone was stopped. What the Manager does next depends on which of these
+// happened, so the host says which.
+type StopOutcome int
+
+const (
+	// StopUnknownRun means the host has no such run: it has not started yet —
+	// a task claims its run before the host is told to launch it — or it is
+	// long gone. Nothing was cancelled, so the ending is the Manager's to
+	// record.
+	StopUnknownRun StopOutcome = iota
+	// StopCancelled means the run is not going to continue: it was cancelled,
+	// or it had already finished. Either way nothing more will come from it.
+	StopCancelled
+	// StopAfterTurn means the run is still going and will stop at the end of
+	// its current turn, reporting its own ending through OnRunFinished. Only a
+	// graceful stop can be answered this way, and it is the one answer that
+	// lets the Manager leave the terminal state to the run.
+	StopAfterTurn
+)
+
 // Stopper cancels a running task. It is separate from Launcher because a host
 // that only ever spawns need not implement it, and a Manager without one still
 // finalizes a stopped task's row — it simply cannot interrupt the run.
 type Stopper interface {
-	// Stop cancels the run. graceful lets the current turn finish.
-	Stop(ctx context.Context, runID string, graceful bool) error
+	// Stop cancels the run. graceful lets the current turn finish; only then
+	// may StopAfterTurn be returned.
+	Stop(ctx context.Context, runID string, graceful bool) (StopOutcome, error)
 }
 
 // StopperFunc adapts a function to Stopper.
-type StopperFunc func(ctx context.Context, runID string, graceful bool) error
+type StopperFunc func(ctx context.Context, runID string, graceful bool) (StopOutcome, error)
 
 // Stop implements Stopper.
-func (f StopperFunc) Stop(ctx context.Context, runID string, graceful bool) error {
+func (f StopperFunc) Stop(ctx context.Context, runID string, graceful bool) (StopOutcome, error) {
 	return f(ctx, runID, graceful)
 }
 

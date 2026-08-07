@@ -393,6 +393,7 @@ interface ProcessTimelineProps {
   onReject?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
   onRetryTask?: (taskId: string) => void;
+  retryableByCallId?: Record<string, boolean>;
   liveTaskStatusByCallId?: Record<string, string>;
   liveTaskLabelByCallId?: Record<string, string>;
   taskLabelById?: Record<string, string>;
@@ -401,7 +402,7 @@ interface ProcessTimelineProps {
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
-function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, diagnostics, onApprove, onReject, onInspectTask, onRetryTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
+function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, diagnostics, onApprove, onReject, onInspectTask, onRetryTask, retryableByCallId, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: ProcessTimelineProps) {
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
 
@@ -473,6 +474,7 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, di
                   onReject={onReject}
                   onInspectTask={onInspectTask}
                   onRetryTask={onRetryTask}
+                  taskRetryable={retryableByCallId?.[tc.tool_call_id]}
                   liveTaskStatus={liveTaskStatusByCallId?.[tc.tool_call_id]}
                   liveTaskLabel={liveTaskLabelByCallId?.[tc.tool_call_id]}
                   taskLabelById={taskLabelById}
@@ -545,12 +547,13 @@ interface TurnBlockProps {
   onFork?: (id: string) => void;
   onInspectTask?: (taskId: string) => void;
   onRetryTask?: (taskId: string) => void;
+  retryableByCallId?: Record<string, boolean>;
   liveTaskStatusByCallId?: Record<string, string>;
   liveTaskLabelByCallId?: Record<string, string>;
   taskLabelById?: Record<string, string>;
 }
 
-const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, branches, onSwitchBranch, onFork, onInspectTask, onRetryTask, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
+const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, liveAgentName, onApprove, onReject, regenMessageId, regenContent, onRegenerate, running, compacting, diagnostics, duration, liveStartedAt, messageId, branches, onSwitchBranch, onFork, onInspectTask, onRetryTask, retryableByCallId, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById }: TurnBlockProps) {
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const [copied, setCopied] = useState(false);
 
@@ -587,6 +590,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
           : <ProcessTimeline
               onInspectTask={onInspectTask}
               onRetryTask={onRetryTask}
+              retryableByCallId={retryableByCallId}
               liveTaskStatusByCallId={liveTaskStatusByCallId}
               liveTaskLabelByCallId={liveTaskLabelByCallId}
               taskLabelById={taskLabelById}
@@ -605,6 +609,7 @@ const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive,
         <ProcessTimeline
           onInspectTask={onInspectTask}
           onRetryTask={onRetryTask}
+          retryableByCallId={retryableByCallId}
           liveTaskStatusByCallId={liveTaskStatusByCallId}
           liveTaskLabelByCallId={liveTaskLabelByCallId}
           taskLabelById={taskLabelById}
@@ -1146,14 +1151,19 @@ export function ChatView({
   }, [sessionId, onPatchTask]);
 
   const retryTask = useCallback((taskId: string) => {
-    (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number }>)
+    (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number; retryable?: boolean }>)
       .then(info => {
         // The confirmed state, applied without waiting for the broadcast — the
         // same reason stopTask does: the answer is already in hand, and a
         // button that stays on "failed" invites a second click that will be
         // refused. The failed attempt's summary goes with it.
         if (sessionId && info?.status) {
-          onPatchTask?.(sessionId, taskId, { status: info.status as TaskStatus, attempt: info.attempt, summary: undefined });
+          onPatchTask?.(sessionId, taskId, {
+            status: info.status as TaskStatus, attempt: info.attempt,
+            // The server's own answer, so a task that just used its last
+            // attempt stops offering one.
+            retryable: !!info.retryable, summary: undefined,
+          });
         }
       })
       .catch((e: Error) => toast.error(e.message || 'Retry failed'));
@@ -1207,6 +1217,16 @@ export function ChatView({
       Object.entries(next).every(([k, v]) => prev[k] === v);
     if (!same) liveTaskStatusRef.current = next;
     return liveTaskStatusRef.current;
+  }, [tasks]);
+
+  // toolCallId → whether the server would accept a retry of that task. The
+  // card cannot work it out: "failed" says nothing about attempts left.
+  const retryableByCallId = useMemo(() => {
+    const next: Record<string, boolean> = {};
+    for (const t of Object.values(tasks || {})) {
+      if (t.toolCallId && t.retryable) next[t.toolCallId] = true;
+    }
+    return next;
   }, [tasks]);
 
   // toolCallId → live task title (the spawn label), for the spawn card header
@@ -1418,6 +1438,7 @@ export function ChatView({
                   key={entryKey(m, i, 'turn')}
                   onInspectTask={openTaskDetail}
                   onRetryTask={retryTask}
+                  retryableByCallId={retryableByCallId}
                   parts={m.parts || []}
                   streaming={isLive ? streaming : null}
                   reasoning={isLive ? reasoning : null}

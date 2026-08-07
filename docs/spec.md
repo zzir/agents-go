@@ -1905,6 +1905,30 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
 - **A retry takes a concurrency slot** like a spawn — exempting it would make
   retry the way around the cap — and a launch that fails puts the task back to
   failed with its debt consumed, since the caller is being told to its face.
+- **A stop reports what it DID**, not whether it errored. A host asked to stop
+  a run it has never heard of — the ordinary state during a launch — has
+  nothing to report but success, and reading that as "the run will wind itself
+  up" answers a graceful stop with acceptance while the task runs to completion
+  and nobody records anything. `StopAfterTurn` is the only answer that lets the
+  Manager stand back, and only a graceful stop may give it; a run that is
+  already over is not a cancellation to announce, since publishing one would
+  rewrite an outcome every client has seen.
+- **Whether a run reported is the Manager's own knowledge, not the row's.** A
+  run that finished the instant it started and a run something ended while the
+  host could not reach it leave the SAME row: terminal, on that run id.
+  Compensation looks at both — the row, and whether `OnRunFinished` has spoken
+  about that run — because cancelling on the row alone cancels tasks that
+  simply finished quickly, which is the common case when a run fails its
+  pre-flight.
+- **A finished task's debt is consumed on the MODEL's path only.** When a task
+  ends before the call that started it returns, its result is in the tool
+  output the model is about to read, so the wake-up owes nothing — the rule
+  `task_status` already followed. A person reading the same result over an HTTP
+  response has told the model nothing, so a host API must not consume it.
+- **Retryability is the Manager's answer, not the status's.** A failed task
+  that has used every attempt looks exactly like one that has not, so a caller
+  offering a retry asks (`Retryable`) rather than inferring — otherwise the
+  offer is a button that can only be refused.
 - **Starting a run is two steps, and a terminator can land between them.** The
   row is claimed (created, or reopened by `RetryClaim`) before the host is told
   to start the run, so a stop arriving inside that window cancels a run the host

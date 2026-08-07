@@ -85,25 +85,36 @@ type taskStopper struct{ r *Runner }
 // claimed the row by the time this is called — so the work here is discarding
 // the approval and telling every client, or the chip stays "input required"
 // with dead buttons and holds a task-cap slot until the record is collected.
-func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) error {
+func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
 	info, live := t.r.hub.Info(runID)
 	if live && info.Status == RunRunning {
 		if graceful && t.r.hub.StopAfterTurn(runID) {
-			return nil
+			return tasks.StopAfterTurn, nil
 		}
 		t.r.hub.Cancel(runID)
-		return nil
+		return tasks.StopCancelled, nil
 	}
-	// Not running: either paused on an approval or already gone.
+	// Not running: paused on an approval, already over, or never started.
 	if t.r.Deps.PendingApprovals != nil {
 		if err := t.r.Deps.PendingApprovals.Delete(ctx, runID); err != nil && !errors.Is(err, store.ErrNotFound) {
 			zerolog.Ctx(ctx).Warn().Err(err).Str("run_id", runID).Msg("discarding pending approval on stop")
 		}
 	}
-	if live {
-		t.r.publishTaskCancelled(runID)
+	if !live {
+		// The hub has no record: the run has not been registered yet — a task
+		// claims its run before this is called — or it was collected long ago.
+		// Saying so is what lets the SDK record the ending itself instead of
+		// waiting for a run that will never report.
+		return tasks.StopUnknownRun, nil
 	}
-	return nil
+	if isTerminalRunStatus(info.Status) {
+		// Already finished. Publishing a cancellation would rewrite an outcome
+		// every watching client has already seen — and it is not one: nothing
+		// was cancelled, the run simply ended first.
+		return tasks.StopCancelled, nil
+	}
+	t.r.publishTaskCancelled(runID)
+	return tasks.StopCancelled, nil
 }
 
 // taskWakeGuard answers "may this parent be woken now".
@@ -189,13 +200,14 @@ func taskInfoFrom(i *tasks.Info) *TaskInfo {
 		return nil
 	}
 	return &TaskInfo{
-		TaskID:  i.TaskID,
-		Label:   i.Label,
-		Agent:   i.Agent,
-		Status:  string(i.Status),
-		Attempt: i.Attempt,
-		Summary: i.Summary,
-		Result:  i.Result,
+		TaskID:    i.TaskID,
+		Label:     i.Label,
+		Agent:     i.Agent,
+		Status:    string(i.Status),
+		Attempt:   i.Attempt,
+		Retryable: i.Retryable,
+		Summary:   i.Summary,
+		Result:    i.Result,
 	}
 }
 

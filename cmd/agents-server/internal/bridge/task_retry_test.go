@@ -117,6 +117,75 @@ func TestTaskStore_FinalizeIsBoundToTheAttempt(t *testing.T) {
 	}
 }
 
+// The Manager needs more than "no error" from a stop: a host that has never
+// heard of the run has nothing to report but success, and reading that as "it
+// will wind itself up" leaves a task running that someone was told was
+// stopped. A run that is already over is not a cancellation either — saying so
+// would rewrite an outcome every client has seen.
+func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
+	ctx := context.Background()
+	runner, _, _, _ := newTaskTestRunner(t)
+	stopper := taskStopper{runner}
+
+	out, err := stopper.Stop(ctx, "never-started", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != tasks.StopUnknownRun {
+		t.Errorf("outcome = %v, want StopUnknownRun for a run the hub has no record of", out)
+	}
+
+	// A live run takes a real cancel, and a graceful stop says it will report
+	// its own ending.
+	seg, _, err := runner.hub.register("live-run", "sess-live", "agent", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seg.finalize()
+	runner.hub.setControl("live-run", &fakeControl{})
+	if out, err = stopper.Stop(ctx, "live-run", true); err != nil || out != tasks.StopAfterTurn {
+		t.Errorf("graceful stop of a live run = %v (err %v), want StopAfterTurn", out, err)
+	}
+	// Without a control there is nothing to defer to, so the run is cancelled
+	// outright — and saying AfterTurn would promise an ending nobody records.
+	seg3, _, err := runner.hub.register("no-ctrl", "sess-noctrl", "agent", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seg3.finalize()
+	if out, err = stopper.Stop(ctx, "no-ctrl", true); err != nil || out != tasks.StopCancelled {
+		t.Errorf("graceful stop with no control = %v (err %v), want StopCancelled", out, err)
+	}
+
+	// A record the hub keeps after the run ended: nothing to cancel, and
+	// nothing to announce.
+	seg2, _, err := runner.hub.register("done-run", "sess-done", "agent", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seg2.finalize()
+	runner.hub.finish("done-run", false)
+	if info, ok := runner.hub.Info("done-run"); !ok || info.Status != RunCompleted {
+		t.Fatalf("precondition: the run is %+v, want a retained completed record", info)
+	}
+	var published int
+	detach, ok := runner.hub.Subscribe("done-run", 0, func(*protocol.Envelope) { published++ })
+	if !ok {
+		t.Fatal("cannot watch the finished run")
+	}
+	defer detach()
+
+	if out, err = stopper.Stop(ctx, "done-run", false); err != nil || out == tasks.StopAfterTurn {
+		t.Errorf("stop of a finished run = %v (err %v), want it reported as over", out, err)
+	}
+	if info, _ := runner.hub.Info("done-run"); info.Status != RunCompleted {
+		t.Errorf("the finished run became %q — a stop rewrote an outcome clients already saw", info.Status)
+	}
+	if published != 0 {
+		t.Errorf("a finished run published %d event(s) on being stopped", published)
+	}
+}
+
 // A failed task is invisible to a session teardown — its run is over and its
 // hidden session was never marked — so the hub has to refuse a run whose PARENT
 // is being deleted. Otherwise a retry landing between the mark and the cascade

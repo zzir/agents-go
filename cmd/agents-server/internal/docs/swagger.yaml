@@ -416,6 +416,12 @@ components:
             Result carries the task's full final output (task_status only — the
             wake notification and the UI card stay on the truncated Summary).
           type: string
+        retryable:
+          description: |-
+            Retryable reports whether task_retry would be accepted right now — a
+            failed task with attempts left. A client offering the action asks rather
+            than inferring it from the status.
+          type: boolean
         status:
           type: string
         summary:
@@ -1236,6 +1242,12 @@ components:
           type: string
         parent_session_id:
           type: string
+        retryable:
+          description: |-
+            Retryable is computed for the wire, not stored: whether task_retry would
+            be accepted right now. The row knows its status and attempt; only the
+            task manager knows the ceiling they are measured against.
+          type: boolean
         run_id:
           description: |-
             RunID is the id of the task's CURRENT attempt: a retry replaces it. It is

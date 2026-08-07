@@ -136,11 +136,16 @@ func newHarness(t *testing.T, tune ...func(*Config)) *harness {
 			return Spec{DisplayName: name, Inherit: json.RawMessage(`{"agent":"` + name + `"}`)}, nil
 		}),
 		Guard: WakeGuardFunc(func(context.Context, string) bool { return h.canWake }),
-		Stopper: StopperFunc(func(_ context.Context, runID string, _ bool) error {
+		// A host that knows every run it was asked about: the tests that care
+		// about the launch window override this.
+		Stopper: StopperFunc(func(_ context.Context, runID string, graceful bool) (StopOutcome, error) {
 			h.mu.Lock()
 			h.stopped = append(h.stopped, runID)
 			h.mu.Unlock()
-			return nil
+			if graceful {
+				return StopAfterTurn, nil
+			}
+			return StopCancelled, nil
 		}),
 	}
 	for _, f := range tune {

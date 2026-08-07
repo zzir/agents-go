@@ -146,5 +146,10 @@ func (h *TaskHandler) ListBySession(c *gin.Context) {
 			}
 		}
 	}
+	// After the overlay, so a task the hub still shows as running is not
+	// offered a retry it would refuse.
+	for i := range tasks {
+		tasks[i].Retryable = h.runner.TaskRetryable(tasks[i].Status, tasks[i].Attempt)
+	}
 	c.JSON(http.StatusOK, tasks)
 }

@@ -114,6 +114,17 @@ type RunInfo struct {
 	Task *TaskMeta `json:"task,omitempty"`
 }
 
+// isTerminalRunStatus reports whether a run has ended. A retained record in
+// one of these states describes something that is over: nothing can be
+// cancelled, and publishing a cancellation would rewrite what clients saw.
+func isTerminalRunStatus(s RunStatus) bool {
+	switch s {
+	case RunCompleted, RunErrored, RunCancelled:
+		return true
+	}
+	return false
+}
+
 // TaskStatusFor maps a run status onto the MCP Tasks (SEP-1686) five-state
 // task vocabulary — the single point where the two state models meet.
 func TaskStatusFor(s RunStatus) string {

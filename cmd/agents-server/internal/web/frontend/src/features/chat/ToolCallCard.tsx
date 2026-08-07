@@ -18,6 +18,9 @@ interface ToolCallCardProps {
   // Resumes the failed task this spawn call started. Absent where a retry has
   // nowhere to report to.
   onRetryTask?: (taskId: string) => void;
+  // Whether the server would accept that retry. The card's own task state
+  // cannot answer it — "failed" says nothing about attempts left.
+  taskRetryable?: boolean;
   toolCall: ToolCall;
   live?: boolean;
   onApprove?: (id: string, scope?: string) => void;
@@ -145,7 +148,7 @@ function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
   }
 }
 
-export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, onRetryTask, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
+export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, onRetryTask, taskRetryable, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task, progress } = toolCall;
 
   // A spawn_task card is the task's anchor in the timeline: the terminal
@@ -250,7 +253,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       {(task?.attempt ?? 0) > 1 && <Label variant="secondary">{'attempt ' + task!.attempt}</Label>}
       {/* Only on a card whose task is FAILED: a retry needs something to
           resume, and the badge above is the card's own word on that. */}
-      {task?.status === 'failed' && inspectTaskId && onRetryTask && (
+      {task?.status === 'failed' && taskRetryable && inspectTaskId && onRetryTask && (
         <button
           className="ToolCallCard-inspect"
           title="Retry task"

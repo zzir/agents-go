@@ -257,6 +257,9 @@ export function applyTaskTerminal(msgs: Msgs, toolCallId: string, task: { id: st
   if (!TERMINAL_TASK_STATUSES.has(task.status)) return null;
   const cur = findToolCall(msgs, toolCallId);
   if (!cur || (cur.task?.status && TERMINAL_TASK_STATUSES.has(cur.task.status))) return null;
+  // An outcome from an attempt the card has already moved past: a stale
+  // snapshot, resolving after the events that overtook it.
+  if (task.attempt && cur.task?.attempt && task.attempt < cur.task.attempt) return null;
   const t: NonNullable<ToolCall['task']> = { id: task.id, status: task.status };
   if (task.label) t.label = task.label;
   if (task.summary) t.summary = task.summary;
@@ -279,8 +282,14 @@ export function startTaskAttempt(msgs: Msgs, toolCallId: string, attempt: number
   const cur = findToolCall(msgs, toolCallId);
   if (!cur?.task?.status || !TERMINAL_TASK_STATUSES.has(cur.task.status)) return null;
   if (!attempt || attempt <= (cur.task.attempt ?? 1)) return null;
-  const label = cur.task.label;
-  return patchToolCall(msgs, toolCallId, { task: label ? { label } : undefined });
+  // The attempt stays on the card. Dropping it left the card unable to say
+  // which attempt it was on, so a stale snapshot resolving later — a reconnect
+  // fetch issued before the retry — could fold the PREVIOUS attempt's outcome
+  // onto a task that is running again. The status is what the badge reads, and
+  // that is what re-arming clears.
+  const task: NonNullable<ToolCall['task']> = { attempt };
+  if (cur.task.label) task.label = cur.task.label;
+  return patchToolCall(msgs, toolCallId, { task });
 }
 
 // syncTaskCard brings a spawn card in line with a task's current state: a newer
