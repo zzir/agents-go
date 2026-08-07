@@ -22,7 +22,7 @@ import { describe, it, expect } from 'vitest';
 import { buildTimeline, type EntryView, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
 } from '@/lib/streamReducer';
 
 const RUN = 'run-1';
@@ -211,6 +211,54 @@ describe('stream/replay isomorphism', () => {
       },
     ]);
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  it('task retry: a folded outcome carries its attempt, so a replay cannot wipe it', () => {
+    // syncTaskCard is the one way task state becomes card state, and it folds
+    // the attempt in with the outcome. When each caller passed the parts
+    // separately the live path forgot the attempt, the card read as attempt 1
+    // whatever it was, and a replayed run.started for the attempt it was
+    // ALREADY showing looked like a new one — wiping a real result.
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    live = syncTaskCard(live, 'c1', { id: 't1', label: 'Flaky job', status: 'failed', summary: 'boom', attempt: 1 })!;
+    live = syncTaskCard(live, 'c1', { id: 't1', label: 'Flaky job', attempt: 2 })!;
+    live = syncTaskCard(live, 'c1', { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 })!;
+
+    const card = () => (live[live.length - 1] as TurnEntry).parts[0];
+    expect(card()).toEqual({
+      type: 'tools',
+      toolCalls: [{
+        tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', status: null, output: null,
+        task: { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 },
+      }],
+    });
+    // The replay of the attempt now on the card changes nothing.
+    expect(syncTaskCard(live, 'c1', { id: 't1', label: 'Flaky job', attempt: 2 })).toBeNull();
+  });
+
+  it('task retry: one sync both re-arms and folds a retry that already ended', () => {
+    // What the reconnect sweep sees: the card is on the previous attempt's
+    // outcome, the row is a later attempt that has already finished, and no
+    // broadcast is coming for either step.
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, {
+      tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}',
+      needs_approval: undefined, status: null, output: null,
+    }, '')!;
+    live = syncTaskCard(live, 'c1', { id: 't1', label: 'Flaky job', status: 'failed', summary: 'boom', attempt: 1 })!;
+    live = syncTaskCard(live, 'c1', { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 })!;
+
+    expect((live[live.length - 1] as TurnEntry).parts[0]).toEqual({
+      type: 'tools',
+      toolCalls: [{
+        tool_call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', status: null, output: null,
+        task: { id: 't1', label: 'Flaky job', status: 'completed', summary: 'done', attempt: 2 },
+      }],
+    });
   });
 
   it('task retry: a card that never finished is left alone', () => {

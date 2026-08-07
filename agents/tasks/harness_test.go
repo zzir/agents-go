@@ -14,9 +14,16 @@ type fakeLauncher struct {
 	mu       sync.Mutex
 	launched []LaunchRequest
 	err      error
+	// beforeLaunch runs inside Launch, before the request is recorded. It is
+	// how a test stages something arriving in the window between a task
+	// claiming a run and the host knowing that run exists.
+	beforeLaunch func(LaunchRequest)
 }
 
 func (l *fakeLauncher) Launch(_ context.Context, req LaunchRequest) error {
+	if hook := l.hook(); hook != nil {
+		hook(req)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.err != nil {
@@ -24,6 +31,15 @@ func (l *fakeLauncher) Launch(_ context.Context, req LaunchRequest) error {
 	}
 	l.launched = append(l.launched, req)
 	return nil
+}
+
+// hook reads beforeLaunch under the lock, so a test may set it from another
+// goroutine, and calls it OUTSIDE — the hook re-enters the Manager, which
+// launches again.
+func (l *fakeLauncher) hook() func(LaunchRequest) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.beforeLaunch
 }
 
 func (l *fakeLauncher) all() []LaunchRequest {

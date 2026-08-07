@@ -21,6 +21,7 @@ import { login, checkAuth, getToken, api } from '@/lib/api';
 import { EV } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall } from '@/lib/timeline';
+import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { onToast, toast } from '@/lib/toast';
 
@@ -299,9 +300,22 @@ export default function App() {
   // API's response) directly — the fallback for when no hub broadcast will
   // come (stopping a paused task after a restart).
   const patchTask = useCallback((sid: string, taskId: string, patch: Record<string, unknown>) => {
-    updateSS(sid, s => s.tasks[taskId]
-      ? { ...s, tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], ...patch } } }
-      : s);
+    updateSS(sid, s => {
+      const cur = s.tasks[taskId];
+      if (!cur) return s;
+      const next = { ...s, tasks: { ...s.tasks, [taskId]: { ...cur, ...patch } } };
+      // The spawn card follows the same confirmation. A retry normally re-arms
+      // it from the run.started broadcast, but the caller that got this answer
+      // over REST may have no socket at all — and then nothing else would ever
+      // correct a card still offering to retry a task that is already running.
+      const merged = next.tasks[taskId];
+      if (!cur.toolCallId) return next;
+      const msgs = syncTaskCard(next.messages, cur.toolCallId, {
+        id: taskId, label: merged.label, status: merged.status,
+        summary: merged.summary, attempt: merged.attempt,
+      });
+      return msgs ? { ...next, messages: msgs } : next;
+    });
   }, [updateSS]);
 
   useEffect(() => {

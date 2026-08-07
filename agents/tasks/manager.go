@@ -365,8 +365,15 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		return nil, fmt.Errorf("tasks: starting task run: %w", err)
 	}
 
-	m.notifyUpdate(ctx, task)
-	return infoFrom(task, spec.DisplayName), nil
+	// The row was visible to a teardown from the moment it was created, and
+	// the run was not: a StopTree in between cancelled a run the host could not
+	// reach, and this launch would leave it executing.
+	settled, err := m.settleLaunch(ctx, task.ID, task.RunID)
+	if err != nil {
+		return nil, err
+	}
+	m.notifyUpdate(ctx, settled)
+	return infoFrom(settled, spec.DisplayName), nil
 }
 
 // SpawnRequest describes a task to start.
@@ -450,7 +457,11 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 		return nil, m.retryLaunchFailed(ctx, taskID, runID, err)
 	}
 
-	updated, err := m.cfg.Store.Get(ctx, taskID)
+	// A stop that arrived while this run was being launched has already
+	// recorded its ending — against a run the host could not reach. Report what
+	// the task IS rather than the working state we claimed, and see the
+	// orphaned run stopped.
+	updated, err := m.settleLaunch(ctx, taskID, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -516,6 +527,39 @@ func retryPrompt(t *Task, limit int) string {
 	return "A previous attempt at this task failed: " + reason + ". " +
 		"The conversation above is the progress made so far. Review it and continue the task to " +
 		"completion; avoid repeating work that already succeeded."
+}
+
+// settleLaunch reconciles a task with the run just started for it, and returns
+// the task as it now stands.
+//
+// Starting a run is two steps — claim the row, then tell the host — and a
+// terminator that lands between them acts on an attempt the host has never
+// heard of: its Stopper call reaches nothing, and the launch goes ahead anyway.
+// The result is a run executing for a task that is cancelled (or already on a
+// later attempt), unstoppable, its own outcome unrecordable because the row it
+// would finalize is no longer its own.
+//
+// A stop closes its half by telling the host again once the ending is
+// unambiguously its own. This closes the other half, for the terminators that
+// never speak to the host at all: an approval reaper, a restart sweep.
+func (m *Manager) settleLaunch(ctx context.Context, taskID, runID string) (*Task, error) {
+	t, err := m.cfg.Store.Get(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if t.RunID == runID && !t.Status.Terminal() {
+		return t, nil
+	}
+	if m.cfg.Stopper == nil {
+		m.log.WarnContext(ctx, "a run outlived the task that started it, and there is no Stopper to cancel it",
+			slog.String("task_id", taskID), slog.String("run_id", runID), slog.String("status", string(t.Status)))
+		return t, nil
+	}
+	if serr := m.cfg.Stopper.Stop(ctx, runID, false); serr != nil {
+		m.log.WarnContext(ctx, "stopping a run its task no longer owns",
+			slog.String("task_id", taskID), slog.String("run_id", runID), slog.String("error", serr.Error()))
+	}
+	return t, nil
 }
 
 func (m *Manager) cleanupSession(ctx context.Context, id string) {
@@ -667,6 +711,15 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 	if paused {
 		// Told after the claim, so the host discards the approval only once
 		// this call owns the transition.
+		stopRun()
+	} else if won {
+		// Told AGAIN, now that the ending is ours. The first call may have gone
+		// out while the run was still being launched — a run the host had never
+		// heard of, so the stop reached nothing and the launch went ahead. It
+		// exists by now, and nothing else will ever stop it: its own outcome
+		// cannot even be recorded against the row this call just finalized.
+		// Asking a Stopper to cancel a run that already ended is something it
+		// has to tolerate regardless.
 		stopRun()
 	}
 	if won {

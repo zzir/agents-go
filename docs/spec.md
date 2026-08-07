@@ -1905,6 +1905,19 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
 - **A retry takes a concurrency slot** like a spawn — exempting it would make
   retry the way around the cap — and a launch that fails puts the task back to
   failed with its debt consumed, since the caller is being told to its face.
+- **Starting a run is two steps, and a terminator can land between them.** The
+  row is claimed (created, or reopened by `RetryClaim`) before the host is told
+  to start the run, so a stop arriving inside that window cancels a run the host
+  has never heard of: its `Stopper` call reaches nothing, and the launch goes
+  ahead regardless. The result is a run executing for a task that is already
+  cancelled — unstoppable, and unable even to record its own outcome, since the
+  row it would finalize is no longer its own. Both halves are closed: a stop
+  tells the host **again** once the ending is unambiguously its own (the run is
+  reachable by then), and `Spawn`/`Retry` **re-read the row after launching** —
+  if it no longer names their run as its live attempt, they cancel the run they
+  just started and report what the task actually is. The second half is what
+  covers the terminators that never speak to the host at all: an approval
+  reaper, a restart sweep.
 - **The restart sweep cannot arbitrate a retry**, so ordering must. `FailOrphans`
   fails every row recorded as working and has no notion of a live run; a retry
   that claimed first would have its fresh run declared dead, its parent woken

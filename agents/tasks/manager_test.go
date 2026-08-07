@@ -748,9 +748,12 @@ func TestStop_PausedTaskIsClaimedBeforeTheHostIsTold(t *testing.T) {
 
 // A working task is the other way round: cancel the run first, or its own
 // completion wins the CAS and records a success for something the user stopped.
-func TestStop_WorkingTaskCancelsTheRunFirst(t *testing.T) {
+//
+// And then again once the ending is ours — a run still being launched when the
+// first call went out was invisible to the host then and reachable now.
+func TestStop_WorkingTaskCancelsTheRunFirstThenAgain(t *testing.T) {
 	ctx := context.Background()
-	var sawStatus string
+	var saw []string
 	h := newHarness(t)
 	info := h.spawn(t)
 	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) error {
@@ -758,15 +761,21 @@ func TestStop_WorkingTaskCancelsTheRunFirst(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		sawStatus = string(task.Status)
+		saw = append(saw, string(task.Status))
 		return nil
 	})
 
 	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
 		t.Fatal(err)
 	}
-	if sawStatus != string(StatusWorking) {
-		t.Errorf("host saw %q when told to stop, want working — the row was claimed too early", sawStatus)
+	if len(saw) != 2 {
+		t.Fatalf("host was told %d times %v, want twice: before the claim and after it", len(saw), saw)
+	}
+	if saw[0] != string(StatusWorking) {
+		t.Errorf("host saw %q on the first call, want working — the row was claimed too early", saw[0])
+	}
+	if saw[1] != string(StatusCancelled) {
+		t.Errorf("host saw %q on the second call, want cancelled — it follows the claim", saw[1])
 	}
 	if got := h.get(t, info.TaskID).Status; got != StatusCancelled {
 		t.Errorf("status = %q, want cancelled", got)

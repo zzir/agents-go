@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -454,6 +455,81 @@ func TestStop_ChasesOneRetry(t *testing.T) {
 	}
 	if final := h.get(t, info.TaskID); final.Status != StatusCancelled {
 		t.Errorf("stored status = %s, want cancelled", final.Status)
+	}
+}
+
+// Starting a run is two steps — claim the row, then tell the host — and a stop
+// that lands between them cancels a run the host has never heard of: its
+// Stopper call reaches nothing and the launch goes ahead. Without the settle,
+// the row reads cancelled while that run executes, unstoppable, its own outcome
+// unrecordable — and the retry reports success.
+func TestRetry_StopInsideTheLaunchWindow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+
+	var stopped *Info
+	h.launcher.beforeLaunch = func(LaunchRequest) {
+		h.launcher.beforeLaunch = nil // the stop's own launches must not recurse
+		var err error
+		if stopped, err = h.m.Stop(ctx, info.TaskID, false); err != nil {
+			t.Errorf("staging the interleaved stop: %v", err)
+		}
+	}
+
+	got, err := h.m.Retry(ctx, info.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped == nil || stopped.Status != StatusCancelled {
+		t.Fatalf("the staged stop did not cancel: %+v", stopped)
+	}
+	// The retry reports what the task IS, not the working state it claimed.
+	if got.Status != StatusCancelled {
+		t.Errorf("retry reported %s, want the cancelled state it lost to", got.Status)
+	}
+	if row := h.get(t, info.TaskID); row.Status != StatusCancelled {
+		t.Errorf("row = %s, want cancelled", row.Status)
+	}
+
+	// And the run that was started anyway is stopped, rather than left running
+	// for a task that is over.
+	launched := h.launcher.all()
+	newRun := launched[len(launched)-1].RunID
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !slices.Contains(h.stopped, newRun) {
+		t.Errorf("run %s was launched for a cancelled task and never stopped (stopped: %v)", newRun, h.stopped)
+	}
+}
+
+// The same window on the spawn path: a task row is visible to a teardown from
+// the moment it exists, and its run is not.
+func TestSpawn_TeardownInsideTheLaunchWindow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+
+	h.launcher.beforeLaunch = func(LaunchRequest) {
+		h.launcher.beforeLaunch = nil
+		if err := h.m.StopTree(ctx, "parent"); err != nil {
+			t.Errorf("staging the interleaved teardown: %v", err)
+		}
+	}
+
+	info, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "parent", AgentName: "worker", Input: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Status != StatusCancelled {
+		t.Errorf("spawn reported %s, want the cancelled state the teardown recorded", info.Status)
+	}
+	launched := h.launcher.all()
+	newRun := launched[len(launched)-1].RunID
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !slices.Contains(h.stopped, newRun) {
+		t.Errorf("run %s was launched into a torn-down session and never stopped (stopped: %v)", newRun, h.stopped)
 	}
 }
 

@@ -5,7 +5,7 @@ import type { TaskStatus } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, appendToolProgress, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart,
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
@@ -389,7 +389,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           // "failed" badge with a live Retry button, and the new outcome is
           // dropped by applyTaskTerminal's no-move-backwards guard.
           const rearmed = p.tool_call_id && p.attempt
-            ? startTaskAttempt(s.messages, p.tool_call_id, p.attempt)
+            ? syncTaskCard(s.messages, p.tool_call_id, { id: taskId, label: p.label, attempt: p.attempt })
             : null;
           return {
             ...s,
@@ -471,11 +471,17 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         // the live counterpart of the call-display UPDATE the server appends
         // for replay (applyTaskTerminal ignores non-terminal statuses).
         if (meta.toolCallId && patch.status) {
-          const msgs = applyTaskTerminal(next.messages, meta.toolCallId, {
+          const merged = next.tasks[meta.taskId];
+          const msgs = syncTaskCard(next.messages, meta.toolCallId, {
             id: meta.taskId,
-            label: cur.label || meta.label,
+            label: merged.label || meta.label,
             status: patch.status,
             summary: patch.summary ?? cur.summary,
+            // The attempt travels WITH the outcome. Without it the card reads
+            // as attempt 1 whatever it is, and a replayed run.started for the
+            // attempt it is already showing looks like a new one — wiping the
+            // result the guard exists to protect.
+            attempt: merged.attempt,
           });
           if (msgs) next = { ...next, messages: msgs };
         }
@@ -795,7 +801,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         if (msgs) {
           for (const t of Object.values(s.tasks)) {
             if (t.toolCallId === p.tool_call_id && TERMINAL_TASK_STATUSES.has(t.status)) {
-              msgs = applyTaskTerminal(msgs, p.tool_call_id, { id: t.taskId, label: t.label, status: t.status, summary: t.summary }) ?? msgs;
+              msgs = syncTaskCard(msgs, p.tool_call_id, { id: t.taskId, label: t.label, status: t.status, summary: t.summary, attempt: t.attempt }) ?? msgs;
               break;
             }
           }
@@ -983,6 +989,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
             if (!rows || rows.length === 0) return;
             updateSS(sid, s => {
               const tasks = { ...s.tasks };
+              let messages = s.messages;
               for (const row of rows) {
                 const cur = tasks[row.task_id];
                 const status = (row.status || 'working') as TaskState['status'];
@@ -990,12 +997,24 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
                   ...(cur || { taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id }),
                   childSessionId: cur?.childSessionId || row.child_session_id,
                   parentRunId: cur?.parentRunId || row.parent_run_id,
-                  status, summary: row.summary ?? cur?.summary,
+                  status, attempt: row.attempt ?? cur?.attempt, summary: row.summary ?? cur?.summary,
                   createdAt: (row.created_at ? Date.parse(row.created_at) : undefined) || cur?.createdAt,
                   updatedAt: (row.updated_at ? Date.parse(row.updated_at) : undefined) || cur?.updatedAt,
                 };
+                // The spawn card too, not just the chip: a retry during the
+                // outage left the card on the previous attempt's outcome, and
+                // the run.started that would have re-armed it is long gone from
+                // the hub. Nothing else revisits the card — only a reload does,
+                // and that may never come.
+                const callId = cur?.toolCallId || row.tool_call_id;
+                if (callId) {
+                  messages = syncTaskCard(messages, callId, {
+                    id: row.task_id, label: row.label || cur?.label,
+                    status, summary: row.summary, attempt: row.attempt,
+                  }) ?? messages;
+                }
               }
-              return { ...s, tasks };
+              return { ...s, tasks, messages };
             });
           }).catch(() => undefined);
       }

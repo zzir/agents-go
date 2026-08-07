@@ -283,6 +283,30 @@ export function startTaskAttempt(msgs: Msgs, toolCallId: string, attempt: number
   return patchToolCall(msgs, toolCallId, { task: label ? { label } : undefined });
 }
 
+// syncTaskCard brings a spawn card in line with a task's current state: a newer
+// attempt re-arms it, a terminal outcome folds in, and both together are a
+// retry that has already finished.
+//
+// It exists because three callers need it — the live task events, a REST
+// response the caller already has in hand, and the reconnect sweep — and each
+// remembering the parts separately is how the attempt stopped being recorded
+// on the live path, which quietly disarmed the guard that keeps a replayed
+// run.started from wiping a real outcome.
+export function syncTaskCard(msgs: Msgs, toolCallId: string, task: { id: string; label?: string; status?: string; summary?: string; attempt?: number }): Msgs | null {
+  let out: Msgs | null = null;
+  if (task.attempt) {
+    const rearmed = startTaskAttempt(msgs, toolCallId, task.attempt);
+    if (rearmed) { out = rearmed; msgs = rearmed; }
+  }
+  if (task.status) {
+    const folded = applyTaskTerminal(msgs, toolCallId, {
+      id: task.id, label: task.label, status: task.status, summary: task.summary, attempt: task.attempt,
+    });
+    if (folded) out = folded;
+  }
+  return out;
+}
+
 // appendToolProgress accumulates the live output a running tool pushed.
 //
 // It appends rather than replaces because the wire carries deltas: a command
