@@ -79,11 +79,13 @@ has debts waiting, and its own run boundary is where they can finally be paid.
 | `Launcher` | "Start a run." (`Wake: true` marks the parent's notification run) |
 | `WakeGuard` | "May this parent be woken right now?" |
 
-A `Stopper` reports **what it did**, not just whether it errored. Two answers
-leave the ending to the run: `StopAfterTurn` (still going, will record its own
-ending — only a graceful stop may get this) and `StopAlreadyFinished` (it ended
-before the stop arrived, and its outcome is on its way). A host that has never
-heard of the run says `StopUnknownRun`: a task claims its run before the launch
+A `Stopper` reports **what it did**, not just whether it errored.
+`StopAfterTurn` (still going, will record its own ending — only a graceful stop
+may get this) is the one answer that finishes the call. `StopAlreadyFinished`
+means it ended before the stop arrived and its outcome is on its way: the stop
+records nothing and looks again, since that same answer is what it hears when a
+retry has replaced the attempt it was aiming at. A host that has never heard of
+the run says `StopUnknownRun`: a task claims its run before the launch
 registers it, so this is a real state, and answering "fine" for having done
 nothing is how a stop gets reported as accepted while the task runs on.
 

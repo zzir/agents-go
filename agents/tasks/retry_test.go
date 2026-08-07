@@ -416,11 +416,21 @@ func TestRetry_StaleNotifyWriteCannotSwallowTheNewDebt(t *testing.T) {
 func TestStop_ChasesOneRetry(t *testing.T) {
 	ctx := context.Background()
 	var stopper func(runID string)
+	// A host that answers the way the real one does: a run it has already seen
+	// finish is reported as over, not as cancelled. That is precisely what a
+	// stop hears about the attempt a retry replaced — the previous run IS
+	// finished, which is what let the retry happen — so a fake that always
+	// says "cancelled" would let this test pass on a Manager that never
+	// chases.
+	finished := map[string]bool{}
 	h := newHarness(t, func(c *Config) {
 		inner := c.Stopper
 		c.Stopper = StopperFunc(func(ctx context.Context, runID string, graceful bool) (StopOutcome, error) {
 			if stopper != nil {
 				stopper(runID)
+			}
+			if finished[runID] {
+				return StopAlreadyFinished, nil
 			}
 			return inner.Stop(ctx, runID, graceful)
 		})
@@ -432,7 +442,9 @@ func TestStop_ChasesOneRetry(t *testing.T) {
 	}
 	current := h.get(t, info.TaskID).RunID
 
-	// A retry lands between the stop's read and its claim, exactly once.
+	// A retry lands between the stop's read and its claim, exactly once. The
+	// attempt the stop was aiming at is finished by then — which is what the
+	// host will tell it.
 	var once sync.Once
 	stopper = func(string) {
 		once.Do(func() {
@@ -440,6 +452,7 @@ func TestStop_ChasesOneRetry(t *testing.T) {
 			if err != nil || !won {
 				t.Errorf("staging the interleaved failure: won=%v err=%v", won, err)
 			}
+			finished[current] = true
 			if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
 				t.Errorf("staging the interleaved retry: %v", err)
 			}
@@ -667,58 +680,71 @@ func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
 	})
 }
 
-// The wake-up is cancelled only when the result is genuinely what the model is
-// being handed. A task that finishes AFTER the call was decided still owes it:
-// the model was told "working", so consuming on the row instead would swallow
-// the answer and nobody would ever deliver it.
-func TestTools_ResultLandingAfterTheCallStillOwesAWakeUp(t *testing.T) {
+// The wake-up is cancelled only for the result the model is genuinely handed.
+// The two ways that can go wrong are opposite, and both leave news undelivered:
+// consuming for a task the model was told is still running swallows a result
+// that landed afterwards, and consuming on the row alone cancels a debt that by
+// then belongs to a different attempt.
+func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t)
-	h.canWake = false // hold the debt still, so this is about consumption
-	info := h.spawn(t)
-	h.fail(t, info.TaskID, "boom")
-	// Consume the first failure's debt so the assertion below is about the
-	// retry's.
-	if _, err := h.m.Status(ctx, info.TaskID, 0); err != nil {
-		t.Fatal(err)
-	}
 
-	// The task finishes between the launch settling and the tool returning —
-	// after Retry decided what to report.
-	h.launcher.beforeLaunch = func(req LaunchRequest) {
-		h.launcher.beforeLaunch = nil
-		go func() {
-			// Ordering is what matters, not timing: the retry's own settle has
-			// to read "working" first.
-			for range 100 {
-				if h.get(t, info.TaskID).Status == StatusWorking {
-					break
-				}
-			}
-			h.m.OnRunFinished(ctx, req.SessionID, RunOutcome{
-				RunID: req.RunID, Status: StatusCompleted, Text: "landed late",
-			})
-		}()
-	}
+	// The row finished after the answer was decided: the model holds
+	// "working", so the wake-up is the only way this result ever arrives.
+	t.Run("a result the model was not shown still owes a wake-up", func(t *testing.T) {
+		h := newHarness(t)
+		h.canWake = false // hold the debt where it can be inspected
+		info := h.spawn(t)
+		h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
+			RunID: h.get(t, info.TaskID).RunID, Status: StatusCompleted, Text: "landed late",
+		})
 
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
-		`{"task_id":"`+info.TaskID+`"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Whatever the tool reported, the model must not be left without the
-	// result: either it is in this output, or a wake-up still owes it.
-	told := strings.Contains(stringOf(res), "landed late")
-	// Wait for the late finish to land before reading the debt.
-	for range 1000 {
-		if h.get(t, info.TaskID).Status.Terminal() {
-			break
+		// info is what the tool is about to return — decided before the finish.
+		h.m.modelHasResult(ctx, info)
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
+			t.Errorf("notify state = %q, want pending — the model was told %q", got, info.Status)
 		}
-	}
-	owed := h.get(t, info.TaskID).NotifyState == NotifyPending
-	if !told && !owed {
-		t.Errorf("the model was told %q and is owed nothing — the result reaches nobody", stringOf(res))
-	}
+	})
+
+	t.Run("the result the model reads cancels its own wake-up", func(t *testing.T) {
+		h := newHarness(t)
+		h.canWake = false
+		info := h.spawn(t)
+		h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
+			RunID: h.get(t, info.TaskID).RunID, Status: StatusCompleted, Text: "done",
+		})
+
+		// What Status hands the model: the finished task itself.
+		finished, err := h.m.Status(ctx, info.TaskID, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.m.modelHasResult(ctx, finished)
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
+			t.Errorf("notify state = %q, want consumed", got)
+		}
+	})
+
+	// A retry between the answer and the write moves the debt to an attempt
+	// nobody has been told about.
+	t.Run("a later attempt's wake-up is not this result's to cancel", func(t *testing.T) {
+		h := newHarness(t)
+		h.canWake = false
+		info := h.spawn(t)
+		h.fail(t, info.TaskID, "boom")
+		stale := h.m.infoOf(h.get(t, info.TaskID), "") // terminal, attempt 1
+
+		if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
+			t.Fatal(err)
+		}
+		h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
+			RunID: h.get(t, info.TaskID).RunID, Status: StatusFailed, Err: "boom again",
+		})
+
+		h.m.modelHasResult(ctx, stale)
+		if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
+			t.Errorf("notify state = %q, want the second attempt's debt untouched", got)
+		}
+	})
 }
 
 // A stop that arrives after the run ended on its own must not overwrite the
@@ -743,6 +769,11 @@ func TestStop_AfterTheRunAlreadyFinishedKeepsTheOutcome(t *testing.T) {
 	}
 	if got := h.get(t, info.TaskID).Status; got != StatusWorking {
 		t.Errorf("status = %s, want the row left for the run's own report", got)
+	}
+
+	// The stop answered with a fresh read, not the row it started from.
+	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
+		t.Fatal(err)
 	}
 
 	// Which then lands, and stands.

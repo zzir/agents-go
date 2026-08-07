@@ -528,6 +528,11 @@ func (m *Manager) notRetryable(t *Task) error {
 // status — nothing is going to advance it — nor a wake-up debt for news the
 // caller is being told to its face.
 func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, cause error) error {
+	// Detached for the same reason as settleLaunch: the likeliest cause of a
+	// launch failing is a session being torn down, which has already cancelled
+	// the caller's context — and a task left working because its rollback was
+	// cancelled holds its slot until a restart sweeps it.
+	ctx = context.WithoutCancel(ctx)
 	full := "retry could not start: " + cause.Error()
 	won, err := m.cfg.Store.Finalize(ctx, taskID, runID, StatusFailed,
 		truncateRunes(full, m.cfg.SummaryLimit), full)
@@ -636,8 +641,9 @@ func (m *Manager) beginLaunch(runID string) (release func()) {
 	}
 }
 
-// noteRunReported records that the host has spoken about a run — which is
-// proof it knows about it, and therefore that a stop would have reached it.
+// noteRunReported records that a run has ENDED and the host said so — which is
+// what tells a launch still settling that a terminal row is its own run's
+// doing rather than an orphan somebody else left behind.
 func (m *Manager) noteRunReported(runID string) {
 	if runID == "" {
 		return
@@ -671,6 +677,11 @@ func (m *Manager) runReported(runID string) bool {
 // unambiguously its own. This closes the other half, for the terminators that
 // never speak to the host at all: an approval reaper, a restart sweep.
 func (m *Manager) settleLaunch(ctx context.Context, taskID, runID string) (*Task, error) {
+	// Detached, for the reason Spawn's rollback is: the event this exists to
+	// clean up after — a teardown that ended the task while the host could not
+	// reach the run — is the same event that cancels the caller's context. A
+	// cancelled read here would leave the run it was about to stop executing.
+	ctx = context.WithoutCancel(ctx)
 	t, err := m.cfg.Store.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -835,8 +846,19 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 		// to do" as "it will take care of itself" is how a stop gets reported
 		// as accepted while the task runs on.
 		switch stopRun() {
-		case StopAfterTurn, StopAlreadyFinished:
+		case StopAfterTurn:
 			return true, false, nil
+		case StopAlreadyFinished:
+			// Not early, and nothing claimed. "That run is over" is also
+			// exactly what a stop hears when a retry landed between its read
+			// and this call — the previous attempt IS finished, which is what
+			// let the retry happen — so answering it like a graceful stop
+			// would end the call here and leave the NEW attempt running.
+			// Reporting nothing claimed sends Stop round again: it re-reads,
+			// and either finds the ending this run recorded or chases the
+			// attempt that replaced it. The one thing it must not do is write
+			// a cancellation over an outcome that is already on its way.
+			return false, false, nil
 		case StopUnknownRun, StopCancelled:
 		}
 	}
@@ -944,11 +966,6 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	// The attempt this outcome belongs to: what the host reported, or — for a
 	// host that does not identify runs — whichever one the row names.
 	runID := cmp.Or(out.RunID, task.RunID)
-	// The host has spoken about this run, so it knows the run exists — which is
-	// exactly what a launch still settling needs to know before deciding the run
-	// was orphaned. Recorded before any of the branching below, and regardless
-	// of who wins a transition: the fact is about the run, not about the row.
-	m.noteRunReported(runID)
 
 	status := out.Status
 	full := strings.TrimSpace(out.Text)
@@ -979,6 +996,13 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	if !status.Terminal() {
 		return
 	}
+	// The run ENDED, and the host said so. That is what a launch still settling
+	// needs before reading a terminal row as its own run's doing rather than an
+	// orphan — a run that merely PAUSED is alive, and a terminal row while it
+	// is paused means something else ended the task and could not reach it.
+	// Recorded regardless of who wins the transition below: the fact is about
+	// the run, not about the row.
+	m.noteRunReported(runID)
 
 	won, err := m.cfg.Store.Finalize(ctx, task.ID, runID, status, summary, full)
 	if err != nil {

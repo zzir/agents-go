@@ -97,8 +97,8 @@ export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject,
               {t.status === 'failed' && ((t.attempt || 1) > 1 || taskRetryable(t)) && (
                 <div className="task-row-actions" onClick={e => e.stopPropagation()}>
                   {(t.attempt || 1) > 1 && <span className="task-row-activity">attempt {t.attempt}</span>}
-                  {/* Only when the server says it would take one: a task that
-                      has used every attempt looks the same from here. */}
+                  {/* Derived from the ceiling the server sends, so the offer
+                      follows the status: an exhausted task shows nothing. */}
                   {taskRetryable(t) && <Button size="small" className="task-row-stop" onClick={() => onRetry(t.taskId)}>Retry</Button>}
                 </div>
               )}

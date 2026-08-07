@@ -1910,12 +1910,15 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   the ordinary state during a launch — has nothing to report but success, and
   reading that as "the run will wind itself up" answers a graceful stop with
   acceptance while the task runs to completion and nobody records anything.
-  **`StopAfterTurn` and `StopAlreadyFinished` are the two answers that leave
-  the ending to the run**: the first is still going, the second ended before
-  the stop arrived — a host marks a run finished before its outcome reaches the
-  task row, so that window is ordinary, and recording a cancellation in it
-  overwrites a real completion, or a failure along with the retry it had
-  earned. Neither is a cancellation to announce.
+  **`StopAfterTurn` is the only answer that ends the call**: that run is still
+  going and will record its own ending. `StopAlreadyFinished` — the run ended
+  before the stop arrived, which is ordinary because a host marks a run
+  finished before its outcome reaches the task row — claims nothing and sends
+  the stop round again. It must not write a cancellation, which would overwrite
+  a real completion or a failure along with the retry it had earned; and it
+  must not end the call either, because "that run is over" is also what a stop
+  hears when a RETRY landed between its read and the call, and standing back
+  there would leave the new attempt running with the stop reported as done.
 - **Whether a run reported is the Manager's own knowledge, not the row's.** A
   run that finished the instant it started and a run something ended while the
   host could not reach it leave the SAME row: terminal, on that run id.
