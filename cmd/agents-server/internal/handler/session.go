@@ -89,7 +89,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	req.Name = cmp.Or(req.Name, "New Chat")
+	req.Name = cmp.Or(req.Name, "New Session")
 	ctx := c.Request.Context()
 	if req.AgentConfigID != "" {
 		if _, err := h.agents.Get(ctx, req.AgentConfigID); err != nil {

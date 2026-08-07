@@ -576,7 +576,7 @@ func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
 	}
 }
 
-// maybeGenerateTitle names a still-default ("New Chat") session from the user's
+// maybeGenerateTitle names a still-default ("New Session") session from the user's
 // first message. It runs IN PARALLEL with the run — the title depends only on
 // the user's message, not the answer — so it is fired at run start and takes the
 // input, model and provider directly rather than reading them back after the run
@@ -590,7 +590,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	// Only name an unnamed session. Checked first so a re-run on an already-named
 	// session (every message after the first) is a cheap Get + return.
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
-	if err != nil || sess.Name != "New Chat" {
+	if err != nil || sess.Name != "New Session" {
 		return
 	}
 	if userInput == "" || provider == nil {

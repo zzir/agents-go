@@ -1033,7 +1033,7 @@ export function ChatView({
   }, []);
 
   const handleSend = useCallback((text: string) => {
-    // No sessionId is fine: sending with no active session starts a new chat
+    // No sessionId is fine: sending with no active session starts a new session
     // (app-level onSend auto-creates it). Only an agent is required.
     if (!agentConfigId) return;
     onSend(text, agentConfigId, sandboxId);

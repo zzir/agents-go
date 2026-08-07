@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { filterSessionsByName } from './sessionFilter';
 
 const sessions = [
-  { name: 'New Chat' },
+  { name: 'New Session' },
   { name: 'Debug the run loop' },
-  { name: 'chat about compaction' },
+  { name: 'session about compaction' },
 ];
 
 describe('filterSessionsByName', () => {
@@ -14,9 +14,9 @@ describe('filterSessionsByName', () => {
   });
 
   it('matches case-insensitively on a substring, preserving order', () => {
-    expect(filterSessionsByName(sessions, 'CHAT')).toEqual([
-      { name: 'New Chat' },
-      { name: 'chat about compaction' },
+    expect(filterSessionsByName(sessions, 'SESSION')).toEqual([
+      { name: 'New Session' },
+      { name: 'session about compaction' },
     ]);
     expect(filterSessionsByName(sessions, 'run loop')).toEqual([{ name: 'Debug the run loop' }]);
   });

@@ -27,23 +27,23 @@ func TestMaybeGenerateTitleGuards(t *testing.T) {
 		t.Errorf("titled session renamed to %q", got.Name)
 	}
 
-	// New Chat but no user input: no model call, no rename.
-	empty := &store.Session{ID: store.NewID(), Name: "New Chat"}
+	// New Session but no user input: no model call, no rename.
+	empty := &store.Session{ID: store.NewID(), Name: "New Session"}
 	if err := sessions.Create(ctx, empty); err != nil {
 		t.Fatalf("create empty session: %v", err)
 	}
 	runner.maybeGenerateTitle(ctx, empty.ID, "gpt-test", "", nil, func(string, any) {})
-	if got, _ := sessions.Get(ctx, empty.ID); got.Name != "New Chat" {
-		t.Errorf("empty New Chat renamed to %q", got.Name)
+	if got, _ := sessions.Get(ctx, empty.ID); got.Name != "New Session" {
+		t.Errorf("empty New Session renamed to %q", got.Name)
 	}
 
-	// New Chat with input but no provider: still bails before any model call.
-	noProv := &store.Session{ID: store.NewID(), Name: "New Chat"}
+	// New Session with input but no provider: still bails before any model call.
+	noProv := &store.Session{ID: store.NewID(), Name: "New Session"}
 	if err := sessions.Create(ctx, noProv); err != nil {
 		t.Fatalf("create no-provider session: %v", err)
 	}
 	runner.maybeGenerateTitle(ctx, noProv.ID, "gpt-test", "a question", nil, func(string, any) {})
-	if got, _ := sessions.Get(ctx, noProv.ID); got.Name != "New Chat" {
-		t.Errorf("no-provider New Chat renamed to %q", got.Name)
+	if got, _ := sessions.Get(ctx, noProv.ID); got.Name != "New Session" {
+		t.Errorf("no-provider New Session renamed to %q", got.Name)
 	}
 }

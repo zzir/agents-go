@@ -107,7 +107,7 @@ A `SessionRepo` owns which sessions exist, separately from what each one holds.
 
 ```go
 repo, _ := filesession.NewRepo("./sessions")     // or sessions.NewRepo(db)
-sess, _ := repo.Create(ctx, session.CreateOptions{Title: "New chat"})
+sess, _ := repo.Create(ctx, session.CreateOptions{Title: "New session"})
 list, _ := repo.List(ctx, session.ListOptions{})  // hidden sessions left out
 ```
 

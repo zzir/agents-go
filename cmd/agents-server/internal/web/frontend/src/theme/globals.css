@@ -177,7 +177,7 @@ a:hover {
     min-height: 0;
 }
 
-/* Fixed action row at the top of the sidebar: search box + new-chat button.
+/* Fixed action row at the top of the sidebar: search box + new-session button.
    Height is explicit — the old ActionList content reached 48px only through
    its own inset paddings. */
 .sidebar-actions {

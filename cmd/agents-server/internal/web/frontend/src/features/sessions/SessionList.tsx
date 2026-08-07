@@ -116,7 +116,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const sess = await api.sessions.create('New Chat') as Session;
+      const sess = await api.sessions.create('New Session') as Session;
       mutateData(prev => (prev ? [sess, ...prev] : [sess]));
       onSelect(sess.id);
       if (onCreated) onCreated();

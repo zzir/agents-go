@@ -330,7 +330,7 @@ export default function App() {
     // deleted session, hand-typed id). The messages endpoint returns [] for an
     // unknown session rather than 404, so validate existence explicitly: a 404
     // means drop the id — the app falls back to the empty state and typing then
-    // starts a new chat instead of running against a non-existent session.
+    // starts a new session instead of running against a non-existent session.
     const tryLoad = () => loadSession(activeSession).catch(() => toast.error('Could not load conversation'));
     api.sessions.get(activeSession)
       .then((sess) => {
@@ -365,7 +365,7 @@ export default function App() {
       toast.error('WebSocket disconnected — message not sent');
       return;
     }
-    // Typing straight into the box with no active session starts a new chat,
+    // Typing straight into the box with no active session starts a new session,
     // instead of silently dropping the message. The freshly-created session has
     // no history, so mark it loaded to protect the optimistic message from the
     // load-session effect.
@@ -373,14 +373,14 @@ export default function App() {
     let isNew = false;
     if (!sid) {
       try {
-        const sess = await api.sessions.create('New Chat', agentConfigId) as { id: string };
+        const sess = await api.sessions.create('New Session', agentConfigId) as { id: string };
         sid = sess.id;
         isNew = true;
         setActiveSession(sid);
         setActivePanel(null);
         setSessionReloadKey(k => k + 1);
       } catch {
-        toast.error('Could not start a new chat');
+        toast.error('Could not start a new session');
         return;
       }
     }
