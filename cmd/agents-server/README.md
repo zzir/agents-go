@@ -114,7 +114,7 @@ detail.
 | GET    | `/sessions`               | List sessions                                                        |
 | POST   | `/sessions`               | Create session (`{name?, agent_config_id?}`)                         |
 | GET    | `/sessions/:id`           | Get session                                                          |
-| PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session     |
+| PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session |
 | DELETE | `/sessions/:id`           | Delete session and its entries and traces                            |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
@@ -129,13 +129,22 @@ agent at creation (it must reference an existing agent). Rename and pin are a
 single `PATCH /sessions/:id` accepting a partial `{name?, pinned?}` body; both
 the separate `PUT` rename and `PATCH /sessions/:id/pin` endpoints are gone.
 
+Session responses also carry `sandbox_id?` / `work_dir?` — the session's
+sandbox binding, written by its first sandbox-carrying run (see
+[Runs](#runs--apiv1runs)); absent while unbound. The binding is **immutable**:
+neither half can be set or changed over the API — one conversation, one file
+system context. Switching projects means starting (or forking into) another
+session; the composer's Project picker is that flow in the UI.
+
 `fork` copies the source session's entries (and their traces) into a new
 session. Its body is optional: `{message_id?, exclusive?, label?}`. Omit
 `message_id` to fork everything; supply it to bound the copy up to and including
 that entry (`exclusive: true` excludes the boundary entry itself). Entry ids and
 their parent links are rewritten into the fork's namespace, so the copy is a
 self-consistent tree rather than one pointing back at another session. The
-session inherits the source's `agent_config_id`.
+session inherits the source's `agent_config_id` and its sandbox binding
+(`sandbox_id` / `work_dir`) — a fork continues the same conversation over the
+same file system context, with no fresh bind of its own.
 
 `branch` moves the session's active branch to an entry, so the next run
 continues from there. It APPENDS a leaf entry rather than deleting anything:
@@ -175,7 +184,7 @@ up without loss.
 
 | Method | Path                 | Description                                            |
 |--------|----------------------|--------------------------------------------------------|
-| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?}`                             |
+| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?, work_dir?}`                  |
 | GET    | `/runs/:id`          | Get run status                                                                     |
 | GET    | `/runs/:id/events`   | Stream run events (Server-Sent Events)                                             |
 | POST   | `/runs/:id/cancel`   | Cancel the run — `204`; `?mode=graceful` finishes the current turn, default aborts |
@@ -188,8 +197,32 @@ approval, `{run_id, session_id, status: "interrupted"}` (list
 SAME run id, continuing its event sequence). It returns `409` if the session
 already has an active run.
 
+The first run that carries a `sandbox_id` **permanently binds**
+`(sandbox_id, work_dir)` to the session (compare-and-set; the winner announces
+it with a `session.sandbox_bound` event). From then on the server uses the
+bound values and ignores whatever the client sends — the conversation's file
+system context never changes. Runs without a sandbox never bind, so a
+chat-only session can still pick one later.
+
+A new binding is **validated before it is written**, and only after the run
+has been accepted (a run refused as busy/deleting/draining binds nothing).
+The sandbox must exist, and `work_dir` must be one its backend honors — the
+canonical form is what gets stored:
+
+- `local` — empty (the server `--workspace`) or an absolute path.
+- `ssh` — a fixed **absolute** directory is required, either here or as the
+  config's default `work_dir`: without one every exec runs in a throw-away
+  remote temp dir, and a relative one resolves against a login home the
+  remote host can move — either way the binding would not say where the
+  session's files are.
+- `docker` persistent — empty, `/workspace`, or a `/workspace` subtree (the
+  mount never moves; the session works in a subtree of it).
+- `docker` ephemeral — empty only (each exec always runs in `/workspace`).
+
+A request that fails validation is `400` and leaves the session unbound.
+
 `GET /runs/:id` returns `{run_id, session_id, status, last_seq, agent_config_id?,
-sandbox_id?}`. `status` is one of `running`, `interrupted`, `completed`, `error`,
+sandbox_id?, work_dir?}`. `status` is one of `running`, `interrupted`, `completed`, `error`,
 or `cancelled`. Finished runs stay queryable and replayable for **15 minutes**
 after they end, then `GET /runs/:id` returns 404 (the conversation itself is
 always in `/sessions/:id/messages`).
@@ -531,11 +564,90 @@ Sandbox types: `local` (subprocess — requires `--allow-local-sandbox`), `docke
 enforced on both create and update. For `ssh` sandboxes the `password` config
 field is masked on read — see [Secret handling](#secret-handling).
 
+Create and update validate the config STRICTLY and store it in canonical
+form: a type mismatch on a known field (`persistent: "yes"`) or a missing
+required field (docker `image`, ssh `addr`/`user`) is `400` — accepted, it
+would bind sessions to a config that can never build, and once referenced the
+identity freeze would block its own repair. Canonical means an ssh `addr`
+always carries its port (`host` is stored as `host:22` — the backend dials 22
+either way, and identity comparisons must not read the spelling difference as
+a different machine), paths lose trailing slashes, and unknown keys are
+dropped. One decoder answers every question about a config — save-time
+validation, the content comparison, the identity freeze — so they cannot
+disagree.
+
+`DELETE` refuses (`409`) while any session is bound to the sandbox: the
+binding is permanent, so removing its target would leave those sessions
+failing every run with no way back — delete the sessions first. The refusal
+is decided by the delete statement itself (a `NOT EXISTS` guard over
+sessions), and the bind carries the mirror-image `EXISTS` guard, so a
+first-run bind racing a delete cannot leave a session pointing at a vanished
+config. (Conversely, deleting the last session bound to a
+`(sandbox, work_dir)` pair releases its cached live instance — with holders
+draining first: an in-flight run or an open terminal keeps the instance alive
+until it finishes, and only then is the ssh connection or docker container
+closed.)
+
+`PUT` freezes a referenced sandbox's **identity fields** — `type`, ssh
+`addr`/`user`/`work_dir` (the ssh user picks the account: its home and
+permission view are a different file system even at one address), docker
+`host_dir`/`persistent`/`container_name`: sessions bound the config id on the
+promise that it keeps meaning the same file system, so an update that would
+move it is `409` while references exist. Everything else stays freely
+editable — `name`, credentials (key rotation is routine), `image`, `network`,
+the docker exec `user`, `runtime` and limits change the execution
+environment, not where the data lives.
+
+A config carries two monotonic counters (both 1 at creation), each fencing a
+different race. `revision` is the row's version: EVERY write bumps it, `PUT`
+is a compare-and-set against the revision the client read (a concurrent
+update means `409`, re-read and retry — no lost credential rotation, no
+identity check against a stale row), and a first-run bind lands only against
+the revision its workdir was validated on (a concurrent update makes it lose
+and re-validate; a config that keeps moving exhausts the bind's three
+attempts as `409`). `runtime_gen` is the CONTENT generation: it bumps only
+when the type or config payload actually change, and it is what the
+live-instance cache keys on and what retires instances and severs web
+terminals when an update lands — so a rename never tears down a running
+container or a live shell, while a credential rotation retires every
+instance the moment it commits; a run that read the old config just before
+can finish on it, but no later run or late-registering terminal ever shares
+old credentials, an old image or an old mount. Integers, deliberately not a
+version-history table: nothing keeps old generations runnable — updates
+apply to everyone at their next run.
+
+`terminal.open` validates a non-empty `work_dir` with the same rules a
+binding does and uses the canonical form; a value the backend would silently
+rewrite (a docker path outside `/workspace`) is refused instead of opening a
+shell in a different directory than the client displays. An empty `work_dir`
+stays valid — it means the sandbox's own default.
+
 Every response carries a computed `terminal` boolean — whether the sandbox can
 host an interactive web terminal (`ssh` always, `docker` only with
 `persistent: true`, `local` never, by design). The chat top bar's terminal
 button is enabled only when some sandbox advertises it; the session
 itself runs over [`/ws/terminal`](#terminal-endpoint--get-wsterminal).
+
+Responses also carry two computed workdir fields, which the composer's
+pre-binding project picker prefills and gates on. `default_work_dir` is always
+the **execution view** — the directory commands actually run in — so it never
+disagrees with what the model reports as its working directory:
+
+| Type                 | `default_work_dir`                 | `work_dir_editable` |
+|----------------------|------------------------------------|---------------------|
+| `ssh`                | `config.work_dir` (may be empty — a session binding then requires an explicit directory) | `true` |
+| `local`              | the server `--workspace`, absolute | `true`              |
+| `docker` persistent  | `/workspace` — the mount point     | `true` (constrained to `/workspace` or a subdirectory) |
+| `docker` ephemeral   | `/workspace`                       | `false`             |
+
+A persistent container's session may work in a **subdirectory of the mount**
+(`/workspace/<project>`): the mount point never moves, but each project in the
+mounted tree gets its own working directory — UI, binding and the model's own
+`pwd` all show the same container-side path. Where the mounted data lives on
+the **host** is a different concept: `config.host_dir`, the directory
+bind-mounted at `/workspace` (empty = the server `--workspace`). It is
+deliberately not called a working directory — it says where the files are, not
+where commands run.
 
 ### Playground — `/api/v1/playground`
 
@@ -621,7 +733,7 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 
 | type            | Description                                                                                                     |
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
-| `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?}`                                              |
+| `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?, work_dir?}` (sandbox/workdir matter only until the session's first sandbox-carrying run binds them) |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
 | `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
@@ -650,6 +762,7 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 | `run.error`             | Error — `{run_id?, session_id?, code, message, guardrail?, stage?}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`); `guardrail`/`stage` are set when `code` is `guardrail_tripwire` |
 | `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
+| `session.sandbox_bound` | The session's first sandbox-carrying run permanently bound `(sandbox_id, work_dir)` — `{session_id, sandbox_id, work_dir?}`; published exactly once, by the run that won the bind |
 | `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, ...}`                                                                                                 |
 
 Generation spans carry the full model request/response in their `data`
@@ -978,7 +1091,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided
-    deliberately). Never add ALTER TABLE migration machinery here.
+    deliberately). Never add ALTER TABLE migration machinery here. The
+    no-migration stance is honest only if the mismatch is loud: startup
+    probes every model with a zero-row SELECT (bun names every mapped
+    column), so an old database file fails fast with a "delete and recreate"
+    message instead of surfacing per-request as `no such column` — the
+    models themselves are the schema version, no constant to forget to bump.
 26. **Where a session stands is stored, not folded.** An append must not cost a
     read of the session: the SDK persists once per TURN, so a run appends many
     times, and folding the branch tip out of the entries each time made one run
@@ -1000,6 +1118,42 @@ When a change genuinely doesn't fit, update this list in the same PR.
     leave the whole conversation on an abandoned branch. `GetEntries` still
     folds the whole session on every call: a known cost, deliberately left,
     because a person pays it once per page while a run paid it once per turn.
+27. **A session's `(sandbox_id, work_dir)` binding is immutable and
+    server-authoritative.** The first sandbox-carrying run binds it
+    (`BindSandboxIfEmpty`) and nothing changes it afterwards: there is no
+    unbind, no rebind, and no PATCH — switching projects means starting (or
+    forking into) another session, which is the composer Project picker's
+    flow. From then on `startRunWithID` overrides whatever the client sends
+    with the bound values; the top bar shows the binding as a read-only badge.
+    A new binding is validated first and written only after the run is
+    accepted: `planSandboxBinding` resolves and checks the pair (the config
+    must exist; `resolveBindingWorkDir` canonicalizes the workdir per backend
+    — ssh requires a fixed directory, docker persistent a `/workspace`
+    subtree, ephemeral empty, local an absolute path; violations are 400 and
+    bind nothing), then `hub.register` claims the session slot, and only then
+    does the CAS write land — a run refused as busy/deleting/draining has NOT
+    silently fixed the session's file system context (`hub.unregister`
+    withdraws a registration whose bind failed). Runs with no sandbox never
+    bind, so a chat-only session can still pick one later. The binding's
+    target is protected in both directions, atomically: deleting a sandbox
+    still referenced by sessions is refused with 409 by the delete statement's
+    own `NOT EXISTS` guard, the bind carries the mirror `EXISTS` guard
+    (`BindSandboxIfEmpty`), and an update that would change a referenced
+    sandbox's IDENTITY — type, ssh addr/user/work_dir, docker
+    host_dir/persistent/container_name, the fields that decide where the
+    data lives — is refused the same way (`UpdateIdentityIfUnreferenced`),
+    while credentials, name and limits stay editable. A bound session whose
+    sandbox cannot be resolved or built fails the run loudly rather than
+    degrading to a chat with no tools. Sandbox instances are cached per
+    `(config id, runtime generation, workdir)` with a REFERENCE COUNT
+    (`SandboxManager.Acquire`):
+    runs and terminals hold their instance for exactly their lifetime, and an
+    eviction (config update/delete, or the last bound session going away —
+    `ReleaseSessionBinding`) closes an idle instance immediately but only
+    DOOMS a held one, which the last release closes — an in-flight run or an
+    open terminal is never torn off its connection. Task child sessions
+    inherit the parent's pair through `Inherit` and bind their own hidden
+    sessions with it.
 
 ## Database
 

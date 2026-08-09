@@ -1402,12 +1402,15 @@ an activated environment survive between calls.
   that the tool's closer exists to prevent. A named command that arrives
   afterwards fails instead, rather than opening a shell on a sandbox whose owner
   has already let go of it.
+- **The named shells belong to the tool, not the run.** Two concurrent runs of
+  the same agent share one pool, so both `"build"` sessions are the same shell;
+  a host that wants isolation builds the tool per run.
 
 ### 2.7l Sandbox tool argument decoding ✅
 
 `exec_command` decodes its own arguments — it is a hand-built tool, not a
 `NewTool` wrapper, so nothing upstream of `OnInvoke` catches a malformed call.
-Two rules keep one from costing more than the call:
+Three rules keep one from costing more than the call:
 
 - **Malformed arguments are refused as text, not returned as an error.**
   CodeTool sets no `FailureErrorFunction`, so an error return aborts the whole
@@ -1417,18 +1420,20 @@ Two rules keep one from costing more than the call:
   reserved for sandbox *infrastructure* failure (a dead daemon, a broken
   connection), where feeding text back would have the model retry against a
   sandbox that is gone.
-- **String arguments decode leniently**: a JSON number or boolean lands as its
-  literal text (`0` → `"0"`), `null` as `""`. A backend that does not enforce
-  strict schemas (Anthropic, ChatGPT) lets the model fill an unused required
-  field with a zero-value sentinel — `session_id: 0` for "no session" — and
-  strict mode is what made the field required in the first place. The schema
-  still advertises plain `string`; objects and arrays still refuse, because
-  there is no literal text the model plausibly meant.
+- **The optional string arguments (`workdir`, `session_id`) accept only the
+  zero-value sentinels** `null`, `0` and `false`, each decoding to `""`. A
+  backend that does not enforce strict schemas (Anthropic, ChatGPT) lets the
+  model fill an unused required field with a zero value — `session_id: 0` for
+  "no session" — and strict mode is what made the field required in the first
+  place. Every other non-string scalar (`true`, `42`, `3.14`) refuses: its
+  intent is unknown, and keeping the literal text would run `cd '42'` or open
+  a shell named `"3.14"` — a sentinel misread as a value. The refusal feeds
+  back as text (previous rule), so the model corrects it on the next call; a
+  session genuinely named "0" is still expressible as the string `"0"`. The
+  schema still advertises plain `string`. `cmd` stays an ordinary string —
+  an empty command is not "unused", it is wrong.
 - The approval gate treats undecodable arguments like a policy veto (§2.7j): a
   call `OnInvoke` will refuse as text never reaches a human.
-- **The named shells belong to the tool, not the run.** Two concurrent runs of
-  the same agent share one pool, so both `"build"` sessions are the same shell;
-  a host that wants isolation builds the tool per run.
 
 ### 2.8 Nested agent-as-tool attribution ✅
 
@@ -1945,13 +1950,18 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   a host API must not consume it at all.
 - **Retryability is about the task's own state, and the ceiling is the
   Manager's.** A failed task that has used every attempt looks exactly like one
-  that has not, so a caller offering a retry needs the ceiling — `Retryable`
-  answers for state in hand, `MaxAttempts` hands over the parameter for a
-  client tracking tasks live, whose answer must move with the status rather
-  than lag a round trip behind it. **Capacity is deliberately excluded**: the
-  parent's live-task limit can change between an offer being rendered and
-  someone taking it, so a precomputed answer would be wrong as often as right —
-  that refusal arrives as `ErrTaskLimit`, which explains itself.
+  that has not, so a caller offering a retry needs the ceiling — `MaxAttempts`
+  hands over the parameter, and the caller derives the answer from the status
+  and attempt it already tracks, so its offer moves with the state rather than
+  lag a round trip behind it. The parameter is the WHOLE api on purpose: a
+  precomputed per-task boolean was tried and died unread — every consumer
+  (server relay, web UI, the model tools) preferred deriving from state in
+  hand. **Capacity is deliberately excluded**: the parent's live-task limit
+  can change between an offer being rendered and someone taking it, so a
+  precomputed answer would be wrong as often as right — that refusal arrives
+  as `ErrTaskLimit` at call time, which explains itself; a retry that loses
+  its claim to a concurrent writer is `ErrRetryConflict`, a conflict to retry,
+  not a fault.
 - **Starting a run is two steps, and a terminator can land between them.** The
   row is claimed (created, or reopened by `RetryClaim`) before the host is told
   to start the run, so a stop arriving inside that window cancels a run the host
@@ -1965,6 +1975,27 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   just started and report what the task actually is. The second half is what
   covers the terminators that never speak to the host at all: an approval
   reaper, a restart sweep.
+- **Every attempt-scoped write names its attempt.** `Finalize` and the notify
+  pair always did; `MarkInputRequired` and `ReclaimWorking` once ran unbound on
+  the argument that a non-terminal state can only belong to the current
+  attempt. An APPROVAL breaks that argument: persisted before the pause lands
+  on the task row, it can outlive its attempt across a crash, a `FailOrphans`
+  sweep and a retry — and an unbound writer acting for it would pause, reclaim
+  or (through the expiry reaper) cancel the attempt that replaced its own. All
+  four transitions now carry the run-id predicate; a stale approval's write is
+  a silent no-op, its resolve is refused as stale (and discarded, not retried
+  — restored it would refuse forever), and the reaper finalizes against the
+  expired approval's OWN run id, never the row's current one.
+- **A launch that failed never counts as an attempt.** `Attempt`'s contract is
+  the runs the task has *had*, and `RetryClaim` increments it before the host
+  is asked to launch — so a launch refusal (shutdown, session deleting) would
+  otherwise spend the retry ceiling on runs that never existed, until every
+  attempt was gone without a retry executing. `ReleaseRetryClaim` is the undo:
+  bound to the claimed run id like `Finalize`, it puts the task back to failed,
+  rolls the attempt back down (floored at 1 — the original run always counts),
+  records the launch failure as the task's result, and reopens the wake-up
+  debt. Only the launch path releases; a run that registered and then failed
+  is a real attempt and finalizes normally.
 - **The restart sweep cannot arbitrate a retry**, so ordering must. `FailOrphans`
   fails every row recorded as working and has no notion of a live run; a retry
   that claimed first would have its fresh run declared dead, its parent woken
@@ -2371,6 +2402,14 @@ only view the model ever sees) and are translated to their host-side names,
 and anything else fails with `sandbox.ErrOutsideWorkDir` — an explicit
 "outside the working directory" to the model, never a silent re-rooting.
 
+Docker's working directory may be narrowed to a **subtree of the mount**
+(`Options.ContainerWorkDir`, `/workspace` by default, validated by `New` to be
+`/workspace` or below it): the mount point never moves, but commands run — and
+relative paths in the file tools resolve — in that subdirectory, exec and file
+tools moving together per this section's rule. Absolute `/workspace/...` paths
+keep addressing the whole mount, exactly like a shell `cd`'d into the subtree
+still can.
+
 ### 5.15 Streaming-only backends adapt with a Model decorator
 
 Some backends accept **only** streaming requests — the ChatGPT Codex backend
@@ -2516,6 +2555,28 @@ the pause or the host invents a side channel. It covers pause→resume only: a
 fact that must survive a crash mid-run needs the host's own durable write at
 the moment it happens (`PlanPhase.OnUnlock`), and the two records answer
 different questions.
+
+### 5.19 A named container is adopted only against a configuration fingerprint
+
+A persistent docker sandbox with a fixed `ContainerName` can find the name
+already taken — by a container a previous process run left behind, or by
+something else entirely. Adoption (taking the existing container over instead
+of erroring) is allowed **only when the container proves to be ours from the
+same configuration**: creation stamps a label carrying a hash of every
+security-relevant option (image, runtime, user, network, bind source, resource
+limits), and `adoptNamed` requires an exact match.
+
+Matching on image + mount alone — the original rule — was a hole: a container
+created under a laxer policy (network on, root user, no limits) passed both
+checks and silently served a config that no longer allows any of it. The
+fingerprint hashes **effective** values (the resolved user, the applied PIDs
+default), so equivalent spellings of one configuration still adopt.
+`ContainerWorkDir` is excluded on purpose — persistent mode passes the working
+directory per exec, so it does not change what the container *is*. A container
+without the label (foreign, or created before the label existed) is a hard
+error naming the remedy: remove or rename it. That cost lands once per legacy
+container and buys the guarantee that adoption can never widen a sandbox's
+blast radius.
 
 ---
 

@@ -111,7 +111,7 @@ agent := &agents.Agent{
 
 The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) and malformed arguments are normal tool output the model can correct; *infrastructure* failures (daemon down, missing image) abort the run.
 
-String arguments (`workdir`, `session_id`) decode leniently: a model running on a backend that does not enforce strict schemas sometimes fills an unused field with `0` or `null` instead of `""`, and those decode as `"0"` / `""` rather than failing the call.
+String arguments (`workdir`, `session_id`) accept the zero-value sentinels `null`, `0` and `false`, each decoding to `""`: a model running on a backend that does not enforce strict schemas sometimes fills an unused field with a zero value instead of `""`, and each of those reads unambiguously as "not used". Any other non-string scalar (`true`, `42`, `3.14`) is rejected and fed back as correctable text — keeping its literal spelling would run `cd '42'`; a session genuinely named "0" is still expressible as the string `"0"`.
 
 ## CodeTool configuration
 
@@ -187,6 +187,8 @@ sandbox.FileToolConfig{
 File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
 
 **Path resolution follows shell semantics, the same view `exec_command` has** ([spec §5.14](spec.md)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The sandbox, not the working directory, is the isolation boundary; the file tools do not pretend to a narrower view than exec already has. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
+
+Docker's working directory can be narrowed to a subtree of the mount with `Options.ContainerWorkDir` (`/workspace` by default; validated to be `/workspace` or below it): commands run there, relative paths in the file tools resolve there, and absolute `/workspace/...` paths keep addressing the whole mount — one mounted directory can host several projects, each session working in its own subdirectory.
 
 `ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 
