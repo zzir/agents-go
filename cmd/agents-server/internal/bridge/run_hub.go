@@ -105,6 +105,7 @@ type RunInfo struct {
 	SessionID     string    `json:"session_id"`
 	AgentConfigID string    `json:"agent_config_id,omitempty"`
 	SandboxID     string    `json:"sandbox_id,omitempty"`
+	WorkDir       string    `json:"work_dir,omitempty"`
 	Status        RunStatus `json:"status"`
 	LastSeq       int       `json:"last_seq"`
 	// GracefulStop records that StopAfterTurn was requested: a clean finish
@@ -382,7 +383,7 @@ func (e ErrTaskLimit) Error() string {
 // root (not any connection). The goroutine MUST call seg.finalize() exactly
 // once when it ends. It fails with ErrSessionBusy if the session already has a
 // live run, or ErrSessionDeleting if the session is being torn down.
-func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runSegment, context.Context, error) {
+func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID, workDir string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -400,7 +401,7 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 	ctx, cancel := context.WithCancel(h.rootCtx)
 	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := &runRecord{
-		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
+		info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, WorkDir: workDir, Status: RunRunning, Task: task},
 		cancel: seg.cancel,
 		done:   seg.done,
 		fanout: newRunFanout(),
@@ -408,6 +409,24 @@ func (h *RunHub) register(runID, sessionID, agentConfigID, sandboxID string, tas
 	h.runs[runID] = rec
 	h.bySession[sessionID] = runID
 	return seg, ctx, nil
+}
+
+// unregister withdraws a run that never launched: register succeeded but a
+// pre-launch step failed, so nothing was published, no subscriber attached
+// (OnRunAttach has not run), and no goroutine owns the segment. It releases
+// the session slot and the segment's context so the failed start leaves no
+// trace — the run id was never observable.
+func (h *RunHub) unregister(runID string, seg *runSegment) {
+	h.mu.Lock()
+	if rec := h.runs[runID]; rec != nil {
+		delete(h.runs, runID)
+		if h.bySession[rec.info.SessionID] == runID {
+			delete(h.bySession, rec.info.SessionID)
+		}
+		rec.fanout.Close()
+	}
+	h.mu.Unlock()
+	seg.finalize()
 }
 
 // LiveTaskCount reports how many live (running or input-required) task runs
@@ -442,7 +461,7 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 // It fails with ErrSessionBusy if the session already has a live run,
 // ErrSessionDeleting if the session is being torn down, or ErrRunNotResumable
 // if the record is not paused (a concurrent stop finished it).
-func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task *TaskMeta) (*runSegment, context.Context, error) {
+func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID, workDir string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -459,7 +478,7 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID string, task 
 	rec := h.runs[runID]
 	if rec == nil {
 		rec = &runRecord{
-			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, Status: RunRunning, Task: task},
+			info:   RunInfo{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, WorkDir: workDir, Status: RunRunning, Task: task},
 			cancel: seg.cancel,
 			done:   seg.done,
 			fanout: newRunFanout(),

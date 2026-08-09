@@ -40,6 +40,22 @@ func (e *ApprovalNotReadyError) Error() string {
 	return "run " + e.RunID + " is not yet ready for an approval decision; retry"
 }
 
+// StaleApprovalAttemptError reports an approval whose attempt is no longer
+// the task's current one: the task was retried past the run that paused, so
+// the decision has nothing left to resume. The row is discarded — restoring
+// it would refuse forever — and the current attempt is untouched. Handlers
+// map it to 409.
+type StaleApprovalAttemptError struct {
+	TaskID        string
+	ApprovalRunID string
+	CurrentRunID  string
+}
+
+func (e *StaleApprovalAttemptError) Error() string {
+	return "task " + e.TaskID + " was retried past the paused run " + e.ApprovalRunID +
+		" (now on " + e.CurrentRunID + "); the approval is stale and was discarded"
+}
+
 // persistInterruption serializes an interrupted run's SDK state and its
 // pending tool calls to the store, so the approval survives a restart and can
 // be resumed from any connection. Best-effort: a persistence failure is
@@ -66,6 +82,7 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		SessionID:     result.SessionID,
 		AgentConfigID: result.AgentConfigID,
 		SandboxID:     result.SandboxID,
+		WorkDir:       result.WorkDir,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
 		// The user-authored text of the paused turn's new input, so the UI can
@@ -82,8 +99,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID string, taskRun bool) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, taskRun)
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, workDir string, taskRun bool) (map[string]*agents.Agent, *BuildResult, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, taskRun)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -216,10 +233,21 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// skip its reclaim; refuse rather than guess.
 		return "", pending.SessionID, err
 	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, taskMeta != nil)
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, taskMeta != nil)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
+	// The rebuilt agent IS the resumed run's executor (the state resolves its
+	// CurrentAgent from this registry), so the build's sandbox reference must
+	// live exactly as long as that run. Handed off to the resume's onDone
+	// below; every earlier exit releases it here — Release is idempotent, so
+	// the belt covers a path that both hands off and fails.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			rebuilt.Release()
+		}
+	}()
 	state, err := agents.RunStateFromJSON([]byte(pending.State), registry)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("restoring run state: %w", err)
@@ -267,9 +295,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 
 	// For a task's approval the row CAS (input_required -> working) is the
-	// second claim, mutually exclusive with a concurrent stop's Finalize.
+	// second claim, mutually exclusive with a concurrent stop's Finalize —
+	// and bound to THIS approval's attempt: an approval that outlived its
+	// attempt (crash before the pause landed on the row, FailOrphans, retry)
+	// must not reclaim the run that replaced its own.
 	if taskMeta != nil && taskMeta.TaskID != "" {
-		won, cerr := r.Deps.Tasks.ReclaimWorking(mctx, taskMeta.TaskID)
+		won, cerr := r.Deps.Tasks.ReclaimWorking(mctx, taskMeta.TaskID, pending.RunID)
 		if cerr != nil {
 			// A store error is not a definitive loss — put the row back so the
 			// decision survives to be retried instead of vanishing with the run.
@@ -277,13 +308,19 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 			return "", pending.SessionID, fmt.Errorf("reclaiming task %s: %w", taskMeta.TaskID, cerr)
 		}
 		if !won {
-			// The task is no longer reclaimable. If it went terminal a stop/reap
-			// won the race and the decision is genuinely void (the discarded row
-			// is correct — nothing may revive a cancelled task). If it is somehow
-			// still non-terminal (the settle wait should have prevented this),
-			// restore the row so the approval is not lost — defense for it.
+			// The task is no longer reclaimable by this approval. Three cases:
+			// terminal (a stop/reap won — the decision is void; nothing may
+			// revive a cancelled task); a DIFFERENT attempt (a retry moved the
+			// task past this approval's run — the approval is stale, and
+			// restoring it would just refuse forever, so it stays discarded);
+			// or somehow still this attempt and non-terminal (the settle wait
+			// should have prevented this) — restore the row so the decision is
+			// not lost.
 			cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID)
 			if gerr == nil && !isTerminalTaskStatus(cur.Status) {
+				if cur.RunID != pending.RunID {
+					return "", pending.SessionID, &StaleApprovalAttemptError{TaskID: taskMeta.TaskID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
+				}
 				r.restorePendingApproval(mctx, pending)
 				return "", pending.SessionID, &ApprovalNotReadyError{RunID: pending.RunID}
 			}
@@ -293,7 +330,16 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 
 	// The continuation reopens the SAME run id, so the whole turn — both the
 	// interrupted and resumed halves — shares one event stream and trace group.
-	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, onDone)
+	// The wrapped onDone releases the rebuild's sandbox reference when the
+	// resumed segment ends (completion, error, cancel or a further interrupt —
+	// the next resume performs its own rebuild and acquire).
+	resumeDone := func(res *RunOutcome) {
+		rebuilt.Release()
+		if onDone != nil {
+			onDone(res)
+		}
+	}
+	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, resumeDone)
 	if err != nil {
 		// Give the approval back (e.g. the session has a live run right now) so
 		// the decision can be retried once the session frees up — losing the row
@@ -301,12 +347,13 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// input_required with it.
 		r.restorePendingApproval(mctx, pending)
 		if taskMeta != nil && taskMeta.TaskID != "" {
-			if merr := r.Deps.Tasks.MarkInputRequired(mctx, taskMeta.TaskID); merr != nil {
+			if merr := r.Deps.Tasks.MarkInputRequired(mctx, taskMeta.TaskID, pending.RunID); merr != nil {
 				zerolog.Ctx(ctx).Warn().Err(merr).Str("task_id", taskMeta.TaskID).Msg("restoring task input_required after failed resume")
 			}
 		}
 		return "", pending.SessionID, err
 	}
+	handedOff = true
 
 	// A stop may have finalized the task cancelled in the narrow window between
 	// our ReclaimWorking and the resumed segment registering as live — its own

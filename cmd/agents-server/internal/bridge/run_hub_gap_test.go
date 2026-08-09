@@ -20,7 +20,7 @@ func TestSubscribeSeqNeverDeliversNilEnvelope(t *testing.T) {
 	rootCtx, shutdown := context.WithCancel(context.Background())
 	defer shutdown()
 	h := NewRunHub(rootCtx)
-	if _, _, err := h.register("run1", "sess1", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 

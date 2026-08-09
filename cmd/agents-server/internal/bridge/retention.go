@@ -55,13 +55,18 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 			// stop or approve can ever advance.
 			if tasks != nil {
 				if task, err := tasks.ByChildSession(ctx, p.SessionID); err == nil {
-					// Against the attempt this expired approval belongs to: a
-					// task retried since would be cancelled mid-run otherwise.
-					if won, _ := tasks.Finalize(ctx, task.ID, task.RunID, "cancelled",
+					// Against p.RunID — the attempt this expired approval
+					// belongs to — NEVER the row's current run id: after a
+					// crash + FailOrphans + retry, the row names the retry's
+					// run, and finalizing against it would cancel a healthy
+					// new attempt because an approval from a previous life
+					// expired. The run-id predicate makes the stale case a
+					// silent no-op instead.
+					if won, _ := tasks.Finalize(ctx, task.ID, p.RunID, "cancelled",
 						"approval expired after "+strconv.Itoa(ttl)+" minutes", ""); won {
 						// Cancellations owe no wake-up; the timeout annotation
 						// above is the parent's record.
-						_ = tasks.ConsumeNotify(ctx, task.ID, task.RunID)
+						_ = tasks.ConsumeNotify(ctx, task.ID, p.RunID)
 					}
 				}
 			}

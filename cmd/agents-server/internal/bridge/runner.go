@@ -172,6 +172,7 @@ type RunOutcome struct {
 	SessionID     string
 	AgentConfigID string
 	SandboxID     string
+	WorkDir       string
 	// ErrCode/ErrMessage describe a failed run (mirroring the run.error event)
 	// so terminal bookkeeping — a task row's failure reason above all, and the
 	// synchronous REST path's response — does not depend on having watched the
@@ -191,31 +192,141 @@ type RunOutcome struct {
 // started it). It returns the run id; subscribe via Hub() to stream events.
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
 // ErrSessionBusy when the session already has a live run.
-func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, input string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, input, onDone)
+func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, workDir, input string, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, onDone)
 }
+
+// bindingPlan is one run request's resolved sandbox context: the effective
+// values the run executes under, and whether this run still owes the session
+// its permanent binding (first sandbox-carrying run on an unbound session).
+type bindingPlan struct {
+	sandboxID string
+	workDir   string
+	needBind  bool
+	// revision is the config revision the workdir was validated against; the
+	// bind CAS matches it, so a config updated between this plan and the
+	// write makes the bind lose and re-plan instead of landing a workdir
+	// vetted against values that no longer hold.
+	revision int64
+}
+
+// planSandboxBinding decides a run's sandbox context WITHOUT writing anything.
+// A bound session overrides the request — the client's values are ignored, the
+// conversation's file system context never changes. An unbound session
+// carrying a sandbox has the request validated (the config must exist, the
+// workdir must be one its backend honors — ResolveBindingWorkDir) and a bind
+// planned. Runs with no sandbox resolve to none; the session stays bindable.
+//
+// The write happens in startRunWithID only after hub registration succeeds: a
+// run refused as busy/deleting/draining must not have silently fixed the
+// session's file system context on its way out.
+func (r *Runner) planSandboxBinding(ctx context.Context, sess *store.Session, sandboxID, workDir string) (bindingPlan, error) {
+	if sess.SandboxID != "" {
+		return bindingPlan{sandboxID: sess.SandboxID, workDir: sess.WorkDir}, nil
+	}
+	if sandboxID == "" {
+		return bindingPlan{}, nil
+	}
+	cfg, err := r.Deps.SandboxConfigs.Get(ctx, sandboxID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bindingPlan{}, ErrInvalidBinding{Reason: "sandbox not found: " + sandboxID}
+		}
+		return bindingPlan{}, err
+	}
+	canonical, err := ResolveBindingWorkDir(cfg, workDir)
+	if err != nil {
+		return bindingPlan{}, err
+	}
+	return bindingPlan{sandboxID: sandboxID, workDir: canonical, needBind: true, revision: cfg.Revision}, nil
+}
+
+// maxBindAttempts bounds the plan→register→bind loop in startRunWithID: only
+// a sandbox config whose revision moves between every read and its bind keeps
+// an attempt alive, so three passes distinguish an unlucky race from a config
+// under active edit.
+const maxBindAttempts = 3
 
 // startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
 // task's run id up front so the row can carry it before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, input string, onDone func(*RunOutcome)) (string, error) {
-	// Reject unknown sessions up front so we never register a run (or write
-	// orphaned messages) against a non-existent session.
-	if _, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID); err != nil {
-		return "", err
-	}
-	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
-	if err != nil {
-		return "", err
-	}
-	seg, ctx, err := r.hub.register(runID, sessionID, agentConfigID, sandboxID, meta)
-	if err != nil {
-		return "", err
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, workDir, input string, onDone func(*RunOutcome)) (string, error) {
+	var (
+		seg      *runSegment
+		ctx      context.Context
+		plan     bindingPlan
+		boundNow bool
+	)
+	for attempt := 1; ; attempt++ {
+		// Reject unknown sessions up front so we never register a run (or
+		// write orphaned messages) against a non-existent session. The same
+		// lookup feeds the sandbox binding below.
+		sess, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		plan, err = r.planSandboxBinding(r.hub.rootCtx, sess, sandboxID, workDir)
+		if err != nil {
+			return "", err
+		}
+		meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		// Register first, bind second. Registration is the gate that can
+		// refuse (busy, deleting, draining, task limit) — binding before it
+		// permanently fixed the session's file system context for a run that
+		// never started. Holding the session slot also serializes binds: no
+		// second run of this session can reach the CAS until this one
+		// launches or unwinds.
+		seg, ctx, err = r.hub.register(runID, sessionID, agentConfigID, plan.sandboxID, plan.workDir, meta)
+		if err != nil {
+			return "", err
+		}
+		if !plan.needBind {
+			break
+		}
+		won, err := r.Deps.Sessions.BindSandboxIfEmpty(r.hub.rootCtx, sessionID, plan.sandboxID, plan.workDir, plan.revision)
+		if err != nil {
+			r.hub.unregister(runID, seg)
+			return "", err
+		}
+		if won {
+			boundNow = true
+			break
+		}
+		// The CAS refused. With the session slot held, no other bind can race
+		// this one — what CAN change under it is the bind's own EXISTS
+		// predicate: the sandbox config was deleted, UPDATED to a new
+		// revision (the workdir was vetted against values that no longer
+		// hold), or the session row removed between the plan's validation and
+		// this write. Withdraw the registration and go around: the next pass
+		// reads the world as it now is — re-validating against the new
+		// revision, refusing a vanished config (400) or session (404)
+		// outright, or, should an out-of-process writer ever have bound the
+		// session, adopting its values via the bound branch. Only a revision
+		// that moves on every single pass keeps the loop alive; after
+		// maxBindAttempts of that it is contention by definition, and the
+		// retry belongs to the client, not to a server hot-loop chasing an
+		// admin who is actively editing the config.
+		r.hub.unregister(runID, seg)
+		if attempt == maxBindAttempts {
+			return "", ErrBindingContention
+		}
 	}
 	if r.OnRunAttach != nil {
 		r.OnRunAttach(runID)
 	}
+	// After register+OnRunAttach so every live connection is attached to this
+	// run's stream and receives the announcement (replayed to late joiners).
+	if boundNow {
+		if env, err := protocol.NewEnvelope(protocol.EventSessionSandboxBound, protocol.SessionSandboxBound{
+			SessionID: sessionID, SandboxID: plan.sandboxID, WorkDir: plan.workDir,
+		}); err == nil {
+			r.hub.publish(runID, env)
+		}
+	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.runStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, input)
+		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.sandboxID, plan.workDir, input)
 	})
 	return runID, nil
 }
@@ -277,7 +388,7 @@ type segmentSpec struct {
 
 // execStreamed executes one run segment — fresh or resumed — to completion,
 // publishing events to the hub, and returns its outcome.
-func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID string, spec segmentSpec) *RunOutcome {
+func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir string, spec segmentSpec) *RunOutcome {
 	log := zerolog.Ctx(ctx)
 	// Fresh and resumed segments both pass here: stamp the run id so a
 	// spawn_task inside the run records which run spawned it — that is what
@@ -316,7 +427,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sendEvent(protocol.EventRunStarted, started)
 
 	mkResult := func() *RunOutcome {
-		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
+		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, WorkDir: workDir}
 	}
 	mkErrResult := func(code, msg string) *RunOutcome {
 		res := mkResult()
@@ -397,10 +508,16 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	// Build fully configured agent from DB config. Task runs never get the
 	// task tools themselves: one level of spawning, no recursive fan-out.
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, task != nil)
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, task != nil)
 	if err != nil {
 		return failTurn("", protocol.CodeConfigError, err, "", "")
 	}
+	// This segment is the build's only holder: when it returns, nothing uses
+	// the built agent's sandbox tools any more (a resume executes the
+	// approval path's OWN rebuild, released by its own hand-off — see
+	// ResolveApproval), so the instance reference drops here whatever the
+	// outcome.
+	defer built.Release()
 
 	agent := built.Agent
 	provider := built.Provider
@@ -460,13 +577,13 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}
 
-	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, sendEvent)
+	return r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, workDir, sendEvent)
 }
 
 // runStreamed executes one fresh run segment to completion, publishing events
 // to the hub, and returns its outcome.
-func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, input string) *RunOutcome {
-	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, segmentSpec{
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir, input string) *RunOutcome {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, workDir, segmentSpec{
 		input:    input,
 		failCode: "stream_error",
 		fresh:    true,
@@ -494,12 +611,12 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // the SAME hub run (same event stream, same sequence), so one logical run
 // keeps one id across interrupt/resume — events, traces, and messages all
 // stay under that id and the trace panel shows one group per turn.
-func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID, workDir string, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
 		return "", err
 	}
-	seg, ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, meta)
+	seg, ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, workDir, meta)
 	if err != nil {
 		return "", err
 	}
@@ -507,7 +624,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		r.OnRunAttach(runID)
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID)
+		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID, workDir)
 	})
 	return runID, nil
 }
@@ -521,8 +638,8 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 // later turn's text and tool calls) go live to the client instead of
 // surfacing only in the terminal run.output, and a resume continues the same
 // run so it must carry the same policies.
-func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID string) *RunOutcome {
-	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, segmentSpec{
+func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID, workDir string) *RunOutcome {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, workDir, segmentSpec{
 		input:    session.UserText(state.UserInput),
 		failCode: "resume_error",
 		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
@@ -531,7 +648,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	})
 }
 
-func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID string, sendEvent func(string, any)) *RunOutcome {
+func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID, workDir string, sendEvent func(string, any)) *RunOutcome {
 	if len(res.Interruptions) > 0 {
 		for _, item := range res.Interruptions {
 			sendEvent(protocol.EventRunToolCall, protocol.RunToolCall{
@@ -551,6 +668,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 			SessionID:     sessionID,
 			AgentConfigID: agentConfigID,
 			SandboxID:     sandboxID,
+			WorkDir:       workDir,
 			Interrupted:   true,
 			Interruptions: res.Interruptions,
 			SDKState:      res.State,
@@ -561,7 +679,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 
 	finalText := res.FinalOutputString()
 	sendEvent(protocol.EventRunOutput, protocol.RunOutput{RunID: runID, FinalOutput: finalText})
-	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID}
+	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, WorkDir: workDir}
 }
 
 // bindSessionAgent back-fills the session's bound agent config once the run has

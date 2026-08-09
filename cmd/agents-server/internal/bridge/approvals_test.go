@@ -90,7 +90,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 
 	// Occupy the session with a live run so ResumeRun must fail busy.
-	if _, _, err := runner.hub.register("blocker-run", sess.ID, ac.ID, "", nil); err != nil {
+	if _, _, err := runner.hub.register("blocker-run", sess.ID, ac.ID, "", "", nil); err != nil {
 		t.Fatalf("register blocker: %v", err)
 	}
 
@@ -327,7 +327,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 	}
 
 	// Once postRun marks it input_required, the same decision goes through.
-	if err := tasks.MarkInputRequired(ctx, task.ID); err != nil {
+	if err := tasks.MarkInputRequired(ctx, task.ID, task.RunID); err != nil {
 		t.Fatalf("mark input_required: %v", err)
 	}
 	if _, _, err := runner.ResolveApproval(ctx, "call-race-1", true, ApprovalOnce, "", nil); err != nil {

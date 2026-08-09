@@ -110,6 +110,23 @@ type BuildResult struct {
 	// their own agent-level guardrails; the root's are moved here (and cleared
 	// off the root agent) to avoid double-running.
 	RunGuardrails []agents.Guardrail
+
+	// releaseSandbox drops every sandbox-instance reference this build
+	// acquired — the entry agent's and each handoff target's, folded into one
+	// (see agentBuildCtx.releases). Nil when the build attached no sandbox.
+	// Callers go through Release.
+	releaseSandbox func()
+}
+
+// Release drops the build's hold on its sandbox instance. Every builder MUST
+// arrange for exactly one Release once nothing uses the built agent's tools
+// any more — a run's end, an approval resume's completion — or an evicted
+// instance (config update/delete, last session gone) is never closed. Safe on
+// a build with no sandbox and idempotent (Acquire's release is once-guarded).
+func (b *BuildResult) Release() {
+	if b != nil && b.releaseSandbox != nil {
+		b.releaseSandbox()
+	}
 }
 
 // BuildFullAgent constructs an *agents.Agent from a config ID, loading all
@@ -117,18 +134,21 @@ type BuildResult struct {
 // global settings (system_prompt). agentConfigID is required. sandboxID is
 // optional — when set, only that sandbox is attached; when empty, all are.
 func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string) (*BuildResult, error) {
-	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, false)
+	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, "", false)
 }
 
-// buildFullAgent is BuildFullAgent with task-run awareness: a background task
-// run's agent is built WITHOUT the task tools, capping spawn depth at one.
-func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string, taskRun bool) (*BuildResult, error) {
+// buildFullAgent is BuildFullAgent with the run-scoped extras: the session's
+// bound workDir for the sandbox tools, and task-run awareness (a background
+// task run's agent is built WITHOUT the task tools, capping spawn depth at
+// one).
+func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, workDir string, taskRun bool) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
 	bc := &agentBuildCtx{
-		stack: make(map[string]bool),
-		cache: make(map[string]*BuildResult),
+		stack:   make(map[string]bool),
+		cache:   make(map[string]*BuildResult),
+		workDir: workDir,
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err == nil {
@@ -140,7 +160,20 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.Tools(nil)...)
 	}
 	if err != nil {
+		// A failed build returns no result to Release, so the sandbox
+		// references acquired before the failure are dropped here.
+		for _, release := range bc.releases {
+			release()
+		}
 		return nil, err
+	}
+	if len(bc.releases) > 0 {
+		releases := bc.releases
+		result.releaseSandbox = func() {
+			for _, release := range releases {
+				release()
+			}
+		}
 	}
 	// Lift the entry agent's guardrails to the run level so they protect the
 	// whole conversation — the final output is checked even after a handoff to an
@@ -180,6 +213,17 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 type agentBuildCtx struct {
 	stack map[string]bool
 	cache map[string]*BuildResult
+	// workDir is the session's bound working directory, applied to every
+	// sandbox toolset built for this run — handoff-target agents included, so
+	// one run sees one file system context throughout.
+	workDir string
+	// releases collects the sandbox-instance references every build in this
+	// recursion acquired (the entry agent's and each handoff target's).
+	// Collected on the CONTEXT, not the per-agent results: only the top-level
+	// BuildResult reaches the caller, so a release stored on a nested result
+	// would be unreachable — the whole set is folded into the top result's
+	// Release, and a failed build releases it before returning.
+	releases []func()
 }
 
 // errHandoffCycle marks a back-edge in the handoff graph. It is recoverable —
@@ -348,17 +392,22 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		}
 	}
 
-	// Sandbox tools: "" = none, else = specific ID
+	// Sandbox tools: "" = none, else = specific ID. Failure is the run's
+	// failure, not a silent downgrade: a bound session whose sandbox cannot be
+	// built would otherwise run coding prompts with no file system at all and
+	// nothing telling anyone. (Deleting a still-referenced sandbox is refused
+	// with 409, so the lookup failing here means the store itself did.)
 	if sandboxID != "" {
 		sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
-		if err == nil {
-			tools, err := deps.SandboxManager.SandboxTools(sbCfg, approveCommands)
-			if err != nil {
-				log.Warn().Err(err).Str("sandbox", sbCfg.Name).Msg("failed to create sandbox tools")
-			} else {
-				agent.Tools = append(agent.Tools, tools...)
-			}
+		if err != nil {
+			return nil, fmt.Errorf("sandbox %s: %w", sandboxID, err)
 		}
+		tools, release, err := deps.SandboxManager.SandboxTools(sbCfg, bc.workDir, approveCommands)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox %q: building tools: %w", sbCfg.Name, err)
+		}
+		bc.releases = append(bc.releases, release)
+		agent.Tools = append(agent.Tools, tools...)
 	}
 
 	// Brave Search

@@ -291,3 +291,32 @@ func (r *Runner) StopSessionTree(sessionID string) {
 // finish. Unbounded would let one stuck run block a delete forever; too short
 // and the cascade races a write.
 const sessionTeardownWait = 5 * time.Second
+
+// ReleaseSessionBinding releases the cached sandbox instance behind a deleted
+// session's (sandbox, workdir) binding, but only when no remaining session
+// references the pair — the instance may be a live ssh connection or a docker
+// container, and sessions sharing a project must not lose it under a sibling's
+// delete. Called AFTER the delete cascade, so the count excludes the deleted
+// session and its task children. Best-effort: on any doubt (the count failed),
+// the instance stays — an idle instance is a smaller cost than tearing one out
+// from under a session still using it.
+func (r *Runner) ReleaseSessionBinding(sandboxID, workDir string) {
+	if sandboxID == "" {
+		return
+	}
+	ctx := r.hub.rootCtx
+	n, err := r.Deps.Sessions.CountBindingRefs(ctx, sandboxID, workDir)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Str("sandbox_id", sandboxID).Msg("counting sandbox binding refs")
+		return
+	}
+	if n > 0 {
+		return
+	}
+	cfg, err := r.Deps.SandboxConfigs.Get(ctx, sandboxID)
+	if err != nil {
+		// Config already gone: its Delete removed every cached instance.
+		return
+	}
+	r.Deps.SandboxManager.RemoveInstance(cfg, workDir)
+}
