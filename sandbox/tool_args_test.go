@@ -10,14 +10,15 @@ import (
 )
 
 func TestLenientString_UnmarshalJSON(t *testing.T) {
+	// Only the zero-value sentinels normalize to "" — each reads as "not
+	// used". Other scalars are values with unknown intent and must be
+	// rejected, not kept as literal text (workdir: 42 would run `cd '42'`).
 	ok := map[string]lenientString{
 		`"build"`: "build",
+		`"0"`:     "0",
 		`""`:      "",
-		`0`:       "0",
-		`42`:      "42",
-		`1.5`:     "1.5",
-		`true`:    "true",
-		`false`:   "false",
+		`0`:       "",
+		`false`:   "",
 		`null`:    "",
 	}
 	for in, want := range ok {
@@ -28,7 +29,7 @@ func TestLenientString_UnmarshalJSON(t *testing.T) {
 			t.Errorf("Unmarshal(%s) = %q, want %q", in, got, want)
 		}
 	}
-	for _, in := range []string{`{}`, `{"a":1}`, `[1,2]`} {
+	for _, in := range []string{`42`, `1.5`, `true`, `{}`, `{"a":1}`, `[1,2]`} {
 		var got lenientString
 		if err := json.Unmarshal([]byte(in), &got); err == nil {
 			t.Errorf("Unmarshal(%s) = %q, want error", in, got)
@@ -55,10 +56,13 @@ func TestCodeTool_LenientArgs(t *testing.T) {
 	}
 }
 
-// With sessions enabled, a numeric session_id names the session by its literal
-// text: 0 and "0" are the same shell, not an error and not two shells.
+// With sessions enabled, session_id: 0 is the zero-value sentinel for "no
+// session" — a fresh shell, not a persistent shell named "0". Only the string
+// "0" names a session.
 func TestCodeTool_LenientArgs_NumericSessionName(t *testing.T) {
-	sb := &fakeTerminalSandbox{started: make(chan struct{}, 8)}
+	// A real Exec backend under the fake: session_id 0 decodes to "" and runs
+	// in a fresh shell (plain Exec), which the terminal-only fake cannot serve.
+	sb := &fakeTerminalSandbox{Sandbox: NewLocal(), started: make(chan struct{}, 8)}
 	tool := CodeTool(sb, CodeToolConfig{Sessions: true})
 	ctx := context.Background()
 	tc := &agents.ToolContext{}
@@ -75,7 +79,7 @@ func TestCodeTool_LenientArgs_NumericSessionName(t *testing.T) {
 		}
 	}
 	if n := sb.opens.Load(); n != 1 {
-		t.Errorf("terminals opened = %d, want 1 (0 and \"0\" must share a session)", n)
+		t.Errorf("terminals opened = %d, want 1 (0 is a fresh shell; only \"0\" names a session)", n)
 	}
 }
 

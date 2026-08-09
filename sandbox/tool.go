@@ -88,11 +88,17 @@ func (c CodeToolConfig) withDefaults() CodeToolConfig {
 	return c
 }
 
-// lenientString is a string that also accepts a JSON number, boolean or null,
-// decoding to the literal's text ("" for null). The schema still says string —
-// but a backend that does not enforce strict schemas (Anthropic, ChatGPT) lets
-// the model fill an unused required field with a zero-value sentinel like 0,
-// and a whole run is not worth losing over that spelling of "none".
+// lenientString is a string that also accepts the JSON zero-value sentinels
+// null, 0 and false, decoding each to "". The schema still says string — but a
+// backend that does not enforce strict schemas (Anthropic, ChatGPT) lets the
+// model fill an unused required field with a zero value, and a whole run is
+// not worth losing over that spelling of "none". Only those three normalize:
+// each reads unambiguously as "not used", never as a real directory or
+// session name. Any other non-string scalar (true, 42, 3.14) is a value whose
+// intent is unknown — keeping its literal text would run `cd '42'` or open a
+// persistent shell named "3.14" — so it is rejected, which OnInvoke returns to
+// the model as correctable text. A model that genuinely wants a session named
+// "0" can still say so with a string.
 type lenientString string
 
 func (s *lenientString) UnmarshalJSON(data []byte) error {
@@ -101,16 +107,13 @@ func (s *lenientString) UnmarshalJSON(data []byte) error {
 		*s = lenientString(v)
 		return nil
 	}
-	lit := string(bytes.TrimSpace(data))
-	switch {
-	case lit == "null":
+	switch lit := string(bytes.TrimSpace(data)); lit {
+	case "null", "0", "false":
 		*s = ""
-	case lit == "" || lit[0] == '{' || lit[0] == '[':
-		return fmt.Errorf("cannot decode %s as a string", lit)
+		return nil
 	default:
-		*s = lenientString(lit) // number or boolean: keep the literal text
+		return fmt.Errorf("cannot decode %s as a string", lit)
 	}
-	return nil
 }
 
 type codeToolArgs struct {
