@@ -7,27 +7,38 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// CreateSchema creates every table and supporting index if they do not already exist.
+// schemaModels is every persisted model — the tables CreateSchema creates and
+// verifySchema probes.
+var schemaModels = []any{
+	(*Session)(nil),
+	(*entryRow)(nil),
+	(*appendPointRow)(nil),
+	(*AgentConfig)(nil),
+	(*McpServerConfig)(nil),
+	(*Memory)(nil),
+	(*Setting)(nil),
+	(*ProviderRoute)(nil),
+	(*SandboxConfig)(nil),
+	(*TraceEvent)(nil),
+	(*Guardrail)(nil),
+	(*PendingApproval)(nil),
+	(*Task)(nil),
+}
+
+// CreateSchema creates every table and supporting index if they do not
+// already exist, then verifies the result is the schema this build expects.
+// The verification is what turns "old database file" from a landmine into a
+// startup error: IF NOT EXISTS skips a table that already exists in an older
+// shape, and without the probe the mismatch only surfaces per-request as
+// `no such column` from whichever query touches the missing field first.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
-	models := []any{
-		(*Session)(nil),
-		(*entryRow)(nil),
-		(*appendPointRow)(nil),
-		(*AgentConfig)(nil),
-		(*McpServerConfig)(nil),
-		(*Memory)(nil),
-		(*Setting)(nil),
-		(*ProviderRoute)(nil),
-		(*SandboxConfig)(nil),
-		(*TraceEvent)(nil),
-		(*Guardrail)(nil),
-		(*PendingApproval)(nil),
-		(*Task)(nil),
-	}
-	for _, model := range models {
+	for _, model := range schemaModels {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
 			return fmt.Errorf("creating table for %T: %w", model, err)
 		}
+	}
+	if err := verifySchema(ctx, db); err != nil {
+		return err
 	}
 	// Entry reads and writes are addressed by (session, generation) — the gen
 	// belongs in every key. Both indexes are UNIQUE, and that is load-bearing:
@@ -165,6 +176,28 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating provider_routes unique prefix index: %w", err)
+	}
+	return nil
+}
+
+// verifySchema probes every model with a zero-row SELECT. bun names every
+// mapped column in the SELECT list, so the model definitions themselves are
+// the probe — a database created by an older build fails here, at startup,
+// with one clear message, instead of per-request once a query touches a
+// column the old table lacks. There is deliberately no schema-version
+// constant to keep bumped: the models are the version. Schema changes ship
+// without migrations by design — the remedy is recreating the file.
+func verifySchema(ctx context.Context, db *bun.DB) error {
+	for _, model := range schemaModels {
+		// The slice destination makes zero rows a valid result; scanning into
+		// the nil model itself would demand exactly one row and report the
+		// empty table as sql.ErrNoRows.
+		var probe []map[string]any
+		if err := db.NewSelect().Model(model).Limit(0).Scan(ctx, &probe); err != nil {
+			return fmt.Errorf(
+				"database schema is out of date for %T (%w); this build changed the database layout and ships no migrations — back up the database file if needed, delete it, and restart to recreate it",
+				model, err)
+		}
 	}
 	return nil
 }

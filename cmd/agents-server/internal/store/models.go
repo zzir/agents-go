@@ -25,10 +25,17 @@ type Session struct {
 	// "hidden" belongs to the session: the list query had to know what a task
 	// was in order to exclude one, and anything else worth hiding would have
 	// had to teach it a second special case.
-	Hidden        bool      `bun:"hidden"               json:"hidden,omitempty"`
-	AgentConfigID string    `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
-	CreatedAt     time.Time `bun:"created_at,notnull"   json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`
+	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
+	AgentConfigID string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
+	// SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
+	// run that carries a sandbox writes them (compare-and-set, see
+	// BindSandboxIfEmpty) and they are never rewritten — the session's file
+	// system context must not change under a conversation that already touched
+	// it. An empty WorkDir means "the sandbox's own default".
+	SandboxID string    `bun:"sandbox_id"           json:"sandbox_id,omitempty"`
+	WorkDir   string    `bun:"work_dir"             json:"work_dir,omitempty"`
+	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"   json:"updated_at"`
 }
 
 // Task is a background subagent run spawned from a chat session via the
@@ -65,14 +72,18 @@ type Task struct {
 	// spawning tasks forever — could never trip on this host.
 	Depth int `bun:"depth" json:"depth,omitempty"`
 	// Attempt counts this task's runs: 1 for the original, one more per retry.
-	// Zero reads as the first attempt, so a row written before retries existed
-	// needs no migration to mean what it already meant.
+	// Zero reads as the first attempt — mirroring the SDK's AttemptNo()
+	// contract, so a row whose column was never set (an insert that omitted
+	// it) means what it already meant. (Not a migration concern: this server
+	// recreates its schema rather than altering it, so no pre-attempt rows
+	// survive an upgrade.)
 	Attempt int `bun:"attempt" json:"attempt,omitempty"`
-	// ParentAgentConfigID / ParentSandboxID snapshot the spawning run's
-	// configuration so the completion notification can start a parent run with
-	// the same setup.
+	// ParentAgentConfigID / ParentSandboxID / ParentWorkDir snapshot the
+	// spawning run's configuration so the completion notification (and a retry)
+	// can start a run with the same setup.
 	ParentAgentConfigID string `bun:"parent_agent_config_id" json:"-"`
 	ParentSandboxID     string `bun:"parent_sandbox_id"      json:"-"`
+	ParentWorkDir       string `bun:"parent_work_dir"        json:"-"`
 	Status              string `bun:"status,notnull"     json:"status"`
 	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
 	// Result is the task's full final output. The row summary (and the wake
@@ -291,10 +302,37 @@ type SandboxConfig struct {
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
+	// Revision counts this config's WRITES: 1 at creation, +1 on every
+	// update, name-only included. It is the row's concurrency control — the
+	// expected-revision CAS both update paths carry (no lost updates, no
+	// identity-freeze bypass through a stale read), and the predicate a
+	// first-run bind lands against (the workdir was validated on exactly this
+	// revision). An integer, not a version-history table: nothing keeps old
+	// revisions runnable — updates (credential rotation above all) apply to
+	// everyone at the next run.
+	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
+
+	// RuntimeGen counts the config's CONTENT generations: +1 only when Type
+	// or Config actually change. It is what the live-instance cache and the
+	// terminal registry key their fences on, deliberately separate from
+	// Revision: a name-only update bumps the row version but must not retire
+	// instances or sever terminals — tying eviction to Revision force-deleted
+	// idle persistent containers (volumes included) over a rename.
+	RuntimeGen int64 `bun:"runtime_gen,notnull,default:1" json:"-"`
+
 	// Terminal reports whether this sandbox can host an interactive web
 	// terminal (ssh always; docker only in persistent mode; local never, by
 	// design). Computed per response by the handler, never stored.
 	Terminal bool `bun:"-" json:"terminal"`
+
+	// DefaultWorkDir is the directory a session binding to this sandbox would
+	// use when the user picks none — always the EXECUTION view (where commands
+	// run: docker reports the container-side /workspace, never the host mount
+	// source). WorkDirEditable reports whether a custom per-session workdir is
+	// honored (local/ssh only). Both computed per response by the handler,
+	// never stored.
+	DefaultWorkDir  string `bun:"-" json:"default_work_dir"`
+	WorkDirEditable bool   `bun:"-" json:"work_dir_editable"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
@@ -308,11 +346,17 @@ type LocalConfig struct {
 
 // DockerConfig is the SandboxConfig.Config payload for Type == "docker".
 type DockerConfig struct {
-	Image            string `json:"image"`
-	Runtime          string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
-	User             string `json:"user,omitempty"`    // user[:group] the container runs as; "" = backend default (65534 nobody)
-	Network          bool   `json:"network"`
-	Persistent       bool   `json:"persistent"`
+	Image      string `json:"image"`
+	Runtime    string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
+	User       string `json:"user,omitempty"`    // user[:group] the container runs as; "" = backend default (65534 nobody)
+	Network    bool   `json:"network"`
+	Persistent bool   `json:"persistent"`
+	// HostDir is the host directory bind-mounted at /workspace inside a
+	// PERSISTENT container (the container-side working directory is always
+	// /workspace). Empty = the server's --workspace. Distinct from a working
+	// directory on purpose: it says where the data lives on the host, not
+	// where commands run.
+	HostDir          string `json:"host_dir,omitempty"`
 	ContainerName    string `json:"container_name,omitempty"`      // Docker container name (persistent mode only)
 	MaxReadFileBytes int64  `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
@@ -373,6 +417,7 @@ type PendingApproval struct {
 	SessionID     string `bun:"session_id,notnull"     json:"session_id"`
 	AgentConfigID string `bun:"agent_config_id"        json:"agent_config_id,omitempty"`
 	SandboxID     string `bun:"sandbox_id"             json:"sandbox_id,omitempty"`
+	WorkDir       string `bun:"work_dir"               json:"work_dir,omitempty"`
 	// State is the JSON from agents.RunState.MarshalJSON. Hidden from the API.
 	State string `bun:"state,type:text,notnull" json:"-"`
 	// ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)

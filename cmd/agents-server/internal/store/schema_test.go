@@ -2,85 +2,51 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
-// TestSchemaIndexes documents and locks the intended index design: the unique
-// constraints that back business identity, and the query indexes for the two
-// tables that grow with history (messages, trace_events).
-func TestSchemaIndexes(t *testing.T) {
+// A database file created by an older build must fail at startup with one
+// clear message, not per-request: CREATE TABLE IF NOT EXISTS skips a table
+// that exists in an older shape, so CreateSchema's verify probe is the only
+// thing standing between "server started fine" and "no such column" from
+// whichever query first touches the missing field.
+func TestCreateSchemaFailsOnStaleTable(t *testing.T) {
+	db, err := NewSQLiteDB("file:" + NewID() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
 	ctx := context.Background()
-	db := newTestDB(t) // runs CreateSchema
 
-	type idx struct {
-		name   string
-		unique bool
-		cols   string
-	}
-	want := []idx{
-		// Business-identity unique keys.
-		{"idx_agent_configs_name", true, "name"},
-		{"idx_mcp_servers_name", true, "name"},
-		{"idx_guardrails_name", true, "name"},
-		{"idx_provider_routes_prefix", true, "prefix"},
-		// Entry identity: seq and entry id are never handed out twice within a
-		// (session, generation), and the store constrains what it can (spec
-		// §2.5e2) — so these are UNIQUE, not just query indexes.
-		{"idx_entries_session_seq", true, "session_id,gen,seq"},
-		{"idx_entries_entry_id", true, "session_id,gen,entry_id"},
-		// Query indexes for the history tables and hot lookups.
-		{"idx_trace_events_session_id", false, "session_id,id"},
-		{"idx_trace_events_created_at", false, "created_at"},
-		{"idx_memories_agent_config_id", false, "agent_config_id"},
-		// The session list orders by recency of change.
-		{"idx_sessions_updated_at", false, "updated_at"},
+	// A sandbox_configs table from before the revision counters existed.
+	if _, err := db.ExecContext(ctx,
+		`CREATE TABLE sandbox_configs (id TEXT PRIMARY KEY, name TEXT, type TEXT, config TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)`); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, w := range want {
-		t.Run(w.name, func(t *testing.T) {
-			var unique bool
-			// SQLite: index uniqueness via PRAGMA index_list.
-			rows, err := db.QueryContext(ctx, "SELECT \"unique\" FROM pragma_index_list('"+tableForIndex(w.name)+"') WHERE name = ?", w.name)
-			if err != nil {
-				t.Fatalf("pragma index_list: %v", err)
-			}
-			found := false
-			for rows.Next() {
-				found = true
-				if err := rows.Scan(&unique); err != nil {
-					t.Fatalf("scan: %v", err)
-				}
-			}
-			_ = rows.Close()
-			if !found {
-				t.Fatalf("index %s not found", w.name)
-			}
-			if unique != w.unique {
-				t.Errorf("index %s unique = %v, want %v", w.name, unique, w.unique)
-			}
-		})
+	err = CreateSchema(ctx, db)
+	if err == nil {
+		t.Fatal("CreateSchema accepted a stale table; want a schema-out-of-date error")
+	}
+	if !strings.Contains(err.Error(), "out of date") || !strings.Contains(err.Error(), "SandboxConfig") {
+		t.Fatalf("err = %v, want an out-of-date message naming the model", err)
 	}
 }
 
-// tableForIndex maps an index name to its table for PRAGMA lookups.
-func tableForIndex(index string) string {
-	switch index {
-	case "idx_agent_configs_name":
-		return "agent_configs"
-	case "idx_mcp_servers_name":
-		return "mcp_servers"
-	case "idx_guardrails_name":
-		return "guardrails"
-	case "idx_provider_routes_prefix":
-		return "provider_routes"
-	case "idx_entries_session_seq", "idx_entries_entry_id":
-		return "entries"
-	case "idx_trace_events_session_id", "idx_trace_events_created_at":
-		return "trace_events"
-	case "idx_memories_agent_config_id":
-		return "memories"
-	case "idx_sessions_updated_at":
-		return "sessions"
+// The probe must pass on a database this build created — including one it
+// re-opens (the everyday restart path).
+func TestCreateSchemaIdempotentOnCurrentSchema(t *testing.T) {
+	db, err := NewSQLiteDB("file:" + NewID() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return ""
+	defer func() { _ = db.Close() }()
+	ctx := context.Background()
+	if err := CreateSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateSchema(ctx, db); err != nil {
+		t.Fatalf("second CreateSchema on the same database: %v", err)
+	}
 }

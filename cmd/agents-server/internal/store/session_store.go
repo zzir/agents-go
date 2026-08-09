@@ -126,6 +126,64 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
+// BindSandboxIfEmpty permanently binds (sandbox_id, work_dir) to the session,
+// unless it is already bound: the first sandbox-carrying run wins and the
+// binding is never rewritten — the session's file system context must not
+// change under a conversation that already touched it. It reports whether THIS
+// call performed the bind, so the winner (and only the winner) can announce
+// it; a caller that lost re-reads the session to adopt the standing values.
+//
+// The EXISTS predicate makes "the target is still what was validated" part of
+// the same atomic statement: the caller read the config and validated the
+// workdir against it earlier, but a concurrent delete OR update can land
+// between that read and this write, and a binding is permanent — written
+// against a vanished config it would point the session at nothing forever,
+// and written against a changed one it would fix a workdir vetted against
+// values that no longer hold (a different ssh host, a different mount).
+// Matching the REVISION, not just the id, is what closes the second half.
+// Losing to the predicate reads as won=false; the caller's re-plan then reads
+// the world as it now is — validating against the new revision, or refusing
+// because the config is gone.
+//
+// An empty sandboxID binds nothing (a run without a sandbox leaves the session
+// bindable later). A missing session is (false, nil) — the caller's own
+// existence check owns that error. Like BindAgentIfEmpty, it leaves updated_at
+// alone: the conversation did not change.
+func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, workDir string, revision int64) (bool, error) {
+	if sandboxID == "" {
+		return false, nil
+	}
+	res, err := s.db.NewUpdate().Model((*Session)(nil)).
+		Set("sandbox_id = ?", sandboxID).
+		Set("work_dir = ?", workDir).
+		Where("id = ?", id).
+		Where("sandbox_id = '' OR sandbox_id IS NULL").
+		Where("EXISTS (SELECT 1 FROM sandbox_configs WHERE id = ? AND revision = ?)", sandboxID, revision).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("binding session %s to sandbox %s: %w", id, sandboxID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("binding session %s to sandbox %s: %w", id, sandboxID, err)
+	}
+	return n > 0, nil
+}
+
+// CountBindingRefs reports how many sessions are bound to exactly (sandboxID,
+// workDir) — the unit the SandboxManager caches an instance per. Zero after a
+// session delete means the pair's cached instance has no caller left.
+func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, workDir string) (int, error) {
+	n, err := s.db.NewSelect().Model((*Session)(nil)).
+		Where("sandbox_id = ?", sandboxID).
+		Where("work_dir = ?", workDir).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting sessions bound to sandbox %s workdir %q: %w", sandboxID, workDir, err)
+	}
+	return n, nil
+}
+
 // Delete removes the session with the given id together with all of its
 // messages, trace events, and pending approvals in one transaction. Background
 // tasks spawned from the session cascade: their rows and hidden child
