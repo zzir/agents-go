@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zzir/agents-go/agents/tasks"
@@ -97,8 +98,9 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 	if info, ok := runner.hub.Info("done-run"); !ok || info.Status != RunCompleted {
 		t.Fatalf("precondition: the run is %+v, want a retained completed record", info)
 	}
-	var published int
-	detach, ok := runner.hub.Subscribe("done-run", 0, func(*protocol.Envelope) { published++ })
+	// Atomic: the sink runs on the subscription's goroutine, unjoined.
+	var published atomic.Int32
+	detach, ok := runner.hub.Subscribe("done-run", 0, func(*protocol.Envelope) { published.Add(1) })
 	if !ok {
 		t.Fatal("cannot watch the finished run")
 	}
@@ -110,8 +112,8 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 	if info, _ := runner.hub.Info("done-run"); info.Status != RunCompleted {
 		t.Errorf("the finished run became %q — a stop rewrote an outcome clients already saw", info.Status)
 	}
-	if published != 0 {
-		t.Errorf("a finished run published %d event(s) on being stopped", published)
+	if n := published.Load(); n != 0 {
+		t.Errorf("a finished run published %d event(s) on being stopped", n)
 	}
 }
 

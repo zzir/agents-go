@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,11 +47,14 @@ func startAndWait(t *testing.T, r *Runner, sessionID, sandboxID, workDir string)
 
 func countBoundEvents(t *testing.T, r *Runner, runID string) int {
 	t.Helper()
-	n := 0
+	// The sink runs on the subscription's own goroutine and detach does not
+	// join it, so the counter is atomic: the reads below can overlap a replay
+	// still in flight.
+	var n atomic.Int32
 	seen := make(chan struct{})
 	detach, ok := r.Hub().Subscribe(runID, 0, func(env *protocol.Envelope) {
 		if env.Type == protocol.EventSessionSandboxBound {
-			n++
+			n.Add(1)
 		}
 		select {
 		case seen <- struct{}{}:
@@ -69,9 +73,9 @@ func countBoundEvents(t *testing.T, r *Runner, runID string) int {
 		case <-seen:
 			continue
 		case <-time.After(100 * time.Millisecond):
-			return n
+			return int(n.Load())
 		case <-deadline:
-			return n
+			return int(n.Load())
 		}
 	}
 }
