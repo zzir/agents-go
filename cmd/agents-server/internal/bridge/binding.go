@@ -64,11 +64,10 @@ func ResolveBindingWorkDir(cfg *store.SandboxConfig, workDir string) (string, er
 	case "ssh":
 		var sc store.SSHConfig
 		if len(cfg.Config) > 0 {
-			// A config that does not decode must refuse the bind, not bind its
-			// zero value: the binding is permanent, and a session bound under
-			// a misread config points at the wrong file system for good.
-			// (Save-time normalization refuses these now; this catches rows
-			// stored before it existed.)
+			// A stored config that does not decode (predating save-time
+			// normalization) must refuse the bind, not bind its zero value:
+			// the binding is permanent, and a session bound under a misread
+			// config points at the wrong file system for good.
 			if err := json.Unmarshal(cfg.Config, &sc); err != nil {
 				return "", ErrInvalidBinding{Reason: "this sandbox's stored config cannot be decoded; fix the sandbox first: " + err.Error()}
 			}
@@ -91,8 +90,7 @@ func ResolveBindingWorkDir(cfg *store.SandboxConfig, workDir string) (string, er
 		var dc store.DockerConfig
 		if len(cfg.Config) > 0 {
 			// Same as ssh above: a persistent flag misread as false would
-			// validate this bind against the wrong mode and freeze the
-			// mistake into the session.
+			// validate this bind against the wrong mode.
 			if err := json.Unmarshal(cfg.Config, &dc); err != nil {
 				return "", ErrInvalidBinding{Reason: "this sandbox's stored config cannot be decoded; fix the sandbox first: " + err.Error()}
 			}

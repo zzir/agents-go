@@ -216,9 +216,8 @@ func errorsAsInvalidBinding(err error) (ErrInvalidBinding, bool) {
 }
 
 // A stored config that does not decode must refuse the bind, not bind its
-// zero-value reading: save-time normalization refuses these now, but a row
-// written before it existed (persistent:"yes") would otherwise validate as
-// an ephemeral sandbox and freeze that misreading into the session.
+// zero-value reading — persistent:"yes" would otherwise validate as an
+// ephemeral sandbox and freeze that misreading into the session.
 func TestUndecodableConfigRefusesBinding(t *testing.T) {
 	_, err := ResolveBindingWorkDir(&store.SandboxConfig{
 		ID: "sb", Type: "docker",

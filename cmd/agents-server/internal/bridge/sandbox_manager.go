@@ -319,14 +319,11 @@ func (m *SandboxManager) RemoveInstance(cfg *store.SandboxConfig, workDir string
 
 // Retire evicts every cached instance of the config id built from a runtime
 // generation below minLive, and moves the fence so none can come back: an
-// acquire that read the config just before the update is still in flight, and
-// without the fence its build would re-install an old-credential instance
-// after the eviction swept the cache (the classic read-then-act around
-// Update). With
-// it, that instance is doomed the moment its build lands — the run that
-// started on it finishes, then it closes. In-flight holders of the evicted
-// instances likewise finish on what they acquired; only idle instances close
-// immediately.
+// acquire that read the config just before the update may still be dialing,
+// and without the fence its build would re-install an old-credential
+// instance after the eviction swept the cache. With it, that instance is
+// doomed the moment its build lands. In-flight holders finish on what they
+// acquired; only idle instances close immediately.
 func (m *SandboxManager) Retire(id string, minLive int64) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -349,16 +346,12 @@ func (m *SandboxManager) Retire(id string, minLive int64) {
 
 // Remove evicts every cached instance of the config id — all generations and
 // workdir variants — and fences the id permanently: the config was deleted,
-// so nothing may serve it again. The tombstone matters because "deleted ids
-// fail their later reads" only covers callers who have not read yet — a
-// terminal open or a config test reads the config, then dials, then acquires,
-// and a delete landing inside that window would otherwise let the late
-// acquire build and CACHE an instance of a config that no longer exists,
-// alive until process exit with no path ever retiring it. With the fence the
-// builder's completion check dooms it: it serves the holders already waiting,
-// then the last release closes it. Permanence is safe — ids are random and
-// never reused. In-flight holders of evicted instances finish on what they
-// acquired; only idle instances close immediately.
+// so nothing may serve it again. The tombstone covers callers who READ the
+// config before the delete (a terminal open or config test reads, dials,
+// then acquires): without it their late build would enter the cache as an
+// instance of a config that no longer exists, with no path ever retiring it.
+// Permanence is safe — ids are random and never reused. In-flight holders
+// finish on what they acquired; only idle instances close immediately.
 func (m *SandboxManager) Remove(id string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()

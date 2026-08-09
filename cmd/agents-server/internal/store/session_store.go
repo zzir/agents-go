@@ -133,17 +133,13 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 // call performed the bind, so the winner (and only the winner) can announce
 // it; a caller that lost re-reads the session to adopt the standing values.
 //
-// The EXISTS predicate makes "the target is still what was validated" part of
-// the same atomic statement: the caller read the config and validated the
-// workdir against it earlier, but a concurrent delete OR update can land
-// between that read and this write, and a binding is permanent — written
-// against a vanished config it would point the session at nothing forever,
-// and written against a changed one it would fix a workdir vetted against
-// values that no longer hold (a different ssh host, a different mount).
-// Matching the REVISION, not just the id, is what closes the second half.
-// Losing to the predicate reads as won=false; the caller's re-plan then reads
-// the world as it now is — validating against the new revision, or refusing
-// because the config is gone.
+// The EXISTS predicate makes "the target is still what was validated" part
+// of the same atomic statement: a concurrent delete or update landing
+// between the caller's read and this write would otherwise bind the session
+// to a vanished config, or fix a workdir vetted against values that no
+// longer hold. Matching the REVISION, not just the id, closes the update
+// half; losing reads as won=false and the caller re-plans against the world
+// as it now is.
 //
 // An empty sandboxID binds nothing (a run without a sandbox leaves the session
 // bindable later). A missing session is (false, nil) — the caller's own

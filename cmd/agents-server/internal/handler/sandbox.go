@@ -145,11 +145,9 @@ type createSandboxReq struct {
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
 	// Revision, on update only, is the revision the client's edit was based
-	// on (from GET/List). When set, the write lands only while the row is
-	// still there — editing from a stale form is 409 instead of silently
-	// overwriting a concurrent update. Absent (0) keeps last-writer-wins:
-	// the CAS then anchors on the revision the handler itself just read,
-	// which still serializes concurrent handlers. Ignored on create.
+	// on (from GET/List): editing from a stale form is then 409 instead of
+	// silently overwriting a concurrent update. Absent (0) keeps
+	// last-writer-wins. Ignored on create.
 	Revision int64 `json:"revision,omitempty"`
 }
 
@@ -163,12 +161,11 @@ func (r createSandboxReq) toConfig() *store.SandboxConfig {
 
 // validateSandbox enforces the POLICY layer of a sandbox write: name and
 // type present, local gated behind its flag, remote docker daemons refused.
-// Field-level validation — required fields, type mismatches — and
-// canonicalization live in store.NormalizeSandboxConfig, which both write
-// handlers run right after this. The docker host check must stay HERE,
-// before normalization: host is not a DockerConfig field, so the canonical
-// re-marshal would silently drop it instead of telling the user it is
-// unsupported.
+// Field-level validation and canonicalization live in
+// store.NormalizeSandboxConfig, which both write handlers run right after
+// this. The docker host check must stay HERE, before normalization: host is
+// not a DockerConfig field, so the canonical re-marshal would silently drop
+// it instead of telling the user it is unsupported.
 func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) bool {
 	if req.Name == "" {
 		badRequest(c, "name is required")
@@ -317,10 +314,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	cfg := req.toConfig()
 	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, prev.Config)
-	// Normalize AFTER the mask restore (the canonical form must carry the
-	// real secret, not the ******** sentinel). From here on the identity and
-	// content comparisons read the same canonical payload that will be
-	// stored — one decoding, one answer.
+	// Normalize AFTER the mask restore: the canonical form must carry the
+	// real secret, not the ******** sentinel.
 	canonical, err := store.NormalizeSandboxConfig(cfg.Type, cfg.Config)
 	if err != nil {
 		badRequest(c, err.Error())
@@ -328,17 +323,13 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	cfg.Config = canonical
 	// Everything decided from prev — the identity comparison, contentChanged
-	// — holds only while the row IS prev, which is exactly what the
-	// expected-revision CAS both write paths carry guarantees: a concurrent
-	// update moves the revision, this write refuses (409), and the client
-	// re-reads. Without it a stale comparison could bypass the identity
-	// freeze or silently overwrite another update's credential rotation.
-	// The anchor is the client's own revision when the request names one —
-	// extending the guarantee back to the form the edit was made on, so a
-	// stale tab cannot overwrite a save it never saw (both paths succeed
-	// only when it equals prev.Revision, keeping every prev-derived decision
-	// exactly as CAS-guarded as before). Without one the anchor is prev:
-	// concurrent handlers still serialize, clients are last-writer-wins.
+	// — holds only while the row IS prev, which the expected-revision CAS on
+	// both write paths guarantees: a concurrent update moves the revision,
+	// this write refuses (409), the client re-reads. The anchor is the
+	// client's own revision when the request names one, extending the
+	// guarantee back to the form the edit was made on; without one it is
+	// prev — concurrent handlers still serialize, clients are
+	// last-writer-wins.
 	expected := prev.Revision
 	if req.Revision != 0 {
 		expected = req.Revision

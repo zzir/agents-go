@@ -229,15 +229,11 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
       await reload();
     } catch (e) {
       toast.error((e as Error).message);
-      // A 409 on an EDIT means the row changed under the form (revision
-      // conflict, identity freeze, rename collision): the snapshot the form
-      // opened on is stale, and resubmitting it can only 409 again — the
-      // list itself still holds the stale row, so without a reload even
-      // Cancel + re-Edit would resubmit the same dead snapshot. Close the
-      // editor and reload so the next Edit starts from current data. An
-      // add's 409 (duplicate name) keeps the form: the fix is changing the
-      // input, which is worth keeping — as are validation 400s on either
-      // path.
+      // A 409 on an EDIT means the row changed under the form: resubmitting
+      // the stale snapshot can only 409 again, and the list still holds the
+      // stale row — so close the editor and reload, and the next Edit starts
+      // from current data. An add's 409 (duplicate name) keeps the form: the
+      // fix is changing the input, which is worth keeping.
       if (editing && (e as { status?: number }).status === 409) {
         setEditing(null);
         await reload();

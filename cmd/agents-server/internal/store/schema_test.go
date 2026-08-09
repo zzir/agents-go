@@ -7,10 +7,8 @@ import (
 )
 
 // A database file created by an older build must fail at startup with one
-// clear message, not per-request: CREATE TABLE IF NOT EXISTS skips a table
-// that exists in an older shape, so CreateSchema's verify probe is the only
-// thing standing between "server started fine" and "no such column" from
-// whichever query first touches the missing field.
+// clear message, not per-request as "no such column" — CREATE TABLE IF NOT
+// EXISTS skips a table that exists in an older shape.
 func TestCreateSchemaFailsOnStaleTable(t *testing.T) {
 	db, err := NewSQLiteDB("file:" + NewID() + "?mode=memory&cache=shared")
 	if err != nil {

@@ -26,11 +26,9 @@ var schemaModels = []any{
 }
 
 // CreateSchema creates every table and supporting index if they do not
-// already exist, then verifies the result is the schema this build expects.
-// The verification is what turns "old database file" from a landmine into a
-// startup error: IF NOT EXISTS skips a table that already exists in an older
-// shape, and without the probe the mismatch only surfaces per-request as
-// `no such column` from whichever query touches the missing field first.
+// already exist, then verifies the result is the schema this build expects
+// (see verifySchema — IF NOT EXISTS skips a table that exists in an older
+// shape).
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range schemaModels {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {

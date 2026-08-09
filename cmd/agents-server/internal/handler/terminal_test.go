@@ -414,10 +414,9 @@ func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 	}
 }
 
-// The registration fence: a terminal that opened under a generation a config
-// update (or delete) has since retired is refused at register — it read its
-// config before the sweep, dialed through it, and would otherwise surface as
-// a live shell on retired credentials the sweep could never see.
+// The registration fence: a terminal that opened under a since-retired
+// generation is refused at register — the sweep that retired it ran while
+// this terminal was still dialing and could not see it.
 func TestTerminalRegisterFence(t *testing.T) {
 	th := NewTerminalHandler(nil, nil)
 	th.CloseSandboxTerminals("sb", 2)

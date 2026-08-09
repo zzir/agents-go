@@ -11,11 +11,9 @@ import (
 )
 
 // A rename submitted from the UI must not count as a content change, even
-// though the UI's pack() round-trips every config field with explicit zeros
-// while a raw-API-created config spells only the non-zero ones. The runtime
-// generation is the observable consequence: a content change bumps it and
-// retires instances/terminals (for persistent docker, force-removing the
-// container); a rename must leave it alone.
+// though the UI round-trips every config field with explicit zeros while a
+// raw-API-created config spells only the non-zero ones. The runtime
+// generation is the observable: a content change bumps it, a rename must not.
 func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)

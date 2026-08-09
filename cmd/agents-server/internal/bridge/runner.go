@@ -241,10 +241,8 @@ func (r *Runner) planSandboxBinding(ctx context.Context, sess *store.Session, sa
 	return bindingPlan{sandboxID: sandboxID, workDir: canonical, needBind: true, revision: cfg.Revision}, nil
 }
 
-// maxBindAttempts bounds the plan→register→bind loop in startRunWithID: only
-// a sandbox config whose revision moves between every read and its bind keeps
-// an attempt alive, so three passes distinguish an unlucky race from a config
-// under active edit.
+// maxBindAttempts bounds the plan→register→bind loop in startRunWithID:
+// three passes distinguish an unlucky race from a config under active edit.
 const maxBindAttempts = 3
 
 // startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
@@ -294,20 +292,14 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, work
 			boundNow = true
 			break
 		}
-		// The CAS refused. With the session slot held, no other bind can race
-		// this one — what CAN change under it is the bind's own EXISTS
-		// predicate: the sandbox config was deleted, UPDATED to a new
-		// revision (the workdir was vetted against values that no longer
-		// hold), or the session row removed between the plan's validation and
-		// this write. Withdraw the registration and go around: the next pass
-		// reads the world as it now is — re-validating against the new
-		// revision, refusing a vanished config (400) or session (404)
-		// outright, or, should an out-of-process writer ever have bound the
-		// session, adopting its values via the bound branch. Only a revision
-		// that moves on every single pass keeps the loop alive; after
-		// maxBindAttempts of that it is contention by definition, and the
-		// retry belongs to the client, not to a server hot-loop chasing an
-		// admin who is actively editing the config.
+		// The CAS refused: with the session slot held, only the bind's own
+		// EXISTS predicate can have moved — the sandbox config was deleted or
+		// updated to a new revision, or the session row was removed. Withdraw
+		// the registration and go around; the next pass re-reads and
+		// re-validates, refusing a vanished config (400) or session (404)
+		// outright. Only a revision moving on every pass keeps the loop
+		// alive, and after maxBindAttempts of that the retry belongs to the
+		// client, not to a server hot-loop chasing an active editor.
 		r.hub.unregister(runID, seg)
 		if attempt == maxBindAttempts {
 			return "", ErrBindingContention

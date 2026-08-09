@@ -240,12 +240,9 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 }
 
 // register adds a live terminal, enforcing the per-sandbox cap and the
-// generation fence: a terminal that opened under a generation a config
-// update or delete has since retired is refused HERE, under the same lock
-// the fence moves under — the sweep that ran while this terminal was still
-// dialing could not see it, and letting it register would leave a live shell
-// on retired credentials (or a deleted sandbox). The two refusals are
-// distinct answers: full is temporary, stale is final.
+// generation fence (see the fence field) — checked under the same lock the
+// fence moves under. The two refusals are distinct answers: full is
+// temporary, stale is final.
 func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -276,12 +273,10 @@ func (h *TerminalHandler) unregister(sandboxID string, lt *liveTerminal) {
 
 // CloseSandboxTerminals tears down every live terminal for a sandbox config
 // that opened under a generation below minGen, and moves the registration
-// fence there — a terminal still dialing when this sweep runs (it registers
-// AFTER opening its PTY) is refused at register instead of surviving on
-// retired credentials. A config update passes the new runtime generation; a
-// delete passes math.MaxInt64: nothing may serve a config that is gone.
-// Sandbox Update/Delete call it alongside SandboxManager.Retire/Remove so no
-// shell keeps running against a stale or deleted config.
+// fence there so a terminal still dialing is refused at register (see the
+// fence field). A config update passes the new runtime generation; a delete
+// passes math.MaxInt64: nothing may serve a config that is gone. Sandbox
+// Update/Delete call it alongside SandboxManager.Retire/Remove.
 func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string, minGen int64) {
 	h.mu.Lock()
 	if h.fence[sandboxID] < minGen {

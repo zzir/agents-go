@@ -74,12 +74,11 @@ type Store interface {
 	// the task's current attempt. Best-effort: a concurrent terminal
 	// transition (or a newer attempt) wins.
 	//
-	// The runID predicate matches Finalize's, and for the same reason. These
-	// two once ran unbound ("a non-terminal state can only belong to the
-	// current attempt"), but an APPROVAL outlives the attempt that opened it:
-	// persisted before the pause lands on the row, it can survive a crash, a
-	// FailOrphans sweep and a retry — and then pause or cancel the attempt
-	// that replaced its own. Every attempt-scoped writer names its attempt.
+	// The runID predicate matches Finalize's, and for the same reason: an
+	// APPROVAL outlives the attempt that opened it — persisted before the
+	// pause lands on the row, it can survive a crash, a FailOrphans sweep
+	// and a retry, and would then pause or cancel the attempt that replaced
+	// its own. Every attempt-scoped writer names its attempt.
 	MarkInputRequired(ctx context.Context, id, runID string) error
 	// ReclaimWorking flips input_required → working when an approval resumes
 	// the run, only while runID is the current attempt. false means the task

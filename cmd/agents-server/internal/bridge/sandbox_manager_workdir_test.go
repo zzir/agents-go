@@ -348,10 +348,8 @@ func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 }
 
 // A rename bumps the row revision but not the runtime generation, and the
-// cache keys on the generation — so the renamed config keeps sharing the live
-// instance instead of dialing a second one (and nothing retires the old key,
-// which for docker would have force-removed a running container over a
-// display-name edit).
+// cache keys on the generation: the renamed config keeps sharing the live
+// instance, and nothing retires it over a display-name edit.
 func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	m := NewSandboxManager(t.TempDir())
 	sb := &closeCountingSandbox{}
@@ -392,11 +390,9 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	}
 }
 
-// A delete landing between a caller's config read and its acquire (terminal
-// open and config test both read, dial, then acquire): the tombstone Remove
-// leaves behind dooms the late build — it serves the holder that started it
-// and closes on release, instead of entering the cache as an instance of a
-// deleted config that nothing would ever retire.
+// A delete landing between a caller's config read and its acquire: the
+// tombstone dooms the late build instead of letting it enter the cache as an
+// instance of a deleted config that nothing would ever retire.
 func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	m, gate, sb := gatedManager(t)
 	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "local", RuntimeGen: 1}

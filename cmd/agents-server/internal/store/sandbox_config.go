@@ -17,23 +17,16 @@ import (
 // at save time cannot be answered another way at compare time.
 
 // NormalizeSandboxConfig strictly decodes raw for one backend type, enforces
-// the fields the sandbox cannot run without, and returns the canonical
-// payload to store. It is the API write path's gate (Create and Update):
-// a payload that decodes here builds later — a type mismatch such as
-// persistent:"yes" is refused with 400 instead of being stored, silently
-// read as its zero value at binding time (permanently binding a session to
-// a config that can never build), and only failing at run time.
-//
-// Canonical means: fields re-marshaled in struct order, ssh addr carrying an
-// explicit port (the backend dials :22 either way — host and host:22 are the
-// same machine and must compare equal), paths cleaned of trailing slashes.
-// Unknown keys are dropped by the re-marshal: the server does not consume
-// them, ContentEqual already ignores them, and echoing them back would
-// suggest they mean something.
-//
-// Required fields mirror buildSandbox's own checks (which stay, as defense):
-// docker needs an image, ssh needs addr and user. Empty local config stays
-// empty rather than becoming "{}".
+// the fields the sandbox cannot run without (docker an image, ssh addr and
+// user — mirroring buildSandbox's own checks), and returns the canonical
+// payload to store. It gates the API write path: a payload that decodes here
+// builds later, where a stored type mismatch (persistent:"yes") would read
+// as its zero value at binding time and permanently bind a session to a
+// config that can never build. Canonical means fields re-marshaled in struct
+// order, an ssh addr carrying its port explicitly (host and host:22 are the
+// same machine and must compare equal), paths cleaned of trailing slashes,
+// and unknown keys dropped (nothing consumes them). An empty local config
+// stays empty rather than becoming "{}".
 func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, error) {
 	switch typ {
 	case "docker":
@@ -81,24 +74,17 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 }
 
 // ContentEqual reports whether two sandbox config payloads mean the same
-// runtime CONTENT for one backend type — the predicate behind the
-// contentChanged flag that bumps RuntimeGen, retires live instances and
-// severs web terminals. Typed decoding plus canonicalization means
-// representation noise never counts as a change: an omitted field and its
-// explicit zero value are the same config (the UI round-trips every field
-// with explicit zeros, so a map-level compare would turn a rename of a
-// minimally-written config into a full retire, docker container teardown
-// included), as are key order, number spelling, and canonical spellings of
-// one target (host vs host:22, /srv/x/ vs /srv/x — also how a stored config
-// predating canonicalization compares equal to its own canonical echo).
-// Unknown keys are ignored: the server does not consume them, so their
-// drift must not tear anything down either.
-//
-// A payload the type cannot decode compares unequal on the safe side: the
-// caller treats it as a content change and retires, which at worst rebuilds
-// an environment — the opposite miss would keep old credentials serving.
-// A TYPE change is a content change by definition; callers short-circuit it
-// before asking here.
+// runtime CONTENT for one backend type — the predicate behind contentChanged,
+// which bumps RuntimeGen, retires live instances and severs web terminals.
+// Typed decoding plus canonicalization keeps representation noise from
+// counting as a change: an omitted field equals its explicit zero (the UI
+// round-trips every field with explicit zeros — compared as maps, a mere
+// rename of a minimally-written config would tear down a docker container),
+// host equals host:22, and unknown keys are ignored. A payload the type
+// cannot decode compares unequal on the safe side: retiring too much
+// rebuilds an environment, while the opposite miss keeps old credentials
+// serving. A TYPE change is a content change by definition; callers
+// short-circuit it before asking here.
 func ContentEqual(typ string, a, b json.RawMessage) bool {
 	switch typ {
 	case "docker":
@@ -113,22 +99,19 @@ func ContentEqual(typ string, a, b json.RawMessage) bool {
 // IdentityChanged reports whether an update moves the sandbox's IDENTITY —
 // the fields that decide where a binding's files live: the backend type; an
 // ssh sandbox's machine, USER and default directory (the user picks the
-// account — its home, its permissions view — so user-a@host and user-b@host
-// are different file systems even at one address); a docker sandbox's mount
-// source, mode and adopted container. Sessions bind a config id permanently
-// on the promise that the id keeps meaning the same file system, so these
-// fields freeze once any session references the config. Everything else —
-// name, credentials (key rotation is routine), image, network, runtime,
+// account, so user-a@host and user-b@host are different file systems even at
+// one address); a docker sandbox's mount source, mode and adopted container.
+// Sessions bind a config id permanently on the promise that it keeps meaning
+// the same file system, so these fields freeze while any session references
+// the config; everything else — name, credentials, image, network, runtime,
 // limits, the docker exec user — changes the execution environment, not
 // where the data is, and stays freely editable.
 //
-// Both sides are canonicalized before comparing, so host → host:22 is not a
-// move. A prev payload that no longer decodes (stored before strict
-// validation existed) is NOT an identity change: sessions bound to it are
-// bound to a config that cannot build, fixing it is their only way out, and
-// refusing the fix would deadlock them permanently. The reverse asymmetry —
-// an undecodable NEXT counts as a change — is pure defense: normalization
-// upstream refuses those payloads before they get here.
+// Both sides are canonicalized first, so host → host:22 is not a move. A
+// prev that no longer decodes is NOT a change: sessions bound to it hold a
+// config that cannot build, and fixing it is their only way out. (An
+// undecodable NEXT counts as one — pure defense; normalization upstream
+// refuses those payloads.)
 func IdentityChanged(prev, next *SandboxConfig) bool {
 	if prev.Type != next.Type {
 		return true

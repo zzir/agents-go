@@ -49,9 +49,7 @@ const unreferenced = "NOT EXISTS (SELECT 1 FROM sessions WHERE sandbox_id = ?)"
 // Update overwrites the config, shadowing the generic CrudStore update with
 // the two counters and a compare-and-set: the write lands only while the row
 // is still at expectedRevision — the revision the caller read, compared its
-// identity against, and decided contentChanged on. Without the CAS a slow
-// update could overwrite a concurrent one (losing a credential rotation) or
-// bypass the identity freeze on the strength of a stale comparison.
+// identity against, and decided contentChanged on (see ErrRevisionConflict).
 // contentChanged bumps the runtime generation alongside the revision; a
 // name-only write moves the revision alone, so nothing downstream retires
 // instances or severs terminals over a rename.
@@ -105,15 +103,12 @@ func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (ref
 	return s.explainRefusal(ctx, id)
 }
 
-// UpdateIdentityIfUnreferenced overwrites the config only while no session is
-// bound to it AND the row is still at expectedRevision — the write path for
-// updates that change the sandbox's IDENTITY (which machine, which directory,
-// which container: the fields that decide where a binding's files live). A
-// bound session's file system context is immutable, so such an update on a
-// referenced config is refused with the blocking count; a moved revision is
-// ErrRevisionConflict (the identity decision was made against a stale read).
-// An identity change is by definition a content change, so the runtime
-// generation bumps unconditionally here.
+// UpdateIdentityIfUnreferenced overwrites the config only while no session
+// is bound to it AND the row is still at expectedRevision — the write path
+// for updates that move the sandbox's IDENTITY (see IdentityChanged). A
+// referenced config refuses with the blocking count; a moved revision is
+// ErrRevisionConflict. An identity change is by definition a content change,
+// so the runtime generation bumps unconditionally here.
 func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, cfg *SandboxConfig, expectedRevision int64) (refs int, err error) {
 	cfg.ID = id
 	res, err := s.db.NewUpdate().Model(cfg).

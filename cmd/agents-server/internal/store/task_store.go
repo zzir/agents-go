@@ -96,19 +96,10 @@ const (
 	NotifyDelivered = "delivered"
 )
 
-// Finalize records a terminal status via compare-and-set: it wins only while
-// the row is still non-terminal, so of two racing finalizers (stop vs. run
-// completion vs. reaper) exactly one lands and a terminal state is never
-// overwritten. The same UPDATE owes the parent its wake-up notification
-// (notify_state = pending) — result persistence and the notification debt are
-// one atomic transition, which is what lets task_status treat "row terminal"
-// as "result is fully readable".
-//
-// The run_id predicate is the other half of the claim. A task can leave a
-// terminal state now (RetryClaim), so non-terminality alone no longer says
-// WHICH attempt a finalizer observed: without it, a stop that read the row
-// before a retry would cancel the attempt that replaced it, while that run
-// keeps executing with its own result discarded for losing the CAS.
+// Finalize implements the tasks.Store contract (one atomic CAS on
+// non-terminality AND the attempt named by runID — see the interface) as a
+// single conditional UPDATE: status, result and the wake-up debt
+// (notify_state = pending) land together or not at all.
 func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string) (bool, error) {
 	q := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("status = ?", status).
@@ -131,17 +122,12 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 	return n > 0, nil
 }
 
-// RetryClaim reopens a failed task for another attempt: status back to
-// working, a new run id, the attempt count up, and the previous attempt's
-// summary, result and wake-up debt cleared — the debt because the task is no
-// longer finished, so nothing is owed until it is again.
-//
-// One conditional UPDATE, so the attempt ceiling holds when two processes ask
-// at once rather than only inside the caller that checked it first. maxAttempts
-// counts the original run; <= 0 means no ceiling. The generation predicates are
-// the ones every by-session read carries: a row whose sessions are gone must
-// not come back to life and start a run on an id that now answers to someone
-// else.
+// RetryClaim implements the tasks.Store contract as one conditional UPDATE,
+// so the attempt ceiling holds when two processes ask at once rather than
+// only inside the caller that checked it first. The generation predicates
+// are the ones every by-session read carries: a row whose sessions are gone
+// must not come back to life and start a run on an id that now answers to
+// someone else.
 func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (bool, error) {
 	q := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("status = ?", taskWorking).

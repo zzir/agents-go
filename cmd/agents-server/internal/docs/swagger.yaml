@@ -561,11 +561,9 @@ components:
         revision:
           description: |-
             Revision, on update only, is the revision the client's edit was based
-            on (from GET/List). When set, the write lands only while the row is
-            still there — editing from a stale form is 409 instead of silently
-            overwriting a concurrent update. Absent (0) keeps last-writer-wins:
-            the CAS then anchors on the revision the handler itself just read,
-            which still serializes concurrent handlers. Ignored on create.
+            on (from GET/List): editing from a stale form is then 409 instead of
+            silently overwriting a concurrent update. Absent (0) keeps
+            last-writer-wins. Ignored on create.
           type: integer
         type:
           type: string
