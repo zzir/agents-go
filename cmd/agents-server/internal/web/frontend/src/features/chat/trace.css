@@ -26,6 +26,14 @@
    tasks triggered); each segment keeps its own waterfall timeline, with a
    small gap between them. */
 .trace-run-segment + .trace-run-segment { margin-top: 8px; }
+/* Optional segment heading — the task panel names each attempt of a retried
+   task with it. Muted, small: a divider with a name, not a second header. */
+.trace-segment-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fgColor-muted);
+  padding: 2px 0;
+}
 .trace-run-label {
   flex: 1;
   min-width: 0;

@@ -57,6 +57,9 @@ export interface TerminalViewHandle {
 
 interface TerminalViewProps {
   sandboxId: string;
+  // The sandbox-instance working directory this shell opens in ('' = the
+  // sandbox default) — a bound session's terminal follows its binding.
+  workDir?: string;
   // Hidden tabs stay mounted so their session (xterm buffer + WebSocket)
   // survives tab switches; only the active tab is displayed.
   hidden: boolean;
@@ -68,7 +71,7 @@ interface TerminalViewProps {
 // session's lifetime is the component's: unmounting (closing the tab) ends
 // the shell.
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
-  { sandboxId, hidden, onStatus, onSelection }: TerminalViewProps,
+  { sandboxId, workDir, hidden, onStatus, onSelection }: TerminalViewProps,
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -158,7 +161,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         case EV.authOk:
           ws.send(JSON.stringify({
             type: EV.terminalOpen,
-            payload: { sandbox_id: sandboxId, cols: term.cols, rows: term.rows },
+            payload: { sandbox_id: sandboxId, ...(workDir ? { work_dir: workDir } : {}), cols: term.cols, rows: term.rows },
           }));
           break;
         case EV.terminalReady:

@@ -22,6 +22,16 @@
   flex-shrink: 0;
 }
 
+/* Title + binding badge share the left half; both clamp independently so a
+   long session name and a long workdir path degrade together. */
+.chat-topbar-info {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-width: 0;
+  flex: 1;
+}
+
 .chat-topbar-title {
   min-width: 0;
   overflow: hidden;
@@ -29,6 +39,35 @@
   white-space: nowrap;
   font-size: 14px;
   font-weight: 600; /* match .side-panel-title */
+  /* The title is the session's identity — it never yields to the badge.
+     Its own max-width still clamps a truly long name. */
+  flex-shrink: 0;
+  max-width: 50%;
+}
+
+/* The bound-workdir hint beside the title: muted metadata text showing only
+   the directory's basename; hover shows the full path and sandbox in the
+   title. Read-only on purpose — the binding is immutable, so this is context,
+   not a control. */
+.chat-topbar-binding {
+  padding: 2px 6px;
+  max-width: 200px;
+  min-width: 0;
+  flex-shrink: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+.chat-topbar-binding svg {
+  flex-shrink: 0;
+}
+.chat-topbar-binding-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-topbar-actions {
@@ -489,6 +528,21 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+}
+
+/* The project picker button: clamp long labels so the composer row never
+   overflows. Primer Button lays its content out as a grid whose children
+   default to min-width:auto — without these the text refuses to shrink. */
+.chat-input-toolbar-left [data-component='buttonContent'] {
+  min-width: 0;
+}
+.chat-input-toolbar-left [data-component='text'] {
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-input-toolbar-right {
   display: flex;

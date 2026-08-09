@@ -42,6 +42,9 @@ export const EV = {
   runDiagnostic: 'run.diagnostic',
   runGap: 'run.gap',
   sessionTitleUpdated: 'session.title_updated',
+  // The session's first sandbox-carrying run permanently bound
+  // (sandbox_id, work_dir) — published once, by the run that won the bind.
+  sessionSandboxBound: 'session.sandbox_bound',
   traceSpan: 'trace.span',
 
   // terminal (on /ws/terminal; binary frames carry the byte stream)

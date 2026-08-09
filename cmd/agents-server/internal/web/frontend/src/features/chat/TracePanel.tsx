@@ -894,6 +894,10 @@ function SpanRow({ node, depth, range, alignChevron }: { node: SpanNode; depth: 
 export interface TraceRunSegment {
   runId: string;
   events: TraceEventData[];
+  // label, when set, renders a small heading above the segment — the task
+  // panel names each attempt of a retried task with it. Absent (the chat
+  // drawer), segments render unlabeled as before.
+  label?: string;
 }
 
 interface TraceRunProps {
@@ -926,6 +930,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       }
       return {
         runId: seg.runId,
+        label: seg.label,
         spanRoots: buildSpanTree(spanEvents),
         range: spanTimeRange(spanEvents),
       };
@@ -978,6 +983,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       {spanCount === 0 && <div className="trace-empty">No trace events.</div>}
       {parts.map(p => (
         <div key={p.runId} className="trace-run-segment">
+          {p.label && <div className="trace-segment-label">{p.label}</div>}
           {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} />)}
         </div>
       ))}

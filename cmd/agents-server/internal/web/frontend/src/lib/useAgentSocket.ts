@@ -56,7 +56,11 @@ export interface TaskViewState {
   messages: any[];
   streaming: string;
   reasoning: string;
-  traces: TraceEvent[];
+  // Trace events grouped by run — one group per ATTEMPT (a retry starts a new
+  // run on the same child session), insertion-ordered oldest first, the same
+  // shape the chat's trace drawer keeps. Flattened they were unreadable after
+  // a retry: two attempts' root spans interleaved on one timeline.
+  traceRuns: Record<string, TraceEvent[]>;
   loaded: boolean;
 }
 
@@ -976,9 +980,12 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
             error: p.error, started_at: p.started_at, ended_at: p.ended_at,
             data: p.data || null, duration,
           };
-          const idx = p.span_id ? v.traces.findIndex(e => e.span_id === p.span_id) : -1;
-          const traces = idx >= 0 ? [...v.traces.slice(0, idx), ev, ...v.traces.slice(idx + 1)] : [...v.traces, ev];
-          return { ...v, traces };
+          // Into the span's own run group (a retry's spans open a new group),
+          // upserting by span id within it.
+          const events = v.traceRuns[p.run_id] || [];
+          const idx = p.span_id ? events.findIndex(e => e.span_id === p.span_id) : -1;
+          const next = idx >= 0 ? [...events.slice(0, idx), ev, ...events.slice(idx + 1)] : [...events, ev];
+          return { ...v, traceRuns: { ...v.traceRuns, [p.run_id]: next } };
         });
         return;
       }
@@ -1077,7 +1084,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   const watchTask = useCallback((sid: string, taskId: string, childSessionId: string) => {
     taskWatchRef.current = { sid, taskId, childSessionId };
     taskViewBufRef.current = { text: '', reasoning: '' };
-    updateSS(sid, s => ({ ...s, taskView: { taskId, childSessionId, messages: [], streaming: '', reasoning: '', traces: [], loaded: false } }));
+    updateSS(sid, s => ({ ...s, taskView: { taskId, childSessionId, messages: [], streaming: '', reasoning: '', traceRuns: {}, loaded: false } }));
     Promise.all([
       // fetchTimeline (not raw messages): a task paused on an approval keeps
       // its dangling tool call out of messages (persist boundary) — the
@@ -1086,7 +1093,9 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       (api.sessions.traces(childSessionId) as Promise<any[]>).catch(() => []),
     ]).then(([{ timeline }, traceRows]) => {
       if (taskWatchRef.current?.taskId !== taskId) return; // switched away meanwhile
-      const traces: TraceEvent[] = [];
+      // Grouped by run — one group per attempt, row order (= time order)
+      // deciding group order, exactly like the chat drawer's load.
+      const traceRuns: Record<string, TraceEvent[]> = {};
       for (const ev of traceRows || []) {
         if (ev.kind !== 'span') continue;
         let parsed: Record<string, unknown> | null = null;
@@ -1096,20 +1105,26 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           const ms = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
           duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
         }
-        traces.push({ kind: 'span', name: ev.name || '', type: ev.detail || '', span_id: ev.span_id, parent_id: ev.parent_id, error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at, data: parsed, duration });
+        const rid = ev.run_id || 'unknown';
+        if (!traceRuns[rid]) traceRuns[rid] = [];
+        traceRuns[rid].push({ kind: 'span', name: ev.name || '', type: ev.detail || '', span_id: ev.span_id, parent_id: ev.parent_id, error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at, data: parsed, duration });
       }
       updateSS(sid, s => {
         if (!s.taskView || s.taskView.taskId !== taskId) return s;
-        // Live spans that raced the fetch win (upsert by span id).
-        const merged = [...traces];
-        for (const live of s.taskView.traces) {
-          const idx = live.span_id ? merged.findIndex(e => e.span_id === live.span_id) : -1;
-          if (idx >= 0) merged[idx] = live; else merged.push(live);
+        // Live spans that raced the fetch win (upsert by span id, per run —
+        // a live-only run keeps its whole group).
+        for (const [rid, liveEvents] of Object.entries(s.taskView.traceRuns)) {
+          const merged = [...(traceRuns[rid] || [])];
+          for (const live of liveEvents) {
+            const idx = live.span_id ? merged.findIndex(e => e.span_id === live.span_id) : -1;
+            if (idx >= 0) merged[idx] = live; else merged.push(live);
+          }
+          traceRuns[rid] = merged;
         }
         // Snapshot wins: the child rows share the live turn's runId, so a
         // mergeLiveTail would drop the in-flight turn wholesale. Terminal
         // events refetch (refetchTaskView), which closes the gap for good.
-        return { ...s, taskView: { ...s.taskView, messages: timeline, traces: merged, loaded: true } };
+        return { ...s, taskView: { ...s.taskView, messages: timeline, traceRuns, loaded: true } };
       });
     }).catch(() => {
       updateSS(sid, s => (s.taskView && s.taskView.taskId === taskId ? { ...s, taskView: { ...s.taskView, loaded: true } } : s));

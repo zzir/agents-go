@@ -228,10 +228,22 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
-  // The active session's display name for the chat top bar. Captured from the
-  // existence-check fetch below and kept fresh by the title_updated event; the
-  // id guards against a stale response landing after a session switch.
-  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string } | null>(null);
+  // The active session's display name and sandbox binding. Captured from the
+  // existence-check fetch below and kept fresh by the title_updated /
+  // sandbox_bound events; the id guards against a stale response landing after
+  // a session switch.
+  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; sandboxId: string; workDir: string } | null>(null);
+  // Bindings announced over the socket, per session. The session GET races the
+  // session.sandbox_bound broadcast (meta is cleared before the fetch, so the
+  // event can arrive while prev is null), and a binding is immutable once set
+  // — any announced value is THE value, merged over whatever the slower GET
+  // returns.
+  const announcedBindings = useRef<Record<string, { sandboxId: string; workDir: string }>>({});
+  // Bumped whenever the set of bound sessions changes (a new binding lands, a
+  // session is deleted): the recent-projects pickers in ChatView and the
+  // terminal panel aggregate over the sessions list, and without this they
+  // would only ever show the world as of their mount.
+  const [bindingsVersion, setBindingsVersion] = useState(0);
   // Global terminal panel: session-agnostic, opened from the composer (the
   // button only ever opens; closing/collapsing lives on the panel itself).
   // everOpened defers mounting (and the xterm chunk) until first use, after
@@ -242,11 +254,11 @@ export default function App() {
   // composer button opens a CLOSED panel with a capable sandbox selected (an
   // already-open panel is left alone). The nonce distinguishes repeat requests
   // for the same sandbox.
-  const [terminalRequest, setTerminalRequest] = useState<{ id: string; name: string; nonce: number } | null>(null);
+  const [terminalRequest, setTerminalRequest] = useState<{ id: string; name: string; workDir?: string; nonce: number } | null>(null);
   const terminalOpenRef = useRef(false);
   terminalOpenRef.current = terminalOpen;
   const terminalNonceRef = useRef(0);
-  const handleTerminalOpen = useCallback((sandbox?: { id: string; name: string }) => {
+  const handleTerminalOpen = useCallback((sandbox?: { id: string; name: string; workDir?: string }) => {
     if (!terminalOpenRef.current && sandbox) {
       setTerminalRequest({ ...sandbox, nonce: ++terminalNonceRef.current });
     }
@@ -335,7 +347,16 @@ export default function App() {
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
-        setSessionMeta({ id: activeSession, name: (sess as { name?: string })?.name || '' });
+        const s = sess as { name?: string; sandbox_id?: string; work_dir?: string };
+        // A binding announced while this fetch was in flight wins: the fetch
+        // read the row before the bind landed, and bindings never change.
+        const announced = announcedBindings.current[activeSession];
+        setSessionMeta({
+          id: activeSession,
+          name: s?.name || '',
+          sandboxId: announced ? announced.sandboxId : (s?.sandbox_id || ''),
+          workDir: announced ? announced.workDir : (s?.work_dir || ''),
+        });
         tryLoad();
       })
       .catch((e: { status?: number }) => {
@@ -348,8 +369,8 @@ export default function App() {
 
   useEffect(() => {
     if (!wsRef.current) return;
-    // Single handler for the event — WSClient.on replaces per type, so the
-    // sidebar reload and the top-bar title update must live in one body.
+    // Single handler per event type — WSClient.on replaces per type, so each
+    // event's full behavior lives in one body (a second .on would clobber it).
     wsRef.current.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
       setSessionReloadKey(k => k + 1);
       if (p?.session_id && typeof p.title === 'string') {
@@ -357,9 +378,22 @@ export default function App() {
         setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
       }
     });
+    wsRef.current.on(EV.sessionSandboxBound, (p: { session_id?: string; sandbox_id?: string; work_dir?: string }) => {
+      if (p?.session_id && p.sandbox_id) {
+        // Record first, then patch the live meta. The record is what makes the
+        // announcement survive the meta being null (session switch mid-fetch):
+        // the fetch merges it when it lands.
+        announcedBindings.current[p.session_id] = { sandboxId: p.sandbox_id, workDir: p.work_dir || '' };
+        setSessionMeta(prev => (prev && prev.id === p.session_id
+          ? { ...prev, sandboxId: p.sandbox_id!, workDir: p.work_dir || '' }
+          : prev));
+        // A new (sandbox, workdir) pair exists: refresh the project pickers.
+        setBindingsVersion(v => v + 1);
+      }
+    });
   }, [wsRef]);
 
-  const handleSend = useCallback(async (text: string, agentConfigId?: string, sandboxId?: string) => {
+  const handleSend = useCallback(async (text: string, agentConfigId?: string, sandboxId?: string, workDir?: string) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('WebSocket disconnected — message not sent');
@@ -387,7 +421,10 @@ export default function App() {
     const clientMsgId = nextClientMsgId();
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId }], ...(isNew ? { loaded: true } : {}) }));
     const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
-    if (sandboxId) payload.sandbox_id = sandboxId;
+    if (sandboxId) {
+      payload.sandbox_id = sandboxId;
+      if (workDir) payload.work_dir = workDir;
+    }
     if (!wsRef.current.send(EV.runCreate, payload)) {
       // The socket dropped between the isConnected() check and the send: roll
       // back the optimistic bubble so it isn't left stranded with no run.
@@ -440,6 +477,12 @@ export default function App() {
       delete next[deletedId];
       return next;
     });
+    // The record of the session's announced binding dies with it — the map
+    // would otherwise grow one entry per bound session for the page's life.
+    delete announcedBindings.current[deletedId];
+    // The deleted session may have carried the last reference to a project —
+    // the pickers re-aggregate.
+    setBindingsVersion(v => v + 1);
   }, [deleteSession]);
 
   const handleLoadEarlier = useCallback(() => {
@@ -485,7 +528,7 @@ export default function App() {
   // It used to fork a whole new session per attempt, which is why a chat list
   // filled up with "(regen 2)", "(regen 3)" and no way to compare them — the
   // attempts now live in one session, switchable.
-  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string) => {
+  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string, workDir?: string) => {
     if (!activeSession || !wsRef.current) return;
     try {
       await api.sessions.branch(activeSession, userEntryId);
@@ -497,7 +540,12 @@ export default function App() {
       // Empty input: the run answers the branch we just switched to rather
       // than adding a new user message. The server maps it to an empty item list.
       const payload: Record<string, any> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
-      if (sandboxId) payload.sandbox_id = sandboxId;
+      if (sandboxId) {
+        payload.sandbox_id = sandboxId;
+        // A regen can be an unbound session's first sandbox-carrying run, so
+        // the workdir choice rides along; a bound session ignores it anyway.
+        if (workDir) payload.work_dir = workDir;
+      }
       if (!wsRef.current.send(EV.runCreate, payload)) {
         toast.error('WebSocket disconnected — message not sent');
       }
@@ -513,6 +561,14 @@ export default function App() {
     }
     return set;
   }, [ss]);
+
+  // Stable reference so MemoizedChatView's shallow compare isn't defeated by a
+  // fresh object literal every render.
+  const sessionBinding = useMemo(() =>
+    sessionMeta && sessionMeta.id === activeSession && sessionMeta.sandboxId
+      ? { sandboxId: sessionMeta.sandboxId, workDir: sessionMeta.workDir }
+      : null,
+  [sessionMeta, activeSession]);
 
   // A session is awaiting approval when its latest turn holds a tool call that
   // needs approval and has no decision yet. Derived from the messages (not a
@@ -579,6 +635,7 @@ export default function App() {
     <MemoizedChatView
       sessionId={activeSession}
       sessionName={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.name : ''}
+      sessionBinding={sessionBinding}
       messages={currentSS.messages}
       entries={currentSS.entries}
       loaded={currentSS.loaded}
@@ -608,6 +665,7 @@ export default function App() {
       onSwitchBranch={handleSwitchBranch}
       onRegenerate={handleRegenerate}
       settingsReloadKey={settingsReloadKey}
+      bindingsVersion={bindingsVersion}
       panel={activePanel}
       onPanelChange={setActivePanel}
       onTerminalOpen={handleTerminalOpen}
@@ -624,6 +682,7 @@ export default function App() {
               open={terminalOpen}
               onClose={() => setTerminalOpen(false)}
               settingsReloadKey={settingsReloadKey}
+              bindingsVersion={bindingsVersion}
               openRequest={terminalRequest}
             />
           </React.Suspense>

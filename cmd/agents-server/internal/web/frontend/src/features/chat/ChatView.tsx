@@ -1,14 +1,17 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, memo, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Button, IconButton, Label, ActionMenu, ActionList } from '@primer/react';
+import { Button, Dialog, IconButton, Label, ActionMenu, ActionList, Select, Stack, TextInput } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useAsyncMarkdown, splitMermaidBlocks, sanitizeSVG } from '@/lib/markdown';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type TimelineEntry, type Branches, type EntryView } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
-import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox } from '@/lib/drafts';
+import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox, loadSessionWorkdir, saveSessionWorkdir } from '@/lib/drafts';
+import { bindingWorkDirIssue, composerSandboxView, groupProjects, projectLabel, type SessionBinding } from '@/lib/binding';
+import { useRecentProjects } from '@/lib/useRecentProjects';
+import { fc } from '@/lib/form';
 import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
 import { taskRetryable, type TaskState, type TaskViewState } from '@/lib/useAgentSocket';
 import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
@@ -19,7 +22,7 @@ import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, ContainerIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, FileDirectoryIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { toast } from '@/lib/toast';
 
@@ -70,9 +73,15 @@ interface AgentConfig {
 interface SandboxConfig {
   id: string;
   name: string;
+  type?: string;
   // Whether this sandbox can host an interactive web terminal (server-computed:
   // ssh always, docker only when persistent, local never).
   terminal?: boolean;
+  // The workdir a session binding would default to, and whether a custom
+  // per-session workdir is honored (server-computed; docker constrains it to
+  // the /workspace mount).
+  default_work_dir?: string;
+  work_dir_editable?: boolean;
 }
 
 interface MermaidSegment {
@@ -924,7 +933,7 @@ interface ChatViewProps {
   // Applies a server-confirmed task state change (the stop API response) —
   // the fallback when no hub broadcast will come (paused task after restart).
   onPatchTask?: (sid: string, taskId: string, patch: Partial<TaskState>) => void;
-  onSend: (text: string, agentConfigId: string, sandboxId: string) => void;
+  onSend: (text: string, agentConfigId: string, sandboxId: string, workDir?: string) => void;
   onCancel: (graceful?: boolean) => void;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
@@ -936,30 +945,44 @@ interface ChatViewProps {
   onLoadEarlier?: () => void;
   // Switches the session's active branch to another attempt.
   onSwitchBranch?: (tipEntryId: string) => void;
-  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string) => void;
+  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string, workDir?: string) => void;
   settingsReloadKey?: number;
+  // Bumped by the app when the set of session bindings changed; refreshes the
+  // Project picker's recent-projects aggregation.
+  bindingsVersion?: number;
+  // The session's permanent (sandbox, workdir) binding, or null while unbound.
+  // Set by the first sandbox-carrying run; server-authoritative and immutable
+  // afterwards — switching projects means starting a new session.
+  sessionBinding?: SessionBinding | null;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. When
-  // the composer has a terminal-capable sandbox selected it is passed along,
-  // and a freshly opened panel starts a terminal for it right away.
-  onTerminalOpen?: (sandbox?: { id: string; name: string }) => void;
+  // the session is bound to a terminal-capable sandbox its (sandbox, workdir)
+  // is passed along, and a freshly opened panel starts a terminal for it —
+  // in the same instance (and directory) the session's runs use.
+  onTerminalOpen?: (sandbox?: { id: string; name: string; workDir?: string }) => void;
 }
 
 export function ChatView({
   sessionId, sessionName, messages, entries, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
-  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onRegenerate, settingsReloadKey,
-  panel, onPanelChange, onTerminalOpen,
+  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onRegenerate, settingsReloadKey, bindingsVersion,
+  sessionBinding, panel, onPanelChange, onTerminalOpen,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [sandboxId, setSandboxIdState] = useState(() => loadSessionSandbox(sessionId || ''));
+  const [workDir, setWorkDirState] = useState(() => loadSessionWorkdir(sessionId || ''));
+  // The "New project…" dialog: pick a sandbox, set its directory.
+  const [projDialogOpen, setProjDialogOpen] = useState(false);
+  const [projSandboxId, setProjSandboxId] = useState('');
+  const [projPath, setProjPath] = useState('');
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
     setSandboxIdState(loadSessionSandbox(sessionId || ''));
+    setWorkDirState(loadSessionWorkdir(sessionId || ''));
   }, [sessionId]);
 
   const setAgentConfigId = useCallback((id: string) => {
@@ -967,13 +990,24 @@ export function ChatView({
     saveSessionAgent(sessionId || '', id);
   }, [sessionId]);
 
+  const setWorkDir = useCallback((dir: string) => {
+    setWorkDirState(dir);
+    saveSessionWorkdir(sessionId || '', dir);
+  }, [sessionId]);
+
   const setSandboxId = useCallback((id: string) => {
     setSandboxIdState(id);
     saveSessionSandbox(sessionId || '', id);
+    // A custom path chosen for sandbox A must not silently apply to sandbox B.
+    setWorkDirState('');
+    saveSessionWorkdir(sessionId || '', '');
   }, [sessionId]);
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
   const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>);
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
+  // Bound sessions aggregated into the picker's "recent projects" — the same
+  // hook the terminal panel's + menu uses.
+  const projects = useRecentProjects(sandboxConfigs, bindingsVersion);
 
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
@@ -1032,12 +1066,30 @@ export function ChatView({
     });
   }, []);
 
+  const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
+  const sandboxView = composerSandboxView(sessionBinding || null, selectedSandbox, sandboxConfigs, workDir);
+
   const handleSend = useCallback((text: string) => {
     // No sessionId is fine: sending with no active session starts a new session
     // (app-level onSend auto-creates it). Only an agent is required.
     if (!agentConfigId) return;
-    onSend(text, agentConfigId, sandboxId);
-  }, [agentConfigId, sandboxId, onSend]);
+    if (sessionBinding) {
+      // Bound: the server uses the binding regardless — send no sandbox claim.
+      onSend(text, agentConfigId, '', '');
+      return;
+    }
+    // The workdir that would bind is the view's effectiveWorkDir — the same
+    // value the picker button and the dialog show, snapshotted explicitly so
+    // the binding does not drift with later config edits. One validation
+    // source (bindingWorkDirIssue) guards it, mirroring the server's rules.
+    const sel = sandboxConfigs?.find(s => s.id === sandboxId);
+    const issue = bindingWorkDirIssue(sel, workDir);
+    if (issue) {
+      toast.error(issue);
+      return;
+    }
+    onSend(text, agentConfigId, sandboxId, sandboxView.effectiveWorkDir);
+  }, [agentConfigId, sandboxId, workDir, sandboxConfigs, sessionBinding, sandboxView.effectiveWorkDir, onSend]);
 
   const handleCancel = useCallback((graceful?: boolean) => {
     onCancel(graceful);
@@ -1276,14 +1328,17 @@ export function ChatView({
 
   // Keep agent/sandbox selection in a ref so the regenerate callback stays
   // referentially stable — a new closure per render would defeat TurnBlock's memo.
-  const regenConfigRef = useRef({ agentConfigId, sandboxId });
-  regenConfigRef.current = { agentConfigId, sandboxId };
+  // Bound sessions claim no sandbox (the server uses the binding); unbound ones
+  // carry the choice, because a regen can be the first sandbox-carrying run.
+  const regenConfigRef = useRef({ agentConfigId, sandboxId, workDir: '' });
+  regenConfigRef.current = sessionBinding
+    ? { agentConfigId, sandboxId: '', workDir: '' }
+    : { agentConfigId, sandboxId, workDir: sandboxView.effectiveWorkDir };
   const handleRegen = useCallback((messageId: string, content: string) => {
     if (!onRegenerate) return;
-    onRegenerate(messageId, content, regenConfigRef.current.agentConfigId, regenConfigRef.current.sandboxId);
+    onRegenerate(messageId, content, regenConfigRef.current.agentConfigId, regenConfigRef.current.sandboxId, regenConfigRef.current.workDir);
   }, [onRegenerate]);
 
-  const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
   const topBar = (
     <ChatTopBar
       sessionName={sessionName || ''}
@@ -1294,8 +1349,23 @@ export function ChatView({
       traceCount={Object.keys(traceRuns).length}
       terminalEnabled={!!onTerminalOpen && !!sandboxConfigs?.some(s => s.terminal)}
       onTerminalOpen={onTerminalOpen
-        ? () => onTerminalOpen(selectedSandbox?.terminal ? { id: selectedSandbox.id, name: selectedSandbox.name } : undefined)
+        ? () => {
+          // A bound session's terminal follows its binding — same sandbox
+          // instance, same working directory as the runs. Unbound sessions
+          // fall back to the picker's current (uncommitted) selection.
+          const bound = sessionBinding ? sandboxConfigs?.find(s => s.id === sessionBinding.sandboxId) : undefined;
+          if (bound?.terminal) {
+            onTerminalOpen({ id: bound.id, name: bound.name, workDir: sessionBinding?.workDir || undefined });
+          } else if (!sessionBinding && selectedSandbox?.terminal) {
+            onTerminalOpen({ id: selectedSandbox.id, name: selectedSandbox.name });
+          } else {
+            onTerminalOpen(undefined);
+          }
+        }
         : undefined}
+      binding={sandboxView.bound && sessionBinding
+        ? { title: sandboxView.title, workDir: sessionBinding.workDir }
+        : null}
     />
   );
 
@@ -1318,7 +1388,6 @@ export function ChatView({
     );
   }
 
-  const selectedSandboxLabel = selectedSandbox?.name || 'Sandbox';
   const selectedAgentLabel = agentConfigs?.find(a => a.id === agentConfigId)?.name || 'Agent';
 
   const inputToolbar: ReactNode = (
@@ -1331,23 +1400,129 @@ export function ChatView({
           aria-label="Add context"
           disabled
         />
-        {sandboxConfigs && sandboxConfigs.length > 0 && (
+        {/* Bound sessions show nothing here — the binding lives in the top
+            bar's badge. Before binding the picker offers PROJECTS — recent
+            (directory, sandbox) pairs aggregated from bound sessions — because
+            the directory is what a person recognizes; the backend is its
+            attribute, not the other way around. */}
+        {!sandboxView.bound && sandboxConfigs && sandboxConfigs.length > 0 && (
           <ActionMenu>
-            <ActionMenu.Button size="small" variant="invisible" leadingVisual={ContainerIcon}>
-              {selectedSandboxLabel}
+            <ActionMenu.Button size="small" variant="invisible" leadingVisual={FileDirectoryIcon}>
+              {sandboxId && selectedSandbox ? projectLabel(sandboxView.effectiveWorkDir, selectedSandbox.name) : 'Project'}
             </ActionMenu.Button>
             <ActionMenu.Overlay>
               <ActionList selectionVariant="single">
-                <ActionList.Item selected={sandboxId === ''} onSelect={() => setSandboxId('')}>None</ActionList.Item>
-                {sandboxConfigs.map(s => (
-                  <ActionList.Item key={s.id} selected={sandboxId === s.id} onSelect={() => setSandboxId(s.id)}>
-                    {s.name}
-                  </ActionList.Item>
+                <ActionList.Item selected={sandboxId === ''} onSelect={() => setSandboxId('')}>
+                  None
+                  <ActionList.Description variant="inline">chat only</ActionList.Description>
+                </ActionList.Item>
+                {/* One group per sandbox: the group heading carries the
+                    backend, rows carry just the project name — the full path
+                    lives in the hover title. */}
+                {groupProjects(projects).map(g => (
+                  <ActionList.Group key={g.sandboxId}>
+                    {/* Primer requires an explicit heading level on list-role
+                        ActionLists; omitting `as` throws and unmounts the app. */}
+                    <ActionList.GroupHeading as="h3">{g.sandboxName}</ActionList.GroupHeading>
+                    {g.items.map(p => (
+                      <ActionList.Item
+                        key={p.sandboxId + ' ' + p.workDir}
+                        selected={sandboxId === p.sandboxId && sandboxView.effectiveWorkDir === p.workDir}
+                        onSelect={() => { setSandboxId(p.sandboxId); setWorkDir(p.workDir); }}
+                        title={p.title}
+                      >
+                        {p.base}
+                      </ActionList.Item>
+                    ))}
+                  </ActionList.Group>
                 ))}
+                <ActionList.Divider />
+                <ActionList.Item
+                  onSelect={() => {
+                    const initial = selectedSandbox || sandboxConfigs[0];
+                    setProjSandboxId(initial.id);
+                    setProjPath(sandboxId && selectedSandbox ? sandboxView.effectiveWorkDir : (initial.default_work_dir || ''));
+                    setProjDialogOpen(true);
+                  }}
+                >
+                  New project…
+                </ActionList.Item>
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>
         )}
+        {projDialogOpen && (() => {
+          const projSandbox = sandboxConfigs?.find(s => s.id === projSandboxId);
+          const editable = !!projSandbox?.work_dir_editable;
+          const isDocker = projSandbox?.type === 'docker';
+          const isSSH = projSandbox?.type === 'ssh';
+          // One validation source with the send-time guard: the dialog must
+          // not accept a draft that sending will refuse.
+          const pathIssue = bindingWorkDirIssue(projSandbox, projPath);
+          const pathValid = !pathIssue;
+          return (
+            <Dialog
+              title="New project"
+              onClose={() => setProjDialogOpen(false)}
+              width="large"
+              footerButtons={[
+                { content: 'Cancel', onClick: () => setProjDialogOpen(false) },
+                {
+                  content: 'Select',
+                  buttonType: 'primary',
+                  disabled: !projSandbox || !pathValid,
+                  onClick: () => {
+                    if (!projSandbox || !pathValid) return;
+                    setSandboxId(projSandbox.id);
+                    // A non-editable backend stores no workdir draft: its
+                    // directory is fixed, and a snapshot of it would be sent
+                    // as a directory claim the server refuses.
+                    setWorkDir(editable ? projPath.trim() : '');
+                    setProjDialogOpen(false);
+                  },
+                },
+              ]}
+            >
+              <Stack gap="normal">
+                {fc('Sandbox', (
+                  <Select
+                    block
+                    value={projSandboxId}
+                    onChange={e => {
+                      const id = e.target.value;
+                      setProjSandboxId(id);
+                      setProjPath(sandboxConfigs?.find(s => s.id === id)?.default_work_dir || '');
+                    }}
+                  >
+                    {sandboxConfigs?.map(s => (
+                      <Select.Option key={s.id} value={s.id}>{s.name}</Select.Option>
+                    ))}
+                  </Select>
+                ), '')}
+                {fc('Directory', (
+                  <TextInput
+                    block
+                    value={projPath}
+                    disabled={!editable}
+                    validationStatus={pathValid ? undefined : 'error'}
+                    placeholder={editable ? (projSandbox?.default_work_dir || '(sandbox default)') : undefined}
+                    onChange={e => setProjPath(e.target.value)}
+                  />
+                ), !editable
+                  ? 'An ephemeral docker container always runs in /workspace.'
+                  : isDocker
+                    ? 'Must be /workspace or a subdirectory of it.'
+                    : isSSH
+                      ? (projSandbox?.default_work_dir
+                        ? 'An absolute remote path; empty = the sandbox\'s default directory.'
+                        : 'Required: an absolute remote directory keeps the session\'s files between commands.')
+                      : (projSandbox?.default_work_dir
+                        ? 'Empty = the sandbox\'s default directory.'
+                        : 'Empty = the server workspace directory.'))}
+              </Stack>
+            </Dialog>
+          );
+        })()}
       </div>
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (

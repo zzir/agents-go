@@ -146,10 +146,23 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
   const [traceExpanded, setTraceExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
   const live = task.status === 'working' || task.status === 'input_required';
-  const traceSegments = useMemo(
-    () => [{ runId: task.taskId, events: (view?.traces || []) as TraceEventData[] }],
-    [task.taskId, view?.traces],
-  );
+  // One segment per RUN — a retry starts a new run on the same child session,
+  // and its spans must not interleave with the previous run's on one
+  // waterfall. Group order is insertion order (load is row order, live runs
+  // append), so segments read oldest first; the labels only appear once there
+  // is more than one. "run N", NOT "attempt N": the index counts runs that
+  // left spans, and an attempt that died before its first span (a preflight
+  // failure) leaves no group — numbering the survivors as attempts would
+  // misname them.
+  const { traceSegments, spanTotal } = useMemo(() => {
+    const entries = Object.entries(view?.traceRuns || {});
+    const segments = entries.map(([runId, events], i) => ({
+      runId,
+      events: events as TraceEventData[],
+      label: entries.length > 1 ? `run ${i + 1}` : undefined,
+    }));
+    return { traceSegments: segments, spanTotal: segments.reduce((n, s) => n + s.events.length, 0) };
+  }, [view?.traceRuns]);
 
   return (
     <SidePanel icon={StackIcon} title={task.label || task.taskId.slice(0, 8)} onClose={onClose} storageKey="inspectorWidth">
@@ -178,7 +191,7 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
       <div className="task-detail-tabs">
         <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
         <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
-          Trace{view && view.traces.length > 0 ? ` (${view.traces.length})` : ''}
+          Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
         </button>
       </div>
 
@@ -232,7 +245,7 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
         </div>
       ) : (
         <div className="task-view">
-          {view.traces.length === 0 ? (
+          {spanTotal === 0 ? (
             <div className="trace-empty">No trace events yet.</div>
           ) : (
             <TraceRun

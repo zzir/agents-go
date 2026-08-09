@@ -22,6 +22,9 @@ interface SandboxConfig {
   name: string;
   type: string;
   config: Record<string, unknown>;
+  // Row version from the server; sent back on save so an edit made on a
+  // stale form is refused (409) instead of overwriting a concurrent update.
+  revision?: number;
 }
 
 interface TestResult {
@@ -37,6 +40,7 @@ interface FlatForm {
   runtime: string;
   network: boolean;
   persistent: boolean;
+  host_dir: string;
   container_name: string;
   // ssh
   addr: string;
@@ -55,6 +59,7 @@ interface PackedForm {
   name: string;
   type: string;
   config?: Record<string, unknown>;
+  revision?: number;
 }
 
 // The shape of the nested `config` blob per backend type. All fields are
@@ -67,6 +72,7 @@ interface SandboxConfigShape {
   runtime?: string;
   network?: boolean;
   persistent?: boolean;
+  host_dir?: string;
   container_name?: string;
   // ssh
   addr?: string;
@@ -86,7 +92,7 @@ function flatten(s: Partial<SandboxConfig>): FlatForm {
   return {
     name: s.name || '', type: s.type || 'docker',
     // docker
-    image: c.image || 'ghcr.io/zzir/sandbox:latest', runtime: c.runtime || '', network: !!c.network, persistent: !!c.persistent, container_name: c.container_name || '',
+    image: c.image || 'ghcr.io/zzir/sandbox:latest', runtime: c.runtime || '', network: !!c.network, persistent: !!c.persistent, host_dir: c.host_dir || '', container_name: c.container_name || '',
     // ssh
     addr: c.addr || '', user: c.user || '', key_file: c.key_file || '', password: c.password || '',
     use_agent: !!c.use_agent, known_hosts: c.known_hosts || '', insecure_host_key: !!c.insecure_host_key, work_dir: c.work_dir || '',
@@ -100,7 +106,7 @@ function pack(form: FlatForm): PackedForm {
   const base: PackedForm = { name: form.name, type: form.type };
   let config: Record<string, unknown> | undefined;
   if (form.type === 'docker') {
-    config = { image: form.image, runtime: form.runtime, user: form.user, network: form.network, persistent: form.persistent, container_name: form.container_name };
+    config = { image: form.image, runtime: form.runtime, user: form.user, network: form.network, persistent: form.persistent, host_dir: form.host_dir, container_name: form.container_name };
   } else if (form.type === 'ssh') {
     config = {
       addr: form.addr, user: form.user, use_agent: form.use_agent,
@@ -162,6 +168,10 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
           <FormControl.Label>Persistent container (reuse across executions)</FormControl.Label>
         </FormControl>
       )}
+      {t === 'docker' && form.persistent && fc('Host directory',
+        <TextInput block value={form.host_dir} onChange={e => set('host_dir', e.target.value)} placeholder="/path/on/host" />,
+        'Host directory mounted at /workspace inside the container (commands always run in /workspace). Leave empty for the server --workspace.',
+      )}
       {t === 'docker' && form.persistent && fc('Container name',
         <TextInput block value={form.container_name} onChange={e => set('container_name', e.target.value)} placeholder="e.g. sandbox-dev" />,
         'Docker container name. Leave empty for a random name.',
@@ -197,9 +207,9 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
           <FormControl.Label>Skip host key verification (insecure -- dev/test only)</FormControl.Label>
         </FormControl>
       )}
-      {t === 'ssh' && fc('Working directory',
+      {t === 'ssh' && fc('Default directory',
         <TextInput block value={form.work_dir} onChange={e => set('work_dir', e.target.value)} placeholder="/home/sandbox/workspace" />,
-        'Fixed remote directory for command execution. Leave empty to use a temporary directory per execution.',
+        'The default project directory for new sessions — each session can pick its own before its first message. Leave empty for a temporary directory per execution.',
       )}
 
       {fc('Max read_file bytes',
@@ -208,7 +218,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
       )}
 
       <div className="form-actions">
-        <Button onClick={() => onSave(pack(form))} variant="primary">Save</Button>
+        <Button onClick={() => onSave({ ...pack(form), revision: initial?.revision })} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
       </div>

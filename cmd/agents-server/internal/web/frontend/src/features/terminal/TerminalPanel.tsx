@@ -5,6 +5,8 @@ import { PlusIcon, QuoteIcon, SyncIcon, TerminalIcon, XIcon } from '@primer/octi
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { insertIntoComposer, quoteAsCodeBlock } from '@/lib/composer';
+import { workDirBasename } from '@/lib/binding';
+import { useRecentProjects } from '@/lib/useRecentProjects';
 import { toast } from '@/lib/toast';
 import { TerminalView, type TerminalViewHandle, type TermStatus } from '@/features/terminal/TerminalView';
 
@@ -18,6 +20,9 @@ interface TerminalTab {
   id: number;
   sandboxId: string;
   sandboxName: string;
+  // The sandbox-instance workdir the shell opened in ('' = default) — a
+  // bound session's request lands the terminal in its own project instance.
+  workDir: string;
   // gen forces a fresh session (remount) on restart.
   gen: number;
   status: TermStatus;
@@ -27,10 +32,13 @@ interface TerminalPanelProps {
   open: boolean;
   onClose: () => void;
   settingsReloadKey?: number;
+  // Bumped by the app when the set of session bindings changed; refreshes the
+  // + menu's recent-projects aggregation.
+  bindingsVersion?: number;
   // One-shot request to start (or focus) a terminal for a sandbox, issued
-  // when the composer button opens a closed panel with a capable sandbox
+  // when the top-bar button opens a closed panel with a capable sandbox
   // selected. The nonce marks each request as new.
-  openRequest?: { id: string; name: string; nonce: number } | null;
+  openRequest?: { id: string; name: string; workDir?: string; nonce: number } | null;
 }
 
 // Dragging the top edge below this height collapses the panel to just its
@@ -42,7 +50,7 @@ const MIN_HEIGHT = 120;
 // It is session-agnostic and stays mounted while hidden so every tab's shell
 // survives panel toggles, chat switches and sandbox re-selection; only
 // closing a tab (or the page) ends that session.
-export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }: TerminalPanelProps) {
+export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersion, openRequest }: TerminalPanelProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const nextId = useRef(1);
@@ -64,14 +72,18 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
     if (settingsReloadKey) reloadSandboxes();
   }, [settingsReloadKey, reloadSandboxes]);
   const capable = (sandboxes || []).filter(s => s.terminal);
+  // Bound sessions aggregated into "recent projects" for the + menu — the
+  // same hook (and unit) the composer picker uses: opening a project's
+  // terminal lands in that project's sandbox instance and directory.
+  const projects = useRecentProjects(capable, bindingsVersion);
 
   // A collapsed panel must expand before a terminal can be shown (a new tab
   // mounted into a zero-height body would fit to a bogus grid).
   const expand = () => setCollapsed(false);
 
-  const addTab = (s: SandboxConfig) => {
+  const addTab = (s: SandboxConfig, workDir = '') => {
     const id = nextId.current++;
-    setTabs(t => [...t, { id, sandboxId: s.id, sandboxName: s.name, gen: 0, status: 'connecting' }]);
+    setTabs(t => [...t, { id, sandboxId: s.id, sandboxName: s.name, workDir, gen: 0, status: 'connecting' }]);
     setActiveId(id);
     expand();
   };
@@ -124,12 +136,13 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
   useEffect(() => {
     if (!openRequest || openRequest.nonce === consumedRequestNonce.current) return;
     consumedRequestNonce.current = openRequest.nonce;
-    const matching = tabs.filter(t => t.sandboxId === openRequest.id);
+    const wanted = openRequest.workDir || '';
+    const matching = tabs.filter(t => t.sandboxId === openRequest.id && t.workDir === wanted);
     const existing = matching[matching.length - 1];
     if (existing) {
       activateTab(existing.id);
     } else {
-      addTab({ id: openRequest.id, name: openRequest.name });
+      addTab({ id: openRequest.id, name: openRequest.name }, wanted);
     }
     // activateTab/addTab close over current state; nonce guards re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +199,9 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') activateTab(tab.id); }}
             >
               <TerminalIcon size={12} />
-              <span className="terminal-tab-name">{tab.sandboxName}</span>
+              <span className="terminal-tab-name" title={tab.workDir || undefined}>
+                {tab.workDir ? `${tab.sandboxName} · ${workDirBasename(tab.workDir)}` : tab.sandboxName}
+              </span>
               {(tab.status === 'exited' || tab.status === 'error') && (
                 <span className="terminal-tab-status">{tab.status === 'exited' ? 'exited' : 'lost'}</span>
               )}
@@ -209,11 +224,26 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
                 {capable.length === 0 ? (
                   <ActionList.Item disabled>No terminal-capable sandboxes (ssh, or docker with persistent on)</ActionList.Item>
                 ) : (
-                  capable.map(s => (
-                    <ActionList.Item key={s.id} onSelect={() => addTab(s)}>
-                      {s.name}
-                    </ActionList.Item>
-                  ))
+                  capable.map(s => {
+                    const items = projects.filter(p => p.sandboxId === s.id && p.workDir);
+                    return (
+                      <ActionList.Group key={s.id}>
+                        {/* Primer requires an explicit heading level on
+                            list-role ActionLists. */}
+                        <ActionList.GroupHeading as="h3">{s.name}</ActionList.GroupHeading>
+                        <ActionList.Item onSelect={() => addTab(s)}>default directory</ActionList.Item>
+                        {items.map(p => (
+                          <ActionList.Item
+                            key={p.sandboxId + ' ' + p.workDir}
+                            title={p.title}
+                            onSelect={() => addTab(s, p.workDir)}
+                          >
+                            {p.base}
+                          </ActionList.Item>
+                        ))}
+                      </ActionList.Group>
+                    );
+                  })
                 )}
               </ActionList>
             </ActionMenu.Overlay>
@@ -259,6 +289,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, openRequest }:
                 else viewRefs.current.delete(tab.id);
               }}
               sandboxId={tab.sandboxId}
+              workDir={tab.workDir || undefined}
               hidden={tab.id !== activeId}
               onStatus={s => setTabStatus(tab.id, s)}
               onSelection={has => {
