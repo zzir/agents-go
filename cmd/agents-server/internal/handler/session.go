@@ -23,6 +23,11 @@ type RunStopper interface {
 	// the cascade rolled back, so the session still exists and must not be
 	// left refusing every run until restart.
 	AbortSessionDelete(sessionID string)
+	// ReleaseSessionBinding releases the cached sandbox instance behind a
+	// deleted session's (sandbox, workdir) binding when no other session
+	// references the pair — the instance (an ssh connection, a docker
+	// container) would otherwise live until process exit.
+	ReleaseSessionBinding(sandboxID, workDir string)
 }
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
@@ -130,6 +135,9 @@ func (h *SessionHandler) Get(c *gin.Context) {
 }
 
 // sessionPatchReq is the request body for Patch; absent fields are unchanged.
+// The sandbox binding is deliberately NOT patchable: (sandbox_id, work_dir) is
+// fixed by the first sandbox-carrying run and never rewritten — switching
+// projects means starting (or forking into) another session.
 type sessionPatchReq struct {
 	Name   *string `json:"name"`
 	Pinned *bool   `json:"pinned"`
@@ -163,9 +171,11 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	if err := h.sessions.UpdateFields(ctx, id, req.Name, req.Pinned); err != nil {
-		storeError(c, err)
-		return
+	if req.Name != nil || req.Pinned != nil {
+		if err := h.sessions.UpdateFields(ctx, id, req.Name, req.Pinned); err != nil {
+			storeError(c, err)
+			return
+		}
 	}
 	sess, err := h.sessions.Get(ctx, id)
 	if err != nil {
@@ -187,18 +197,30 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/sessions/{id} [delete]
 func (h *SessionHandler) Delete(c *gin.Context) {
+	id := c.Param("id")
+	// The binding, read before the cascade erases it: releasing the cached
+	// sandbox instance afterwards needs to know which pair this session held.
+	var boundSandbox, boundWorkDir string
+	if sess, err := h.sessions.Get(c.Request.Context(), id); err == nil {
+		boundSandbox, boundWorkDir = sess.SandboxID, sess.WorkDir
+	}
 	// Stop the session's live run and all its background tasks (bounded wait)
 	// BEFORE the cascade: a task still executing would keep writing entries
 	// and traces into rows this delete is about to remove.
 	if h.stopper != nil {
-		h.stopper.StopSessionTree(c.Param("id"))
+		h.stopper.StopSessionTree(id)
 	}
-	if err := h.sessions.Delete(c.Request.Context(), c.Param("id")); err != nil {
+	if err := h.sessions.Delete(c.Request.Context(), id); err != nil {
 		if h.stopper != nil {
-			h.stopper.AbortSessionDelete(c.Param("id"))
+			h.stopper.AbortSessionDelete(id)
 		}
 		storeError(c, err)
 		return
+	}
+	// After the cascade: the reference count the release consults no longer
+	// includes this session (or its cascade-deleted task children).
+	if h.stopper != nil && boundSandbox != "" {
+		h.stopper.ReleaseSessionBinding(boundSandbox, boundWorkDir)
 	}
 	c.Status(http.StatusNoContent)
 }
@@ -252,6 +274,10 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		ID:            store.NewID(),
 		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
+		// The sandbox binding is copied, not re-bound: a fork continues the
+		// same conversation over the same file system context.
+		SandboxID: src.SandboxID,
+		WorkDir:   src.WorkDir,
 	}
 	// One transaction creates the session and copies its entries, so a failure
 	// (or a cancelled request) can't leave an orphaned empty session behind.

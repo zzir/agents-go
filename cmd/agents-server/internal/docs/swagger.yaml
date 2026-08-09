@@ -386,6 +386,8 @@ components:
           $ref: '#/components/schemas/bridge.RunStatus'
         task:
           $ref: '#/components/schemas/bridge.TaskMeta'
+        work_dir:
+          type: string
       type: object
     bridge.RunStatus:
       enum:
@@ -491,6 +493,8 @@ components:
             pause this is the only place the user's prompt is stored — the UI
             reconstructs the user bubble from it on reload.
           type: string
+        work_dir:
+          type: string
       type: object
     handler.approvalResultResp:
       properties:
@@ -529,6 +533,12 @@ components:
           type: string
         sandbox_id:
           type: string
+        work_dir:
+          description: |-
+            WorkDir only matters until the session's first sandbox-carrying run
+            permanently binds (sandbox_id, work_dir); after that the server uses the
+            bound values and ignores both fields.
+          type: string
       type: object
     handler.createRunResp:
       properties:
@@ -548,6 +558,15 @@ components:
           uniqueItems: false
         name:
           type: string
+        revision:
+          description: |-
+            Revision, on update only, is the revision the client's edit was based
+            on (from GET/List). When set, the write lands only while the row is
+            still there — editing from a stale form is 409 instead of silently
+            overwriting a concurrent update. Absent (0) keeps last-writer-wins:
+            the CAS then anchors on the revision the handler itself just read,
+            which still serializes concurrent handlers. Ignored on create.
+          type: integer
         type:
           type: string
       type: object
@@ -1160,10 +1179,30 @@ components:
           uniqueItems: false
         created_at:
           type: string
+        default_work_dir:
+          description: |-
+            DefaultWorkDir is the directory a session binding to this sandbox would
+            use when the user picks none — always the EXECUTION view (where commands
+            run: docker reports the container-side /workspace, never the host mount
+            source). WorkDirEditable reports whether a custom per-session workdir is
+            honored (local/ssh only). Both computed per response by the handler,
+            never stored.
+          type: string
         id:
           type: string
         name:
           type: string
+        revision:
+          description: |-
+            Revision counts this config's WRITES: 1 at creation, +1 on every
+            update, name-only included. It is the row's concurrency control — the
+            expected-revision CAS both update paths carry (no lost updates, no
+            identity-freeze bypass through a stale read), and the predicate a
+            first-run bind lands against (the workdir was validated on exactly this
+            revision). An integer, not a version-history table: nothing keeps old
+            revisions runnable — updates (credential rotation above all) apply to
+            everyone at the next run.
+          type: integer
         terminal:
           description: |-
             Terminal reports whether this sandbox can host an interactive web
@@ -1175,6 +1214,8 @@ components:
           type: string
         updated_at:
           type: string
+        work_dir_editable:
+          type: boolean
       type: object
     store.Session:
       properties:
@@ -1198,7 +1239,17 @@ components:
           type: string
         pinned:
           type: boolean
+        sandbox_id:
+          description: |-
+            SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
+            run that carries a sandbox writes them (compare-and-set, see
+            BindSandboxIfEmpty) and they are never rewritten — the session's file
+            system context must not change under a conversation that already touched
+            it. An empty WorkDir means "the sandbox's own default".
+          type: string
         updated_at:
+          type: string
+        work_dir:
           type: string
       type: object
     store.SessionGroup:
@@ -1226,8 +1277,11 @@ components:
         attempt:
           description: |-
             Attempt counts this task's runs: 1 for the original, one more per retry.
-            Zero reads as the first attempt, so a row written before retries existed
-            needs no migration to mean what it already meant.
+            Zero reads as the first attempt — mirroring the SDK's AttemptNo()
+            contract, so a row whose column was never set (an insert that omitted
+            it) means what it already meant. (Not a migration concern: this server
+            recreates its schema rather than altering it, so no pre-attempt rows
+            survive an upgrade.)
           type: integer
         child_session_id:
           type: string
@@ -2769,6 +2823,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: sessions are bound to this sandbox
         "500":
           content:
             application/json:
@@ -2813,6 +2873,9 @@ paths:
       tags:
       - sandboxes
     put:
+      description: 'Include the revision the edit was based on (from GET/List) to
+        make the write conditional: 409 if the config changed meanwhile. Omitting
+        it falls back to last-writer-wins.'
       parameters:
       - description: Sandbox ID
         in: path
@@ -2856,6 +2919,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: identity change refused (sessions are bound), or the config
+            changed concurrently — re-read and retry
         "500":
           content:
             application/json:
@@ -3305,7 +3375,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: session already has an active run
+          description: session already has an active run, or the sandbox config kept
+            changing under the bind
       security:
       - BearerAuth: []
       summary: Start run

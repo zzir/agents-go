@@ -41,33 +41,47 @@ type TerminalHandler struct {
 
 	mu   sync.Mutex
 	live map[string]map[*liveTerminal]struct{} // sandbox config id → open terminals
+	// fence maps a config id to the lowest runtime generation still allowed
+	// to register. A terminal reads its config, dials and opens a PTY BEFORE
+	// registering, so a config update (or delete) can complete inside that
+	// window — sweeping the registry misses it, and it would surface
+	// afterwards as a live shell on retired credentials (or on a deleted
+	// sandbox). CloseSandboxTerminals moves the fence; register checks it
+	// under the same lock, so the late arrival is refused instead.
+	fence map[string]int64
 }
 
 // sandboxProvider is the slice of bridge.SandboxManager the terminal handler
 // depends on; an interface so tests can inject a fake backend.
 type sandboxProvider interface {
-	GetOrCreate(cfg *store.SandboxConfig) (sandbox.Sandbox, error)
+	// Acquire takes a reference on the instance for the terminal's lifetime;
+	// the returned release drops it when the connection ends, so an instance
+	// evicted meanwhile (config update, last bound session deleted) stays
+	// alive under the open terminal and closes only after it.
+	Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error)
 }
 
 var _ sandboxProvider = (*bridge.SandboxManager)(nil)
 
 // liveTerminal pairs a Terminal with its connection so a registry teardown
-// can stop both pumps.
+// can stop both pumps; gen records the config generation it opened under, so
+// a teardown scoped to older generations leaves newer terminals running.
 type liveTerminal struct {
 	term sandbox.Terminal
 	conn *server.WSConn
+	gen  int64
 }
 
 // NewTerminalHandler returns a handler backed by the given store and sandbox manager.
 func NewTerminalHandler(s *store.SandboxStore, m sandboxProvider) *TerminalHandler {
-	return &TerminalHandler{store: s, manager: m, live: map[string]map[*liveTerminal]struct{}{}}
+	return &TerminalHandler{store: s, manager: m, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}}
 }
 
 // Handle runs one terminal session on an authenticated WebSocket connection.
 func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	log := zerolog.Ctx(conn.Context())
 
-	term, sandboxID, err := h.open(conn)
+	term, opened, release, err := h.open(conn)
 	if err != nil {
 		// Client-caused failures (bad first frame, unknown sandbox, unsupported
 		// backend) are reported on the wire and logged at debug only.
@@ -77,11 +91,23 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		})})
 		return
 	}
-	lt := &liveTerminal{term: term, conn: conn}
-	if !h.register(sandboxID, lt) {
+	sandboxID := opened.ID
+	// The instance reference lives exactly as long as this connection: a
+	// forced teardown (CloseSandboxTerminals) closes the conn, the pumps
+	// return, and this defer drops the hold.
+	defer release()
+	lt := &liveTerminal{term: term, conn: conn, gen: opened.RuntimeGen}
+	if ok, stale := h.register(sandboxID, lt); !ok {
 		_ = term.Close()
+		msg := fmt.Sprintf("too many open terminals for this sandbox (max %d)", maxTerminalsPerSandbox)
+		if stale {
+			// The config was updated or deleted while this terminal was
+			// dialing: its shell would serve retired credentials (or a
+			// sandbox that is gone). Reconnect to open under the current one.
+			msg = "this sandbox changed while the terminal was opening; reconnect"
+		}
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
-			Message: fmt.Sprintf("too many open terminals for this sandbox (max %d)", maxTerminalsPerSandbox),
+			Message: msg,
 		})})
 		return
 	}
@@ -153,60 +179,89 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	}
 }
 
-// open reads the terminal.open handshake frame and builds the Terminal.
-func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, string, error) {
+// open reads the terminal.open handshake frame and builds the Terminal,
+// returning the config it opened under (its id and runtime generation gate
+// registration). The returned release drops the instance reference open
+// acquired; the caller owns it once err is nil.
+func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.SandboxConfig, func(), error) {
 	var env protocol.Envelope
 	if err := conn.ReadJSON(&env); err != nil {
-		return nil, "", fmt.Errorf("read terminal.open: %w", err)
+		return nil, nil, nil, fmt.Errorf("read terminal.open: %w", err)
 	}
 	if env.Type != protocol.EventTerminalOpen {
-		return nil, "", fmt.Errorf("expected %s as first message, got %q", protocol.EventTerminalOpen, env.Type)
+		return nil, nil, nil, fmt.Errorf("expected %s as first message, got %q", protocol.EventTerminalOpen, env.Type)
 	}
 	var msg protocol.TerminalOpen
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
-		return nil, "", fmt.Errorf("invalid terminal.open payload: %w", err)
+		return nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
 	}
 	if msg.SandboxID == "" {
-		return nil, "", errors.New("terminal.open requires sandbox_id")
+		return nil, nil, nil, errors.New("terminal.open requires sandbox_id")
 	}
 
 	ctx := conn.Context()
 	cfg, err := h.store.Get(ctx, msg.SandboxID)
 	if err != nil {
-		return nil, "", fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
+		return nil, nil, nil, fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
 	}
 	if cfg.Type == "local" {
-		return nil, "", errors.New("local sandboxes do not support web terminals")
+		return nil, nil, nil, errors.New("local sandboxes do not support web terminals")
 	}
-	sb, err := h.manager.GetOrCreate(cfg)
+	// A NON-empty work_dir passes the same validation a binding does, and the
+	// canonical form is what keys the instance — a value the backend would
+	// silently rewrite (a docker path outside /workspace landing in the
+	// default) must be refused, not displayed as one directory while the
+	// shell runs in another. An empty work_dir stays valid here even where a
+	// binding would refuse it (ssh with no configured default): a terminal is
+	// an interactive shell with no session-files promise, and empty honestly
+	// means the sandbox's own default.
+	workDir := msg.WorkDir
+	if workDir != "" {
+		workDir, err = bridge.ResolveBindingWorkDir(cfg, workDir)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	sb, release, err := h.manager.Acquire(cfg, workDir)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, err
 	}
 	opener, ok := sb.(sandbox.TerminalOpener)
 	if !ok {
-		return nil, "", fmt.Errorf("%s sandbox: %w", cfg.Type, sandbox.ErrTerminalUnsupported)
+		release()
+		return nil, nil, nil, fmt.Errorf("%s sandbox: %w", cfg.Type, sandbox.ErrTerminalUnsupported)
 	}
 	term, err := opener.OpenTerminal(ctx, sandbox.TerminalOptions{Cols: msg.Cols, Rows: msg.Rows})
 	if err != nil {
-		return nil, "", err
+		release()
+		return nil, nil, nil, err
 	}
-	return term, cfg.ID, nil
+	return term, cfg, release, nil
 }
 
-// register adds a live terminal, enforcing the per-sandbox cap.
-func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal) bool {
+// register adds a live terminal, enforcing the per-sandbox cap and the
+// generation fence: a terminal that opened under a generation a config
+// update or delete has since retired is refused HERE, under the same lock
+// the fence moves under — the sweep that ran while this terminal was still
+// dialing could not see it, and letting it register would leave a live shell
+// on retired credentials (or a deleted sandbox). The two refusals are
+// distinct answers: full is temporary, stale is final.
+func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if lt.gen < h.fence[sandboxID] {
+		return false, true
+	}
 	set := h.live[sandboxID]
 	if len(set) >= maxTerminalsPerSandbox {
-		return false
+		return false, false
 	}
 	if set == nil {
 		set = map[*liveTerminal]struct{}{}
 		h.live[sandboxID] = set
 	}
 	set[lt] = struct{}{}
-	return true
+	return true, false
 }
 
 func (h *TerminalHandler) unregister(sandboxID string, lt *liveTerminal) {
@@ -219,14 +274,24 @@ func (h *TerminalHandler) unregister(sandboxID string, lt *liveTerminal) {
 	}
 }
 
-// CloseSandboxTerminals tears down every live terminal for a sandbox config.
-// Sandbox Update/Delete call it alongside SandboxManager.Remove so no session
-// keeps running against a stale or deleted config.
-func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string) {
+// CloseSandboxTerminals tears down every live terminal for a sandbox config
+// that opened under a generation below minGen, and moves the registration
+// fence there — a terminal still dialing when this sweep runs (it registers
+// AFTER opening its PTY) is refused at register instead of surviving on
+// retired credentials. A config update passes the new runtime generation; a
+// delete passes math.MaxInt64: nothing may serve a config that is gone.
+// Sandbox Update/Delete call it alongside SandboxManager.Retire/Remove so no
+// shell keeps running against a stale or deleted config.
+func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string, minGen int64) {
 	h.mu.Lock()
+	if h.fence[sandboxID] < minGen {
+		h.fence[sandboxID] = minGen
+	}
 	terminals := make([]*liveTerminal, 0, len(h.live[sandboxID]))
 	for lt := range h.live[sandboxID] {
-		terminals = append(terminals, lt)
+		if lt.gen < minGen {
+			terminals = append(terminals, lt)
+		}
 	}
 	h.mu.Unlock()
 	// Close outside the lock: pump teardown re-enters unregister.

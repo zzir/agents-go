@@ -136,7 +136,8 @@ func run(_ *cobra.Command, _ []string) error {
 	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore)
 	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
 	terminalHandler := handler.NewTerminalHandler(sandboxStore, sandboxManager)
-	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox).WithTerminals(terminalHandler)
+	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox).
+		WithTerminals(terminalHandler).WithWorkspace(flagWorkspace)
 	traceHandler := handler.NewTraceHandler(traceStore)
 	playgroundHandler := handler.NewPlaygroundHandler(deps)
 	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)

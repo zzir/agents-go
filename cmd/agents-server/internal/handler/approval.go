@@ -172,6 +172,12 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 		conflict(c, void.Error())
 		return
 	}
+	// The task was retried past the paused run — the approval belongs to a
+	// finished attempt and was discarded. 409, not 500.
+	if staleAttempt, ok := errors.AsType[*bridge.StaleApprovalAttemptError](err); ok {
+		conflict(c, staleAttempt.Error())
+		return
+	}
 	// The paused run had not finished settling; the row is preserved for a
 	// retry, so it is a transient conflict.
 	if notReady, ok := errors.AsType[*bridge.ApprovalNotReadyError](err); ok {

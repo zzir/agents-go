@@ -51,6 +51,11 @@ func TestRestContract(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create session: %d", w.Code)
 	}
+	// A fresh session has no sandbox binding — the omitempty fields must be
+	// absent, not empty strings, or clients would treat "" as a binding.
+	if body := w.Body.String(); strings.Contains(body, "sandbox_id") || strings.Contains(body, "work_dir") {
+		t.Errorf("created session leaks empty binding fields: %s", body)
+	}
 	var sess struct {
 		ID string `json:"id"`
 	}
@@ -90,5 +95,90 @@ func TestRestContract(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &agent)
 	if w := doJSON(t, engine, http.MethodPut, "/agents/"+agent.ID, `{"name":""}`); w.Code != http.StatusBadRequest {
 		t.Errorf("PUT empty agent name: got %d, want 400", w.Code)
+	}
+}
+
+// A fork inherits the source's sandbox binding verbatim — it continues the
+// same conversation over the same file system context, with no CAS of its own.
+func TestForkCopiesSandboxBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	sessions := store.NewSessionStore(db)
+	// BindSandboxIfEmpty refuses a target with no config row (EXISTS).
+	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	sh := NewSessionHandler(sessions, store.NewSharedEntryStore(db), store.NewTraceStore(db), store.NewAgentConfigStore(db))
+
+	engine := gin.New()
+	engine.POST("/sessions", sh.Create)
+	engine.POST("/sessions/:id/fork", sh.Fork)
+
+	w := doJSON(t, engine, http.MethodPost, "/sessions", `{"name":"src"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", w.Code)
+	}
+	var src struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &src)
+	if won, err := sessions.BindSandboxIfEmpty(t.Context(), src.ID, "sb-1", "/srv/app", 1); err != nil || !won {
+		t.Fatalf("bind: won=%v err=%v", won, err)
+	}
+
+	w = doJSON(t, engine, http.MethodPost, "/sessions/"+src.ID+"/fork", `{}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("fork: %d %s", w.Code, w.Body.String())
+	}
+	var forked struct {
+		SandboxID string `json:"sandbox_id"`
+		WorkDir   string `json:"work_dir"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &forked)
+	if forked.SandboxID != "sb-1" || forked.WorkDir != "/srv/app" {
+		t.Fatalf("fork binding = (%q,%q), want the source's (sb-1,/srv/app)", forked.SandboxID, forked.WorkDir)
+	}
+}
+
+// A session's (sandbox_id, work_dir) binding is immutable: PATCH carries no
+// binding fields, so a request naming work_dir changes nothing — switching
+// projects means starting (or forking into) another session.
+func TestPatchCannotMoveBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	sessions := store.NewSessionStore(db)
+	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	sh := NewSessionHandler(sessions, store.NewSharedEntryStore(db), store.NewTraceStore(db), store.NewAgentConfigStore(db))
+
+	engine := gin.New()
+	engine.POST("/sessions", sh.Create)
+	engine.PATCH("/sessions/:id", sh.Patch)
+
+	w := doJSON(t, engine, http.MethodPost, "/sessions", `{"name":"s"}`)
+	var sess struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &sess)
+
+	if won, err := sessions.BindSandboxIfEmpty(t.Context(), sess.ID, "sb-1", "/w1", 1); err != nil || !won {
+		t.Fatalf("bind: won=%v err=%v", won, err)
+	}
+	w = doJSON(t, engine, http.MethodPatch, "/sessions/"+sess.ID, `{"name":"renamed","work_dir":"/elsewhere"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
+	}
+	var patched struct {
+		Name      string `json:"name"`
+		SandboxID string `json:"sandbox_id"`
+		WorkDir   string `json:"work_dir"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &patched)
+	if patched.Name != "renamed" {
+		t.Fatalf("rename lost: %q", patched.Name)
+	}
+	if patched.SandboxID != "sb-1" || patched.WorkDir != "/w1" {
+		t.Fatalf("binding moved to (%q,%q), want (sb-1,/w1) untouched", patched.SandboxID, patched.WorkDir)
 	}
 }

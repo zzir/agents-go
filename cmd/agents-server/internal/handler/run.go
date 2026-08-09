@@ -30,6 +30,10 @@ type createRunReq struct {
 	Input         string `json:"input"`
 	AgentConfigID string `json:"agent_config_id"`
 	SandboxID     string `json:"sandbox_id"`
+	// WorkDir only matters until the session's first sandbox-carrying run
+	// permanently binds (sandbox_id, work_dir); after that the server uses the
+	// bound values and ignores both fields.
+	WorkDir string `json:"work_dir"`
 }
 
 type createRunResp struct {
@@ -55,7 +59,7 @@ type createRunResp struct {
 //	@Success		200		{object}	map[string]interface{}	"Final result (wait=true)"
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"session already has an active run"
+//	@Failure		409		{object}	ErrorResponse	"session already has an active run, or the sandbox config kept changing under the bind"
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/runs [post]
 func (h *RunHandler) Create(c *gin.Context) {
@@ -72,7 +76,7 @@ func (h *RunHandler) Create(c *gin.Context) {
 		return
 	}
 
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.Input, nil)
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.WorkDir, req.Input, nil)
 	if err != nil {
 		h.startError(c, err)
 		return
@@ -88,7 +92,7 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	// just marshaled. Buffered so the callback never blocks if the client
 	// hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.Input, func(res *bridge.RunOutcome) {
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.WorkDir, req.Input, func(res *bridge.RunOutcome) {
 		done <- res
 	})
 	if err != nil {
@@ -121,6 +125,18 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 func (h *RunHandler) startError(c *gin.Context, err error) {
 	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
 		conflict(c, "session already has an active run: "+busy.RunID)
+		return
+	}
+	// The request named a sandbox binding that can never work (unknown id, a
+	// workdir the backend cannot honor): the client's mistake, 400.
+	if invalid, ok := errors.AsType[bridge.ErrInvalidBinding](err); ok {
+		badRequest(c, invalid.Error())
+		return
+	}
+	// The bind kept losing its validation race against concurrent config
+	// edits: transient state, the client retries once the config settles.
+	if errors.Is(err, bridge.ErrBindingContention) {
+		conflict(c, err.Error())
 		return
 	}
 	// The session exists but is already at its live-task cap: a state conflict

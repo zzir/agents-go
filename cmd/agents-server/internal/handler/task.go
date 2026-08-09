@@ -107,7 +107,8 @@ func (h *TaskHandler) retryError(c *gin.Context, err error) {
 		notFound(c)
 	case errors.As(err, new(tasks.ErrNotRetryable)),
 		errors.As(err, new(tasks.ErrRetryLimit)),
-		errors.As(err, new(tasks.ErrTaskLimit)):
+		errors.As(err, new(tasks.ErrTaskLimit)),
+		errors.Is(err, tasks.ErrRetryConflict):
 		conflict(c, err.Error())
 	default:
 		internalError(c, err)

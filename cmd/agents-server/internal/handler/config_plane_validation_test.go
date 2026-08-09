@@ -63,6 +63,13 @@ func TestSandboxValidation(t *testing.T) {
 		{"malformed docker config bypasses host block", `{"name":"x","type":"docker","config":"notanobject"}`, http.StatusBadRequest},
 		{"ssh without addr", `{"name":"x","type":"ssh","config":{"user":"u"}}`, http.StatusBadRequest},
 		{"local disabled", `{"name":"x","type":"local"}`, http.StatusForbidden},
+		// Field-level strictness (store.NormalizeSandboxConfig): a type
+		// mismatch or a missing required field must be refused at save time —
+		// stored as-is it would bind sessions to a config that can never
+		// build (and, once referenced, could never be repaired).
+		{"docker type mismatch", `{"name":"x","type":"docker","config":{"image":"i","persistent":"yes"}}`, http.StatusBadRequest},
+		{"docker without image", `{"name":"x","type":"docker","config":{"persistent":true}}`, http.StatusBadRequest},
+		{"ssh without user", `{"name":"x","type":"ssh","config":{"addr":"h"}}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

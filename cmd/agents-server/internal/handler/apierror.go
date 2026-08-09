@@ -70,11 +70,16 @@ func internalError(c *gin.Context, err error) {
 	abortError(c, http.StatusInternalServerError, protocol.CodeInternal, "internal error")
 }
 
-// storeError maps a store failure to a response: ErrNotFound → 404, anything
-// else → 500.
+// storeError maps a store failure to a response: ErrNotFound → 404, a lost
+// optimistic-concurrency write (ErrRevisionConflict) → 409 so the client
+// re-reads and retries, anything else → 500.
 func storeError(c *gin.Context, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		notFound(c)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		conflict(c, err.Error())
 		return
 	}
 	internalError(c, err)

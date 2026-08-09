@@ -58,6 +58,10 @@ const (
 	EventRunDiagnostic       = "run.diagnostic"
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
+	// EventSessionSandboxBound announces that a session's first sandbox-carrying
+	// run permanently bound (sandbox_id, work_dir) to it — published exactly
+	// once, by the run that won the bind.
+	EventSessionSandboxBound = "session.sandbox_bound"
 	EventTraceSpan           = "trace.span"
 
 	// Terminal events, exchanged on /ws/terminal (one terminal per
@@ -104,11 +108,15 @@ func NewEnvelope(typ string, payload any) (*Envelope, error) {
 // Client → Server messages
 
 // RunCreate is the client request to start a new run within a session.
+// SandboxID/WorkDir only matter until the session's first sandbox-carrying run
+// binds them permanently; after that the server uses the bound values and
+// ignores what the client sends.
 type RunCreate struct {
 	SessionID     string `json:"session_id"`
 	Input         string `json:"input"`
 	AgentConfigID string `json:"agent_config_id,omitempty"`
 	SandboxID     string `json:"sandbox_id,omitempty"`
+	WorkDir       string `json:"work_dir,omitempty"`
 }
 
 // RunCancel is the client request to cancel an in-flight run.
@@ -165,8 +173,12 @@ type ToolReject struct {
 // use the backend defaults (80x24).
 type TerminalOpen struct {
 	SandboxID string `json:"sandbox_id"`
-	Cols      int    `json:"cols,omitempty"`
-	Rows      int    `json:"rows,omitempty"`
+	// WorkDir selects the sandbox instance to open the shell in — a bound
+	// session's terminal lands in the session's working directory (for
+	// docker: its /workspace subtree container), not the default instance.
+	WorkDir string `json:"work_dir,omitempty"`
+	Cols    int    `json:"cols,omitempty"`
+	Rows    int    `json:"rows,omitempty"`
 }
 
 // TerminalResize is the client request to change the PTY size.
@@ -428,6 +440,15 @@ type RunGap struct {
 type SessionTitleUpdated struct {
 	SessionID string `json:"session_id"`
 	Title     string `json:"title"`
+}
+
+// SessionSandboxBound notifies the client that the session is now permanently
+// bound to (sandbox_id, work_dir). An empty work_dir means the sandbox's own
+// default directory.
+type SessionSandboxBound struct {
+	SessionID string `json:"session_id"`
+	SandboxID string `json:"sandbox_id"`
+	WorkDir   string `json:"work_dir,omitempty"`
 }
 
 // Tracing events

@@ -191,7 +191,7 @@ func (h *WSHandler) subscribe(conn *server.WSConn, subs *connSubs, runID string,
 func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate) {
 	// No explicit subscribe here: the runner's OnRunAttach hook attached every
 	// connection (this one included) before the first event published.
-	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.Input, nil)
+	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.WorkDir, msg.Input, nil)
 	if err != nil {
 		// These fire before any run.started, so no run→session mapping exists
 		// client-side yet: carry the session id so the error is attributable.

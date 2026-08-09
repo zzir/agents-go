@@ -106,6 +106,9 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 		badRequest(c, "building agent: "+err.Error())
 		return
 	}
+	// No sandbox is attached (the empty sandboxID above), so this is a no-op
+	// today — kept so a future sandbox-carrying build cannot leak its hold.
+	defer built.Release()
 	if built.Provider == nil {
 		badRequest(c, "no API key configured for this agent")
 		return
@@ -313,6 +316,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 		badRequest(c, "building agent: "+err.Error())
 		return
 	}
+	defer built.Release()
 	// This endpoint reports the FULL surface. A plan-mode build starts in the
 	// planning phase, which filters MCP listings; unlock first — this build
 	// serves no run, so the phase flag guards nothing here. Per-tool enabled

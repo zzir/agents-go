@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,10 +98,23 @@ func (f *fakeTerminalSandbox) OpenTerminal(_ context.Context, opts sandbox.Termi
 type fakeProvider struct {
 	sb  sandbox.Sandbox
 	err error
+	// releases counts how often the acquired reference was dropped — the
+	// terminal must release exactly once when its connection ends.
+	releases atomic.Int64
+	// workDirs records what each Acquire was asked for, so tests can assert
+	// the canonicalized value reached the manager.
+	mu       sync.Mutex
+	workDirs []string
 }
 
-func (p *fakeProvider) GetOrCreate(*store.SandboxConfig) (sandbox.Sandbox, error) {
-	return p.sb, p.err
+func (p *fakeProvider) Acquire(_ *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error) {
+	if p.err != nil {
+		return nil, nil, p.err
+	}
+	p.mu.Lock()
+	p.workDirs = append(p.workDirs, workDir)
+	p.mu.Unlock()
+	return p.sb, func() { p.releases.Add(1) }, nil
 }
 
 // terminalTestServer stands up /ws/terminal with a fake sandbox backend and a
@@ -307,7 +321,9 @@ func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
 	srv, th, id := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
 	conn := dialTerminal(t, srv, id)
 
-	th.CloseSandboxTerminals(id)
+	// The update's new generation retires everything below it (the test
+	// config sits at generation 1).
+	th.CloseSandboxTerminals(id, 2)
 
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {
@@ -327,5 +343,94 @@ func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
 	term.mu.Unlock()
 	if !closed {
 		t.Error("terminal not closed after CloseSandboxTerminals")
+	}
+}
+
+// terminal.open validates a NON-empty work_dir like a binding does and hands
+// the manager the canonical form: a value the backend would silently rewrite
+// (docker outside /workspace) is refused instead of opening a shell in a
+// different directory than the client displays. Empty stays valid — it
+// honestly means the sandbox default.
+func TestTerminalOpen_ValidatesWorkDir(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	sandboxes := store.NewSandboxStore(db)
+	cfg := &store.SandboxConfig{Name: "dock", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
+	if err := sandboxes.Create(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
+	th := NewTerminalHandler(sandboxes, provider)
+	engine := gin.New()
+	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testWSToken))
+	srv := httptest.NewServer(engine)
+	t.Cleanup(srv.Close)
+
+	open := func(workDir string) protocol.Envelope {
+		conn := dialTerminalRaw(t, srv)
+		if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalOpen, Payload: mustJSON(protocol.TerminalOpen{
+			SandboxID: cfg.ID, WorkDir: workDir, Cols: 80, Rows: 24,
+		})}); err != nil {
+			t.Fatal(err)
+		}
+		return readTerminalEnvelope(t, conn)
+	}
+
+	// Outside /workspace: refused up front, the manager never sees it.
+	if env := open("/tmp/project"); env.Type != protocol.EventTerminalError {
+		t.Fatalf("out-of-workspace open: %s, want %s", env.Type, protocol.EventTerminalError)
+	}
+	// A subtree opens, canonicalized before it keys the instance.
+	if env := open("/workspace//proj/"); env.Type != protocol.EventTerminalReady {
+		t.Fatalf("subtree open: %s, want %s", env.Type, protocol.EventTerminalReady)
+	}
+	// Empty is the sandbox default, no validation to fail.
+	if env := open(""); env.Type != protocol.EventTerminalReady {
+		t.Fatalf("empty open: %s, want %s", env.Type, protocol.EventTerminalReady)
+	}
+	provider.mu.Lock()
+	got := append([]string(nil), provider.workDirs...)
+	provider.mu.Unlock()
+	if len(got) != 2 || got[0] != "/workspace/proj" || got[1] != "" {
+		t.Fatalf("manager saw workdirs %q, want [/workspace/proj \"\"]", got)
+	}
+}
+
+// The instance reference lives exactly as long as the connection: closing the
+// socket unwinds the pumps and drops the hold — once, not zero times (which
+// would pin an evicted instance forever) and not twice.
+func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
+	p := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
+	srv, _, id := terminalTestServer(t, p)
+	conn := dialTerminal(t, srv, id)
+	_ = conn.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for p.releases.Load() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("releases = %d after close, want 1", p.releases.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The registration fence: a terminal that opened under a generation a config
+// update (or delete) has since retired is refused at register — it read its
+// config before the sweep, dialed through it, and would otherwise surface as
+// a live shell on retired credentials the sweep could never see.
+func TestTerminalRegisterFence(t *testing.T) {
+	th := NewTerminalHandler(nil, nil)
+	th.CloseSandboxTerminals("sb", 2)
+
+	if ok, stale := th.register("sb", &liveTerminal{gen: 1}); ok || !stale {
+		t.Fatalf("stale-generation register: ok=%v stale=%v, want a stale refusal", ok, stale)
+	}
+	if ok, stale := th.register("sb", &liveTerminal{gen: 2}); !ok || stale {
+		t.Fatalf("current-generation register: ok=%v stale=%v, want accepted", ok, stale)
+	}
+	// The fence never regresses: an older sweep arriving late cannot reopen it.
+	th.CloseSandboxTerminals("sb", 1)
+	if ok, stale := th.register("sb", &liveTerminal{gen: 1}); ok || !stale {
+		t.Fatalf("register after a late older sweep: ok=%v stale=%v, want still refused", ok, stale)
 	}
 }

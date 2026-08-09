@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"math"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +22,9 @@ type SandboxHandler struct {
 	manager           *bridge.SandboxManager
 	allowLocalSandbox bool
 	terminals         *TerminalHandler
+	// workspaceAbs is the server --workspace directory, absolute — the default
+	// workdir reported for local and persistent-docker sandboxes.
+	workspaceAbs string
 }
 
 // NewSandboxHandler returns a handler backed by the given store and sandbox manager.
@@ -35,11 +40,23 @@ func (h *SandboxHandler) WithTerminals(t *TerminalHandler) *SandboxHandler {
 	return h
 }
 
-// closeTerminals tears down live web terminals for a sandbox config, if the
-// terminal feature is wired.
-func (h *SandboxHandler) closeTerminals(id string) {
+// WithWorkspace records the server workspace directory so responses can report
+// each sandbox's default workdir.
+func (h *SandboxHandler) WithWorkspace(dir string) *SandboxHandler {
+	if abs, err := filepath.Abs(dir); err == nil {
+		h.workspaceAbs = abs
+	} else {
+		h.workspaceAbs = dir
+	}
+	return h
+}
+
+// closeSandboxTerminals tears down live web terminals opened under a config
+// generation below minGen, if the terminal feature is wired — and moves the
+// registry's fence so a terminal still dialing cannot register afterwards.
+func (h *SandboxHandler) closeSandboxTerminals(id string, minGen int64) {
 	if h.terminals != nil {
-		h.terminals.CloseSandboxTerminals(id)
+		h.terminals.CloseSandboxTerminals(id, minGen)
 	}
 }
 
@@ -65,6 +82,42 @@ func terminalCapable(cfg *store.SandboxConfig) bool {
 	}
 }
 
+// annotate fills the computed, never-stored response fields: terminal
+// capability, plus the default workdir a session binding would use and whether
+// a custom per-session workdir is honored (local/ssh only). The workdir is
+// always the EXECUTION view — the directory commands actually run in — so for
+// docker it is the container-side /workspace constant, never the host mount
+// source (that is the config's host_dir, a different concept).
+func (h *SandboxHandler) annotate(cfg *store.SandboxConfig) {
+	cfg.Terminal = terminalCapable(cfg)
+	switch cfg.Type {
+	case "ssh":
+		var sc store.SSHConfig
+		if len(cfg.Config) > 0 {
+			_ = json.Unmarshal(cfg.Config, &sc)
+		}
+		// May be "" — but a session BINDING then requires an explicit directory
+		// (ResolveBindingWorkDir): without a fixed dir, every exec runs in a
+		// throw-away remote temp dir, which breaks session file continuity.
+		cfg.DefaultWorkDir = sc.WorkDir
+		cfg.WorkDirEditable = true
+	case "local":
+		cfg.DefaultWorkDir = h.workspaceAbs
+		cfg.WorkDirEditable = true
+	case "docker":
+		// The mount point never moves, but a persistent container's session
+		// may work in a /workspace subtree — so the directory is editable
+		// within that constraint. An ephemeral container has no durable tree
+		// to subdivide.
+		cfg.DefaultWorkDir = bridge.DockerWorkspace
+		var dc store.DockerConfig
+		if len(cfg.Config) > 0 {
+			_ = json.Unmarshal(cfg.Config, &dc)
+		}
+		cfg.WorkDirEditable = dc.Persistent
+	}
+}
+
 // List responds with all sandbox configurations, secrets masked.
 //
 //	@Summary	List sandboxes
@@ -82,7 +135,7 @@ func (h *SandboxHandler) List(c *gin.Context) {
 	}
 	for i := range configs {
 		configs[i] = sanitizeSandboxConfig(configs[i])
-		configs[i].Terminal = terminalCapable(&configs[i])
+		h.annotate(&configs[i])
 	}
 	c.JSON(http.StatusOK, configs)
 }
@@ -91,6 +144,13 @@ type createSandboxReq struct {
 	Name   string          `json:"name"`
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
+	// Revision, on update only, is the revision the client's edit was based
+	// on (from GET/List). When set, the write lands only while the row is
+	// still there — editing from a stale form is 409 instead of silently
+	// overwriting a concurrent update. Absent (0) keeps last-writer-wins:
+	// the CAS then anchors on the revision the handler itself just read,
+	// which still serializes concurrent handlers. Ignored on create.
+	Revision int64 `json:"revision,omitempty"`
 }
 
 func (r createSandboxReq) toConfig() *store.SandboxConfig {
@@ -101,16 +161,22 @@ func (r createSandboxReq) toConfig() *store.SandboxConfig {
 	}
 }
 
-// validateSandbox checks required fields and type-level permissions. It
-// reports the failure to c and returns false when the request is rejected.
+// validateSandbox enforces the POLICY layer of a sandbox write: name and
+// type present, local gated behind its flag, remote docker daemons refused.
+// Field-level validation — required fields, type mismatches — and
+// canonicalization live in store.NormalizeSandboxConfig, which both write
+// handlers run right after this. The docker host check must stay HERE,
+// before normalization: host is not a DockerConfig field, so the canonical
+// re-marshal would silently drop it instead of telling the user it is
+// unsupported.
 func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) bool {
 	if req.Name == "" {
 		badRequest(c, "name is required")
 		return false
 	}
 	switch req.Type {
-	case "local":
-		if !h.allowLocalSandbox {
+	case "local", "ssh":
+		if req.Type == "local" && !h.allowLocalSandbox {
 			forbidden(c, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it")
 			return false
 		}
@@ -129,18 +195,6 @@ func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) 
 		}
 		if dc.Host != "" {
 			badRequest(c, "remote Docker daemon is not supported; use a local daemon or the SSH sandbox for remote hosts")
-			return false
-		}
-	case "ssh":
-		var sc store.SSHConfig
-		if len(req.Config) > 0 {
-			if err := json.Unmarshal(req.Config, &sc); err != nil {
-				badRequest(c, "config is not valid JSON: "+err.Error())
-				return false
-			}
-		}
-		if sc.Addr == "" {
-			badRequest(c, "ssh sandbox requires config.addr")
 			return false
 		}
 	case "":
@@ -179,12 +233,18 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 	cfg := req.toConfig()
 	// No stored config yet: mask sentinels resolve to empty.
 	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, nil)
+	canonical, err := store.NormalizeSandboxConfig(cfg.Type, cfg.Config)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	cfg.Config = canonical
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
 		internalError(c, err)
 		return
 	}
 	created := sanitizeSandboxConfig(*cfg)
-	created.Terminal = terminalCapable(&created)
+	h.annotate(&created)
 	c.JSON(http.StatusCreated, created)
 }
 
@@ -207,15 +267,20 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 		return
 	}
 	out := sanitizeSandboxConfig(*cfg)
-	out.Terminal = terminalCapable(&out)
+	h.annotate(&out)
 	c.JSON(http.StatusOK, out)
 }
 
 // Update overwrites the sandbox configuration identified by the id path
 // parameter and responds with the updated configuration. A masked SSH
-// password keeps the stored value.
+// password keeps the stored value. An update that would change the sandbox's
+// identity (type, ssh addr/work_dir, docker host_dir/persistent/
+// container_name) is refused with 409 while sessions are bound to it — their
+// binding is permanent, and rewriting what the id points at would switch a
+// conversation's file system under it. Non-identity fields update freely.
 //
 //	@Summary	Update sandbox
+//	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the config changed meanwhile. Omitting it falls back to last-writer-wins.
 //	@Tags		sandboxes
 //	@Accept		json
 //	@Produce	json
@@ -225,6 +290,7 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 //	@Failure	400		{object}	ErrorResponse
 //	@Failure	403		{object}	ErrorResponse	"local sandbox disabled"
 //	@Failure	404		{object}	ErrorResponse
+//	@Failure	409		{object}	ErrorResponse	"identity change refused (sessions are bound), or the config changed concurrently — re-read and retry"
 //	@Failure	500		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id} [put]
@@ -240,48 +306,94 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
 	// Load the current row so masked secrets can round-trip to their stored
-	// values. A transient (non-not-found) Get failure must abort: continuing
-	// with an empty prev would resolve the ******** mask to "" and silently
-	// WIPE the stored ssh password — the same guard every sibling handler
-	// carries. Not-found falls through; the Update below returns 404 for it.
-	var prevConfig json.RawMessage
+	// values, and so its revision anchors the CAS below. A transient
+	// (non-not-found) Get failure must abort: continuing with an empty prev
+	// would resolve the ******** mask to "" and silently WIPE the stored ssh
+	// password — the same guard every sibling handler carries.
 	prev, err := h.store.Get(ctx, id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		internalError(c, err)
-		return
-	}
-	if prev != nil {
-		prevConfig = prev.Config
-	}
-	cfg := req.toConfig()
-	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, prevConfig)
-	// Persist first, then drop the cached instance: if the DB write fails, the
-	// live sandbox must stay as it was rather than be torn down for a change
-	// that never landed. Remove() forces a rebuild with the new config on next
-	// use.
-	if err := h.store.Update(ctx, id, cfg); err != nil {
+	if err != nil {
 		storeError(c, err)
 		return
 	}
-	h.manager.Remove(id)
-	h.closeTerminals(id)
+	cfg := req.toConfig()
+	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, prev.Config)
+	// Normalize AFTER the mask restore (the canonical form must carry the
+	// real secret, not the ******** sentinel). From here on the identity and
+	// content comparisons read the same canonical payload that will be
+	// stored — one decoding, one answer.
+	canonical, err := store.NormalizeSandboxConfig(cfg.Type, cfg.Config)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	cfg.Config = canonical
+	// Everything decided from prev — the identity comparison, contentChanged
+	// — holds only while the row IS prev, which is exactly what the
+	// expected-revision CAS both write paths carry guarantees: a concurrent
+	// update moves the revision, this write refuses (409), and the client
+	// re-reads. Without it a stale comparison could bypass the identity
+	// freeze or silently overwrite another update's credential rotation.
+	// The anchor is the client's own revision when the request names one —
+	// extending the guarantee back to the form the edit was made on, so a
+	// stale tab cannot overwrite a save it never saw (both paths succeed
+	// only when it equals prev.Revision, keeping every prev-derived decision
+	// exactly as CAS-guarded as before). Without one the anchor is prev:
+	// concurrent handlers still serialize, clients are last-writer-wins.
+	expected := prev.Revision
+	if req.Revision != 0 {
+		expected = req.Revision
+	}
+	contentChanged := prev.Type != cfg.Type || !store.ContentEqual(cfg.Type, prev.Config, cfg.Config)
+	if store.IdentityChanged(prev, cfg) {
+		refs, uerr := h.store.UpdateIdentityIfUnreferenced(ctx, id, cfg, expected)
+		if uerr != nil {
+			storeError(c, uerr)
+			return
+		}
+		if refs > 0 {
+			conflict(c, fmt.Sprintf("%d session(s) are bound to this sandbox; its type, machine, directory and container are frozen — credentials, name and limits stay editable, or create a new sandbox for the new location", refs))
+			return
+		}
+	} else if err := h.store.Update(ctx, id, cfg, expected, contentChanged); err != nil {
+		storeError(c, err)
+		return
+	}
+	// The write landed; invalidate NOW, from what the CAS guarantees
+	// (revision moved to prev+1, the generation iff content changed) — not
+	// from a re-read that a cancelled request could fail, leaving new
+	// credentials in the store while old instances and terminals keep
+	// serving. Only a CONTENT change retires: a rename must not sever
+	// terminals or close idle persistent containers (docker's Close deletes
+	// the container and its volumes).
+	if contentChanged {
+		h.manager.Retire(id, prev.RuntimeGen+1)
+		h.closeSandboxTerminals(id, prev.RuntimeGen+1)
+	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
 	out := sanitizeSandboxConfig(*updated)
-	out.Terminal = terminalCapable(&out)
+	h.annotate(&out)
 	c.JSON(http.StatusOK, out)
 }
 
 // Delete removes the sandbox configuration identified by the id path parameter.
+// A sandbox still referenced by session bindings is refused with 409: the
+// binding is permanent, so deleting its target would leave those sessions
+// failing every run with no way back. Delete the sessions first (or keep the
+// sandbox). The refusal is decided by the delete statement itself
+// (DeleteIfUnreferenced), not a prior count — a first-run bind racing this
+// delete therefore either lands before it (and blocks it) or loses its own
+// EXISTS predicate; a session can never end up bound to a config this removed.
 //
 //	@Summary	Delete sandbox
 //	@Tags		sandboxes
 //	@Param		id	path	string	true	"Sandbox ID"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
+//	@Failure	409	{object}	ErrorResponse	"sessions are bound to this sandbox"
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id} [delete]
@@ -290,12 +402,19 @@ func (h *SandboxHandler) Delete(c *gin.Context) {
 	// Delete from the DB first: only tear down the live instance once the row
 	// is gone, so a failed delete doesn't leave a persisted sandbox with its
 	// running instance already closed.
-	if err := h.store.Delete(c.Request.Context(), id); err != nil {
+	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), id)
+	if err != nil {
 		storeError(c, err)
 		return
 	}
+	if refs > 0 {
+		conflict(c, fmt.Sprintf("%d session(s) are bound to this sandbox; delete them first", refs))
+		return
+	}
 	h.manager.Remove(id)
-	h.closeTerminals(id)
+	// Every generation goes: the config no longer exists, so no terminal —
+	// registered or still dialing — may keep serving it.
+	h.closeSandboxTerminals(id, math.MaxInt64)
 	c.Status(http.StatusNoContent)
 }
 
@@ -318,11 +437,12 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		return
 	}
 
-	sb, err := h.manager.GetOrCreate(cfg)
+	sb, release, err := h.manager.Acquire(cfg, "")
 	if err != nil {
 		upstreamError(c, err)
 		return
 	}
+	defer release()
 
 	timeout := sandbox.DefaultTimeout
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout+5*time.Second)
