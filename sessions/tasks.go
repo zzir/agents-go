@@ -334,13 +334,39 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	return false, nil
 }
 
-// MarkInputRequired implements tasks.Store. Best-effort CAS: a concurrent
-// terminal transition wins.
-func (s *TaskStore) MarkInputRequired(ctx context.Context, id string) error {
+// ReleaseRetryClaim implements tasks.Store as one conditional UPDATE bound to
+// the claimed run id, like Finalize: only the claim's owner can release it.
+// The attempt rolls back because the claimed run never launched — attempt
+// counts runs the task has HAD — with the same floor AttemptNo() applies.
+func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
+	res, err := s.db.NewUpdate().Model((*taskRow)(nil)).
+		Set("status = ?", string(tasks.StatusFailed)).
+		Set("attempt = CASE WHEN attempt <= 1 THEN 1 ELSE attempt - 1 END").
+		Set("summary = ?", summary).
+		Set("result = ?", result).
+		Set("notify_state = ?", string(tasks.NotifyPending)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("run_id = ?", runID).
+		Where("status = ?", string(tasks.StatusWorking)).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("releasing the retry claim of task %q: %w", id, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// MarkInputRequired implements tasks.Store, bound to the current attempt like
+// Finalize — an approval can outlive the attempt that opened it, and it must
+// not pause the one that replaced it. Best-effort CAS: a concurrent terminal
+// transition (or newer attempt) wins.
+func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) error {
 	_, err := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusInputRequired)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
+		Where("run_id = ?", runID).
 		Where("status = ?", string(tasks.StatusWorking)).
 		Exec(ctx)
 	if err != nil {
@@ -349,12 +375,15 @@ func (s *TaskStore) MarkInputRequired(ctx context.Context, id string) error {
 	return nil
 }
 
-// ReclaimWorking implements tasks.Store.
-func (s *TaskStore) ReclaimWorking(ctx context.Context, id string) (bool, error) {
+// ReclaimWorking implements tasks.Store, with the same attempt bound: a stale
+// approval (its attempt retried past) must lose the claim, not resume over
+// the newer run.
+func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusWorking)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
+		Where("run_id = ?", runID).
 		Where("status = ?", string(tasks.StatusInputRequired)).
 		Exec(ctx)
 	if err != nil {

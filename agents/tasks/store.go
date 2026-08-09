@@ -56,21 +56,36 @@ type Store interface {
 	// be collapsed into won=false.
 	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
 
-	// MarkInputRequired flips working → input_required. Best-effort: a
-	// concurrent terminal transition wins.
+	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status
+	// back to failed, the attempt count back down, the launch failure recorded
+	// as the task's summary/result, and the wake-up debt reopened (the parent
+	// has not heard this ending). The attempt must roll back because Attempt's
+	// contract is "the runs this task has HAD" — a launch that failed before
+	// registering started nothing, and letting it stand would let a run of
+	// infrastructure failures exhaust the retry ceiling without a single retry
+	// executing.
 	//
-	// It and ReclaimWorking take no runID, unlike Finalize and the notify pair.
-	// Both move between NON-terminal states, which one attempt can only reach
-	// while it is the current one: a retry needs the task failed, so the
-	// previous attempt is finished before the next exists. Only a second
-	// process running a task this one has already declared dead could
-	// interleave them, which is the multi-process exposure Manager already
-	// documents rather than one this predicate would close.
-	MarkInputRequired(ctx context.Context, id string) error
+	// It applies only while runID is the current attempt and the row is still
+	// working; won=false means another writer moved the task first and its
+	// state stands.
+	ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (won bool, err error)
+
+	// MarkInputRequired flips working → input_required, only while runID is
+	// the task's current attempt. Best-effort: a concurrent terminal
+	// transition (or a newer attempt) wins.
+	//
+	// The runID predicate matches Finalize's, and for the same reason. These
+	// two once ran unbound ("a non-terminal state can only belong to the
+	// current attempt"), but an APPROVAL outlives the attempt that opened it:
+	// persisted before the pause lands on the row, it can survive a crash, a
+	// FailOrphans sweep and a retry — and then pause or cancel the attempt
+	// that replaced its own. Every attempt-scoped writer names its attempt.
+	MarkInputRequired(ctx context.Context, id, runID string) error
 	// ReclaimWorking flips input_required → working when an approval resumes
-	// the run. false means the task went terminal meanwhile and the resume
-	// must be abandoned.
-	ReclaimWorking(ctx context.Context, id string) (bool, error)
+	// the run, only while runID is the current attempt. false means the task
+	// went terminal, was retried past this attempt, or is not paused — the
+	// resume must be abandoned (and a stale approval discarded, not retried).
+	ReclaimWorking(ctx context.Context, id, runID string) (bool, error)
 
 	// ConsumeNotify cancels the wake-up debt: the model already has the result.
 	// It applies only while runID is the task's current attempt — a consume
@@ -220,11 +235,32 @@ func (s *InMemoryStore) RetryClaim(_ context.Context, id, newRunID string, maxAt
 	return true, nil
 }
 
-// MarkInputRequired implements Store.
-func (s *InMemoryStore) MarkInputRequired(_ context.Context, id string) error {
+// ReleaseRetryClaim implements Store.
+func (s *InMemoryStore) ReleaseRetryClaim(_ context.Context, id, runID, summary, result string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[id]; ok && t.Status == StatusWorking {
+	t, ok := s.tasks[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if t.Status != StatusWorking || t.RunID != runID {
+		return false, nil
+	}
+	t.Status = StatusFailed
+	// The claim counted a run that never happened; AttemptNo() floors at 1, so
+	// the rollback can never go below the original run.
+	t.Attempt = max(t.AttemptNo()-1, 1)
+	t.Summary, t.Result = summary, result
+	t.NotifyState = NotifyPending
+	t.UpdatedAt = time.Now().UTC()
+	return true, nil
+}
+
+// MarkInputRequired implements Store.
+func (s *InMemoryStore) MarkInputRequired(_ context.Context, id, runID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[id]; ok && t.Status == StatusWorking && t.RunID == runID {
 		t.Status = StatusInputRequired
 		t.UpdatedAt = time.Now().UTC()
 	}
@@ -232,14 +268,14 @@ func (s *InMemoryStore) MarkInputRequired(_ context.Context, id string) error {
 }
 
 // ReclaimWorking implements Store.
-func (s *InMemoryStore) ReclaimWorking(_ context.Context, id string) (bool, error) {
+func (s *InMemoryStore) ReclaimWorking(_ context.Context, id, runID string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.tasks[id]
 	if !ok {
 		return false, ErrNotFound
 	}
-	if t.Status != StatusInputRequired {
+	if t.Status != StatusInputRequired || t.RunID != runID {
 		return false, nil
 	}
 	t.Status = StatusWorking

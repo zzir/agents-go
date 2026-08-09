@@ -73,6 +73,13 @@ func (e ErrRetryLimit) Error() string {
 	return fmt.Sprintf("tasks: this task has already used its %d attempts; start a new task instead", e.Limit)
 }
 
+// ErrRetryConflict reports a retry that lost its claim to another writer — a
+// concurrent stop, or another process's retry — between the lock-guarded read
+// and the compare-and-set. The task's refreshed state travels back beside it,
+// and trying again is the remedy: a conflict, not a fault, so hosts map it to
+// 409 rather than 500.
+var ErrRetryConflict = errors.New("tasks: another writer claimed this task first; try again")
+
 // Config configures a Manager. Store, Sessions, Resolver and Launcher are
 // required.
 type Config struct {
@@ -389,7 +396,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		return nil, err
 	}
 	m.notifyUpdate(ctx, settled)
-	return m.infoOf(settled, spec.DisplayName), nil
+	return infoFrom(settled, spec.DisplayName), nil
 }
 
 // SpawnRequest describes a task to start.
@@ -431,7 +438,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	if rerr := m.notRetryable(t); rerr != nil {
 		// The task's own state travels with the refusal, so a caller can show
 		// what it actually is instead of only why it said no.
-		return m.infoOf(t, ""), rerr
+		return infoFrom(t, ""), rerr
 	}
 
 	live, err := m.cfg.Store.ListNonTerminal(ctx, t.ParentSessionID)
@@ -442,7 +449,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 		// A retry is a task coming back to life, so it queues behind the same
 		// ceiling a spawn does; exempting it would make retry the way around
 		// the cap.
-		return m.infoOf(t, ""), ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
+		return infoFrom(t, ""), ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
 	}
 
 	// Read the failure BEFORE the claim clears it: it is what tells the next
@@ -459,9 +466,9 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 			return nil, gerr
 		}
 		if rerr := m.notRetryable(cur); rerr != nil {
-			return m.infoOf(cur, ""), rerr
+			return infoFrom(cur, ""), rerr
 		}
-		return m.infoOf(cur, ""), errors.New("tasks: another writer claimed this task first; try again")
+		return infoFrom(cur, ""), ErrRetryConflict
 	}
 
 	defer m.beginLaunch(runID)()
@@ -485,28 +492,18 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	// The card is showing a failed task with a failure on it. Say now that it
 	// is working again, rather than at the end of a run that may take minutes.
 	m.notifyUpdate(ctx, updated)
-	return m.infoOf(updated, ""), nil
-}
-
-// Retryable reports whether a task's OWN state allows a retry: it failed, and
-// it has attempts left. A host offering a retry asks rather than infers —
-// "failed" alone does not answer it, since the ceiling is this Manager's
-// configuration and a task that has used every attempt looks the same from
-// outside.
-//
-// It deliberately says nothing about capacity. Retry also refuses when the
-// parent is at its live-task ceiling, and that is a transient condition which
-// can change between an offer being rendered and someone taking it — a
-// precomputed answer would be wrong as often as it was right. Such a refusal
-// is ErrTaskLimit, and it explains itself.
-func (m *Manager) Retryable(status Status, attempt int) bool {
-	return status == StatusFailed && max(attempt, 1) < m.cfg.MaxAttemptsPerTask
+	return infoFrom(updated, ""), nil
 }
 
 // MaxAttempts is the configured ceiling on a task's runs. A host that has to
 // answer "would a retry be allowed" about state it holds itself — a UI
-// tracking tasks live — takes the parameter rather than asking per task, so
-// its answer moves with the state instead of lagging a round trip behind it.
+// tracking tasks live — takes the parameter and derives the answer from the
+// status and attempt it already tracks, so it moves with the state instead of
+// lagging a round trip behind it. Deliberately a parameter and not a
+// precomputed boolean per task: capacity (the parent's live-task ceiling) can
+// change between an offer being rendered and someone taking it, so the only
+// honest precomputed answer would be wrong as often as right — that refusal
+// arrives as ErrTaskLimit from Retry itself, and it explains itself.
 func (m *Manager) MaxAttempts() int { return m.cfg.MaxAttemptsPerTask }
 
 // notRetryable explains why a task cannot be retried, or returns nil.
@@ -525,7 +522,10 @@ func (m *Manager) notRetryable(t *Task) error {
 //
 // Unlike Spawn's rollback there is no row to remove: the task existed before
 // this call and its history is real. What must not survive is the working
-// status — nothing is going to advance it.
+// status — nothing is going to advance it — or the claimed attempt: the run
+// never launched, and Attempt's contract is "the runs this task has had", so
+// ReleaseRetryClaim rolls the count back rather than letting infrastructure
+// failures spend the retry ceiling without a retry ever executing.
 //
 // The wake-up debt the new ending opens is deliberately left standing. Whether
 // the MODEL has heard is the caller's knowledge, not this function's: the
@@ -539,7 +539,7 @@ func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, c
 	// cancelled holds its slot until a restart sweeps it.
 	ctx = context.WithoutCancel(ctx)
 	full := "retry could not start: " + cause.Error()
-	won, err := m.cfg.Store.Finalize(ctx, taskID, runID, StatusFailed,
+	won, err := m.cfg.Store.ReleaseRetryClaim(ctx, taskID, runID,
 		truncateRunes(full, m.cfg.SummaryLimit), full)
 	if err != nil {
 		m.log.WarnContext(ctx, "failing a task whose retry never started",
@@ -563,7 +563,7 @@ func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, c
 		// parent would not hear the failure until something else ended a run.
 		m.DrainPending(ctx, t.ParentSessionID)
 	}
-	return m.infoOf(t, ""), wrapped
+	return infoFrom(t, ""), wrapped
 }
 
 // retryPrompt is what a retried run is asked to do.
@@ -630,12 +630,6 @@ func (m *Manager) consumeNotify(ctx context.Context, t *Task) {
 // infoOf is the public view of a task. It is a method because retryability is
 // the Manager's policy — the row knows its status and its attempt, not the
 // ceiling they are measured against.
-func (m *Manager) infoOf(t *Task, agent string) *Info {
-	info := infoFrom(t, agent)
-	info.Retryable = m.notRetryable(t) == nil
-	return info
-}
-
 // beginLaunch registers a run about to be launched, and returns the release
 // its caller must defer.
 func (m *Manager) beginLaunch(runID string) (release func()) {
@@ -748,11 +742,11 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 			// The row is in hand and it IS what the model is about to read, so
 			// the bound write needs no re-read.
 			m.consumeNotify(ctx, t)
-			return m.infoOf(t, ""), nil
+			return infoFrom(t, ""), nil
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return m.infoOf(t, ""), nil
+			return infoFrom(t, ""), nil
 		}
 		if !m.awaitFinish(ctx, taskID, remaining) {
 			// Context cancelled, or the wait ran out; report what it is now.
@@ -760,7 +754,7 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 			if err != nil {
 				return nil, err
 			}
-			return m.infoOf(t, ""), nil
+			return infoFrom(t, ""), nil
 		}
 	}
 }
@@ -781,9 +775,9 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 			if pass > 0 {
 				// The first pass lost the CAS and this one finds the task
 				// finished: whoever won recorded its ending, which stands.
-				return m.infoOf(t, ""), nil
+				return infoFrom(t, ""), nil
 			}
-			return m.infoOf(t, ""), ErrAlreadyFinal{Status: t.Status}
+			return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
 		}
 
 		early, won, err := m.stopAttempt(ctx, t, graceful)
@@ -791,7 +785,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 			return nil, err
 		}
 		if early {
-			return m.infoOf(t, ""), nil
+			return infoFrom(t, ""), nil
 		}
 		if !won {
 			// A retry reopened the task on a new run between the read and the
@@ -803,7 +797,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 			return nil, err
 		}
 		m.notifyUpdate(ctx, updated)
-		return m.infoOf(updated, ""), nil
+		return infoFrom(updated, ""), nil
 	}
 	// Two passes, two losses. Report the task as it stands rather than
 	// insisting: it is live, and saying otherwise would be a lie the UI shows.
@@ -811,7 +805,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 	if err != nil {
 		return nil, err
 	}
-	return m.infoOf(t, ""), nil
+	return infoFrom(t, ""), nil
 }
 
 // stopAttempt cancels the one attempt t names. early reports that the run took
@@ -994,8 +988,10 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 
 	if status == StatusInputRequired {
 		// Not terminal: the approval flow surfaces it and the resumed run lands
-		// back here with a final status.
-		if err := m.cfg.Store.MarkInputRequired(ctx, task.ID); err != nil {
+		// back here with a final status. Bound to this outcome's attempt: an
+		// approval that outlived its attempt must not pause the one that
+		// replaced it.
+		if err := m.cfg.Store.MarkInputRequired(ctx, task.ID, runID); err != nil {
 			m.log.WarnContext(ctx, "marking task input_required",
 				slog.String("task_id", task.ID), slog.String("error", err.Error()))
 		}

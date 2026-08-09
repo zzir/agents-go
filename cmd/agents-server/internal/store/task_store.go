@@ -178,13 +178,42 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	return false, nil
 }
 
+// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status back
+// to failed, the attempt count back down (the claimed run started nothing, and
+// attempt counts runs the task has HAD), the launch failure recorded, and the
+// wake-up debt reopened. One conditional UPDATE bound to the claimed run id,
+// like Finalize: only the claim's owner can release it.
+func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
+	res, err := s.db.NewUpdate().Model((*Task)(nil)).
+		Set("status = ?", "failed").
+		// The floor mirrors AttemptNo(): never below the original run.
+		Set("attempt = CASE WHEN attempt <= 1 THEN 1 ELSE attempt - 1 END").
+		Set("summary = ?", summary).
+		Set("result = ?", result).
+		Set("notify_state = ?", NotifyPending).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("run_id = ?", runID).
+		Where("status = ?", taskWorking).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("releasing the retry claim of task %s: %w", id, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // MarkInputRequired flips a working task to input_required (the run paused on
-// an approval). Best-effort CAS: a concurrent terminal transition wins.
-func (s *TaskStore) MarkInputRequired(ctx context.Context, id string) error {
+// an approval), only while runID is the current attempt — an approval can
+// outlive its attempt (crash before this mark, FailOrphans, retry), and it
+// must not pause the attempt that replaced its own. Best-effort CAS: a
+// concurrent terminal transition (or newer attempt) wins.
+func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) error {
 	if _, err := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("status = ?", taskInputRequired).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
+		Where("run_id = ?", runID).
 		Where("status = ?", taskWorking).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("marking task %s input_required: %w", id, err)
@@ -193,21 +222,34 @@ func (s *TaskStore) MarkInputRequired(ctx context.Context, id string) error {
 }
 
 // ReclaimWorking flips an input_required task back to working — the approve
-// path's exclusive claim against a concurrent stop. Reports whether this call
-// won; a false return means the task reached a terminal state meanwhile (it
-// was stopped or reaped) and the resume must be abandoned.
-func (s *TaskStore) ReclaimWorking(ctx context.Context, id string) (bool, error) {
+// path's exclusive claim against a concurrent stop — only while runID is the
+// current attempt. Reports whether this call won; false means the task went
+// terminal, was retried past this attempt (the approval is stale and must be
+// discarded, not retried), or is not paused. A task that does not exist is
+// ErrNotFound — a different answer, and the shipped stores must agree on it
+// (the conformance suite holds all three to that).
+func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("status = ?", taskWorking).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
+		Where("run_id = ?", runID).
 		Where("status = ?", taskInputRequired).
 		Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("reclaiming task %s: %w", id, err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	exists, eerr := s.db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
+	if eerr != nil {
+		return false, fmt.Errorf("reclaiming task %s: %w", id, eerr)
+	}
+	if !exists {
+		return false, ErrNotFound
+	}
+	return false, nil
 }
 
 // ConsumeNotify marks a pending wake-up as consumed: the model already pulled

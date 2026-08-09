@@ -270,8 +270,10 @@ func TestRetry_LaunchFailurePutsTheTaskBack(t *testing.T) {
 	if cur == nil {
 		t.Fatal("no task state came back with the launch failure")
 	}
-	if cur.Status != StatusFailed || cur.Attempt != 2 {
-		t.Errorf("reported %s attempt %d, want failed attempt 2", cur.Status, cur.Attempt)
+	// Attempt is back at 1: the claimed run never launched, so it never
+	// counted — infrastructure failures must not spend the retry ceiling.
+	if cur.Status != StatusFailed || cur.Attempt != 1 {
+		t.Errorf("reported %s attempt %d, want failed attempt 1 (the claim rolled back)", cur.Status, cur.Attempt)
 	}
 
 	after := h.get(t, info.TaskID)
@@ -298,6 +300,34 @@ func TestRetry_LaunchFailurePutsTheTaskBack(t *testing.T) {
 	}
 	if got := wakes[len(wakes)-1].Input; !strings.Contains(got, "retry could not start") {
 		t.Errorf("the wake-up does not carry the failure: %q", got)
+	}
+}
+
+// Launch failures do not spend the retry ceiling: however many times the
+// infrastructure refuses to start the run, the task keeps its attempts and a
+// later retry that does launch still succeeds.
+func TestRetry_LaunchFailuresDoNotSpendAttempts(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+	h.fail(t, info.TaskID, "boom")
+
+	h.launcher.err = errors.New("shutting down")
+	for range h.m.MaxAttempts() + 1 { // more failures than the ceiling has attempts
+		if _, err := h.m.Retry(ctx, info.TaskID); err == nil {
+			t.Fatal("retry reported success with no run started")
+		}
+	}
+	if got := h.get(t, info.TaskID).AttemptNo(); got != 1 {
+		t.Fatalf("attempt = %d after launch failures, want 1 — none of them ran", got)
+	}
+
+	h.launcher.err = nil
+	if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
+		t.Fatalf("retry after the launcher recovered: %v", err)
+	}
+	if got := h.get(t, info.TaskID).AttemptNo(); got != 2 {
+		t.Fatalf("attempt = %d, want 2 — the launched retry counts", got)
 	}
 }
 
@@ -807,7 +837,7 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 		h.canWake = false
 		info := h.spawn(t)
 		h.fail(t, info.TaskID, "boom")
-		stale := h.m.infoOf(h.get(t, info.TaskID), "") // terminal, attempt 1
+		stale := infoFrom(h.get(t, info.TaskID), "") // terminal, attempt 1
 
 		if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
 			t.Fatal(err)
@@ -877,52 +907,10 @@ func TestRetryable_IsAboutTheTaskNotTheParentsCapacity(t *testing.T) {
 	h.spawn(t)
 	h.spawn(t) // the parent is now full
 
-	if !h.m.Retryable(StatusFailed, 1) {
-		t.Error("a failed task with attempts left is not retryable")
-	}
 	if _, err := h.m.Retry(ctx, first.TaskID); !errors.As(err, new(ErrTaskLimit)) {
 		t.Fatalf("err = %v, want the capacity refusal to arrive at call time", err)
 	}
 	if h.m.MaxAttempts() != DefaultMaxAttemptsPerTask {
 		t.Errorf("MaxAttempts = %d, want the configured ceiling", h.m.MaxAttempts())
-	}
-}
-
-// A task that does not exist is a different answer from one that cannot be
-// claimed, and both shipped stores must agree — a caller written against one
-// backend has to be right on the other.
-func TestRetryClaim_MissingTaskIsNotFound(t *testing.T) {
-	ctx := context.Background()
-	s := NewInMemoryStore()
-	won, err := s.RetryClaim(ctx, "nope", "run2", 3)
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
-	}
-	if won {
-		t.Error("claimed a task that does not exist")
-	}
-}
-
-// A store-level guard, not only a Manager-level one: the ceiling has to hold
-// when two processes ask at once, and only the row can arbitrate that.
-func TestRetryClaim_EnforcesTheCeilingItself(t *testing.T) {
-	ctx := context.Background()
-	s := NewInMemoryStore()
-	task := &Task{ID: "t1", RunID: "run1", ParentSessionID: "p", ChildSessionID: "c",
-		Attempt: 3, Status: StatusFailed}
-	if err := s.Create(ctx, task); err != nil {
-		t.Fatal(err)
-	}
-
-	won, err := s.RetryClaim(ctx, "t1", "run2", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if won {
-		t.Error("claimed past the ceiling")
-	}
-	// Zero means no ceiling: a host that wants unlimited retries says so.
-	if won, err = s.RetryClaim(ctx, "t1", "run2", 0); err != nil || !won {
-		t.Errorf("unlimited claim: won=%v err=%v", won, err)
 	}
 }

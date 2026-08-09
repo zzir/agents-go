@@ -1,0 +1,351 @@
+// Package conformancetest holds the behavioral contract every tasks.Store
+// implementation must satisfy, as one reusable test suite — the same shape as
+// modelkit/conformancetest for Model implementations.
+//
+// It exists because the contract used to be enforced by three hand-written,
+// near-duplicate test files (the SDK's in-memory store, the server's, the
+// sessions module's) whose coverage drifted apart: each store had predicates
+// the others' tests locked and its own did not. A store passes this suite or
+// it does not implement the interface, whatever its comments claim.
+//
+// Store-SPECIFIC behavior stays in each store's own tests — above all the SQL
+// stores' session-generation predicates, which the in-memory store does not
+// have.
+package conformancetest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/zzir/agents-go/agents/tasks"
+)
+
+// Run exercises the tasks.Store contract against fresh stores from newStore.
+// Each subtest gets its own store, so implementations need no cross-test
+// cleanup.
+func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	// mk returns a working task with predictable ids: task "t<n>", run
+	// "t<n>-run", parent/child sessions named after it.
+	mk := func(n int) *tasks.Task {
+		id := fmt.Sprintf("t%d", n)
+		return &tasks.Task{
+			ID: id, RunID: id + "-run", Label: "job " + id,
+			ParentSessionID: "parent-" + id, ChildSessionID: "child-" + id,
+			Status: tasks.StatusWorking,
+		}
+	}
+	create := func(t *testing.T, s tasks.Store, n int) *tasks.Task {
+		t.Helper()
+		task := mk(n)
+		if err := s.Create(ctx, task); err != nil {
+			t.Fatalf("create %s: %v", task.ID, err)
+		}
+		return task
+	}
+
+	t.Run("create and read back", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		got, err := s.Get(ctx, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.RunID != task.RunID || got.Status != tasks.StatusWorking || got.Label != task.Label {
+			t.Fatalf("roundtrip lost fields: %+v", got)
+		}
+		if _, err := s.Get(ctx, "absent"); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
+		}
+		if got, err := s.ByChildSession(ctx, task.ChildSessionID); err != nil || got.ID != task.ID {
+			t.Fatalf("ByChildSession = %v, %v", got, err)
+		}
+	})
+
+	t.Run("finalize is a run-bound CAS", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		// The wrong run cannot end the attempt.
+		if won, err := s.Finalize(ctx, task.ID, "other-run", tasks.StatusFailed, "s", "r"); err != nil || won {
+			t.Fatalf("foreign finalize: won=%v err=%v, want a refusal", won, err)
+		}
+		won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "sum", "res")
+		if err != nil || !won {
+			t.Fatalf("finalize: won=%v err=%v", won, err)
+		}
+		got, _ := s.Get(ctx, task.ID)
+		if got.Status != tasks.StatusCompleted || got.Summary != "sum" || got.Result != "res" {
+			t.Fatalf("finalize did not land whole: %+v", got)
+		}
+		if got.NotifyState != tasks.NotifyPending {
+			t.Fatalf("notify state = %q, want pending — a terminal state owes its wake-up", got.NotifyState)
+		}
+		// Terminal is terminal: a second finalizer loses.
+		if won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "", ""); err != nil || won {
+			t.Fatalf("re-finalize: won=%v err=%v, want a refusal", won, err)
+		}
+	})
+
+	t.Run("retry claim reopens exactly one failed attempt", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		// Working: nothing to resume.
+		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || won {
+			t.Fatalf("claimed a working task: won=%v err=%v", won, err)
+		}
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "boom"); err != nil {
+			t.Fatal(err)
+		}
+		won, err := s.RetryClaim(ctx, task.ID, "run2", 3)
+		if err != nil || !won {
+			t.Fatalf("claim: won=%v err=%v", won, err)
+		}
+		got, _ := s.Get(ctx, task.ID)
+		if got.Status != tasks.StatusWorking || got.RunID != "run2" || got.AttemptNo() != 2 {
+			t.Fatalf("claim = %s/%s attempt %d, want working/run2 attempt 2", got.Status, got.RunID, got.AttemptNo())
+		}
+		if got.Summary != "" || got.Result != "" || got.NotifyState != tasks.NotifyNone {
+			t.Fatalf("the failed attempt survived the claim: %+v", got)
+		}
+		// Unknown id is a different answer from a refused claim.
+		if _, err := s.RetryClaim(ctx, "absent", "run", 3); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("retry claim enforces the ceiling in the store", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		// Attempt 1 → 2 → 3, refused at a ceiling of 3.
+		for want := 2; want <= 3; want++ {
+			if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", ""); err != nil {
+				t.Fatal(err)
+			}
+			if won, err := s.RetryClaim(ctx, task.ID, fmt.Sprintf("run%d", want), 3); err != nil || !won {
+				t.Fatalf("claim to attempt %d: won=%v err=%v", want, won, err)
+			}
+			if got, _ := s.Get(ctx, task.ID); got.AttemptNo() != want {
+				t.Fatalf("attempt = %d, want %d", got.AttemptNo(), want)
+			}
+		}
+		if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", ""); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := s.RetryClaim(ctx, task.ID, "run4", 3); err != nil || won {
+			t.Fatalf("claim past the ceiling: won=%v err=%v, want a refusal", won, err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.AttemptNo() != 3 {
+			t.Fatalf("attempt = %d, want it to stay at 3", got.AttemptNo())
+		}
+	})
+
+	t.Run("a zero attempt column reads as the first attempt", func(t *testing.T) {
+		s := newStore(t)
+		task := mk(1)
+		task.Attempt = 0 // an insert that never set the column
+		if err := s.Create(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", ""); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || !won {
+			t.Fatalf("claim: won=%v err=%v", won, err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.AttemptNo() != 2 {
+			t.Fatalf("attempt = %d, want 2 — zero counted as the first", got.AttemptNo())
+		}
+	})
+
+	t.Run("release retry claim rolls the attempt back", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", ""); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || !won {
+			t.Fatalf("claim: won=%v err=%v", won, err)
+		}
+		// Only the claim's owner can release it.
+		if won, err := s.ReleaseRetryClaim(ctx, task.ID, "other-run", "s", "r"); err != nil || won {
+			t.Fatalf("foreign release: won=%v err=%v, want a refusal", won, err)
+		}
+		won, err := s.ReleaseRetryClaim(ctx, task.ID, "run2", "never started", "never started")
+		if err != nil || !won {
+			t.Fatalf("release: won=%v err=%v", won, err)
+		}
+		got, _ := s.Get(ctx, task.ID)
+		if got.Status != tasks.StatusFailed || got.AttemptNo() != 1 {
+			t.Fatalf("after release: %s attempt %d, want failed attempt 1", got.Status, got.AttemptNo())
+		}
+		if got.NotifyState != tasks.NotifyPending || got.Summary != "never started" {
+			t.Fatalf("release did not record the failure: %+v", got)
+		}
+		// Released, the row is failed — nothing left to undo.
+		if won, err := s.ReleaseRetryClaim(ctx, task.ID, "run2", "s", "r"); err != nil || won {
+			t.Fatalf("double release: won=%v err=%v, want a refusal", won, err)
+		}
+	})
+
+	t.Run("pause and reclaim are attempt-bound", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		// A stale attempt's mark is a silent no-op.
+		if err := s.MarkInputRequired(ctx, task.ID, "other-run"); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.Status != tasks.StatusWorking {
+			t.Fatalf("stale mark paused the task: %s", got.Status)
+		}
+		if err := s.MarkInputRequired(ctx, task.ID, task.RunID); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.Status != tasks.StatusInputRequired {
+			t.Fatalf("mark did not pause: %s", got.Status)
+		}
+		// A stale attempt cannot reclaim; the current one can, once.
+		if ok, err := s.ReclaimWorking(ctx, task.ID, "other-run"); err != nil || ok {
+			t.Fatalf("stale reclaim: ok=%v err=%v, want a refusal", ok, err)
+		}
+		if ok, err := s.ReclaimWorking(ctx, task.ID, task.RunID); err != nil || !ok {
+			t.Fatalf("reclaim: ok=%v err=%v", ok, err)
+		}
+		// Terminal beats a late reclaim.
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCancelled, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		if ok, _ := s.ReclaimWorking(ctx, task.ID, task.RunID); ok {
+			t.Fatal("reclaimed a terminal task")
+		}
+		if _, err := s.ReclaimWorking(ctx, "absent", "run"); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("notify writes are attempt-bound and pending-only", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "done", ""); err != nil {
+			t.Fatal(err)
+		}
+		// The wrong attempt cannot settle the debt.
+		if err := s.ConsumeNotify(ctx, task.ID, "other-run"); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.NotifyState != tasks.NotifyPending {
+			t.Fatalf("foreign consume settled the debt: %q", got.NotifyState)
+		}
+		if err := s.MarkNotifyDelivered(ctx, task.ID, task.RunID); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.Get(ctx, task.ID)
+		if got.NotifyState != tasks.NotifyDelivered {
+			t.Fatalf("notify state = %q, want delivered", got.NotifyState)
+		}
+		// Delivered is settled: a later consume must not rewrite it.
+		if err := s.ConsumeNotify(ctx, task.ID, task.RunID); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.NotifyState != tasks.NotifyDelivered {
+			t.Fatalf("consume rewrote a settled debt: %q", got.NotifyState)
+		}
+	})
+
+	t.Run("pending notifications list oldest first, parents dedup", func(t *testing.T) {
+		s := newStore(t)
+		a, b := mk(1), mk(2)
+		b.ParentSessionID = a.ParentSessionID // same parent, two debts
+		for _, task := range []*tasks.Task{a, b} {
+			if err := s.Create(ctx, task); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "done", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pending, err := s.ListPendingNotify(ctx, a.ParentSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pending) != 2 || pending[0].ID != a.ID || pending[1].ID != b.ID {
+			t.Fatalf("pending = %+v, want [t1 t2] oldest first", pending)
+		}
+		parents, err := s.PendingNotifyParents(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parents) != 1 || parents[0] != a.ParentSessionID {
+			t.Fatalf("parents = %v, want the one parent once", parents)
+		}
+	})
+
+	t.Run("fail orphans keeps paused tasks", func(t *testing.T) {
+		s := newStore(t)
+		working, paused := create(t, s, 1), create(t, s, 2)
+		if err := s.MarkInputRequired(ctx, paused.ID, paused.RunID); err != nil {
+			t.Fatal(err)
+		}
+		n, err := s.FailOrphans(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("failed %d, want 1 — the paused task is not an orphan", n)
+		}
+		if got, _ := s.Get(ctx, working.ID); got.Status != tasks.StatusFailed || got.NotifyState != tasks.NotifyPending {
+			t.Fatalf("orphan = %+v, want failed and owing a wake-up", got)
+		}
+		if got, _ := s.Get(ctx, paused.ID); got.Status != tasks.StatusInputRequired {
+			t.Fatalf("paused task = %s, want input_required preserved", got.Status)
+		}
+	})
+
+	t.Run("listings and delete", func(t *testing.T) {
+		s := newStore(t)
+		a, b := mk(1), mk(2)
+		b.ParentSessionID = a.ParentSessionID
+		for _, task := range []*tasks.Task{a, b} {
+			if err := s.Create(ctx, task); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.Finalize(ctx, a.ID, a.RunID, tasks.StatusCompleted, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		live, err := s.ListNonTerminal(ctx, a.ParentSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(live) != 1 || live[0].ID != b.ID {
+			t.Fatalf("non-terminal = %+v, want just t2", live)
+		}
+		all, err := s.ListByParent(ctx, a.ParentSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(all) != 2 || all[0].ID != b.ID {
+			t.Fatalf("by parent = %+v, want [t2 t1] newest first", all)
+		}
+		if err := s.Delete(ctx, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Get(ctx, a.ID); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("deleted task: err = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// currentRun reads the task's live run id — the ceiling walk re-finalizes
+// whichever attempt the row is on.
+func currentRun(t *testing.T, s tasks.Store, id string) string {
+	t.Helper()
+	got, err := s.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got.RunID
+}

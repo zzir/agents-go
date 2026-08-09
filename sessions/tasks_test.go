@@ -208,7 +208,7 @@ func TestSQLTaskStore_ListNonTerminalMatchesStatusTerminal(t *testing.T) {
 		case tasks.StatusWorking:
 			// Created working already.
 		case tasks.StatusInputRequired:
-			if err := s.MarkInputRequired(ctx, id); err != nil {
+			if err := s.MarkInputRequired(ctx, id, id+"-run"); err != nil {
 				t.Fatal(err)
 			}
 		default:
@@ -241,65 +241,5 @@ func TestSQLTaskStore_ListNonTerminalMatchesStatusTerminal(t *testing.T) {
 		if got[id] != want[id] {
 			t.Errorf("status %q: listed as live = %v, but Terminal() says live = %v", st, got[id], want[id])
 		}
-	}
-}
-
-// A task paused on an approval is not an orphan: its approval persists.
-func TestSQLTaskStore_FailOrphansKeepsInputRequired(t *testing.T) {
-	ctx := context.Background()
-	s := newTaskStore(t)
-	if err := s.Create(ctx, mkTask("t1", "parent", "c1")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Create(ctx, mkTask("t2", "parent", "c2")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkInputRequired(ctx, "t2"); err != nil {
-		t.Fatal(err)
-	}
-
-	n, err := s.FailOrphans(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Errorf("failed %d, want 1", n)
-	}
-	t2, err := s.Get(ctx, "t2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if t2.Status != tasks.StatusInputRequired {
-		t.Errorf("status = %q, want input_required preserved", t2.Status)
-	}
-	t1, err := s.Get(ctx, "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if t1.Status != tasks.StatusFailed || t1.NotifyState != tasks.NotifyPending {
-		t.Errorf("orphan = %+v, want failed and owing a wake-up", t1)
-	}
-}
-
-func TestSQLTaskStore_ReclaimWorking(t *testing.T) {
-	ctx := context.Background()
-	s := newTaskStore(t)
-	if err := s.Create(ctx, mkTask("t1", "parent", "c1")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkInputRequired(ctx, "t1"); err != nil {
-		t.Fatal(err)
-	}
-	ok, err := s.ReclaimWorking(ctx, "t1")
-	if err != nil || !ok {
-		t.Fatalf("reclaim: ok=%v err=%v", ok, err)
-	}
-	// A task that went terminal meanwhile cannot be reclaimed — the resume
-	// must be abandoned.
-	if _, err := s.Finalize(ctx, "t1", "t1-run", tasks.StatusCancelled, "", ""); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := s.ReclaimWorking(ctx, "t1"); ok {
-		t.Error("reclaimed a terminal task")
 	}
 }

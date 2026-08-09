@@ -27,11 +27,12 @@ func NewTaskAdapter(s *TaskStore) *TaskAdapter { return &TaskAdapter{store: s} }
 // Inherit is the configuration snapshot the SDK carries opaquely and hands back
 // when it launches a run — this server's agent config and sandbox.
 type Inherit struct {
-	// AgentConfigID and SandboxID are the SPAWNING run's setup, replayed when
-	// the parent is woken so the notification reaches the agent that asked for
-	// the task.
+	// AgentConfigID, SandboxID and WorkDir are the SPAWNING run's setup,
+	// replayed when the parent is woken so the notification reaches the agent
+	// that asked for the task.
 	AgentConfigID string `json:"agent_config_id,omitempty"`
 	SandboxID     string `json:"sandbox_id,omitempty"`
+	WorkDir       string `json:"work_dir,omitempty"`
 	// TaskAgentID is the agent the task itself runs as, which is usually a
 	// different one.
 	TaskAgentID string `json:"task_agent_id,omitempty"`
@@ -76,6 +77,7 @@ func toSDK(t *Task) *tasks.Task {
 		Inherit: EncodeInherit(Inherit{
 			AgentConfigID: t.ParentAgentConfigID,
 			SandboxID:     t.ParentSandboxID,
+			WorkDir:       t.ParentWorkDir,
 			TaskAgentID:   t.AgentConfigID,
 		}),
 		Status:      tasks.Status(t.Status),
@@ -113,6 +115,7 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		AgentConfigID:       inherit.TaskAgentID,
 		ParentAgentConfigID: inherit.AgentConfigID,
 		ParentSandboxID:     inherit.SandboxID,
+		ParentWorkDir:       inherit.WorkDir,
 		Attempt:             t.Attempt,
 		Status:              string(t.Status),
 		NotifyState:         string(t.NotifyState),
@@ -164,14 +167,21 @@ func (a *TaskAdapter) RetryClaim(ctx context.Context, id, newRunID string, maxAt
 	return won, mapNotFound(err)
 }
 
+// ReleaseRetryClaim implements tasks.Store.
+func (a *TaskAdapter) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
+	won, err := a.store.ReleaseRetryClaim(ctx, id, runID, summary, result)
+	return won, mapNotFound(err)
+}
+
 // MarkInputRequired implements tasks.Store.
-func (a *TaskAdapter) MarkInputRequired(ctx context.Context, id string) error {
-	return a.store.MarkInputRequired(ctx, id)
+func (a *TaskAdapter) MarkInputRequired(ctx context.Context, id, runID string) error {
+	return a.store.MarkInputRequired(ctx, id, runID)
 }
 
 // ReclaimWorking implements tasks.Store.
-func (a *TaskAdapter) ReclaimWorking(ctx context.Context, id string) (bool, error) {
-	return a.store.ReclaimWorking(ctx, id)
+func (a *TaskAdapter) ReclaimWorking(ctx context.Context, id, runID string) (bool, error) {
+	won, err := a.store.ReclaimWorking(ctx, id, runID)
+	return won, mapNotFound(err)
 }
 
 // ConsumeNotify implements tasks.Store.

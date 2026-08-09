@@ -615,7 +615,7 @@ func TestOnRunFinished_InputRequiredIsNotTerminal(t *testing.T) {
 	}
 
 	// The resumed run lands back here with a final status.
-	if ok, err := h.store.ReclaimWorking(ctx, info.TaskID); err != nil || !ok {
+	if ok, err := h.store.ReclaimWorking(ctx, info.TaskID, h.get(t, info.TaskID).RunID); err != nil || !ok {
 		t.Fatalf("reclaim: ok=%v err=%v", ok, err)
 	}
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "approved and done"})
@@ -741,7 +741,7 @@ func TestStop_PausedTaskIsClaimedBeforeTheHostIsTold(t *testing.T) {
 		t.Errorf("host saw status %v when told to stop, want cancelled — the claim came too late", order)
 	}
 	// And a concurrent approve loses.
-	if ok, _ := h.store.ReclaimWorking(ctx, info.TaskID); ok {
+	if ok, _ := h.store.ReclaimWorking(ctx, info.TaskID, h.get(t, info.TaskID).RunID); ok {
 		t.Error("an approval reclaimed a task that was already cancelled")
 	}
 }
