@@ -32,7 +32,7 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 		return nil, err
 	}
 	result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{
-		SourcePath: containerPath(p),
+		SourcePath: s.containerPath(p),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("docker sandbox: read file: %w", err)
@@ -55,7 +55,7 @@ func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []by
 	}
 	// The tar is built with root-relative names and extracted at "/", so an
 	// absolute in-container path works the same as a workdir-relative one.
-	tarball, terr := buildTar(map[string]string{containerPath(p)[1:]: string(content)})
+	tarball, terr := buildTar(map[string]string{s.containerPath(p)[1:]: string(content)})
 	if terr != nil {
 		return terr
 	}
@@ -69,7 +69,7 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	if err := s.ensureImage(ctx); err != nil {
 		return err
 	}
-	full := containerPath(p)
+	full := s.containerPath(p)
 	if full == "/" {
 		return fmt.Errorf("docker sandbox: invalid file path %q", p)
 	}
@@ -113,7 +113,7 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 }
 
 func (s *Sandbox) removeFileContainer(ctx context.Context, p string) error {
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"rm", "--", containerPath(p)}})
+	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"rm", "--", s.containerPath(p)}})
 	if err != nil {
 		return err
 	}
@@ -124,8 +124,8 @@ func (s *Sandbox) removeFileContainer(ctx context.Context, p string) error {
 }
 
 func (s *Sandbox) renameContainer(ctx context.Context, oldPath, newPath string) error {
-	oc := containerPath(oldPath)
-	nc := containerPath(newPath)
+	oc := s.containerPath(oldPath)
+	nc := s.containerPath(newPath)
 	if parent := path.Dir(nc); parent != "/" {
 		if res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
 			return err
@@ -147,7 +147,7 @@ func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.Dir
 	if err := s.ensureImage(ctx); err != nil {
 		return nil, err
 	}
-	dir := containerPath(p)
+	dir := s.containerPath(p)
 	// NUL-terminate each record instead of newline: a filename may contain
 	// a newline (or a tab), which would otherwise split into a phantom
 	// entry or corrupt the next line. The name is the final \t-field, so a
@@ -172,15 +172,16 @@ func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.Dir
 
 // containerPath maps a model-supplied path onto the container filesystem with
 // shell semantics, mirroring exec (whose cwd is the working directory): an
-// absolute path is used as-is, a relative one resolves under workDir. The
+// absolute path is used as-is, a relative one resolves under the container's
+// working directory (ContainerWorkDir — the directory exec runs in). The
 // container itself is the isolation boundary — exec already reaches the whole
 // container filesystem — so persistent-mode file operations share exec's view
 // rather than pretending to a narrower one.
-func containerPath(p string) string {
+func (s *Sandbox) containerPath(p string) string {
 	if path.IsAbs(p) {
 		return path.Clean(p)
 	}
-	return path.Join(workDir, p)
+	return path.Join(s.containerWorkDir(), p)
 }
 
 // exclusiveCreateScripts builds the in-container shell scripts for an atomic

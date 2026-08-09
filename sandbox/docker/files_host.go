@@ -20,7 +20,7 @@ import (
 // hostRoot opens the os.Root guarding the bind-mounted working directory and
 // resolves p to a name relative to it. The caller closes the root.
 func (s *Sandbox) hostRoot(p string) (*os.Root, string, error) {
-	rel, err := rootRel(p)
+	rel, err := s.rootRel(p)
 	if err != nil {
 		return nil, "", err
 	}
@@ -108,11 +108,11 @@ func (s *Sandbox) removeFileHost(p string) error {
 func (s *Sandbox) renameHost(oldPath, newPath string) error {
 	// Both names are validated before the root is opened, so a bad destination
 	// is rejected the same way whether or not WorkDir can be opened.
-	from, err := rootRel(oldPath)
+	from, err := s.rootRel(oldPath)
 	if err != nil {
 		return err
 	}
-	to, err := rootRel(newPath)
+	to, err := s.rootRel(newPath)
 	if err != nil {
 		return err
 	}
@@ -168,12 +168,21 @@ func (s *Sandbox) listDirHost(p string) ([]sandbox.DirEntry, error) {
 // the in-container mount point (/workspace, the only view the model ever
 // sees) and is translated to its host-side name. Anything else is refused
 // with sandbox.ErrOutsideWorkDir rather than silently re-rooted.
-func rootRel(p string) (string, error) {
+//
+// Relative paths resolve against the container-side working directory
+// (ContainerWorkDir), not the mount point — the same directory exec runs in —
+// while absolute /workspace/... paths keep addressing the whole mount, again
+// matching what a shell inside the container can reach.
+func (s *Sandbox) rootRel(p string) (string, error) {
 	if !path.IsAbs(p) {
 		if p == "" {
+			p = "."
+		}
+		joined := path.Join(s.subDir(), p)
+		if joined == "" || joined == "." {
 			return ".", nil
 		}
-		return filepath.FromSlash(p), nil
+		return filepath.FromSlash(joined), nil
 	}
 	clean := path.Clean(p)
 	if clean == workDir {

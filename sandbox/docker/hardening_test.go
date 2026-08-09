@@ -26,6 +26,78 @@ func TestBuildHostConfig_LogCapped(t *testing.T) {
 	}
 }
 
+// The adoption fingerprint: equivalent configurations hash alike, and every
+// security-relevant option changes it — that is what stops adoptNamed taking
+// over a same-named container created under a laxer policy.
+func TestConfigFingerprint(t *testing.T) {
+	base := Options{Image: "img", User: "65534:65534", WorkDir: "/srv/data"}
+	fp := func(o Options) string { return (&Sandbox{opts: o}).configFingerprint() }
+
+	// Equivalent spellings of the bind source hash alike.
+	same := base
+	same.WorkDir = "/srv/data/"
+	if fp(same) != fp(base) {
+		t.Error("equivalent WorkDir spellings produced different fingerprints")
+	}
+	// The explicit PIDs default and the implicit one are the same container.
+	same = base
+	same.Limits.PIDs = 128
+	if fp(same) != fp(base) {
+		t.Error("the default PIDs limit spelled explicitly changed the fingerprint")
+	}
+	// UserUnset makes any User value moot (the container runs the image
+	// default either way), so a leftover User must not split the fingerprint.
+	unsetA, unsetB := base, base
+	unsetA.UserUnset = true
+	unsetB.UserUnset, unsetB.User = true, "leftover:value"
+	if fp(unsetA) != fp(unsetB) {
+		t.Error("a moot User value under UserUnset changed the fingerprint")
+	}
+
+	diff := map[string]Options{}
+	o := base
+	o.Image = "other"
+	diff["image"] = o
+	o = base
+	o.Network = true
+	diff["network"] = o
+	o = base
+	o.User = "0:0"
+	diff["user"] = o
+	o = base
+	o.UserUnset = true
+	diff["userUnset"] = o
+	o = base
+	o.Runtime = "runsc"
+	diff["runtime"] = o
+	o = base
+	o.WorkDir = "/elsewhere"
+	diff["workdir"] = o
+	o = base
+	o.Limits.MemoryBytes = 1 << 30
+	diff["memory"] = o
+	o = base
+	o.Limits.CPUs = 2
+	diff["cpus"] = o
+	o = base
+	o.Limits.PIDs = 64
+	diff["pids"] = o
+	for name, opt := range diff {
+		if fp(opt) == fp(base) {
+			t.Errorf("changing %s did not change the fingerprint", name)
+		}
+	}
+}
+
+// The fingerprint is stamped on the container so adoptNamed can verify it.
+func TestPersistentConfig_CarriesFingerprintLabel(t *testing.T) {
+	s := &Sandbox{opts: Options{Image: "img", User: "65534:65534"}}
+	cfg, _ := s.buildPersistentConfig()
+	if got := cfg.Labels[fingerprintLabel]; got != s.configFingerprint() {
+		t.Errorf("label = %q, want the config fingerprint %q", got, s.configFingerprint())
+	}
+}
+
 // New defaults User to 65534:65534 (unless UserUnset), and persistent mode
 // must actually apply it — the security default documented on Options.User.
 func TestPersistentConfig_DefaultsToNobody(t *testing.T) {

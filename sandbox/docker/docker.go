@@ -19,10 +19,15 @@ package docker
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,7 +53,39 @@ const (
 	// caller is capped separately (ExecRequest.MaxOutputBytes), and well below
 	// this.
 	logMaxSize = "10m"
+	// fingerprintLabel marks a persistent container as created by this package,
+	// carrying a hash of every security-relevant option it was created from.
+	// adoptNamed requires an exact match: a name conflict may only be resolved
+	// by taking over a container this package created from the SAME
+	// configuration — never a foreign container, and never one created under a
+	// laxer policy (network on, root user, no limits) that the current options
+	// no longer allow.
+	fingerprintLabel = "dev.agents-go.sandbox.fingerprint"
 )
+
+// configFingerprint hashes the options that decide what a persistent container
+// IS security-wise: image, runtime, user, network, the bind source, and the
+// resource limits. ContainerWorkDir is deliberately excluded — persistent mode
+// passes the working directory per exec, so it does not change the container.
+// Effective values are hashed, not raw ones (New already resolved User, and
+// UserUnset makes any User value moot — buildPersistentConfig ignores it; the
+// PIDs default is applied here as in buildHostConfig), so equivalent
+// configurations produce one fingerprint.
+func (s *Sandbox) configFingerprint() string {
+	pids := s.opts.Limits.PIDs
+	if pids == 0 {
+		pids = 128
+	}
+	user := s.opts.User
+	if s.opts.UserUnset {
+		user = ""
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "image=%s\nruntime=%s\nuser=%s\nuserUnset=%t\nnetwork=%t\nworkdir=%s\nmemory=%d\ncpus=%v\npids=%d\n",
+		s.opts.Image, s.opts.Runtime, user, s.opts.UserUnset, s.opts.Network,
+		filepath.Clean(s.opts.WorkDir), s.opts.Limits.MemoryBytes, s.opts.Limits.CPUs, pids)
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
 
 // Options configures the Docker sandbox.
 type Options struct {
@@ -81,10 +118,34 @@ type Options struct {
 	// When set, it replaces the anonymous volume so the container sees (and can
 	// modify) the host files directly. Typically used with Persistent mode.
 	WorkDir string
+	// ContainerWorkDir is the working directory commands run in INSIDE the
+	// container: /workspace itself (the default when empty) or a subdirectory
+	// of it — the mount point never moves, but a session may work in one
+	// project subtree of the mounted directory. Anything outside /workspace is
+	// rejected by New. Relative paths given to the file tools resolve against
+	// it, keeping them in the same view as exec.
+	ContainerWorkDir string
 	// MaxReadFileBytes caps how many bytes ReadFile returns; larger files fail
 	// with sandbox.ErrReadLimitExceeded instead of being loaded into host
 	// memory. Zero (or negative) means sandbox.DefaultMaxReadFileBytes.
 	MaxReadFileBytes int64
+}
+
+// containerWorkDir is the directory commands run in inside the container:
+// Options.ContainerWorkDir (validated by New to be /workspace or below it),
+// or the /workspace mount point itself.
+func (s *Sandbox) containerWorkDir() string {
+	if s.opts.ContainerWorkDir != "" {
+		return s.opts.ContainerWorkDir
+	}
+	return workDir
+}
+
+// subDir is containerWorkDir relative to the /workspace mount point ("" when
+// they coincide) — the offset the host-side file operations apply so relative
+// paths resolve in the same directory exec runs in.
+func (s *Sandbox) subDir() string {
+	return strings.TrimPrefix(strings.TrimPrefix(s.containerWorkDir(), workDir), "/")
 }
 
 // Sandbox is a Docker-backed sandbox.Sandbox.
@@ -106,6 +167,13 @@ type Sandbox struct {
 func New(opts Options) (*Sandbox, error) {
 	if opts.Image == "" {
 		return nil, fmt.Errorf("docker sandbox: Image is required")
+	}
+	if opts.ContainerWorkDir != "" {
+		clean := path.Clean(opts.ContainerWorkDir)
+		if clean != workDir && !strings.HasPrefix(clean, workDir+"/") {
+			return nil, fmt.Errorf("docker sandbox: ContainerWorkDir %q must be %s or a subdirectory of it", opts.ContainerWorkDir, workDir)
+		}
+		opts.ContainerWorkDir = clean
 	}
 	// API-version negotiation is on by default in the moby client.
 	clientOpts := []client.Opt{client.FromEnv}
@@ -208,10 +276,30 @@ func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 // createContainer creates, seeds and starts the persistent container. It must
 // be called with s.mu held; on success s.containerID is the new ID.
 func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
+	if s.opts.WorkDir != "" {
+		// Linux dockerd auto-creates a missing bind source; Docker Desktop
+		// (macOS/Windows) refuses with "bind source path does not exist".
+		// Create it up front so behavior does not depend on the platform.
+		if err := os.MkdirAll(s.opts.WorkDir, 0o755); err != nil {
+			return "", fmt.Errorf("docker sandbox: creating bind source %s: %w", s.opts.WorkDir, err)
+		}
+	}
 	cfg, hostCfg := s.buildPersistentConfig()
 	createOpts := client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, Name: s.opts.ContainerName}
 	created, err := s.cli.ContainerCreate(ctx, createOpts)
 	if err != nil {
+		// A fixed ContainerName can collide with a container WE left behind —
+		// a previous process run, or another Sandbox instance sharing the
+		// name. Adopt it when it matches what we would have created; a
+		// mismatched holder stays a hard error.
+		if s.opts.ContainerName != "" && cerrdefs.IsConflict(err) {
+			id, aerr := s.adoptNamed(ctx)
+			if aerr != nil {
+				return "", fmt.Errorf("docker sandbox: create: %w (name %q held by an incompatible container: %v)", err, s.opts.ContainerName, aerr)
+			}
+			s.containerID = id
+			return id, nil
+		}
 		return "", fmt.Errorf("docker sandbox: create: %w", err)
 	}
 	id := created.ID
@@ -238,6 +326,57 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	}
 	s.containerID = id
 	return id, nil
+}
+
+// adoptNamed takes over the existing container holding our fixed name,
+// provided it proves to be OURS from the SAME configuration: the fingerprint
+// label createContainer stamps must match the current options exactly. Image
+// and bind-mount are still checked first for their specific diagnostics; the
+// fingerprint then covers everything else that decides what the container is
+// security-wise (network, user, runtime, limits) — adopting on image+mount
+// alone would let a container created under a laxer policy (network on, root
+// user, no limits) silently serve a config that no longer allows any of it.
+// The container's own WorkingDir does not matter — persistent mode passes the
+// working directory per exec. A stopped match is started.
+func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
+	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", err
+	}
+	c := info.Container
+	if c.Config == nil || c.Config.Image != s.opts.Image {
+		image := ""
+		if c.Config != nil {
+			image = c.Config.Image
+		}
+		return "", fmt.Errorf("it runs image %q, want %q", image, s.opts.Image)
+	}
+	if s.opts.WorkDir != "" {
+		src := ""
+		for _, m := range c.Mounts {
+			if m.Destination == workDir {
+				src = m.Source
+				break
+			}
+		}
+		if filepath.Clean(src) != filepath.Clean(s.opts.WorkDir) {
+			return "", fmt.Errorf("it mounts %q at %s, want %q", src, workDir, s.opts.WorkDir)
+		}
+	}
+	switch got := c.Config.Labels[fingerprintLabel]; got {
+	case s.configFingerprint():
+		// Ours, same configuration.
+	case "":
+		return "", fmt.Errorf("it was not created by this sandbox (no %s label); remove or rename the container", fingerprintLabel)
+	default:
+		return "", fmt.Errorf("it was created from a different configuration (network, user, runtime or limits changed); remove the container to recreate it under the current one")
+	}
+	if c.State == nil || !c.State.Running {
+		if _, err := s.cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err != nil {
+			return "", fmt.Errorf("starting it: %w", err)
+		}
+	}
+	return c.ID, nil
 }
 
 // Exec implements sandbox.Sandbox.
@@ -320,7 +459,7 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 	marker := newExecMarker()
 	execOpts := client.ExecCreateOptions{
 		Cmd:          req.Cmd,
-		WorkingDir:   workDir,
+		WorkingDir:   s.containerWorkDir(),
 		Env:          append(envSlice(req.Env), execMarkerEnv+"="+marker),
 		AttachStdout: true,
 		AttachStderr: true,
@@ -596,7 +735,7 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 	cfg := &container.Config{
 		Image:      s.opts.Image,
 		Entrypoint: req.Cmd,
-		WorkingDir: workDir,
+		WorkingDir: s.containerWorkDir(),
 		Env:        envSlice(req.Env),
 		Tty:        false,
 	}
@@ -617,8 +756,11 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 	cfg := &container.Config{
 		Image:      s.opts.Image,
 		Entrypoint: []string{"sleep", "infinity"},
-		WorkingDir: workDir,
+		WorkingDir: s.containerWorkDir(),
 		Tty:        false,
+		// The ownership stamp adoptNamed verifies before taking over a
+		// same-named container (see fingerprintLabel).
+		Labels: map[string]string{fingerprintLabel: s.configFingerprint()},
 	}
 	if !s.opts.UserUnset && s.opts.User != "" {
 		cfg.User = s.opts.User

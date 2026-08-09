@@ -45,7 +45,7 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	size := client.ConsoleSize{Height: uint(opts.EffectiveRows()), Width: uint(opts.EffectiveCols())}
 	created, err := s.cli.ExecCreate(ctx, id, client.ExecCreateOptions{
 		Cmd:          shell,
-		WorkingDir:   workDir,
+		WorkingDir:   s.containerWorkDir(),
 		Env:          append(envSlice(opts.Env), "TERM="+opts.EffectiveTerm(), execMarkerEnv+"="+marker),
 		TTY:          true,
 		ConsoleSize:  size,
