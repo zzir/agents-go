@@ -11,13 +11,10 @@ import (
 // ErrNotFound is returned by Store lookups for an unknown task.
 var ErrNotFound = errors.New("tasks: not found")
 
-// Store persists tasks.
-//
-// It requires TRANSACTIONAL semantics, and that is a requirement rather than a
-// preference: Finalize is a compare-and-set, and correctness depends on it.
-// Two finalizers race routinely — a run completing while a stop is in flight,
-// a startup sweep meeting a live run — and without the CAS both write, so a
-// terminal state gets overwritten and the parent is woken twice or not at all.
+// Store persists tasks. It requires TRANSACTIONAL semantics: Finalize is a
+// compare-and-set and correctness depends on it — two finalizers race routinely
+// (a run completing while a stop is in flight, a startup sweep meeting a live
+// run), and without the CAS both write and a terminal state is lost.
 //
 // The SDK ships InMemoryStore; the sessions module ships a SQL one. There is
 // deliberately no file-backed implementation: it could not offer the guarantee.
@@ -32,53 +29,39 @@ type Store interface {
 	// still on the attempt named by runID.
 	//
 	// won=false means another finalizer already owned the transition, or the
-	// attempt being finalized is no longer the current one; the caller must do
-	// nothing further. Writing the three parts separately would let task_status
-	// observe a terminal task whose result is not there yet.
-	//
-	// The runID predicate is what RetryClaim costs: a task can leave a terminal
-	// state now, so "the row is non-terminal" no longer identifies WHICH
-	// attempt a finalizer observed. Without it, a stop that read the row before
-	// a retry would cancel the new attempt — while its run keeps executing,
-	// unkillable, its own result discarded for losing the CAS.
+	// attempt is no longer the current one; the caller must do nothing further.
+	// The runID predicate is what RetryClaim costs — without it, a stop that
+	// read the row before a retry would cancel the new attempt while its run
+	// keeps executing.
 	Finalize(ctx context.Context, id, runID string, st Status, summary, result string) (won bool, err error)
 
 	// RetryClaim reopens a failed task for another attempt, in one atomic
 	// transition and only while the task is failed and under maxAttempts
 	// (which counts the original run; <= 0 means no limit): status returns to
 	// working, run_id becomes newRunID, attempt increments, and the previous
-	// attempt's summary, result and wake-up debt are cleared — the debt because
-	// this task is no longer finished, so nothing is owed until it is again.
+	// attempt's summary, result and wake-up debt are cleared.
 	//
-	// won=false means the row exists but could not be claimed: it is not
-	// failed, it is out of attempts, or another retry won the race. A task that
-	// does not exist is ErrNotFound, which is a different answer and must not
-	// be collapsed into won=false.
+	// won=false means the row exists but could not be claimed: not failed, out
+	// of attempts, or another retry won the race. A task that does not exist is
+	// ErrNotFound — a different answer, not to be collapsed into won=false.
 	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
 
 	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status
 	// back to failed, the attempt count back down, the launch failure recorded
-	// as the task's summary/result, and the wake-up debt reopened (the parent
-	// has not heard this ending). The attempt must roll back because Attempt's
-	// contract is "the runs this task has HAD" — a launch that failed before
-	// registering started nothing, and letting it stand would let a run of
-	// infrastructure failures exhaust the retry ceiling without a single retry
-	// executing.
+	// as the summary/result, and the wake-up debt reopened (the parent has not
+	// heard this ending). The attempt rolls back because it counts the runs a
+	// task has HAD, and a launch that failed before registering started nothing.
 	//
 	// It applies only while runID is the current attempt and the row is still
 	// working; won=false means another writer moved the task first and its
 	// state stands.
 	ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (won bool, err error)
 
-	// MarkInputRequired flips working → input_required, only while runID is
-	// the task's current attempt. Best-effort: a concurrent terminal
-	// transition (or a newer attempt) wins.
-	//
-	// The runID predicate matches Finalize's, and for the same reason: an
-	// APPROVAL outlives the attempt that opened it — persisted before the
-	// pause lands on the row, it can survive a crash, a FailOrphans sweep
-	// and a retry, and would then pause or cancel the attempt that replaced
-	// its own. Every attempt-scoped writer names its attempt.
+	// MarkInputRequired flips working → input_required, only while runID is the
+	// task's current attempt. Best-effort: a concurrent terminal transition (or
+	// a newer attempt) wins. The runID predicate matches Finalize's — an
+	// approval outlives the attempt that opened it, and must not pause the one
+	// that replaced it.
 	MarkInputRequired(ctx context.Context, id, runID string) error
 	// ReclaimWorking flips input_required → working when an approval resumes
 	// the run, only while runID is the current attempt. false means the task
@@ -113,10 +96,8 @@ type Store interface {
 }
 
 // InMemoryStore is a goroutine-safe Store for tests and single-process use.
-//
-// It takes one lock for every operation rather than a finer scheme, because
-// the operations are short and the thing being protected is a state machine
-// where a torn read is a wrong answer, not a slow one.
+// One lock guards every operation: the operations are short and a torn read of
+// the state machine is a wrong answer, not a slow one.
 type InMemoryStore struct {
 	mu    sync.Mutex
 	tasks map[string]*Task
@@ -176,7 +157,6 @@ func (s *InMemoryStore) ListByParent(_ context.Context, parentSessionID string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Task
-	// Newest first, matching what a task list shows.
 	for i := len(s.order) - 1; i >= 0; i-- {
 		if t := s.tasks[s.order[i]]; t != nil && t.ParentSessionID == parentSessionID {
 			out = append(out, *t)
@@ -223,9 +203,8 @@ func (s *InMemoryStore) RetryClaim(_ context.Context, id, newRunID string, maxAt
 	t.Status = StatusWorking
 	t.RunID = newRunID
 	t.Attempt = t.AttemptNo() + 1
-	// The previous attempt's account of itself, cleared: it describes a run
-	// that is no longer this task's, and a card showing "failed: rate limited"
-	// beside a working badge reads as a task failing right now.
+	// The previous attempt's account, cleared: it describes a run that is no
+	// longer this task's.
 	t.Summary, t.Result = "", ""
 	// No longer finished, so nothing is owed. The next terminal state opens a
 	// fresh debt.

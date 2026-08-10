@@ -6,11 +6,8 @@ import (
 )
 
 // AgentResolver turns the agent name the model asked for into something
-// runnable.
-//
-// It is injected because "what is an agent called and where does its
-// configuration live" is the host's question, not the SDK's — a database row,
-// a config file, a map in main().
+// runnable. It is injected because where an agent's configuration lives is the
+// host's question, not the SDK's.
 type AgentResolver func(ctx context.Context, parentSessionID, agentName string) (Spec, error)
 
 // Spec is a resolved agent, opaque to the SDK.
@@ -39,30 +36,23 @@ type LaunchRequest struct {
 	Wake bool
 }
 
-// StopOutcome is what a host did with a stop request.
-//
-// "No error" is not enough to act on: a host asked to stop a run it has never
-// heard of has nothing to report but success, and a Manager reading that as
-// "the run will wind itself up" leaves a task running that it has just told
-// someone was stopped. What the Manager does next depends on which of these
-// happened, so the host says which.
+// StopOutcome is what a host did with a stop request. "No error" is not enough
+// to act on: a host asked to stop a run it never heard of can only report
+// success, which a Manager must not read as "the run will wind itself up". What
+// it does next depends on which outcome this is.
 type StopOutcome int
 
 const (
-	// StopUnknownRun means the host has no such run: it has not started yet —
-	// a task claims its run before the host is told to launch it — or it is
-	// long gone. Nothing was cancelled, so the ending is the Manager's to
-	// record.
+	// StopUnknownRun means the host has no such run: not started yet (a task
+	// claims its run before the host launches it), or long gone. Nothing was
+	// cancelled, so the Manager records the ending.
 	StopUnknownRun StopOutcome = iota
 	// StopCancelled means this call cancelled the run.
 	StopCancelled
 	// StopAlreadyFinished means the run had ended on its own before the stop
-	// arrived, and its outcome is on its way through OnRunFinished.
-	//
-	// It is a separate answer from StopCancelled because the ending is not this
-	// call's: a host finishes a run before its report reaches the task row, and
-	// a Manager treating the two alike records a cancellation over a task that
-	// completed — or one that failed, which also costs it its retry.
+	// arrived, its outcome on its way through OnRunFinished. Separate from
+	// StopCancelled because the ending is not this call's — recording a
+	// cancellation over it would bury a real outcome, and cost a failure its retry.
 	StopAlreadyFinished
 	// StopAfterTurn means the run is still going and will stop at the end of
 	// its current turn, reporting its own ending through OnRunFinished. Only a
@@ -72,26 +62,19 @@ const (
 )
 
 // Stopper cancels a running task; graceful lets the current turn finish, and
-// only then may StopAfterTurn be returned. It is separate from Launcher
-// because a host that only ever spawns need not provide it, and a Manager
-// without one still finalizes a stopped task's row — it simply cannot
-// interrupt the run.
+// only then may StopAfterTurn be returned. It is optional — a Manager without
+// one still finalizes a stopped task's row, but cannot interrupt the run.
 type Stopper func(ctx context.Context, runID string, graceful bool) (StopOutcome, error)
 
-// WakeGuard decides whether a parent session may be woken right now.
-//
-// An implementation MUST return false when it cannot answer — a failed query is
-// "I cannot prove this is safe", and waking a session that turns out to be
-// paused on a human decision races that human and burns a turn. Returning true
-// on error would make every outage a source of spurious runs.
+// WakeGuard decides whether a parent session may be woken right now. An
+// implementation MUST return false when it cannot answer: a failed query means
+// "I cannot prove this is safe", and returning true on error would make every
+// outage a source of spurious runs.
 type WakeGuard func(ctx context.Context, parentSessionID string) bool
 
-// AllGuards passes only when every guard does.
-//
-// The composition is AND rather than OR because each guard names a reason NOT
-// to wake, and any one of them is sufficient. A nil guard is treated as a
-// refusal for the same reason an errored one is: a guard that was supposed to
-// be there and is not cannot be read as permission.
+// AllGuards passes only when every guard does: each names a reason NOT to wake,
+// so any one is sufficient to refuse. A nil guard counts as a refusal — a guard
+// that should be there and is not cannot be read as permission.
 func AllGuards(gs ...WakeGuard) WakeGuard {
 	return func(ctx context.Context, parentSessionID string) bool {
 		for _, g := range gs {

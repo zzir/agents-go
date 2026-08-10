@@ -2,13 +2,9 @@
 // its own session, the parent run does not wait, and the parent is woken with
 // the result when the child finishes.
 //
-// It is a general orchestration pattern rather than a product feature, and the
-// reason it lives in the SDK is everything in this file's neighbourhood: the
-// state machine, the wake-up debt that survives a restart, the four guards that
-// decide when NOT to wake a parent, the compare-and-set that keeps two
-// finalizers from overwriting each other. Anyone building "hand work to a
-// background agent" has to solve all of it, and each one is a bug before it is
-// a design.
+// The hard parts are the state machine, the wake-up debt that survives a
+// restart, the guards that decide when NOT to wake a parent, and the
+// compare-and-set that keeps two finalizers from overwriting each other.
 package tasks
 
 import (
@@ -33,11 +29,8 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
-// Terminal reports whether the status is final.
-//
-// input_required is deliberately not terminal: a task waiting on a human is
-// still a task in flight, and treating it as finished would deliver a
-// notification for something that has not happened.
+// Terminal reports whether the status is final. input_required is deliberately
+// not terminal: a task waiting on a human is still in flight.
 func (s Status) Terminal() bool {
 	switch s {
 	case StatusCompleted, StatusFailed, StatusCancelled:
@@ -47,12 +40,7 @@ func (s Status) Terminal() bool {
 }
 
 // NotifyState is the durable state machine for the wake-up a finished task owes
-// its parent session.
-//
-// It is persisted rather than held in memory because the debt has to survive a
-// restart: a task that finished while the parent was busy, and a process that
-// died before delivering, are the same situation from the parent's side — it
-// was never told.
+// its parent session. It is persisted so the debt survives a restart.
 type NotifyState string
 
 const (
@@ -60,18 +48,16 @@ const (
 	NotifyNone NotifyState = ""
 	// NotifyPending means the terminal state is written and a wake-up is owed.
 	NotifyPending NotifyState = "pending"
-	// NotifyConsumed means the model already pulled the result in-turn with
-	// task_status, so waking it to repeat the news would burn a turn.
+	// NotifyConsumed means the model already pulled the result in-turn, so no
+	// wake-up is owed.
 	NotifyConsumed NotifyState = "consumed"
 	// NotifyDelivered means a wake-up run carried the result to the parent.
 	NotifyDelivered NotifyState = "delivered"
 )
 
-// Task is one background job.
-//
-// ID and RunID are separate on purpose: the task is the durable entity and the
-// run is one attempt at it. Collapsing them would make a retry impossible to
-// express without inventing a second task.
+// Task is one background job. ID and RunID are separate on purpose: the task is
+// the durable entity, the run is one attempt at it — which is what makes retry
+// expressible.
 type Task struct {
 	ID    string `json:"id"`
 	RunID string `json:"run_id"`
@@ -84,34 +70,26 @@ type Task struct {
 	ToolCallID     string `json:"tool_call_id,omitzero"`
 	ChildSessionID string `json:"child_session_id"`
 
-	// Depth is how many task hops from a user-initiated run. It bounds
-	// recursion: a task that can spawn tasks can spawn them forever.
+	// Depth is how many task hops from a user-initiated run; it bounds recursion.
 	Depth int `json:"depth,omitzero"`
 
 	// Attempt counts the runs this task has had: 1 for the original, one more
-	// for each retry. Zero reads as 1 — a row written before retries existed
-	// had exactly one attempt, and inventing a migration to say so would be
-	// writing down what the zero value already means.
+	// for each retry. Zero reads as 1 (see AttemptNo).
 	Attempt int `json:"attempt,omitzero"`
 
-	// Inherit is configuration snapshotted from the spawning run and handed
-	// back to the Launcher verbatim — agent config, sandbox, tenant. The SDK
-	// does not interpret it.
-	//
-	// It is a snapshot rather than a lookup because the wake-up run happens
-	// much later, and the parent's configuration may have changed or gone. A
-	// notification delivered under a different agent than the one that spawned
-	// the task is a confusing thing to receive.
+	// Inherit is configuration snapshotted from the spawning run and handed back
+	// to the Launcher verbatim — agent config, sandbox, tenant. The SDK does not
+	// interpret it. It is a snapshot, not a lookup, because the wake-up run
+	// happens much later and the parent's configuration may have changed or gone.
 	Inherit json.RawMessage `json:"inherit,omitzero"`
 
 	Status      Status      `json:"status"`
 	NotifyState NotifyState `json:"notify_state,omitzero"`
 
 	// Summary is the truncated result: it goes in the notification and on the
-	// UI card. Result is the whole thing, fetched on demand by task_status.
-	//
-	// They are separate so a task returning ten thousand words does not paste
-	// them into the parent's context to say "done".
+	// UI card. Result is the whole thing, fetched on demand by task_status —
+	// separate so a task returning ten thousand words does not paste them into
+	// the parent's context to say "done".
 	Summary string `json:"summary,omitzero"`
 	Result  string `json:"result,omitzero"`
 

@@ -9,23 +9,20 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// SessionIDFrom is how the tools learn which session they are running in.
-//
-// The run context's user value is the channel because a tool receives the
-// caller's context and nothing else identifying the conversation, and the
-// session id decides which parent a task belongs to — getting it from the model
-// would let one conversation spawn tasks onto another.
+// SessionIDFrom is how the tools learn which session they are running in. The
+// session id decides which parent a task belongs to, so it comes from the run
+// context, never the model — which would let one conversation spawn tasks onto
+// another.
 type SessionIDFrom func(rc *agents.RunContext) string
 
 // parentRunKey carries the host's identifier for the currently executing run
 // (see WithParentRunID).
 type parentRunKey struct{}
 
-// WithParentRunID tags ctx with the host's identifier for the run that is
-// executing. spawn_task stamps it onto the task it creates
-// (Task.ParentRunID), which is what lets a host UI tie the task — and the
-// wake-up run its completion later triggers — back to the spawning run's
-// trace. Display-only; a host without run identifiers can skip it.
+// WithParentRunID tags ctx with the host's identifier for the executing run.
+// spawn_task stamps it onto Task.ParentRunID, which lets a host UI tie the task
+// back to the spawning run's trace. Display-only; a host without run
+// identifiers can skip it.
 func WithParentRunID(ctx context.Context, runID string) context.Context {
 	return context.WithValue(ctx, parentRunKey{}, runID)
 }
@@ -103,13 +100,10 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			if err != nil {
 				return agents.ToolResult{}, err
 			}
-			// A task that finished before this call returned puts its result in
-			// the tool output below, so the model has it: waking the
-			// conversation later to repeat the news would burn a turn. Same
-			// rule task_status follows, and the reason it belongs here rather
-			// than in Spawn — a person reading the same result over the REST
-			// API has told the model nothing. It is a no-op for the ordinary
-			// case, where what the model is handed is a task still running.
+			// A task that finished before this call returned carries its result
+			// in the tool output below, so the model has it — waking later to
+			// repeat it would burn a turn. A no-op for the ordinary
+			// still-running case; see modelHasResult.
 			m.modelHasResult(ctx, info)
 			return taskResult(info), nil
 		})
@@ -146,10 +140,8 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 					return agents.ToolResult{}, err
 				}
 				// A refusal, a lost race or a launch that never started: the
-				// task's state travels with the error, so the model can decide
-				// — try again, spawn fresh, or leave it. Reporting that state
-				// hands over whatever result it carries, which settles the
-				// wake-up debt the same way a success settles it.
+				// task's state travels with the error, so the model can decide.
+				// Reporting it also settles the wake-up debt, as a success would.
 				m.modelHasResult(ctx, info)
 				return refusalResult(info, err), nil
 			}
@@ -184,18 +176,17 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 	return []*agents.Tool{spawn, status, retry, stop}
 }
 
-// taskResult splits what the model reads from what a UI renders: Content is the
-// task's state in words, Details is the card's data. A UI parsing the model's
-// text back into fields is how the two drift apart.
+// taskResult splits what the model reads (Content, the state in words) from
+// what a UI renders (Details, the card's data).
 func taskResult(info *Info) agents.ToolResult {
 	return agents.TextResult(describe(info)).
 		WithDisplay("task").
 		WithDetails(taskDetails(info))
 }
 
-// refusalResult is a taskResult whose text leads with why the call was
-// refused. The state alone does not explain a refusal the way it does for
-// task_stop, where "already completed" IS the reason.
+// refusalResult is a taskResult whose text leads with why the call was refused —
+// the state alone does not explain a refusal the way "already completed" does
+// for task_stop.
 func refusalResult(info *Info, err error) agents.ToolResult {
 	r := agents.TextResult(err.Error() + "\n" + describe(info)).
 		WithDisplay("task").
@@ -217,8 +208,8 @@ func taskDetails(info *Info) map[string]any {
 
 func describe(info *Info) string {
 	out := fmt.Sprintf("task_id: %s\nstatus: %s", info.TaskID, info.Status)
-	// Only once it means something: every task has a first attempt, and saying
-	// so on all of them teaches the model to ignore the line.
+	// Only past the first attempt — on every task the line is noise the model
+	// learns to ignore.
 	if info.Attempt > 1 {
 		out += fmt.Sprintf("\nattempt: %d", info.Attempt)
 	}
@@ -229,7 +220,7 @@ func describe(info *Info) string {
 		out += "\nagent: " + info.Agent
 	}
 	// The full result on a finished task, not the summary: this is the call
-	// that exists to fetch it.
+	// that fetches it.
 	if info.Result != "" {
 		out += "\nresult: " + info.Result
 	} else if info.Summary != "" {
