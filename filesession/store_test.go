@@ -44,23 +44,6 @@ func TestStore_RoundTrip(t *testing.T) {
 		t.Errorf("limit-1 = %+v", last)
 	}
 
-	// Pop removes the most recent.
-	popped, err := store.PopEntry(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	poppedItem, perr := popped.InputItem()
-	if perr != nil {
-		t.Fatal(perr)
-	}
-	if popped == nil || poppedItem.OfMessage.Content.OfString.Value != "world" {
-		t.Errorf("popped = %+v", popped)
-	}
-	remaining, _ := session.NewSession(store).ContextItems(ctx, session.Cursor{})
-	if len(remaining) != 1 {
-		t.Errorf("after pop: %d items, want 1", len(remaining))
-	}
-
 	// Clear empties the session.
 	if err := store.Clear(ctx); err != nil {
 		t.Fatal(err)
@@ -109,24 +92,9 @@ func TestStore_IsolationBySessionID(t *testing.T) {
 	}
 }
 
-func TestStore_PopOnEmpty(t *testing.T) {
-	ctx := context.Background()
-	store, _ := New(t.TempDir(), "empty")
-	item, err := store.PopEntry(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item != nil {
-		t.Errorf("pop on empty should return nil, got %+v", item)
-	}
-}
-
-// A pop rewrites the file, and a rewrite computed from a lenient read destroys
-// every line it could not decode — the only copy of whatever those lines held.
-// So a pop on a file with a corrupt line REFUSES (spec §2.5e2: reading what is
-// being removed and removing it are one step), and the file — corrupt line
-// included — stays exactly as it was.
-func TestStore_PopRefusesOnCorruptLine(t *testing.T) {
+// One bad record must not make the session unreadable, and nothing is
+// destroyed by a read.
+func TestStore_LenientReadOnCorruptLine(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	store, err := New(dir, "corrupt")
@@ -153,28 +121,6 @@ func TestStore_PopRefusesOnCorruptLine(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := store.PopEntry(ctx); err == nil {
-		t.Fatal("pop on a corrupt file succeeded; it would have silently destroyed the corrupt line")
-	}
-	if _, err := store.PopItem(ctx); err == nil {
-		t.Fatal("item pop on a corrupt file succeeded; it would have silently destroyed the corrupt line")
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) != string(after) {
-		t.Error("a refused pop still rewrote the file")
-	}
-
-	// Reading stays lenient: one bad record must not make the session
-	// unreadable, and nothing is destroyed by a read.
 	got, err := store.Entries(ctx, session.Cursor{})
 	if err != nil || len(got) != 2 {
 		t.Fatalf("lenient read after corruption: %d entries, err=%v", len(got), err)
@@ -374,9 +320,9 @@ func TestSanitizeSessionID(t *testing.T) {
 	}
 }
 
-// Two instances opened on the same path must share a lock: concurrent
-// AddItems (O_APPEND) and PopItem (read+rename) from separate instances used
-// to drop appended lines silently.
+// Two instances opened on the same path must share a lock: an append reads the
+// tip (parent id, last seq) and then writes, so two unserialized instances
+// hand out the same parent and the same sequence numbers.
 func TestStore_ConcurrentInstancesShareLock(t *testing.T) {
 	dir := t.TempDir()
 	a, err := New(dir, "shared")
@@ -391,37 +337,32 @@ func TestStore_ConcurrentInstancesShareLock(t *testing.T) {
 	const writes = 100
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for range writes {
-			if err := session.NewSession(a).AppendItems(context.Background(), agents.InputItemsFromText("from-a"), agents.Source{}); err != nil {
-				t.Error(err)
-				return
+	for _, st := range []*Store{a, b} {
+		go func() {
+			defer wg.Done()
+			for range writes {
+				if err := session.NewSession(st).AppendItems(context.Background(), agents.InputItemsFromText("hi"), agents.Source{}); err != nil {
+					t.Error(err)
+					return
+				}
 			}
-		}
-	}()
-	var popped int
-	go func() {
-		defer wg.Done()
-		for range writes / 4 {
-			item, err := b.PopEntry(context.Background())
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			if item != nil {
-				popped++
-			}
-		}
-	}()
+		}()
+	}
 	wg.Wait()
 
-	items, err := session.NewSession(a).ContextItems(context.Background(), session.Cursor{})
+	entries, err := a.Entries(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(items) + popped; got != writes {
-		t.Errorf("items+popped = %d, want %d (lost writes)", got, writes)
+	if len(entries) != 2*writes {
+		t.Errorf("stored %d entries, want %d (lost writes)", len(entries), 2*writes)
+	}
+	seen := map[int64]bool{}
+	for _, e := range entries {
+		if seen[e.Seq] {
+			t.Fatalf("sequence number %d was issued twice", e.Seq)
+		}
+		seen[e.Seq] = true
 	}
 }
 

@@ -431,117 +431,6 @@ func idsOf(views []EntryView) []int64 {
 	return out
 }
 
-// PopItem is "undo the last thing the model said": (nil, nil) on an empty
-// session, and never a UI-only annotation or a compacted (soft-deleted) row.
-// PopEntry, which takes the most recent entry whatever it is, is held to its
-// own contract by agentstest.StorageConformance.
-func TestEntryStorePopItem(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	sid := NewID()
-	s := NewEntryStoreFor(db, session.Direct(sid))
-
-	// Empty session -> (nil, nil), not an error.
-	got, err := s.PopItem(ctx)
-	if err != nil || got != nil {
-		t.Fatalf("empty session: got=%v err=%v, want nil,nil", got, err)
-	}
-
-	// Oldest -> newest: a real item, then a compacted item, then an annotation.
-	seed(t, s, userEntry(t, "hi"), userEntry(t, "folded"))
-	// By position, not by a constructed id.
-	stored, serr := s.Entries(ctx, session.Cursor{})
-	if serr != nil || len(stored) != 2 {
-		t.Fatalf("seeded entries: %v %v", stored, serr)
-	}
-	markCompacted(t, s, stored[1].ID)
-	seed(t, s, session.NewAnnotationEntry(
-		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
-		agents.Source{Type: agents.SourceErrorHandler},
-	))
-
-	// The newest row is the annotation and the one before is compacted, but
-	// PopEntry must skip both and return the real item.
-	got, err = s.PopItem(ctx)
-	if err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected the replayable item, got nil")
-	}
-
-	// The annotation and compacted rows must still be present (not deleted).
-	var remaining []entryRow
-	if err := db.NewSelect().Model(&remaining).Where("session_id = ?", sid).Scan(ctx); err != nil {
-		t.Fatalf("scan remaining: %v", err)
-	}
-	if len(remaining) != 2 {
-		t.Fatalf("remaining rows = %d, want 2 (annotation + compacted untouched)", len(remaining))
-	}
-	for _, r := range remaining {
-		if r.Kind != string(session.EntryKindAnnotation) && !r.Compacted {
-			t.Errorf("PopEntry deleted the wrong row; a plain item survived: %+v", r)
-		}
-	}
-
-	// No replayable items left -> (nil, nil) again even though rows exist.
-	got, err = s.PopItem(ctx)
-	if err != nil || got != nil {
-		t.Fatalf("no replayable items: got=%v err=%v, want nil,nil", got, err)
-	}
-}
-
-// Popping a checkpoint undoes its fold in the store's own bookkeeping too: the
-// rows the compaction adapter marked compacted come back, in the same
-// transaction as the delete. The checkpoint and the flags are two records of
-// one fact — removing one without the other leaves rows hidden with nothing
-// left to explain why.
-func TestPopEntryUnfoldsCompactedRows(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	sid := NewID()
-	s := NewEntryStoreFor(db, session.Direct(sid))
-
-	seed(t, s, userEntry(t, "folded question"), userEntry(t, "kept answer"))
-	stored, err := s.Entries(ctx, session.Cursor{})
-	if err != nil || len(stored) != 2 {
-		t.Fatalf("seeded entries: %v %v", stored, err)
-	}
-
-	// What the adapter's persistCompaction does: mark folded, append the
-	// checkpoint naming it.
-	markCompacted(t, s, stored[0].ID)
-	cp, err := session.NewCompactionEntry(session.CompactionPayload{
-		Summary:     "summary",
-		ExcludedIDs: []string{stored[0].ID},
-	})
-	if err != nil {
-		t.Fatalf("checkpoint: %v", err)
-	}
-	seed(t, s, cp)
-
-	popped, err := s.PopEntry(ctx)
-	if err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	if popped == nil || popped.Kind != session.EntryKindCompaction {
-		t.Fatalf("popped %+v, want the checkpoint", popped)
-	}
-
-	var rows []entryRow
-	if err := db.NewSelect().Model(&rows).Where("session_id = ?", sid).OrderExpr("id ASC").Scan(ctx); err != nil {
-		t.Fatalf("scan rows: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want the two items (checkpoint gone)", len(rows))
-	}
-	for _, r := range rows {
-		if r.Compacted {
-			t.Errorf("row %s still marked compacted after its checkpoint was popped", r.EntryID)
-		}
-	}
-}
-
 // Appending, popping and clearing move the session in the listing: the entry
 // store stamps the session row's updated_at in the same transaction as the
 // write (spec §2.5e2, "the change record").
@@ -581,14 +470,6 @@ func TestEntryWritesBumpSessionUpdatedAt(t *testing.T) {
 	seed(t, s, userEntry(t, "hello"))
 	if got := updatedAt(); !got.After(past) {
 		t.Errorf("append did not move updated_at: %v", got)
-	}
-
-	past = rewind()
-	if _, err := s.PopEntry(ctx); err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	if got := updatedAt(); !got.After(past) {
-		t.Errorf("pop did not move updated_at: %v", got)
 	}
 
 	past = rewind()
@@ -664,37 +545,6 @@ func TestForkSessionMissingSource(t *testing.T) {
 	}
 	if _, err := NewSessionStore(db).Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("dst session must not exist after a missing-source fork")
-	}
-}
-
-// a row whose entry JSON can't be deserialized must survive: the delete only
-// commits after a successful decode, so a decode failure rolls back.
-func TestPopEntryRollsBackOnUndecodableRow(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	sid := NewID()
-	s := NewEntryStoreFor(db, session.Direct(sid))
-
-	seed(t, s, userEntry(t, "keep me"))
-	// A newer row with non-empty but undecodable entry JSON.
-	bad := entryRow{
-		SessionID: sid, RunID: "r", EntryID: "corrupt",
-		Kind: string(session.EntryKindItem), Entry: `{"kind":`, CreatedAt: time.Now().UTC(),
-	}
-	if _, err := db.NewInsert().Model(&bad).Exec(ctx); err != nil {
-		t.Fatalf("insert bad: %v", err)
-	}
-
-	if _, err := s.PopEntry(ctx); err == nil {
-		t.Fatal("expected an error popping an undecodable row")
-	}
-	// Neither row was deleted — no silent data loss.
-	var remaining []entryRow
-	if err := db.NewSelect().Model(&remaining).Where("session_id = ?", sid).Scan(ctx); err != nil {
-		t.Fatalf("scan: %v", err)
-	}
-	if len(remaining) != 2 {
-		t.Fatalf("rows = %d, want 2 (nothing lost on decode failure)", len(remaining))
 	}
 }
 
@@ -865,22 +715,6 @@ func TestAppendPointMatchesTheFold(t *testing.T) {
 			}
 			if n == 0 {
 				t.Fatal("the pass folded nothing, so this step proves nothing about a fold")
-			}
-		}},
-		{"pop the checkpoint", func(t *testing.T) {
-			t.Helper()
-			popped, err := s.PopEntry(ctx)
-			if err != nil {
-				t.Fatalf("pop entry: %v", err)
-			}
-			if popped == nil || popped.Kind != session.EntryKindCompaction {
-				t.Fatalf("popped %+v, want the checkpoint the pass just wrote", popped)
-			}
-		}},
-		{"pop an item", func(t *testing.T) {
-			t.Helper()
-			if _, err := s.PopItem(ctx); err != nil {
-				t.Fatalf("pop item: %v", err)
 			}
 		}},
 		{"clear", func(t *testing.T) {

@@ -31,7 +31,6 @@ var storageChecks = []struct {
 	run  func(t *testing.T, st session.Storage)
 }{
 	{"SeqIsMonotonic", checkSeqMonotonic},
-	{"SeqSurvivesARemoval", checkSeqSurvivesRemoval},
 	{"SeqSurvivesAReplace", checkSeqSurvivesReplace},
 	{"AReplaceKeepsTheIDsItIsGiven", checkReplaceKeepsIDs},
 	{"AGuardedReplaceTakesTheSeqItWasShown", checkGuardedReplaceMatches},
@@ -40,113 +39,6 @@ var storageChecks = []struct {
 	{"SeqDoesNotMoveOnRead", checkSeqStableOnRead},
 	{"EntryIDsAreUniqueAndNotReused", checkEntryIDsUnique},
 	{"CursorReturnsWhatItHasNotShown", checkCursorCompleteness},
-	{"PopTakesTheMostRecentEntry", checkPopTakesNewest},
-	{"AnItemPopLeavesTheTreeWhole", checkItemPopKeepsTheTree},
-	{"AnItemPopSkipsFoldedAndReachesKept", checkItemPopSkipsFoldedReachesKept},
-	{"PoppingACheckpointUndoesItsFold", checkPopEntryTakesCheckpointAndUnfolds},
-}
-
-// A checkpoint reshapes what a pop can reach exactly as it reshapes the
-// model's view: an entry it folded is skipped — it is no more "my last
-// message" than a banner is — while the entries it KEPT stay reachable.
-// Stopping the search at the checkpoint once made the kept entries unpoppable
-// while the model could still see them.
-func checkItemPopSkipsFoldedReachesKept(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	popper, ok := st.(session.ItemPopper)
-	if !ok {
-		t.Skip("this store does not pop items")
-	}
-	storageWrite(t, st, "folded away", "kept in the window")
-	stored := storageEntries(t, st)
-	cp, err := session.NewCompactionEntry(session.CompactionPayload{
-		Summary:     "summary of the folded part",
-		ExcludedIDs: []string{stored[0].ID},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Append(ctx, cp); err != nil {
-		t.Fatalf("append checkpoint: %v", err)
-	}
-
-	popped, err := popper.PopItem(ctx)
-	if err != nil {
-		t.Fatalf("pop item: %v", err)
-	}
-	if popped == nil || popped.ID != stored[1].ID {
-		t.Fatalf("popped %+v, want the kept item %q — the checkpoint must not wall it off", popped, stored[1].ID)
-	}
-
-	// The only item left is the folded one, which is not poppable: it is not
-	// part of the conversation as anyone sees it.
-	again, err := popper.PopItem(ctx)
-	if err != nil {
-		t.Fatalf("second pop item: %v", err)
-	}
-	if again != nil {
-		t.Fatalf("popped folded entry %+v; folded history is not \"my last message\"", again)
-	}
-}
-
-// PopEntry takes the most recent entry whatever it is — and when that is a
-// compaction checkpoint, removing it undoes the fold: the exclusions leave
-// with the checkpoint, so the folded history is part of the view again. The
-// checkpoint and any store-side bookkeeping of the fold are two records of one
-// fact, and a store that keeps such bookkeeping reverses it in the same step.
-func checkPopEntryTakesCheckpointAndUnfolds(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	popper, ok := st.(session.EntryPopper)
-	if !ok {
-		t.Skip("this store does not pop")
-	}
-	storageWrite(t, st, "the folded question")
-	stored := storageEntries(t, st)
-	cp, err := session.NewCompactionEntry(session.CompactionPayload{
-		Summary:     "summary standing in for it",
-		ExcludedIDs: []string{stored[0].ID},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Append(ctx, cp); err != nil {
-		t.Fatalf("append checkpoint: %v", err)
-	}
-
-	sess := session.NewSession(st)
-	before, err := sess.ContextEntries(ctx, session.Cursor{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range before {
-		if e.ID == stored[0].ID {
-			t.Fatalf("folded entry %q still in the context view before the pop", e.ID)
-		}
-	}
-
-	popped, err := popper.PopEntry(ctx)
-	if err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	if popped == nil || popped.Kind != session.EntryKindCompaction {
-		t.Fatalf("popped %+v, want the checkpoint — it is the most recent entry", popped)
-	}
-
-	after, err := sess.ContextEntries(ctx, session.Cursor{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	restored := false
-	for _, e := range after {
-		if e.ID == stored[0].ID {
-			restored = true
-		}
-	}
-	if !restored {
-		t.Fatalf("the folded entry did not return when its checkpoint was popped; view = %+v", after)
-	}
 }
 
 func storageWrite(t *testing.T, st session.Storage, texts ...string) {
@@ -196,33 +88,6 @@ func checkSeqMonotonic(t *testing.T, st session.Storage) {
 			t.Fatalf("entry %d has Seq %d, not past its predecessor's %d",
 				i, got[i].Seq, got[i-1].Seq)
 		}
-	}
-}
-
-// A number this session has issued is never issued again, including after the
-// entry holding it is removed. Otherwise a caller resuming from the last number
-// it saw skips the next append forever — its cursor is already past it.
-func checkSeqSurvivesRemoval(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	popper, ok := st.(session.EntryPopper)
-	if !ok {
-		t.Skip("nothing here removes an entry, so no number is ever freed")
-	}
-	storageWrite(t, st, "one", "two")
-	before := storageEntries(t, st)
-	highest := before[len(before)-1].Seq
-
-	if _, err := popper.PopEntry(ctx); err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	storageWrite(t, st, "three")
-
-	after := storageEntries(t, st)
-	newest := after[len(after)-1]
-	if newest.Seq <= highest {
-		t.Fatalf("the entry appended after a pop has Seq %d, not past the %d already issued",
-			newest.Seq, highest)
 	}
 }
 
@@ -393,21 +258,6 @@ func checkGuardedReplaceEmptyLog(t *testing.T, st session.Storage) {
 	if replaced {
 		t.Fatal("the guarded replace accepted expect 0 against a log that holds an entry")
 	}
-
-	popper, ok := st.(session.EntryPopper)
-	if !ok {
-		return
-	}
-	if _, err := popper.PopEntry(ctx); err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	replaced, err = g.ReplaceEntriesIf(ctx, 0, storageItem(t, "third"))
-	if err != nil {
-		t.Fatalf("guarded replace of an emptied log: %v", err)
-	}
-	if !replaced {
-		t.Fatal("the guarded replace refused expect 0 on a log that was emptied by a pop")
-	}
 }
 
 // Reading a session does not renumber it. A store that numbers by position in
@@ -436,19 +286,7 @@ func checkSeqStableOnRead(t *testing.T, st session.Storage) {
 
 func checkEntryIDsUnique(t *testing.T, st session.Storage) {
 	t.Helper()
-	ctx := context.Background()
 	storageWrite(t, st, "one", "two")
-
-	var popped string
-	if popper, ok := st.(session.EntryPopper); ok {
-		e, err := popper.PopEntry(ctx)
-		if err != nil {
-			t.Fatalf("pop: %v", err)
-		}
-		if e != nil {
-			popped = e.ID
-		}
-	}
 	storageWrite(t, st, "three")
 
 	seen := map[string]bool{}
@@ -458,14 +296,10 @@ func checkEntryIDsUnique(t *testing.T, st session.Storage) {
 		}
 		seen[e.ID] = true
 	}
-	if popped != "" && seen[popped] {
-		t.Fatalf("the popped entry's id %q was handed to a later entry", popped)
-	}
 }
 
 // The point of a cursor: resuming from the last number seen returns everything
-// since, and nothing already shown. Checked across a removal, which is where
-// numbering by count or by position gets it wrong.
+// since, and nothing already shown.
 func checkCursorCompleteness(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
@@ -473,11 +307,6 @@ func checkCursorCompleteness(t *testing.T, st session.Storage) {
 	seen := storageEntries(t, st)
 	cursor := seen[len(seen)-1].Seq
 
-	if popper, ok := st.(session.EntryPopper); ok {
-		if _, err := popper.PopEntry(ctx); err != nil {
-			t.Fatalf("pop: %v", err)
-		}
-	}
 	storageWrite(t, st, "three")
 
 	fresh, err := st.Entries(ctx, session.Cursor{AfterSeq: cursor})
@@ -492,87 +321,5 @@ func checkCursorCompleteness(t *testing.T, st session.Storage) {
 			t.Fatalf("resuming from Seq %d returned an entry at %d, which it had already been shown",
 				cursor, e.Seq)
 		}
-	}
-}
-
-// EntryPopper takes the most recent ENTRY. A store that skips past what it
-// finds uninteresting removes something else while reporting it popped the last
-// thing — and leaves what it skipped pointing at what is now gone.
-func checkPopTakesNewest(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	popper, ok := st.(session.EntryPopper)
-	if !ok {
-		t.Skip("this store does not pop")
-	}
-	storageWrite(t, st, "one")
-	// An entry that is not a conversation item, and is the most recent.
-	if err := st.Append(ctx, session.NewAnnotationEntry(
-		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
-		agents.Source{Type: agents.SourceErrorHandler},
-	)); err != nil {
-		t.Fatalf("append annotation: %v", err)
-	}
-	stored := storageEntries(t, st)
-	newest := stored[len(stored)-1]
-
-	popped, err := popper.PopEntry(ctx)
-	if err != nil {
-		t.Fatalf("pop: %v", err)
-	}
-	if popped == nil {
-		t.Fatal("nothing popped from a session with two entries")
-	}
-	if popped.ID != newest.ID {
-		t.Fatalf("popped %q (kind %q), want the most recent entry %q (kind %q)",
-			popped.ID, popped.Kind, newest.ID, newest.Kind)
-	}
-}
-
-// Removing an entry from the middle of a branch — which is what an item pop
-// does whenever something non-item sits above it — must not leave the
-// survivors hanging off an id that is gone. A walk that meets a missing parent
-// stops there, so the session would read short: losing everything BEFORE the
-// entry that was removed, rather than just it.
-func checkItemPopKeepsTheTree(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	popper, ok := st.(session.ItemPopper)
-	if !ok {
-		t.Skip("this store does not pop items")
-	}
-	storageWrite(t, st, "one", "two")
-	if err := st.Append(ctx, session.NewAnnotationEntry(
-		agents.ItemDisplay{Kind: agents.DisplayError, Text: "boom"},
-		agents.Source{Type: agents.SourceErrorHandler},
-	)); err != nil {
-		t.Fatalf("append annotation: %v", err)
-	}
-
-	popped, err := popper.PopItem(ctx)
-	if err != nil {
-		t.Fatalf("pop item: %v", err)
-	}
-	if popped == nil || popped.Kind != session.EntryKindItem {
-		t.Fatalf("popped %+v, want the most recent item", popped)
-	}
-
-	kept := storageEntries(t, st)
-	if len(kept) != 2 {
-		t.Fatalf("session holds %d entries, want the first item and the annotation", len(kept))
-	}
-	byID := map[string]bool{}
-	for _, e := range kept {
-		byID[e.ID] = true
-	}
-	for _, e := range kept {
-		if e.ParentID != "" && !byID[e.ParentID] {
-			t.Fatalf("entry %q points at %q, which the pop removed", e.ID, e.ParentID)
-		}
-	}
-	// The walk reaches every survivor: a walk that stops early is how a removal
-	// in the middle of a branch loses everything BEFORE it.
-	if n := len(session.PathToLeaf(kept, session.LeafOf(kept))); n != len(kept) {
-		t.Fatalf("the active branch walks %d of %d surviving entries — the removal truncated it", n, len(kept))
 	}
 }

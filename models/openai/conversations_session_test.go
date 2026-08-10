@@ -101,7 +101,7 @@ func newTestSession(t *testing.T) (*ConversationsSession, *fakeConversations) {
 	return s, fake
 }
 
-func TestConversationsSession_AddGetPopClear(t *testing.T) {
+func TestConversationsSession_AddGetClear(t *testing.T) {
 	ctx := t.Context()
 	s, fake := newTestSession(t)
 
@@ -135,25 +135,6 @@ func TestConversationsSession_AddGetPopClear(t *testing.T) {
 	}
 	if !itemContains(t, recent[0], "world") {
 		t.Errorf("GetItems(1) item does not contain %q", "world")
-	}
-
-	// Pop removes the newest item.
-	popped, err := s.PopEntry(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if popped == nil {
-		t.Fatal("PopEntry returned nothing")
-	}
-	poppedItem, perr := popped.InputItem()
-	if perr != nil {
-		t.Fatal(perr)
-	}
-	if !itemContains(t, poppedItem, "world") {
-		t.Fatalf("PopEntry = %v", poppedItem)
-	}
-	if remaining, _ := session.NewSession(s).ContextItems(ctx, session.Cursor{}); len(remaining) != 1 {
-		t.Fatalf("after pop len = %d, want 1", len(remaining))
 	}
 
 	// Clear deletes the server-side conversation.

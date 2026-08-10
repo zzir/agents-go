@@ -314,109 +314,6 @@ func (s *Session) Append(ctx context.Context, entries ...session.Entry) error {
 	})
 }
 
-// PopEntry implements session.EntryPopper.
-func (s *Session) PopEntry(ctx context.Context) (*session.Entry, error) {
-	return s.pop(ctx, session.PopLast)
-}
-
-// PopItem implements session.ItemPopper.
-func (s *Session) PopItem(ctx context.Context) (*session.Entry, error) {
-	return s.pop(ctx, session.PopLastItem)
-}
-
-// pop selects the entry to remove, deletes it and applies its relinks all in
-// ONE transaction, holding the write lock. Selecting on one view and deleting
-// on another is how a concurrent append's child ends up hanging off an id that
-// is gone — and a walk meeting a missing parent stops there, losing everything
-// BEFORE the removed entry rather than just it.
-//
-// The delete still arbitrates: a writer not holding the lock (a foreign tool
-// touching the same database) can take the row first, in which case zero rows
-// are affected, this caller lost, and it retries against what the session
-// holds now.
-func (s *Session) pop(ctx context.Context, mode session.PopMode) (*session.Entry, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		var popped *session.Entry
-		done := true
-		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			if err := s.lockForWrite(ctx, tx); err != nil {
-				return err
-			}
-			entries, err := s.entriesIn(ctx, tx, session.Cursor{})
-			if err != nil {
-				return err
-			}
-			plan, ok := session.PlanPop(entries, mode)
-			if !ok {
-				return nil
-			}
-			res, derr := tx.NewDelete().Model((*entry)(nil)).
-				Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
-				Where("entry_id IN (?)", bun.List(plan.Delete)).Exec(ctx)
-			if derr != nil {
-				return derr
-			}
-			if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
-				done = false
-				return nil
-			}
-			byID := make(map[string]session.Entry, len(entries))
-			for _, e := range entries {
-				byID[e.ID] = e
-			}
-			if err := s.relinkIn(ctx, tx, plan, byID); err != nil {
-				return err
-			}
-			if err := s.touchIn(ctx, tx); err != nil {
-				return err
-			}
-			popped = &plan.Entry
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		if done {
-			return popped, nil
-		}
-	}
-}
-
-// relinkIn re-points the entries a removal orphaned, on the transaction that
-// carried the delete.
-func (s *Session) relinkIn(ctx context.Context, tx bun.Tx, plan session.Removal, byID map[string]session.Entry) error {
-	for id, parent := range plan.Relink {
-		e, ok := byID[id]
-		if !ok {
-			continue
-		}
-		if e.Kind == session.EntryKindLeaf {
-			updated, lerr := e.WithLeafTarget(parent)
-			if lerr != nil {
-				continue
-			}
-			e = updated
-		} else {
-			e.ParentID = parent
-		}
-		raw, merr := json.Marshal(e)
-		if merr != nil {
-			return fmt.Errorf("encoding relinked entry %q: %w", id, merr)
-		}
-		if _, uerr := tx.NewUpdate().Model((*entry)(nil)).
-			Set("parent_id = ?", e.ParentID).
-			Set("entry = ?", string(raw)).
-			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
-			Where("entry_id = ?", id).Exec(ctx); uerr != nil {
-			return uerr
-		}
-	}
-	return nil
-}
-
 // Clear implements session.Storage, removing every entry for this session ID.
 // Clearing is a change like any other: it moves the session in a listing, and
 // it holds the same write lock every other entry write holds — an unlocked
@@ -568,8 +465,6 @@ var (
 	_ session.Storage         = (*Session)(nil)
 	_ session.AtomicReplacer  = (*Session)(nil)
 	_ session.GuardedReplacer = (*Session)(nil)
-	_ session.EntryPopper     = (*Session)(nil)
-	_ session.ItemPopper      = (*Session)(nil)
 )
 
 // Metadata implements session.Storage. It counts rather than loading, and

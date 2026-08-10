@@ -324,52 +324,6 @@ func (s *Store) replaceLocked(entries []session.Entry, expect *int64) (bool, err
 	return true, nil
 }
 
-// PopEntry removes and returns the most recent entry, or nil if the session is
-// empty. The file is rewritten atomically.
-func (s *Store) PopEntry(_ context.Context) (*session.Entry, error) {
-	return s.pop(session.PopLast)
-}
-
-// PopItem implements session.ItemPopper.
-func (s *Store) PopItem(_ context.Context) (*session.Entry, error) {
-	return s.pop(session.PopLastItem)
-}
-
-// pop rewrites the file without the entry PlanPop chose, applying the relinks
-// in the same rewrite — the delete and the repair are one atomic replacement,
-// so the file is never on disk with a child hanging off an id that is gone.
-//
-// The read is STRICT, unlike Entries: a removal decided on a view with a hole
-// in it takes the wrong entry, and the rewrite would then silently destroy
-// every line that failed to decode — the only copy of whatever those lines
-// held. Refusing is the contract (spec §2.5e2, "what must be one step"): a
-// record that cannot be read cannot be part of deciding a removal.
-func (s *Store) pop(mode session.PopMode) (*session.Entry, error) {
-	release := acquire(s.lockKey)
-	defer release()
-	entries, err := s.readEntriesStrict()
-	if err != nil {
-		return nil, err
-	}
-	plan, ok := session.PlanPop(entries, mode)
-	if !ok {
-		return nil, nil
-	}
-	kept := session.ApplyRemoval(entries, plan)
-	lines := make([][]byte, 0, len(kept))
-	for i := range kept {
-		data, merr := json.Marshal(kept[i])
-		if merr != nil {
-			return nil, fmt.Errorf("marshaling session entry: %w", merr)
-		}
-		lines = append(lines, data)
-	}
-	if err := s.writeLines(lines); err != nil {
-		return nil, err
-	}
-	return &plan.Entry, nil
-}
-
 // Clear removes all entries in the session.
 func (s *Store) Clear(_ context.Context) error {
 	release := acquire(s.lockKey)
@@ -396,24 +350,6 @@ func (s *Store) readEntries() ([]session.Entry, error) {
 		if json.Unmarshal(line, &e) == nil {
 			out = append(out, e)
 		}
-	}
-	return out, nil
-}
-
-// readEntriesStrict decodes the file's entries, failing on the first line that
-// cannot be decoded. Callers must hold the per-path lock.
-func (s *Store) readEntriesStrict() ([]session.Entry, error) {
-	lines, err := s.readLines()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]session.Entry, 0, len(lines))
-	for i, line := range lines {
-		var e session.Entry
-		if err := json.Unmarshal(line, &e); err != nil {
-			return nil, fmt.Errorf("session file %s: line %d cannot be decoded: %w", s.path, i+1, err)
-		}
-		out = append(out, e)
 	}
 	return out, nil
 }
@@ -539,6 +475,4 @@ var (
 	_ session.Storage         = (*Store)(nil)
 	_ session.AtomicReplacer  = (*Store)(nil)
 	_ session.GuardedReplacer = (*Store)(nil)
-	_ session.EntryPopper     = (*Store)(nil)
-	_ session.ItemPopper      = (*Store)(nil)
 )

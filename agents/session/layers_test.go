@@ -194,39 +194,6 @@ func TestReduceState(t *testing.T) {
 	}
 }
 
-// Popping is not a storage primitive — a run never pops — so a store that
-// cannot do it says so instead of every backend implementing it.
-func TestPopEntry_RequiresACapableStore(t *testing.T) {
-	ctx := context.Background()
-	sess := NewInMemorySession()
-	if err := sess.AppendItems(ctx, userTextItems("only"), Source{}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := sess.PopEntry(ctx)
-	if err != nil || got == nil {
-		t.Fatalf("pop on capable storage: %v, %v", got, err)
-	}
-
-	incapable := NewSession(readOnlyStorage{})
-	if _, err := incapable.PopEntry(ctx); err == nil {
-		t.Error("popping a store that cannot pop should report it, not silently do nothing")
-	}
-}
-
-type readOnlyStorage struct{}
-
-func (readOnlyStorage) Metadata(context.Context) (Metadata, error) {
-	return Metadata{}, nil
-}
-func (readOnlyStorage) Append(context.Context, ...Entry) error { return nil }
-func (readOnlyStorage) Entry(context.Context, string) (*Entry, error) {
-	return nil, nil
-}
-func (readOnlyStorage) Entries(context.Context, Cursor) ([]Entry, error) {
-	return nil, nil
-}
-func (readOnlyStorage) Clear(context.Context) error { return nil }
-
 func contains(b []byte, sub string) bool {
 	return len(b) >= len(sub) && string(b) != "" && indexOf(string(b), sub) >= 0
 }

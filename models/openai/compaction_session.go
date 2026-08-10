@@ -70,8 +70,6 @@ type CompactionSession struct {
 var (
 	_ session.Storage         = (*CompactionSession)(nil)
 	_ session.CompactionAware = (*CompactionSession)(nil)
-	_ session.EntryPopper     = (*CompactionSession)(nil)
-	_ session.ItemPopper      = (*CompactionSession)(nil)
 	_ session.AtomicReplacer  = (*CompactionSession)(nil)
 	_ session.GuardedReplacer = (*CompactionSession)(nil)
 )
@@ -299,27 +297,6 @@ func isBranched(entries []session.Entry) bool {
 	return len(session.ActiveBranchOf(entries)) != len(entries)
 }
 
-// PopEntry implements session.EntryPopper by delegation: wrapping a session in
-// compaction must not take undo away from it — a capability is offered by
-// every backend that can support it (spec §2.5e2), and the wrapper can
-// whenever the wrapped store can.
-func (s *CompactionSession) PopEntry(ctx context.Context) (*session.Entry, error) {
-	p, ok := s.underlying.(session.EntryPopper)
-	if !ok {
-		return nil, fmt.Errorf("session storage %T cannot pop entries", s.underlying)
-	}
-	return p.PopEntry(ctx)
-}
-
-// PopItem implements session.ItemPopper by delegation; see PopEntry.
-func (s *CompactionSession) PopItem(ctx context.Context) (*session.Entry, error) {
-	p, ok := s.underlying.(session.ItemPopper)
-	if !ok {
-		return nil, fmt.Errorf("session storage %T cannot pop items", s.underlying)
-	}
-	return p.PopItem(ctx)
-}
-
 // ReplaceEntries implements session.AtomicReplacer by delegation — and only by
 // delegation: the interface PROMISES atomicity, so when the wrapped store
 // cannot give it, this refuses before touching anything rather than quietly
@@ -336,10 +313,11 @@ func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...sessi
 	return r.ReplaceEntries(ctx, entries...)
 }
 
-// ReplaceEntriesIf implements session.GuardedReplacer by delegation; see
-// PopEntry. A wrapped store without the guard gets an error rather than an
-// unguarded rewrite: replaced=false says the log moved, which is a fact about
-// the log this wrapper is in no position to invent.
+// ReplaceEntriesIf implements session.GuardedReplacer by delegation — wrapping
+// a session must not take a capability away from it. A wrapped store without
+// the guard gets an error rather than an unguarded rewrite: replaced=false
+// says the log moved, which is a fact about the log this wrapper is in no
+// position to invent.
 func (s *CompactionSession) ReplaceEntriesIf(ctx context.Context, expect int64, entries ...session.Entry) (bool, error) {
 	g, ok := s.underlying.(session.GuardedReplacer)
 	if !ok {

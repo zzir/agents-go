@@ -218,9 +218,8 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.InputIt
 	if len(in) == 0 {
 		return nil
 	}
-	// Serialized with PopEntry for the same reason its list+delete is: an
-	// append interleaving with a pop makes the pop remove an item that is no
-	// longer the most recent.
+	// Serialized with Clear so an append cannot interleave with the delete
+	// that resets the conversation.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sanitized := make([]agents.InputItem, 0, len(in))
@@ -323,62 +322,6 @@ func sanitizeConversationItem(item agents.InputItem) (agents.InputItem, bool, er
 func isNonEmptyString(v any) bool {
 	s, ok := v.(string)
 	return ok && s != ""
-}
-
-// PopEntry implements session.EntryPopper: it removes and returns the most
-// recent item, or nil if the conversation is empty.
-//
-// The mutex is held across the list AND the delete: they are one removal
-// (spec §2.5e2, selecting a row and removing it), and unserialized, two
-// in-process pops both list the same newest item and one deletes what the
-// other chose — or an append lands in between and the pop removes an item
-// that is no longer the most recent. Cross-process races are inherent to the
-// server API; the ones this SDK creates itself are not.
-func (s *ConversationsSession) PopEntry(ctx context.Context) (*session.Entry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id, err := s.ensureID(ctx)
-	if err != nil {
-		return nil, err
-	}
-	pager := s.svc.Items.ListAutoPaging(ctx, id, conversations.ItemListParams{
-		Order: conversations.ItemListParamsOrderDesc,
-		Limit: oai.Int(1),
-	})
-	if !pager.Next() {
-		if err := pager.Err(); err != nil {
-			return nil, fmt.Errorf("listing conversation items: %w", err)
-		}
-		return nil, nil
-	}
-	raw := pager.Current()
-	if raw.ID == "" {
-		return nil, fmt.Errorf("conversation item has no ID; cannot pop")
-	}
-	item, err := conversationItemToInput(raw)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := s.svc.Items.Delete(ctx, id, raw.ID); err != nil {
-		return nil, fmt.Errorf("deleting conversation item: %w", err)
-	}
-	entry, err := session.NewItemEntry(item, agents.Source{})
-	if err != nil {
-		return nil, err
-	}
-	entry.ID = raw.ID
-	return &entry, nil
-}
-
-// PopItem implements session.ItemPopper. Every entry in a Conversations session
-// IS a conversation item — the server holds Responses items and nothing else,
-// so there are no banners, leaf moves or checkpoints to skip past and the two
-// pops answer the same question here. A backend that can remove an entry
-// offers both (spec §2.5e2): the flat, server-held store satisfies that with
-// the trivial selection rather than the shared tree-aware one, which has no
-// tree to consult.
-func (s *ConversationsSession) PopItem(ctx context.Context) (*session.Entry, error) {
-	return s.PopEntry(ctx)
 }
 
 // Clear implements session.Storage by deleting the server-side conversation. A

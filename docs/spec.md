@@ -408,9 +408,8 @@ compaction checkpoint, terminal output).
 - **A checkpoint copies nothing.** It NAMES what it folded (`ExcludedIDs`) and
   carries only content that exists nowhere else — the summary, and stand-ins
   for folded groups (`CompactionFold`). The entries a pass kept are never
-  inside it: a copy of a live entry has to be kept in step with the tree, and
-  the copy that fell out of step (a popped entry living on in the checkpoint
-  that "retained" it) is why the earlier self-contained shape was removed.
+  inside it: a copy of a live entry has to be kept in step with the tree —
+  falling out of step is why the earlier self-contained shape was removed.
 
 **Entries are append-only.** ✅ Nothing is rewritten in place; that is what lets
 a session be forked, shared and read concurrently without a writer invalidating
@@ -480,11 +479,8 @@ one is needed, is an optional capability that resolves an ancestor chain
 server-side (a recursive CTE in SQL) rather than a second canonical view.
 
 Capabilities a store may or may not have are **optional interfaces**, not
-required methods: `AtomicReplacer`, `GuardedReplacer`, `EntryPopper`,
-`CompactionAware`. Popping in particular is not in `session.Storage` because a
-run never pops; requiring it would tax stores that cannot (a server-managed
-conversation) for a feature the run loop does not use. **A wrapper that claims
-a capability delivers its contract or refuses**: delegating `AtomicReplacer` to
+required methods: `AtomicReplacer`, `GuardedReplacer`, `CompactionAware`.
+**A wrapper that claims a capability delivers its contract or refuses**: delegating `AtomicReplacer` to
 a wrapped store without it must return an error before touching anything, never
 degrade to a non-atomic Clear+Append — a caller type-asserted the interface
 precisely to rule that failure mode out. `GuardedReplacer` is delegated the
@@ -634,45 +630,10 @@ next backend will answer differently.
 
 - **Parent links are assigned by the minting code**, which is the only layer
   that knows the ids it is about to hand out.
-- **A removal never leaves a reference dangling.** Anything pointing at what was
-  removed — a child's `ParentID`, a leaf move's target, an update entry — is
-  re-pointed or removed with it, atomically. A walk that stops at a missing
-  parent reads the session short, so a removal in the middle of a branch
-  silently truncates everything before it.
-- **A removal operates on the active branch**, not on append order. Removing the
-  newest row can otherwise take an entry off a branch nobody is on. *All
-  shared.*
-
-#### Removing
-
-- **`EntryPopper.PopEntry` removes the most recent entry**, whatever kind it is.
-- **`ItemPopper.PopItem` removes the most recent conversation item**, skipping
-  what is not one — a banner, a leaf move, a folded-away entry. It is "undo my
-  last message".
-- **They are two capabilities because they answer two questions.** One interface
-  answering both meant the same call did different things depending on the
-  store.
-- **A capability is offered by every backend that can support it, or by none.**
-  An interface with one implementation, in an internal package, is an API a
-  caller cannot use and a doc snippet that fails at runtime. *Shared: a backend
-  that can remove an entry gets both, because the selection is shared.* A
-  **flat server-held backend** (`openai.ConversationsSession`) still offers
-  both: every entry it holds IS a conversation item, so the two pops answer
-  the same question and the trivial selection satisfies the shared one.
-- **A checkpoint folds entries out of a pop's reach; popping it brings them
-  back.** An entry a checkpoint folded is skipped exactly as a banner is — not
-  part of the conversation as anyone sees it — while the entries the pass KEPT
-  stay poppable: they are on the branch and in the model's view. And since
-  `PopEntry` takes the newest entry whatever it is, popping a checkpoint
-  UNDOES its fold: the exclusions leave with it. A store that materializes the
-  fold (the server's `compacted` flag) reverses that bookkeeping in the same
-  step — the checkpoint and the flag are two records of one fact. *Selection
-  shared (`PlanPop`); the bookkeeping reversal per backend that keeps any.*
-
 #### The change record
 
-- **Every change moves a session in its listing**, not just an append: clearing
-  and popping are changes.
+- **Every change moves a session in its listing**, not just an append:
+  clearing is a change.
 - **It never moves backwards.** A backend that infers the time from stored
   content moves a session back to its creation as soon as there is no content
   left to infer from.
@@ -779,11 +740,10 @@ payload names the entries it folded (`ExcludedIDs`) and carries only what
 exists nowhere else: the summary text, and a `CompactionFold` per folded group
 whose stand-in renders in the group's place (anchored `Before` the first
 surviving entry after it). The entries the pass kept are read from the session
-itself — never from a copy inside the checkpoint, which is what keeps a later
-pop of a kept entry from living on in a duplicate. The folded entries stay in
-the session untouched, so a reader can offer to expand them, a fork from
-before the checkpoint still finds its full history, and popping the checkpoint
-un-folds them (§2.5e2). `ContextEntries` leaves folded entries out and
+itself — never from a copy inside the checkpoint, which would fall out of
+step with any later change to the entry it duplicates. The folded entries stay
+in the session untouched, so a reader can offer to expand them and a fork from
+before the checkpoint still finds its full history. `ContextEntries` leaves folded entries out and
 `ProjectEntries` renders each live checkpoint's summary up front, so the next
 run reads the shorter context without recomputing the pass.
 
@@ -2032,6 +1992,7 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 | Implicit model-parameter injection (e.g. reasoning defaults for a model family) | Explicit beats implicit. Set `ModelSettings` yourself. |
 | A free-form request passthrough dict | `ExtraBody` / `ExtraHeaders` / `ExtraQuery` cover it, and they are typed. |
 | Redis / encrypted session backends | Implement the session storage interface. The SDK ships in-memory, JSONL and SQL. |
+| A pop/undo storage primitive | Removed after shipping with zero callers: a run never pops (entries are append-only, §2.5b), and every host that wanted "undo" had its own deletion primitive against its own store. Seven implementations of `EntryPopper`/`ItemPopper` existed for no consumer. |
 | A REPL and graph visualization | Not an SDK concern. |
 
 ---

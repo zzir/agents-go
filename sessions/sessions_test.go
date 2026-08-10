@@ -67,26 +67,6 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 		t.Errorf("limit=2 returned wrong items: %v", got)
 	}
 
-	// Pop returns the most recent (c) and shrinks the history.
-	last, err := s.PopEntry(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last == nil {
-		t.Fatal("pop returned nothing")
-	}
-	lastItem, err := last.InputItem()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if jsonOf(t, lastItem) != jsonOf(t, in[2]) {
-		t.Errorf("pop: got %v, want c", lastItem)
-	}
-	got, _ = session.NewSession(s).ContextItems(ctx, session.Cursor{})
-	if len(got) != 2 {
-		t.Errorf("after pop: got %d items, want 2", len(got))
-	}
-
 	if err := s.Clear(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +75,6 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 		t.Errorf("after clear: got %d items, want 0", len(got))
 	}
 
-	last, err = s.PopEntry(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last != nil {
-		t.Errorf("pop on empty: got %v, want nil", last)
-	}
 }
 
 func TestSQLite(t *testing.T) {

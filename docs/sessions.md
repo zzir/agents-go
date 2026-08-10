@@ -136,7 +136,6 @@ Not every store can do everything, and the interface does not pretend otherwise.
 |---|---|
 | `AtomicReplacer` | Swapping the whole history in one step, so a rewrite cannot leave the session empty |
 | `GuardedReplacer` | Swapping the whole history only while its highest sequence number is still the one the caller read, so a rewrite computed from a stale copy cannot delete what landed in between |
-| `EntryPopper` | Removing the most recent entry. **Not** in `session.Storage`: a run never pops, and requiring it would tax stores that cannot (a server-managed conversation) |
 | `CompactionAware` | Compacting its own history after a run |
 
 ## Projection: what the model reads
@@ -240,7 +239,7 @@ sess := session.NewSession(store) // storage alone until it is wrapped
 Properties:
 
 - Goroutine-safe within a process — including multiple `Store` instances opened on the same path (they share a per-path lock). Cross-process access is **not** locked.
-- Appends are written in a single `write` call; rewrites (PopItem) go through an fsynced temp file + atomic rename.
+- Appends are written in a single `write` call; rewrites (`ReplaceEntries`) go through an fsynced temp file + atomic rename.
 - Corrupt lines are skipped on read rather than failing the whole session.
 
 ### SQL sessions (SQLite / PostgreSQL)
@@ -277,7 +276,7 @@ agents.Run(ctx, agent, "remember my name is Ada",
 	agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
 
-`Entries`/`Append`/`PopEntry`/`PopItem`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `session.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
+`Entries`/`Append`/`Clear` proxy the OpenAI Conversations API. Item conversion reuses `session.UnmarshalInputItem`, so messages and function calls/outputs round-trip; exotic server-only item types may not. `Clear` deletes the conversation, and the next use creates a fresh one. Lives in the `models/openai` package because it needs the OpenAI client.
 
 Before persistence each item is **sanitized** for the Conversations API: stale top-level `id`s are stripped except on reasoning items and the handful of types whose create-item schema requires an id (`mcp_call`, `web_search_call`, `item_reference`, …), the SDK-only `provider_data` field is dropped, and a reasoning item that carries neither an `id` nor `encrypted_content` is omitted entirely (the server has nothing durable to reference).
 
@@ -425,13 +424,10 @@ every ordinary exit; it cannot help when the process is killed.
 - History is loaded once at run start; new items are saved incrementally — the user input up front, then each turn as it completes (per-turn `save_result_to_session`). A cancelled or failed run therefore keeps every completed turn and loses only the in-flight one, instead of losing the whole run. A save that leaves nothing behind is announced on the stream as `agents.ItemsPersistedEvent`, so a consumer mirroring the run can tell buffered from persisted without inferring the SDK's timing (see [streaming](streaming.md#the-persistence-event)).
 - When a run pauses for [tool approval](human_in_the_loop.md), the completed part of the turn is already saved; the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` to `ResumeRun`.
 - [Handoff input filters](handoffs.md#input-filters) do not affect what is saved: the session keeps the unfiltered conversation.
-- Corrections: use `PopItem` to remove the last item (e.g. let a user edit their question):
-
-```go
-last, _ := sess.PopItem(ctx) // remove the assistant answer
-last, _ = sess.PopItem(ctx)  // remove the user question
-res, _ := agents.RunSync(ctx, agent, correctedQuestion, agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
-```
+- Corrections (letting a user edit an earlier question) are a branch, not a
+  deletion: fork the session from the entry before the question, or append the
+  corrected turn — entries are append-only, and the projection decides what
+  the model reads.
 
 ## Combining history with new input
 
@@ -480,8 +476,7 @@ Two rules worth knowing:
 
 - **The walk does not stop at a compaction checkpoint.** Folded entries are
   still on the branch — a UI shows them collapsed under the checkpoint — and
-  it is the projection that keeps them out of the model's context. Popping a
-  checkpoint un-folds them.
+  it is the projection that keeps them out of the model's context.
 - **A missing parent ends the walk rather than failing.** An ancestor may have
   been folded away; a corrupt link makes the session shorter, never unreadable.
 

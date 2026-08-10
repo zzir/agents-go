@@ -168,31 +168,6 @@ func (s *InMemoryStorage) Clear(context.Context) error {
 	return nil
 }
 
-// PopEntry implements EntryPopper.
-func (s *InMemoryStorage) PopEntry(context.Context) (*Entry, error) {
-	return s.pop(PopLast)
-}
-
-// PopItem implements ItemPopper.
-func (s *InMemoryStorage) PopItem(context.Context) (*Entry, error) {
-	return s.pop(PopLastItem)
-}
-
-func (s *InMemoryStorage) pop(mode PopMode) (*Entry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkLive(); err != nil {
-		return nil, err
-	}
-	plan, ok := PlanPop(s.entries, mode)
-	if !ok {
-		return nil, nil
-	}
-	s.entries = ApplyRemoval(s.entries, plan)
-	s.updatedAt = time.Now().UTC()
-	return &plan.Entry, nil
-}
-
 // ReplaceEntries implements AtomicReplacer: the swap happens under one lock.
 func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...Entry) error {
 	s.mu.Lock()
@@ -248,8 +223,6 @@ var (
 	_ Storage         = (*InMemoryStorage)(nil)
 	_ AtomicReplacer  = (*InMemoryStorage)(nil)
 	_ GuardedReplacer = (*InMemoryStorage)(nil)
-	_ EntryPopper     = (*InMemoryStorage)(nil)
-	_ ItemPopper      = (*InMemoryStorage)(nil)
 )
 
 // PageEntries applies a cursor to entries already in append order. Backends
@@ -319,54 +292,4 @@ type AtomicReplacer interface {
 // costs a summary that is one entry out of date.
 type GuardedReplacer interface {
 	ReplaceEntriesIf(ctx context.Context, expect int64, entries ...Entry) (replaced bool, err error)
-}
-
-// EntryPopper is an optional Storage capability: remove and return the
-// most recent entry.
-//
-// It is not part of Storage because a run never pops — history is
-// append-only from the runner's side. Only an application undoing a turn needs
-// it, and requiring every backend to implement it would tax the ones that
-// cannot (a server-managed conversation) for a feature the run loop does not
-// use.
-type EntryPopper interface {
-	PopEntry(ctx context.Context) (*Entry, error)
-}
-
-// ItemPopper is an optional Storage capability: remove and return the
-// most recent conversation ITEM, skipping past what is not one — an error
-// banner, a leaf move, an entry a compaction pass folded away.
-//
-// It is separate from EntryPopper because the two answer different questions,
-// and only one of them is "undo the last thing that happened". A UI offering
-// "undo my last message" wants this one: the banner above it is not something a
-// person means to undo, and removing it would leave the turn it reports on in
-// the history.
-//
-// Every store that can remove an entry offers both, because the choice is made
-// by PlanPop rather than by each store. One interface answering both questions
-// is how the same call came to mean different things in different backends.
-type ItemPopper interface {
-	PopItem(ctx context.Context) (*Entry, error)
-}
-
-// PopEntry removes and returns a session's most recent entry, when the store
-// supports it. It reports an error for one that does not.
-func (s *Session) PopEntry(ctx context.Context) (*Entry, error) {
-	p, ok := s.storage.(EntryPopper)
-	if !ok {
-		return nil, fmt.Errorf("session: session storage %T cannot pop entries", s.storage)
-	}
-	return p.PopEntry(ctx)
-}
-
-// PopItem removes and returns a session's most recent conversation item,
-// skipping entries that are not one. It reports an error for a store that
-// cannot.
-func (s *Session) PopItem(ctx context.Context) (*Entry, error) {
-	p, ok := s.storage.(ItemPopper)
-	if !ok {
-		return nil, fmt.Errorf("session: session storage %T cannot pop items", s.storage)
-	}
-	return p.PopItem(ctx)
 }
