@@ -8,11 +8,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// schemaValidator validates instances against one JSON Schema.
-//
-// The schema is compiled once and reused: resolving it per model call would
-// redo the same work on every turn of every run, and a schema does not change
-// between them.
+// schemaValidator validates instances against one JSON Schema, compiled once
+// and reused across calls.
 type schemaValidator struct {
 	once     sync.Once
 	raw      map[string]any
@@ -24,12 +21,8 @@ func newSchemaValidator(raw map[string]any) *schemaValidator {
 	return &schemaValidator{raw: raw}
 }
 
-// resolve compiles the schema on first use.
-//
-// A schema this SDK cannot compile is NOT an error: it may still be a schema
-// the provider understands, and refusing to run because we could not validate
-// locally would turn a missing check into a broken feature. Validation is
-// skipped instead.
+// resolve compiles the schema on first use. A schema this SDK cannot compile is
+// not an error — validation is skipped rather than failing the run.
 func (v *schemaValidator) resolve() (*jsonschema.Resolved, bool) {
 	v.once.Do(func() {
 		if len(v.raw) == 0 {
@@ -50,13 +43,8 @@ func (v *schemaValidator) resolve() (*jsonschema.Resolved, bool) {
 	return v.resolved, v.resolved != nil && v.err == nil
 }
 
-// Validate reports whether raw satisfies the schema.
-//
-// It is the whole-schema check the hand-rolled one could not be: nested
-// `required`, nested type mismatches, enums, bounds. The old check looked at
-// root-level required keys only, so a model returning
-// {"config": {"host": "x"}} against a schema requiring config.port produced a
-// silent zero value instead of an error the model could recover from.
+// Validate reports whether raw satisfies the whole schema, nested included
+// (nested required, type mismatches, enums, bounds).
 func (v *schemaValidator) Validate(raw []byte) error {
 	res, ok := v.resolve()
 	if !ok {
@@ -67,8 +55,7 @@ func (v *schemaValidator) Validate(raw []byte) error {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	if err := res.Validate(instance); err != nil {
-		// The library's messages carry a JSON-pointer path
-		// ("/properties/inner/properties/port"), which is exactly what a model
+		// The library's messages carry a JSON-pointer path, which is what a model
 		// needs to fix its own output.
 		return err
 	}
@@ -76,18 +63,9 @@ func (v *schemaValidator) Validate(raw []byte) error {
 }
 
 // ApplyDefaults fills in the schema's default values for keys the instance
-// omits, returning the completed JSON.
-//
-// A schema that documents a default and then hands the consumer a zero value is
-// telling two different stories. Applying them here means a tool's argument
-// struct sees what the schema advertised.
-//
-// It returns no error, and that is the contract rather than an oversight:
-// defaults are a convenience, so anything that goes wrong — an uncompilable
-// schema, a default that does not fit, a value that will not re-marshal —
-// degrades to the input unchanged. Failing a call whose arguments are
-// otherwise valid because a default could not be applied would be worse than
-// not applying it. Validation still runs on whatever comes back.
+// omits, returning the completed JSON. It never errors: anything that goes
+// wrong (uncompilable schema, unfittable default, re-marshal failure) degrades
+// to the input unchanged.
 func (v *schemaValidator) ApplyDefaults(raw []byte) []byte {
 	res, ok := v.resolve()
 	if !ok {
@@ -108,14 +86,10 @@ func (v *schemaValidator) ApplyDefaults(raw []byte) []byte {
 }
 
 // relaxAdditionalProperties returns a copy of schema with every
-// `additionalProperties: false` removed, for validation only.
-//
-// The schema SENT to the provider keeps it — that is what makes a model
-// well-behaved, and OpenAI strict mode requires it. But enforcing it locally
-// adds strictness without safety: an unexpected key is dropped by Go decoding
-// and the tool cannot see it either way, so rejecting the call only turns a
-// harmless extra into a failed turn. A misspelled key is still caught, by
-// `required`, which is where it should be caught.
+// `additionalProperties: false` removed, for local validation only — the schema
+// sent to the provider keeps it. Enforcing it locally would only turn a
+// harmless extra key into a failed turn; a misspelled key is still caught by
+// `required`.
 func relaxAdditionalProperties(schema map[string]any) map[string]any {
 	out := make(map[string]any, len(schema))
 	for k, val := range schema {

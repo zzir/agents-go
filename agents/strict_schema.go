@@ -63,16 +63,6 @@ func ensureStrictSchemaCopy(schema map[string]any) (map[string]any, error) {
 // such as {"description":...} (a field carrying a jsonschema description tag).
 // Strict mode has no way to express an unconstrained value, so surface the
 // problem at construction time instead of a 400 from the API at request time.
-//
-// json.RawMessage / []byte are deliberately not suggested as a fix: they reflect
-// to a byte-array schema (a JSON array of integers 0-255), not an arbitrary-JSON
-// schema, so they change the argument's meaning rather than relaxing it. Give
-// the field a concrete type, or turn strict off where the schema was built.
-// That last part stays generic on purpose: the same node is reached from
-// runtime schemas too (NewRawTool, NewDynamicOutputSchema), whose switch is
-// their own. The reflected-type constructors are named as the example because
-// they are the ones users reach for, and because the obvious guess there —
-// Tool.NonStrict — runs after the strict schema has already been generated.
 func errUnconstrainedSchema(what string, path []string) error {
 	return fmt.Errorf(
 		"%s (path=%s) is an unconstrained schema: a Go any/interface{} field has no concrete "+
@@ -153,10 +143,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 			if err := ensureStrict(ps, append(path, "properties", key), root); err != nil {
 				return err
 			}
-			// A property that still constrains nothing after normalization — the
-			// map form of an any/interface{} field, e.g. {"description":...} —
-			// slips past the boolean-schema guard above but would 400 at request
-			// time, so reject it here too.
+			// A property that still constrains nothing after normalization (the map
+			// form of an any/interface{} field) would 400 at request time; reject it.
 			if isUnconstrainedSchema(ps) {
 				return errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
 			}

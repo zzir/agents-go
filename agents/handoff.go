@@ -50,15 +50,13 @@ type Handoff struct {
 	// AgentName is the name of the target agent, used for tracing.
 	AgentName string
 
-	// Target is the agent this handoff switches to, declared as data: HandoffTo
-	// fills it, and a consumer enumerating the handoff graph — an approval UI,
-	// the agent registry RunStateFromJSON wants — walks Target fields without
-	// invoking user code. When OnInvoke is nil the runner switches to Target
+	// Target is the agent this handoff switches to, declared as data so a
+	// consumer can enumerate the handoff graph without invoking user code.
+	// HandoffTo fills it; when OnInvoke is nil the runner switches to Target
 	// directly, so a hand-built static handoff needs no callback.
 	//
-	// A dynamic handoff sets OnInvoke instead, and leaves Target nil rather
-	// than declaring a target it may not honor: nil is how it says "not
-	// statically enumerable".
+	// A dynamic handoff sets OnInvoke instead and leaves Target nil: nil is how
+	// it says "not statically enumerable".
 	Target *Agent
 
 	// OnInvoke, when non-nil, resolves the handoff target at runtime — it may
@@ -84,19 +82,16 @@ type Handoff struct {
 // validateHandoffInput checks the raw handoff arguments against the handoff's
 // InputJSONSchema before the handoff fires, so input the target agent could not
 // have used is a *ModelBehaviorError fed back to the model instead of a silent
-// transfer with zero-valued input. The check is the whole schema, the same one
-// tool arguments get: a nested required key, a type mismatch or a violated enum
-// is caught, not only a missing root-level key.
+// transfer with zero-valued input. The check is the whole schema, nested
+// included, the same one tool arguments get.
 //
 // Arguments are checked as sent, without applying schema defaults: OnHandoff,
 // OnInvoke and the session all see the model's raw argument string, and a value
 // invented here would not be in it.
 //
-// The schema is compiled here rather than cached on the Handoff: the runner
-// validates a per-turn copy, so a cache on the value would never be read twice
-// anyway, and a lazily written field on a struct users copy freely is a race
-// waiting for its second caller. One compilation per handoff invocation is
-// nothing next to the model call that produced the arguments.
+// The schema is compiled here rather than cached on the Handoff, which the
+// runner copies per turn: one compilation per invocation is nothing next to the
+// model call that produced the arguments.
 func validateHandoffInput(h *Handoff, argsJSON string) error {
 	if len(h.InputJSONSchema) == 0 {
 		// No schema is nothing to check against, not a stricter default: such a
@@ -104,10 +99,9 @@ func validateHandoffInput(h *Handoff, argsJSON string) error {
 		return nil
 	}
 	trimmed := strings.TrimSpace(argsJSON)
-	// "" and "null" are how a model spells "no input", and the empty object is
-	// the same call. Whether the handoff can accept it is read off the schema
-	// directly instead of by validating "{}", so a handoff that declares it
-	// needs input keeps saying so even for a schema we cannot compile.
+	// "" and "null" are how a model spells "no input". Whether the handoff can
+	// accept it is read off the schema's required list directly, so it still
+	// holds for a schema we cannot compile.
 	if trimmed == "" || trimmed == "null" {
 		if required, _ := h.InputJSONSchema["required"].([]any); len(required) > 0 {
 			return NewModelBehaviorError("Handoff function expected non-null input, but got None")
@@ -118,11 +112,9 @@ func validateHandoffInput(h *Handoff, argsJSON string) error {
 	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
 		return NewModelBehaviorError("invalid input for handoff %q: invalid JSON: %v", h.ToolName, err)
 	}
-	// The schema decides everything else, but not this: `required` and
-	// `properties` say nothing about a non-object instance, so a schema that
-	// omits "type" would accept a bare scalar as handoff input — exactly the
-	// silent zero-value transfer this check exists to prevent. Function tool
-	// arguments are gated the same way.
+	// A non-object instance is rejected explicitly: `required`/`properties` say
+	// nothing about a bare scalar, so a schema omitting "type" would otherwise
+	// accept one as the silent zero-value transfer this check prevents.
 	if _, ok := parsed.(map[string]any); !ok {
 		return NewModelBehaviorError("invalid input for handoff %q: expected a JSON object", h.ToolName)
 	}

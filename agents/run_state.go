@@ -19,14 +19,15 @@ import (
 //
 // Decoding accepts the same major, no newer than this minor and no older than
 // runStateOldestDecodableMinor; anything else is rejected rather than
-// best-effort decoded (see RunStateFromJSON). The numbers below name format
-// steps rather than releases — the constant itself has only ever read 1.0, 1.3,
-// 1.4, 1.5 and 1.6: 1.1 replaced the per-call approval maps with per-tool
-// entries, 1.2 added the nested agent-as-tool states and the reasoning-item id
-// policy, 1.3 added the guardrail-result slices (input, output, tool
-// input/output), 1.4 added the pending injected input, the disclosed deferred
-// tools and the server cursor, 1.5 added the off-chain-history flag, and 1.6
-// added the host extra map.
+// best-effort decoded (see RunStateFromJSON). The minors name format steps, not
+// releases:
+//
+//	1.1 per-tool approval entries (replacing per-call maps)
+//	1.2 nested agent-as-tool states + reasoning-item id policy
+//	1.3 guardrail-result slices
+//	1.4 pending injected input, disclosed deferred tools, server cursor
+//	1.5 off-chain-history flag
+//	1.6 host extra map
 const RunStateSchemaVersion = "1.6"
 
 // runStateOldestDecodableMinor is the oldest minor of the current major this
@@ -34,13 +35,11 @@ const RunStateSchemaVersion = "1.6"
 // after it: a state that old is missing only fields the decoder already falls
 // back for.
 //
-// It is not "the oldest minor that ever existed". Raise it to the new minor
-// whenever a bump REPLACES or reinterprets a field instead of only adding one —
-// such a state decodes successfully with its old fields silently dropped, which
-// is worse than a refusal. It sits at 4 for that reason: 1.3 was stamped both
-// before and after the four separate guardrail-result keys collapsed into one,
-// and the version string cannot tell those two shapes apart. 1.5 and 1.6 only
-// ADDED fields, so a 1.4 state still decodes.
+// Raise it whenever a bump REPLACES or reinterprets a field rather than only
+// adding one — such a state would decode with its old fields silently dropped,
+// worse than a refusal. It sits at 4 because 1.3 was stamped both before and
+// after the guardrail-result keys collapsed into one, a shape the version string
+// cannot disambiguate; 1.5 and 1.6 only added fields, so a 1.4 state decodes.
 const runStateOldestDecodableMinor = 4
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
@@ -64,10 +63,9 @@ type RunState struct {
 	CurrentTurn int
 
 	// MaxTurns is the turn budget of the interrupted run. ResumeRun always
-	// continues under it, ignoring RunOptions.Exec.MaxTurns, so a
-	// run started with MaxTurns 20 and interrupted at turn 12 resumes under 20.
-	// Zero — e.g. states serialized before this field existed — falls back to
-	// DefaultMaxTurns; a negative value (MaxTurnsUnlimited) disables the budget.
+	// continues under it, ignoring RunOptions.Exec.MaxTurns. Zero — including
+	// states serialized before this field existed — falls back to DefaultMaxTurns;
+	// a negative value (MaxTurnsUnlimited) disables the budget.
 	MaxTurns int
 
 	// UserInput is the new input the interrupted Run was invoked with (without
@@ -80,42 +78,31 @@ type RunState struct {
 	SessionItems []*RunItem
 
 	// PersistedSessionItems counts how many leading SessionItems the interrupted
-	// run already wrote to the session before pausing (the pending, output-less
-	// tool calls are held back). The resumed run continues persisting from here.
-	// Zero — including states serialized before this field existed — makes the
-	// resume re-persist from the start, which is safe: an old interrupted run
-	// saved nothing, so there is nothing to double up.
+	// run already wrote before pausing (pending output-less calls held back); the
+	// resume continues from here. Zero — including pre-field states — re-persists
+	// from the start, which is safe: an old interrupted run saved nothing.
 	PersistedSessionItems int
 
-	// ToolsUsed lists the names of agents that had already called tools when the
-	// run paused, so ResumeRun keeps the tool_choice reset in effect for them.
-	// Empty for states from before this field existed — the interrupted agent
-	// re-marks itself when its response is re-processed, so only cross-agent
-	// hand-back loses the reset.
+	// ToolsUsed lists the agents that had already called tools when the run
+	// paused, so ResumeRun keeps their tool_choice reset in effect. Empty for
+	// pre-field states — the interrupted agent re-marks itself on re-process, so
+	// only cross-agent hand-back loses the reset.
 	ToolsUsed []string
 
-	// OffChainHistory records that by the time the run paused, its stored log
-	// already held items no model call had carried — entries a read window
-	// (Conversation.Settings.Limit) truncated away, or a conversation a handoff
-	// input filter dropped. The resumed run re-reads no history and re-runs no
-	// filter, so this is the only way it can answer for the half it did not
-	// perform, and getting it wrong lets a chain-based compaction delete those
-	// items unread (see runner.offChainItems).
-	//
-	// Absent in states serialized before this field existed (schema < 1.5) →
-	// false, which is what those states already meant in effect.
+	// OffChainHistory records that by the pause the stored log already held items
+	// no model call carried — a read window truncated them, or a handoff filter
+	// dropped them. The resume re-reads no history and re-runs no filter, so this
+	// is its only source; getting it wrong lets a chain-based compaction delete
+	// them unread (see runner.offChainItems). Absent (schema < 1.5) → false.
 	OffChainHistory bool
 
 	// DisclosedTools names the deferred tools opened up before the pause, so a
-	// resumed run does not re-hide a tool the model has already been told
-	// about — which would look, from the model's side, like the tool was taken
-	// away mid-conversation.
+	// resumed run does not re-hide a tool the model has already been told about.
 	DisclosedTools []string
 
 	// PendingInput carries input queued through RunControl that the run had not
-	// consumed when it paused. Without it, a steer sent while the caller was
-	// deciding on an approval would be lost at exactly the moment it mattered
-	// most — the human is looking at the run and saying something about it.
+	// consumed when it paused — e.g. a steer sent while the caller was deciding
+	// on an approval, which would otherwise be lost.
 	PendingInput PendingInput
 
 	// ReasoningItemIDPolicy carries the interrupted run's reasoning-item id
@@ -131,44 +118,31 @@ type RunState struct {
 	// does not round-trip, so a decoded result carries a name-only stub.
 	GuardrailResults []GuardrailResult
 
-	// Extra is host-owned state riding the pause. The SDK carries it verbatim —
-	// marshals it, unmarshals it, never reads or writes a key — so whatever a
-	// host must remember across pause and resume (a Plan phase's unlock, a
-	// build-time rewrite's progress) travels inside the state instead of in a
-	// side channel next to it. Keys are the host's; a prefix ("plan:phase")
-	// avoids collisions. Absent in states from before schema 1.6 → nil.
+	// Extra is host-owned state riding the pause. The SDK carries it verbatim,
+	// never reading a key, so a host can remember state across pause and resume.
+	// Keys are the host's; a prefix ("plan:phase") avoids collisions. Absent in
+	// states from before schema 1.6 → nil.
 	//
-	// It covers pause→resume, not crashes: a value lands here only when a
-	// pause serializes the state. A fact that must survive a crash mid-run —
-	// the moment a plan unlocked, say — needs the host's own durable write at
-	// that moment (PlanPhase.OnUnlock exists for exactly that), and the two
-	// records answer different questions.
+	// It covers pause→resume, not crashes: a value lands here only when a pause
+	// serializes the state. A fact that must survive a mid-run crash needs the
+	// host's own durable write (PlanPhase.OnUnlock exists for that).
 	Extra map[string]json.RawMessage
 
 	// cursor is the server-managed-conversation cursor at the pause: what the
-	// server already holds, so a resumed run keeps sending deltas. Without it a
-	// resume re-sent the full history to a conversation that already has it —
-	// duplicating server-side items in ConversationID mode and restarting the
-	// response chain in previous_response_id mode.
+	// server already holds, so a resumed run keeps sending deltas rather than
+	// re-sending the full history to a conversation that already has it.
 	cursor serverCursor
 
 	// nestedToolStates carries the paused RunState of any agent-as-tool nested
-	// run, keyed by the parent tool call id, so ResumeRun continues the nested
-	// run instead of restarting it. It rides on the live RunState across an
-	// in-process pause/resume and is serialized RECURSIVELY in the RunState JSON
-	// (each nested state round-trips through the same agent-registry rebuild), so
-	// a cross-process resume continues the nested run too. Absent in states
-	// serialized before this field existed → nil (a resumed nested run starts
-	// fresh, the pre-1.2 behavior).
+	// run, keyed by the parent tool call id, so ResumeRun continues the nested run
+	// instead of restarting it. Serialized recursively, so a cross-process resume
+	// continues it too. Absent (pre-1.2 states) → nil (nested run starts fresh).
 	nestedToolStates map[string]*RunState
 
 	// usagePending records whether the interrupted response's usage was still
-	// unattributed when the run paused. It usually is: the pause-time persist
-	// withholds the turn's items (a stored call without its output is a
-	// dangling call), so the usage has nothing to land on until the resumed
-	// batch. The resumed runner re-arms attribution exactly when this says the
-	// debt exists — unconditionally re-arming double-counted the request
-	// whenever the pausing segment HAD already attributed it.
+	// unattributed when the run paused. The resumed runner re-arms attribution
+	// only when this says the debt exists; unconditionally re-arming would
+	// double-count a request the pausing segment had already attributed.
 	usagePending bool
 }
 
@@ -201,16 +175,11 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 // Run, and with the same semantics: nothing executes until the stream is
 // ranged.
 //
-// Items the interrupted segment already emitted before pausing (the paused
-// turn's message and tool-call items) are not re-emitted; the stream picks up
-// with the side effects of the approval decisions and every later turn.
-// ResumeRun applies opts.Middlewares exactly as Run does: a caller resuming
-// with the same options gets the same wrapping — logging still logs, Retry
-// still retries, Approval still auto-resolves further pauses. (A middleware
-// resuming from INSIDE the chain passes stripped options, per its own
-// contract, so the chain is never entered twice.) A middleware may edit
-// in.Opts; the paused state's agent and input are already decided, so edits
-// to those fields do not apply.
+// Items the interrupted segment already emitted before pausing are not
+// re-emitted; the stream picks up with the side effects of the approval
+// decisions and every later turn. ResumeRun applies opts.Middlewares exactly as
+// Run does. A middleware may edit in.Opts, but the paused state's agent and
+// input are already decided, so edits to those do not apply.
 func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, RunControl) {
 	ctrl := newRunControl()
 	return resumeWithMiddleware(ctx, state, opts, ctrl, true), ctrl
@@ -232,13 +201,10 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 			resumeStream(ctx, nil, opts, ctrl, rawEvents, yield)
 		})
 	}
-	// Seed the queue from the paused state BEFORE the control reaches the
-	// caller — not lazily when ranging begins. The control is legal to use
-	// before ranging, and a Steer enqueued in that window would otherwise be
-	// sequenced AHEAD of the pre-pause backlog the lazy restore then appends:
-	// delivery order would invert to "new, then old" when the old input was
-	// said first. (restore seeds once per control; middleware re-entries of
-	// the stream body are no-ops either way.)
+	// Seed the queue from the paused state before the control reaches the caller,
+	// not lazily when ranging begins: a Steer enqueued in that window would
+	// otherwise sequence ahead of the restored pre-pause backlog. (restore seeds
+	// once per control.)
 	ctrl.restore(state.PendingInput)
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
@@ -273,17 +239,14 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	if err := validateServerState(opts); err != nil {
 		return nil, nil, err
 	}
-	// Turn budget on resume: the interrupted run's own budget always wins, so
-	// repeated interrupt/resume cycles stay under the original limit. A negative
-	// budget (MaxTurnsUnlimited) is preserved; only a zero — including states
-	// serialized before MaxTurns existed — falls back to the default.
+	// The interrupted run's own budget always wins (see RunState.MaxTurns); only
+	// a zero falls back to the default.
 	maxTurns := state.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
 	}
-	// Reasoning-item id policy precedence: an explicit override in opts wins, then
-	// the interrupted run's own policy carried by the state (so a run started with
-	// Omit keeps stripping ids on resume even when the caller does not repeat it).
+	// Reasoning-item id policy: an explicit opts override wins, else the state's
+	// own policy, so a run started with Omit keeps stripping ids on resume.
 	if opts.Exec.ReasoningItemIDPolicy == ReasoningItemIDPreserve {
 		opts.Exec.ReasoningItemIDPolicy = state.ReasoningItemIDPolicy
 	}
@@ -292,34 +255,22 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		rc.Approvals = state.Approvals
 	}
 	if state.Usage != nil {
-		// A COPY, not the state's own accumulator: the resumed run keeps adding
-		// to rc.Usage on every model call, and adopting the pointer would write
-		// those additions through into the RunState the caller still holds — a
-		// second resume of the same state (a Retry middleware over ResumeRun)
-		// would then start from the first attempt's inflated counters. Same
-		// contract as nestedToolStates below: the pause snapshot stays intact
-		// for every attempt.
+		// A copy, not the state's own accumulator: the resumed run keeps adding to
+		// rc.Usage, and a second resume of the same state (Retry over ResumeRun)
+		// must start from the pause snapshot, not an inflated one.
 		u := state.Usage.Snapshot()
 		rc.Usage = &u
 	}
 	// Re-install any paused agent-as-tool nested states so a resumed AsTool call
-	// continues its nested run. These survive a JSON round-trip (schema ≥ 1.2),
-	// so a cross-process resume continues the nested run too.
-	//
-	// A COPY, not the state's own map: taking a nested state deletes it, and a
-	// second resume of the same state — what a Retry middleware over
-	// ResumeRun does on its next attempt — would then find the map depleted
-	// and RESTART each nested run instead of continuing it. The pause snapshot
-	// stays intact for every attempt.
+	// continues its nested run. A copy, not the state's own map: taking a nested
+	// state deletes it, and a second resume must not find the map depleted and
+	// restart each nested run.
 	rc.nestedToolStates = maps.Clone(state.nestedToolStates)
 	rc.inheritedOpts = &opts
-	// Scrub the resumed input the same way a fresh run scrubs session history:
-	// a state that was serialized, moved across processes, or hand-edited may
-	// carry a dangling tool call the Responses API would reject. The pending
-	// approval call lives in GeneratedItems (awaiting its output this turn), not
-	// in OriginalInput, so it is untouched. The loop seeds originalInput from
-	// r.resume.OriginalInput, so write the scrubbed form back onto the state
-	// this ResumeRun is already consuming.
+	// Scrub the resumed input as a fresh run scrubs session history: a serialized
+	// or hand-edited state may carry a dangling tool call the Responses API would
+	// reject. The pending approval call lives in GeneratedItems, not OriginalInput,
+	// so it is untouched. Write the scrubbed form back for the loop to seed from.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
 	// Same start-up a fresh run gets, trace included: a nested resume joins the
@@ -339,9 +290,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	r.guardrailResults = state.GuardrailResults
 	// Likewise for what the paused half left off the response chain: a resume
 	// makes no windowed read and applies no handoff filter, so the state is its
-	// only source. Answering it from opts instead would be wrong twice over —
-	// silently false when the caller does not repeat Conversation.Settings, and
-	// needlessly true when they repeat a window the log never reached.
+	// only source.
 	r.offChainHistory = state.OffChainHistory
 	// Restore the tool-use tracker so tool_choice stays reset for every agent
 	// that had used tools before the pause (not only the interrupted one).
@@ -372,11 +321,8 @@ type serialItem struct {
 	Type  string          `json:"type"`
 	Agent string          `json:"agent"`
 	Input json.RawMessage `json:"input"`
-	// Source and Display carry the item's provenance and its UI projection
-	// across an interruption. Without them a resumed run reports every restored
-	// item as a plain model output with nothing to render, and a consumer that
-	// reloads a paused conversation sees a different timeline than the one it
-	// was showing before the pause.
+	// Source and Display carry the item's provenance and UI projection across an
+	// interruption, so a reloaded paused conversation renders the same timeline.
 	Source  Source      `json:"source,omitzero"`
 	Display ItemDisplay `json:"display,omitzero"`
 }
@@ -385,11 +331,10 @@ type serialResponse struct {
 	ID     string            `json:"id"`
 	Output []json.RawMessage `json:"output"`
 	Usage  *Usage            `json:"usage,omitempty"`
-	// Status and IncompleteReason survive serialization because Truncated()
-	// reads them: a response cut off at the output-token limit must still
-	// read as cut off after a cross-process resume, or the resumed segment
-	// executes tool calls whose arguments stopped mid-JSON — the exact thing
-	// the in-process path refuses (spec §2.7e).
+	// Status and IncompleteReason survive serialization because Truncated() reads
+	// them: a response cut off at the output-token limit must still read as cut
+	// off after a cross-process resume, or the resume runs tool calls with
+	// mid-JSON arguments (spec §2.7e).
 	Status           string `json:"status,omitempty"`
 	IncompleteReason string `json:"incomplete_reason,omitempty"`
 }
@@ -440,9 +385,8 @@ type serialRunState struct {
 	// JSON that round-trips through RunStateFromJSON with the same agent registry.
 	NestedToolStates map[string]json.RawMessage `json:"nested_tool_states,omitempty"`
 	// UsagePending records an unattributed interrupted-response usage; see
-	// RunState.usagePending. A pointer so absence is distinguishable: states
-	// serialized before the field existed decode as nil and resume with the
-	// old always-re-arm behavior, which loses nothing they had.
+	// RunState.usagePending. A pointer so a pre-field nil decodes to the old
+	// always-re-arm behavior.
 	UsagePending *bool `json:"usage_pending,omitempty"`
 
 	// Guardrail results accumulated before the pause (schema ≥ 1.3), serialized
@@ -592,9 +536,8 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 			ConversationActive: s.cursor.conversationActive,
 		}
 	}
-	// Serialize nested agent-as-tool states recursively: each nested *RunState
-	// round-trips through its own MarshalJSON, so a cross-process resume rebuilds
-	// and continues the nested run instead of restarting it.
+	// Serialize nested agent-as-tool states recursively so a cross-process resume
+	// can continue them.
 	if len(s.nestedToolStates) > 0 {
 		out.NestedToolStates = make(map[string]json.RawMessage, len(s.nestedToolStates))
 		for callID, nested := range s.nestedToolStates {
@@ -724,11 +667,9 @@ func serializeResponse(resp *ModelResponse) serialResponse {
 
 // RunStateVersionSupported reports whether a serialized state stamped with
 // version can be decoded by this SDK: same major, minor no newer than
-// RunStateSchemaVersion and no older than the oldest this decoder still
-// accepts. It answers from the version string alone, so a host triaging a
-// stored state (resume it, refuse it, discard it) can decide without a
-// registry or a full decode — and without hard-coding equality, which would
-// reject states this SDK decodes fine.
+// RunStateSchemaVersion and no older than the oldest this decoder accepts. It
+// answers from the version string alone, so a host can triage a stored state
+// without a registry or a full decode.
 func RunStateVersionSupported(version string) bool {
 	return checkRunStateSchemaVersion(version) == nil
 }
@@ -800,9 +741,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),
 		Extra:                 in.Extra,
 		Approvals:             NewApprovalStore(),
-		// Absent (a pre-flag state) resumes with the old always-re-arm
-		// behavior: those states almost certainly paused with the usage
-		// unattributed, and losing it would be the regression.
+		// Absent (a pre-flag state) resumes with the old always-re-arm behavior.
 		usagePending: in.UsagePending == nil || *in.UsagePending,
 	}
 	if st.CurrentAgent == nil {
@@ -867,10 +806,8 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		})
 	}
 	st.Approvals.restore(in.ApprovalEntries)
-	// Rebuild nested agent-as-tool states recursively, resolving each nested
-	// CurrentAgent via the same registry, so a resumed parent continues (not
-	// restarts) its paused nested runs. Absent (pre-1.2 states) leaves the map
-	// nil — a resumed nested run starts fresh.
+	// Rebuild nested agent-as-tool states recursively via the same registry, so a
+	// resumed parent continues (not restarts) them. Absent (pre-1.2) → nil.
 	if len(in.NestedToolStates) > 0 {
 		st.nestedToolStates = make(map[string]*RunState, len(in.NestedToolStates))
 		for callID, raw := range in.NestedToolStates {

@@ -31,10 +31,9 @@ type CallModelInputFilter func(ctx context.Context, rc *RunContext, agent *Agent
 // agent, "hi", agents.RunOptions{}) works as long as the agent can resolve a
 // model (an explicit Agent.ModelImpl, or Model.Override / Model.Provider here).
 //
-// Fields are grouped by what they configure rather than listed flat. The groups
-// are not cosmetic — Conversation in particular collects options that constrain
-// each other (a local Session and server-managed state are alternatives, not
-// layers), which a flat list hid.
+// Fields are grouped by what they configure rather than listed flat —
+// Conversation in particular collects options that constrain each other (a local
+// Session and server-managed state are alternatives, not layers).
 type RunOptions struct {
 	// Model selects and configures the model behind every agent in the run.
 	Model ModelOptions
@@ -54,9 +53,8 @@ type RunOptions struct {
 	// Agent.Guardrails. Run-level guardrails are consulted first at every stage.
 	Guardrails []Guardrail
 
-	// Middlewares wrap the run, outermost first. They are where optional
-	// policy lives — logging, retrying, recovering — so the loop does not grow
-	// a field and a branch for each one.
+	// Middlewares wrap the run, outermost first. They are where optional policy
+	// lives — logging, retrying, recovering — rather than a loop field each.
 	Middlewares []RunMiddleware
 
 	// Observe configures tracing.
@@ -210,11 +208,6 @@ type ExecOptions struct {
 	// full history saved. It is a predicate, not a producer: the final output
 	// is the turn's last message text, or the last tool output when the turn
 	// produced no message. Anything richer is available on the RunResult.
-	//
-	// It replaces the agent-level tool-use behavior it grew out of. Deciding
-	// from what a turn produced is strictly more expressive than naming tools
-	// up front, and it belongs to the run rather than the agent: the same agent
-	// is reused across runs that want to stop at different points.
 	ShouldStopAfterTurn func(ctx context.Context, tr *TurnResult) (bool, error)
 }
 

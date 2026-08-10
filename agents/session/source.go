@@ -4,10 +4,6 @@ import "cmp"
 
 // SourceType says who produced an item. The zero value is the model, which is
 // where most items come from.
-//
-// It replaces a marker the SDK used to smuggle into the item itself: a fake
-// response id ("__fake_id__") stamped on synthesized items, which every
-// consumer then had to know about and string-compare. Provenance is not an id.
 type SourceType string
 
 const (
@@ -36,11 +32,9 @@ type Source struct {
 }
 
 // IsExternal reports whether the item came from outside the SDK — the model or
-// the caller — as opposed to something the runner synthesized.
-//
-// The distinction matters wherever the SDK must not feed itself: a context
-// provider that injects content and later reads history back must not re-ingest
-// its own injections, and a compaction summary must not be summarized again.
+// the caller — as opposed to something the runner synthesized. The distinction
+// matters where the SDK must not feed itself: a compaction summary must not be
+// summarized again, an injected item must not be re-ingested.
 func (s Source) IsExternal() bool {
 	return s.Type == SourceModel || s.Type == SourceUser
 }

@@ -29,10 +29,8 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 		span.SetError(verr.Error(), map[string]any{"details": "invalid handoff input"})
 		return nil, verr
 	}
-	// OnInvoke is the runtime authority when set — it may pick a target from
-	// the arguments; Target is the static declaration HandoffTo fills. Neither
-	// is a configuration error: the handoff was offered to the model but cannot
-	// deliver anyone to switch to.
+	// OnInvoke is the runtime authority when set — it may pick a target from the
+	// arguments; Target is the static declaration HandoffTo fills.
 	target := run.Handoff.Target
 	if run.Handoff.OnInvoke != nil {
 		var err error

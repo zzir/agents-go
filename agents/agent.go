@@ -8,9 +8,7 @@ import (
 // Instructions produces the system prompt for an agent, computed per run.
 //
 // It is a func type: assign a function directly for dynamic instructions, or
-// use StaticInstructions for a fixed string. (It was an interface once, with
-// only unexported implementations behind two adapter constructors — a plug
-// point nothing ever plugged into.)
+// use StaticInstructions for a fixed string.
 type Instructions func(ctx context.Context, rc *RunContext, agent *Agent) (string, error)
 
 // StaticInstructions returns Instructions yielding a fixed string.
@@ -19,10 +17,9 @@ func StaticInstructions(s string) Instructions {
 }
 
 // WrapInstructions decorates inner by prepending prefix and appending suffix at
-// resolution time, separated by double newlines. Empty prefix/suffix are
-// skipped; a nil inner contributes nothing. It exists because concatenation is
-// the wrong tool here: the inner instructions may themselves be computed per
-// run, so the joining has to happen at resolution, not at wrapping.
+// resolution time (so per-run inner instructions still compose), separated by
+// double newlines. Empty prefix/suffix are skipped; a nil inner contributes
+// nothing.
 func WrapInstructions(inner Instructions, prefix, suffix string) Instructions {
 	return func(ctx context.Context, rc *RunContext, agent *Agent) (string, error) {
 		base := ""
@@ -100,11 +97,8 @@ type Agent struct {
 	// OnStart runs before this agent takes a turn; returning an error aborts
 	// the run. OnEnd runs after it produces the final output.
 	//
-	// These are per-AGENT, which is why they survived the removal of the hook
-	// interfaces: a handoff swaps the agent, and with it these callbacks, in a
-	// way run-level middleware cannot express. Everything else the old
-	// eight-method interfaces observed is now on the event stream or in a
-	// guardrail, both of which can also rewrite rather than only refuse.
+	// These are per-AGENT: a handoff swaps the agent and with it these callbacks,
+	// in a way run-level middleware cannot express.
 	OnStart func(ctx context.Context, rc *RunContext) error
 	// OnEnd runs after this agent produces the run's final output.
 	OnEnd func(ctx context.Context, rc *RunContext, output any) error

@@ -18,13 +18,8 @@ type Strategy interface {
 }
 
 // PipelineStrategy runs strategies in order, stopping at the first one that
-// brings the index under budget.
-//
-// Order is the design: try the cheap, lossless thing first. Folding old tool
-// output away costs nothing and loses nothing a model needs; dropping whole
-// exchanges loses content; summarizing costs a model call and loses fidelity.
-// A pipeline that reaches for the last one first is paying more for a worse
-// result.
+// brings the index under budget. Order is the design: cheap and lossless first
+// (fold tool output), lossy last (drop exchanges, summarize).
 type PipelineStrategy struct {
 	Strategies []Strategy
 }
@@ -48,11 +43,9 @@ func (p *PipelineStrategy) Compact(ctx context.Context, idx *Index) (bool, error
 // ToolResultStrategy folds old tool-call groups into a compact summary of what
 // was called, leaving user messages and assistant prose untouched.
 //
-// In a coding conversation this is where nearly all the context goes: old file
-// reads and command output that mattered for one turn and never again. Folding
-// them is cheaper, faster and more faithful than asking a model to summarize
-// them, and it needs no model call at all. It is also the only answer to a
-// single enormous tool result, where one group IS the overrun.
+// In a coding conversation this is where nearly all the context goes — old file
+// reads and command output that mattered for one turn. Folding needs no model
+// call and is the only answer to a single enormous tool result.
 type ToolResultStrategy struct {
 	// Trigger decides when to start; nil never runs.
 	Trigger Trigger
@@ -108,11 +101,8 @@ func (s *ToolResultStrategy) Compact(_ context.Context, idx *Index) (bool, error
 }
 
 // DefaultToolCallFormatter renders a tool-call group as one line per tool, with
-// its results beneath.
-//
-// It keeps the tool NAMES and drops the payloads. What a model needs from old
-// tool calls is usually the fact that they happened and what they were for —
-// "I already read that file" — not the bytes.
+// its results beneath. It keeps the tool names and drops the payloads — usually
+// all a model needs from an old call is that it happened.
 func DefaultToolCallFormatter(g *Group) string {
 	byTool := map[string][]string{}
 	var order []string
@@ -221,9 +211,8 @@ type TruncationStrategy struct {
 	// MinimumPreservedGroups keeps this many groups at the end. Defaults to 2.
 	MinimumPreservedGroups int
 	// DropSystem lets truncation drop system groups too. The zero value keeps
-	// them regardless of age, since instructions apply to the whole
-	// conversation rather than to the turn that carried them — the field is
-	// named for the opt-out so that the useful default is the zero value.
+	// them regardless of age — instructions apply to the whole conversation, not
+	// the turn that carried them.
 	DropSystem bool
 }
 

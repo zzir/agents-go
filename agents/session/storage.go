@@ -7,14 +7,10 @@ import (
 	"time"
 )
 
-// Storage is the physical layer: it reads and writes entries and
-// understands nothing about what they mean.
-//
-// Splitting it from Session is what stopped every backend from having to
-// re-answer semantic questions. A store that knew "how history becomes model
-// input" had to reimplement projection, compaction-awareness and settings
-// resolution, and each one drifted. A store now answers only "what is
-// recorded, in what order".
+// Storage is the physical layer: it reads and writes entries and understands
+// nothing about what they mean. The semantics — projection, compaction,
+// settings — live in Session, so a store answers only "what is recorded, in
+// what order".
 type Storage interface {
 	// Metadata describes the session.
 	Metadata(ctx context.Context) (Metadata, error)
@@ -33,11 +29,8 @@ type Storage interface {
 	Clear(ctx context.Context) error
 }
 
-// Cursor paginates a read.
-//
-// It is a cursor rather than an offset because entries keep arriving: an offset
-// shifts under a concurrent append, so page two silently skips or repeats. A
-// sequence number does not move.
+// Cursor paginates a read. It pages on sequence numbers, not offsets, so a
+// concurrent append cannot make a page silently skip or repeat.
 type Cursor struct {
 	// AfterSeq returns entries with a higher sequence number. Zero starts at
 	// the beginning.
@@ -55,8 +48,7 @@ type Metadata struct {
 	// Title is a human-facing name, when the application sets one.
 	Title string `json:"title,omitzero"`
 	// Hidden marks a session that exists to serve another one — a background
-	// task's private history — so listings can leave it out by default rather
-	// than each caller maintaining its own filter.
+	// task's private history — so listings can leave it out by default.
 	Hidden    bool      `json:"hidden,omitzero"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
@@ -77,9 +69,8 @@ type InMemoryStorage struct {
 	updatedAt time.Time
 	hidden    bool
 	title     string
-	// retired marks storage whose session was deleted through the repo that
-	// created it. A handle outlives the delete, and a write through one would
-	// otherwise land in a map nothing reads — orphan entries by construction.
+	// retired marks storage whose session was deleted; a write through a handle
+	// that outlives the delete would otherwise orphan entries.
 	retired bool
 }
 
@@ -226,9 +217,7 @@ var (
 )
 
 // PageEntries applies a cursor to entries already in append order. Backends
-// call it so every implementation pages identically — the off-by-one between
-// "after this seq" and "from this seq" is exactly what each would otherwise
-// get subtly wrong on its own.
+// call it so every implementation pages identically.
 func PageEntries(entries []Entry, cur Cursor) []Entry {
 	out := entries
 	if cur.AfterSeq > 0 {
@@ -272,24 +261,17 @@ type AtomicReplacer interface {
 // history, but only if the log has not moved since the caller read it.
 //
 // It exists for the one rewrite that cannot decide and write in the same step —
-// a replacement computed by a server-side compaction API, with a network round
-// trip in the middle. An entry appended inside that window is not in the
-// replacement, and an unconditional swap deletes it: silently, and with no copy
-// left anywhere.
+// a replacement from a server-side compaction API, with a network round trip in
+// the middle — where an unconditional swap would silently delete an entry
+// appended inside that window.
 //
 // expect is the highest sequence number the store held when the caller read it,
 // and zero for a log it read empty. When it still matches, the history is
 // replaced and replaced is true; when it does not, nothing is written and
-// replaced is false — losing the race is not an error, and what to do about it
-// is the caller's decision. The comparison and the write are ONE step, taken
-// under whatever the backend already serializes appends with: reading the
-// current sequence number and then calling ReplaceEntries puts the window
-// straight back.
+// replaced is false — losing the race is not an error but the caller's decision.
 //
-// It catches the appends it exists for, not every possible change. A removal
-// that leaves the highest sequence number in place — popping an item from under
-// a newer annotation — reads as unmoved, which for the housekeeping this guards
-// costs a summary that is one entry out of date.
+// It catches appends, not every change: a removal that leaves the highest
+// sequence number in place reads as unmoved.
 type GuardedReplacer interface {
 	ReplaceEntriesIf(ctx context.Context, expect int64, entries ...Entry) (replaced bool, err error)
 }

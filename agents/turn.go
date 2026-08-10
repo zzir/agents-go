@@ -7,13 +7,9 @@ import (
 )
 
 // TurnSnapshot is everything a turn was resolved to, captured before the model
-// is called.
-//
-// The resolution used to be inline in the loop: a dozen locals, each computed
-// from the agent and the run context, read again a hundred lines later. Naming
-// the result makes the turn's configuration a value — one a hook can inspect,
-// and one a hook can replace so the NEXT turn runs differently without the
-// agent having been mutated underneath a concurrent run.
+// is called. Naming the turn's configuration as a value lets a hook inspect it,
+// and replace it so the NEXT turn runs differently without mutating the agent
+// underneath a concurrent run.
 type TurnSnapshot struct {
 	Agent        *Agent
 	Model        Model
@@ -26,12 +22,10 @@ type TurnSnapshot struct {
 	// Input is what the model is sent this turn. Under server-managed
 	// conversation state that is the new items only, not the whole history.
 	//
-	// The RUNNER owns this field. A snapshot returned from PrepareNextTurn has
-	// it replaced with the next turn's real input, because a prepared snapshot
-	// is nearly always a copy of the previous turn's and honoring its Input
-	// would replay that turn with the tool call and its output missing. To edit
-	// what a call sends, use ModelOptions.InputFilter, which runs per turn and
-	// sees the input the loop actually built.
+	// The RUNNER owns this field. A snapshot returned from PrepareNextTurn has it
+	// replaced with the next turn's real input, since a prepared snapshot is
+	// usually a copy of the previous turn's. To edit what a call sends, use
+	// ModelOptions.InputFilter.
 	Input []InputItem
 }
 
@@ -56,10 +50,7 @@ type TurnResult struct {
 }
 
 // ToolCallNames returns the names of the tools called this turn, in call order.
-//
-// It exists because "stop once tool X has been called" is the common reason to
-// look at a turn at all, and writing that predicate by hand means knowing which
-// item types carry a tool name.
+// It saves a caller writing "stop once tool X was called" by hand.
 func (tr *TurnResult) ToolCallNames() []string {
 	var names []string
 	for _, it := range tr.NewItems {
@@ -79,12 +70,10 @@ func (tr *TurnResult) ToolCallNames() []string {
 // before the next model call — so a run that stops here has its full history
 // saved and needs no unwinding.
 //
-// The hook gets its OWN copy of the TurnResult. It is exported and passed by
-// pointer, so writing to it is a legal thing for a hook to do — and with the
-// caller's pointer handed straight through, a hook that cleared NewItems would
-// blank the run's final output below and hand PrepareNextTurn a turn that never
-// happened. The copy is shallow: it isolates the fields, not what they point
-// at.
+// The hook gets its OWN (shallow) copy of the TurnResult: it is passed by
+// pointer, so a hook that cleared NewItems on the caller's own pointer would
+// blank the run's final output and hand PrepareNextTurn a turn that never
+// happened.
 func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, tr *TurnResult) (bool, any, error) {
 	hook := r.opts.Exec.ShouldStopAfterTurn
 	if hook == nil {
@@ -102,10 +91,9 @@ func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, tr *TurnResult
 // output: the turn's last message if it produced one, otherwise its last tool
 // output.
 //
-// A turn that ran tools and stopped has no closing message — the model never
-// got to write one — so falling through to the tool result is what makes the
-// result useful rather than empty. The full turn is on RunResult.NewItems for
-// anything more specific.
+// A turn that ran tools and stopped has no closing message, so it falls through
+// to the tool result. The full turn is on RunResult.NewItems for anything more
+// specific.
 func turnFinalOutput(agent *Agent, items []*RunItem) any {
 	if m := lastMessageItem(items); m != nil {
 		if text := m.Text(); text != "" {
@@ -247,9 +235,6 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 // injectedInput turns caller-supplied input into run items, so everything
 // downstream — the next turn's model input, the server-side delta cursor, the
 // session write — treats it exactly like the input the run started with.
-//
-// The alternative, carrying a separate "pending input" list the loop splices in
-// at call time, would need every one of those paths taught about it.
 func injectedInput(agent *Agent, items []InputItem) []*RunItem {
 	out := make([]*RunItem, 0, len(items))
 	for _, item := range items {

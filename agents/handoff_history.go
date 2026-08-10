@@ -103,11 +103,9 @@ func flattenNestedHistory(items []InputItem) []InputItem {
 // extractNestedTranscript parses an item that is a marker-wrapped summary back
 // into its transcript items. ok reports whether the item was such a summary.
 //
-// Only the SDK's own summary shape is expandable: an assistant message whose
-// text starts with the fixed lead-in line and contains the markers. Anything
-// else — in particular a user message quoting the markers — is left untouched;
-// expanding arbitrary marker-bearing text would let conversation content
-// inject or silently delete history.
+// Only the SDK's own summary shape is expandable (an assistant message starting
+// with the fixed lead-in line): expanding arbitrary marker-bearing text would
+// let conversation content inject or silently delete history.
 func extractNestedTranscript(item InputItem) ([]InputItem, bool) {
 	m := item.OfMessage
 	if m == nil || m.Role != responses.EasyInputMessageRoleAssistant {
@@ -139,11 +137,8 @@ func extractNestedTranscript(item InputItem) ([]InputItem, bool) {
 		parsed = append(parsed, it)
 	}
 	if sawUnparsable {
-		// One loss policy, not two: a transcript with ANY line this build
-		// cannot decode is kept verbatim, exactly like one with no decodable
-		// lines. Flattening the readable subset silently deleted the other
-		// lines from the target agent's view — three items gone with no
-		// diagnostic, while a fully unreadable summary survived intact.
+		// One loss policy: a transcript with ANY undecodable line is kept verbatim,
+		// rather than flattening the readable subset and silently dropping the rest.
 		return nil, false
 	}
 	return parsed, true

@@ -10,12 +10,8 @@ import (
 )
 
 // OverflowPolicy decides what happens when a model call fails because the
-// context did not fit.
-//
-// It is the reactive half of context management: compaction predicts, this
-// reacts. A prediction is an estimate — a token count the SDK guessed, against
-// a window the provider never states exactly — so it will sometimes be wrong,
-// and the failure it misses is one the run cannot otherwise recover from.
+// context did not fit. It is the reactive half of context management —
+// compaction predicts, this reacts when the prediction was wrong.
 type OverflowPolicy struct {
 	// MaxRetries bounds "compact, then try this turn again". Zero disables the
 	// behavior and the overflow error is returned as-is.
@@ -25,15 +21,12 @@ type OverflowPolicy struct {
 // DetectContextOverflow reports whether a failed model call was the context
 // not fitting.
 //
-// It matches on the message rather than a typed error because that is all the
-// provider gives: a context overflow arrives as a 400 with prose in it. The
-// alternative — treating every 400 as an overflow — would compact and retry
-// after a malformed request, hiding a bug behind a shrinking conversation. A
-// response that ARRIVED is never an overflow: a truncated one is a different
-// problem with a different fix (spec §2.7e), since its input fit and
-// compacting the input does not raise the output cap that cut it off. A
-// backend that reports overflow in the body surfaces it as an error carrying
-// one of these markers (the anthropic adapter does).
+// It matches on the message, not a typed error, because that is all the provider
+// gives — a 400 with prose in it — and treating every 400 as overflow would hide
+// a malformed request behind a shrinking conversation. A response that ARRIVED
+// is never an overflow: a truncated one is a different problem with a different
+// fix (spec §2.7e). A backend that reports overflow in the body surfaces it as
+// an error carrying one of these markers (the anthropic adapter does).
 func DetectContextOverflow(err error) bool {
 	if err == nil {
 		return false
@@ -44,11 +37,9 @@ func DetectContextOverflow(err error) bool {
 		"exceeds the context window",
 		"maximum context length",
 		"reduce the length of the messages",
-		// Anthropic's two shapes: a 400 whose message says the prompt did not
-		// fit, and a response that ARRIVED but stopped with
-		// stop_reason=model_context_window_exceeded — which the anthropic
-		// adapter surfaces as an error carrying that marker, because a resend
-		// without compacting would stop at the same wall.
+		// Anthropic's two shapes: a 400 saying the prompt did not fit, and an
+		// arrived response stopped with stop_reason=model_context_window_exceeded,
+		// which the adapter surfaces as an error carrying this marker.
 		"prompt is too long",
 		"model_context_window_exceeded",
 	} {
@@ -66,22 +57,14 @@ func (p OverflowPolicy) isOverflow(err error) bool {
 
 // recoverOverflow compacts and reports whether the turn is worth retrying.
 //
-// It compacts from the SESSION rather than the in-flight items, for the same
-// reason the save point does: the log is the truth, and a projection of it
-// cannot fall out of step with what was stored. It reports false when the pass
-// left the context no smaller — retrying an identical request would fail
-// identically, and spending the retry budget on that is worse than reporting
-// the overflow — and false as well when the session write the rebuild depends
-// on fails, since a context rebuilt without it would be missing whatever never
-// landed.
+// It compacts from the session, not the in-flight items: the log is the truth,
+// and a projection of it cannot fall out of step with what was stored. It
+// reports false when the pass left the context no smaller, or when the session
+// write the rebuild depends on fails.
 //
-// The two recovery paths write the session at OPPOSITE moments, which is why
-// the choice between them is made up front. A Compactor reads the log and
-// returns a projection of it, so the turn's in-flight items have to be in the
-// log before the pass runs. A self-compacting storage may REPLACE the log with
-// what its own pass produced, so anything written before it is exactly what the
-// replacement erases; that path writes afterwards. Trying one and falling
-// through to the other cannot express both.
+// The two recovery paths write the session at OPPOSITE moments, which is why the
+// path is chosen up front. A Compactor needs the turn in the log before it runs;
+// a self-compacting storage may REPLACE the log, so its write comes after.
 func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, bool) {
 	r.log.Warn(ctx, "context overflow; compacting and retrying the turn",
 		slog.String("error", err.Error()))
@@ -90,31 +73,23 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, b
 	sess := r.opts.Conversation.Session
 	if sess != nil {
 		if cs, ok := sess.Storage().(session.CompactionAware); ok {
-			// The storage compacts itself, so a run-level Compactor stands
-			// aside (compactContext) and a save-point pass could only report
-			// that nothing changed. The storage gets a FORCED pass instead: its
-			// own trigger normally decides when to compact, but an overflow is
-			// the one moment that question has already been answered — by the
-			// provider.
+			// The storage compacts itself, so it gets a FORCED pass: its own
+			// trigger normally decides when to compact, but overflow is the one
+			// moment the provider has already answered that.
 			return r.recoverOverflowViaStorage(ctx, sess, cs)
 		}
 	}
 	if sess == nil || !r.opts.Compaction.active(CompactAtSavePoint) {
-		// Nothing here can shrink the context, so there is no recovery to
-		// prepare for. Writing the turn anyway would mark a drained injection
-		// delivered on the way to reporting the overflow — paying a recovery's
-		// price for a recovery that was never available.
+		// Nothing here can shrink the context, so there is no recovery to prepare
+		// for — and writing the turn anyway would mark a drained injection
+		// delivered while reporting an overflow it cannot fix.
 		return nil, false
 	}
 
-	// Flush before rebuilding. The save point drains the injection queue AFTER
-	// its own write, so a steer taken there is still only in memory — and the
-	// retry's context comes from the log, with the in-flight items thrown away.
-	// Recovering without this hands the model a conversation the caller's words
-	// never reached, while the next write past their mark still counts them
-	// delivered. The boundary rules are unchanged: a batch ending in a call
-	// without its output stays held back, and the injection commits only once a
-	// write has genuinely covered it.
+	// Flush before rebuilding: the retry's context comes from the log, so an
+	// injected steer still only in memory would never reach the model while a
+	// later write still counts it delivered. Boundary rules are unchanged — a
+	// batch ending in a call without its output stays held back.
 	if perr := r.persistSessionItems(ctx); perr != nil {
 		r.abandonRecovery(ctx, perr)
 		return nil, false
@@ -129,9 +104,8 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, b
 // abandonRecovery reports a session write that killed an overflow recovery.
 //
 // The rebuilt context would be missing whatever failed to land, so the run
-// reports the overflow instead — and the write error, which is the reason it
-// was never recovered from, would otherwise live in the log alone. Diagnostics
-// ride out on RunError.Diagnostics, which is how the caller gets to see it.
+// reports the overflow instead. The write error rides out on
+// RunError.Diagnostics, which is how the caller sees it.
 func (r *runner) abandonRecovery(ctx context.Context, err error) {
 	r.log.Warn(ctx, "overflow recovery abandoned: the session write failed",
 		slog.String("error", err.Error()))
@@ -142,16 +116,11 @@ func (r *runner) abandonRecovery(ctx context.Context, err error) {
 // session.CompactionAware storage, then writes the turn and rebuilds its
 // context from the session.
 //
-// The pass runs FIRST. A self-compacting storage may answer with a replacement
-// rather than a decision — the server-side compact API does, and it builds that
-// replacement from its own response chain, which nothing produced locally is
-// on. A write made before the pass is therefore a write the pass erases:
-// injected input taken at the save point would be stored, counted delivered by
-// that very write, and then deleted, with nothing left in flight to roll back.
-// Writing afterwards leaves the turn standing on top of the compacted history.
-//
-// It reports whether the pass is worth a retry: the context has to have come
-// back strictly smaller than the one that overflowed (see contextSize).
+// The pass runs FIRST: a self-compacting storage may answer with a replacement
+// built from its own response chain, so a write made before it is a write the
+// pass erases. Writing afterwards leaves the turn on top of the compacted
+// history. It reports a retry only when the context came back strictly smaller
+// (see contextSize).
 func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Session, cs session.CompactionAware) ([]InputItem, bool) {
 	cur := session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)}
 	before, err := sess.ContextEntries(ctx, cur)
@@ -163,13 +132,9 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 		Force:      true,
 		ResponseID: r.lastResponseID,
 		Store:      r.lastStore,
-		// A continuation taken at the final output is appended and stored
-		// before the turn that overflows, so the log can already hold items no
-		// model call ever saw — as it does under a read window that
-		// truncated the log, or once a handoff filter has dropped part of the
-		// conversation. Recovery costs a
-		// bigger compact request when it does — and a request that fails is
-		// loud, where a replacement built without them is not.
+		// The log can already hold items no model call saw — a continuation
+		// stored before this turn, a truncated read window, a handoff filter's
+		// drop — so this forces the safe compact-from-history path.
 		OffChainItems: r.offChainItems(),
 		StartSpan: func() *tracing.SpanHandle {
 			cspan = r.trace.StartCompactionSpan(r.agentParentID())
@@ -202,9 +167,9 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 		r.abandonRecovery(ctx, perr)
 		return nil, false
 	}
-	// Read once more: the write just added the turn's items — and any injected
-	// input the save point drained — on top of the compacted history, and they
-	// are as much a part of the retry's context as the compacted part is.
+	// Read once more: the write added the turn's items (and any injected input
+	// the save point drained) on top of the compacted history, and they belong
+	// in the retry's context too.
 	rebuilt, err := sess.ContextEntries(ctx, cur)
 	if err != nil {
 		return nil, false
@@ -220,9 +185,8 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 
 // contextSize is the byte weight of what a set of entries puts in front of the
 // model: every entry's stored body, summed. It decides whether a forced pass
-// earned its retry — weight, not entry count and not "did anything change",
-// because a windowed read hides growth from both; the full argument is spec
-// §2.5g ("weighing strictly less").
+// earned its retry — weight, not entry count (a windowed read hides growth from
+// both; spec §2.5g).
 func contextSize(entries []session.Entry) int {
 	n := 0
 	for _, e := range entries {

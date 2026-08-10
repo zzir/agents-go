@@ -3,11 +3,7 @@ package session
 import "encoding/json"
 
 // DerivedState is what a session's entries add up to, computed by folding over
-// them rather than stored alongside them.
-//
-// Deriving it is the point. A field kept in parallel with the log has to be
-// updated on every write and can disagree with the log after a crash, a
-// concurrent writer, or a fork; a fold over an append-only log cannot.
+// them rather than stored alongside them, so nothing can disagree with the log.
 type DerivedState struct {
 	// LastAgent is the agent that produced the most recent entry.
 	LastAgent string
@@ -38,11 +34,8 @@ type Stats struct {
 	Requests int
 }
 
-// ReduceState folds entries into the state they imply.
-//
-// It is deliberately a pure function of the entries: given the same log it
-// gives the same answer, on any machine, at any time, with no cache to
-// invalidate.
+// ReduceState folds entries into the state they imply. It is a pure function of
+// the entries — same log, same answer, no cache to invalidate.
 func ReduceState(entries []Entry) DerivedState {
 	var st DerivedState
 	open := map[string]bool{}
@@ -62,8 +55,8 @@ func ReduceState(entries []Entry) DerivedState {
 		if e.Kind != EntryKindItem {
 			continue
 		}
-		// A call is pending until its output lands. Tracking it here is what
-		// lets a reopened session tell "paused for approval" from "finished".
+		// A call is pending until its output lands — how a reopened session tells
+		// "paused for approval" from "finished".
 		callID, isCall, isOutput := entryCallID(e)
 		switch {
 		case isCall && callID != "":

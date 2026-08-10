@@ -53,8 +53,7 @@ func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelRe
 		resp, err := inner.Respond(ctx, req)
 		if err == nil {
 			if i > 0 {
-				// The run succeeded, on the backup. Without this the only trace
-				// of a primary outage is that answers got slower.
+				// Record the fallback, or a primary outage shows only as slower answers.
 				RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
 					"used_index": i, "models": len(m.models), "streaming": false,
 				})
@@ -69,18 +68,9 @@ func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelRe
 	return nil, errors.Join(errs...)
 }
 
-// StreamResponse implements Model. A backend can only be swapped before its
-// first output event; events carrying no model output — lifecycle preamble
-// (response.created / in_progress / queued) and terminal-failure events
-// (error / response.error / response.failed) — are held back, not delivered,
-// until output commits the backend (deliverStreamAttempt, the same rule as
-// NewRetryModel), so the chain advances on a response.failed exactly like the
-// blocking path and the consumer never sees an abandoned backend's events.
-// After output, a mid-stream error is surfaced as-is and recorded as
-// DiagStreamError naming the committed backend. A retry wrapping that backend
-// records its own for the same break, naming the attempt instead: each
-// decorator reports the part only it can see, so a layered chain describes one
-// truncated answer twice over rather than reporting two.
+// StreamResponse implements Model: a backend can only be swapped before its
+// first output event; once output commits the backend, a mid-stream error is
+// surfaced as-is and recorded as DiagStreamError. See spec §5.16.
 func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		var errs []error
@@ -90,9 +80,8 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 				return
 			}
 			if a.err == nil {
-				// Clean finish. An all-pending stream still delivers what was
-				// held back rather than vanishing. A consumer that stops
-				// mid-flush has abandoned the run — no diagnostic either.
+				// Clean finish: deliver held-back events (an all-pending stream
+				// still delivers rather than vanishing).
 				if !flushStreamEvents(a.pending, yield) {
 					return
 				}
@@ -106,16 +95,13 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 			errs = append(errs, a.err)
 			if a.committed || i == len(m.models)-1 || !m.shouldFallback(a.err) {
 				if a.committed {
-					// A stream that broke after emitting output cannot move to
-					// the next backend — the tokens are already out. Record
-					// which one was committed, or a truncated answer is merely
-					// odd (the same rule as NewRetryModel, spec §5.16).
+					// A committed backend cannot be swapped; record which one, so
+					// a truncated answer is explainable (spec §5.16).
 					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{
 						"used_index": i, "models": len(m.models),
 					})
 				} else if !flushStreamEvents(a.pending, yield) {
-					// No further backend follows: the held-back events are
-					// this stream's last word, delivered ahead of the error.
+					// No further backend: flush the held-back events ahead of the error.
 					return
 				}
 				yield(nil, errors.Join(errs...))
@@ -161,8 +147,8 @@ func (p *FallbackProvider) WithShouldFallback(f func(error) bool) *FallbackProvi
 // If some fallbacks resolve and others do not, the working (shorter) chain is
 // returned. If fallbacks were configured but every one fails to resolve, the
 // aggregated error is returned rather than silently degrading to a bare
-// primary — which would disable the fallback protection the caller asked for.
-// With no fallbacks configured at all, the primary is returned unchanged.
+// primary. With no fallbacks configured at all, the primary is returned
+// unchanged.
 func (p *FallbackProvider) Model(name string) (Model, error) {
 	m, err := p.primary.Model(name)
 	if err != nil {

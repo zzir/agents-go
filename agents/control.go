@@ -89,16 +89,13 @@ type runControl struct {
 	mu sync.Mutex
 
 	// pending is the injection queue: one ordered list, each entry tagged with
-	// the method that queued it. One queue rather than three keeps arrival
-	// order across kinds — two messages from the same caller must reach the
-	// model in the order they were said — while the consumption points filter
-	// by kind.
+	// the method that queued it. One queue rather than three keeps arrival order
+	// across kinds, while the consumption points filter by kind.
 	//
 	// inFlight holds entries the current attempt has taken but not yet made
-	// durable. Delivery is transactional: a session write that covers the
-	// injected items (or a completed attempt, or a RunState carrying them in
-	// its item log) commits the set; a failed attempt rolls it back into
-	// pending, so a retry delivers exactly what the failed attempt never
+	// durable. Delivery is transactional: a session write covering the items (or
+	// a completed attempt, or a RunState carrying them) commits the set; a failed
+	// attempt rolls it back into pending, so a retry delivers exactly what never
 	// landed — nothing lost, nothing doubled.
 	pending  []pendingEntry
 	inFlight []pendingEntry
@@ -211,8 +208,7 @@ func (c *runControl) commitInjected() {
 // rollbackInjected returns in-flight injections to the queue, merged back in
 // arrival order, so the next attempt — a middleware retrying the run, or a
 // retried resume — delivers what the failed attempt consumed but never made
-// durable. The per-queue-state reseeding heuristic this replaces had to guess
-// whether a failed attempt had consumed; the rollback knows.
+// durable.
 func (c *runControl) rollbackInjected() {
 	if c == nil {
 		return
@@ -242,12 +238,10 @@ func (c *runControl) rollbackInjected() {
 // while a human was deciding on an approval is delivered when the run resumes
 // rather than lost.
 //
-// It seeds once per control. Retried attempts need no second seeding: an
-// attempt that failed after consuming has its injections rolled back into the
-// queue, and one that delivered them has committed — the transaction, not a
-// reseed, is what makes input survive a retry exactly once. PendingInput
-// keeps the three-list wire shape, so cross-kind arrival order is not
-// preserved across a pause; within a live queue it is.
+// It seeds once per control. Retried attempts need no second seeding: the
+// transaction (rollback or commit), not a reseed, is what makes input survive a
+// retry exactly once. PendingInput keeps the three-list wire shape, so cross-kind
+// arrival order is not preserved across a pause; within a live queue it is.
 func (c *runControl) restore(p PendingInput) {
 	if c == nil || p.Empty() {
 		return

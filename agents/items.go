@@ -44,21 +44,15 @@ type ModelResponse struct {
 	RequestID string
 	// Status is the provider's own verdict on the response — "completed",
 	// "incomplete", … — and IncompleteReason says why when it is not complete.
-	//
-	// They matter because "incomplete" is not "failed": a response cut off at
-	// the output-token limit still arrives, with output items in it, and some
-	// of those items may be tool calls whose arguments stop mid-JSON. The
-	// runner has to be able to tell that apart from a response the model
-	// finished. See Truncated.
+	// "incomplete" is not "failed": a truncated response still arrives with
+	// output items, some possibly cut off mid-JSON. See Truncated.
 	Status           string
 	IncompleteReason string
 }
 
 // Truncated reports whether the response was cut off at the output-token limit.
-//
-// A truncated response is the dangerous one: it looks ordinary — items present,
-// no error — but anything at its tail may be half-formed, including a tool
-// call's arguments. Executing those is how an agent deletes the wrong path.
+// Such a response looks ordinary — items present, no error — but its tail may
+// be half-formed, including a tool call's arguments.
 func (m *ModelResponse) Truncated() bool {
 	return m != nil && m.Status == "incomplete" && m.IncompleteReason == "max_output_tokens"
 }
@@ -110,10 +104,8 @@ func outputItemToInput(out OutputItem) (InputItem, error) {
 		p := out.AsMessage().ToParam()
 		return InputItem{OfOutputMessage: &p}, nil
 	}
-	// A type we do not model goes back on the wire byte for byte. Decoding it
-	// into the typed union would drop every field the union does not know, and
-	// the API added the type for a reason — a client that silently discards it
-	// corrupts the conversation rather than merely ignoring a feature.
+	// A type we do not model goes back on the wire byte for byte: decoding it
+	// into the typed union would drop every field the union does not know.
 	if !knownOutputTypes[out.Type] {
 		return rawInputOverride(raw), nil
 	}
@@ -148,12 +140,9 @@ func InputItemsFromAssistantText(text string) []InputItem {
 	}
 }
 
-// InputItemsFromSystemText builds a single system message.
-//
-// It is what the runtime uses to say something itself — a compaction summary,
-// a folded record of tool calls. Attributing such content to the user or the
-// assistant would put words in someone's mouth, and the model would treat it as
-// something that was actually said.
+// InputItemsFromSystemText builds a single system message — what the runtime
+// uses to say something itself, e.g. a compaction summary or a folded record of
+// tool calls.
 func InputItemsFromSystemText(text string) []InputItem {
 	return []InputItem{
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleSystem),

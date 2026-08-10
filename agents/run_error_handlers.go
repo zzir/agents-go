@@ -72,8 +72,7 @@ type RunErrorHandlers struct {
 	// text at all (*ModelBehaviorError). Other model-behavior errors (e.g.
 	// calling an unknown tool) are not routed here. When the model produced no
 	// text and this handler is nil (or declines), the runner calls the model
-	// again instead of failing: an empty turn is usually a transient miss, and
-	// failing the run would discard everything before it.
+	// again instead of failing.
 	InvalidFinalOutput RunErrorHandler
 }
 
@@ -224,10 +223,8 @@ func formatFinalOutputText(agent *Agent, v any) string {
 // handler's fallback output text. It round-trips through JSON so the union item
 // is indistinguishable on the wire from a model-produced one.
 //
-// It carries no id. The SDK used to stamp a sentinel one ("__fake_id__") to
-// mark it as synthesized, which meant every consumer that cared had to know
-// that string. Provenance is Source's job now, and the item is genuinely
-// id-less: there is no server-side response to point at.
+// It carries no id: there is no server-side response to point at, and
+// provenance is Source's job.
 func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*RunItem, error) {
 	payload := map[string]any{
 		"type":   "message",

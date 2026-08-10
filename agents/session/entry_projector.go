@@ -8,29 +8,20 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// Projector turns a session entry into the model input items it
-// contributes. Returning none means the entry is not part of the conversation
-// the model sees.
-//
-// It is the single place that answers "what does the model get to read". That
-// question used to be answered implicitly — by what a session happened to
-// store — so anything worth keeping but not worth sending had no home.
+// Projector turns a session entry into the model input items it contributes.
+// Returning none means the entry is not part of the conversation the model
+// sees. It is the single place that answers "what does the model get to read".
 type Projector func(Entry) ([]InputItem, error)
 
 // defaultProjectors is the projection every run starts from.
 //
-// Only items reach the model this way. Annotations, terminal output and custom
-// entries are recorded for people, and sending them would put words in the
-// conversation that nobody said. A caller who wants them in context says so
-// explicitly through RunOptions.Conversation.Projectors — for example
-// projecting terminal output as a user message so the model can see what was
-// run by hand.
+// Only items reach the model this way; annotations, terminal output and custom
+// entries are recorded for people, and a caller who wants them in context adds
+// a projector through RunOptions.Conversation.Projectors.
 //
-// Compaction checkpoints are absent deliberately: a checkpoint is not one
-// entry's worth of items, it is a rule about the whole view — drop what it
-// folded, render its summary and stand-ins where the folded content was —
-// and ProjectEntries applies that rule structurally. An override for
-// EntryKindCompaction disables the structural handling and takes over.
+// Compaction checkpoints are absent deliberately: a checkpoint is a rule about
+// the whole view, not one entry's items, and ProjectEntries applies it
+// structurally. An override for EntryKindCompaction takes that over.
 var defaultProjectors = map[EntryKind]Projector{
 	EntryKindItem: projectItem,
 }
@@ -43,10 +34,8 @@ func projectItem(e Entry) ([]InputItem, error) {
 	return []InputItem{item}, nil
 }
 
-// SummaryMarker prefixes a compaction summary. It is how a later pass
-// recognizes an existing summary and refuses to summarize it again, which is
-// what stops a long conversation from decaying into a summary of a summary of
-// a summary.
+// SummaryMarker prefixes a compaction summary, so a later pass recognizes one
+// and refuses to summarize it again — no summary of a summary of a summary.
 const SummaryMarker = "[Conversation Summary]"
 
 // DefaultSummaryPrompt is the default system prompt used to summarize
@@ -65,13 +54,9 @@ Output only the summary text.
 `)
 
 // CompactionFold is one folded group's stand-in: content that renders in place
-// of a run of folded entries — "[Tool calls, results elided]", say.
-//
-// The stand-in is ORIGINAL content, existing nowhere else in the log, which is
-// why it may live inside the checkpoint. Entries that are still in the session
-// are only ever NAMED (Replaces, ExcludedIDs), never copied: a copy has to be
-// kept in step with the entry it duplicates, and the one that got out of step
-// is what this shape replaced.
+// of a run of folded entries — "[Tool calls, results elided]", say. The stand-in
+// is original content, so it may live in the checkpoint; entries still in the
+// session are only ever named (Replaces), never copied.
 type CompactionFold struct {
 	// Replaces names the folded entries this stand-in renders instead of.
 	Replaces []string `json:"replaces,omitzero"`
@@ -85,16 +70,11 @@ type CompactionFold struct {
 // CompactionPayload is the body of a compaction checkpoint: what a pass folded
 // away (by name) and what stands in for it (summary text, per-group folds).
 //
-// A checkpoint carries no copy of any entry that is still in the session. It
-// used to — a Retained field held the kept tail verbatim — and that copy could
-// only ever drift from the tree it duplicated: popping a kept entry left the
-// checkpoint still replaying it. The tree is the truth; ProjectEntries applies
-// a checkpoint's exclusions when the model's view is built.
-//
-// A checkpoint is APPENDED, never a rewrite. The entries it folds stay in the
-// session exactly as they were — ExcludedIDs names them, so a UI can offer to
-// expand what was compacted, a fork from before the checkpoint still finds its
-// full history, and popping the checkpoint itself undoes the fold.
+// A checkpoint carries no copy of any entry still in the session — the tree is
+// the truth, and ProjectEntries applies the exclusions when the model's view is
+// built. It is appended, never a rewrite: the folded entries stay (ExcludedIDs
+// names them), so a fork from before it still finds the full history and popping
+// the checkpoint undoes the fold.
 type CompactionPayload struct {
 	// Summary is the text that stands in for the folded history. It renders at
 	// the front of the projection, before everything the pass kept.
@@ -128,13 +108,9 @@ func (e Entry) CompactionPayload() (CompactionPayload, error) {
 
 // FoldedEntryIDs collects every entry id the given entries' compaction
 // checkpoints have folded away — the union over ALL checkpoints present, not
-// just the newest. Exclusion is forever: a checkpoint that is itself later
-// folded still keeps what IT folded out of view, or every second-generation
-// pass would resurrect the first one's work.
-//
-// An undecodable checkpoint contributes nothing rather than failing the call:
-// the callers that build views report the decode error themselves, and the
-// callers that select a removal must not be blocked by one corrupt record.
+// just the newest, because exclusion is forever: a checkpoint later folded still
+// keeps what IT folded out of view. An undecodable checkpoint contributes
+// nothing rather than failing the call.
 func FoldedEntryIDs(entries []Entry) map[string]bool {
 	var folded map[string]bool
 	for _, e := range entries {
@@ -167,32 +143,23 @@ func projectorFor(overrides map[EntryKind]Projector, kind EntryKind) (Projector,
 
 // ProjectEntries turns a session's entries into the model input for a run.
 //
-// Update entries are folded into their targets rather than projected: an update
-// amends a display, and displays are not part of what the model reads.
+// Update entries are folded into their targets, not projected. Compaction is
+// applied here and only here: a checkpoint contributes no items of its own but
+// reshapes the view — its ExcludedIDs are dropped, its Summary renders up front,
+// and each fold's stand-in renders where the folded group was. An override for
+// EntryKindCompaction takes over the rendering; the exclusions still apply.
 //
-// Compaction is applied HERE, and only here. A checkpoint entry contributes no
-// items of its own; instead it reshapes the view: every entry it folded
-// (ExcludedIDs) is dropped wherever it appears, its Summary renders up front —
-// it stands in for the oldest history — and each fold's stand-in renders where
-// the folded group was. The entries a pass kept are projected from the list
-// itself, never from a copy inside the checkpoint, so an entry popped after the
-// pass is simply gone. An override for EntryKindCompaction disables all of this
-// and is called per checkpoint like any other projector; the exclusions still
-// apply, because they are facts about the view rather than a way of rendering
-// it.
-//
-// Every checkpoint IN THE LIST is taken at its word. Callers pass a single
-// branch's view (ContextEntries does); handing over append order across
-// branches would let an abandoned attempt's checkpoint fold entries the
-// active branch still reads.
+// Every checkpoint in the list is taken at its word, so callers pass a single
+// branch's view (ContextEntries does) — append order across branches would let
+// an abandoned attempt's checkpoint fold entries the active branch still reads.
 func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]InputItem, error) {
 	folded := FoldedEntryIDs(entries)
 	_, checkpointOverridden := overrides[EntryKindCompaction]
 
-	// The render plan: summaries (and anchorless stand-ins) up front, anchored
+	// The render plan: summaries and anchorless stand-ins up front, anchored
 	// stand-ins keyed by the entry they render before. Only live checkpoints
-	// render — one that was itself folded is out of the view like anything
-	// else, its exclusions already counted by FoldedEntryIDs.
+	// render — one itself folded is out of the view, its exclusions already
+	// counted by FoldedEntryIDs.
 	var front []InputItem
 	var inserts map[string][]InputItem
 	if !checkpointOverridden {
@@ -267,14 +234,10 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 // FoldUpdates applies every update entry to its target and drops the updates,
 // returning the entries a consumer should render.
 //
-// Two rules, both load-bearing:
-//
-//   - Updates apply in the order they were stored, so the last write wins per
-//     field.
-//   - An update whose target is missing is IGNORED, not an error. The target
-//     may have been folded away by compaction, or may simply not have been
-//     written yet — an update is allowed to arrive first, which is what removes
-//     the ordering race instead of handling it.
+// Updates apply in store order, so the last write wins per field. An update
+// whose target is missing is ignored, not an error: the target may have been
+// folded away, or may not have been written yet — an update is allowed to
+// arrive first.
 func FoldUpdates(entries []Entry) []Entry {
 	// Index targets first so an update that precedes its target still applies.
 	index := make(map[string]int, len(entries))
@@ -321,9 +284,8 @@ func FoldUpdates(entries []Entry) []Entry {
 }
 
 // NewCompactionEntry builds a compaction checkpoint from what a pass folded
-// away. The entries the pass KEPT are not part of it: they stay in the session
-// and the projection reads them from there, so the checkpoint holds nothing it
-// would have to keep in step with the tree.
+// away. The entries the pass kept are not part of it — they stay in the session
+// and the projection reads them from there.
 func NewCompactionEntry(p CompactionPayload) (Entry, error) {
 	raw, err := json.Marshal(p)
 	if err != nil {
@@ -358,9 +320,8 @@ func ExtractOutputText(output []OutputItem) string {
 	return ""
 }
 
-// systemTextItems builds a single system message. It is what the projection
-// uses to speak as the runtime — a compaction summary, a folded record —
-// without putting words in the user's or the assistant's mouth.
+// systemTextItems builds a single system message — the projection speaking as
+// the runtime, not as the user or assistant.
 func systemTextItems(text string) []InputItem {
 	return []InputItem{
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleSystem),

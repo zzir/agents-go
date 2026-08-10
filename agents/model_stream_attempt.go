@@ -2,38 +2,27 @@ package agents
 
 import "iter"
 
-// streamAttempt is the outcome of deliverStreamAttempt — one inner stream
-// delivered to a consumer with pre-commit events held back. It is how
-// NewRetryModel and NewFallbackModel share one commit rule without duplicating
-// the state machine.
+// streamAttempt is the outcome of deliverStreamAttempt: one inner stream
+// delivered to a consumer with pre-commit events held back. It lets
+// NewRetryModel and NewFallbackModel share one commit rule (spec §5.16).
 type streamAttempt struct {
-	// committed: output reached the consumer, so this attempt is the run's
-	// final word — emitted tokens cannot be un-sent, and a later error must
-	// pass through rather than trigger another attempt.
+	// committed reports that output reached the consumer, committing this attempt.
 	committed bool
 	// err is the stream's failure; nil means it finished cleanly.
 	err error
-	// stopped: the consumer returned false mid-delivery; abandon everything,
-	// yield nothing further.
+	// stopped reports that the consumer returned false mid-delivery.
 	stopped bool
-	// pending holds an UNCOMMITTED attempt's events (lifecycle preamble and
-	// terminal-failure events), never delivered. The caller flushes it when
-	// this attempt turns out to be the last word (clean finish, or a failure
-	// no further attempt will follow) and drops it when another attempt
-	// supersedes it.
+	// pending holds an uncommitted attempt's held-back events; the caller flushes
+	// them if this attempt is the last word, or drops them when another supersedes it.
 	pending []*ResponseStreamEvent
 }
 
 // deliverStreamAttempt consumes one inner stream on behalf of a retrying or
 // falling-back decorator. Events that carry nothing the model generated —
-// lifecycle preamble, and terminal-failure events — are buffered rather than
-// delivered: once delivered they would commit the consumer to a response that
-// a retried or swapped attempt then duplicates (a second response.created, a
-// different response ID, sequence numbers restarting), and a failure event
-// would announce a failure a later attempt goes on to recover from. Holding
-// them back until the first output event keeps the consumer's view one
-// coherent response no matter how many attempts it took. A nil event neither
-// commits nor buffers; it is dropped (the runner tolerates nil the same way).
+// lifecycle preamble and terminal-failure events — are buffered rather than
+// delivered until the first output event commits the attempt, so a retried or
+// swapped attempt stays one coherent response to the consumer (spec §5.16). A
+// nil event neither commits nor buffers; it is dropped.
 func deliverStreamAttempt(
 	seq iter.Seq2[*ResponseStreamEvent, error],
 	yield func(*ResponseStreamEvent, error) bool,

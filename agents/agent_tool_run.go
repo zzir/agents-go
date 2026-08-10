@@ -29,8 +29,7 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 	}
 
 	// Dispatch callbacks from a background goroutine so a slow handler does not
-	// stall the run — the stream now runs on THIS goroutine, so a blocking
-	// handler would hold up the nested run itself.
+	// stall the run, which now executes on THIS goroutine.
 	//
 	// canceled mirrors the parent's cancellation: once it fires, backlogged
 	// events drain without invoking the callback, so OnStream never fires after
@@ -69,9 +68,8 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 		case *RunItemStreamEvent:
 			// Forward the nested agent's messages to the PARENT run's stream as
 			// tool progress, so a UI watching the parent sees the sub-agent
-			// working without the caller wiring OnStream. Messages only: the
-			// raw deltas belong to the nested run, and relaying them would
-			// bury the parent's own stream.
+			// working. Messages only: relaying raw deltas would bury the
+			// parent's own stream.
 			if e.Item.Kind == ItemMessage {
 				tc.Emit(TextResult(e.Item.Text()).WithDetails(map[string]any{
 					"nested_agent": current.Name, "partial": true,
@@ -199,12 +197,10 @@ func nestedRunOptions(parent *RunContext) RunOptions {
 		// Inherit the sensitive-data gate so a parent that disabled span
 		// content cannot have it re-enabled by a nested agent-as-tool run.
 		opts.Observe.IncludeSensitiveData = parent.inheritedOpts.Observe.IncludeSensitiveData
-		// Inherit the log configuration for the same reason the tracer is
-		// inherited: the nested run is the part of the workflow hardest to see
-		// into, and a parent that asked for records should not go blind
-		// exactly there. Records carry the agent name, so parent and nested
-		// lines stay tellable apart; LogConfig.SensitiveData travels with it,
-		// keeping the two sensitive-data gates consistent.
+		// Inherit the log configuration for the same reason as the tracer: the
+		// nested run is the hardest part of the workflow to see into.
+		// LogConfig.SensitiveData travels with it, keeping the two
+		// sensitive-data gates consistent.
 		opts.Log = parent.inheritedOpts.Log
 		// Inherit input filters so a nested run's own handoffs and model calls
 		// see the same rewriting the parent configured.

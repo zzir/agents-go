@@ -41,19 +41,13 @@ func NewUsage() *Usage { return &Usage{} }
 // UsageFromResponseUsage translates a Responses usage block into a Usage
 // counted as ONE request.
 //
-// This is the single place that field-by-field translation lives. The
-// streaming runner, the blocking OpenAI path and the modelkit conformance
-// suite all go through it, so a detail field the Responses API adds later is
-// picked up by all three at once instead of drifting in whichever hand-copy
-// gets missed.
+// It is the single place field-by-field translation lives, so a detail field
+// the Responses API adds later is picked up everywhere at once.
 //
-// Whether the response carries a usage block AT ALL stays the caller's
-// question. Not because the three ask it differently — they all ask
-// resp.JSON.Usage.Valid() and they all answer NewUsage, zero requests, so a
-// backend that never reports usage does not inflate the request count — but
-// because this mapping is total: an all-zero usage block is a real request
-// that spent no tokens, and only the caller, holding the Response envelope,
-// can tell that apart from a response that reported nothing.
+// Whether the response carries a usage block at all stays the caller's
+// question: this mapping is total, and an all-zero block is a real request that
+// spent no tokens, which only the caller can tell from a response that reported
+// nothing.
 func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
 	return &Usage{
 		Requests:     1,
@@ -70,16 +64,12 @@ func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
 
 // Snapshot returns a point-in-time copy of u's counters taken under the same
 // lock Add uses, so it is safe to call while other goroutines accumulate into u
-// concurrently — e.g. reading a shared parent run's usage while parallel
-// agent-as-tool nested runs fold theirs in with Add.
+// concurrently.
 //
-// The exported counter fields may be read directly only when no goroutine can
-// be calling Add at the same time (for example, after a run has fully
-// completed); reading them while Add runs concurrently is a data race that the
-// race detector flags. Use Snapshot for the concurrent case. The returned value
-// is standalone: RequestUsageEntries is a fresh slice, so it needs no further
-// synchronization and does not alias u's storage. (Its zero-value mutex is
-// unused; copy the returned value only by field, not wholesale.)
+// Read the exported counter fields directly only when no goroutine can be
+// calling Add (e.g. after a run completes); doing so concurrently is a data
+// race. The returned value is standalone — RequestUsageEntries is a fresh slice
+// — so copy it only by field, not wholesale (its zero-value mutex is unused).
 func (u *Usage) Snapshot() Usage {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -132,10 +122,8 @@ func (u *Usage) Add(other *Usage) {
 	}
 }
 
-// Request flattens the aggregate into a single RequestUsage.
-//
-// It is what a nested run's total looks like from the outside: the caller of an
-// agent-as-tool does not care that it took four calls, only what the call cost.
+// Request flattens the aggregate into a single RequestUsage — what a nested
+// run's total looks like from the outside.
 func (u *Usage) Request() RequestUsage {
 	if u == nil {
 		return RequestUsage{}
@@ -153,16 +141,13 @@ func (u *Usage) Request() RequestUsage {
 // attributeUsage puts each response's usage on exactly ONE of the entries it
 // produced, so summing entry usage counts every request once.
 //
-// The last entry of the batch gets it. That is what makes an estimate of "how
-// large is this conversation now" exact: a reader walks back to the most recent
-// entry carrying usage, takes its input+output tokens as measured fact, and
-// estimates only what follows. Usage on the FIRST entry of a response would
-// make the rest of that response get estimated on top of a number that already
-// counts it.
+// The last entry of the batch gets it, so a reader estimating conversation size
+// can take the most recent usage-bearing entry as measured fact and estimate
+// only what follows.
 //
-// A turn split across two batches — what an approval pause creates — attributes
-// on the first batch and clears the flag, since a request counted twice is
-// worse than one attributed a few entries early.
+// A turn split across two batches (an approval pause) attributes on the first
+// batch and clears the flag: a request counted twice is worse than one
+// attributed a few entries early.
 func (r *runner) attributeUsage(entries []session.Entry) {
 	if !r.usagePending || len(entries) == 0 {
 		return

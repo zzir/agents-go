@@ -7,10 +7,7 @@ import "encoding/json"
 //
 // A bare return value cannot say "show this in the UI but do not tell the
 // model", or "this call cost 800 tokens of its own", or "we are done here". The
-// SDK used to reach for those out of band — a CustomDataExtractor that ran a
-// second pass over the finished call to produce UI data, and a consumer-side
-// patch applied afterwards to attach it. The tool already knows all of it at
-// the moment it returns.
+// tool knows all of it at the moment it returns.
 //
 // The zero value is a valid empty result. Most tools never build one by hand:
 // NewTool wraps an ordinary return value automatically.
@@ -102,20 +99,13 @@ func (r ToolResult) WithSummary(summary string) ToolResult {
 	return r
 }
 
-// Text renders the result as the string the model would see.
-//
-// It exists so a consumer that has to put a result on a wire — a UI event, a
-// log line — does not have to reimplement the string/JSON split, and get it
-// subtly different from what the model was actually sent.
+// Text renders the result as the string the model would see, so a consumer
+// putting it on a wire need not reimplement the string/JSON split.
 func (r ToolResult) Text() string { return stringifyToolOutput(r.ModelOutput()) }
 
 // ModelOutput renders the result's content into the value the runner sends to
-// the model: a single text part collapses to its string (the overwhelmingly
-// common case, and what a tool returning a plain value produced before), while
-// anything multimodal stays a content list.
-//
-// A wrapper around another tool uses it to see what the model will receive
-// without reimplementing the collapse rule.
+// the model: a single text part collapses to its string, anything multimodal
+// stays a content list.
 func (r ToolResult) ModelOutput() any {
 	switch len(r.Content) {
 	case 0:
@@ -129,11 +119,10 @@ func (r ToolResult) ModelOutput() any {
 }
 
 // resultFromValue wraps an ordinary tool return value as a ToolResult, so a
-// tool that just returns a string or a struct keeps working unchanged.
-//
-// A value that is already a ToolResult passes through; one that implements
-// ToolOutputContent (or is a slice of it) becomes the content directly;
-// everything else is stringified the way tool output always has been.
+// tool that just returns a string or a struct keeps working unchanged. A value
+// that is already a ToolResult (or *ToolResult) passes through; a
+// ToolOutputContent (or slice) becomes the content; everything else is
+// stringified.
 func resultFromValue(v any) ToolResult {
 	switch out := v.(type) {
 	case ToolResult:
@@ -153,11 +142,9 @@ func resultFromValue(v any) ToolResult {
 }
 
 // normalizeDetails round-trips a result's Details through JSON so a value that
-// cannot be serialized fails here — while the tool call that produced it is
-// still identifiable — rather than at persistence time, long after.
-//
-// An empty map normalizes to nil so an absent value and an empty one look the
-// same to consumers.
+// cannot be serialized fails here, while the tool call is still identifiable,
+// rather than at persistence time. An empty map normalizes to nil so an absent
+// value and an empty one look the same to consumers.
 func normalizeDetails(details map[string]any) (map[string]any, error) {
 	if len(details) == 0 {
 		return nil, nil

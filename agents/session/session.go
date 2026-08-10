@@ -9,14 +9,9 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// Session is a conversation's history: a Storage plus the semantics that
-// turn stored entries into what a model reads.
-//
-// It is a concrete type, not an interface. Storage varies — a file, a table, a
-// map — but "how history becomes model input" does not, and making it an
-// interface meant every backend re-answered it. They drifted, which is how one
-// store ended up projecting compaction summaries in a different order than
-// another.
+// Session is a conversation's history: a Storage plus the semantics that turn
+// stored entries into what a model reads. It is a concrete type, not an
+// interface — storage varies, but "how history becomes model input" does not.
 type Session struct {
 	storage Storage
 }
@@ -44,18 +39,16 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]Entry, error) {
 // themselves stay in — each carries the summary and stand-ins ProjectEntries
 // renders in the folded content's place.
 //
-// Filtering the folded entries HERE, not just at projection, is deliberate: a
-// cursor limit counts entries the model will actually see, and a Compactor fed
-// this view cannot re-include what an earlier pass already folded.
+// Folding here, not only at projection, is what makes a cursor limit count
+// entries the model will actually see.
 func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err
 	}
-	// Walk the active branch, not the append order: an abandoned attempt is
-	// still recorded, and sending it would show the model a conversation that
-	// contradicts itself. A flat, linkless history reads whole — see
-	// activeBranchOf.
+	// Walk the active branch, not append order: an abandoned attempt is still
+	// recorded, and sending it would contradict the conversation. See
+	// ActiveBranchOf.
 	path := ActiveBranchOf(all)
 	if folded := FoldedEntryIDs(path); len(folded) > 0 {
 		kept := make([]Entry, 0, len(path))
@@ -106,10 +99,8 @@ func (s *Session) Entry(ctx context.Context, id string) (*Entry, error) {
 // State folds the session's entries into the state they imply — the last agent,
 // the last response id, tool calls still awaiting outputs.
 //
-// It folds the ACTIVE BRANCH (the same view Recover reads), not append
-// order: a dangling call on an abandoned attempt is not pending — the user
-// branched away from it, and no resume can ever clear it — yet folding every
-// branch reported it forever, a stuck approval no action could dismiss.
+// It folds the active branch, not append order: a dangling call on an abandoned
+// attempt is not pending, since no resume can ever clear it.
 func (s *Session) State(ctx context.Context) (DerivedState, error) {
 	entries, err := s.ContextEntries(ctx, Cursor{})
 	if err != nil {
@@ -162,8 +153,7 @@ type CreateOptions struct {
 	// Title is a human-facing name.
 	Title string
 	// Hidden marks a session that exists to serve another — a background task's
-	// private history. List leaves hidden sessions out by default, so callers
-	// stop maintaining that filter individually and stop forgetting it.
+	// private history. List leaves hidden sessions out by default.
 	Hidden bool
 }
 
@@ -173,11 +163,6 @@ type ListOptions struct {
 	IncludeHidden bool
 	// Limit cuts the listing from the newest end, after the hidden filter.
 	// Anything not positive (the zero value included) means no limit.
-	//
-	// It is a plain count rather than a Cursor: a listing has no sequence
-	// number to resume from, and Cursor's negative limit — take the most
-	// recent -Limit — would mean here exactly what the positive one already
-	// means, since the listing is newest first to begin with.
 	Limit int
 }
 
@@ -189,12 +174,10 @@ type Settings struct {
 	Limit int
 }
 
-// ResolveLimit resolves how many of the most recent entries a run loads.
-// Zero means no limit.
-//
-// The clamp is the point: Cursor spells "the most recent N" as a NEGATIVE
-// limit, so a negative Settings.Limit passed through would come back out of
-// the call site's negation as a positive one and load the OLDEST entries.
+// ResolveLimit resolves how many of the most recent entries a run loads. Zero
+// means no limit. A negative Settings.Limit is clamped to zero: Cursor spells
+// "most recent N" as a negative limit, so passing one through would negate back
+// to positive and load the oldest entries.
 func ResolveLimit(s Settings) int {
 	if s.Limit > 0 {
 		return s.Limit
@@ -211,21 +194,13 @@ type CompactionArgs struct {
 	Store *bool
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
-	// OffChainItems reports that the stored history holds items the
-	// server-side chain rooted at ResponseID cannot know about. Three shapes:
-	// what the run produced AFTER that response (a terminating tool's output,
-	// an error handler's fallback message, input injected past the last model
-	// call); what a read window (Settings.Limit) left out of every request,
-	// which is the OLDEST part of the log rather than the newest; and what a
-	// handoff input filter dropped on its way to the next agent.
-	//
-	// A storage that answers by REPLACING the log with something built from
-	// that chain must not do so while this is set: the replacement would delete
-	// those items, and unlike the ones it summarized, nothing ever read them.
-	// Compacting from the stored history instead is always safe, since that is
-	// exactly what the replacement stands in for. False says the chain covers
-	// the whole log, which is the assumption a storage that ignores this field
-	// keeps making.
+	// OffChainItems reports that the stored history holds items the server-side
+	// chain rooted at ResponseID cannot know about: what the run produced AFTER
+	// that response, what a read window (Settings.Limit) left out, and what a
+	// handoff input filter dropped. A storage that REPLACES the log from that
+	// chain must not do so while this is set — the replacement would delete items
+	// nothing ever read; compacting from the stored history is always safe. False
+	// says the chain covers the whole log.
 	OffChainItems bool
 	// StartSpan, when non-nil, opens a compaction tracing span. Implementations
 	// call it right before actually compacting (not on the no-op path, so
@@ -238,10 +213,8 @@ type CompactionArgs struct {
 // CompactionAware is a Storage that can compact its own history — by
 // summarizing older entries, or by handing them to a server-side compaction
 // API. After a run is persisted, the runner calls RunCompaction so the store can
-// shrink history that has grown large.
-//
-// It is a storage capability, not a session one: compaction rewrites what is
-// stored, and the semantics layer above has nothing to decide about it.
+// shrink history that has grown large. It is a storage capability, not a session
+// one: compaction rewrites what is stored.
 type CompactionAware interface {
 	RunCompaction(ctx context.Context, args CompactionArgs) error
 }
@@ -256,13 +229,11 @@ func MarshalItems(items []InputItem) ([]byte, error) {
 }
 
 // UnmarshalItems deserializes a JSON byte slice (as produced by MarshalItems)
-// back into input items. It tolerates nil, empty, and "null" inputs by returning
-// a nil slice. Each element is decoded through UnmarshalInputItem so the union
-// fix-ups apply: assistant messages keep their output_text/refusal content (a
-// plain slice decode matches EasyInputMessageParam first and silently drops it),
-// and "easy" role messages without a "type" discriminator still decode instead
-// of failing. This keeps a MarshalItems→UnmarshalItems round-trip — the encoding
-// external Session backends use for DB storage — lossless.
+// back into input items, tolerating nil, empty, and "null" as a nil slice.
+//
+// Each element goes through UnmarshalInputItem so the union fix-ups apply — a
+// plain slice decode matches EasyInputMessageParam first and silently drops
+// assistant output_text/refusal content — keeping the round-trip lossless.
 func UnmarshalItems(data []byte) ([]InputItem, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return nil, nil

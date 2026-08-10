@@ -46,11 +46,9 @@ type RunResult struct {
 	AgentToolInvocation *AgentToolInvocation
 
 	// StoppedEarly reports that the run ended at a turn boundary because
-	// RunControl.StopAfterTurn was requested, rather than because the agent
-	// was finished. It is how a middleware that re-runs (Loop) can tell "this
-	// answer is the agent's" from "the human stopped it": without it, a stop
-	// looked like an ordinary result and the next attempt started anyway,
-	// spending a model call per attempt on a run the caller had ended.
+	// RunControl.StopAfterTurn was requested, rather than because the agent was
+	// finished. It is how a middleware that re-runs (Loop) can tell "this answer
+	// is the agent's" from "the human stopped it".
 	StoppedEarly bool
 }
 
@@ -100,10 +98,9 @@ func (r *RunResult) ToInputList() ([]InputItem, error) {
 // UsageByResponse breaks the run's usage down per model call, keyed by response
 // id.
 //
-// RunResult.Usage is a total, which answers "what did this cost" and nothing
-// else. This answers "where did it go" — which turn ran away with the context,
-// which response was the expensive one — without the caller re-deriving it from
-// RawResponses and getting the nil-usage cases wrong.
+// Where RunResult.Usage answers "what did this cost", this answers "where did it
+// go" — which response was the expensive one — without the caller re-deriving it
+// from RawResponses and getting the nil-usage cases wrong.
 func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 	out := make(map[string]RequestUsage, len(r.RawResponses))
 	for _, resp := range r.RawResponses {
@@ -130,9 +127,9 @@ func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 // NestedUsage totals what the run's tools spent on model calls of their own —
 // agent-as-tool sub-runs, summarization steps.
 //
-// It is already part of RunResult.Usage; this says how much of the total was
-// spent somewhere other than the run's own conversation, which is the number
-// that explains a bill nobody can account for from the turn count.
+// It is already part of RunResult.Usage; this says how much was spent somewhere
+// other than the run's own conversation, the number that explains a bill the
+// turn count cannot.
 func (r *RunResult) NestedUsage() RequestUsage {
 	var total RequestUsage
 	for _, it := range r.NewItems {

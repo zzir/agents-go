@@ -112,11 +112,9 @@ func processModelResponse(
 	for _, h := range handoffs {
 		handoffMap[h.ToolName] = h
 	}
-	// Every tool is dispatchable — one with no OnInvoke fails AT INVOCATION as
-	// a UserError naming the tool. Filtering it out here instead would route
-	// the model's call to the not-found path, blaming the model for a
-	// configuration bug (and under ToolNotFoundReturnToModel, inviting it to
-	// retry forever against one).
+	// Every tool is dispatchable — one with no OnInvoke fails AT INVOCATION as a
+	// UserError naming the tool. Filtering it out here would route the call to the
+	// not-found path, blaming the model for a configuration bug.
 	functionMap := make(map[string]*Tool)
 	for _, t := range tools {
 		functionMap[t.Name] = t
@@ -153,12 +151,9 @@ func processModelResponse(
 			pr.Functions = append(pr.Functions, toolRunFunction{Tool: ft, Call: call})
 		default:
 			// An item type this SDK does not model. Keeping it is not optional:
-			// the Responses API gains types faster than any client tracks them,
-			// and dropping one corrupts the conversation, because the next turn
-			// resends a history the model does not recognize as its own.
-			//
-			// ItemUnknown carries the bytes through untouched. Such items used
-			// to be silently discarded here.
+			// dropping one corrupts the conversation, because the next turn resends
+			// a history the model does not recognize. ItemUnknown carries the bytes
+			// through untouched.
 			pr.NewItems = append(pr.NewItems, NewModelItem(ItemUnknown, agent, output))
 		}
 	}
@@ -167,9 +162,7 @@ func processModelResponse(
 
 // stepProgress is the run as this turn found it: the input it started from, the
 // items generated before this turn, and the response being executed. The three
-// travel as one value because they are only ever read together — to drop the
-// already-completed calls of a resumed turn, and to build the RunErrorData an
-// ErrorHandlers recovery is handed.
+// travel together because they are only ever read together.
 type stepProgress struct {
 	originalInput []InputItem
 	preStepItems  []*RunItem
@@ -196,14 +189,10 @@ func (r *runner) executeToolsAndSideEffects(
 		newStepItems = append(newStepItems, pr.NewItems...)
 	}
 
-	// On the first turn after a HITL resume the interrupted model response is
-	// re-processed, so any sibling tool calls that already completed before the
-	// pause reappear in pr.Functions. Their outputs were recorded before the
-	// pause and still sit in preStepItems, so re-running them would duplicate
-	// their side effects and emit a second function_call_output for the same call
-	// id — which the Responses API rejects on the next turn. Drop them from this
-	// turn's work so they are neither re-run nor re-output (their prior outputs
-	// stay in the item log). Mirrors openai-agents-python 3229/3259.
+	// On the first turn after a HITL resume the interrupted response is
+	// re-processed, so sibling calls that completed before the pause reappear.
+	// Drop them (see dropCompletedResumedCalls) so they are neither re-run nor
+	// re-output.
 	functions := pr.Functions
 	if resumed {
 		functions = dropCompletedResumedCalls(functions, prog.preStepItems)
@@ -212,12 +201,10 @@ func (r *runner) executeToolsAndSideEffects(
 	// Human-in-the-loop: partition function calls into those ready to run, those
 	// awaiting approval, and rejected calls (already resolved to results).
 	//
-	// A truncated response bypasses the partition: a call whose arguments may
-	// stop mid-JSON must neither run nor ASK. Pausing would put a doomed call
-	// in front of a human — and an approval serialized into a RunState and
-	// resumed in another process would then execute what this process refuses,
-	// since nothing after the pause re-checks what only the truncation guard
-	// below knows. Every call falls through to truncatedCallResults instead.
+	// A truncated response bypasses the partition: a call whose arguments may stop
+	// mid-JSON must neither run nor ASK, since a resumed approval in another
+	// process would execute what this one refuses. All fall through to
+	// truncatedCallResults.
 	var toRun []toolRunFunction
 	var interruptions []*ToolApprovalItem
 	var rejected []functionToolResult
@@ -243,10 +230,9 @@ func (r *runner) executeToolsAndSideEffects(
 		}, nil
 	}
 
-	// Run the approved/no-approval-needed function tools in parallel, then merge
-	// with the rejected results in original call order so item order and
-	// the turn-boundary hooks see every call (results built in tool_runs
-	// order).
+	// Run the approved function tools in parallel, then merge with the rejected
+	// results in original call order so item order and the turn-boundary hooks
+	// see every call.
 	var executed []functionToolResult
 	if resp.Truncated() {
 		// The response was cut off at the output-token limit, so a call's
@@ -323,12 +309,8 @@ func (r *runner) executeToolsAndSideEffects(
 	}
 
 	// Every tool in the batch asked to stop: honor it, using the last output as
-	// the final result.
-	//
-	// Unanimity is the rule, not "any". One tool wanting to stop while another
-	// is still working is not a decision the SDK can make for them, and
-	// stopping anyway would throw away the other's result — which the model
-	// asked for and the user paid for.
+	// the final result. Unanimity is the rule, not "any" — stopping while another
+	// tool is still working would throw away a result the model asked for.
 	if allTerminate(functionResults) {
 		return &singleStepResult{
 			NewStepItems: newStepItems,
@@ -469,13 +451,11 @@ func orderToolResults(calls []toolRunFunction, executed, rejected []functionTool
 }
 
 // dropCompletedResumedCalls removes function calls whose function_call_output
-// already exists among priorItems (the run's already-generated items). On the
-// first turn after a HITL resume the interrupted model response is re-processed,
-// so sibling calls that finished before the pause reappear as pending work; a
-// completed call must be neither re-run (duplicating side effects) nor re-output
-// (a duplicate call id the Responses API rejects). Its output was recorded
-// before the pause, so dropping the call is safe. Mirrors
-// openai-agents-python 3229/3259.
+// already exists among priorItems. On the first turn after a HITL resume the
+// interrupted response is re-processed, so a call that finished before the pause
+// must be neither re-run (duplicate side effects) nor re-output (a duplicate call
+// id the Responses API rejects). Dropping it is safe: its output is already in
+// the log.
 func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []*RunItem) []toolRunFunction {
 	if len(functions) == 0 {
 		return functions
@@ -519,9 +499,8 @@ func allTerminate(results []functionToolResult) bool {
 // is a string rather than a raw Go value. Agents with an output type keep the
 // raw value for the caller to decode.
 //
-// It renders through stringifyToolOutput so a multimodal output (a content
-// list rather than a string) reads as the JSON the model was sent, not as Go
-// syntax — the same rendering the item's display and the stored session use.
+// It renders through stringifyToolOutput so a multimodal output reads as the JSON
+// the model was sent, not as Go syntax.
 func coerceToolFinalOutput(agent *Agent, output any) any {
 	if agent.OutputType != nil {
 		return output

@@ -5,14 +5,12 @@ import (
 	"fmt"
 )
 
-// Fork extracts a session's active branch into another session,
-// producing an independent conversation that shares its past.
+// Fork extracts a session's active branch into another session, producing an
+// independent conversation that shares its past.
 //
-// It is not "copy everything": abandoned branches stay behind, because the
-// point of a fork is to continue from where the conversation actually is. Entry
-// ids are preserved, so an update entry that names one still finds its target.
-//
-// dst is cleared first, so it holds exactly the extracted branch.
+// It is not "copy everything": abandoned branches stay behind. Entry ids are
+// preserved, so an update that names one still finds its target. dst is cleared
+// first, so it holds exactly the extracted branch.
 func Fork(ctx context.Context, src, dst *Session) error {
 	path, err := src.PathEntries(ctx)
 	if err != nil {
@@ -25,11 +23,10 @@ func Fork(ctx context.Context, src, dst *Session) error {
 // exported pieces: PathToLeaf(entries, entryID) to cut the branch, then
 // ReplaceEntries on the destination.
 func writeFork(ctx context.Context, dst *Session, path []Entry) error {
-	// Ids and parent links are the conversation's and travel with it; the
-	// destination allocates the sequence numbers, since a cursor position
-	// belongs to the session it pages. One replace instead of clear-then-append
-	// so a storage that can swap atomically (AtomicReplacer) never shows a
-	// cleared-but-unfilled dst when a failure lands mid-write.
+	// Ids and parent links travel with the conversation; the destination
+	// allocates the sequence numbers. One replace instead of clear-then-append
+	// so an AtomicReplacer never shows a cleared-but-unfilled dst on a mid-write
+	// failure.
 	if err := ReplaceEntries(ctx, dst.storage, path...); err != nil {
 		return fmt.Errorf("fork: writing destination session: %w", err)
 	}

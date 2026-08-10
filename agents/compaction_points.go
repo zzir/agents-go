@@ -11,14 +11,9 @@ import (
 // Compactor decides what a session's history should look like as model context.
 //
 // It takes the entries the run would otherwise send and returns the ones it
-// should. It never deletes: the log stays whole and a compactor's answer is a
-// projection of it, which is what lets a session be forked, replayed and read
-// concurrently while its context shrinks.
-//
-// The interface lives here rather than in agents/compaction so the core can
-// name it without importing the grouping and strategy machinery — the same
-// reason a Model is an interface here and an implementation elsewhere. Build
-// one with compaction.New.
+// should. It never deletes — the answer is a projection of a log that stays
+// whole, which is what lets a session be forked, replayed and read concurrently
+// while its context shrinks. Build one with compaction.New.
 type Compactor interface {
 	Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error)
 }
@@ -33,11 +28,9 @@ const (
 	CompactBeforeRun CompactionPoint = 1 << iota
 
 	// CompactAtSavePoint compacts at each turn boundary — after the turn's
-	// items are persisted, before the next model call.
-	//
-	// It is the point the old design lacked, and the one that matters for
-	// agentic work: a run that calls thirty tools overruns its window inside a
-	// single run, long before the run-level pass would ever get to look.
+	// items are persisted, before the next model call. It is the point that
+	// matters for agentic work: a run that calls thirty tools overruns its
+	// window inside a single run, long before a run-level pass would look.
 	CompactAtSavePoint
 
 	// CompactAfterRun compacts once the run's final output is produced and
@@ -55,10 +48,8 @@ func (p CompactionPoint) Has(q CompactionPoint) bool { return p&q != 0 }
 // CompactionOptions configures context compaction for a run.
 //
 // Compaction is a RUN-level concern, not a session-level one: deciding what to
-// drop needs the model (to summarize), the usage numbers (to measure) and the
-// context window (to compare against), and all three belong to the run. A
-// session decorator holding a summarization model was a shape inherited from
-// elsewhere, not one this SDK needs.
+// drop needs the model, the usage numbers and the context window, all of which
+// belong to the run.
 type CompactionOptions struct {
 	// Compactor shrinks the context. Nil disables compaction entirely.
 	Compactor Compactor
@@ -141,12 +132,9 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 // changedEntries reports whether a compaction pass altered the context, by
 // identity rather than by size.
 //
-// Every field takes part, not just the id and the item. A strategy that keeps
-// the ids and rewrites a payload — a compaction checkpoint's own body is the
-// obvious case — has changed the context, and calling that a no-op means the
-// save point never rebuilds it and the after-run point never writes the
-// checkpoint. A custom projector may read any field, so none of them can be
-// assumed not to matter.
+// Every field takes part, not just id and item: a strategy that rewrites only a
+// payload (a checkpoint's own body) has still changed the context, and a custom
+// projector may read any field.
 func changedEntries(before, after []session.Entry) bool {
 	return !slices.EqualFunc(before, after, session.Entry.Equal)
 }
@@ -169,14 +157,10 @@ func (p CompactionPoint) String() string {
 // persisted, so the session log is complete and the run can rebuild its context
 // from it.
 //
-// Rebuilding rather than editing the in-flight item list is what makes the
-// append-only model pay off. The log is the truth; the context is a projection
-// of it, and a projection is cheap to recompute and impossible to get out of
-// step with what was stored. Trying to splice a compacted result into the
-// running []*RunItem would mean converting entries the other way, which no
-// folded summary survives.
-//
-// It reports ok=false when nothing applies, leaving the caller's context alone.
+// It rebuilds from the log rather than editing the in-flight item list: the
+// context is a projection, cheap to recompute and impossible to get out of step
+// with what was stored. It reports ok=false when nothing applies, leaving the
+// caller's context alone.
 func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, ok bool, err error) {
 	if !r.opts.Compaction.active(CompactAtSavePoint) {
 		return nil, false, nil
@@ -209,27 +193,17 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 }
 
 // CompactionCheckpointer is an optional Compactor capability: describe the last
-// pass as an append-only checkpoint entry.
-//
-// It is optional because a compactor that only reshapes the context in memory
-// is perfectly useful — it just has nothing durable to say, and requiring every
-// implementation to invent a checkpoint would tax the simple case for the
-// benefit of the elaborate one.
+// pass as an append-only checkpoint entry. It is optional — a compactor that
+// only reshapes context in memory has nothing durable to record.
 type CompactionCheckpointer interface {
 	// Checkpoint returns the entry recording what the compactor folded away
-	// from exactly this context — the entries the caller's own preceding
-	// Compact call saw. ok is false when nothing was folded, and also when
-	// the compactor's state no longer describes these entries: a compactor is
-	// allowed to be shared across concurrent runs, and between one run's
-	// Compact and its Checkpoint another run's pass may have re-aimed the
-	// shared state at a different session. Writing that state here would
-	// durably record another conversation's exclusions — and content — in
-	// this one's log. A lost checkpoint merely costs the next run one more
-	// pass; a stolen one is a cross-session leak.
+	// from exactly this context — the entries the caller's own preceding Compact
+	// call saw. ok is false when nothing was folded, and when the compactor's
+	// shared state no longer describes these entries: a concurrent run may have
+	// re-aimed it, and recording that here would leak another conversation's
+	// exclusions into this log (spec §2.5f).
 	//
-	// seen is that preceding Compact call's INPUT, not its result: the
-	// compactor is being asked to confirm its state still describes the
-	// context it was pointed at.
+	// seen is that preceding Compact call's INPUT, not its result.
 	Checkpoint(seen []session.Entry) (session.Entry, bool, error)
 }
 
@@ -237,8 +211,7 @@ type CompactionCheckpointer interface {
 // so the next run starts from the shorter context instead of recomputing it.
 //
 // It reports whether it wrote one. Failure is not fatal — a missing checkpoint
-// costs the next run one more compaction pass, which is exactly what happened
-// before checkpoints existed.
+// costs the next run one more compaction pass.
 func (r *runner) checkpointAfterRun(ctx context.Context) bool {
 	if !r.opts.Compaction.active(CompactAfterRun) || r.opts.Conversation.Session == nil {
 		return false

@@ -51,27 +51,23 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 			return nil, nil, nil, herr
 		}
 		// A read that came back FULL is one the window truncated: what it left
-		// behind is stored, entered no request, and is therefore on no response
-		// chain (see offChainItems). Measuring it here — from the read the run
-		// was making anyway — is what keeps the answer from being "a window is
-		// configured", which never clears and would strand a caller who pinned
-		// a chain-based compaction mode. A log exactly the window's size reads
-		// full too, so this errs toward reporting; that is the safe direction.
+		// behind is stored, entered no request, and is on no response chain (see
+		// offChainItems). Measuring it here (not "a window is configured") is what
+		// lets the flag clear. A log exactly the window's size reads full too, so
+		// this errs toward reporting — the safe direction.
 		if limit > 0 && len(entries) >= limit {
 			r.offChainHistory = true
 		}
-		// Compact before projecting: the compactor reasons about entries —
-		// their kinds, their turns, their usage — and projection is what turns
-		// whatever survives into model input.
+		// Compact before projecting: the compactor reasons about entries, and
+		// projection turns whatever survives into model input.
 		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
 		history, herr := session.ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
 		// A projector that sends nothing for an item entry keeps it out of every
-		// request while leaving it in the log — the same standing as what a
-		// window cut off, and invisible to position, since a withheld entry can
-		// sit anywhere (see offChainItems).
+		// request while leaving it in the log — like what a window cut off (see
+		// offChainItems).
 		if withheldItemEntries(entries, opts.Conversation.Projectors) {
 			r.offChainHistory = true
 		}
@@ -94,11 +90,9 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 // the trace — a no-op when the trace was joined or tracing is off — and must be
 // deferred by the caller.
 //
-// ResumeRun goes through here too, so a resumed run is observed exactly like
-// the run it continues: resumed only marks the log and the trace name, and
-// every other difference between the two is a bug — a group id reaching one
-// trace but not the other leaves a paused/resumed pair unlinkable in exactly
-// the view built to follow it.
+// ResumeRun goes through here too, so a resumed run is observed exactly like the
+// run it continues: resumed only marks the log and the trace name, and every
+// other difference between the two would be a bug.
 func (r *runner) observeRun(agent *Agent, resumed bool) func() {
 	attrs := []slog.Attr{slog.String("agent", agent.Name)}
 	if resumed {
@@ -152,13 +146,10 @@ type loopSeed struct {
 	startTurn int
 }
 
-// seedLoop builds the loop's starting state. When resuming from an
-// interruption it seeds prior state from the RunState and restores the
-// runner's persistence cursor: the interrupted run already persisted its user
-// input and every turn up to the pause (holding back the pending, output-less
-// tool calls), so the resume continues from that cursor instead of re-saving.
-// Turn counting also continues where the interrupted run stopped, so repeated
-// interrupt/resume cycles cannot exceed the turn budget.
+// seedLoop builds the loop's starting state. When resuming from an interruption
+// it seeds prior state from the RunState and restores the persistence cursor and
+// turn counter, so the resume continues from the pause instead of re-saving or
+// resetting the turn budget.
 func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed {
 	seed := loopSeed{
 		agent:          startAgent,

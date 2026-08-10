@@ -10,8 +10,7 @@ import (
 // It configures the TOOL surface: its name, visibility, approval gate, error
 // rendering, and how arguments become nested-run input. Configuring the nested
 // RUN — its session, turn budget, conversation, model, guardrails — is
-// ModifyRunOptions's job; there is one channel for run options rather than a
-// mirror field here for each.
+// ModifyRunOptions's job.
 type AgentToolConfig struct {
 	// Name is the tool name exposed to the calling agent. Defaults to the
 	// agent's name (sanitized) when empty.
@@ -177,11 +176,10 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			var res *RunResult
 			var err error
 			resumed := false
-			// On resume, continue the nested run this call paused (human-in-the-
-			// loop): its state was cached on the parent run context by tool call
-			// id. Mirror the parent's approve/reject decisions for the surfaced
-			// nested interruptions into the nested run before resuming so the
-			// human's choice takes effect.
+			// On resume, continue the nested run this call paused: its state was
+			// cached on the parent run context by tool call id. Mirror the
+			// parent's approve/reject decisions into the nested run before
+			// resuming so the human's choice takes effect.
 			if tc.RunContext != nil {
 				if paused := tc.takeNestedToolState(tc.ToolCallID); paused != nil {
 					resumed = true
@@ -197,9 +195,8 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			if !resumed {
 				// Arguments face the whole-schema check every tool's arguments
 				// get (spec §2.7h) before they can influence the nested run: a
-				// missing required key or a violated enum comes back as a
-				// *ModelBehaviorError the model can self-correct, instead of
-				// silently becoming the nested run's prompt.
+				// violation comes back as a *ModelBehaviorError the model can
+				// self-correct, instead of silently becoming the nested run's prompt.
 				if verr := validate(argsJSON); verr != nil {
 					return ToolResult{}, verr
 				}
@@ -214,9 +211,8 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			}
 			// The nested run paused for approval: surface its interruptions to the
 			// parent run (via the sentinel below) instead of returning an output,
-			// so the parent pauses too and the human sees the nested approval.
-			// Usage is not folded in yet — it will be when the resumed nested run
-			// finally completes, carrying its full usage.
+			// so the parent pauses too. Usage is folded in later, when the resumed
+			// nested run completes carrying its full usage.
 			if len(res.Interruptions) > 0 {
 				return ToolResult{}, &nestedRunInterrupt{
 					callID:        tc.ToolCallID,
@@ -243,8 +239,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				out = custom
 			}
 			// Report the nested run's usage on the result so it is attributable
-			// to THIS tool call, not just folded into the run total where
-			// nothing says which call spent it.
+			// to THIS tool call, not just folded into the run total.
 			result := resultFromValue(out)
 			result.Usage = res.Usage
 			return result, nil

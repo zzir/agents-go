@@ -2,10 +2,9 @@ package compaction
 
 // Trigger decides whether a strategy should act on an index.
 //
-// Strategies take two: one to start and one to stop. Separating them is what
-// makes a pass stop at a comfortable size rather than at the threshold that
-// alarmed it — compacting down to exactly the trigger point means the next turn
-// triggers again, and the conversation spends the rest of its life compacting.
+// Strategies take two, one to start and one to stop, so a pass can stop at a
+// comfortable size rather than the threshold that alarmed it — stopping at the
+// trigger point just re-triggers next turn.
 type Trigger func(*Index) bool
 
 // Always fires unconditionally.

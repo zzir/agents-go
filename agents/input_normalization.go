@@ -27,8 +27,7 @@ func normalizeStoredInput(items []InputItem) []InputItem {
 		return items
 	}
 	// One shared raw-JSON projection per item: the openai-go input union has no
-	// uniform accessors across its variants, and the JSON form also covers
-	// item types Go never constructs itself.
+	// uniform accessors across its variants.
 	itemMaps := make([]map[string]any, len(items))
 	for i := range items {
 		itemMaps[i] = inputItemAsMap(items[i])

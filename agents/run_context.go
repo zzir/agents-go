@@ -13,11 +13,8 @@ import (
 // agent run. It is passed to tool invocations, guardrails and lifecycle hooks.
 //
 // User data lives in the Context field as an any value; tool authors type-assert
-// it back to their concrete type. Making Agent generic over that type instead
-// would put a type parameter on every value the runner touches — agents,
-// tools, guardrails, handoffs — to type one field nothing in the SDK reads.
-// The standard library context.Context stays separate, for cancellation and
-// deadlines.
+// it back to their concrete type (see spec §5.12). The standard library
+// context.Context stays separate, for cancellation and deadlines.
 type RunContext struct {
 	// Context is the arbitrary user value threaded through the run. It is never
 	// inspected by the SDK.
@@ -45,15 +42,9 @@ type RunContext struct {
 	activeTrace *tracing.TraceHandle
 
 	// nestedToolStates caches the paused RunState of an agent-as-tool nested run,
-	// keyed by the parent tool call id, so a resumed parent run continues the
-	// nested run from where it paused instead of restarting it. Populated by the
-	// runner at an interruption and re-installed onto the resume's context from
-	// RunState, which serializes these states recursively (NestedToolStates) —
-	// a RunState persisted to JSON and resumed in another process continues the
-	// nested run mid-approval rather than restarting it.
-	// Guarded by nestedMu: a resume replays the interrupted turn's tool calls
-	// concurrently (errgroup), so two paused agent-tools take their states in
-	// parallel.
+	// keyed by parent tool call id, so a resumed parent continues it instead of
+	// restarting. Guarded by nestedMu: a resume replays the turn's tool calls
+	// concurrently, so two paused agent-tools take their states in parallel.
 	nestedMu         sync.Mutex
 	nestedToolStates map[string]*RunState
 }

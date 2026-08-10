@@ -49,8 +49,7 @@ func traceTools(tools []*Tool) []map[string]any {
 
 // traceHandoffs projects the request's handoffs into a serializable form.
 // Description and input schema are recorded alongside the names: they are part
-// of the tool surface the model saw, and a replay that lacks them is a
-// different request.
+// of the tool surface the model saw.
 func traceHandoffs(handoffs []Handoff) []map[string]any {
 	out := make([]map[string]any, 0, len(handoffs))
 	for _, h := range handoffs {

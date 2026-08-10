@@ -142,12 +142,9 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 // wait sleeps for the backoff (or server-suggested) delay before the next
 // attempt. attempt is the number of the attempt that just failed.
 //
-// A server-suggested delay longer than maxDelay **ends the retries** and
-// returns that attempt's error, rather than being clamped down to the cap.
-// Clamping would retry far sooner than the server said it would accept, which
-// near-certainly fails again and burns the remaining attempts before reporting
-// the same error anyway. Failing immediately says why, and says it faster. The
-// error is wrapped, so errors.As and CodeOf still reach the original.
+// A server-suggested delay longer than maxDelay ends the retries and returns
+// that attempt's error (wrapped, so errors.As and CodeOf still reach the
+// original) rather than clamping to the cap.
 func (p RetryPolicy) wait(ctx context.Context, attempt int, err error) error {
 	delay := p.backoff(attempt)
 	if p.RetryAfter != nil {
@@ -206,9 +203,7 @@ func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelRespo
 		if attempt == maxAttempts || !retryIf(err) {
 			break
 		}
-		// A run that answered after three retries looks identical to one that
-		// answered first time. Record the difference, or nobody can explain the
-		// latency afterwards.
+		// Record the retry so the extra latency is explainable afterward.
 		RecordDiagnostic(ctx, DiagModelRetry, err, map[string]any{
 			"attempt": attempt, "max_attempts": maxAttempts, "streaming": false,
 		})
@@ -220,15 +215,11 @@ func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelRespo
 	return nil, lastErr
 }
 
-// StreamResponse retries only while the inner stream has yielded no output.
-// Events carrying no model output — lifecycle preamble (response.created /
-// in_progress / queued) and terminal-failure events (error / response.error /
-// response.failed) — are held back, not delivered, until the first output
-// event commits the attempt (deliverStreamAttempt), so a stream that dies
-// early is retried like a failed connection and the consumer never sees the
-// abandoned attempt's events. Once output has been emitted it cannot be
-// un-sent: the attempt is committed and a later error is passed straight
-// through.
+// StreamResponse retries only while the inner stream has yielded no output:
+// pre-commit events are held back until the first output event commits the
+// attempt (deliverStreamAttempt), so a stream that dies early is retried like a
+// failed connection. Once output is emitted the attempt is committed and a
+// later error passes straight through. See spec §5.16.
 func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		retryIf := m.policy.retryIf()
@@ -239,23 +230,19 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 				return
 			}
 			if a.err == nil {
-				// Clean finish. An all-pending stream (no output at all) still
-				// delivers what was held back rather than vanishing. Nothing
-				// follows the flush, so a consumer stopping mid-flush needs no
-				// handling here — anything added after it must check the bool
-				// (see the fallback's clean-finish branch).
+				// Clean finish: deliver held-back events (an all-pending stream
+				// still delivers rather than vanishing). Nothing follows, so the
+				// flush bool needs no check here.
 				flushStreamEvents(a.pending, yield)
 				return
 			}
 			if a.committed || attempt == maxAttempts || !retryIf(a.err) {
 				if a.committed {
-					// A stream that broke after emitting output cannot be
-					// retried — the tokens are already out. Record it so a
-					// truncated answer is explainable rather than merely odd.
+					// A committed stream cannot be retried; record the break so a
+					// truncated answer is explainable.
 					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{"attempt": attempt})
 				} else if !flushStreamEvents(a.pending, yield) {
-					// No further attempt follows: the held-back events are
-					// this stream's last word, delivered ahead of the error.
+					// No further attempt: flush the held-back events ahead of the error.
 					return
 				}
 				yield(nil, a.err)
@@ -299,14 +286,9 @@ func (p *retryProvider) Model(name string) (Model, error) {
 	return NewRetryModel(m, p.policy), nil
 }
 
-// retrySpan records one failed attempt as a span under the generation span it
-// belongs to.
-//
-// It is opened and finished together rather than wrapping the attempt, because
-// the attempt has already happened by the time we know it failed — and a
-// zero-duration marker showing THAT a retry occurred is the point. A generation
-// span that took eight seconds because it was tried three times is otherwise
-// indistinguishable from one that was simply slow.
+// retrySpan records one failed attempt as a zero-duration span under the
+// generation span it belongs to, so a slow generation and a retried one are
+// tellable apart.
 func retrySpan(ctx context.Context, attempt, maxAttempts int, streaming bool, err error) {
 	sp, _ := tracing.StartSpanFrom(ctx, "model_retry", tracing.SpanTypeModelRetry, map[string]any{
 		"attempt": attempt, "max_attempts": maxAttempts, "streaming": streaming,

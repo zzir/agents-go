@@ -36,26 +36,18 @@ const (
 	// treats it exactly like the input the run started with.
 	ItemInjectedInput ItemKind = "injected_input"
 	// ItemUnknown carries a model output item whose type this SDK does not
-	// model. The raw bytes go back on the wire unchanged.
-	//
-	// It exists because the alternative was silently dropping it. The Responses
-	// API gains item types faster than any client tracks them, and a dropped
-	// item is not a missing feature — it is a corrupted conversation, because
-	// the next turn resends a history the model does not recognize as its own.
-	// What is lost is only inspection: Display reports the wire type name.
+	// model. The raw bytes go back on the wire unchanged; dropping one would
+	// corrupt the conversation. What is lost is only inspection: Display reports
+	// the wire type name.
 	ItemUnknown ItemKind = "unknown"
 )
 
 // RunItem is one thing that happened during a run: a model message, a tool
 // call, a tool result, a handoff, a reasoning trace.
 //
-// It is a struct with a Kind, not an interface with seven implementations. The
-// set is closed — the runner produces these kinds and a caller cannot add one —
-// and the members were near-identical: five of them held `{Agent, Raw}` and
-// differed only in the tag they returned. Serialization had already arrived at
-// this shape on its own: a serialized RunState stores `{type, agent, input,
-// source, display}`, and rebuilding one needed an eighth, private item type
-// whose whole job was to carry those fields back into the interface.
+// It is a struct with a Kind, not an interface: the set is closed (the runner
+// produces these kinds and a caller cannot add one), and the members were
+// near-identical.
 //
 // Which fields carry meaning depends on Kind:
 //
@@ -109,11 +101,9 @@ type RunItem struct {
 	// agent-as-tool's nested run, a summarization step. Nil when it called no
 	// model.
 	//
-	// It is kept apart from the turn's own usage rather than added to it,
-	// because the two answer different questions. "How big is this
-	// conversation" is the parent's InputTokens; a nested run's tokens were
-	// spent on a different conversation entirely, and folding them in would
-	// make the context look larger than anything ever sent.
+	// It is kept apart from the turn's own usage rather than added to it: a
+	// nested run's tokens were spent on a different conversation, and folding
+	// them in would make the context look larger than anything ever sent.
 	NestedUsage *Usage
 
 	// IsHandoff marks the tool_called stream event that wraps a handoff call
@@ -133,11 +123,9 @@ type RunItem struct {
 	display *ItemDisplay
 }
 
-// Display projects the item into the fields a renderer actually needs: the
-// text, the tool call, the error flag. It is produced by the SDK, which knows
-// the wire format, rather than by each consumer parsing it again — the version
-// of that parsing living in agents-server was the source of a long tail of
-// rendering bugs.
+// Display projects the item into the fields a renderer actually needs: the text,
+// the tool call, the error flag. It is produced by the SDK, which knows the wire
+// format, rather than by each consumer parsing it again.
 //
 // It is a hint, not a replacement. A consumer that ignores Display entirely
 // must still be able to render from the item's own fields; that is what keeps

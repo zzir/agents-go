@@ -4,29 +4,23 @@ import "context"
 
 // usageSnapshot returns a detached copy of the run's usage accumulator for
 // anything handed to the caller — a RunResult, a RunState, error details. The
-// live accumulator keeps changing (parallel agent-as-tool runs fold in, a
-// resumed run keeps adding), so what escapes the runner is always a copy of
-// its own: reading it needs no synchronization, and a later resume can never
-// mutate a result the caller already holds.
+// live accumulator keeps changing, so a copy needs no synchronization and a
+// later resume cannot mutate a result the caller already holds.
 func (r *runner) usageSnapshot() *Usage {
 	u := r.rc.Usage.Snapshot()
 	return &u
 }
 
-// baseResult fills the fields every RunResult carries however the run ended:
-// the input, the item log, the responses, the last agent, and the three
-// accumulators. Each ending then adds only what makes it different —
-// FinalOutput, StoppedEarly, Interruptions plus State.
-//
-// Every ending goes through here, so a field added to RunResult is added once
-// rather than at four returns, where missing one leaves it silently absent
-// from that ending alone.
+// baseResult fills the fields every RunResult carries however the run ended: the
+// input, the item log, the responses, the last agent, and the three
+// accumulators. Each ending then adds only what makes it different. Every ending
+// goes through here, so a field added to RunResult is filled once, not at four
+// returns.
 //
 // NewItems is the unfiltered log (r.sessionItems), never the loop's
-// generatedItems: a handoff input filter and a mid-run recompaction reset the
-// model's view, while the result reports what the run produced. It is nil for
-// a fresh run that failed before producing anything; a resume seeds it from
-// the paused state.
+// generatedItems: a handoff input filter or a mid-run recompaction resets the
+// model's view, while the result reports what the run produced. Nil for a fresh
+// run that failed before producing anything; a resume seeds it from the state.
 func (r *runner) baseResult() *RunResult {
 	return &RunResult{
 		Input:            r.state.originalInput,
@@ -55,9 +49,8 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	// A Replace decision substitutes the final output and the run continues.
 	if outGuardrails := selectStage(r.runGuardrails(agent), StageOutput); len(outGuardrails) > 0 {
 		// The output stage is the likeliest place for a slow (LLM-based)
-		// guardrail, and it ran under whatever phase the turn last set —
-		// "model" or "tools" — which is exactly the misreport Phase exists to
-		// prevent.
+		// guardrail; it gets its own span so it is not misreported under the
+		// turn's last phase ("model" or "tools").
 		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
 		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
 			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})

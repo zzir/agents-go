@@ -64,8 +64,7 @@ func newTypedTool[A any, R any](
 	strict bool,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
 ) *Tool {
-	// Strictness and constructor are one-to-one, so a panic can blame the call
-	// the programmer actually wrote.
+	// Name the constructor in panics so they blame the call the programmer wrote.
 	ctor := "NewTool"
 	if !strict {
 		ctor = "NewToolNonStrict"
@@ -156,14 +155,11 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 	if _, ok := parsed.(map[string]any); !ok {
 		return NewModelBehaviorError("Invalid JSON input for tool %s: expected a JSON object", toolName)
 	}
-	// Fill in what the schema documents as a default before validating, so a
-	// schema that advertises one and a tool that receives a zero value stop
-	// telling two different stories.
+	// Fill in schema defaults before validating, so a documented default reaches
+	// the tool rather than a zero value.
 	filled := v.ApplyDefaults([]byte(trimmed))
-	// Validate the WHOLE schema. The hand-rolled check looked at root-level
-	// required keys only, so a nested object missing a required field, or one
-	// holding a string where the schema said integer, reached the tool as a
-	// zero value it had no way to notice.
+	// Validate the whole schema, nested included: a nested missing required field
+	// or type mismatch must not reach the tool as an unnoticed zero value.
 	if err := v.Validate(filled); err != nil {
 		return NewModelBehaviorError("Invalid JSON input for tool %s: %v", toolName, err)
 	}

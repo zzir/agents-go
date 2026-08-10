@@ -99,28 +99,18 @@ type Tool struct {
 	Sequential bool
 
 	// Deferred withholds the tool from the model until a ToolResult names it in
-	// AddedTools.
+	// AddedTools — progressive disclosure for tools only relevant after something
+	// else has happened.
 	//
-	// It is progressive disclosure: an agent offered forty tools chooses worse
-	// than one offered four, and most of those forty are only relevant after
-	// something else has happened. A tool announcing the tools it unlocks says
-	// that directly, where a static list cannot.
-	//
-	// Once disclosed a tool stays available for the rest of the run; withdrawing
-	// it after one use would surprise a model that had just been told it existed.
+	// Once disclosed a tool stays available for the rest of the run.
 	Deferred bool
 
 	// RetrySafe declares the tool safe to run again after a crash interrupted it
 	// mid-execution. See RetrySafeNames and session.RecoveryPolicy.
 	//
-	// The default is unsafe, and deliberately so. A process killed between
-	// issuing a call and recording its output leaves no way to tell whether the
-	// tool ran: the email may already have been sent. Repeating it is a choice
-	// only the tool's author can make, and assuming otherwise would make crash
-	// recovery a source of duplicate side effects.
-	//
-	// A reader is a good candidate; anything that writes, charges or notifies is
-	// not, unless it is idempotent by construction.
+	// The default is unsafe: a crash between a call and recording its output
+	// leaves no way to tell whether the tool ran. A reader is a good candidate;
+	// anything that writes, charges or notifies is not, unless idempotent.
 	RetrySafe bool
 
 	// validator is the compiled form of ParamsJSONSchema, used to validate

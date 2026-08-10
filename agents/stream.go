@@ -51,15 +51,11 @@ type RunCompletedEvent struct {
 
 func (*RunCompletedEvent) streamEvent() {}
 
-// ToolProgressEvent is a partial result pushed by a running tool.
+// ToolProgressEvent is a partial result pushed by a running tool. It is what
+// makes a long tool call watchable rather than a spinner.
 //
-// It is what makes a long tool call watchable: a command producing output for
-// two minutes, a patch applying file by file, a nested agent thinking out loud.
-// Without it the only honest thing a UI can show is a spinner.
-//
-// A progress result is NOT the tool's return value and never reaches the model.
-// The tool's actual result is the one it returns; treating progress as an
-// answer would let a half-finished thought become the conversation.
+// A progress result is NOT the tool's return value and never reaches the model:
+// the tool's actual result is the one it returns.
 type ToolProgressEvent struct {
 	// ToolName and CallID identify the call this belongs to. The call id is
 	// what a consumer keys on: several tools stream at once.
@@ -95,11 +91,8 @@ func (*ItemsPersistedEvent) streamEvent() {}
 // consumed.
 //
 // Running on the consumer's goroutine is deliberate. Abandoning the stream — a
-// break, an early return, a failing test — stops the run, instead of leaking
-// the goroutine that was producing it. The previous design pushed events into a
-// buffered channel from a goroutine and required the consumer to cancel the
-// run's context on early exit; that was easy to forget and impossible to
-// detect.
+// break, an early return, a failing test — stops the run, instead of leaking the
+// goroutine that was producing it.
 //
 // The cost is that a slow consumer slows the run. For a single consumer that is
 // backpressure working correctly. For one run feeding several consumers at
@@ -143,11 +136,9 @@ func (r *runner) emit(event StreamEvent) bool {
 	if r.yield == nil {
 		return true
 	}
-	// A tool emitting progress runs on its own goroutine while the loop waits
-	// on the batch, and several tools emit at once. An iterator's yield is not
-	// safe for concurrent calls, so the mutex is what makes ToolContext.Emit
-	// possible at all — without it, progress from two parallel tools would
-	// corrupt the consumer's range loop.
+	// A tool emitting progress runs on its own goroutine, and several emit at
+	// once. An iterator's yield is not safe for concurrent calls, so this mutex
+	// is what makes ToolContext.Emit possible at all.
 	r.emitMu.Lock()
 	defer r.emitMu.Unlock()
 	if r.consumerStopped.Load() {

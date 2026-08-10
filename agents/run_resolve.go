@@ -67,9 +67,8 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*Tool, error
 		mcpTools, err := server.ListTools(ctx, r.rc, agent)
 		if err != nil {
 			// Failing the turn, not skipping the server: with its tools quietly
-			// missing, the model's next call to one it used a turn ago becomes
-			// a "tool not found" error blamed on the model. A listing failure
-			// is this run's failure, named as such.
+			// missing, the model's next call to one becomes a "tool not found"
+			// error blamed on the model. A listing failure is this run's failure.
 			return nil, fmt.Errorf("listing tools of MCP server for agent %q: %w", agent.Name, err)
 		}
 		out = append(out, mcpTools...)

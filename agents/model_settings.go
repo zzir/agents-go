@@ -170,8 +170,7 @@ type ModelSettings struct {
 
 	// PromptCacheKey is forwarded as the Responses API prompt_cache_key to
 	// improve prompt-cache hit rates. Empty means unset. The runner never
-	// generates a key: callers set this (or ExtraBody) themselves, because a
-	// key the SDK invented would silently partition a cache the caller shares.
+	// generates a key — callers set this (or ExtraBody) themselves.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
 	// PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
@@ -260,8 +259,7 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 		out.TopLogprobs = override.TopLogprobs
 	}
 	// ExtraHeaders/ExtraQuery/ExtraBody are replaced wholesale when the override
-	// sets them, not merged per-key: a half-merged header set is harder to
-	// reason about than a replaced one.
+	// sets them, not merged per-key.
 	if override.ExtraHeaders != nil {
 		out.ExtraHeaders = override.ExtraHeaders
 	}

@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// EntryKind classifies what a session entry holds. It is an open vocabulary:
-// a consumer that meets a kind it does not know must ignore the entry, not
-// fail, so a session written by a newer build stays readable.
+// EntryKind classifies what a session entry holds. It is an open vocabulary: an
+// unknown kind must be ignored, not rejected, so a session written by a newer
+// build stays readable.
 type EntryKind string
 
 const (
@@ -36,29 +36,19 @@ const (
 
 // Entry is one record in a session's history.
 //
-// Sessions used to store bare Responses items, which meant everything that was
-// not a Responses item had nowhere to live: an error banner, a compaction
-// checkpoint, terminal output. Consumers grew side tables for them and had to
-// merge two orderings back together at read time.
-//
-// Entries are **append-only**. Nothing is ever rewritten in place — an entry
-// whose display must change later gets an EntryKindUpdate naming it, folded in
-// at projection time. That is what lets a session be shared, forked, and read
-// concurrently without a writer invalidating a reader's view.
+// Entries are append-only: nothing is rewritten in place. An entry whose display
+// must change later gets an EntryKindUpdate naming it, folded in at projection
+// time, which is what lets a session be shared, forked, and read concurrently.
 type Entry struct {
 	// ID identifies the entry within its session. Storage assigns it when
 	// empty.
 	ID string `json:"id"`
-	// Seq is the entry's position in append order, assigned by storage. It is
-	// what a Cursor pages on: an offset shifts under a concurrent append, a
-	// sequence number does not.
+	// Seq is the entry's position in append order, assigned by storage. A Cursor
+	// pages on it.
 	Seq int64 `json:"seq,omitzero"`
-	// ParentID is the entry this one follows. Empty means a root.
-	//
-	// A session is a tree, not a list, because branching is the natural shape
-	// of "try that again differently": the abandoned attempt stays recorded
-	// instead of being deleted, and two branches can share everything before
-	// the point they diverge rather than duplicating it.
+	// ParentID is the entry this one follows; empty means a root. A session is a
+	// tree, so branches share their common prefix and an abandoned attempt stays
+	// recorded rather than deleted.
 	ParentID string `json:"parent_id,omitzero"`
 	// Kind says what this entry holds.
 	Kind EntryKind `json:"kind"`
@@ -73,36 +63,27 @@ type Entry struct {
 	// usage attributable.
 	ResponseID string `json:"response_id,omitzero"`
 
-	// Item is the Responses item's wire JSON, for Kind == EntryKindItem.
-	//
-	// It is stored as raw bytes rather than a decoded union so an item type
-	// this build does not model survives verbatim; see UnknownOutputItem.
+	// Item is the Responses item's wire JSON, for Kind == EntryKindItem. Raw
+	// bytes, not a decoded union, so an item type this build does not model
+	// survives verbatim; see UnknownOutputItem.
 	Item json.RawMessage `json:"item,omitzero"`
 	// Payload is the structured body of every other kind.
 	Payload json.RawMessage `json:"payload,omitzero"`
 
 	// Display is the entry's UI projection, when it has one.
 	Display *ItemDisplay `json:"display,omitzero"`
-	// Usage is the token usage of the model call this entry belongs to — a call
-	// on THIS conversation. Exactly one entry per response carries it, so
-	// summing over entries counts each request once.
+	// Usage is the token usage of the model call this entry belongs to. Exactly
+	// one entry per response carries it, so summing over entries counts each
+	// request once.
 	Usage *RequestUsage `json:"usage,omitzero"`
-	// Diagnostics records trouble the run went through while producing this
-	// entry — retries, a fallback model, a compaction pass that gave up.
-	//
-	// It is on the entry rather than only in a log because these are the
-	// failures that do NOT fail the run: they never reach an error return, so
-	// without this the session cannot answer "why was that answer bad" once the
-	// log has rotated.
+	// Diagnostics records trouble the run survived while producing this entry —
+	// retries, a fallback model, a compaction pass that gave up: the failures
+	// that do NOT fail the run and so never reach an error return.
 	Diagnostics []Diagnostic `json:"diagnostics,omitzero"`
 
-	// NestedUsage is what a nested run started by this entry's tool spent.
-	//
-	// Separate from Usage because they answer different questions. Usage
-	// measures this conversation, and a reader estimating how large it has
-	// grown reads the most recent one; a nested run's tokens were spent on a
-	// different conversation, and counting them as context would make it look
-	// larger than anything ever sent.
+	// NestedUsage is what a nested run started by this entry's tool spent. Kept
+	// separate from Usage because those tokens were spent on a different
+	// conversation — counting them as context would overstate this one's size.
 	NestedUsage *RequestUsage `json:"nested_usage,omitzero"`
 
 	// CreatedAt is when the entry was produced. Storage sets it when zero.
@@ -110,28 +91,18 @@ type Entry struct {
 }
 
 // UpdatePayload is the body of an EntryKindUpdate entry: it amends the display
-// of an entry recorded earlier.
+// of an entry recorded earlier — a display that settles after its turn ended,
+// such as a background task card whose task outlives the turn.
 //
-// It exists because some displays are settled long after the turn that produced
-// them ended — a background task card whose task runs for minutes while its
-// parent turn finished in seconds. Rewriting the original entry would break the
-// append-only guarantee that forking and concurrent reads depend on.
-//
-// It also makes a race disappear rather than handling it. An update may be
-// stored BEFORE its target, and projection still associates them by id; the
-// consumer-side retry loop that existed to paper over "the task finished before
-// the parent turn was saved" has nothing left to do.
+// An update may be stored BEFORE its target; projection still associates them
+// by id, so the ordering never has to be a race.
 type UpdatePayload struct {
 	// TargetID is the entry being amended.
 	TargetID string `json:"target_id,omitzero"`
-	// TargetCallID amends the entry whose display carries this tool call id,
-	// for an amender that knows the call but not the entry.
-	//
-	// That is the ordinary case for anything reporting on a tool call
-	// afterwards: a background task finishing knows which call started it, and
-	// the entry id is assigned by storage at a moment the amender may not have
-	// reached yet. Requiring the entry id would put the race back — look it up,
-	// find nothing, retry — which is what this mechanism exists to remove.
+	// TargetCallID amends the entry whose display carries this tool call id, for
+	// an amender that knows the call but not the entry — the ordinary case for
+	// anything reporting on a tool call afterwards, since the entry id is
+	// storage's to assign.
 	TargetCallID string `json:"target_call_id,omitzero"`
 	// Display is merged over the target's display. Only non-zero fields apply.
 	Display ItemDisplay `json:"display"`
@@ -166,12 +137,9 @@ func NewAnnotationEntry(display ItemDisplay, src Source) Entry {
 }
 
 // LeafPayload is the body of an EntryKindLeaf entry: it moves the session's
-// active branch to another entry.
-//
-// Switching branches is an APPEND, not a mutable pointer. That is what keeps
-// the switch itself part of the history — you can see that a branch was
-// abandoned and when — and what lets the current leaf be derived by folding the
-// log rather than stored beside it, where it could disagree after a crash.
+// active branch to another entry. The move is an append, not a mutable pointer,
+// so the switch stays in history and the current leaf is derived by folding the
+// log rather than stored beside it.
 type LeafPayload struct {
 	// TargetID is the entry that becomes the new leaf.
 	TargetID string `json:"target_id"`
@@ -187,8 +155,7 @@ func NewLeafEntry(targetID string) (Entry, error) {
 }
 
 // WithLeafTarget returns the leaf entry re-pointed at targetID, keeping its own
-// identity. It is how a removal moves a branch pointer off an entry that is
-// going, rather than leaving it aimed at something that will not be there.
+// identity — how a removal moves a branch pointer off an entry that is going.
 func (e Entry) WithLeafTarget(targetID string) (Entry, error) {
 	if e.Kind != EntryKindLeaf {
 		return e, fmt.Errorf("entry %q is a %s entry, not a leaf move", e.ID, e.Kind)
@@ -219,10 +186,8 @@ func NewUpdateEntry(targetID string, display ItemDisplay) (Entry, error) {
 }
 
 // NewCallUpdateEntry builds an entry amending the display of whichever entry
-// holds the given tool call.
-//
-// It is what a long-running thing reports through: the caller knows the call it
-// was started by, and the entry id belongs to storage.
+// holds the given tool call — what a long-running task reports through, knowing
+// the call it was started by but not the storage-assigned entry id.
 func NewCallUpdateEntry(callID string, display ItemDisplay) (Entry, error) {
 	return newUpdate(UpdatePayload{TargetCallID: callID, Display: display})
 }
@@ -288,9 +253,8 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 		d.IsError = true
 	}
 	if len(other.Extra) > 0 {
-		// Copy-on-write: d's map may be shared with a stored entry (readers
-		// hand out shallow copies), and merging happens on the read path —
-		// writing into the existing map would edit storage from a read.
+		// Copy-on-write: d's Extra may be shared with a stored entry, and merging
+		// is on the read path, so writing in place would edit storage from a read.
 		m := make(map[string]any, len(d.Extra)+len(other.Extra))
 		maps.Copy(m, d.Extra)
 		maps.Copy(m, other.Extra)
@@ -298,19 +262,13 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 	}
 }
 
-// Equal reports whether two entries are the same entry, field for field.
+// Equal reports whether two entries are the same entry, field for field. It
+// compares every field: a partial comparison would let a compactor that
+// rewrites only a payload look like a no-op.
 //
-// It exists because "did this change?" is asked in two places that must not
-// guess — a compaction pass deciding whether it altered the context, and an
-// incremental index deciding whether what it is handed still continues what it
-// grouped. Comparing a subset of the fields makes both fail open: a compactor
-// that rewrites only a payload looks like a no-op, and an index resumes onto a
-// history that is not its own.
-//
-// Neither == nor reflect.DeepEqual can stand in for it. Entry holds
-// maps, so it is not comparable; and DeepEqual on a time.Time distinguishes
-// readings of the same instant by their monotonic clock, so an entry that has
-// round-tripped through storage would never equal the one still in memory.
+// Not == (Entry holds maps, so it is not comparable) and not reflect.DeepEqual
+// (which distinguishes two readings of the same instant by their monotonic
+// clock, so a stored entry would never equal its in-memory twin).
 func (e Entry) Equal(other Entry) bool {
 	switch {
 	case e.ID != other.ID,

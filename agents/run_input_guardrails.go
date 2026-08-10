@@ -13,8 +13,7 @@ import (
 
 // errServerManagedReplace is what a Replace verdict gets when the conversation
 // is server-managed: the history it would rewrite lives on the server, so both
-// the blocking and the racing path have to fail rather than claim a
-// replacement that reaches nothing.
+// paths fail rather than claim a replacement that reaches nothing.
 const errServerManagedReplace = "input guardrail replacement cannot apply: the conversation is server-managed " +
 	"and its history cannot be rewritten; use a locally-managed session, or Trip instead of Replace"
 
@@ -34,9 +33,7 @@ type inputGuardRace struct {
 }
 
 // stop cancels the in-flight guardrails. Nil-safe and idempotent, so the loop
-// can defer it unconditionally: every early exit (e.g. a failed model call)
-// stops an LLM-based guardrail instead of letting it run to completion after
-// the run has already returned.
+// can defer it unconditionally to stop an LLM-based guardrail on any early exit.
 func (g *inputGuardRace) stop() {
 	if g != nil && g.cancel != nil {
 		g.cancel()
@@ -57,12 +54,10 @@ type inputGateResult struct {
 // firstTurnInputGuardrails runs the input stage ahead of the first model call:
 // run-level guardrails first, then the starting agent's.
 //
-// A guardrail with Blocking=true runs to completion here — a gate. It runs
-// after the turn's input is built and published, so it can inspect
-// rc.TurnInput(); a Replace verdict rebuilds that input from the replacement
-// (via rebuild), which is what makes the verdict real for the guarded call
-// itself. The rest are spawned to race the model call; the returned race
-// delivers their results and tripwire.
+// A guardrail with Blocking=true runs to completion here — a gate. It runs after
+// the turn's input is built and published, so it can inspect rc.TurnInput(); a
+// Replace verdict rebuilds that input (via rebuild). The rest race the model
+// call; the returned race delivers their results and tripwire.
 //
 // Errors are returned bare; the loop wraps them with fail() so the error
 // details carry the loop's state. Even on error, result.original reports the
@@ -93,17 +88,12 @@ func (r *runner) firstTurnInputGuardrails(
 			GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: out.original})
 		r.recordGuardrailResults(res...)
 		if repl, ok := inputReplacement(res); ok {
-			// The whole point of Replace: the model must see the
-			// replacement. Rebuild THIS turn's input from it — leaving
-			// the already-built input in place sent the original to the
-			// model while the result claimed it was replaced.
+			// Replace means the model must see the replacement: rebuild THIS
+			// turn's input from it, or the model gets the original.
 			if !usedOriginalInput {
-				// A server-managed turn (previous_response_id / a
-				// server-held conversation) sends only a delta; the
-				// history the replacement would rewrite lives on the
-				// server and cannot be rewritten from here. Proceeding
-				// would send the original while claiming otherwise —
-				// fail instead.
+				// A server-managed turn sends only a delta; the history the
+				// replacement would rewrite lives on the server. Fail rather
+				// than send the original while claiming otherwise.
 				rerr := NewUserError(errServerManagedReplace)
 				gspan.SetError(rerr.Error(), nil)
 				gspan.Finish()
@@ -128,12 +118,10 @@ func (r *runner) firstTurnInputGuardrails(
 		gspan.Finish()
 	}
 
-	// Non-blocking guardrails race the model call: a tripwire cancels it,
-	// so the run fails without waiting for a response nobody will use.
-	// A Replace verdict from a racing guardrail necessarily misses the
-	// call it raced — the request is already in flight when the verdict
-	// lands — and applies from the next turn on; a guardrail that must
-	// rewrite what the model sees sets Blocking.
+	// Non-blocking guardrails race the model call: a tripwire cancels it, so the
+	// run fails without waiting for a response nobody will use. A Replace verdict
+	// necessarily misses the call it raced and applies from the next turn on; a
+	// guardrail that must rewrite what the model sees sets Blocking.
 	if len(parallel) > 0 {
 		gctx, gcancel := context.WithCancel(ctx)
 		race := &inputGuardRace{ch: make(chan inputGuardOutcome, 1), cancel: gcancel}
@@ -174,11 +162,8 @@ type racedCallOutcome struct {
 
 // raceModelCall runs the first turn's model call with the non-blocking input
 // guardrails watching the verdict from the side, so a tripwire cancels the
-// in-flight call. The call itself stays on THIS goroutine in its usual form —
-// streamed when the run streams — because racing must not de-stream it:
-// yielding raw events from a helper goroutine would race the iterator, and
-// downgrading to a blocking call silently cost a streaming UI its whole first
-// turn of deltas.
+// in-flight call. The call stays on THIS goroutine in its usual (streamed) form,
+// because racing must not de-stream it.
 //
 // A tripped guardrail aborts the turn WITHOUT billing usage or firing OnLLMEnd
 // — the model outcome is discarded. Raw events already yielded by a streamed
@@ -200,13 +185,10 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 	} else {
 		out.resp, err = model.Respond(modelCtx, req)
 	}
-	// An abandoned stream must stop the run WHERE IT STANDS
-	// (spec §2.0), and the guardrails are the run: waiting for
-	// them here parked the consumer's `break` for a slow
-	// guardrail's full duration — forever, for one that returns
-	// only on cancellation, since the deferred cancel cannot run
-	// while this read blocks. Cancel them and leave; their
-	// verdict is about a turn nobody will read.
+	// An abandoned stream must stop the run WHERE IT STANDS (spec §2.0): don't
+	// wait on the guardrails here, or a slow one parks the consumer's break for
+	// its full duration. Cancel them and leave — their verdict is about a turn
+	// nobody will read.
 	if r.consumerStopped.Load() || errors.Is(err, errConsumerStopped) {
 		race.stop()
 		modelCancel()
@@ -214,12 +196,10 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 		out.resp, out.stopped = nil, true
 		return out
 	}
-	// The guardrails always finish — a tripwire cancelled the call,
-	// completion just outlasted it — so honor a verdict still in
-	// flight before trusting the model outcome. A call that failed on
-	// its own is done deciding, though: cancel the race first, so a
-	// slow guardrail cannot hold an already-failed run open. A verdict
-	// already delivered still wins below; stop is idempotent.
+	// The guardrails always finish, so honor a verdict still in flight before
+	// trusting the model outcome. But a call that failed on its own is done
+	// deciding: cancel the race first so a slow guardrail cannot hold an
+	// already-failed run open. A delivered verdict still wins below.
 	if err != nil {
 		race.stop()
 	}
@@ -228,11 +208,9 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 	r.recordGuardrailResults(g.results...)
 	if repl, ok := inputReplacement(g.results); ok {
 		if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
-			// "Applies from the next turn on" is impossible here:
-			// server-managed turns send only deltas and never
-			// rebuild from the input, so the replacement would
-			// apply to NOTHING while the result claimed
-			// otherwise. Fail rather than pretend.
+			// "Applies from the next turn on" is impossible here: server-managed
+			// turns send only deltas, so the replacement would apply to nothing.
+			// Fail rather than pretend.
 			span.Finish()
 			out.resp = nil
 			out.guardErr = NewUserError(errServerManagedReplace)
@@ -243,9 +221,8 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 		out.original = repl
 	}
 	// A guardrail verdict outranks the model outcome it raced — but a
-	// cancellation error after the model already failed is not a verdict,
-	// it is the race.stop() above being honored. Reporting it would mask
-	// the model's own error behind "context canceled".
+	// cancellation after the model already failed is not a verdict, it is
+	// race.stop() being honored, and reporting it would mask the model's own error.
 	if g.err != nil && (err == nil || !errors.Is(g.err, context.Canceled)) {
 		span.SetError(g.err.Error(), nil)
 		span.Finish()
