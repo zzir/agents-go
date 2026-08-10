@@ -61,7 +61,9 @@ sandbox.CodeTool(sb, sandbox.CodeToolConfig{Sessions: true})
 
 The model then passes a `session_id`, and that named shell is held open between
 calls, so `cd`, exported variables, an activated virtualenv and a started
-background process all survive.
+background process all survive. The `session_id` argument exists only when
+`Sessions` is on — a tool built without it does not advertise a field it would
+ignore.
 
 Completion is detected with a **sentinel**: after each command the session
 prints a random per-session token and the exit status, and output is read until
@@ -111,7 +113,7 @@ agent := &agents.Agent{
 
 The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) and malformed arguments are normal tool output the model can correct; *infrastructure* failures (daemon down, missing image) abort the run.
 
-String arguments (`workdir`, `session_id`) accept the zero-value sentinels `null`, `0` and `false`, each decoding to `""`: a model running on a backend that does not enforce strict schemas sometimes fills an unused field with a zero value instead of `""`, and each of those reads unambiguously as "not used". Any other non-string scalar (`true`, `42`, `3.14`) is rejected and fed back as correctable text — keeping its literal spelling would run `cd '42'`; a session genuinely named "0" is still expressible as the string `"0"`.
+String arguments (`workdir`, and `session_id` where Sessions is enabled) accept the zero-value sentinels `null`, `0` and `false`, each decoding to `""`: a model running on a backend that does not enforce strict schemas sometimes fills an unused field with a zero value instead of `""`, and each of those reads unambiguously as "not used". Any other non-string scalar (`true`, `42`, `3.14`) is rejected and fed back as correctable text — keeping its literal spelling would run `cd '42'`; a session genuinely named "0" is still expressible as the string `"0"`.
 
 ## CodeTool configuration
 

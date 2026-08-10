@@ -116,11 +116,20 @@ func (s *lenientString) UnmarshalJSON(data []byte) error {
 	}
 }
 
-type codeToolArgs struct {
+// codeToolArgsNoSession is the schema advertised when Sessions is off: the
+// model is never offered a session_id the tool would ignore.
+type codeToolArgsNoSession struct {
 	Cmd            string        `json:"cmd"             jsonschema:"the shell command to execute (passed to bash -c)"`
 	TimeoutSeconds int           `json:"timeout_seconds" jsonschema:"execution timeout in seconds; 0 uses the default"`
 	Workdir        lenientString `json:"workdir"         jsonschema:"working directory for the command; empty uses the sandbox default"`
-	SessionID      lenientString `json:"session_id"      jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
+}
+
+// codeToolArgs is the full argument set and always the decode target: a
+// session_id sent anyway (non-strict backend) decodes and is gated on
+// cfg.Sessions in OnInvoke.
+type codeToolArgs struct {
+	codeToolArgsNoSession
+	SessionID lenientString `json:"session_id" jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
 }
 
 // CodeTool wraps a Sandbox as a function tool. The model supplies a shell
@@ -140,10 +149,17 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			cfg.RegisterCloser(sessions)
 		}
 	}
-	schema, err := agents.SchemaFor[codeToolArgs](true)
+	// The schema advertises session_id only when Sessions is on — see spec §2.7k.
+	var schema map[string]any
+	var err error
+	if cfg.Sessions {
+		schema, err = agents.SchemaFor[codeToolArgs](true)
+	} else {
+		schema, err = agents.SchemaFor[codeToolArgsNoSession](true)
+	}
 	if err != nil {
-		// codeToolArgs is fixed at compile time, so this is a deterministic
-		// programmer error, surfaced at construction like NewTool's.
+		// Both argument types are fixed at compile time, so this is a
+		// deterministic programmer error, surfaced at construction like NewTool's.
 		panic(fmt.Sprintf("sandbox: CodeTool(%q): schema generation failed: %v", cfg.Name, err))
 	}
 	// Compiled once here and shared, read-only, by both closures below: the

@@ -126,7 +126,7 @@ func TestCodeTool_InvalidArgsSkipApproval(t *testing.T) {
 // The lenient decoding is invisible in the schema: the model is still told
 // these fields are plain strings.
 func TestCodeTool_LenientArgsSchemaIsString(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{})
+	tool := CodeTool(NewLocal(), CodeToolConfig{Sessions: true})
 	props, _ := tool.ParamsJSONSchema["properties"].(map[string]any)
 	if props == nil {
 		t.Fatalf("schema has no properties: %v", tool.ParamsJSONSchema)
@@ -138,6 +138,25 @@ func TestCodeTool_LenientArgsSchemaIsString(t *testing.T) {
 		}
 		if p["type"] != "string" {
 			t.Errorf("schema %s type = %v, want string", field, p["type"])
+		}
+	}
+}
+
+// Without Sessions the schema must not mention session_id at all — not in
+// properties, and (strict mode makes every property required) not in required.
+func TestCodeTool_SchemaOmitsSessionIDWithoutSessions(t *testing.T) {
+	tool := CodeTool(NewLocal(), CodeToolConfig{})
+	raw, err := json.Marshal(tool.ParamsJSONSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "session_id") {
+		t.Errorf("schema mentions session_id with Sessions off: %s", raw)
+	}
+	props, _ := tool.ParamsJSONSchema["properties"].(map[string]any)
+	for _, field := range []string{"cmd", "timeout_seconds", "workdir"} {
+		if _, ok := props[field]; !ok {
+			t.Errorf("schema missing %s: %v", field, props)
 		}
 	}
 }

@@ -1347,6 +1347,12 @@ an activated environment survive between calls.
 - **The named shells belong to the tool, not the run.** Two concurrent runs of
   the same agent share one pool, so both `"build"` sessions are the same shell;
   a host that wants isolation builds the tool per run.
+- **The schema advertises `session_id` only when Sessions is enabled.** A tool
+  built without Sessions must not offer a field it would silently ignore — and
+  strict mode makes every property required, so the model would be forced to
+  spell "no session" on every call of a tool that has none. A `session_id`
+  sent anyway (non-strict backend) still decodes and is ignored under the
+  Sessions gate.
 
 ### 2.7l Sandbox tool argument decoding
 
