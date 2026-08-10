@@ -276,21 +276,21 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 // binding is permanent, and rewriting what the id points at would switch a
 // conversation's file system under it. Non-identity fields update freely.
 //
-//	@Summary	Update sandbox
+//	@Summary		Update sandbox
 //	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the config changed meanwhile. Omitting it falls back to last-writer-wins.
-//	@Tags		sandboxes
-//	@Accept		json
-//	@Produce	json
-//	@Param		id		path		string				true	"Sandbox ID"
-//	@Param		sandbox	body		createSandboxReq	true	"Sandbox configuration"
-//	@Success	200		{object}	store.SandboxConfig
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	403		{object}	ErrorResponse	"local sandbox disabled"
-//	@Failure	404		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"identity change refused (sessions are bound), or the config changed concurrently — re-read and retry"
-//	@Failure	500		{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/sandboxes/{id} [put]
+//	@Tags			sandboxes
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string				true	"Sandbox ID"
+//	@Param			sandbox	body		createSandboxReq	true	"Sandbox configuration"
+//	@Success		200		{object}	store.SandboxConfig
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		403		{object}	ErrorResponse	"local sandbox disabled"
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"identity change refused (sessions are bound), or the config changed concurrently — re-read and retry"
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sandboxes/{id} [put]
 func (h *SandboxHandler) Update(c *gin.Context) {
 	var req createSandboxReq
 	if err := c.ShouldBindJSON(&req); err != nil {
