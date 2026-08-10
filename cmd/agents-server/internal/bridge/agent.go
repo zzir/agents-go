@@ -264,10 +264,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
 	}
 
-	// Decode every JSON-encoded config field once, up front. A structural error
-	// fails the build loudly (the operator would otherwise think a malformed
-	// guardrail / schema / settings block took effect); the same decode backs
-	// save-time validation, so the contract lives in one place (DecodeAgentSpec).
+	// Decode every JSON-encoded config field once, up front, so a structural
+	// error fails the build loudly. DecodeAgentSpec also backs save-time
+	// validation, keeping the contract in one place.
 	spec, err := DecodeAgentSpec(ac)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", ac.Name, err)
@@ -292,11 +291,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		agent.Guardrails = append(agent.Guardrails, gs...)
 	}
 
-	// HITL tool approval and structured-output schema — decoded in spec.
-	// "exec_command" in the approve list opts INTO per-command session approval,
-	// but must not ride the SDK's ApproveTools OR — that forces approval on every
-	// call and defeats session trust. Route it to the sandbox command gate
-	// instead and strip it from the SDK list.
+	// "exec_command" in the approve list opts into per-command session approval:
+	// route it to the sandbox command gate and strip it from the SDK ApproveTools
+	// list (which would otherwise force approval on every call).
 	approveCommands := false
 	if len(spec.ApproveTools) > 0 {
 		filtered := make([]string, 0, len(spec.ApproveTools))
