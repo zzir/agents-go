@@ -167,8 +167,9 @@ func (r *runner) finishStream(res *RunResult, err error) {
 // model sees it, everything generated so far, every response received, and the
 // agent currently holding the turn.
 //
-// The four live as one value because every way a run reports itself — a
-// result, a failure, a pause state — reads all of them.
+// The first four live as one value because every way a run reports itself — a
+// result, a failure, a pause state — reads all of them; pending and
+// runStartHooks are loop-progression state carried alongside.
 //
 // Two stages replace fields wholesale rather than appending: a handoff input
 // filter and a recompaction (mid-run or after an overflow) rewrite
@@ -180,6 +181,12 @@ type turnState struct {
 	generatedItems []*RunItem
 	rawResponses   []*ModelResponse
 	agent          *Agent
+
+	// pending is a snapshot prepared by PrepareNextTurn at the last save point,
+	// used next turn instead of resolving from the agent. runStartHooks gates
+	// the agent's OnStart hooks and its span at the top of a turn.
+	pending       *TurnSnapshot
+	runStartHooks bool
 }
 
 // runner holds the mutable state for a single Run invocation.
@@ -369,21 +376,17 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		generatedItems: seed.generatedItems,
 		rawResponses:   seed.rawResponses,
 		agent:          seed.agent,
+		runStartHooks:  true,
 	}
 	r.state = st
 	pendingResponse := seed.pendingResponse
 	startTurn := seed.startTurn
-	shouldRunStartHooks := true
 
 	// cursor tracks what a server-managed conversation already holds
 	// (previous_response_id chaining, or a server-side conversation id), so
 	// each turn sends only the delta. A resume restores the pause-time cursor
 	// from the RunState.
 	cursor := seed.cursor
-
-	// pending holds a snapshot supplied by PrepareNextTurn at the last save
-	// point, to be used instead of resolving the next turn from the agent.
-	var pending *TurnSnapshot
 
 	// finalTurn marks the extra tool-free turn granted when the budget ran out,
 	// so it is granted once rather than every turn from then on.
@@ -447,13 +450,13 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		}
 		r.log.Debug(ctx, "turn started", slog.Int("turn", turn), slog.String("agent", st.agent.Name))
 
-		if shouldRunStartHooks {
+		if st.runStartHooks {
 			if st.agent.OnStart != nil {
 				if err := st.agent.OnStart(ctx, r.rc); err != nil {
 					return nil, r.fail(err)
 				}
 			}
-			shouldRunStartHooks = false
+			st.runStartHooks = false
 			// Start an agent span (parent of this agent's generation/tool spans).
 			if r.agentSpan != nil {
 				r.agentSpan.Finish()
@@ -481,10 +484,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		// overwritten: a prepared snapshot is almost always a copy of the
 		// previous turn's, and honoring its Input would replay that turn — the
 		// tool call and its output silently gone from what the model is sent.
-		if pending != nil {
-			pending.Input = turnInput
-			snapshot = pending
-			pending = nil
+		if st.pending != nil {
+			st.pending.Input = turnInput
+			snapshot = st.pending
+			st.pending = nil
 		}
 		outputSchema, handoffs, tools := snapshot.OutputSchema, snapshot.Handoffs, snapshot.Tools
 		modelInput := snapshot.Input
@@ -634,144 +637,160 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			cursor.advance(r.opts.Conversation, resp, lenBeforeStep, len(processed.NewItems))
 		}
 
+		var a stepAction
 		switch step.NextStep {
 		case stepFinalOutput:
-			// A steer that arrived too late for the save point, or a queued
-			// follow-up, continues the run instead of ending it. The exchange
-			// finished on its own terms; the next one starts from it, in the
-			// same run, so the trace, the usage total and the session stay one
-			// thing rather than three loosely related ones.
-			if extra := r.ctrl.takeContinuation(); len(extra) > 0 {
-				// Append the take BEFORE persisting, so the write that closes
-				// this exchange also covers the injected input — the boundary
-				// check in persistSessionItems then commits the take only once
-				// a write has genuinely persisted past it. Persisting first
-				// committed the take against a write that predated it, and a
-				// failure later in the run could no longer roll it back.
-				injected := injectedInput(st.agent, extra)
-				r.appendInjected(st, injected)
-				if err := r.persistSessionItems(ctx); err != nil {
-					return nil, r.fail(err)
-				}
-				if !r.emitItems(injected) {
-					return nil, errConsumerStopped
-				}
-				continue
-			}
-			res, ferr := r.finishRun(ctx, step.FinalOutput)
-			if ferr != nil {
-				return nil, r.fail(ferr)
-			}
-			return res, nil
+			a = r.handleFinalOutput(ctx, st, step)
 		case stepHandoff:
-			// Persist this turn before switching agents. sessionItems is the
-			// unfiltered log, so the handoff input filter below (which rewrites
-			// generatedItems) never affects what the session keeps.
-			if err := r.persistSessionItems(ctx); err != nil {
-				return nil, r.fail(err)
-			}
-			// A handoff is a turn boundary too: control is about to leave this
-			// agent, which is exactly the moment a caller may want to stop.
-			// Asked before the input filter runs, so the hook sees the turn as
-			// it happened. The rest of the save point does not apply — the next
-			// turn belongs to a different agent, so its snapshot is resolved
-			// fresh and its context is about to be rewritten by the filter.
-			stop, out, serr := r.stopAfterTurn(ctx, st.agent, &TurnResult{
-				Turn: turn, Response: resp, NewItems: step.NewStepItems, Snapshot: snapshot,
-			})
-			if serr != nil {
-				return nil, r.fail(serr)
-			}
-			if stop {
-				res, ferr := r.finishRun(ctx, out)
-				if ferr != nil {
-					return nil, r.fail(ferr)
-				}
-				return res, nil
-			}
-			if step.Handoff != nil {
-				if filter := r.handoffInputFilter(step.Handoff); filter != nil {
-					// A handoff input filter cannot coexist with server-managed
-					// conversation state: the server holds the unfiltered history,
-					// so a filtered view would desync (in ConversationID mode,
-					// resending the full filtered input duplicates the server's
-					// stored items). Fail fast.
-					if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
-						err := NewUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
-						return nil, r.fail(err)
-					}
-					filtered, ferr := applyHandoffInputFilter(filter, st.originalInput, st.generatedItems)
-					if ferr != nil {
-						return nil, r.fail(ferr)
-					}
-					st.originalInput = filtered
-					st.generatedItems = nil
-					r.offChainHistory = true
-				}
-			}
-			r.log.Info(ctx, "handoff",
-				slog.String("from", st.agent.Name), slog.String("to", step.NewAgent.Name))
-			st.agent = step.NewAgent
-			shouldRunStartHooks = true
-			if !r.emit(&AgentUpdatedStreamEvent{NewAgent: st.agent}) {
-				return nil, errConsumerStopped
-			}
-			continue
+			a = r.handleHandoff(ctx, st, step, snapshot, resp, turn)
 		case stepInterruption:
-			// Persist the completed part of this turn before pausing. The pending
-			// tool calls have no outputs yet, so persistSessionItems holds them
-			// back (they would break replay); they save with their outputs once
-			// the run resumes. The cursor rides along in RunState.
-			if err := r.persistSessionItems(ctx); err != nil {
-				return nil, r.fail(err)
-			}
-			// Injections taken this turn were consumed by the interrupted
-			// turn's model call and ride in the state's item log
-			// (SessionItems), which resume persists — that log, not
-			// PendingInput, is their durable home now. Committed only AFTER
-			// the persist above succeeds: a failed persist fails the attempt
-			// before any RunState exists, and the rollback in finishStream
-			// must still find the take to redeliver it on a retry.
-			r.ctrl.commitInjected()
-			res := r.baseResult()
-			res.Interruptions = step.Interruptions
-			res.State = r.buildPauseState(turn, resp, step, cursor)
-			return res, nil
+			a = r.handleInterruption(ctx, step, resp, cursor, turn)
 		case stepRunAgain:
-			sp, serr := r.savePoint(ctx, savePointInput{
-				Turn:     turn,
-				Agent:    st.agent,
-				Snapshot: snapshot,
-				Response: resp,
-				NewItems: step.NewStepItems,
-			})
-			if serr != nil {
-				return nil, r.fail(serr)
-			}
-			if sp.Stop {
-				res, ferr := r.finishRun(ctx, sp.FinalOutput)
-				if ferr != nil {
-					return nil, r.fail(ferr)
-				}
-				return res, nil
-			}
-			if sp.Recompacted {
-				// The rebuilt context already contains this run's items, so the
-				// generated list starts over — the same substitution a handoff
-				// input filter makes above.
-				st.originalInput = sp.Input
-				st.generatedItems = nil
-			}
-			if len(sp.Injected) > 0 {
-				r.appendInjected(st, sp.Injected)
-				if !r.emitItems(sp.Injected) {
-					return nil, errConsumerStopped
-				}
-			}
-			pending = sp.NextSnapshot
-			continue
+			a = r.handleRunAgain(ctx, st, step, snapshot, resp, turn)
+		}
+		if a.done {
+			return a.result, a.err
 		}
 	}
+}
+
+// stepAction is what loop() does after a NextStep handler runs: done=true
+// returns (result, err) from the run; done=false continues the loop.
+type stepAction struct {
+	done   bool
+	result *RunResult
+	err    error
+}
+
+func loopAgain() stepAction { return stepAction{} }
+func loopReturn(res *RunResult, err error) stepAction {
+	return stepAction{done: true, result: res, err: err}
+}
+
+// handleFinalOutput ends the run, unless a late steer or queued follow-up
+// continues it in the same trace/usage/session.
+func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *singleStepResult) stepAction {
+	if extra := r.ctrl.takeContinuation(); len(extra) > 0 {
+		// Append before persisting, so the closing write covers the take and
+		// persistSessionItems commits it only once a write persists past it.
+		injected := injectedInput(st.agent, extra)
+		r.appendInjected(st, injected)
+		if err := r.persistSessionItems(ctx); err != nil {
+			return loopReturn(nil, r.fail(err))
+		}
+		if !r.emitItems(injected) {
+			return loopReturn(nil, errConsumerStopped)
+		}
+		return loopAgain()
+	}
+	res, ferr := r.finishRun(ctx, step.FinalOutput)
+	if ferr != nil {
+		return loopReturn(nil, r.fail(ferr))
+	}
+	return loopReturn(res, nil)
+}
+
+// handleHandoff persists the turn, offers the stop hook, applies any input
+// filter, then switches to the new agent.
+func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleStepResult, snapshot *TurnSnapshot, resp *ModelResponse, turn int) stepAction {
+	// Persist before switching: sessionItems is the unfiltered log, so the
+	// input filter below (which rewrites generatedItems) never affects it.
+	if err := r.persistSessionItems(ctx); err != nil {
+		return loopReturn(nil, r.fail(err))
+	}
+	// A handoff is a turn boundary; ask to stop before the filter runs so the
+	// hook sees the turn as it happened.
+	stop, out, serr := r.stopAfterTurn(ctx, st.agent, &TurnResult{
+		Turn: turn, Response: resp, NewItems: step.NewStepItems, Snapshot: snapshot,
+	})
+	if serr != nil {
+		return loopReturn(nil, r.fail(serr))
+	}
+	if stop {
+		res, ferr := r.finishRun(ctx, out)
+		if ferr != nil {
+			return loopReturn(nil, r.fail(ferr))
+		}
+		return loopReturn(res, nil)
+	}
+	if step.Handoff != nil {
+		if filter := r.handoffInputFilter(step.Handoff); filter != nil {
+			// Input filters cannot coexist with server-managed conversation
+			// state, which holds the unfiltered history: a filtered view
+			// desyncs. Fail fast.
+			if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
+				err := NewUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
+				return loopReturn(nil, r.fail(err))
+			}
+			filtered, ferr := applyHandoffInputFilter(filter, st.originalInput, st.generatedItems)
+			if ferr != nil {
+				return loopReturn(nil, r.fail(ferr))
+			}
+			st.originalInput = filtered
+			st.generatedItems = nil
+			r.offChainHistory = true
+		}
+	}
+	r.log.Info(ctx, "handoff",
+		slog.String("from", st.agent.Name), slog.String("to", step.NewAgent.Name))
+	st.agent = step.NewAgent
+	st.runStartHooks = true
+	if !r.emit(&AgentUpdatedStreamEvent{NewAgent: st.agent}) {
+		return loopReturn(nil, errConsumerStopped)
+	}
+	return loopAgain()
+}
+
+// handleInterruption persists the completed part of the turn and returns the
+// pause state; the injections it consumed ride in the persisted item log.
+func (r *runner) handleInterruption(ctx context.Context, step *singleStepResult, resp *ModelResponse, cursor serverCursor, turn int) stepAction {
+	if err := r.persistSessionItems(ctx); err != nil {
+		return loopReturn(nil, r.fail(err))
+	}
+	// Commit only after the persist succeeds: a failed attempt leaves the take
+	// for finishStream to roll back and redeliver.
+	r.ctrl.commitInjected()
+	res := r.baseResult()
+	res.Interruptions = step.Interruptions
+	res.State = r.buildPauseState(turn, resp, step, cursor)
+	return loopReturn(res, nil)
+}
+
+// handleRunAgain runs the save point and prepares the next turn: it may stop,
+// recompact (restarting the generated log), inject follow-up input, or carry a
+// prepared snapshot forward.
+func (r *runner) handleRunAgain(ctx context.Context, st *turnState, step *singleStepResult, snapshot *TurnSnapshot, resp *ModelResponse, turn int) stepAction {
+	sp, serr := r.savePoint(ctx, savePointInput{
+		Turn:     turn,
+		Agent:    st.agent,
+		Snapshot: snapshot,
+		Response: resp,
+		NewItems: step.NewStepItems,
+	})
+	if serr != nil {
+		return loopReturn(nil, r.fail(serr))
+	}
+	if sp.Stop {
+		res, ferr := r.finishRun(ctx, sp.FinalOutput)
+		if ferr != nil {
+			return loopReturn(nil, r.fail(ferr))
+		}
+		return loopReturn(res, nil)
+	}
+	if sp.Recompacted {
+		// The rebuilt context already holds this run's items, so the generated
+		// list starts over.
+		st.originalInput = sp.Input
+		st.generatedItems = nil
+	}
+	if len(sp.Injected) > 0 {
+		r.appendInjected(st, sp.Injected)
+		if !r.emitItems(sp.Injected) {
+			return loopReturn(nil, errConsumerStopped)
+		}
+	}
+	st.pending = sp.NextSnapshot
+	return loopAgain()
 }
 
 // emitItems delivers each item to the stream, returning false when the consumer
