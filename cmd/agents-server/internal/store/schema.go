@@ -179,12 +179,11 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 }
 
 // verifySchema probes every model with a zero-row SELECT. bun names every
-// mapped column in the SELECT list, so the model definitions themselves are
-// the probe — a database created by an older build fails here, at startup,
-// with one clear message, instead of per-request once a query touches a
-// column the old table lacks. There is deliberately no schema-version
-// constant to keep bumped: the models are the version. Schema changes ship
-// without migrations by design — the remedy is recreating the file.
+// mapped column in the SELECT list, so the model definitions themselves are the
+// probe — a database created by an older build fails here at startup, with one
+// clear message, instead of per-request. There is deliberately no schema-version
+// constant: the models are the version, and schema changes ship without
+// migrations (the remedy is recreating the file).
 func verifySchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range schemaModels {
 		// The slice destination makes zero rows a valid result; scanning into

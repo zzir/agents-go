@@ -13,20 +13,16 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// This file is what remains of the 669-line task runner: the three answers only
-// this server can give. The state machine, the wake-up debt, the guards and the
-// compare-and-set live in agents/tasks.
+// This file holds the three answers only this server can give the task manager.
+// The state machine, the wake-up debt, the guards and the compare-and-set live
+// in agents/tasks.
 
 // taskResolver answers "what is this agent called" from the agent-config table.
 type taskResolver struct{ r *Runner }
 
-// Resolve implements tasks.AgentResolver.
-//
-// The aliases matter: a model asked to delegate says "default" or "self" as
-// often as it names a config, and refusing those would make the tool unusable
-// for the common case of "another one of me". An explicit name that does not
-// exist still fails, with the available names, because that is a mistake worth
-// telling the model about.
+// Resolve implements tasks.AgentResolver. The "default"/"self" aliases resolve
+// to the parent's own config (a model delegating to "another one of me"); an
+// explicit name that does not exist fails, with the available names listed.
 func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
 	cfg, err := t.r.resolveSpawnAgent(ctx, parentSessionID, name)
 	if err != nil {
@@ -93,10 +89,9 @@ const taskStopSettleTimeout = approvalSettleTimeout
 
 // Stop implements tasks.Stopper.
 //
-// A task paused on an approval has no run to cancel — the SDK has already
-// claimed the row by the time this is called — so the work here is discarding
-// the approval and telling every client, or the chip stays "input required"
-// with dead buttons and holds a task-cap slot until the record is collected.
+// A task paused on an approval has no run to cancel, so the work here is
+// discarding the approval and telling every client — otherwise the chip stays
+// "input required" with dead buttons and holds a task-cap slot.
 func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
 	info, live := t.r.hub.Info(runID)
 	if live && info.Status == RunRunning {
@@ -113,27 +108,19 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 		}
 	}
 	if !live {
-		// The hub has no record: the run has not been registered yet — a task
-		// claims its run before this is called — or it was collected long ago.
-		// Saying so is what lets the SDK record the ending itself instead of
+		// The hub has no record: the run was never registered or was collected
+		// long ago. Saying so lets the SDK record the ending itself instead of
 		// waiting for a run that will never report.
 		return tasks.StopUnknownRun, nil
 	}
 	if isTerminalRunStatus(info.Status) {
-		// The run ended on its own before this stop arrived — the hub marks a
-		// run finished before its outcome reaches the task row, so this window
-		// is ordinary. Nothing was cancelled: publishing one would rewrite an
-		// outcome every watching client has seen, and recording one would
-		// overwrite the result already on its way to the row.
-		//
-		// Wait that window out first. The segment's goroutine records the
-		// outcome (postRun) and only THEN closes its done gate, so a closed
-		// gate means the row is as settled as it will ever be — and the SDK
-		// treats a run reported finished with nothing on the row as an outcome
-		// that was lost, which it then records itself. Answering before the
-		// gate closes would make an ordinary few milliseconds look like that.
-		// An already-drained segment returns from here at once, so the wait is
-		// paid only where it is the answer.
+		// The run ended on its own before this stop arrived (the hub marks a run
+		// finished before its outcome reaches the row). Nothing was cancelled, so
+		// wait the window out first: the segment records its outcome (postRun)
+		// then closes its done gate, so a closed gate means the row is settled.
+		// The SDK treats a finished run with nothing on the row as a lost
+		// outcome; answering before the gate closes would look like that. An
+		// already-drained segment returns at once.
 		deadline := time.Now().Add(taskStopSettleTimeout)
 		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 			// A caller stopping many tasks under one bound (a session
@@ -147,14 +134,10 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 	return tasks.StopCancelled, nil
 }
 
-// taskWakeGuard answers "may this parent be woken now".
-//
-// Three refusals, each of which was a bug: a session mid-delete would have a
-// run started that outlives the cascade; a session with a live run must let
-// that run's own boundary drain instead; and a session paused on a human
-// decision belongs to the human. A query that fails counts as a refusal —
-// waking something that turns out to be awaiting approval races the person
-// looking at it.
+// taskWakeGuard answers "may this parent be woken now". It refuses three cases:
+// a session mid-delete (a wake would outlive the cascade), a session with a live
+// run (let that run's own boundary drain), and a session paused on a human
+// decision (it belongs to the human). A failed query counts as a refusal.
 type taskWakeGuard struct{ r *Runner }
 
 // CanWake implements tasks.WakeGuard.
@@ -177,33 +160,27 @@ func (t taskWakeGuard) CanWake(ctx context.Context, parentSessionID string) bool
 	return len(approvals) == 0
 }
 
-// onTaskUpdate records a task's changed state against the spawn call's card —
-// which happens long after the turn that spawned it ended.
-//
-// It appends an update entry rather than rewriting the card. That is what
-// removed the retry loop: a fast task can finish before the parent turn is
-// persisted, so the old rewrite had to hunt for a row that did not exist yet
-// and try again for thirty seconds. An update may be stored first; projection
-// associates it by call id.
+// onTaskUpdate records a task's changed state against the spawn call's card,
+// which happens long after the turn that spawned it ended. It appends an update
+// entry rather than rewriting the card: a fast task can finish before the parent
+// turn is persisted, so the update may be stored first and projection associates
+// it by call id.
 func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	if t.ToolCallID == "" {
 		return
 	}
-	// Updates fold in append order, so a non-terminal one that lands after a
-	// terminal one would roll the card back to "waiting for input" on a task
-	// that already finished. Every notify path reads the task then reports it,
-	// and those two steps can interleave across a concurrent finalizer — so
-	// check the store, which the CAS in Finalize makes the arbiter, before
+	// Updates fold in append order, so a non-terminal one landing after a
+	// terminal one would roll the card back to "waiting for input" on a finished
+	// task. Check the store (the CAS in Finalize makes it the arbiter) before
 	// recording a status that would move the card backwards.
 	if !isTerminalTaskStatus(string(t.Status)) && r.Deps.Tasks != nil {
 		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && isTerminalTaskStatus(cur.Status) {
 			return
 		}
 	}
-	// The card's heading and one-liner are display's first-class fields; the
-	// id and status stay in Extra as task-renderer state the generic path does
-	// not read. Empty Summary merges as absent (merge applies non-zero fields
-	// only), so a later update cannot blank an earlier summary.
+	// Heading and one-liner are display's first-class fields; id and status stay
+	// in Extra as task-renderer state. Empty Summary merges as absent (non-zero
+	// fields only), so a later update cannot blank an earlier summary.
 	display := agents.ItemDisplay{
 		Title:   t.Label,
 		Summary: t.Summary,
@@ -214,13 +191,10 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 		},
 	}
 	if t.Summary != "" {
-		// Because a later update cannot blank a summary, a retry's working
-		// update leaves the previous attempt's failure text in the fold beside
-		// the new attempt's status. Extra merges per key, so recording WHOSE
-		// summary this is survives every later update that carries none — and
-		// lets the timeline drop a summary from an earlier attempt than the
-		// one the card is on, instead of showing a voided failure as the
-		// current result.
+		// A later update cannot blank a summary, so tag whose attempt this summary
+		// is (Extra merges per key). That lets the timeline drop a summary from an
+		// earlier attempt than the card is on, instead of showing a voided failure
+		// as the current result.
 		display.Extra["task_summary_attempt"] = t.AttemptNo()
 	}
 	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
@@ -235,10 +209,8 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 }
 
 // taskInfoFrom converts the SDK's task view to this server's API shape.
-//
-// MaxAttempts comes from the Runner rather than the Info: it is the manager's
-// configuration, and every response carries it so a client never has to guess
-// whether a retry is still on the table.
+// MaxAttempts comes from the Runner (the manager's configuration), so every
+// response tells a client whether a retry is still on the table.
 func (r *Runner) taskInfoFrom(i *tasks.Info) *TaskInfo {
 	if i == nil {
 		return nil

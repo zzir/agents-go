@@ -83,9 +83,9 @@ type ApprovalGroup struct {
 type CompactionGroup struct {
 	Enabled bool `json:"compaction_enabled,omitempty"`
 	// Threshold is in TOKENS. The key is compaction_threshold_tokens — a NEW
-	// name, deliberately: the old compaction_threshold counted ENTRIES, and
-	// reinterpreting a stored 20 as 20 tokens would compact on every turn.
-	// Legacy rows decode past the old key and fall back to the default.
+	// name because the earlier compaction_threshold counted ENTRIES, and
+	// reinterpreting a stored 20 as tokens would compact on every turn. Legacy
+	// rows decode past the old key and fall back to the default.
 	Threshold int    `json:"compaction_threshold_tokens,omitempty"`
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`

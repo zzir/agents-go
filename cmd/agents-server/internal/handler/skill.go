@@ -150,12 +150,11 @@ func (h *SkillHandler) Clone(c *gin.Context) {
 	}
 
 	// Clone into a private temp directory and publish it with a single atomic
-	// rename. This removes the check-then-clone/cleanup TOCTOU: the old code
-	// cloned straight into dest and, on any failure, RemoveAll(dest) — so two
-	// concurrent clones of the same name could delete each other's tree. Now the
-	// rename is the one point that makes the repo visible, and cleanup only ever
-	// touches this request's own scratch dir. The temp dir lives inside skillsDir
-	// so the rename stays on one filesystem (truly atomic, no cross-device copy).
+	// rename, so two concurrent clones of the same name cannot delete each
+	// other's tree: the rename is the one point that makes the repo visible, and
+	// cleanup only ever touches this request's own scratch dir. The temp dir
+	// lives inside skillsDir so the rename stays on one filesystem (truly atomic,
+	// no cross-device copy).
 	tmp, err := os.MkdirTemp(h.skillsDir, ".clone-*")
 	if err != nil {
 		internalError(c, err)

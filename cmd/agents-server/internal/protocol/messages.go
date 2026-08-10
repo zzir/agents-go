@@ -13,11 +13,10 @@ type Envelope struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-// Envelope.Type values. These ARE the wire protocol — every emitter and
-// consumer must reference these constants, never a string literal, so a typo
-// is a compile error instead of an event the frontend silently never receives.
-// The frontend mirror lives in web/frontend/src/lib/protocol.ts; keep both in
-// sync when adding an event.
+// Envelope.Type values. These ARE the wire protocol — every emitter and consumer
+// references these constants, never a string literal, so a typo is a compile
+// error. The frontend mirror lives in web/frontend/src/lib/protocol.ts; keep
+// both in sync when adding an event.
 const (
 	// Client → server
 	EventAuth         = "auth"
@@ -52,9 +51,8 @@ const (
 	EventRunCancelled    = "run.cancelled"
 	EventRunCompaction   = "run.compaction"
 	// EventRunDiagnostic reports trouble a run went through and SURVIVED —
-	// retries, a fallback model, a compaction pass that gave up. None of these
-	// reach run.error, so without this a run that answered after a bad time
-	// looks exactly like one that answered first time.
+	// retries, a fallback model, a compaction pass that gave up. None reach
+	// run.error, so this is the only signal such a run had a bad time.
 	EventRunDiagnostic       = "run.diagnostic"
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
@@ -75,8 +73,7 @@ const (
 )
 
 // RunError.Code values. Same single-point rule as the event constants: the
-// frontend branches on these to pick recovery behavior, so a misspelled code
-// downgrades a handled error to the generic path without any signal.
+// frontend branches on these to pick recovery behavior.
 //
 // Two origins share one flat namespace on the wire (PROTOCOL.md F3):
 //
@@ -128,10 +125,9 @@ type RunCancel struct {
 	Mode string `json:"mode,omitempty"`
 }
 
-// The injection queues a RunInject can name. They are distinct semantics, not
-// moods of one flag: steer changes course inside the run that is going,
-// next-turn rides along with a turn it was taking anyway, and follow-up starts
-// the next exchange once this one lands.
+// The injection queues a RunInject can name, each a distinct semantic: steer
+// changes course inside the running turn, next-turn rides along with a turn it
+// was taking anyway, and follow-up starts the next exchange once this one lands.
 const (
 	InjectQueueSteer    = "steer"
 	InjectQueueNextTurn = "next_turn"
@@ -227,9 +223,7 @@ type RunStarted struct {
 	// outcome over a task that is running again.
 	Attempt int `json:"attempt,omitempty"`
 	// MaxAttempts is the ceiling Attempt is measured against, so a client can
-	// answer "could this be retried" from state it already tracks — the answer
-	// then changes with the status, instead of being fixed at whatever it was
-	// when the last REST call happened to return.
+	// answer "could this be retried" from state it already tracks.
 	MaxAttempts int `json:"max_attempts,omitempty"`
 }
 
@@ -245,13 +239,10 @@ const (
 )
 
 // TaskNotificationPrefix marks a user-input message injected when a background
-// task finishes (the parent run "wakes" on it). The client renders such
-// messages as task notifications rather than user bubbles; the model sees the
-// prefixed text verbatim.
-//
-// It is an alias for the SDK's constant, not a copy: the SDK formats these
-// messages, so a second definition here could only ever drift from the one that
-// actually produces them.
+// task finishes (the parent run "wakes" on it). The client renders such messages
+// as task notifications rather than user bubbles; the model sees the prefixed
+// text verbatim. Aliased from the SDK's constant (which formats these messages)
+// so it cannot drift.
 const TaskNotificationPrefix = tasks.NotificationPrefix
 
 // RunToolProgress is a partial result from a tool that is still running: a
@@ -339,10 +330,8 @@ type RunToolCall struct {
 }
 
 // RunToolResult carries the output of a completed tool call back to the client.
-//
-// The display fields mirror the stored entry's ItemDisplay (same JSON names),
-// so the live card and the one rebuilt from history render from the same
-// data. Omitting them here was how Title/Summary only appeared after a reload.
+// The display fields mirror the stored entry's ItemDisplay (same JSON names), so
+// the live card and the one rebuilt from history render from the same data.
 type RunToolResult struct {
 	RunID      string `json:"run_id"`
 	ToolCallID string `json:"tool_call_id"`
@@ -360,8 +349,7 @@ type RunToolResult struct {
 	// Extra carries whatever the tool attached via ToolResult.Details — the
 	// card's data as opposed to the model's text (a task result's task_id, an
 	// exec_command's command). It reaches history readers through the stored
-	// entry's display; omitting it here left live clients parsing Output text
-	// for fields the tool had already provided structured.
+	// entry's display, and live clients through this field.
 	Extra map[string]any `json:"extra,omitempty"`
 }
 
@@ -418,12 +406,9 @@ type RunCompaction struct {
 }
 
 // RunGap tells one connection that it fell behind and events were dropped for
-// it. Only that connection receives it; the run itself is unaffected.
-//
-// It exists because the alternative is worse. Dropping silently leaves a
-// timeline quietly missing a tool result, which looks exactly like one that
-// never had it; disconnecting punishes a user for a slow render. The client
-// resubscribes with from_seq = last_good to fill the hole.
+// it. Only that connection receives it; the run itself is unaffected. The client
+// resubscribes with from_seq = last_good to fill the hole, rather than leaving
+// the timeline quietly missing events.
 type RunGap struct {
 	RunID string `json:"run_id"`
 	// Dropped is how many events were discarded for this connection.

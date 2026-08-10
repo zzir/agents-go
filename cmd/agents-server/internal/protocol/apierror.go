@@ -8,12 +8,8 @@ type APIError struct {
 }
 
 // ErrorResponse is the REST error envelope: {"error": {"code": ..., "message": ...}}.
-//
-// It sits in this package for the same reason the WebSocket messages do — it is
-// a frozen wire contract with two emitters. Besides the handler package, the
-// server package writes it for auth failures and unmatched API paths, and
-// server cannot import handler (handler depends on server.WSConn), so a second
-// declaration there would drift the moment the envelope changes.
+// It lives here, not in handler, because the server package also emits it (auth
+// failures, unmatched API paths) and cannot import handler.
 type ErrorResponse struct {
 	Error APIError `json:"error"`
 }

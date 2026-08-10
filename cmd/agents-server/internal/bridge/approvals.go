@@ -281,9 +281,9 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// run goroutine's postRun marks a task input_required (working ->
 	// input_required) and only THEN closes the segment's done gate, so waiting
 	// on it guarantees the task row is already in the state ReclaimWorking
-	// expects. This closes the window: a fast approve that raced ahead of
-	// postRun used to delete the pending row, then fail ReclaimWorking (task
-	// still "working"), and — with the row gone — strand the approval forever.
+	// expects — otherwise a fast approve races ahead of postRun, fails
+	// ReclaimWorking (task still "working"), and with the row gone strands the
+	// approval forever.
 	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
 
 	// Deleting the record is the exclusive claim on this approval vs. a

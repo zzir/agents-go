@@ -302,22 +302,18 @@ type SandboxConfig struct {
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
-	// Revision counts this config's WRITES: 1 at creation, +1 on every
-	// update, name-only included. It is the row's concurrency control — the
-	// expected-revision CAS both update paths carry (no lost updates, no
-	// identity-freeze bypass through a stale read), and the predicate a
+	// Revision counts this config's WRITES: 1 at creation, +1 on every update,
+	// name-only included. It is the row's concurrency control — the
+	// expected-revision CAS both update paths carry, and the predicate a
 	// first-run bind lands against (the workdir was validated on exactly this
-	// revision). An integer, not a version-history table: nothing keeps old
-	// revisions runnable — updates (credential rotation above all) apply to
-	// everyone at the next run.
+	// revision). Nothing keeps old revisions runnable: updates apply to everyone
+	// at the next run.
 	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
 
-	// RuntimeGen counts the config's CONTENT generations: +1 only when Type
-	// or Config actually change. It is what the live-instance cache and the
-	// terminal registry key their fences on, deliberately separate from
-	// Revision: a name-only update bumps the row version but must not retire
-	// instances or sever terminals — tying eviction to Revision force-deleted
-	// idle persistent containers (volumes included) over a rename.
+	// RuntimeGen counts the config's CONTENT generations: +1 only when Type or
+	// Config actually change. The live-instance cache and terminal registry key
+	// their fences on it, separate from Revision, so a name-only update does not
+	// retire instances or sever terminals over a rename.
 	RuntimeGen int64 `bun:"runtime_gen,notnull,default:1" json:"-"`
 
 	// Terminal reports whether this sandbox can host an interactive web
@@ -373,9 +369,6 @@ type SSHConfig struct {
 	WorkDir          string `json:"work_dir,omitempty"`            // fixed remote working directory
 	MaxReadFileBytes int64  `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
-
-// BeforeAppendModel hooks stamp id/timestamps for the CrudStore-backed entities
-// (see stampOnAppend). bun invokes them on insert and update.
 
 // Guardrail is a stored guardrail definition. Mode selects the check logic:
 // "regex" uses Config.Pattern; "max_length" uses Config.MaxLength.
@@ -451,32 +444,28 @@ func (p *PendingApproval) parsedToolCalls() []PendingToolCall {
 	return out
 }
 
-// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
+// BeforeAppendModel stamps id/timestamps for each CrudStore-backed entity via
+// stampOnAppend; bun invokes it on insert and update.
 func (m *Guardrail) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
 func (m *AgentConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
 func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
 func (m *Memory) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
 func (m *ProviderRoute) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel assigns an id and timestamps on insert and refreshes updated_at on update.
 func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }

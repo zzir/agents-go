@@ -123,13 +123,11 @@ func NewSandboxManager(workspace string) *SandboxManager {
 // New bindings are validated and canonicalized up front by
 // ResolveBindingWorkDir, so run time normally sees only legal values. The
 // out-of-tree fallback (a value outside /workspace lands in the default
-// instance) stays because a binding can be legal WHEN WRITTEN and wrong by
-// the time it runs: the bind CAS and a config identity update guard against
-// each other's presence, not each other's content, so a bind validated
-// against v1 can land beside an update to v2 (ephemeral→persistent and back,
-// a changed mount). Runs on such a session degrade to the default directory
-// rather than being bricked. Docker subtrees return path.Clean so equivalent
-// spellings of one directory key one cache entry, not one instance each.
+// instance) stays because a binding legal when written can be wrong by the time
+// it runs — a bind validated against one config revision can land beside an
+// update to the next — so such runs degrade to the default directory rather than
+// being bricked. Docker subtrees return path.Clean so equivalent spellings key
+// one cache entry, not one instance each.
 func effectiveWorkDir(cfg *store.SandboxConfig, workDir string) string {
 	workDir = strings.TrimSpace(workDir)
 	if cfg.Type != "docker" {

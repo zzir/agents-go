@@ -14,13 +14,9 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// entryRow is one session entry.
-//
-// The whole entry is stored as JSON, with only the columns the queries need
-// lifted out. That is the point of the change it replaced: the old messages
-// table had a column per field the UI happened to want, so provenance, usage,
-// diagnostics and the parent link — everything the SDK's entry model carries —
-// had nowhere to go and was silently dropped on the way in.
+// entryRow is one session entry. The whole entry is stored as JSON, with only
+// the columns the queries need lifted out, so nothing the SDK's entry model
+// carries (provenance, usage, diagnostics, the parent link) is dropped.
 type entryRow struct {
 	bun.BaseModel `bun:"table:entries,alias:e"`
 
@@ -50,20 +46,11 @@ type entryRow struct {
 }
 
 // appendPointRow is where one session stands: the branch tip, and the highest
-// sequence number it holds.
-//
-// It is stored rather than folded out of the entries because an append must not
-// cost a read of the session. The SDK persists once per TURN, so a run appends
-// many times, and folding each time would make a single run cost O(entries²) —
-// over a log that only grows, since compaction soft-deletes.
-//
-// It is not a cache: every path that moves the tip or issues a sequence number
-// writes it in the same transaction as the change itself, so the two records
-// cannot come apart. foldAppendPointIn is the definition it must agree with —
-// TestAppendPointMatchesTheFold holds the paths a session walks in place,
-// TestForkCutOnAFoldedEntry the copy a fork makes, and
-// TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip a fold that takes
-// the tip with it.
+// sequence number it holds. It is stored rather than folded out of the entries
+// so an append need not read the whole session (which only grows, since
+// compaction soft-deletes). Not a cache: every path that moves the tip or issues
+// a sequence number writes it in the same transaction as the change, so the two
+// cannot come apart. foldAppendPointIn is the definition it must agree with.
 type appendPointRow struct {
 	bun.BaseModel `bun:"table:append_points,alias:ap"`
 
@@ -80,10 +67,8 @@ type appendPointRow struct {
 	LastSeq int64 `bun:"last_seq,notnull"`
 }
 
-// EntryStore persists a server session's entries and serves them to the SDK.
-//
-// It implements session.Storage directly rather than adapting another
-// shape, which is what removed the losses: an entry goes in as the runner
+// EntryStore persists a server session's entries and serves them to the SDK. It
+// implements session.Storage directly, so an entry goes in as the runner
 // produced it and comes back the same, display and provenance included.
 type EntryStore struct {
 	db    *bun.DB
@@ -95,9 +80,8 @@ type EntryStore struct {
 }
 
 // NewEntryStoreFor returns storage addressed by ref. A repo builds one from the
-// session row it has already read, so the generation is never resolved a second
-// time — between two lookups an id can be deleted and recreated, and the handle
-// would then be bound to the replacement.
+// session row it already read, so the generation is never resolved a second
+// time — between two lookups an id can be deleted and recreated.
 func NewEntryStoreFor(db *bun.DB, ref session.Ref) *EntryStore {
 	return &EntryStore{db: db, ref: ref}
 }
@@ -117,15 +101,14 @@ func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (session.Ref,
 
 // forRef returns a handle for another session, carrying this one's run and
 // model. It takes a ref, so there is no id-shaped hole for the generation to
-// fall through: four methods used to build one of these by hand and three of
-// them lost it.
+// fall through.
 func (s *EntryStore) forRef(ref session.Ref) *EntryStore {
 	return &EntryStore{db: s.db, ref: ref, runID: s.runID, model: s.model}
 }
 
 // scoped narrows a query to this session. Every read and write of entry rows
-// goes through it: that is what makes the generation part of the address rather
-// than a field a code path can forget to carry.
+// goes through it, so the generation is part of the address, not a field a code
+// path can forget to carry.
 func (s *EntryStore) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
@@ -163,12 +146,8 @@ func (s *EntryStore) RunHasAnnotation(ctx context.Context, runID, kind string) (
 // RunHasItems reports whether the run persisted any replayable item entry —
 // the user's input, or an item of a turn that completed. A caller writing a
 // fallback record of a run that died asks this first, so it does not duplicate
-// what the SDK's per-turn persistence already saved.
-//
-// Scoped like every other read of entry rows: an id alone answers for a
-// generation that was deleted and recreated under the same name, and a stray
-// "yes" from the dead one silently drops the record this caller was about to
-// write.
+// what the SDK's per-turn persistence already saved. Scoped by generation like
+// every other entry read.
 func (s *EntryStore) RunHasItems(ctx context.Context, runID string) (bool, error) {
 	exists, err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).
 		Where("run_id = ?", runID).
@@ -318,17 +297,11 @@ func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 }
 
 // appendPointIn reads where the session stands: one indexed row, whatever the
-// session's length (see appendPointRow).
-//
-// No row falls back to the fold. A session that was never appended to has none,
-// and so does every session in a database written before this table existed —
-// answering "nothing here" for the second would make the next append a new root
-// and abandon the whole conversation behind it. The fold is right for both, and
-// costs one fold once per session, since the append that follows writes the row.
-//
-// The fallback cannot hide a path that forgets to maintain the point: forgetting
-// leaves a STALE row, not a missing one, and TestAppendPointMatchesTheFold still
-// catches that.
+// session's length (see appendPointRow). No row falls back to the fold, which is
+// right both for a never-appended session and for one predating this table —
+// answering "nothing here" would make the next append a new root and abandon the
+// conversation behind it. A path that forgets to maintain the point leaves a
+// STALE row, not a missing one, so the fallback cannot hide it.
 func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
 	row := new(appendPointRow)
 	err := db.NewSelect().Model(row).
@@ -481,8 +454,7 @@ func (s *EntryStore) Entries(ctx context.Context, cur session.Cursor) ([]session
 //
 // Only "no such entry" is absence; a cancelled context or an unreachable
 // database is a failure to look, and reaches the caller as one (spec §2.5e2,
-// "absence"). Folding the two into nil once made "does this entry exist"
-// checks silently pass over a database that was down.
+// "absence"), not folded into a nil that reads as "no such entry".
 func (s *EntryStore) Entry(ctx context.Context, id string) (*session.Entry, error) {
 	row := new(entryRow)
 	err := s.scoped(s.db.NewSelect().Model(row)).
@@ -501,10 +473,9 @@ func (s *EntryStore) Entry(ctx context.Context, id string) (*session.Entry, erro
 	return &e, nil
 }
 
-// Metadata implements session.Storage. It merges the session row, so a
-// handle and the listing give the same answer about the same session (spec
-// §2.5e2, "the change record") — this was the one backend still reporting only
-// a count while its own List returned title, hidden and both timestamps.
+// Metadata implements session.Storage. It merges the session row, so a handle
+// and the listing give the same answer about the same session (spec §2.5e2,
+// "the change record").
 func (s *EntryStore) Metadata(ctx context.Context) (session.Metadata, error) {
 	n, err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).Count(ctx)
 	if err != nil {
@@ -547,13 +518,9 @@ func (s *EntryStore) Clear(ctx context.Context) error {
 
 var _ session.Storage = (*EntryStore)(nil)
 
-// EntryView is the REST shape of one entry.
-//
-// It is the stored entry plus the row id the cursor pages on. Nothing is
-// re-derived here: Display, Source, Usage and Diagnostics come from what the
-// runner wrote, which is the difference from the messages table this replaced —
-// that one recomputed a display at read time from the raw item, and could only
-// ever produce a worse version of what the SDK already knew.
+// EntryView is the REST shape of one entry: the stored entry plus the row id the
+// cursor pages on. Nothing is re-derived here — Display, Source, Usage and
+// Diagnostics come from what the runner wrote.
 type EntryView struct {
 	ID       int64  `json:"id"`
 	EntryID  string `json:"entry_id"`
@@ -561,7 +528,7 @@ type EntryView struct {
 	Kind     string `json:"kind"`
 	RunID    string `json:"run_id,omitempty"`
 	// Role is who produced the entry, from its recorded provenance rather than
-	// re-parsed from the item. Provenance is not something to guess at.
+	// re-parsed from the item.
 	Role string `json:"role"`
 	// Content is the readable text, for a renderer that wants one string.
 	Content     string               `json:"content"`
@@ -595,16 +562,13 @@ type CompactionInfo struct {
 //
 // With a limit it returns the NEWEST that many (still oldest-first) and the
 // caller pages backwards with the smallest id it received — a cursor, because
-// entries keep arriving and an offset would shift under a concurrent append.
+// an offset would shift under a concurrent append.
 //
-// Update entries are folded into their targets here rather than shipped to the
-// client. Folding is the SDK's rule and there should be one implementation of
-// it; a client that re-derived it would be a second one, free to disagree. It
-// happens over the whole session before the cursor is applied, because an
-// update and the entry it amends need not land in the same page.
-//
-// Which is why this reads every row on every call, cursor or not — a known
-// cost, deliberately left: it is paid once per page a person asks for.
+// Update entries are folded into their targets here, not shipped to the client:
+// folding is the SDK's rule and there should be one implementation. It happens
+// over the whole session before the cursor is applied (an update and the entry
+// it amends need not land in the same page), so this reads every row on every
+// call — a known cost, paid once per page a person asks for.
 func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID int64, limit int) ([]EntryView, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
@@ -679,10 +643,9 @@ func roleOf(e session.Entry) string {
 	case agents.SourceErrorHandler, agents.SourceGuardrail:
 		return "system"
 	case agents.SourceModel:
-		// The zero source: the model's own output. A failed run's streamed
-		// text/reasoning saved by savePartialTurn carries it on ANNOTATION
-		// entries, which must not fall through to the annotation → "system"
-		// default below — that renders the model's prose as a system chip.
+		// The zero source: the model's own output. savePartialTurn puts a failed
+		// run's streamed text/reasoning on ANNOTATION entries, which must not fall
+		// through to the annotation → "system" default below.
 		return "assistant"
 	}
 	if e.Kind == session.EntryKindAnnotation {
@@ -771,15 +734,11 @@ func activeBranch(entries []session.Entry) map[string]bool {
 	return on
 }
 
-// AppendCallDisplayUpdate records an amendment to the display of whichever
-// entry holds callID.
-//
-// It is an APPEND, and that is what removed the retry loop this replaced. A
-// background task can finish before the turn that spawned it is persisted, so
-// the old read-modify-write had to scan for a row that did not exist yet and
-// try again for thirty seconds. An update entry may be stored before its
-// target; projection associates them by call id afterwards, so there is nothing
-// to wait for.
+// AppendCallDisplayUpdate records an amendment to the display of whichever entry
+// holds callID. It is an APPEND: an update entry may be stored before its target
+// (a background task can finish before the turn that spawned it is persisted),
+// and projection associates them by call id afterwards, so there is nothing to
+// wait for.
 func (s *EntryStore) AppendCallDisplayUpdate(ctx context.Context, ref session.Ref, callID string, display agents.ItemDisplay) error {
 	e, err := session.NewCallUpdateEntry(callID, display)
 	if err != nil {
@@ -799,13 +758,10 @@ func (s *EntryStore) AppendAnnotation(ctx context.Context, ref session.Ref, runI
 	))
 }
 
-// forkEntriesTx copies a prefix of src's entries into dst.
-//
-// Entry ids are rewritten to the destination's namespace and parent links are
-// remapped alongside them, so the fork is a self-consistent tree rather than
-// one pointing back at entries in another session. Copying the ids verbatim
-// would make the two sessions' entries indistinguishable by id, which every
-// lookup here keys on.
+// forkEntriesTx copies a prefix of src's entries into dst. Entry ids are
+// rewritten to the destination's namespace and parent links remapped alongside,
+// so the fork is a self-consistent tree — copying ids verbatim would make the
+// two sessions' entries indistinguishable by the id every lookup keys on.
 func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID int64, exclusive bool) ([]string, error) {
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
@@ -864,13 +820,9 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
 		return nil, fmt.Errorf("fork entries write: %w", err)
 	}
-	// The copy is a tree of its own — its own ids, its own numbering — so it
-	// stands where its own entries put it, not where the source stands.
-	//
-	// Folded by the definition rather than counted off the rows in hand: a fork
-	// copies compacted rows too (the UI shows what was folded), and a cut that
-	// lands on one of them would otherwise make it the destination's tip — an
-	// entry the fold has already taken out of the view.
+	// The copy is a tree of its own, so refold to place its tip: a fork copies
+	// compacted rows too (the UI shows what was folded), and a cut landing on one
+	// would otherwise make an already-folded entry the destination's tip.
 	if err := (&EntryStore{ref: dst}).refreshAppendPointIn(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -882,14 +834,10 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.Ref, upToID int64, exclusive bool) ([]string, error) {
 	var runIDs []string
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// Confirm the source still exists inside the tx: a concurrent delete
-		// between the handler's read and here would otherwise yield an empty
-		// entry set and a bogus empty fork returned as success.
-		// By (id, gen), like every other read of a session's rows: an id alone
-		// matches a REPLACEMENT session created after this fork resolved its
-		// ref, and the guard would pass while forkEntriesTx copies zero rows
-		// from the generation that is gone — a bogus empty fork reported as
-		// success.
+		// Confirm the source still exists inside the tx, by (id, gen): a
+		// concurrent delete would otherwise yield an empty entry set and a bogus
+		// empty fork reported as success. An id alone would match a REPLACEMENT
+		// session created after this fork resolved its ref.
 		exists, err := tx.NewSelect().Model((*Session)(nil)).
 			Where("id = ?", src.ID).Where("gen = ?", src.Gen).Exists(ctx)
 		if err != nil {
@@ -920,12 +868,9 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.
 	return runIDs, nil
 }
 
-// DeleteBySession removes every entry of a session, in every generation the
-// repo made — this is the teardown, and a superseded generation's rows are
-// unreachable garbage once the session row is gone.
-//
-// The direct scope is excluded: an empty generation belongs to a session this
-// server did not create through a repo, so removing it here would destroy
+// DeleteBySession removes every entry of a session, in every generation the repo
+// made. The direct scope (empty generation) is excluded: it belongs to a session
+// this server did not create through a repo, so removing it here would destroy
 // history the caller keeps somewhere else.
 func (s *EntryStore) DeleteBySession(ctx context.Context, sessionID string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

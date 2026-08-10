@@ -60,8 +60,7 @@ func (h *TaskHandler) Stop(c *gin.Context) {
 
 // stopError maps a stop failure. The not-found sentinel is the SDK's, not the
 // store's: every lookup goes through the task adapter, which maps its own to
-// that one — matching store.ErrNotFound here caught nothing, so an unknown id
-// used to answer 500.
+// that one, so match the SDK's sentinel here rather than store.ErrNotFound.
 func (h *TaskHandler) stopError(c *gin.Context, err error) {
 	switch final, isFinal := errors.AsType[*bridge.TaskFinalError](err); {
 	case isFinal:
