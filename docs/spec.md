@@ -6,9 +6,8 @@ answered here, not by [openai-agents-python](https://github.com/openai/openai-ag
 **The rule:** when this document does not cover a case, decide, implement it,
 and add the invariant here **in the same change**.
 
-Status markers used below:
+Every invariant below is implemented and stable unless flagged:
 
-- ✅ implemented and stable
 - 🚧 specified but not implemented yet
 - ❓ open — see [§6](#6-open-questions)
 
@@ -40,7 +39,7 @@ from upstream.
 
 ## 2. Core invariants
 
-### 2.0 Entry points ✅
+### 2.0 Entry points
 
 `Run` returns `(RunStream, RunControl)`; `RunSync` returns `(*RunResult, error)`.
 `ResumeRun` / `ResumeRunSync` are the same pair for a paused run.
@@ -71,12 +70,12 @@ from upstream.
   call**: `Run` streams it so raw events reach the consumer, `RunSync` makes one
   blocking call. Everything else — guardrail timing, persistence points, hooks,
   tracing — is identical, because there is one loop.
-- **A trace always closes**, including when the consumer abandons the stream. ✅
+- **A trace always closes**, including when the consumer abandons the stream.
   The run executes inside the iterator, so `yield` returning false unwinds the
   loop and the deferred trace finish runs; there is no window in which nobody
   owns the trace. Every span it opened is finished and exported.
 
-### 2.0b Option grouping ✅
+### 2.0b Option grouping
 
 `RunOptions` groups its fields by what they configure — `Model`,
 `Conversation`, `Exec`, `Observe` — rather than listing them flat. The zero
@@ -87,7 +86,7 @@ each other**: a local `Session`, `UsePreviousResponseID` and `ConversationID`
 are alternatives, not layers, and a run that combines a local session with
 server-managed state is rejected. A flat list hid that.
 
-### 2.1 The run loop ✅
+### 2.1 The run loop
 
 A run consists of **turns**. One turn = **one model call** plus every side effect
 it triggers (tool execution, handoff).
@@ -111,16 +110,16 @@ for turn := 1; ; turn++ {
 **Termination conditions**, highest precedence first:
 
 1. `ctx` cancelled → the run ends there, and `ctx.Err()` reaches the caller
-   wrapped in a `*RunError` carrying the turns that did complete. ✅ A
+   wrapped in a `*RunError` carrying the turns that did complete. A
    cancellation noticed inside the loop is a failure like any other; only
    failures from *before* the loop are returned bare.
 2. Budget exhausted → with `ToolLoop.FinalTurnWithoutTools`, call the model
    once more **without tools** so it can close out in prose. Otherwise return
-   `*MaxTurnsError`. ✅
+   `*MaxTurnsError`.
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
 4. The model produced a final output → see [§2.3](#23-deciding-the-final-output-).
 
-**A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
+**A `RunState` round-trips whole.** Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
 server-conversation cursor and the off-chain-history flag included — pinned by a
 full-field round-trip test (`RunStateSchemaVersion` 1.5). The in-process resume
@@ -139,14 +138,14 @@ the run. That is the cost of a contract, not an oversight: a resumed run's
 snapshot promises "every response so far". Trimming the state to the
 interrupted response alone would make pausing observable in the result.
 
-**A `RunState` decodes across a version window, not on strict equality.** ✅
+**A `RunState` decodes across a version window, not on strict equality.**
 `RunStateFromJSON` accepts the same schema major from
 `runStateOldestDecodableMinor` up to `RunStateSchemaVersion`; anything newer,
 any other major, and anything below the floor is a `*UserError` naming which
 way it missed. A minor may only ADD fields — a bump that replaces or
 reinterprets one must raise the floor to itself. See [§5.18](#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned).
 
-### 2.1b Items ✅
+### 2.1b Items
 
 **`RunItem` is one struct with a `Kind`, not an interface.** The kinds are a
 closed set the runner produces — message, tool call, tool output, handoff
@@ -190,7 +189,7 @@ and so is `Output` — a tool's Go-native return value does not round-trip, only
 its rendered input form does. A resume replays history from input items, which
 is all it needs.
 
-**An unknown output item is kept, never dropped.** ✅ A model output type this
+**An unknown output item is kept, never dropped.** A model output type this
 SDK does not model becomes an `ItemUnknown` run item carrying the original bytes,
 and goes back on the wire byte for byte on the next turn. Dropping it is not
 "ignoring a feature" — the next turn resends a history the model does not
@@ -201,14 +200,14 @@ union does not know and preserves its bytes, so a session written by a newer
 build stays readable. An item with no `type` is still rejected, so malformed
 JSON does not slip through as an opaque blob.
 
-### 2.2 Ordering within a turn ✅
+### 2.2 Ordering within a turn
 
 **This is the most important invariant in this document.** The steps may not be
 reordered.
 
 | # | Step | Constraint |
 |---|---|---|
-| 1 | Publish `RunContext.TurnInput` | ✅ Set once the turn's input is final (before the model call), refreshed if `CallModelInputFilter` edits it. It is **what was actually sent** — under server-managed conversation state that is the new items only, not the whole history |
+| 1 | Publish `RunContext.TurnInput` | Set once the turn's input is final (before the model call), refreshed if `CallModelInputFilter` edits it. It is **what was actually sent** — under server-managed conversation state that is the new items only, not the whole history |
 | 2 | On resume: drop already-completed sibling calls | Prevents duplicated side effects and a second `function_call_output` for the same call id |
 | 3 | Partition calls by approval: `toRun` / `interruptions` / `rejected` | — |
 | 4 | **If any call needs approval, pause the whole turn — no tool runs** | Pausing only the gated calls would leave `RunState` holding partial results |
@@ -220,16 +219,16 @@ reordered.
 
 **Concurrency guarantees:**
 
-- Tool concurrency is capped by `MaxToolConcurrency` (0 = unlimited). ✅
-- A panicking tool is recovered and routed through that tool's error path. ✅
+- Tool concurrency is capped by `MaxToolConcurrency` (0 = unlimited).
+- A panicking tool is recovered and routed through that tool's error path.
 - When several tools fail, the error surfaced to the run is the one with the
   **lowest call index among non-cancellation errors** — never whichever
   goroutine finished first, and never a sibling's `context.Canceled` echo of
   the failure that cancelled it. Cancellation surfaces only when it is all
-  there is (the consumer abandoned the run mid-batch). ✅
-- A tool declaring `SequentialTool` forces the whole batch to run serially. ✅
+  there is (the consumer abandoned the run mid-batch).
+- A tool declaring `SequentialTool` forces the whole batch to run serially.
 
-### 2.3 Deciding the final output ✅
+### 2.3 Deciding the final output
 
 Once the turn has no remaining tool work:
 
@@ -252,7 +251,7 @@ otherwise (plain text)
     → the message text is the final output (possibly the empty string)
 ```
 
-### 2.3a The save point ✅
+### 2.3a The save point
 
 The **save point** is the turn boundary: the turn's assistant message and every
 tool result are persisted, and the next model call has not happened yet.
@@ -273,7 +272,7 @@ A **handoff** reaches only step 1 and 2. The next turn belongs to a different
 agent, so its snapshot is resolved fresh, and its context is about to be
 rewritten by the handoff input filter.
 
-### 2.3b Turn snapshots ✅
+### 2.3b Turn snapshots
 
 A turn is resolved into a `TurnSnapshot` — agent, model, settings,
 instructions, prompt, tools, handoffs, output schema, input — before the model
@@ -291,7 +290,7 @@ is called, and the turn reads the snapshot from then on rather than the agent.
   looks like it is progressing. To edit what a call sends, use
   `ModelOptions.InputFilter`, which runs per turn on the input the loop built.
 
-### 2.3c Stopping early ✅
+### 2.3c Stopping early
 
 A turn that would otherwise continue can be ended from two places, and only
 two:
@@ -310,7 +309,7 @@ two:
 - It is a **predicate, not a producer**. The final output is derived from the
   turn, so a stopped run's result cannot disagree with its saved history. A
   caller wanting something else computes it from `RunResult.NewItems`.
-- The `*TurnResult` a hook is handed is **its own to read**. ✅ Writes to its
+- The `*TurnResult` a hook is handed is **its own to read**. Writes to its
   fields reach neither the run nor the next hook, so a hook that clears
   `NewItems` can neither blank the stopped run's final output nor hide the
   turn from `PrepareNextTurn`.
@@ -322,7 +321,7 @@ front cannot express anything the turn predicate cannot, and the policy belongs
 to the run — the same agent gets reused across runs that stop at different
 points.
 
-### 2.4 Handoffs ✅
+### 2.4 Handoffs
 
 - A handoff is expressed as a **function call**; to the model it is just a tool.
 - On the stream it surfaces as **both** `tool_called` and `handoff_requested` —
@@ -349,16 +348,16 @@ points.
   usage. Contrast with agent-as-tool ([§2.8](#28-nested-agent-as-tool-attribution-)),
   which starts a nested run.
 
-### 2.5 Session persistence boundaries ✅
+### 2.5 Session persistence boundaries
 
 | When | What is written |
 |---|---|
-| Just before the first model call | The new user input — deferred so a failure ahead of that leaves no orphan message ✅ |
+| Just before the first model call | The new user input — deferred so a failure ahead of that leaves no orphan message |
 | End of each turn | The items produced by that turn |
 | Final turn | **After output guardrails pass** — a tripped final output is never persisted |
 
 Whether a tripped input guardrail leaves the user message behind is decided by
-`Blocking`, and by nothing else: ✅ a blocking guardrail finishes before the
+`Blocking`, and by nothing else: a blocking guardrail finishes before the
 save and before the model is reached, so a tripwire leaves the session
 untouched and costs nothing; a racing one (the default) trips while the model
 call is in flight, so the input is persisted and the request was made. Both
@@ -380,9 +379,9 @@ pending `function_call` items are **withheld** and written together with their
 outputs after resume.
 
 This guarantee does not survive an abnormal process exit; a `RecoveryPolicy`
-repairs dangling state when the session is reopened. ✅
+repairs dangling state when the session is reopened.
 
-**Entries are append-only.** ✅ An entry's display may need
+**Entries are append-only.** An entry's display may need
 updating long after the turn that produced it has ended — a background task
 card, a late diagnostic. That is expressed as a **new update entry** naming its
 target, folded in at projection time; entries are never rewritten in place.
@@ -390,7 +389,7 @@ Multiple updates to one target merge in sequence order. An update whose target
 does not exist is ignored, not an error — the target may have been folded away
 by compaction.
 
-### 2.5b Session entries ✅
+### 2.5b Session entries
 
 A session stores **entries**, not bare Responses items. An entry carries the
 item plus what the run knew about it — provenance, display, the model call it
@@ -412,7 +411,7 @@ compaction checkpoint, terminal output).
   inside it: a copy of a live entry has to be kept in step with the tree —
   falling out of step is why the earlier self-contained shape was removed.
 
-**Entries are append-only.** ✅ Nothing is rewritten in place; that is what lets
+**Entries are append-only.** Nothing is rewritten in place; that is what lets
 a session be forked, shared and read concurrently without a writer invalidating
 a reader's view. A display settled after its turn ended is expressed as an
 **update entry** naming its target, folded in at read time:
@@ -428,7 +427,7 @@ a reader's view. A display settled after its turn ended is expressed as an
 - **An update whose target is missing is ignored, not an error.** The target may
   have been folded away by compaction, and failing an entire read over a stale
   pointer would make history unloadable.
-- **Folding is a projection: it never writes through to storage.** ✅ Readers
+- **Folding is a projection: it never writes through to storage.** Readers
   get shallow copies whose `Display` (and its `Extra` map) is shared with the
   stored entry, so the fold copies what it merges instead of editing in
   place — a read must never change what the next read returns.
@@ -437,7 +436,7 @@ A server-managed conversation (`openai.ConversationsSession`) can hold only
 items; other kinds are dropped on write, because failing a run over a UI
 annotation that could not be stored server-side is worse than losing it.
 
-### 2.5c Session layering ✅
+### 2.5c Session layering
 
 A session is three layers, split along what varies:
 
@@ -448,11 +447,11 @@ A session is three layers, split along what varies:
   and as an interface every backend re-answered it and they drifted.
 - **`SessionRepo`** owns lifecycles — create, open, list, delete.
 
-**Reads page on sequence numbers, not offsets.** ✅ Entries keep arriving, so an
+**Reads page on sequence numbers, not offsets.** Entries keep arriving, so an
 offset shifts under a concurrent append and a second page silently skips or
 repeats. A negative `Cursor.Limit` takes the most recent N.
 
-**Derived state is a fold, never a stored field.** ✅ `State` and `Stats`
+**Derived state is a fold, never a stored field.** `State` and `Stats`
 recompute from the entries. A field maintained beside the log has to be updated
 on every write and can disagree with it after a crash, a concurrent writer or a
 fork; a fold cannot. `State` folds the ACTIVE BRANCH — the view recovery reads
@@ -460,7 +459,7 @@ fork; a fold cannot. `State` folds the ACTIVE BRANCH — the view recovery reads
 and folding every branch reported it forever as a stuck approval nothing could
 clear. `Stats` stays whole-log, because it counts what is stored.
 
-**`ContextEntries` is the active branch minus what compaction folded** ✅ — the
+**`ContextEntries` is the active branch minus what compaction folded** — the
 checkpoints themselves stay in the view (they carry the summary and stand-ins
 the projection renders), while the entries their exclusions name are left out:
 re-sending folded history would undo the compaction, and a cursor limit must
@@ -488,11 +487,11 @@ precisely to rule that failure mode out. `GuardedReplacer` is delegated the
 same way: a wrapper over a store that cannot compare the log back errors rather
 than answering `replaced=false`, which would assert the log had moved.
 
-### 2.5d Sessions are trees ✅
+### 2.5d Sessions are trees
 
 An entry names its parent, so a session is a walk rather than a pile.
 
-- **Branching abandons without deleting.** ✅ Moving the active branch leaves the
+- **Branching abandons without deleting.** Moving the active branch leaves the
   old attempt recorded and off the path; "try that again differently" costs
   nothing and loses nothing.
 - **Switching branches is an append**, not a mutable pointer: `EntryKindLeaf`.
@@ -521,13 +520,13 @@ An entry names its parent, so a session is a walk rather than a pile.
   filtered view may have dropped an ancestor), and a repeated id does too, so a
   corrupt session reads short instead of hanging.
 
-**Fork extracts a branch; branch moves within one session.** ✅ A fork carries
+**Fork extracts a branch; branch moves within one session.** A fork carries
 entry ids across unchanged, so an update entry naming one still finds its
 target. The destination is written through `session.ReplaceEntries`, so a
 storage that can swap atomically (`AtomicReplacer`) never shows a
 cleared-but-unfilled fork target when a failure lands mid-write.
 
-### 2.5e Session lifecycles ✅
+### 2.5e Session lifecycles
 
 A `SessionRepo` owns which sessions exist, separately from their contents.
 
@@ -551,7 +550,7 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   it can finish writing gives the claim back if the rest fails, or the id is
   burned: unusable and un-recreatable.
 
-### 2.5e2 The entry lifecycle contract ✅
+### 2.5e2 The entry lifecycle contract
 
 Everything above describes what a session *is*. This describes what happens to
 an entry over its life — minted, addressed, walked, removed — and it exists as
@@ -692,7 +691,7 @@ next backend will answer differently.
 - Only "there is no such thing" is absence. Every other failure reaches the
   caller. *Shared.*
 
-### 2.5f Compaction ✅
+### 2.5f Compaction
 
 Compaction is a **run-level** concern. Deciding what to drop needs the model,
 the usage numbers and the context window; all three belong to the run, so the
@@ -815,24 +814,6 @@ so a log that never reached its window is never mistaken for that conflict.
 **The runner does not decide this by skipping the pass.** It used to, and that
 took the decision away from a storage with no chain to be wrong about: an agent
 that always finishes through a terminating tool never compacted at all.
-saw.** A run with a local `Session` resends its whole input every turn
-(`UsePreviousResponseID` refuses to combine with one), so the last response
-holds everything that stood in front of the model when it answered — its own
-output, and every tool output, handoff acknowledgement and steer before it.
-Those are on the chain, and a summary that folds them away read them first.
-What the chain cannot hold is what came AFTER: a terminating tool's output, an
-error handler's fallback message, input injected past the last model call. The
-runner reports whether any exist as `CompactionArgs.OffChainItems`, decided by
-POSITION — everything after the last model-produced item — and not by
-provenance, since a steer taken after the final output is external and yet
-reached no model call. `openai.CompactionSession` answers it by compacting from
-the stored items instead of `previous_response_id`: the same conversation,
-minus the deletion. A caller who PINNED `CompactionModePreviousResponseID` gets
-the pass skipped and `abandoned: off_chain_items` on the span instead, because
-the mode is the one thing they configured and compaction can always afford to
-wait. **The runner does not decide this by skipping the pass.** It used to, and
-that took the decision away from a storage with no chain to be wrong about: an
-agent that always finishes through a terminating tool never compacted at all.
 
 **That rewrite is guarded by the sequence number it read.** Reading the history
 and writing the replacement are separated by a network round trip, and an entry
@@ -857,7 +838,7 @@ an entry no longer there, and a fold that finds no target is dropped in silence
 — the late display it carried (a background task's card) lost for good. Those
 entries are numbered afresh regardless (§2.5e2).
 
-### 2.5g Context overflow ✅
+### 2.5g Context overflow
 
 Compaction predicts; overflow recovery reacts. A prediction is an estimate — a
 token count the SDK guessed, against a window the provider never states exactly
@@ -938,7 +919,7 @@ cannot otherwise survive.
   off.
 - A recovered overflow is recorded as a `context_overflow` diagnostic.
 
-### 2.5h Crash recovery ✅
+### 2.5h Crash recovery
 
 `session.Recover` repairs a session a killed process left inconsistent.
 
@@ -965,7 +946,7 @@ cannot otherwise survive.
   dangling call out on every ordinary exit and cannot help when the process is
   killed.
 
-### 2.6 Guardrails ✅
+### 2.6 Guardrails
 
 One `Guardrail` type covers every stage. Placement decides scope: guardrails in
 `RunOptions` or on an `Agent` apply to the whole run — their tool stages cover
@@ -1028,11 +1009,11 @@ that tool only.
 - `tool_output` — replaces the content returned to the model.
 
 Streaming and blocking share one run loop, so they share one guardrail
-behavior: concurrent with the model call, with cancellation. ✅
+behavior: concurrent with the model call, with cancellation.
 
 ### 2.7 Tools
 
-#### Return values ✅
+#### Return values
 
 A tool returns a `ToolResult` ([§2.7b](#27b-tool-results-)); plain values are
 wrapped. What the model sees, given the result's `Content`:
@@ -1047,7 +1028,7 @@ wrapped. What the model sees, given the result's `Content`:
 
 An empty result with no error is a **success with no output**, not a failure.
 
-#### Errors ✅
+#### Errors
 
 - A tool returning an error goes through `FailureErrorFunction`, which turns it
   into model-readable text fed back to the model. This is the default.
@@ -1056,9 +1037,9 @@ An empty result with no error is a **success with no output**, not a failure.
 - Malformed argument JSON gets dedicated wording that prompts the model to resend
   valid JSON.
 - `ToolLoopPolicy.MaxConsecutiveFailures` trips a circuit breaker when that
-  many turns in a row have every tool fail, and aborts the run. ✅
+  many turns in a row have every tool fail, and aborts the run.
 
-#### Approval ✅
+#### Approval
 
 - `NeedsApproval` / `NeedsApprovalFunc` decide; the function takes precedence.
 - If **any** call in a turn needs approval, the whole turn pauses
@@ -1066,7 +1047,7 @@ An empty result with no error is a **success with no output**, not a failure.
 - Approval decisions may be scoped ("this call", "all calls to this tool", …);
   the caller expresses the scope on the `RunState`.
 
-### 2.7b Tool results ✅
+### 2.7b Tool results
 
 A tool returns a `ToolResult`, not a bare value. The distinction it makes is
 that some of what a tool knows is **not for the model**:
@@ -1096,7 +1077,7 @@ that some of what a tool knows is **not for the model**:
 A tool that returns a plain value (string, struct, `ToolOutputContent`) is
 wrapped automatically, so the ordinary tool is unchanged.
 
-### 2.7c Tool capabilities are fields ✅
+### 2.7c Tool capabilities are fields
 
 `*Tool` is the only tool type, and everything a tool can do beyond
 being called is a **field** on it: `OnInvoke`, `Description`,
@@ -1137,7 +1118,7 @@ bare type assertion through a wrapper silently reported that a tool needing
 approval needed none — a trap the design created and then had to specify around.
 A field cannot hide behind a wrapper.
 
-### 2.7d Tool-loop safety valves ✅
+### 2.7d Tool-loop safety valves
 
 The loop's own failure modes — not the model's ordinary mistakes, but the ones
 where an agent keeps going and gets nowhere:
@@ -1159,7 +1140,7 @@ where an agent keeps going and gets nowhere:
   it for a resource — a shell session, a working directory — the others touch
   too.
 
-### 2.7e Truncated responses ✅
+### 2.7e Truncated responses
 
 A response the provider marks `status="incomplete"` with reason
 `max_output_tokens` was cut off at the output-token limit.
@@ -1184,7 +1165,7 @@ A response the provider marks `status="incomplete"` with reason
   partition, and `Status`/`IncompleteReason` survive `RunState` serialization
   so a cross-process resume refuses the same calls.
 
-### 2.7f Usage attribution ✅
+### 2.7f Usage attribution
 
 - **Exactly one entry per response carries that response's `Usage`.** Several
   entries share a response; if each carried it, summing over a session's
@@ -1209,7 +1190,7 @@ A response the provider marks `status="incomplete"` with reason
 - `RunResult.UsageByResponse()` and `RunResult.NestedUsage()` read it back:
   where the tokens went, and how many were spent off this conversation.
 
-### 2.7h Schema validation ✅
+### 2.7h Schema validation
 
 Tool arguments, handoff input and structured outputs are validated against the
 **whole** JSON Schema, not a root-level `required` check.
@@ -1255,7 +1236,7 @@ Tool arguments, handoff input and structured outputs are validated against the
 - `EnsureStrictJSONSchema` is unaffected: it is the OpenAI strict-mode
   *transformer*, a different job from validation.
 
-### 2.7i Progressive tool disclosure ✅
+### 2.7i Progressive tool disclosure
 
 A tool marked `Deferred: true` is withheld from the model until some
 `ToolResult.AddedTools` names it.
@@ -1274,7 +1255,7 @@ A tool marked `Deferred: true` is withheld from the model until some
 - **Naming an unknown tool is ignored.** A tool should not be able to fail a run
   by mentioning something.
 
-### 2.7g Tool progress ✅
+### 2.7g Tool progress
 
 `ToolContext.Emit` pushes a partial result to a streamed run's consumer as a
 `ToolProgressEvent`.
@@ -1304,7 +1285,7 @@ A tool marked `Deferred: true` is withheld from the model until some
 - The sandbox exec tool streams stdout through it, capturing in parallel —
   streaming must not cost the model its output.
 
-### 2.7j Sandbox command policy ✅
+### 2.7j Sandbox command policy
 
 `CodeToolConfig.Policy` filters commands **before** the approval gate.
 
@@ -1329,7 +1310,7 @@ A tool marked `Deferred: true` is withheld from the model until some
   Containment is the sandbox backend's job — the policy only keeps the obvious
   out of a person's face.
 
-### 2.7k Persistent shells ✅
+### 2.7k Persistent shells
 
 `exec_command` optionally reuses a named shell, so `cd`, exported variables and
 an activated environment survive between calls.
@@ -1367,7 +1348,7 @@ an activated environment survive between calls.
   the same agent share one pool, so both `"build"` sessions are the same shell;
   a host that wants isolation builds the tool per run.
 
-### 2.7l Sandbox tool argument decoding ✅
+### 2.7l Sandbox tool argument decoding
 
 `exec_command` decodes its own arguments — it is a hand-built tool, not a
 `NewTool` wrapper, so nothing upstream of `OnInvoke` catches a malformed call.
@@ -1396,7 +1377,7 @@ Three rules keep one from costing more than the call:
 - The approval gate treats undecodable arguments like a policy veto (§2.7j): a
   call `OnInvoke` will refuse as text never reaches a human.
 
-### 2.8 Nested agent-as-tool attribution ✅
+### 2.8 Nested agent-as-tool attribution
 
 | Aspect | Attribution |
 |---|---|
@@ -1431,19 +1412,19 @@ When a budget trips mid-turn, the current tool batch is allowed to finish before
 the run stops. Stopping mid-batch would leave dangling calls, which
 [§2.5](#25-session-persistence-boundaries-) forbids.
 
-### 2.10 Errors and recovery ✅
+### 2.10 Errors and recovery
 
-- Every SDK error carries a stable `ErrorCode`, read with `CodeOf(err)`. ✅
+- Every SDK error carries a stable `ErrorCode`, read with `CodeOf(err)`.
   `CodeOf` unwraps `%w` chains, so a code survives the run loop's own wrapping
   and a transport can read it off whatever `Run` returned.
 - **The code is derived from the error's type — there is exactly one
-  classification.** ✅ The typed errors carry their data fields and nothing
+  classification.** The typed errors carry their data fields and nothing
   else; `CodeOf` maps type → code, so an error built as a struct literal
   classifies identically to a constructed one, and a mismatch between a code
   field and a type cannot exist because there is no code field. (The previous
   design carried both, and they disagreed exactly as often as a constructor
   was bypassed — `CodeOf` needed a rescue path for it.)
-- **A run that fails after its loop started returns a `*RunError`** ✅ wrapping
+- **A run that fails after its loop started returns a `*RunError`** wrapping
   the cause and carrying the partial progress as a `*RunResult` (nil
   `FinalOutput`): input, generated items, raw responses, usage, guardrail
   results, diagnostics. One shape for finished and failed runs — a failed run
@@ -1454,25 +1435,25 @@ the run stops. Stopping mid-batch would leave dangling calls, which
   loop (bad options, unresolvable model) are returned bare — there is no
   progress to report.
 - `Classify(code, err)` tags an error **without hiding it**: `errors.Is` and
-  `errors.As` still reach the original. ✅ It is how packages outside the run
+  `errors.As` still reach the original. It is how packages outside the run
   loop (`sandbox`, `mcp`, custom tools) contribute a code.
-- **The innermost classification wins.** ✅ `Classify` returns an
+- **The innermost classification wins.** `Classify` returns an
   already-coded error unchanged, so a boundary cannot overwrite a more specific
   reason with its own generic one.
-- The code set is **open**. ✅ A consumer that does not recognize a code falls
+- The code set is **open**. A consumer that does not recognize a code falls
   back to generic handling; this is what lets the SDK add one without a
   coordinated release downstream.
 - Errors that a tool returns as *text* (the sandbox file and patch tools) are
-  model-facing results, not failures, and carry no code. ✅
+  model-facing results, not failures, and carry no code.
 - Submodule errors (`sandbox`, `sessions`, `mcp`, `skills`) are classified **at
-  the module boundary**, not deep inside. ✅
+  the module boundary**, not deep inside.
 - Recoverable failures are handled by error handlers (max turns, model refusal,
-  invalid final output), **in the loop, not as middleware** ✅ — see
+  invalid final output), **in the loop, not as middleware** — see
   [§2.12](#212-middleware-).
 - A fallback message synthesized by a recovery handler is tagged
-  `Source{Type: SourceErrorHandler}`. ✅
+  `Source{Type: SourceErrorHandler}`.
 
-#### How the safety valves compose ✅
+#### How the safety valves compose
 
 `ExecOptions` stacks several independent protections — `MaxTurns`, `ToolLoop`,
 `Overflow`, `ErrorHandlers`, `ShouldStopAfterTurn` / `PrepareNextTurn` — and
@@ -1512,7 +1493,7 @@ their interactions are pinned, not emergent:
 
 ---
 
-### 2.11 Event fan-out ✅
+### 2.11 Event fan-out
 
 One producer's events reach many independent consumers through `Fanout[T]`.
 
@@ -1570,7 +1551,7 @@ consumer on its own, so per-subscriber buffering is needed either way.
 
 ---
 
-### 2.11b Run control ✅
+### 2.11b Run control
 
 `Run` returns a `RunControl` alongside the stream. It is safe to use from
 another goroutine, including before ranging begins.
@@ -1629,7 +1610,7 @@ was ending:
   arrival order — an accepted loss at the pause boundary, not worth a schema
   bump.
 
-### 2.11e Span coverage ✅
+### 2.11e Span coverage
 
 - Typed spans cover: agent, generation, function, handoff, guardrail,
   compaction, model retry, MCP, sandbox.
@@ -1665,7 +1646,7 @@ was ending:
   effect. Spans with no GenAI equivalent use an `agents.` prefix — naming them
   `gen_ai.*` would imply a portability that is not there.
 
-### 2.11d Diagnostics ✅
+### 2.11d Diagnostics
 
 A `Diagnostic` records trouble a run went through **and survived**.
 
@@ -1689,7 +1670,7 @@ A `Diagnostic` records trouble a run went through **and survived**.
 - `DiagnosticType` is an **open vocabulary**: an unknown type is displayed
   generically, never rejected.
 
-### 2.11c Logging ✅
+### 2.11c Logging
 
 - **Off by default.** `LogConfig.Logger` is nil unless a caller sets it; the SDK
   never writes to `slog.Default()` on its own. A library that logs the moment it
@@ -1712,7 +1693,7 @@ A `Diagnostic` records trouble a run went through **and survived**.
 - Logging and tracing are configured separately, as are their sensitive-data
   switches: exporting spans and writing log lines are different exposures.
 
-### 2.12 Middleware ✅
+### 2.12 Middleware
 
 `RunOptions.Middlewares` wraps a run, **outermost first** — the order they are
 read in is the order they see the run.
@@ -1828,7 +1809,7 @@ instruction-injecting middleware. Their invariants:
 
 ---
 
-### 2.13 Background tasks ✅
+### 2.13 Background tasks
 
 A task is a sub-agent that outlives the turn that started it. The invariants
 below are behavior, not implementation detail — see [tasks.md](tasks.md).
@@ -2517,7 +2498,7 @@ them) and are **aliased** in agents (`agents.Source = session.Source`),
 because they are equally part of the runner's surface: every `RunItem` carries
 a `Source`, every result reports `RequestUsage`. An alias is transparent — one
 type, two import paths — so neither layer's API is second-class. **Each alias
-keeps the name it aliases.** ✅ A renamed alias stops being transparent the
+keeps the name it aliases.** A renamed alias stops being transparent the
 moment anything spells the type out: the compile error, the godoc and the
 reflected name all say the session name while the code says the agents one.
 (`agents.ItemDisplay = session.Display` was the one that drifted; session's
