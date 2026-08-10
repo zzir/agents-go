@@ -2615,6 +2615,30 @@ a connection outage for every other user of the server. The rule generalizes:
 cancellation** — a per-run deadline on a per-process resource is a way for one
 run to break another.
 
+### 5.21 A dead shared connection repairs itself, and a tool call is not repeated
+
+Isolation keeps one caller from killing the connection; it does not make
+connections immortal. A server restarts, a proxy drops an idle socket. Nothing
+in the go-sdk reconnects, so **the connection owns its own recovery**: given a
+way to rebuild its transport (`mcp.Options.Redial`), a session found dead is
+replaced in place. In place matters — every holder of that server recovers,
+not only the runs that start afterwards, which is the difference between one
+task failing and every task failing.
+
+Three bounds make it safe. **A death is noticed as it happens**, by watching
+the connection rather than waiting for a caller to trip over it, because the
+callers who would pay are whoever is mid-run. **Healing is throttled**, so a
+server that accepts a connection and drops it again cannot become a dial loop.
+And **only idempotent work is repeated**: `tools/list` is re-issued on the
+fresh session, while a failed tool CALL is reported to the model rather than
+retried — a dead connection cannot say whether the server ran that tool before
+the line dropped, and running a write twice is worse than reporting it once.
+
+Recovery is opt-in because only the owner of the configuration can rebuild a
+transport: an `*exec.Cmd` is spent once, an endpoint needs its headers, proxy
+and OAuth handler. Without `Redial` the old behavior stands — the failure is
+reported, not repaired.
+
 ---
 
 ## 6. Open questions

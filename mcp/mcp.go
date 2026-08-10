@@ -14,6 +14,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -90,16 +91,36 @@ type Options struct {
 	// handle OAuth 2.1 authorization flows (authorization code + PKCE, token
 	// refresh, dynamic client registration). Ignored for stdio transports.
 	OAuthHandler auth.OAuthHandler
+
+	// Redial builds a fresh transport for a connection that has died, and is
+	// what makes a Server self-healing: without it a dead connection stays
+	// dead and every later call fails, which is a permanent outage for every
+	// agent configured with that server.
+	//
+	// It must return a transport that can be connected NOW — a new
+	// CommandTransport with an unstarted command, a streamable transport with
+	// the same endpoint, headers and OAuth handler. The context it receives is
+	// the connection's own, so anything bound to it (a subprocess) lives
+	// exactly as long as the connection does.
+	//
+	// Nil keeps the old behavior: a dead connection is reported, not repaired.
+	Redial func(ctx context.Context) (mcpsdk.Transport, error)
 }
 
 // Server is a connected MCP server whose tools are exposed to an agent. It
 // implements agents.MCPServer.
 type Server struct {
-	name    string
-	session *mcpsdk.ClientSession
-	opts    Options
-	allowed map[string]bool
-	blocked map[string]bool
+	name string
+	// session is swapped, not fixed: a connection that dies is replaced in
+	// place (see redial), so every holder of this *Server recovers rather than
+	// only the runs that start afterwards.
+	session atomic.Pointer[mcpsdk.ClientSession]
+	dialMu  sync.Mutex
+	// lastDial throttles healing; see redialCooldown.
+	lastDial time.Time
+	opts     Options
+	allowed  map[string]bool
+	blocked  map[string]bool
 
 	// closed flips when Close runs so later ListTools/CallTool report a clear
 	// error instead of failing obscurely on the dead session — a long-lived
@@ -174,12 +195,24 @@ func callSession[T any](ctx context.Context, s *Server, fn func(context.Context)
 	}
 }
 
-func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
+// redialCooldown throttles healing. A server that accepts a connection and
+// drops it again would otherwise turn the watcher below into a dial loop: one
+// death heals at once, a second inside this window waits for a caller to ask
+// again.
+const redialCooldown = 3 * time.Second
+
+// redialConnectTimeout bounds one healing attempt's handshake. It exists
+// because redial runs under dialMu: an endpoint that black-holes instead of
+// refusing would otherwise hold the lock for as long as TCP keeps trying, and
+// every caller waiting to report a connection error with it.
+const redialConnectTimeout = 30 * time.Second
+
+func (s *Server) newClient() *mcpsdk.Client {
 	name := s.opts.ClientName
 	name = cmp.Or(name, "agents-go")
 	version := s.opts.ClientVersion
 	version = cmp.Or(version, "0.1.0")
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, &mcpsdk.ClientOptions{
+	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, &mcpsdk.ClientOptions{
 		// Drop the cached tool list when the server announces a change
 		// (notifications/tools/list_changed), so CacheToolsList can never serve
 		// a permanently stale list. No-op when caching is off.
@@ -187,12 +220,112 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 			s.InvalidateToolsCache()
 		},
 	})
-	session, err := client.Connect(ctx, transport, nil)
+}
+
+func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
+	session, err := s.newClient().Connect(ctx, transport, nil)
 	if err != nil {
 		return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: connecting to %q: %w", s.name, err))
 	}
-	s.session = session
+	s.session.Store(session)
+	s.watch(session)
 	return nil
+}
+
+// watch heals the connection the moment it dies, instead of leaving the next
+// caller to trip over it.
+//
+// Without it, every death costs somebody a failed turn — and the callers who
+// pay are whoever happens to be mid-run, which in practice is every background
+// task at once. The watcher is one goroutine per live connection, ending with
+// the connection it watches.
+func (s *Server) watch(session *mcpsdk.ClientSession) {
+	if s.opts.Redial == nil {
+		return
+	}
+	go func() {
+		_ = session.Wait() // returns when the connection is done, however it ended
+		if s.closed.Load() {
+			return
+		}
+		s.redial(session)
+	}()
+}
+
+// redial replaces a dead session with a fresh one, and reports whether this
+// call is the one that did it.
+//
+// A connection dies for reasons that have nothing to do with the caller who
+// finds out: the server restarted, a proxy dropped an idle socket, a request
+// somebody else made failed mid-body. Nothing in the go-sdk reconnects, so
+// without this the FIRST such failure is permanent — every agent configured
+// with the server answers "client is closing" until a person notices and
+// reconnects it by hand. That is what this repairs.
+//
+// failed is the session the caller was using. Serialized and compared against
+// what is current, so a dozen callers discovering the same dead connection
+// dial once between them and the rest simply retry.
+func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
+	if s.opts.Redial == nil || s.closed.Load() {
+		return false
+	}
+	s.dialMu.Lock()
+	defer s.dialMu.Unlock()
+	if s.session.Load() != failed {
+		return true // somebody else already healed it; the caller should retry
+	}
+	if !s.lastDial.IsZero() && time.Since(s.lastDial) < redialCooldown {
+		return false
+	}
+	s.lastDial = time.Now()
+	// Derived from the connection's own context — a session re-established on
+	// a caller's context would be that caller's to kill — and BOUNDED, because
+	// this runs under dialMu: an unreachable endpoint holding TCP retries for
+	// minutes would hold the lock too, and with it every failed caller waiting
+	// in healed() to report an error. Cancelling after connect is safe: a
+	// session's lifetime is independent of the context it was connected under
+	// (the auto-connect path has always cancelled its handshake context right
+	// after Connect returns).
+	dctx, cancel := context.WithTimeout(s.rpcCtx, redialConnectTimeout)
+	defer cancel()
+	transport, err := s.opts.Redial(dctx)
+	if err != nil {
+		return false
+	}
+	session, err := s.newClient().Connect(dctx, transport, nil)
+	if err != nil {
+		return false
+	}
+	if failed != nil {
+		_ = failed.Close()
+	}
+	s.session.Store(session)
+	// Re-checked AFTER the store, because Close does the mirror image — closed
+	// first, then close whatever the session slot holds — and the two only
+	// compose into "no session survives a Close" in this order: a Close that
+	// missed the swap is caught here, and a Close that saw it closes the new
+	// session itself. Without this, a Close landing between the connect above
+	// and the store would close the OLD session and leave the new one live
+	// forever — a disabled server still holding its connection.
+	if s.closed.Load() {
+		_ = session.Close()
+		return false
+	}
+	s.watch(session)
+	// A new session is a new server as far as tools go — it may have restarted
+	// with a different set.
+	s.InvalidateToolsCache()
+	return true
+}
+
+// healed reports whether err says the connection is gone and a fresh one was
+// put in its place. A server closed on purpose is not healed: it was meant to
+// end.
+func (s *Server) healed(err error, failed *mcpsdk.ClientSession) bool {
+	if err == nil || s.closed.Load() || !errors.Is(err, mcpsdk.ErrConnectionClosed) {
+		return false
+	}
+	return s.redial(failed)
 }
 
 // NewWithTransport connects to an MCP server over an arbitrary transport. Use
@@ -238,6 +371,10 @@ func (s *Server) Close() error {
 	// Nil-checked because the zero Server is reachable: this type is exported,
 	// and a caller (a test, a discarded handshake) can hold one that never went
 	// through a constructor.
+	// Marked closed FIRST: everything below ends the connection, and the
+	// watcher must read this before it wakes or it would heal a server that
+	// was deliberately shut down.
+	s.closed.Store(true)
 	if s.rpcStop != nil {
 		// Before the session close, not after: closing waits for the requests
 		// still in flight, and one of those may be riding a server that stopped
@@ -245,11 +382,11 @@ func (s *Server) Close() error {
 		// Ending the connection's context is what lets them unwind.
 		s.rpcStop()
 	}
-	if s.session == nil {
+	session := s.session.Load()
+	if session == nil {
 		return nil
 	}
-	s.closed.Store(true)
-	return s.session.Close()
+	return session.Close()
 }
 
 func (s *Server) allow(toolName string) bool {
@@ -327,7 +464,8 @@ const maxToolListPages = 1000
 // toolList returns the adapted tools, fetching them from the server (and caching
 // when CacheToolsList is set) or reusing the cache.
 func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
-	if s.session == nil {
+	session := s.session.Load()
+	if session == nil {
 		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	if s.closed.Load() {
@@ -355,7 +493,7 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	// — no error, no log, just "no such tool" when the model calls one — and,
 	// with CacheToolsList, the truncated list cached as if it were complete.
 	var tools []*mcpsdk.Tool
-	err := s.runWithRetries(ctx, func() error {
+	fetch := func() error {
 		tools = tools[:0]
 		var params *mcpsdk.ListToolsParams
 		// A faulty (or hostile) server that repeats a cursor, or never runs
@@ -367,7 +505,7 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 				return fmt.Errorf("tools/list exceeded %d pages without finishing", maxToolListPages)
 			}
 			res, e := callSession(ctx, s, func(rpc context.Context) (*mcpsdk.ListToolsResult, error) {
-				return s.session.ListTools(rpc, params)
+				return s.session.Load().ListTools(rpc, params)
 			})
 			if e != nil {
 				return e
@@ -382,7 +520,16 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 			seen[res.NextCursor] = true
 			params = &mcpsdk.ListToolsParams{Cursor: res.NextCursor}
 		}
-	})
+	}
+	err := s.runWithRetries(ctx, fetch)
+	if err != nil && s.healed(err, session) {
+		// The connection this run found was somebody else's casualty, and the
+		// list is idempotent — so ask again on the fresh one rather than
+		// failing a turn over a connection that has already been replaced.
+		// Only listing gets this: repeating a tool CALL could repeat whatever
+		// it did (see the call site).
+		err = s.runWithRetries(ctx, fetch)
+	}
 	if err != nil {
 		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err))
 	}
@@ -506,16 +653,23 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 			defer span.Finish()
 
 			var result *mcpsdk.CallToolResult
+			session := s.session.Load()
 			if err := s.runWithRetries(ctx, func() error {
 				var e error
 				if s.closed.Load() {
 					return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is closed", s.name))
 				}
 				result, e = callSession(ctx, s, func(rpc context.Context) (*mcpsdk.CallToolResult, error) {
-					return s.session.CallTool(rpc, params)
+					return s.session.Load().CallTool(rpc, params)
 				})
 				return e
 			}); err != nil {
+				// Repair the connection, but do NOT repeat the call on it. A
+				// dead connection cannot say whether the server ran this tool
+				// before the line dropped, and repeating a write twice is worse
+				// than reporting it once. The model is told, it can ask again,
+				// and the connection it asks on is now a live one.
+				s.healed(err, session)
 				span.SetError(err.Error(), nil)
 				// A transport/protocol failure is fed back to the model via the
 				// FailureErrorFunction (SDK-wide default) so it can recover.
@@ -719,6 +873,6 @@ func jsonTextPart(c mcpsdk.Content) agents.ToolOutputText {
 // Session exposes the underlying MCP client session, for protocol surface this
 // package does not adapt — prompts, resources, and whatever the SDK grows
 // next. It is nil until the server is connected.
-func (s *Server) Session() *mcpsdk.ClientSession { return s.session }
+func (s *Server) Session() *mcpsdk.ClientSession { return s.session.Load() }
 
 var _ agents.MCPServer = (*Server)(nil)

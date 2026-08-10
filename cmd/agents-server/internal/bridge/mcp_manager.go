@@ -132,6 +132,10 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 	var transport *mcpsdk.StreamableClientTransport
 	var retry store.McpRetryConfig
 	var useStructured bool
+	// redial is what makes the connection self-healing: the recipe for
+	// rebuilding this server's transport, which the SDK runs when it finds the
+	// connection dead. The manager owns it because the config lives here.
+	var redial func(context.Context) (mcpsdk.Transport, error)
 	switch cfg.TransportType {
 	case "stdio":
 		var sc store.StdioMcpConfig
@@ -143,18 +147,29 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 		// the manager's root context, NOT the caller's (a request context
 		// would kill the server as soon as the request ends).
 		cmd = exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)
+		redial = func(context.Context) (mcpsdk.Transport, error) {
+			return &mcpsdk.CommandTransport{Command: exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)}, nil
+		}
 	case "streamable_http":
 		var hc store.HTTPMcpConfig
 		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
 			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 		}
 		retry, useStructured = hc.McpRetryConfig, hc.UseStructuredContent
-		transport = &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint}
-		transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
+		transport = m.httpTransport(ctx, &hc, nil)
+		redial = func(context.Context) (mcpsdk.Transport, error) {
+			// The manager's own context, and the settings as they read NOW: a
+			// re-dial minutes later must not reuse a request context that is
+			// long gone, and picking up a proxy changed since is a bonus, not
+			// a risk — the endpoint and headers are the config this connection
+			// was made from.
+			return m.httpTransport(m.rootCtx, &hc, nil), nil
+		}
 	default:
 		return fmt.Errorf("unknown transport type: %s", cfg.TransportType)
 	}
 	opts := buildMcpOptions(cfg.Name, retry, useStructured)
+	opts.Redial = redial
 
 	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
@@ -248,6 +263,15 @@ func (m *McpManager) proxyClient(ctx context.Context) *http.Client {
 	return ProxyHTTPClient(ctx, m.settings)
 }
 
+// httpTransport builds the streamable transport for an HTTP server config. The
+// first connect and every re-dial go through it, so a healed connection cannot
+// drift from the original's endpoint, headers, proxy or OAuth handler.
+func (m *McpManager) httpTransport(ctx context.Context, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) *mcpsdk.StreamableClientTransport {
+	t := &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint, OAuthHandler: oauthHandler}
+	t.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
+	return t
+}
+
 // httpClientFor builds the HTTP client an HTTP-based MCP transport should use,
 // combining the optional proxy client with optional static request headers.
 // Returns nil (so the SDK uses its default client) when neither is configured.
@@ -290,13 +314,17 @@ func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpSer
 		return err
 	}
 
-	transport := &mcpsdk.StreamableClientTransport{
-		Endpoint:     hc.Endpoint,
-		OAuthHandler: oauthHandler,
+	transport := m.httpTransport(ctx, hc, oauthHandler)
+	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
+	// The same handler on the re-dial: a healed connection re-authorizes
+	// through the machinery that authorized the first one — and that handler
+	// holds the persisting token source, so a refresh still reaches the store.
+	hcCopy := *hc
+	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
+		return m.httpTransport(m.rootCtx, &hcCopy, oauthHandler), nil
 	}
-	transport.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 
-	srv, cerr := mcp.NewWithTransport(hctx, cfg.Name, transport, buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent))
+	srv, cerr := mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
 	if cerr != nil {
 		cerr = fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, cerr)
 	}
