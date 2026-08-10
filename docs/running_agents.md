@@ -212,7 +212,7 @@ mw := agents.RunMiddlewareFunc(func(ctx context.Context, next agents.RunFunc, in
 })
 
 agents.RunSync(ctx, agent, "hi", agents.RunOptions{
-	Middlewares: []agents.RunMiddleware{middleware.Logging{}, mw},
+	Middlewares: []agents.RunMiddleware{middleware.Retry{MaxAttempts: 2}, mw},
 })
 ```
 
@@ -229,7 +229,6 @@ refuse before the model is ever called.
 | `middleware.Loop` | Re-runs the agent until an `Evaluator` accepts the answer, feeding each rejected attempt back with the reason |
 | `middleware.Approval` | Answers approval interruptions from a standing `ApprovalPolicy` and resumes, so the caller only sees the pauses the policy declined |
 | `middleware.Retry` | Re-runs a **failed** run |
-| `middleware.Logging` | Logs a run's shape: start, items, how it ended |
 | `middleware.Plan` | Plan mode: read-only exploration, a plan submitted through `submit_plan` pauses for approval, and approval unlocks the toolset in the same run |
 | `middleware.Todo` | Has the agent keep a working todo list through `todo_write`; the host observes it via `OnUpdate` |
 

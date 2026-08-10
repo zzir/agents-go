@@ -25,7 +25,7 @@ See [Agents](agents.md), [Running agents](running_agents.md), [Tools](tools.md),
 | Error recovery | `RunOptions.Exec.ErrorHandlers` (fallback final output on max-turns / refusal / invalid structured output) |
 | Tool result contract | `ToolResult{Content, Details, Display, Usage, Terminate, IsError}` — UI data and per-call usage alongside the model-facing value |
 | Instruction composition | `agents.WrapInstructions(inner, prefix, suffix)` |
-| Run middleware | `middleware.Loop` · `middleware.Approval` · `middleware.Retry` · `middleware.Logging` · `middleware.Plan` · `middleware.Todo` |
+| Run middleware | `middleware.Loop` · `middleware.Approval` · `middleware.Retry` · `middleware.Plan` · `middleware.Todo` |
 
 ## Sessions & state
 

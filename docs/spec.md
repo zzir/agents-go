@@ -1717,8 +1717,8 @@ That norm is a three-clause contract, and an author owes all three (stated on
 
 The shipped middleware that re-enter or terminate a run keep the contract
 through the package's internal `collect`/`finish` helpers (a pure pass-through
-like `Logging` keeps it by construction); a third-party author implements the
-same three clauses directly.
+that only observes keeps it by construction); a third-party author implements
+the same three clauses directly.
 
 **Order is behavior.** A middleware that resolves something about *one attempt*
 (answering an approval pause) must sit inside one that decides whether to make
