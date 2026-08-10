@@ -40,7 +40,8 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]Entry, error) {
 // renders in the folded content's place.
 //
 // Folding here, not only at projection, is what makes a cursor limit count
-// entries the model will actually see.
+// entries the model will actually see. cur.Limit bounds the projection, not the
+// storage read: the whole active branch is loaded so folding stays correct.
 func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {

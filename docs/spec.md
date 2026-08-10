@@ -2639,6 +2639,11 @@ attempt). A provider used without it performs no retries. The transport layer
 is re-enabled, not forbidden — the caller's own `option.WithMaxRetries` is
 appended after the default and overrides it.
 
+A server-suggested `Retry-After` longer than the configured `MaxDelay` **ends**
+the retries — returning that attempt's wrapped error — rather than clamping to
+the cap and trying again: a wait the caller capped below what the server asked
+for is a signal to stop, not to retry sooner.
+
 ---
 
 ## 6. Open questions
