@@ -71,8 +71,8 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   the loop; abandoning it stops the run. No producer goroutine, no context that
   must be cancelled on early exit.
 - **Middleware** — `agents/middleware.go` defines `RunMiddleware`;
-  `agents/middleware/` ships `Loop`, `Approval`, `Retry`, `Logging`, `Plan`,
-  `Todo`. Wrapping a whole run belongs here, not in the loop.
+  `agents/middleware/` ships `Loop`, `Approval`, `Retry`, `Plan`, `Todo`.
+  Wrapping a whole run belongs here, not in the loop.
 - **Models** — `agents/model.go`; backends are `models/openai` (Responses
   API, the native format) and `models/anthropic` (Messages API, translated in
   the adapter — spec §5.10). `models/modelkit` holds the shared adapter
@@ -157,3 +157,49 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   quick-start. New public capabilities get a runnable example under
   `examples/`. `cmd/verifydocs` checks that doc snippets still name things that
   exist; it runs in CI, so a rename that leaves the prose behind fails there.
+
+## Principles
+
+- **Simplicity is the default; earn every abstraction.** An interface, wrapper,
+  option, or exported symbol needs a *present* caller or a documented external
+  contract — no "just in case." A zero-consumer feature is removed, not kept
+  (the retired `Logging` middleware is the standing precedent).
+- **Reach for the plainer construct first.** A concrete type over an interface, a
+  field over a getter, a function over a one-use struct, sequential code over a
+  goroutine. Add the seam when the *second* implementation arrives — an interface
+  earns its keep only when something else implements it (`Model`, `Storage`,
+  `Compactor` all clear this bar; a one-impl interface usually does not).
+- **The recorded decisions are deliberate.** Before "simplifying" anything in
+  [spec.md §1.2/§3/§5](docs/spec.md), assume it was decided on purpose and read
+  the reason. Independent evolution is fine; silent reversal of a recorded
+  decision is not.
+
+## Comments
+
+Comment bloat is a recurring regression here — the altitude rule is strict.
+
+- **A comment says WHAT the code does and the one gotcha a reader can't infer.**
+  One or two lines. That is the ceiling for internal functions and struct fields.
+- **Rationale lives in the spec, not the code.** "Why it's built this way,"
+  trade-offs, and invariant proofs go in [spec.md](docs/spec.md). When a subtle
+  invariant needs a signpost, write a single line — `// … — see spec §2.7f` —
+  never a restatement of the spec paragraph. The spec is the one authority; a
+  copy in a comment is a second one that drifts.
+- **No historical narrative.** "used to…", "the old API…", "this was a bug
+  because…" is git/PR history — delete it. The reader sees only the code that
+  exists now.
+- **No essays in doc comments.** No markdown headers, no multi-section treatises
+  on a type or func. Public godoc may run longer *only* for a runnable example or
+  a load-bearing caveat the caller needs.
+- **Rough target: ~10–15% comment lines.** A file past ~25% is a smell to review,
+  not a hard limit.
+
+## Commits
+
+- **`type(scope): summary`** — `fix` / `refactor` / `feat` / `docs` / `test` /
+  `chore`. A breaking API change adds `!`: `refactor(session)!:`.
+- **Behavior change ⇒ same-commit spec update.** The invariant in `docs/spec.md`
+  and the relevant `docs/` page land in the *same* commit as the code, never a
+  follow-up. (Restated from Conventions because it is the rule most often missed.)
+- **Branch off `main`; keep CI green.** `./scripts/ci.sh` (race detector on) must
+  pass before each commit. Don't push or merge without being asked.
