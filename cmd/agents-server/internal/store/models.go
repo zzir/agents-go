@@ -445,27 +445,32 @@ func (p *PendingApproval) parsedToolCalls() []PendingToolCall {
 }
 
 // BeforeAppendModel stamps id/timestamps for each CrudStore-backed entity via
-// stampOnAppend; bun invokes it on insert and update.
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *Guardrail) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *AgentConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *Memory) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *ProviderRoute) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
