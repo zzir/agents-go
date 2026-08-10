@@ -322,7 +322,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		return nil, ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
 	}
 
-	spec, err := m.cfg.Resolver.Resolve(ctx, req.ParentSessionID, req.AgentName)
+	spec, err := m.cfg.Resolver(ctx, req.ParentSessionID, req.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: resolving agent %q: %w", req.AgentName, err)
 	}
@@ -371,7 +371,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	}
 
 	defer m.beginLaunch(task.RunID)()
-	if err := m.cfg.Launcher.Launch(ctx, LaunchRequest{
+	if err := m.cfg.Launcher(ctx, LaunchRequest{
 		RunID:     task.RunID,
 		SessionID: childID,
 		Input:     req.Input,
@@ -472,7 +472,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	}
 
 	defer m.beginLaunch(runID)()
-	if err := m.cfg.Launcher.Launch(ctx, LaunchRequest{
+	if err := m.cfg.Launcher(ctx, LaunchRequest{
 		RunID:     runID,
 		SessionID: t.ChildSessionID,
 		Input:     prompt,
@@ -708,7 +708,7 @@ func (m *Manager) settleLaunch(ctx context.Context, taskID, runID string) (*Task
 			slog.String("task_id", taskID), slog.String("run_id", runID), slog.String("status", string(t.Status)))
 		return t, nil
 	}
-	if _, serr := m.cfg.Stopper.Stop(ctx, runID, false); serr != nil {
+	if _, serr := m.cfg.Stopper(ctx, runID, false); serr != nil {
 		m.log.WarnContext(ctx, "stopping a run its task no longer owns",
 			slog.String("task_id", taskID), slog.String("run_id", runID), slog.String("error", serr.Error()))
 	}
@@ -884,7 +884,7 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool)
 		if m.cfg.Stopper == nil {
 			return StopUnknownRun
 		}
-		out, serr := m.cfg.Stopper.Stop(ctx, t.RunID, graceful)
+		out, serr := m.cfg.Stopper(ctx, t.RunID, graceful)
 		if serr != nil {
 			m.log.WarnContext(ctx, "stopping task run",
 				slog.String("task_id", t.ID), slog.String("error", serr.Error()))
@@ -1118,7 +1118,7 @@ func (m *Manager) DrainPending(ctx context.Context, parentSessionID string) {
 	if parentSessionID == "" {
 		return
 	}
-	if m.cfg.Guard == nil || !m.cfg.Guard.CanWake(ctx, parentSessionID) {
+	if m.cfg.Guard == nil || !m.cfg.Guard(ctx, parentSessionID) {
 		return
 	}
 	pending, err := m.cfg.Store.ListPendingNotify(ctx, parentSessionID)
@@ -1142,7 +1142,7 @@ func (m *Manager) DrainPending(ctx context.Context, parentSessionID string) {
 		}
 	}
 
-	if err := m.cfg.Launcher.Launch(ctx, LaunchRequest{
+	if err := m.cfg.Launcher(ctx, LaunchRequest{
 		RunID:     m.cfg.NewID(),
 		SessionID: parentSessionID,
 		Input:     m.cfg.NotifyFormatter(pending),

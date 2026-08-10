@@ -64,7 +64,7 @@ func main() {
 		Sessions: repo,
 
 		// "What is this agent called?"
-		Resolver: tasks.AgentResolverFunc(func(_ context.Context, _, name string) (tasks.Spec, error) {
+		Resolver: tasks.AgentResolver(func(_ context.Context, _, name string) (tasks.Spec, error) {
 			name = cmp.Or(name, "researcher")
 			if _, ok := catalog[name]; !ok {
 				return tasks.Spec{}, fmt.Errorf("no agent named %q", name)
@@ -75,7 +75,7 @@ func main() {
 
 		// "Start a run." It returns immediately; the run happens on its own
 		// goroutine and reports back through OnRunFinished.
-		Launcher: tasks.LauncherFunc(func(_ context.Context, req tasks.LaunchRequest) error {
+		Launcher: tasks.Launcher(func(_ context.Context, req tasks.LaunchRequest) error {
 			mu.Lock()
 			if running[req.SessionID] {
 				mu.Unlock()
@@ -132,7 +132,7 @@ func main() {
 
 		// "May this parent be woken right now?" A real host adds "not being
 		// deleted" and "not paused on an approval".
-		Guard: tasks.WakeGuardFunc(func(_ context.Context, sessionID string) bool {
+		Guard: tasks.WakeGuard(func(_ context.Context, sessionID string) bool {
 			mu.Lock()
 			defer mu.Unlock()
 			return !running[sessionID]

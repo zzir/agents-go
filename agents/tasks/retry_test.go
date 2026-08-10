@@ -531,14 +531,14 @@ func TestStop_ChasesOneRetry(t *testing.T) {
 	finished := map[string]bool{}
 	h := newHarness(t, func(c *Config) {
 		inner := c.Stopper
-		c.Stopper = StopperFunc(func(ctx context.Context, runID string, graceful bool) (StopOutcome, error) {
+		c.Stopper = Stopper(func(ctx context.Context, runID string, graceful bool) (StopOutcome, error) {
 			if stopper != nil {
 				stopper(runID)
 			}
 			if finished[runID] {
 				return StopAlreadyFinished, nil
 			}
-			return inner.Stop(ctx, runID, graceful)
+			return inner(ctx, runID, graceful)
 		})
 	})
 	info := h.spawn(t)
@@ -655,7 +655,7 @@ func TestSpawn_TeardownInsideTheLaunchWindow(t *testing.T) {
 // unknownRunStopper is a host that answers honestly about a run it has never
 // heard of — which is what every host is during the window between a task
 // claiming its run and the launch registering it.
-func unknownRunStopper(h *harness, known map[string]bool) StopperFunc {
+func unknownRunStopper(h *harness, known map[string]bool) Stopper {
 	return func(_ context.Context, runID string, _ bool) (StopOutcome, error) {
 		h.mu.Lock()
 		h.stopped = append(h.stopped, runID)
@@ -868,7 +868,7 @@ func TestStop_AfterTheRunAlreadyFinishedKeepsTheOutcome(t *testing.T) {
 	// The host: this run is over, its report is on its way — and here it
 	// comes, from the run's own goroutine, while the stop is waiting.
 	landed := make(chan struct{})
-	h.m.cfg.Stopper = StopperFunc(func(_ context.Context, rid string, _ bool) (StopOutcome, error) {
+	h.m.cfg.Stopper = Stopper(func(_ context.Context, rid string, _ bool) (StopOutcome, error) {
 		h.mu.Lock()
 		first := len(h.stopped) == 0
 		h.stopped = append(h.stopped, rid)
@@ -912,7 +912,7 @@ func TestStop_AnOutcomeThatNeverLandsDoesNotWedgeTheTask(t *testing.T) {
 	h := newHarness(t)
 	info := h.spawn(t)
 
-	h.m.cfg.Stopper = StopperFunc(func(_ context.Context, rid string, _ bool) (StopOutcome, error) {
+	h.m.cfg.Stopper = Stopper(func(_ context.Context, rid string, _ bool) (StopOutcome, error) {
 		h.mu.Lock()
 		h.stopped = append(h.stopped, rid)
 		h.mu.Unlock()

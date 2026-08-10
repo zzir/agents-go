@@ -128,17 +128,17 @@ func newHarness(t *testing.T, tune ...func(*Config)) *harness {
 	cfg := Config{
 		Store:    h.store,
 		Sessions: h.repo,
-		Launcher: h.launcher,
-		Resolver: AgentResolverFunc(func(_ context.Context, _, name string) (Spec, error) {
+		Launcher: h.launcher.Launch,
+		Resolver: AgentResolver(func(_ context.Context, _, name string) (Spec, error) {
 			if name == "" {
 				name = "default"
 			}
 			return Spec{DisplayName: name, Inherit: json.RawMessage(`{"agent":"` + name + `"}`)}, nil
 		}),
-		Guard: WakeGuardFunc(func(context.Context, string) bool { return h.canWake }),
+		Guard: WakeGuard(func(context.Context, string) bool { return h.canWake }),
 		// A host that knows every run it was asked about: the tests that care
 		// about the launch window override this.
-		Stopper: StopperFunc(func(_ context.Context, runID string, graceful bool) (StopOutcome, error) {
+		Stopper: Stopper(func(_ context.Context, runID string, graceful bool) (StopOutcome, error) {
 			h.mu.Lock()
 			h.stopped = append(h.stopped, runID)
 			h.mu.Unlock()

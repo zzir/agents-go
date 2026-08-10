@@ -249,21 +249,21 @@ func TestNotify_GuardRefusalKeepsTheDebt(t *testing.T) {
 
 func TestNotify_AllGuardsRequiresEveryOne(t *testing.T) {
 	ctx := context.Background()
-	yes := WakeGuardFunc(func(context.Context, string) bool { return true })
-	no := WakeGuardFunc(func(context.Context, string) bool { return false })
+	yes := WakeGuard(func(context.Context, string) bool { return true })
+	no := WakeGuard(func(context.Context, string) bool { return false })
 
-	if !AllGuards(yes, yes).CanWake(ctx, "s") {
+	if !AllGuards(yes, yes)(ctx, "s") {
 		t.Error("all-yes refused")
 	}
-	if AllGuards(yes, no).CanWake(ctx, "s") {
+	if AllGuards(yes, no)(ctx, "s") {
 		t.Error("one refusal was not enough to refuse")
 	}
 	// A guard that was supposed to be there and is not cannot read as
 	// permission.
-	if AllGuards(yes, nil).CanWake(ctx, "s") {
+	if AllGuards(yes, nil)(ctx, "s") {
 		t.Error("a nil guard counted as permission")
 	}
-	if AllGuards().CanWake(ctx, "s") != true {
+	if AllGuards()(ctx, "s") != true {
 		t.Error("an empty set should pass; the refusals are the guards")
 	}
 }
@@ -461,7 +461,7 @@ func TestSpawn_RollbackSurvivesAParentCancellation(t *testing.T) {
 	h.launcher.err = errors.New("no capacity")
 
 	// The parent is cancelled at the moment the launch fails.
-	h.m.cfg.Launcher = LauncherFunc(func(context.Context, LaunchRequest) error {
+	h.m.cfg.Launcher = Launcher(func(context.Context, LaunchRequest) error {
 		cancel()
 		return errors.New("no capacity")
 	})
@@ -719,7 +719,7 @@ func TestStop_PausedTaskIsClaimedBeforeTheHostIsTold(t *testing.T) {
 	info := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusInputRequired})
 
-	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) (StopOutcome, error) {
+	h.m.cfg.Stopper = Stopper(func(context.Context, string, bool) (StopOutcome, error) {
 		// By the time the host is told, the row must already be cancelled —
 		// otherwise a racing approve could still reclaim it.
 		task, err := h.store.Get(ctx, info.TaskID)
@@ -756,7 +756,7 @@ func TestStop_WorkingTaskCancelsTheRunFirstThenAgain(t *testing.T) {
 	var saw []string
 	h := newHarness(t)
 	info := h.spawn(t)
-	h.m.cfg.Stopper = StopperFunc(func(context.Context, string, bool) (StopOutcome, error) {
+	h.m.cfg.Stopper = Stopper(func(context.Context, string, bool) (StopOutcome, error) {
 		task, err := h.store.Get(ctx, info.TaskID)
 		if err != nil {
 			return StopUnknownRun, err
@@ -852,7 +852,7 @@ func TestGracefulStopFinalizesWhenNothingTookTheStop(t *testing.T) {
 	}{
 		{"no stopper", func(c *Config) { c.Stopper = nil }},
 		{"stopper fails", func(c *Config) {
-			c.Stopper = StopperFunc(func(context.Context, string, bool) (StopOutcome, error) {
+			c.Stopper = Stopper(func(context.Context, string, bool) (StopOutcome, error) {
 				return StopUnknownRun, errors.New("run already gone")
 			})
 		}},

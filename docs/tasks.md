@@ -27,17 +27,17 @@ import "github.com/zzir/agents-go/agents/tasks"
 mgr := tasks.New(tasks.Config{
 	Store:    tasks.NewInMemoryStore(),   // or sessions.NewTaskStore(db)
 	Sessions: repo,                       // an session.Repo
-	Resolver: tasks.AgentResolverFunc(func(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
+	Resolver: func(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
 		cfg := lookUpAgent(name)
 		return tasks.Spec{DisplayName: cfg.Name, Inherit: cfg.Snapshot()}, nil
-	}),
-	Launcher: tasks.LauncherFunc(func(ctx context.Context, req tasks.LaunchRequest) error {
+	},
+	Launcher: func(ctx context.Context, req tasks.LaunchRequest) error {
 		return myHub.Start(req.RunID, req.SessionID, req.Input, req.Inherit)
-	}),
+	},
 	Guard: tasks.AllGuards(notDeleting, noActiveRun, noPendingApproval),
-	Stopper: tasks.StopperFunc(func(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
+	Stopper: func(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
 		return myHub.Cancel(runID, graceful)
-	}),
+	},
 })
 
 agent.Tools = append(agent.Tools, mgr.Tools(nil)...)

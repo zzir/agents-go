@@ -141,10 +141,10 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref session.Ref) session.Storage {
 				return store.NewEntryStoreFor(db, ref)
 			}),
-			Resolver:               taskResolver{r},
-			Launcher:               taskLauncher{r},
-			Stopper:                taskStopper{r},
-			Guard:                  taskWakeGuard{r},
+			Resolver:               taskResolver{r}.Resolve,
+			Launcher:               taskLauncher{r}.Launch,
+			Stopper:                taskStopper{r}.Stop,
+			Guard:                  taskWakeGuard{r}.CanWake,
 			MaxConcurrentPerParent: r.hub.maxTasks,
 			OnTaskUpdate:           r.onTaskUpdate,
 			NewID:                  store.NewID,

@@ -2114,6 +2114,13 @@ func type is the same capability assigned directly; `StaticInstructions` /
 resolution points — resolution (nil handling, prompt-ID validation) is the
 runner's job, not API surface.
 
+The same rule collapsed `tasks.AgentResolver`, `tasks.Launcher`,
+`tasks.Stopper` and `tasks.WakeGuard`: each was a single-method interface with
+a `...Func` adapter nobody used in production — hosts assigned method values
+anyway, and a method value satisfies a func type just as directly. A
+single-method injection point is a func type unless a second method is already
+in sight; `tasks.Store` (multi-method) keeps being an interface.
+
 ### 5.4 A tool is a struct, not an interface
 
 `*Tool` is the tool type. There is no `Tool` interface, which is how the

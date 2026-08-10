@@ -79,6 +79,22 @@ func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([
 	return tasks, nil
 }
 
+// ListNonTerminalByParent returns the given chat session's still-live tasks.
+// liveParent like every other by-session read (spec §2.13): without it a dead
+// incarnation's rows still counted against the live session's concurrency cap
+// — an ErrTaskLimit nothing could clear, since the list the user sees is
+// guarded — and StopTree cancelled a previous incarnation's tasks.
+func (s *TaskStore) ListNonTerminalByParent(ctx context.Context, parentSessionID string) ([]Task, error) {
+	var tasks []Task
+	if err := s.db.NewSelect().Model(&tasks).
+		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
+		Where("status NOT IN " + taskTerminalSet).
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("listing live tasks for %s: %w", parentSessionID, err)
+	}
+	return tasks, nil
+}
+
 // Task status values, mirrored from protocol (store cannot import bridge's
 // protocol package without a cycle; the vocabulary is fixed by MCP Tasks).
 const (
