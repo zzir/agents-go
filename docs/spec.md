@@ -2639,6 +2639,18 @@ transport: an `*exec.Cmd` is spent once, an endpoint needs its headers, proxy
 and OAuth handler. Without `Redial` the old behavior stands — the failure is
 reported, not repaired.
 
+### 5.22 Retry policy lives in one layer
+
+Both official clients retry transient failures on their own (2 attempts by
+default), and `agents.NewRetryModel` wraps the whole model call from above; the
+two layers compose multiplicatively, and neither can see the other. So
+`openai.NewProvider` and `anthropic.NewProvider` build their clients with
+`WithMaxRetries(0)`: the SDK's one retry layer is `NewRetryModel`, which is
+provider-agnostic, classifiable (`RetryIf`), and observable (a span per
+attempt). A provider used without it performs no retries. The transport layer
+is re-enabled, not forbidden — the caller's own `option.WithMaxRetries` is
+appended after the default and overrides it.
+
 ---
 
 ## 6. Open questions

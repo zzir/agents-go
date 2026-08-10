@@ -22,8 +22,15 @@ type Provider struct {
 // NewProvider builds a Provider. Pass openai-go request options such as
 // option.WithAPIKey or option.WithBaseURL to configure the client. With no
 // options, the API key is read from the OPENAI_API_KEY environment variable.
+//
+// The client's own transport-level retries are DISABLED (openai-go defaults to
+// 2): retry policy belongs to one layer, and the SDK's is agents.NewRetryModel.
+// Stacked, the two multiply — every transient error costs MaxAttempts × 3
+// requests. A caller that wants the transport layer to retry instead passes
+// option.WithMaxRetries explicitly; options given here override the default.
 func NewProvider(opts ...option.RequestOption) *Provider {
-	return &Provider{client: oai.NewClient(opts...)}
+	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
+	return &Provider{client: oai.NewClient(all...)}
 }
 
 // WithDefaultModel sets the model used when an agent omits a model name. Without

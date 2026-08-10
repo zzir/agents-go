@@ -35,8 +35,14 @@ type Provider struct {
 // NewProvider builds a Provider. Pass anthropic-sdk-go request options such as
 // option.WithAPIKey or option.WithBaseURL to configure the client. With no
 // options, the API key is read from the ANTHROPIC_API_KEY environment variable.
+//
+// The client's own transport-level retries are DISABLED (anthropic-sdk-go
+// defaults to 2), for the same reason models/openai does it: retry policy
+// belongs to one layer — agents.NewRetryModel — and stacked layers multiply.
+// Pass option.WithMaxRetries explicitly to re-enable the transport layer.
 func NewProvider(opts ...option.RequestOption) *Provider {
-	return &Provider{client: ant.NewClient(opts...), promptCaching: true}
+	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
+	return &Provider{client: ant.NewClient(all...), promptCaching: true}
 }
 
 // WithDefaultModel sets the model used when an agent omits a model name.

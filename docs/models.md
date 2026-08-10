@@ -86,10 +86,10 @@ model := agents.NewRetryModel(primary, policy)
 
 Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation; `openai.RetryableError` adds OpenAI-aware status-code classification. `openai.RetryAfter` understands both `Retry-After-Ms` (milliseconds, checked first — what OpenAI actually sends on short rate limits) and `Retry-After` (seconds or HTTP-date), and a server-suggested delay is always capped at the policy's `MaxDelay`.
 
-> **Two layers of retry.** The `openai-go` client already retries transient failures on its own — by default `MaxRetries: 2` on 408/409/429/5xx and connection errors, honoring `Retry-After`. `NewRetryModel` sits *above* that: it wraps the whole `Respond`/stream call (including response handling) and is the unit that a fallback chain advances over. The two compose multiplicatively, so with the defaults a single transient error can be attempted up to `MaxAttempts × 3` times. To keep retry behavior in one place — more predictable and easier to observe — disable the client layer when building the provider and let `RetryModel` own it:
+> **One layer of retry.** The `openai-go` client can retry transient failures on its own, and stacked with `NewRetryModel` the two compose multiplicatively — a single transient error attempted up to `MaxAttempts × 3` times. Both `openai.NewProvider` and `anthropic.NewProvider` therefore **disable the client layer by default** (`WithMaxRetries(0)`): retry policy lives in `NewRetryModel`, where it is predictable and observable. A provider built without `NewRetryModel` performs no retries at all; to hand retries back to the transport instead, pass the option explicitly:
 >
 > ```go
-> provider := openai.NewProvider(option.WithMaxRetries(0))
+> provider := openai.NewProvider(option.WithMaxRetries(2))
 > ```
 
 **Fallback** — `agents.NewFallbackModel(primary, backups...)` tries each backend in order until one succeeds, joining all errors if none do. Wrap each backend in a retry first so it exhausts its own retries before the chain advances:
