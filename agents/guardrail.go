@@ -285,7 +285,6 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 	if len(sel) == 0 {
 		return nil, nil
 	}
-	// Canceled on early return so still-running guardrails can stop promptly.
 	gctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -299,16 +298,7 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 	for _, g := range sel {
 		go func() {
 			d, err := runOne(gctx, rc, g, p)
-			done <- outcome{result: GuardrailResult{
-				Guardrail:  g,
-				Stage:      p.Stage,
-				Decision:   d,
-				Agent:      p.Agent,
-				Checked:    checkedValue(p),
-				ToolName:   p.ToolName,
-				ToolCallID: p.ToolCallID,
-				Arguments:  p.Arguments,
-			}, err: err}
+			done <- outcome{result: newGuardrailResult(g, p, d), err: err}
 		}()
 	}
 	results := make([]GuardrailResult, 0, len(sel))
@@ -352,6 +342,20 @@ func checkedValue(p GuardrailPayload) any {
 	}
 }
 
+// newGuardrailResult records g's decision d over payload p.
+func newGuardrailResult(g Guardrail, p GuardrailPayload, d GuardrailDecision) GuardrailResult {
+	return GuardrailResult{
+		Guardrail:  g,
+		Stage:      p.Stage,
+		Decision:   d,
+		Agent:      p.Agent,
+		Checked:    checkedValue(p),
+		ToolName:   p.ToolName,
+		ToolCallID: p.ToolCallID,
+		Arguments:  p.Arguments,
+	}
+}
+
 // runStageSequential runs every guardrail covering stage in order, stopping at
 // the first Replace or Trip. Tool stages run sequentially because a Replace
 // short-circuits the rest: once one guardrail has substituted the content,
@@ -362,16 +366,7 @@ func checkedValue(p GuardrailPayload) any {
 func runStageSequential(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) (results []GuardrailResult, replacement string, replaced bool, err error) {
 	for _, g := range selectStage(guardrails, p.Stage) {
 		d, rerr := runOne(ctx, rc, g, p)
-		res := GuardrailResult{
-			Guardrail:  g,
-			Stage:      p.Stage,
-			Decision:   d,
-			Agent:      p.Agent,
-			Checked:    checkedValue(p),
-			ToolName:   p.ToolName,
-			ToolCallID: p.ToolCallID,
-			Arguments:  p.Arguments,
-		}
+		res := newGuardrailResult(g, p, d)
 		if rerr != nil {
 			return results, "", false, rerr
 		}
