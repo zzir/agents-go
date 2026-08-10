@@ -592,10 +592,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		// interrupted response whose items the paused segment already emitted,
 		// so only a fresh model call emits here.
 		if !resumedTurn {
-			for _, it := range processed.NewItems {
-				if !r.emitItem(it) {
-					return nil, errConsumerStopped
-				}
+			if !r.emitItems(processed.NewItems) {
+				return nil, errConsumerStopped
 			}
 		}
 
@@ -617,10 +615,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		if resumedTurn {
 			emitFrom = 0
 		}
-		for _, it := range step.NewStepItems[emitFrom:] {
-			if !r.emitItem(it) {
-				return nil, errConsumerStopped
-			}
+		if !r.emitItems(step.NewStepItems[emitFrom:]) {
+			return nil, errConsumerStopped
 		}
 
 		st.generatedItems = append(st.generatedItems, step.NewStepItems...)
@@ -653,16 +649,12 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 				// committed the take against a write that predated it, and a
 				// failure later in the run could no longer roll it back.
 				injected := injectedInput(st.agent, extra)
-				st.generatedItems = append(st.generatedItems, injected...)
-				r.sessionItems = append(r.sessionItems, injected...)
-				r.injectedUpTo = len(r.sessionItems)
+				r.appendInjected(st, injected)
 				if err := r.persistSessionItems(ctx); err != nil {
 					return nil, r.fail(err)
 				}
-				for _, it := range injected {
-					if !r.emitItem(it) {
-						return nil, errConsumerStopped
-					}
+				if !r.emitItems(injected) {
+					return nil, errConsumerStopped
 				}
 				continue
 			}
@@ -771,19 +763,35 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 				st.generatedItems = nil
 			}
 			if len(sp.Injected) > 0 {
-				st.generatedItems = append(st.generatedItems, sp.Injected...)
-				r.sessionItems = append(r.sessionItems, sp.Injected...)
-				r.injectedUpTo = len(r.sessionItems)
-				for _, it := range sp.Injected {
-					if !r.emitItem(it) {
-						return nil, errConsumerStopped
-					}
+				r.appendInjected(st, sp.Injected)
+				if !r.emitItems(sp.Injected) {
+					return nil, errConsumerStopped
 				}
 			}
 			pending = sp.NextSnapshot
 			continue
 		}
 	}
+}
+
+// emitItems delivers each item to the stream, returning false when the consumer
+// abandoned the run (the caller then returns errConsumerStopped).
+func (r *runner) emitItems(items []*RunItem) bool {
+	for _, it := range items {
+		if !r.emitItem(it) {
+			return false
+		}
+	}
+	return true
+}
+
+// appendInjected records injected input on both the turn's generated items and
+// the session log, and advances the persist-boundary high-water. The caller
+// emits, and when closing an exchange persists, afterward.
+func (r *runner) appendInjected(st *turnState, injected []*RunItem) {
+	st.generatedItems = append(st.generatedItems, injected...)
+	r.sessionItems = append(r.sessionItems, injected...)
+	r.injectedUpTo = len(r.sessionItems)
 }
 
 // modelCallOutcome is how one turn's model call ended. Exactly one of the three
