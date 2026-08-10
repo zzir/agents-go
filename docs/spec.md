@@ -122,9 +122,6 @@ for turn := 1; ; turn++ {
 
 **A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
-server-conversation cursor included — pinned by a full-field round-trip test
-**A `RunState` round-trips whole.** ✅ Everything a resume consumes is in the
-wire format — the pending injected input, the disclosed deferred tools, the
 server-conversation cursor and the off-chain-history flag included — pinned by a
 full-field round-trip test (`RunStateSchemaVersion` 1.5). The in-process resume
 passing the live pointer must never be the only path that works; the serialized
@@ -133,12 +130,14 @@ keeps sending deltas: the resumed turn re-processes a response the restored
 cursor already accounts for and does not advance it — re-deriving the cursor
 there marked pre-pause sibling tool outputs as already served, and a
 server-managed conversation never received them.
-must never be the only path that works; the serialized surface IS the
-contract. The cursor in particular rides along so a resumed run keeps sending
-deltas: the resumed turn re-processes a response the restored cursor already
-accounts for and does not advance it — re-deriving the cursor there marked
-pre-pause sibling tool outputs as already served, and a server-managed
-conversation never received them.
+
+**And it round-trips the run's full past, deliberately.** The serialized state
+carries every raw response and generated item so far, so its size grows with
+the run. That is the cost of a contract, not an oversight: a resumed run's
+`RunResult` must report the same `RawResponses` (and therefore the same
+`UsageByRequest`) as one that never paused, and the max-turns handler's
+snapshot promises "every response so far". Trimming the state to the
+interrupted response alone would make pausing observable in the result.
 
 **A `RunState` decodes across a version window, not on strict equality.** ✅
 `RunStateFromJSON` accepts the same schema major from
@@ -186,8 +185,10 @@ Beyond its payload, every item reports two things:
 
 Both survive `RunState` serialization, so a resumed run reports the same
 provenance and renders the same timeline as before the pause. A rebuilt item
-carries its replayed input form (`RawInput`) and stored display; `Raw` is nil —
-a resume replays history from input items, which is all it needs.
+carries its replayed input form (`RawInput`) and stored display; `Raw` is nil,
+and so is `Output` — a tool's Go-native return value does not round-trip, only
+its rendered input form does. A resume replays history from input items, which
+is all it needs.
 
 **An unknown output item is kept, never dropped.** ✅ A model output type this
 SDK does not model becomes an `ItemUnknown` run item carrying the original bytes,
@@ -1470,6 +1471,44 @@ the run stops. Stopping mid-batch would leave dangling calls, which
   [§2.12](#212-middleware-).
 - A fallback message synthesized by a recovery handler is tagged
   `Source{Type: SourceErrorHandler}`. ✅
+
+#### How the safety valves compose ✅
+
+`ExecOptions` stacks several independent protections — `MaxTurns`, `ToolLoop`,
+`Overflow`, `ErrorHandlers`, `ShouldStopAfterTurn` / `PrepareNextTurn` — and
+their interactions are pinned, not emergent:
+
+- **Every recovered final output is still a final output.** A fallback from any
+  `ErrorHandlers` handler, and the output derived by `ShouldStopAfterTurn`,
+  finish through the same tail as a model-produced answer (`finishRun`):
+  agent-end hook, then **output guardrails**, then persistence. A guardrail's
+  Replace rewrites a fallback like any other output; a tripwire fails the
+  recovery. There is no side door to "finished" that skips the checks.
+- **An overflow retry moves no other counter.** It does not spend the turn
+  budget ([§2.5g](#25g-context-overflow-)), and it does not touch the tool-loop
+  valve either: `ToolLoop` counts turns whose TOOL RESULTS all failed, and an
+  overflow turn produced no tool results — the counter neither advances nor
+  resets across the retry.
+- **The tool-loop valve counts only tool turns.** A turn with no tool calls
+  neither advances nor resets it; any single successful tool call resets it.
+- **`ToolLoopError` has no handler.** `ErrorHandlers` covers max turns, model
+  refusal and invalid final output; a tripped tool-loop valve is always fatal —
+  it exists to stop a run that is demonstrably not progressing, and a fallback
+  answer synthesized from that state would report the loop as success.
+- **An empty final turn retries before it fails.** With no
+  `InvalidFinalOutput` handler (or one that declines), a structured-output
+  turn that produced no text at all calls the model again rather than failing
+  the run; the handler, when set, is consulted first.
+- **Queued input outranks the finish.** A `Steer` that missed the save point,
+  or a `FollowUp`, continues a run that had produced its final output — the
+  continuation happens INSTEAD of `finishRun`, and the turn budget keeps
+  counting across it. `MaxTurns` still bounds the continued run, and its
+  handler can still recover the overrun.
+- **`ShouldStopAfterTurn` is consulted at turn boundaries only** — after the
+  turn's items are persisted, including the handoff boundary — so a stop never
+  needs unwinding; `PrepareNextTurn` runs at the same boundary and shapes the
+  turn that follows, so the two compose by order: stop is asked first, prepare
+  only runs if the answer was "continue".
 
 ---
 

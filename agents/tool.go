@@ -9,27 +9,21 @@ import (
 // Tool is a tool the agent can call: a name and JSON-schema parameters
 // shown to the model, plus the Go function the SDK runs when the model calls it.
 //
-// It is a STRUCT, and it is the only kind of tool there is. Everything a tool
-// can do — a timeout, an approval gate, its own guardrails, whether it may run
-// concurrently — is a field here, so configuring a tool is assigning to it and
-// deriving a variant is copying it:
+// It is a STRUCT, and it is the only kind of tool there is — deliberately no
+// interface, which is how "no hosted tools" is enforced (spec §5.4).
+// Everything a tool can do — a timeout, an approval gate, its own guardrails,
+// whether it may run concurrently — is a field here, so configuring a tool is
+// assigning to it and deriving a variant is copying it:
 //
 //	gated := *t
 //	gated.NeedsApproval = true
 //
 // A copy shares nothing that matters: the schema map and validator are built
-// once and never mutated after construction. That is what replaced a wrapper
-// hierarchy — wrappers had to be unwrapped to be inspected, and a lookup that
-// forgot to unwrap silently reported that a tool needing approval needed none.
-// A field cannot hide behind a wrapper.
+// once and never mutated after construction.
 //
 // Build one with NewTool, which reflects the argument type into a
 // strict-mode schema. The struct is exported so a tool with a hand-written
 // schema (NewRawTool, an MCP bridge, a sandbox) can be built directly.
-//
-// There is deliberately no interface: a provider-hosted tool (`web_search`,
-// `file_search`, …) would bind an agent to one backend, and with a struct there
-// is nowhere for one to be introduced.
 type Tool struct {
 	// Name is the tool name exposed to the model.
 	Name string

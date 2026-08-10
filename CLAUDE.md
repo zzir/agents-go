@@ -146,11 +146,12 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
 - **Upstream watch, not upstream parity.** After each upstream minor release,
   review its changelog and record the decision (ported / declined + why) in
   `docs/upstream_watch.md`. There is no obligation to match.
-- **A new black-box test goes in `package agents_test`.** The 61 existing test
-  files are all internal (`package agents`), which is why `run_test.go` carries
-  its own `fakeModel` while `agentstest` — the harness shipped for exactly this —
-  goes unused by the package it was written for. An external test package can
-  import it without the cycle; the existing files stay where they are.
+- **A new black-box test goes in `package agents_test`.** That external test
+  package can import `agentstest` (the shipped harness) without a cycle, and
+  both are established practice: `agents/` has ~10 `agents_test` files doing
+  exactly this. The bulk of the older test files are internal
+  (`package agents`) with their own unexported `fakeModel`; they stay where
+  they are.
 - **Docs track the code.** Any functional change must update the relevant
   `docs/` page — and `README.md` when it affects the feature set or
   quick-start. New public capabilities get a runnable example under

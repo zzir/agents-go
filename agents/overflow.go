@@ -219,27 +219,10 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 }
 
 // contextSize is the byte weight of what a set of entries puts in front of the
-// model: every entry's stored body, summed.
-//
-// It is what decides whether a forced pass earned its retry, in place of the
-// entry count and in place of "did anything change". The count cannot decide
-// it, because the read is windowed (Conversation.Settings.Limit) and a
-// saturated window hides growth perfectly: a storage that guards its
-// replacement against concurrent appends ABANDONS the pass when the log moved
-// under it, and the one appended entry that made it abandon pushes the oldest
-// entry out of the window, so the read comes back the same LENGTH — a context
-// that grew, read as one that held still. "Did anything change" cannot decide
-// it either, and for the same reason: that append is exactly what made it
-// different.
-//
-// Bytes answer both, and still see the case a count would miss — the same
-// number of entries with shorter content, one summary standing in for one
-// entry, is a real compaction. An unchanged history weighs exactly what it
-// weighed, so demanding strictly less rules the no-op out on its own.
-//
-// It is a proxy for tokens, and a deliberately conservative one: a pass whose
-// result does not weigh less costs a retry the run would otherwise have spent
-// on a request that already failed once.
+// model: every entry's stored body, summed. It decides whether a forced pass
+// earned its retry — weight, not entry count and not "did anything change",
+// because a windowed read hides growth from both; the full argument is spec
+// §2.5g ("weighing strictly less").
 func contextSize(entries []session.Entry) int {
 	n := 0
 	for _, e := range entries {

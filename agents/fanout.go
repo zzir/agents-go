@@ -73,26 +73,15 @@ const (
 )
 
 // Fanout broadcasts one producer's items to many independent subscribers,
-// decoupling the producer from all of them.
+// decoupling the producer from all of them: a run's events go to every
+// attached client, and one slow client must not stall the run.
 //
-// The problem it solves: a run's events go to every attached client, and one
-// slow client must not stall the run. Measurement showed both a pull-based
-// iterator and a plain buffered channel couple the producer to the slowest
-// consumer — a channel just does it N events later. Fan-out with per-subscriber
-// buffers is required regardless of which stream shape the producer uses.
-//
-// # The slow-subscriber policy
-//
-// Publish never blocks. When a subscriber's buffer is full its items are
-// dropped, and it is told: the next delivery on that stream is preceded by a
-// *GapError naming the range it lost.
-//
-// The two obvious alternatives were both rejected. Dropping silently corrupts
-// the consumer's view with no way to notice — a chat timeline quietly missing
-// a tool result looks exactly like one that never had it. Disconnecting the
-// subscriber punishes a user for a slow render and turns a recoverable hiccup
-// into a visible failure. Dropping loudly keeps the connection and lets the
-// consumer resync from LastGood.
+// The slow-subscriber policy: Publish never blocks. When a subscriber's buffer
+// is full its items are dropped LOUDLY — the next delivery on that stream is
+// preceded by a *GapError naming the range it lost, so the consumer can resync
+// from LastGood. Why loud dropping beats silent dropping and disconnection,
+// and why per-subscriber buffering is required for any stream shape, is spec
+// §2.11.
 //
 // A Fanout is safe for concurrent use. Subscribers may come and go at any time.
 type Fanout[T any] struct {
