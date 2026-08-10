@@ -126,7 +126,7 @@ what was already a field on the single concrete type, and the walker existed
 because a plain type assertion through a wrapper silently returned false — a
 timeout wrapper around an approval wrapper reported that the tool needed no
 approval. Fields have no such failure mode, and a variant of someone else's tool
-is `cp := *tool`. See [spec.md §2.7c](spec.md#27c-tool-capabilities-are-fields-).
+is `cp := *tool`. See [spec.md §2.7c](spec.md#27c-tool-capabilities-are-fields).
 
 ---
 

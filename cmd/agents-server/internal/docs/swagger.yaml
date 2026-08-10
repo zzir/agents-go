@@ -128,8 +128,7 @@ components:
           description: |-
             PromptCacheKey is forwarded as the Responses API prompt_cache_key to
             improve prompt-cache hit rates. Empty means unset. The runner never
-            generates a key: callers set this (or ExtraBody) themselves, because a
-            key the SDK invented would silently partition a cache the caller shares.
+            generates a key — callers set this (or ExtraBody) themselves.
           type: string
         prompt_cache_options:
           $ref: '#/components/schemas/agents.PromptCacheOptions'
@@ -439,9 +438,9 @@ components:
       properties:
         attempt:
           description: |-
-            Attempt is which run of the task this is: 1 for the original, more after
-            a retry. It rides on run.started so a client showing a finished task's
-            card can tell a NEW attempt from a replay of the old one.
+            Attempt is which run of the task this is: 1 for the original, more after a
+            retry. It rides on run.started so a client can tell a NEW attempt from a
+            replay of the old one.
           type: integer
         label:
           type: string
@@ -985,9 +984,9 @@ components:
         compaction_threshold_tokens:
           description: |-
             Threshold is in TOKENS. The key is compaction_threshold_tokens — a NEW
-            name, deliberately: the old compaction_threshold counted ENTRIES, and
-            reinterpreting a stored 20 as 20 tokens would compact on every turn.
-            Legacy rows decode past the old key and fall back to the default.
+            name because the earlier compaction_threshold counted ENTRIES, and
+            reinterpreting a stored 20 as tokens would compact on every turn. Legacy
+            rows decode past the old key and fall back to the default.
           type: integer
         compaction_window:
           type: integer
@@ -1047,7 +1046,7 @@ components:
         role:
           description: |-
             Role is who produced the entry, from its recorded provenance rather than
-            re-parsed from the item. Provenance is not something to guess at.
+            re-parsed from the item.
           type: string
         run_id:
           type: string
@@ -1192,14 +1191,12 @@ components:
           type: string
         revision:
           description: |-
-            Revision counts this config's WRITES: 1 at creation, +1 on every
-            update, name-only included. It is the row's concurrency control — the
-            expected-revision CAS both update paths carry (no lost updates, no
-            identity-freeze bypass through a stale read), and the predicate a
+            Revision counts this config's WRITES: 1 at creation, +1 on every update,
+            name-only included. It is the row's concurrency control — the
+            expected-revision CAS both update paths carry, and the predicate a
             first-run bind lands against (the workdir was validated on exactly this
-            revision). An integer, not a version-history table: nothing keeps old
-            revisions runnable — updates (credential rotation above all) apply to
-            everyone at the next run.
+            revision). Nothing keeps old revisions runnable: updates apply to everyone
+            at the next run.
           type: integer
         terminal:
           description: |-

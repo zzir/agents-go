@@ -55,7 +55,7 @@ from upstream.
   that returns only when cancelled; a tool that ignores its context still runs
   to completion, but its result is discarded. (One narrow exception to "the
   consumer's goroutine": a tool streaming progress yields from its own
-  goroutine — [§2.7g](#27g-tool-progress-).)
+  goroutine — [§2.7g](#27g-tool-progress).)
 - **A `RunStream` is single-use.** Ranging it a second time yields a
   `*UserError` instead of anything else: the run body lives inside the
   iterator, so a second range would re-execute it — model billed again, tools
@@ -117,7 +117,7 @@ for turn := 1; ; turn++ {
    once more **without tools** so it can close out in prose. Otherwise return
    `*MaxTurnsError`.
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
-4. The model produced a final output → see [§2.3](#23-deciding-the-final-output-).
+4. The model produced a final output → see [§2.3](#23-deciding-the-final-output).
 
 **A `RunState` round-trips whole.** Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
@@ -169,7 +169,7 @@ Beyond its payload, every item reports two things:
   acknowledgement, an error handler's fallback). A context provider uses it to
   avoid re-ingesting its own injections, and the runner reads it to find the
   last model-produced item — the frontier of what a server-side response chain
-  can hold ([§2.5f](#25f-compaction-)). It does not settle that question on its
+  can hold ([§2.5f](#25f-compaction)). It does not settle that question on its
   own: input the caller injected after the last model call is external and is
   still off the chain.
 
@@ -215,7 +215,7 @@ reordered.
 | 6 | A nested agent-as-tool interruption pauses the parent run too | Completed siblings **keep** their outputs; the interrupted call's output is **withheld** |
 | 7 | Unknown tool → feed back `Tool 'X' not found.` | Only under `ToolNotFoundReturnToModel`; otherwise it is a `*ModelBehaviorError` |
 | 8 | **Handoffs win**: switch to the target agent, end the turn | Tools in the same response have **already executed**; the final-output check is skipped |
-| 9 | Decide the final output ([§2.3](#23-deciding-the-final-output-)) | — |
+| 9 | Decide the final output ([§2.3](#23-deciding-the-final-output)) | — |
 
 **Concurrency guarantees:**
 
@@ -260,7 +260,7 @@ It is one place in the code, and its step order is the contract:
 
 1. flush the turn to the session
 2. ask `ShouldStopAfterTurn`
-3. compact ([§2.5f](#25f-compaction-)), rebuilding the context from the log
+3. compact ([§2.5f](#25f-compaction)), rebuilding the context from the log
 4. call `PrepareNextTurn`
 
 Persisting first is what makes the rest safe: a run that stops at step 2, or
@@ -300,8 +300,8 @@ two:
 | tool | `ToolResult.Terminate` | the last tool's output |
 | run | `ExecOptions.ShouldStopAfterTurn` | the turn's last message, else its last tool output |
 
-- `Terminate` requires **unanimity** across the batch ([§2.7b](#27b-tool-results-)).
-- `ShouldStopAfterTurn` is consulted at the **save point** ([§2.3a](#23a-the-save-point-)), at both branches that would take another turn, including a handoff. A run stopped there has its full
+- `Terminate` requires **unanimity** across the batch ([§2.7b](#27b-tool-results)).
+- `ShouldStopAfterTurn` is consulted at the **save point** ([§2.3a](#23a-the-save-point)), at both branches that would take another turn, including a handoff. A run stopped there has its full
   history saved and needs no unwinding, and stopping at a handoff means control
   never leaves the agent.
 - It is **not** consulted on a turn that already ends the run: asking whether to
@@ -339,13 +339,13 @@ points.
   non-enumerable by leaving `Target` nil.
 - Multiple handoffs in one response → the **first** wins, the rest are ignored.
 - Handoff alongside regular tools → **all tools execute first**, then the agent
-  switches (step 8 of [§2.2](#22-ordering-within-a-turn-)).
+  switches (step 8 of [§2.2](#22-ordering-within-a-turn)).
 - `MaxTurns` **keeps accumulating** across a handoff; it is not reset.
 - `InputFilter` may rewrite the history handed to the target agent. **The session
   always retains the unfiltered conversation.**
 - The target agent's `OnStart` fires at the beginning of the next turn.
 - A handoff happens **inside the same run**, so it shares the run's session and
-  usage. Contrast with agent-as-tool ([§2.8](#28-nested-agent-as-tool-attribution-)),
+  usage. Contrast with agent-as-tool ([§2.8](#28-nested-agent-as-tool-attribution)),
   which starts a nested run.
 
 ### 2.5 Session persistence boundaries
@@ -861,7 +861,7 @@ cannot otherwise survive.
   turn's context from the log, throwing the in-flight items away. The write
   therefore has to happen, or the retry hands the model a conversation the
   caller's words never reached while the next write past their mark still
-  counts them delivered ([§2.11b](#211b-run-control-)). **When** it happens is
+  counts them delivered ([§2.11b](#211b-run-control)). **When** it happens is
   decided by which recovery applies, and the two want opposite answers. A
   `Compactor` reads the log and returns a projection of it, so the turn has to
   be IN the log before the pass runs. A `CompactionAware` storage may answer
@@ -914,7 +914,7 @@ cannot otherwise survive.
   marker ([§5.10](#510-non-responses-backends-adapt-at-the-model-boundary)) —
   resending unchanged would stop at the same wall, and compact-and-retry is
   the recovery that actually helps.
-- **A truncated response is NOT an overflow** ([§2.7e](#27e-truncated-responses-)).
+- **A truncated response is NOT an overflow** ([§2.7e](#27e-truncated-responses)).
   Its input fit; compacting the input does not raise the output cap that cut it
   off.
 - A recovered overflow is recorded as a `context_overflow` diagnostic.
@@ -1015,7 +1015,7 @@ behavior: concurrent with the model call, with cancellation.
 
 #### Return values
 
-A tool returns a `ToolResult` ([§2.7b](#27b-tool-results-)); plain values are
+A tool returns a `ToolResult` ([§2.7b](#27b-tool-results)); plain values are
 wrapped. What the model sees, given the result's `Content`:
 
 | The tool returns | The model sees |
@@ -1043,7 +1043,7 @@ An empty result with no error is a **success with no output**, not a failure.
 
 - `NeedsApproval` / `NeedsApprovalFunc` decide; the function takes precedence.
 - If **any** call in a turn needs approval, the whole turn pauses
-  (step 4 of [§2.2](#22-ordering-within-a-turn-)).
+  (step 4 of [§2.2](#22-ordering-within-a-turn)).
 - Approval decisions may be scoped ("this call", "all calls to this tool", …);
   the caller expresses the scope on the `RunState`.
 
@@ -1247,7 +1247,7 @@ A tool marked `Deferred: true` is withheld from the model until some
 - **Disclosure is cumulative** for the rest of the run. Withdrawing a tool after
   one use would surprise a model that had just been told it existed.
 - **It survives a resume** (`RunState.DisclosedTools`), a serialized
-  cross-process one included ([§2.1](#21-the-run-loop-): a `RunState`
+  cross-process one included ([§2.1](#21-the-run-loop): a `RunState`
   round-trips whole). Re-hiding would look, from the model's side, like a tool
   taken away mid-conversation.
 - **It does not override `IsEnabled`.** Disclosure opens a door; it does not
@@ -1410,7 +1410,7 @@ the run.
 
 When a budget trips mid-turn, the current tool batch is allowed to finish before
 the run stops. Stopping mid-batch would leave dangling calls, which
-[§2.5](#25-session-persistence-boundaries-) forbids.
+[§2.5](#25-session-persistence-boundaries) forbids.
 
 ### 2.10 Errors and recovery
 
@@ -1449,7 +1449,7 @@ the run stops. Stopping mid-batch would leave dangling calls, which
   the module boundary**, not deep inside.
 - Recoverable failures are handled by error handlers (max turns, model refusal,
   invalid final output), **in the loop, not as middleware** — see
-  [§2.12](#212-middleware-).
+  [§2.12](#212-middleware).
 - A fallback message synthesized by a recovery handler is tagged
   `Source{Type: SourceErrorHandler}`.
 
@@ -1466,7 +1466,7 @@ their interactions are pinned, not emergent:
   Replace rewrites a fallback like any other output; a tripwire fails the
   recovery. There is no side door to "finished" that skips the checks.
 - **An overflow retry moves no other counter.** It does not spend the turn
-  budget ([§2.5g](#25g-context-overflow-)), and it does not touch the tool-loop
+  budget ([§2.5g](#25g-context-overflow)), and it does not touch the tool-loop
   valve either: `ToolLoop` counts turns whose TOOL RESULTS all failed, and an
   overflow turn produced no tool results — the counter neither advances nor
   resets across the retry.
@@ -1603,7 +1603,7 @@ was ending:
 - **Nothing is silently dropped.** `Pending()` reports what a run did not
   consume, which is how a caller learns a `NextTurn` arrived too late.
 - **Queued input survives an interruption**: `RunState.PendingInput` carries
-  it — across serialization too ([§2.1](#21-the-run-loop-)) — so a steer sent
+  it — across serialization too ([§2.1](#21-the-run-loop)) — so a steer sent
   while a human was deciding on an approval is delivered on resume. That is
   precisely when someone is looking at the run and saying something about it.
   The wire shape stays the three lists, which does not record cross-kind
@@ -1633,7 +1633,7 @@ was ending:
 - **A dropped span is announced through `BatchProcessorOptions.OnDrop`.** The
   processor's queue is bounded, so telemetry is lost under load and after
   `Shutdown`; the SDK does not write to `slog.Default()` on its own
-  ([§2.11c](#211c-logging-)), which leaves a host-installed callback as the
+  ([§2.11c](#211c-logging)), which leaves a host-installed callback as the
   only channel that can say so. `Dropped()` remains the cumulative counter.
 - The runner installs the generation span as parent for the model call (retries
   nest under it) and the function span for a tool invocation (MCP and sandbox
@@ -1709,7 +1709,7 @@ also what bounds it.
 |---|---|
 | Handoffs | Change which agent the state machine is in |
 | Guardrails | Race the model call and can cancel it |
-| Session persistence | Has a boundary only the loop knows ([§2.5](#25-session-persistence-boundaries-)) |
+| Session persistence | Has a boundary only the loop knows ([§2.5](#25-session-persistence-boundaries)) |
 | Tracing | Spans nest with the loop's own structure |
 | `ExecOptions.ErrorHandlers` | Needs the run's in-flight items to build `RunErrorData`, and the loop's completion path to persist what it recovers. A middleware sees a terminal error and can reconstruct neither |
 | `ModelOptions.InputFilter` | Per **turn**, not per run |
@@ -2070,7 +2070,7 @@ breaking batch:
   `OutputItem`, `TResponseStreamEvent` → `ResponseStreamEvent` (the run-level
   event interface already owns the bare `StreamEvent` name).
 - `AgentsError` stuttered; resolved by deletion in the error rework
-  ([§2.10](#210-errors-and-recovery-)).
+  ([§2.10](#210-errors-and-recovery)).
 - `FunctionTool` → `Tool`: with the interface gone there is only one kind of
   tool, and the qualifier distinguished nothing.
 
@@ -2111,7 +2111,7 @@ tool has nowhere to be introduced, because there is nothing to implement.
 This replaced a sealed interface with an unexported marker method. The seal was
 doing the same job, but it also invited a wrapper hierarchy to carry optional
 behavior, and that hierarchy needed a lookup protocol
-([§2.7c](#27c-tool-capabilities-are-fields-)) to be usable. A struct closes the
+([§2.7c](#27c-tool-capabilities-are-fields)) to be usable. A struct closes the
 kind and carries the behavior in one move; behavior stays open because the
 fields are exported and a variant is a copy.
 
