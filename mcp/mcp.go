@@ -106,6 +106,12 @@ type Server struct {
 	// run can hold a *Server pointer past a reconfiguration that closed it.
 	closed atomic.Bool
 
+	// rpcCtx is the context every request on this session rides. It belongs to
+	// the CONNECTION and ends only with Close — see callSession for why it can
+	// never be a caller's.
+	rpcCtx  context.Context
+	rpcStop context.CancelFunc
+
 	mu       sync.Mutex
 	cached   []cachedTool // populated lazily when CacheToolsList is set
 	cacheGen uint64       // bumped by InvalidateToolsCache; guards a mid-fetch invalidation from being overwritten
@@ -120,6 +126,9 @@ type cachedTool struct {
 
 func newServer(name string, opts Options) *Server {
 	s := &Server{name: name, opts: opts, allowed: map[string]bool{}, blocked: map[string]bool{}}
+	// Rooted at Background, not at whoever connects: this context outlives
+	// every caller and must carry none of their deadlines.
+	s.rpcCtx, s.rpcStop = context.WithCancel(context.Background())
 	for _, t := range opts.AllowedTools {
 		s.allowed[t] = true
 	}
@@ -127,6 +136,42 @@ func newServer(name string, opts Options) *Server {
 		s.blocked[t] = true
 	}
 	return s
+}
+
+// callSession runs one request against the shared session and returns as soon
+// as EITHER the request answers or the caller's context ends.
+//
+// The request itself rides the connection's context, never the caller's. A
+// session is shared by every agent configured with this server — several runs,
+// their background tasks, other conversations — and the streamable HTTP
+// transport issues each request on the context it is handed. Cancelling one
+// mid-flight fails the whole CONNECTION, permanently and for everyone: the
+// go-sdk reads the response body, sees context.Canceled, and calls fail(),
+// which is a sync.Once closing the connection's failure gate. Every later call
+// by anyone then answers "client is closing" until something reconnects. One
+// person stopping one run must not take out every other run's tools.
+//
+// The caller still gets its cancellation honored — it returns here at once —
+// while the request finishes in the background and its answer is dropped. That
+// costs one in-flight request; the alternative costs the connection.
+func callSession[T any](ctx context.Context, s *Server, fn func(context.Context) (T, error)) (T, error) {
+	type answer struct {
+		val T
+		err error
+	}
+	// Buffered, so the request goroutine never blocks on a caller that left.
+	ch := make(chan answer, 1)
+	go func() {
+		val, err := fn(s.rpcCtx)
+		ch <- answer{val, err}
+	}()
+	select {
+	case a := <-ch:
+		return a.val, a.err
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
 }
 
 func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
@@ -190,6 +235,16 @@ func (s *Server) Name() string { return s.name }
 // Close implements agents.MCPServer, closing the session. Subsequent
 // ListTools/CallTool calls fail with a "closed" error.
 func (s *Server) Close() error {
+	// Nil-checked because the zero Server is reachable: this type is exported,
+	// and a caller (a test, a discarded handshake) can hold one that never went
+	// through a constructor.
+	if s.rpcStop != nil {
+		// Before the session close, not after: closing waits for the requests
+		// still in flight, and one of those may be riding a server that stopped
+		// answering — the case where a caller already gave up and left it here.
+		// Ending the connection's context is what lets them unwind.
+		s.rpcStop()
+	}
 	if s.session == nil {
 		return nil
 	}
@@ -311,7 +366,9 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 			if page >= maxToolListPages {
 				return fmt.Errorf("tools/list exceeded %d pages without finishing", maxToolListPages)
 			}
-			res, e := s.session.ListTools(ctx, params)
+			res, e := callSession(ctx, s, func(rpc context.Context) (*mcpsdk.ListToolsResult, error) {
+				return s.session.ListTools(rpc, params)
+			})
 			if e != nil {
 				return e
 			}
@@ -454,7 +511,9 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 				if s.closed.Load() {
 					return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is closed", s.name))
 				}
-				result, e = s.session.CallTool(ctx, params)
+				result, e = callSession(ctx, s, func(rpc context.Context) (*mcpsdk.CallToolResult, error) {
+					return s.session.CallTool(rpc, params)
+				})
 				return e
 			}); err != nil {
 				span.SetError(err.Error(), nil)

@@ -2590,6 +2590,31 @@ error naming the remedy: remove or rename it. That cost lands once per legacy
 container and buys the guarantee that adoption can never widen a sandbox's
 blast radius.
 
+### 5.20 A shared connection is not a caller's to cancel
+
+An MCP session is shared by everyone configured with that server — several
+runs, their background tasks, other conversations — while a run's context
+belongs to one of them. **A request on a shared connection therefore rides the
+connection's context, not the caller's**, and the caller's cancellation is
+honored by returning from the wait rather than by cancelling the request. The
+answer that arrives afterwards is dropped.
+
+The alternative was tried and cost a great deal: the streamable HTTP transport
+issues each request on the context it is handed, and one cancelled mid-flight
+makes the go-sdk fail the whole CONNECTION — a `sync.Once` closing its failure
+gate. Every later call by anyone then answers "client is closing" until
+something reconnects, which nothing does. One person stopping one run was
+observed failing five background tasks across two conversations inside seven
+seconds, each blamed on its own agent's MCP server rather than on the stop that
+actually did it.
+
+The price is one in-flight request outliving its caller, bounded by the
+connection's own lifetime (`Close` ends it). That is the right trade against
+a connection outage for every other user of the server. The rule generalizes:
+**a resource shared between runs may not be handed a single run's
+cancellation** — a per-run deadline on a per-process resource is a way for one
+run to break another.
+
 ---
 
 ## 6. Open questions

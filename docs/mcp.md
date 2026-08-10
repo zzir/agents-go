@@ -113,7 +113,8 @@ r, _ := server.Session().ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "file
 - Tool call results reach the model as content parts, one per content block: text stays text, image content (an `image` block, or an embedded resource with an `image/*` MIME type) becomes real image input, and everything else is JSON-encoded into a text part. A lone text block still collapses to a plain string. This builds on [structured tool output](tools.md#structured--multimodal-output).
 - `Options.UseStructuredContent` instead uses the server's `structuredContent` exclusively, as a single JSON text part, falling back to the content blocks when it is empty. It is off by default because most servers duplicate that data in the blocks.
 - A tool call that fails — including results flagged `isError` — is fed back to the model as the tool output so it can recover, like any function tool failure. Set the produced tool's `FailureErrorFunction` to nil if you want failures to abort the run (advanced).
-- `Close()` shuts the session down; it is safe to call once finished with the server.
+- **A caller's cancellation does not cancel the request.** A connection is shared by everyone using that server, and the streamable HTTP transport fails the whole connection — permanently, for every user of it — when a request it is carrying is cancelled mid-flight. So requests ride the connection's own context: cancelling a run returns from `ListTools`/`CallTool` at once with `context.Canceled`, and the request it was waiting on finishes in the background with its answer dropped. One caller's cancellation costs one in-flight request, not the connection.
+- `Close()` shuts the session down; it is safe to call once finished with the server. It also ends the connection's context, so requests still in flight — including ones their caller has already abandoned — unwind with it.
 
 Not modeled: provider-hosted MCP (OpenAI's server-side MCP tool), per the SDK's no-hosted-tools stance.
 
