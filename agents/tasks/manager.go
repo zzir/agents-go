@@ -780,27 +780,33 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 			return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
 		}
 
-		early, won, err := m.stopAttempt(ctx, t, graceful)
+		verdict, err := m.stopAttempt(ctx, t, graceful, pass == 1)
 		if err != nil {
 			return nil, err
 		}
-		if early {
+		switch verdict {
+		case stopDeferred:
 			return infoFrom(t, ""), nil
-		}
-		if !won {
+		case stopClaimed:
+			updated, err := m.cfg.Store.Get(ctx, taskID)
+			if err != nil {
+				return nil, err
+			}
+			m.notifyUpdate(ctx, updated)
+			return infoFrom(updated, ""), nil
+		case stopRunEnded:
+			// The run is over and its outcome is on its way to the row. Wait
+			// for it, so the next pass reports the real ending instead of
+			// racing it — and, if none arrives, records one of its own.
+			m.awaitSettled(ctx, taskID)
+		case stopRetried:
 			// A retry reopened the task on a new run between the read and the
-			// claim. Go round once against that attempt.
-			continue
+			// claim. Go round at once, against that attempt.
 		}
-		updated, err := m.cfg.Store.Get(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		m.notifyUpdate(ctx, updated)
-		return infoFrom(updated, ""), nil
 	}
-	// Two passes, two losses. Report the task as it stands rather than
-	// insisting: it is live, and saying otherwise would be a lie the UI shows.
+	// The last pass lost its claim as well, so the task is on an attempt this
+	// call never saw. Report it as it stands rather than insisting: it is live,
+	// and saying otherwise would be a lie the UI shows.
 	t, err := m.cfg.Store.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -808,10 +814,57 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 	return infoFrom(t, ""), nil
 }
 
-// stopAttempt cancels the one attempt t names. early reports that the run took
-// a graceful stop and will record the ending itself; won reports that this call
-// owns the terminal transition.
-func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (early, won bool, err error) {
+// stopVerdict is what one attempt at stopping a task did. The four answers
+// steer the pass after it, and only one of them ends the call. They start at
+// one, so the zero value is no verdict at all — what an attempt that failed
+// outright returns beside its error.
+type stopVerdict int
+
+const (
+	// stopClaimed: this call recorded the ending.
+	stopClaimed stopVerdict = iota + 1
+	// stopDeferred: the run took a graceful stop and will record its own.
+	stopDeferred
+	// stopRetried: the claim lost, so a retry has moved the task to an attempt
+	// this pass never saw.
+	stopRetried
+	// stopRunEnded: the run was already over and nothing was claimed — its
+	// outcome may still be on its way to the row.
+	stopRunEnded
+)
+
+// stopSettleWait bounds how long a stop waits for a finished run's outcome to
+// reach the row before recording an ending of its own. Short, because the
+// window it covers is short — a host marks a run finished, then writes what it
+// finished with — and a stop that waits longer than the person pressing the
+// button will is its own kind of failure.
+const stopSettleWait = 2 * time.Second
+
+// awaitSettled waits, briefly, for a finished run's outcome to reach the row.
+//
+// It is the difference between a stop that reports a task's real ending and
+// one that overwrites it. The bound is the other half: an outcome that was
+// LOST rather than late — a host whose store refused the write, say — would
+// otherwise leave the task working forever with nothing able to end it, and
+// the stop button is exactly what a person reaches for then.
+func (m *Manager) awaitSettled(ctx context.Context, taskID string) {
+	deadline := time.Now().Add(stopSettleWait)
+	for time.Now().Before(deadline) {
+		t, err := m.cfg.Store.Get(ctx, taskID)
+		if err != nil || t.Status.Terminal() {
+			return
+		}
+		if !m.awaitFinish(ctx, taskID, time.Until(deadline)) {
+			return // the caller went away
+		}
+	}
+}
+
+// stopAttempt cancels the one attempt t names and reports what it did. last
+// says this is the final pass, after which nothing else will chase the task —
+// which is what turns a run the host reports as already finished from
+// something to wait for into something to end.
+func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool) (stopVerdict, error) {
 	// A paused task has no running goroutine, so finalizing IS the exclusive
 	// claim: a concurrent approval's ReclaimWorking (input_required → working)
 	// and this Finalize (non-terminal → cancelled) cannot both win. Claim it
@@ -844,7 +897,8 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 		// leave it to the run's own report: it is winding up gracefully, or it
 		// had already finished before the stop arrived. Recording a
 		// cancellation over the second would overwrite a real outcome — and
-		// for a failure, cost the task the retry it had earned.
+		// for a failure, cost the task the retry it had earned. The second
+		// holds only while that outcome can still arrive; see below.
 		//
 		// Everything else falls through, including a host that has never heard
 		// of this run because it is still being launched: reading its "nothing
@@ -852,18 +906,26 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 		// as accepted while the task runs on.
 		switch stopRun() {
 		case StopAfterTurn:
-			return true, false, nil
+			return stopDeferred, nil
 		case StopAlreadyFinished:
-			// Not early, and nothing claimed. "That run is over" is also
-			// exactly what a stop hears when a retry landed between its read
-			// and this call — the previous attempt IS finished, which is what
-			// let the retry happen — so answering it like a graceful stop
-			// would end the call here and leave the NEW attempt running.
-			// Reporting nothing claimed sends Stop round again: it re-reads,
-			// and either finds the ending this run recorded or chases the
-			// attempt that replaced it. The one thing it must not do is write
-			// a cancellation over an outcome that is already on its way.
-			return false, false, nil
+			// "That run is over" is also exactly what a stop hears when a retry
+			// landed between its read and this call — the previous attempt IS
+			// finished, which is what let the retry happen — so answering it
+			// like a graceful stop would end the call here and leave the NEW
+			// attempt running. Reporting the run ended sends Stop round again:
+			// it waits for the outcome, then either finds the ending that run
+			// recorded or chases the attempt that replaced it. What it must not
+			// do is write a cancellation over an outcome already on its way.
+			if !last {
+				return stopRunEnded, nil
+			}
+			// Except on the last pass, where waiting has already happened and
+			// the row still names this attempt, still non-terminal. Nothing is
+			// on its way: the outcome was lost, not late. Falling through to
+			// claim the ending is what keeps a task whose run died unrecorded
+			// from being un-stoppable — and it is safe, because the CAS below
+			// is bound to this attempt and to a non-terminal row, so a real
+			// outcome landing first still wins.
 		case StopUnknownRun, StopCancelled:
 		}
 	}
@@ -872,9 +934,9 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 	if paused {
 		reason = "stopped while awaiting approval"
 	}
-	won, err = m.cfg.Store.Finalize(ctx, t.ID, t.RunID, StatusCancelled, reason, "")
+	won, err := m.cfg.Store.Finalize(ctx, t.ID, t.RunID, StatusCancelled, reason, "")
 	if err != nil {
-		return false, false, err
+		return 0, err
 	}
 	if paused {
 		// Told after the claim, so the host discards the approval only once
@@ -898,8 +960,9 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful bool) (earl
 				slog.String("task_id", t.ID), slog.String("error", cerr.Error()))
 		}
 		m.finished(t.ID)
+		return stopClaimed, nil
 	}
-	return false, won, nil
+	return stopRetried, nil
 }
 
 // RunOutcome is what a finished run reports.

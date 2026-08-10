@@ -1927,6 +1927,18 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   must not end the call either, because "that run is over" is also what a stop
   hears when a RETRY landed between its read and the call, and standing back
   there would leave the new attempt running with the stop reported as done.
+- **An outcome that is late is waited for; one that is lost is replaced.** The
+  two are indistinguishable in the moment — both are a dead run under a live
+  row — so the stop waits, briefly and boundedly, for the ending to arrive
+  before its last pass, and records a cancellation only if none does. Waiting
+  is what keeps a real completion; the bound is what keeps a task whose outcome
+  never landed (a host whose store refused the write) from being **un-stoppable**:
+  reporting it as still working leaves a dead task live in every UI, with a
+  timer that never stops and a stop button that changes nothing. A host helps by
+  answering `StopAlreadyFinished` only once the run's own recording has had its
+  chance — for the server that means waiting on the segment's done gate, which
+  closes after the outcome is written — which turns the ordinary race into no
+  wait at all and leaves the SDK's bound for the genuinely lost case.
 - **Whether a run reported is the Manager's own knowledge, not the row's.** A
   run that finished the instant it started and a run something ended while the
   host could not reach it leave the SAME row: terminal, on that run id.

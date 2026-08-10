@@ -319,7 +319,12 @@ export default function App() {
     updateSS(sid, s => {
       const cur = s.tasks[taskId];
       if (!cur) return s;
-      const next = { ...s, tasks: { ...s.tasks, [taskId]: { ...cur, ...patch } } };
+      // Stamped like the live-event path (updateTask), because the duration a
+      // terminal task shows is updatedAt - createdAt: without this it freezes
+      // at whatever event last touched the task — a tool call, an approval —
+      // and a task stopped after a long quiet stretch shows its timer jumping
+      // backwards. A patch carrying its own value still wins.
+      const next = { ...s, tasks: { ...s.tasks, [taskId]: { ...cur, updatedAt: Date.now(), ...patch } } };
       // The spawn card follows the same confirmation. A retry normally re-arms
       // it from the run.started broadcast, but the caller that got this answer
       // over REST may have no socket at all — and then nothing else would ever

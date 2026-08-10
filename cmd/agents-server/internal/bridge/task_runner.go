@@ -277,8 +277,15 @@ func (r *Runner) StopSessionTree(sessionID string) {
 			}
 		}
 		// The manager cancels each one and finalizes the rows that no goroutine
-		// will ever advance.
-		if err := r.tasks.StopTree(ctx, sessionID); err != nil {
+		// will ever advance. Under the teardown deadline, because it stops
+		// tasks one at a time and a stop can WAIT — for a finished run's
+		// outcome to reach its row — so a session's worth of them would
+		// otherwise add up past any bound this delete thought it had. The
+		// cascade removes these rows next in any case.
+		stopCtx, cancelStop := context.WithDeadline(ctx, deadline)
+		err = r.tasks.StopTree(stopCtx, sessionID)
+		cancelStop()
+		if err != nil {
 			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("stopping session tasks")
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -84,6 +85,12 @@ func (t taskLauncher) Launch(_ context.Context, req tasks.LaunchRequest) error {
 // taskStopper answers "cancel this run".
 type taskStopper struct{ r *Runner }
 
+// taskStopSettleTimeout bounds the wait for a finished task run's segment to
+// drain, so a stop landing in the ordinary window between "the run ended" and
+// "the row says so" reports the real ending. It matches the approval settle
+// wait: both wait on the same gate, for the same reason.
+const taskStopSettleTimeout = approvalSettleTimeout
+
 // Stop implements tasks.Stopper.
 //
 // A task paused on an approval has no run to cancel — the SDK has already
@@ -118,6 +125,22 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 		// is ordinary. Nothing was cancelled: publishing one would rewrite an
 		// outcome every watching client has seen, and recording one would
 		// overwrite the result already on its way to the row.
+		//
+		// Wait that window out first. The segment's goroutine records the
+		// outcome (postRun) and only THEN closes its done gate, so a closed
+		// gate means the row is as settled as it will ever be — and the SDK
+		// treats a run reported finished with nothing on the row as an outcome
+		// that was lost, which it then records itself. Answering before the
+		// gate closes would make an ordinary few milliseconds look like that.
+		// An already-drained segment returns from here at once, so the wait is
+		// paid only where it is the answer.
+		deadline := time.Now().Add(taskStopSettleTimeout)
+		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+			// A caller stopping many tasks under one bound (a session
+			// teardown) owns the budget; this wait must fit inside it.
+			deadline = d
+		}
+		t.r.hub.waitDone(runID, deadline)
 		return tasks.StopAlreadyFinished, nil
 	}
 	t.r.publishTaskCancelled(runID)

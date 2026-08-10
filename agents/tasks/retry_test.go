@@ -856,36 +856,42 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 // A stop that arrives after the run ended on its own must not overwrite the
 // outcome: the host marks a run finished before its report reaches the row, so
 // this window is ordinary — and recording a cancellation there loses a
-// completion, or a failure along with the retry it had earned.
+// completion, or a failure along with the retry it had earned. The stop waits
+// out the window rather than racing it.
 func TestStop_AfterTheRunAlreadyFinishedKeepsTheOutcome(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	info := h.spawn(t)
+	child := h.childOf(t, info.TaskID)
+	runID := h.get(t, info.TaskID).RunID
 
-	// The host: this run is over, its report is on its way.
-	h.m.cfg.Stopper = StopperFunc(func(_ context.Context, runID string, _ bool) (StopOutcome, error) {
+	// The host: this run is over, its report is on its way — and here it
+	// comes, from the run's own goroutine, while the stop is waiting.
+	landed := make(chan struct{})
+	h.m.cfg.Stopper = StopperFunc(func(_ context.Context, rid string, _ bool) (StopOutcome, error) {
 		h.mu.Lock()
-		h.stopped = append(h.stopped, runID)
+		first := len(h.stopped) == 0
+		h.stopped = append(h.stopped, rid)
 		h.mu.Unlock()
+		if first {
+			go func() {
+				defer close(landed)
+				h.m.OnRunFinished(context.Background(), child, RunOutcome{
+					RunID: runID, Status: StatusFailed, Err: "the real failure",
+				})
+			}()
+		}
 		return StopAlreadyFinished, nil
 	})
 
-	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
+	stopped, err := h.m.Stop(ctx, info.TaskID, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := h.get(t, info.TaskID).Status; got != StatusWorking {
-		t.Errorf("status = %s, want the row left for the run's own report", got)
+	<-landed
+	if stopped.Status != StatusFailed {
+		t.Errorf("the stop answered %s, want the real ending it waited for", stopped.Status)
 	}
-
-	// The stop answered with a fresh read, not the row it started from.
-	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
-		t.Fatal(err)
-	}
-
-	// Which then lands, and stands.
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
-		RunID: h.get(t, info.TaskID).RunID, Status: StatusFailed, Err: "the real failure",
-	})
 	after := h.get(t, info.TaskID)
 	if after.Status != StatusFailed {
 		t.Errorf("status = %s, want failed — a stop overwrote a real outcome", after.Status)
@@ -893,6 +899,36 @@ func TestStop_AfterTheRunAlreadyFinishedKeepsTheOutcome(t *testing.T) {
 	// And a failure keeps the retry it earned.
 	if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
 		t.Errorf("the task lost its retry to a stop that cancelled nothing: %v", err)
+	}
+}
+
+// The other half of the same window: an outcome that was LOST rather than late
+// must not leave the task un-stoppable. The host keeps answering "that run is
+// over" and nothing ever reaches the row — which is what a host whose store
+// refused the write leaves behind — so the stop records the ending itself
+// instead of reporting a task that will never end as still working.
+func TestStop_AnOutcomeThatNeverLandsDoesNotWedgeTheTask(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info := h.spawn(t)
+
+	h.m.cfg.Stopper = StopperFunc(func(_ context.Context, rid string, _ bool) (StopOutcome, error) {
+		h.mu.Lock()
+		h.stopped = append(h.stopped, rid)
+		h.mu.Unlock()
+		return StopAlreadyFinished, nil
+	})
+
+	stopped, err := h.m.Stop(ctx, info.TaskID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Status != StatusCancelled {
+		t.Errorf("the stop answered %s, want cancelled — a stop that reports the task as still\n"+
+			"working leaves a dead task live in the UI, with a Stop button that does nothing", stopped.Status)
+	}
+	if got := h.get(t, info.TaskID).Status; got != StatusCancelled {
+		t.Errorf("status = %s, want cancelled", got)
 	}
 }
 

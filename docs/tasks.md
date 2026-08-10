@@ -83,11 +83,14 @@ A `Stopper` reports **what it did**, not just whether it errored.
 `StopAfterTurn` (still going, will record its own ending — only a graceful stop
 may get this) is the one answer that finishes the call. `StopAlreadyFinished`
 means it ended before the stop arrived and its outcome is on its way: the stop
-records nothing and looks again, since that same answer is what it hears when a
-retry has replaced the attempt it was aiming at. A host that has never heard of
-the run says `StopUnknownRun`: a task claims its run before the launch
-registers it, so this is a real state, and answering "fine" for having done
-nothing is how a stop gets reported as accepted while the task runs on.
+waits briefly for that outcome and looks again, since the same answer is what it
+hears when a retry has replaced the attempt it was aiming at. If the wait passes
+and the row still reads as this attempt, still running, then the outcome was
+lost rather than late — and the stop records the ending itself, because a task
+nothing will ever end must not also be one nothing can stop. A host that has
+never heard of the run says `StopUnknownRun`: a task claims its run before the
+launch registers it, so this is a real state, and answering "fine" for having
+done nothing is how a stop gets reported as accepted while the task runs on.
 
 A `WakeGuard` **must return false when it cannot answer**. A failed query is "I
 cannot prove this is safe" — returning true on error makes every outage a source
