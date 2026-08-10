@@ -37,10 +37,8 @@ type sandboxKey struct {
 }
 
 // sandboxInstance is one live sandbox plus everything scoped to its lifetime:
-// how many holders still use it (runs and terminals, via Acquire), the shell
-// pools its tools opened, and whether an eviction is waiting for the last
-// holder. The closers hang off the instance rather than a key-indexed map so
-// an evicted generation's shells can never mingle with its replacement's.
+// how many holders still use it (runs and terminals, via Acquire) and whether
+// an eviction is waiting for the last holder.
 type sandboxInstance struct {
 	// ready closes once the build finished — sb or buildErr is set from then
 	// on. An instance enters the cache as a PLACEHOLDER before its sandbox is
@@ -58,17 +56,13 @@ type sandboxInstance struct {
 	// can acquire it, and the LAST release closes it — an in-flight run or an
 	// open terminal finishes on the configuration it started with instead of
 	// having its connection torn out from under it. Guarded by mu.
-	doomed  bool
-	closers []io.Closer
+	doomed bool
 }
 
-// close releases the instance's held-open shells and the sandbox itself.
-// Called without the manager lock — teardown can block on I/O. The nil check
-// covers a placeholder whose build never finished (process shutdown mid-dial).
+// close tears down the sandbox. Called without the manager lock — teardown can
+// block on I/O. The nil check covers a placeholder whose build never finished
+// (process shutdown mid-dial).
 func (i *sandboxInstance) close() {
-	for _, c := range i.closers {
-		_ = c.Close()
-	}
 	if i.sb != nil {
 		_ = i.sb.Close()
 	}
@@ -180,11 +174,7 @@ func (m *SandboxManager) Acquire(cfg *store.SandboxConfig, workDir string) (sand
 	return inst.sb, release, nil
 }
 
-// acquire is Acquire returning the instance itself — for the one caller
-// (SandboxTools) that must also reach the instance's closer list. A second
-// map lookup would not do: the instance can be evicted between the acquire
-// and the lookup, and the reference this call holds is exactly what makes
-// using it after that safe.
+// acquire backs Acquire, returning the instance itself.
 //
 // The build runs OUTSIDE the manager lock. An ssh dial can take seconds (the
 // connect timeout defaults to 15s), and holding the lock through it would
@@ -389,16 +379,35 @@ func (m *SandboxManager) CloseAll() {
 	}
 }
 
-// trackCloser records a tool's shell pool on its sandbox instance so the
-// instance's close releases the held-open shells with the sandbox itself. On
-// the instance, not a key-indexed map: after an eviction the key can be
-// rebuilt, and the old generation's shells must go down with the old
-// instance, never linger under the new one.
-func (m *SandboxManager) trackCloser(inst *sandboxInstance) func(io.Closer) {
-	return func(c io.Closer) {
-		m.mu.Lock()
-		inst.closers = append(inst.closers, c)
-		m.mu.Unlock()
+// Output caps for the sandbox tools, replacing the SDK's 8192 defaults:
+// read_file must return whole source files (65536 covers a ~2000-line file),
+// while exec_command keeps a tighter per-stream cap — its truncation preserves
+// head and tail, which is what build/test output needs.
+const (
+	fileToolMaxOutputBytes = 65536
+	execToolMaxOutputBytes = 32768
+)
+
+// TerminalCapable reports whether a sandbox config can hold an interactive
+// shell open (sandbox.TerminalOpener): ssh always, docker only in persistent
+// mode (an ephemeral container has nothing to attach to between Execs), local
+// never — a PTY on the host process is a bigger grant than
+// --allow-local-sandbox implies. One rule for both consumers: the web-terminal
+// capability flag and exec_command's persistent sessions.
+func TerminalCapable(cfg *store.SandboxConfig) bool {
+	switch cfg.Type {
+	case "ssh":
+		return true
+	case "docker":
+		var dc store.DockerConfig
+		if len(cfg.Config) > 0 {
+			if err := json.Unmarshal(cfg.Config, &dc); err != nil {
+				return false
+			}
+		}
+		return dc.Persistent
+	default:
+		return false
 	}
 }
 
@@ -407,22 +416,37 @@ func (m *SandboxManager) trackCloser(inst *sandboxInstance) func(io.Closer) {
 // backing instance that the returned release drops (see Acquire — the caller
 // releases when the run using the tools is over). apply_patch (Codex-style
 // multi-file edits) and the file tools all edit through the same Sandbox, so
-// they target the same filesystem exec_command runs in. When commandApproval is
-// set, exec_command is gated per call through the session command-trust store:
-// a command is approved on first use, then trusted per the user's choice.
+// they target the same filesystem exec_command runs in. On terminal-capable
+// backends exec_command offers persistent named shells (session_id); they are
+// scoped to this toolset, so the release also closes any the run opened. When
+// commandApproval is set, exec_command is gated per call through the session
+// command-trust store: a command is approved on first use, then trusted per
+// the user's choice.
 func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, workDir string, commandApproval bool) ([]*agents.Tool, func(), error) {
-	inst, release, err := m.acquire(cfg, workDir)
+	sb, release, err := m.Acquire(cfg, workDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	codeCfg := sandbox.CodeToolConfig{RegisterCloser: m.trackCloser(inst)}
+	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes}
+	var pools []io.Closer
+	if TerminalCapable(cfg) {
+		codeCfg.Sessions = true
+		codeCfg.RegisterCloser = func(c io.Closer) { pools = append(pools, c) }
+	}
 	if commandApproval {
 		codeCfg.NeedsApprovalFunc = m.commandGate
 	}
-	tools := []*agents.Tool{sandbox.CodeTool(inst.sb, codeCfg)}
-	tools = append(tools, sandbox.FileTools(inst.sb, sandbox.FileToolConfig{})...)
-	tools = append(tools, sandbox.ApplyPatchTool(inst.sb, sandbox.FileToolConfig{}))
-	return tools, release, nil
+	fileCfg := sandbox.FileToolConfig{MaxOutputBytes: fileToolMaxOutputBytes}
+	tools := []*agents.Tool{sandbox.CodeTool(sb, codeCfg)}
+	tools = append(tools, sandbox.FileTools(sb, fileCfg)...)
+	tools = append(tools, sandbox.ApplyPatchTool(sb, fileCfg))
+	releaseTools := func() {
+		for _, p := range pools {
+			_ = p.Close()
+		}
+		release()
+	}
+	return tools, releaseTools, nil
 }
 
 // buildSandbox constructs the SDK sandbox for a config. workDir is the

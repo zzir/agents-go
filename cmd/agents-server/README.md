@@ -628,6 +628,16 @@ host an interactive web terminal (`ssh` always, `docker` only with
 button is enabled only when some sandbox advertises it; the session
 itself runs over [`/ws/terminal`](#terminal-endpoint--get-wsterminal).
 
+The same capability rule gates `exec_command`'s **persistent shells**: on
+terminal-capable sandboxes the tool schema offers a `session_id`, and a named
+shell is held open between calls so `cd`, exported variables and an activated
+environment survive; on `local` and ephemeral `docker` the field is absent from
+the schema rather than silently ignored. Named shells are scoped to one run —
+its teardown closes them (an approval pause included, so a resumed run reopens
+its sessions fresh). Tool output toward the model is capped above the SDK
+defaults: file reads at 64 KiB (whole source files), exec output at 32 KiB per
+stream (truncation keeps head and tail).
+
 Responses also carry two computed workdir fields, which the composer's
 pre-binding project picker prefills and gates on. `default_work_dir` is always
 the **execution view** — the directory commands actually run in — so it never

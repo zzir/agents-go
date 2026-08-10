@@ -60,28 +60,6 @@ func (h *SandboxHandler) closeSandboxTerminals(id string, minGen int64) {
 	}
 }
 
-// terminalCapable reports whether a sandbox config can host an interactive
-// web terminal: ssh always, docker only in persistent mode (an ephemeral
-// container has nothing to attach to between Execs), local never — a web
-// terminal on the host process is a bigger grant than --allow-local-sandbox
-// implies.
-func terminalCapable(cfg *store.SandboxConfig) bool {
-	switch cfg.Type {
-	case "ssh":
-		return true
-	case "docker":
-		var dc store.DockerConfig
-		if len(cfg.Config) > 0 {
-			if err := json.Unmarshal(cfg.Config, &dc); err != nil {
-				return false
-			}
-		}
-		return dc.Persistent
-	default:
-		return false
-	}
-}
-
 // annotate fills the computed, never-stored response fields: terminal
 // capability, plus the default workdir a session binding would use and whether
 // a custom per-session workdir is honored (local/ssh only). The workdir is
@@ -89,7 +67,7 @@ func terminalCapable(cfg *store.SandboxConfig) bool {
 // docker it is the container-side /workspace constant, never the host mount
 // source (that is the config's host_dir, a different concept).
 func (h *SandboxHandler) annotate(cfg *store.SandboxConfig) {
-	cfg.Terminal = terminalCapable(cfg)
+	cfg.Terminal = bridge.TerminalCapable(cfg)
 	switch cfg.Type {
 	case "ssh":
 		var sc store.SSHConfig
