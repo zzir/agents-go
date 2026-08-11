@@ -241,7 +241,6 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	bc.stack[configID] = true
 	defer delete(bc.stack, configID)
 
-	log := zerolog.Ctx(ctx)
 	result := &BuildResult{}
 
 	globalSystemPrompt := settingValue(ctx, deps.Settings, "system_prompt")
@@ -318,53 +317,11 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		})
 	}
 
-	// Provider + retry/fallback decorators
-	if err := ValidateProviderSelection(ac); err != nil {
-		return nil, fmt.Errorf("agent %q: %w", ac.Name, err)
-	}
-	def, err := providerDefFor(ac.Provider.ProviderType)
-	if err != nil {
-		return nil, err // unreachable after validation; fail loud, never default
-	}
+	// Provider + retry/fallback decorators. proxyClient is reused by Brave below.
 	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
-	result.ProviderType = def.Type
-	apiKey := ac.Provider.APIKey
-	var chatgptCreds *ChatGPTCredentials
-	// Validation limits chatgpt_login to backends that list it, so no
-	// provider check is needed here.
-	if ac.Provider.AuthMode == authModeChatGPTLogin && deps.ChatGPTOAuth != nil {
-		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, configID); err == nil {
-			apiKey = creds.AccessToken
-			chatgptCreds = creds
-		} else {
-			log := zerolog.Ctx(ctx)
-			log.Warn().Err(err).Msg("ChatGPT OAuth token unavailable, falling back to api_key")
-		}
-	}
-	if apiKey == "" {
-		// The global per-provider fallback key (derived into
-		// handler.secretSettingKeys from the same registry).
-		apiKey = settingValue(ctx, deps.Settings, def.SettingKey)
-	}
-	if apiKey != "" {
-		ac.Provider.APIKey = apiKey
-		if chatgptCreds != nil && ac.Provider.BaseURL == "" {
-			ac.Provider.BaseURL = ChatGPTBaseURL
-		}
-		provider := def.Build(ac.Provider.APIKey, ac.Provider.BaseURL, chatgptCreds, proxyClient)
-		if ac.Resilience.RetryEnabled {
-			provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
-		}
-		if len(spec.FallbackModels) > 0 {
-			provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient, func(providerType string) string {
-				fdef, ferr := providerDefFor(providerType)
-				if ferr != nil {
-					return ""
-				}
-				return settingValue(ctx, deps.Settings, fdef.SettingKey)
-			})
-		}
-		result.Provider = provider
+	result.Provider, result.ProviderType, err = resolveProvider(ctx, deps, configID, ac, spec, proxyClient)
+	if err != nil {
+		return nil, err
 	}
 
 	// Global system prompt
@@ -378,123 +335,199 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", buildMemoryBlock(memories))
 	}
 
-	// MCP servers — the selected ids are decoded in spec; an id whose server
-	// isn't currently connected is skipped (the tool set reflects live state).
-	for _, id := range spec.Tools {
-		srv := deps.McpManager.Get(id)
-		if srv != nil {
-			agent.MCPServers = append(agent.MCPServers, srv)
-		} else {
-			log.Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
-		}
-	}
+	// MCP servers — an id whose server is not currently connected is skipped.
+	attachMCPServers(ctx, deps, agent, spec)
 
-	// Sandbox tools: "" = none, else = specific ID. Failure is the run's
-	// failure, not a silent downgrade: a bound session whose sandbox cannot be
-	// built would otherwise run coding prompts with no file system at all and
-	// nothing telling anyone. (Deleting a still-referenced sandbox is refused
-	// with 409, so the lookup failing here means the store itself did.)
-	if sandboxID != "" {
-		sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
-		if err != nil {
-			return nil, fmt.Errorf("sandbox %s: %w", sandboxID, err)
-		}
-		tools, release, err := deps.SandboxManager.SandboxTools(sbCfg, bc.workDir, approveCommands)
-		if err != nil {
-			return nil, fmt.Errorf("sandbox %q: building tools: %w", sbCfg.Name, err)
-		}
-		bc.releases = append(bc.releases, release)
-		agent.Tools = append(agent.Tools, tools...)
+	// Sandbox tools — "" means none; a build failure fails the run.
+	if err := attachSandboxTools(ctx, deps, bc, agent, sandboxID, approveCommands); err != nil {
+		return nil, err
 	}
 
 	// Brave Search
-	if apiKey := settingValue(ctx, deps.Settings, "brave_api_key"); apiKey != "" {
-		bsOpts := bravesearch.Options{APIKey: apiKey}
-		if proxyClient != nil {
-			bsOpts.HTTPClient = proxyClient
-		}
-		bsTool, err := bravesearch.New(bsOpts)
-		if err == nil {
-			agent.Tools = append(agent.Tools, bsTool)
-		} else {
-			log.Warn().Err(err).Msg("failed to create brave_search tool")
-		}
-	}
+	attachBraveSearch(ctx, deps, agent, proxyClient)
 
-	// Skills — loaded from <root>/skills, matching where SkillHandler manages
-	// them. Load and ReadFileTool must share this root so the relative paths in
-	// the rendered index resolve correctly. ac.SkillsJSON, when set, restricts
-	// which loaded skills are advertised to this agent (matched by Dir, e.g.
-	// "docx" or "some-repo/docx" — the same directory-relative id the Skills
-	// API and the Agent form's checkboxes use); an unset SkillsJSON (agents
-	// that pre-date per-agent scoping) still gets every installed skill.
-	if deps.Workspace != "" {
-		skillsDir := filepath.Join(deps.Workspace, "skills")
-		loadedSkills, err := skills.LoadRecursive(skillsDir)
-		if err == nil && spec.SkillsSet {
-			// spec.Skills restricts which loaded skills this agent advertises;
-			// an unset selection (SkillsSet == false) keeps every installed skill.
-			allowed := make(map[string]bool, len(spec.Skills))
-			for _, p := range spec.Skills {
-				allowed[p] = true
-			}
-			filtered := loadedSkills[:0]
-			for _, sk := range loadedSkills {
-				if allowed[sk.Dir] {
-					filtered = append(filtered, sk)
-				}
-			}
-			loadedSkills = filtered
-		}
-		if err == nil && len(loadedSkills) > 0 {
-			agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))
-			agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
-		}
-	}
+	// Skills — loaded from <workspace>/skills; spec may restrict the selection.
+	attachSkills(deps, agent, spec)
 
-	// Handoffs — recursive build over the decoded target ids. Each target that
-	// carries its own provider gets its model pre-resolved into ModelImpl so the
-	// run loop uses the target's backend, not the run-level (main agent's) one.
-	if len(spec.Handoffs) > 0 {
-		for _, hID := range spec.Handoffs {
-			hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, bc)
-			if err != nil {
-				// A cycle is recoverable: drop the back-edge and keep going.
-				// Any other failure means the target's config is broken, and
-				// silently dropping the handoff would hide it — propagate.
-				if errors.Is(err, errHandoffCycle) {
-					log.Warn().Err(err).Str("handoff_id", hID).Msg("handoff cycle, skipping edge")
-					continue
-				}
-				return nil, fmt.Errorf("agent %q handoff %q: %w", ac.Name, hID, err)
-			}
-			// A keyless target has no provider of its own and would resolve
-			// through the RUN's provider at handoff time. Same backend, that
-			// is credential sharing; a different backend would silently send
-			// the target's model name to the wrong API — refuse it instead.
-			if hResult.Provider == nil && hResult.ProviderType != result.ProviderType {
-				targetKey := hResult.ProviderType + "_api_key"
-				if tdef, terr := providerDefFor(hResult.ProviderType); terr == nil {
-					targetKey = tdef.SettingKey
-				}
-				return nil, fmt.Errorf(
-					"agent %q handoff %q: target uses provider_type %q but has no API key, so it would inherit this agent's %q provider — give the target its own api_key or set the global %s",
-					ac.Name, hID, hResult.ProviderType, result.ProviderType, targetKey)
-			}
-			if hResult.Provider != nil && hResult.Agent.Model != "" && hResult.Agent.ModelImpl == nil {
-				m, merr := hResult.Provider.Model(hResult.Agent.Model)
-				if merr != nil {
-					return nil, fmt.Errorf("agent %q handoff %q: resolve model: %w", ac.Name, hID, merr)
-				}
-				hResult.Agent.ModelImpl = m
-			}
-			agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
-		}
+	// Handoffs — recursively built; a target with its own provider gets its model
+	// pre-resolved so the run uses the target's backend, not the main agent's.
+	if err := buildHandoffs(ctx, deps, bc, agent, result, ac, spec, sandboxID); err != nil {
+		return nil, err
 	}
 
 	result.Agent = agent
 	bc.cache[configID] = result
 	return result, nil
+}
+
+// buildHandoffs recursively builds each handoff target and wires it onto the
+// agent. A cycle is recoverable (the edge is dropped); any other target failure
+// propagates. A keyless target on a different backend is refused rather than
+// letting it silently inherit this agent's provider; a target with its own
+// provider gets its model pre-resolved so the run uses the target's backend.
+func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, result *BuildResult, ac *store.AgentConfig, spec *AgentSpec, sandboxID string) error {
+	for _, hID := range spec.Handoffs {
+		hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, bc)
+		if err != nil {
+			if errors.Is(err, errHandoffCycle) {
+				zerolog.Ctx(ctx).Warn().Err(err).Str("handoff_id", hID).Msg("handoff cycle, skipping edge")
+				continue
+			}
+			return fmt.Errorf("agent %q handoff %q: %w", ac.Name, hID, err)
+		}
+		// A keyless target would resolve through the RUN's provider at handoff
+		// time; a different backend would send its model name to the wrong API.
+		if hResult.Provider == nil && hResult.ProviderType != result.ProviderType {
+			targetKey := hResult.ProviderType + "_api_key"
+			if tdef, terr := providerDefFor(hResult.ProviderType); terr == nil {
+				targetKey = tdef.SettingKey
+			}
+			return fmt.Errorf(
+				"agent %q handoff %q: target uses provider_type %q but has no API key, so it would inherit this agent's %q provider — give the target its own api_key or set the global %s",
+				ac.Name, hID, hResult.ProviderType, result.ProviderType, targetKey)
+		}
+		if hResult.Provider != nil && hResult.Agent.Model != "" && hResult.Agent.ModelImpl == nil {
+			m, merr := hResult.Provider.Model(hResult.Agent.Model)
+			if merr != nil {
+				return fmt.Errorf("agent %q handoff %q: resolve model: %w", ac.Name, hID, merr)
+			}
+			hResult.Agent.ModelImpl = m
+		}
+		agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
+	}
+	return nil
+}
+
+// resolveProvider builds the agent's model provider: the selected backend
+// wrapped with retry and fallback decorators when enabled. It returns a nil
+// provider (no error) when no API key is available — the run-without-a-provider
+// path — and always returns the normalized providerType.
+func resolveProvider(ctx context.Context, deps *AgentDeps, configID string, ac *store.AgentConfig, spec *AgentSpec, proxyClient *http.Client) (agents.ModelProvider, string, error) {
+	if err := ValidateProviderSelection(ac); err != nil {
+		return nil, "", fmt.Errorf("agent %q: %w", ac.Name, err)
+	}
+	def, err := providerDefFor(ac.Provider.ProviderType)
+	if err != nil {
+		return nil, "", err // unreachable after validation; fail loud, never default
+	}
+	apiKey := ac.Provider.APIKey
+	var chatgptCreds *ChatGPTCredentials
+	if ac.Provider.AuthMode == authModeChatGPTLogin && deps.ChatGPTOAuth != nil {
+		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, configID); err == nil {
+			apiKey = creds.AccessToken
+			chatgptCreds = creds
+		} else {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("ChatGPT OAuth token unavailable, falling back to api_key")
+		}
+	}
+	if apiKey == "" {
+		apiKey = settingValue(ctx, deps.Settings, def.SettingKey) // global per-provider fallback key
+	}
+	if apiKey == "" {
+		return nil, def.Type, nil
+	}
+	baseURL := ac.Provider.BaseURL
+	if chatgptCreds != nil && baseURL == "" {
+		baseURL = ChatGPTBaseURL
+	}
+	provider := def.Build(apiKey, baseURL, chatgptCreds, proxyClient)
+	if ac.Resilience.RetryEnabled {
+		provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
+	}
+	if len(spec.FallbackModels) > 0 {
+		provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient, func(providerType string) string {
+			fdef, ferr := providerDefFor(providerType)
+			if ferr != nil {
+				return ""
+			}
+			return settingValue(ctx, deps.Settings, fdef.SettingKey)
+		})
+	}
+	return provider, def.Type, nil
+}
+
+// attachMCPServers wires the config's selected MCP servers onto the agent,
+// skipping any whose server is not currently connected.
+func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) {
+	for _, id := range spec.Tools {
+		if srv := deps.McpManager.Get(id); srv != nil {
+			agent.MCPServers = append(agent.MCPServers, srv)
+		} else {
+			zerolog.Ctx(ctx).Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
+		}
+	}
+}
+
+// attachBraveSearch adds the Brave Search tool when a brave_api_key is set; a
+// build failure is logged and skipped, not fatal.
+func attachBraveSearch(ctx context.Context, deps *AgentDeps, agent *agents.Agent, proxyClient *http.Client) {
+	apiKey := settingValue(ctx, deps.Settings, "brave_api_key")
+	if apiKey == "" {
+		return
+	}
+	bsOpts := bravesearch.Options{APIKey: apiKey}
+	if proxyClient != nil {
+		bsOpts.HTTPClient = proxyClient
+	}
+	bsTool, err := bravesearch.New(bsOpts)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("failed to create brave_search tool")
+		return
+	}
+	agent.Tools = append(agent.Tools, bsTool)
+}
+
+// attachSandboxTools builds and attaches the bound sandbox's tools when one is
+// selected. A build failure fails the run rather than silently downgrading — a
+// bound session must not run coding prompts with no file system. The instance
+// reference is recorded on bc for the build's Release.
+func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, sandboxID string, approveCommands bool) error {
+	if sandboxID == "" {
+		return nil
+	}
+	sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
+	if err != nil {
+		return fmt.Errorf("sandbox %s: %w", sandboxID, err)
+	}
+	tools, release, err := deps.SandboxManager.SandboxTools(sbCfg, bc.workDir, approveCommands)
+	if err != nil {
+		return fmt.Errorf("sandbox %q: building tools: %w", sbCfg.Name, err)
+	}
+	bc.releases = append(bc.releases, release)
+	agent.Tools = append(agent.Tools, tools...)
+	return nil
+}
+
+// attachSkills loads skills from <workspace>/skills and, when spec restricts the
+// selection, filters to the advertised ones; the rendered index and ReadFileTool
+// share the skills root so relative paths resolve. Best-effort: a load error is
+// skipped, not fatal.
+func attachSkills(deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) {
+	if deps.Workspace == "" {
+		return
+	}
+	skillsDir := filepath.Join(deps.Workspace, "skills")
+	loadedSkills, err := skills.LoadRecursive(skillsDir)
+	if err != nil {
+		return
+	}
+	if spec.SkillsSet {
+		allowed := make(map[string]bool, len(spec.Skills))
+		for _, p := range spec.Skills {
+			allowed[p] = true
+		}
+		filtered := loadedSkills[:0]
+		for _, sk := range loadedSkills {
+			if allowed[sk.Dir] {
+				filtered = append(filtered, sk)
+			}
+		}
+		loadedSkills = filtered
+	}
+	if len(loadedSkills) > 0 {
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))
+		agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
+	}
 }
 
 // staticLocalToolNames returns the fixed names of every tool the bridge
