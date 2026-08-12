@@ -456,6 +456,15 @@ components:
         tool_call_id:
           type: string
       type: object
+    handler.CompactResponse:
+      properties:
+        after_items:
+          type: integer
+        before_items:
+          type: integer
+        compacted:
+          type: boolean
+      type: object
     handler.ErrorResponse:
       properties:
         error:
@@ -1010,6 +1019,91 @@ components:
         tokens_before:
           type: integer
       type: object
+    store.ContextItem:
+      properties:
+        anchor:
+          description: |-
+            Anchor is what the client scrolls to: a tool call id when the entry is
+            part of a tool exchange, the entry id otherwise. RunID is the fallback
+            for an entry the timeline renders under a turn rather than on its own.
+          type: string
+        kind:
+          description: Kind is the entry's display kind (message / tool_output / reasoning
+            / …).
+          type: string
+        label:
+          type: string
+        response_id:
+          description: |-
+            ResponseID names the model call that produced the entry, which is how a
+            non-tool item finds its generation span (a tool item uses Anchor, which
+            is the call id its function span records).
+          type: string
+        run_id:
+          type: string
+        tokens:
+          type: integer
+      type: object
+    store.ContextReport:
+      properties:
+        cache_write_tokens:
+          type: integer
+        cached_tokens:
+          description: |-
+            CachedTokens / CacheWriteTokens split that call's input by cache
+            disposition, for providers that report it.
+          type: integer
+        compaction_enabled:
+          description: |-
+            CompactionEnabled reports whether the pass runs at all; Threshold is what
+            it fires at (the default filled in when the config names none) and Tokens
+            is what it compares — ActiveContextTokens over the same history, so the
+            number the panel draws is the number that trips.
+          type: boolean
+        compaction_threshold:
+          type: integer
+        compaction_tokens:
+          type: integer
+        context_window:
+          description: |-
+            ContextWindow is the agent config's declared window in tokens; 0 means
+            unconfigured and the client shows occupancy without a denominator.
+          type: integer
+        growth:
+          description: |-
+            Growth is each model call's input tokens in order — the curve the panel
+            draws, where a compaction pass shows up as the drop it caused.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        input_tokens:
+          description: |-
+            InputTokens is what the LAST model call on the branch sent — the history,
+            prompt and tool schemas that are in the window right now. OutputTokens is
+            that same call's completion.
+          type: integer
+        items:
+          description: Items are the heaviest entries still in context, largest first.
+          items:
+            $ref: '#/components/schemas/store.ContextItem'
+          type: array
+          uniqueItems: false
+        model:
+          type: string
+        output_tokens:
+          type: integer
+        prompt:
+          $ref: '#/components/schemas/store.PromptProfile'
+        session_input_tokens:
+          description: |-
+            SessionInputTokens / SessionOutputTokens total every model call on the
+            branch. Input counts re-sent history once per call, so it runs far ahead
+            of InputTokens by design — it is a spend figure, not a window figure.
+          type: integer
+        session_output_tokens:
+          type: integer
+      type: object
     store.EntryView:
       properties:
         compacted:
@@ -1118,6 +1212,40 @@ components:
         updated_at:
           type: string
       type: object
+    store.PromptProfile:
+      description: |-
+        Prompt is what the session's last build put in front of the conversation
+        — the instruction layers and the tool surface, in the same estimated
+        characters as CompactionTokens. Absent until a run has built once.
+      properties:
+        global_prompt_chars:
+          type: integer
+        instructions_chars:
+          description: The instruction layers, in the order WrapInstructions composed
+            them.
+          type: integer
+        mcp_server_ids:
+          description: MCPServerIDs are the servers the build wired up, in config
+            order.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        memory_chars:
+          type: integer
+        skills_index_chars:
+          type: integer
+        tools:
+          description: |-
+            Tools are the locally attached tools, bucketed by what attached them.
+            MCP is absent here: its tools live on the server, not on the agent, and
+            are sized by the read path (which is also the only place a live server
+            can be asked).
+          items:
+            $ref: '#/components/schemas/store.ToolBucket'
+          type: array
+          uniqueItems: false
+      type: object
     store.ProviderGroup:
       description: |-
         The remaining knobs are grouped into JSON category columns (see
@@ -1130,6 +1258,13 @@ components:
           type: string
         base_url:
           type: string
+        context_window:
+          description: |-
+            ContextWindow is the model's context window in tokens. Declared rather
+            than discovered: no provider reports it on a response, and a wrong guess
+            would put a fraction on the Context panel that reads as fact. 0 leaves
+            the panel showing occupancy without a denominator.
+          type: integer
         provider_type:
           type: string
       type: object
@@ -1321,6 +1456,20 @@ components:
         updated_at:
           type: string
       type: object
+    store.ToolBucket:
+      properties:
+        chars:
+          type: integer
+        count:
+          type: integer
+        source:
+          type: string
+        unavailable:
+          description: |-
+            Unavailable marks a bucket that could not be measured (an MCP server that
+            is disconnected or did not answer). Reported as unknown, never as zero.
+          type: boolean
+      type: object
     store.TraceEvent:
       properties:
         created_at:
@@ -1340,6 +1489,13 @@ components:
         name:
           type: string
         parent_id:
+          type: string
+        parent_run_id:
+          description: |-
+            ParentRunID is the run's LINEAGE: for a task wake-up run, the run whose
+            spawn started the chain. Recorded on the trace itself so the panel's run
+            grouping reads it directly — deriving it from task rows or notification
+            text broke on every surface that does not carry them (forks above all).
           type: string
         run_id:
           type: string
@@ -3213,6 +3369,94 @@ paths:
       security:
       - BearerAuth: []
       summary: Switch active branch
+      tags:
+      - sessions
+  /sessions/{id}/compact:
+    post:
+      description: Folds the session's active branch down to its kept window plus
+        a summary checkpoint, regardless of the threshold — the Context panel's "Compact
+        now". A 200 with compacted=false means there was nothing to fold (the kept
+        window already covers the history). Fails 409 while a run is executing and
+        400 when the session's agent has compaction disabled or no usable provider.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.CompactResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: session already has an active run
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Compact session history
+      tags:
+      - sessions
+  /sessions/{id}/context:
+    get:
+      description: 'What the session''s active branch occupies of its model''s context
+        window: the last call''s provider token counts, the session totals, the per-call
+        growth curve, the compaction estimate, and the heaviest entries still in context.
+        Window figures are the provider''s; compaction figures and item sizes are
+        character estimates — the two are not the same ruler.'
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.ContextReport'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Session context usage
       tags:
       - sessions
   /sessions/{id}/fork:

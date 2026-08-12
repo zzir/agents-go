@@ -105,9 +105,7 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 	if !built.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
 	}
-	modelName := built.Compaction.Model
-	modelName = cmp.Or(modelName, built.Agent.Model)
-	summaryModel, err := provider.Model(modelName)
+	summaryModel, err := summaryModelFor(provider, built.Compaction, built.Agent.Model)
 	if err != nil || summaryModel == nil {
 		return session.NewSession(sa)
 	}
@@ -115,6 +113,13 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 		built.Compaction.Threshold, built.Compaction.Window, built.Compaction.Prompt,
 		compactionNotifier(send, runID),
 	))
+}
+
+// summaryModelFor resolves the model a compaction pass summarizes with — the
+// config's compaction_model, else the agent's own. One definition, shared by
+// the run path and the manual CompactSession.
+func summaryModelFor(provider agents.ModelProvider, compaction store.CompactionGroup, agentModel string) (agents.Model, error) {
+	return provider.Model(cmp.Or(compaction.Model, agentModel))
 }
 
 // NewRunner creates a Runner backed by the given database and agent
@@ -186,7 +191,13 @@ type RunOutcome struct {
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
 // ErrSessionBusy when the session already has a live run.
 func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, workDir, input string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, onDone)
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, "", onDone)
+}
+
+// StartWakeRun is StartRun for a task notification delivery: same launch, plus
+// the lineage (the run whose spawn started the chain) the trace records.
+func (r *Runner) StartWakeRun(sessionID, agentConfigID, sandboxID, workDir, input, parentRunID string, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, parentRunID, onDone)
 }
 
 // bindingPlan is one run request's resolved sandbox context: the effective
@@ -235,7 +246,7 @@ const maxBindAttempts = 3
 
 // startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
 // task's run id up front so the row can carry it before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, workDir, input string, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, workDir, input, wakeParentRunID string, onDone func(*RunOutcome)) (string, error) {
 	var (
 		seg      *runSegment
 		ctx      context.Context
@@ -301,7 +312,7 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, work
 		}
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.sandboxID, plan.workDir, input)
+		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.sandboxID, plan.workDir, input, wakeParentRunID)
 	})
 	return runID, nil
 }
@@ -343,6 +354,12 @@ type segmentSpec struct {
 	// input is the user text announced in run.started and persisted when the
 	// segment fails before the SDK's own per-turn save.
 	input string
+	// wakeParentRunID is a wake-up run's lineage: the run whose spawn started
+	// the chain, stamped on every trace span (see wsProcessor.parentRunID).
+	// Empty for ordinary runs — and for resumes, which is fine: the fresh
+	// segment already wrote spans carrying it, and the panel takes the first
+	// one it finds.
+	wakeParentRunID string
 	// failCode is the fallback error code for a failed stream drain.
 	failCode string
 	// fresh gates the fresh-run extras: the session pre-check, the
@@ -475,6 +492,15 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// ResolveApproval), released by its own hand.
 	defer built.Release()
 
+	// What this build put in front of the model, for the Context panel. Only
+	// the build knows it, and only the run has a session to file it under; a
+	// failure here costs a panel section, never the run.
+	if r.Deps.ContextProfiles != nil {
+		if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.Profile); err != nil {
+			log.Warn().Err(err).Msg("failed to record the session's context profile")
+		}
+	}
+
 	agent := built.Agent
 	provider := built.Provider
 	if provider == nil {
@@ -502,7 +528,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		// an agent the resume never runs.
 		armPlanUnlock(built.PlanPhase, sa)
 	}
-	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID)
+	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, spanDataCap(ctx, r.Deps.Settings))
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
@@ -529,11 +555,12 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 // runStreamed executes one fresh run segment to completion, publishing events
 // to the hub, and returns its outcome.
-func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir, input string) *RunOutcome {
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir, input, wakeParentRunID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, workDir, segmentSpec{
-		input:    input,
-		failCode: "stream_error",
-		fresh:    true,
+		input:           input,
+		wakeParentRunID: wakeParentRunID,
+		failCode:        "stream_error",
+		fresh:           true,
 		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			// An empty input means "continue from where the session's branch
 			// now points" — what regenerating does after switching back to the

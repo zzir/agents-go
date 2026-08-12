@@ -18,6 +18,11 @@ type ProviderGroup struct {
 	AuthMode     string `json:"auth_mode,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	BaseURL      string `json:"base_url,omitempty"`
+	// ContextWindow is the model's context window in tokens. Declared rather
+	// than discovered: no provider reports it on a response, and a wrong guess
+	// would put a fraction on the Context panel that reads as fact. 0 leaves
+	// the panel showing occupancy without a denominator.
+	ContextWindow int `json:"context_window,omitempty"`
 }
 
 // BehaviorGroup holds the run-behavior knobs.

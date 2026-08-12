@@ -242,6 +242,59 @@ type Memory struct {
 	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`
 }
 
+// ContextProfile is what a session's last build put in front of the model
+// before the conversation itself. It is a SNAPSHOT, written per run rather
+// than derived on demand: the sizes depend on the sandbox that was attached,
+// the skills that were on disk and the plan/todo wrappers that were applied,
+// and reconstructing that in a read path would be a second copy of
+// buildAgentFromConfig.
+type ContextProfile struct {
+	bun.BaseModel `bun:"table:context_profiles,alias:cxp"`
+
+	SessionID string `bun:"session_id,pk"`
+	// Payload is a PromptProfile as JSON.
+	Payload string `bun:"payload,type:text"`
+}
+
+// PromptProfile is the ContextProfile payload: the instruction layers and the
+// tool surface, sized in CHARACTERS. Same ruler as the compaction estimate and
+// NOT the provider's — see README invariant 28.
+type PromptProfile struct {
+	// The instruction layers, in the order WrapInstructions composed them.
+	InstructionsChars int `json:"instructions_chars,omitempty"`
+	GlobalPromptChars int `json:"global_prompt_chars,omitempty"`
+	MemoryChars       int `json:"memory_chars,omitempty"`
+	SkillsIndexChars  int `json:"skills_index_chars,omitempty"`
+	// Tools are the locally attached tools, bucketed by what attached them.
+	// MCP is absent here: its tools live on the server, not on the agent, and
+	// are sized by the read path (which is also the only place a live server
+	// can be asked).
+	Tools []ToolBucket `json:"tools,omitempty"`
+	// MCPServerIDs are the servers the build wired up, in config order.
+	MCPServerIDs []string `json:"mcp_server_ids,omitempty"`
+}
+
+// ToolBucket is one origin's share of the tool surface.
+type ToolBucket struct {
+	Source string `json:"source"`
+	Count  int    `json:"count"`
+	Chars  int    `json:"chars"`
+	// Unavailable marks a bucket that could not be measured (an MCP server that
+	// is disconnected or did not answer). Reported as unknown, never as zero.
+	Unavailable bool `json:"unavailable,omitempty"`
+}
+
+// Tool bucket sources.
+const (
+	ToolSourceSandbox  = "sandbox"
+	ToolSourceBrave    = "brave"
+	ToolSourceSkills   = "skills"
+	ToolSourceTasks    = "tasks"
+	ToolSourceWorkflow = "workflow"
+	// ToolSourceMCP is a prefix: "mcp:<server name>".
+	ToolSourceMCP = "mcp:"
+)
+
 // Setting is a single key/value server configuration entry.
 type Setting struct {
 	bun.BaseModel `bun:"table:settings,alias:st"`
@@ -270,19 +323,24 @@ type ProviderRoute struct {
 type TraceEvent struct {
 	bun.BaseModel `bun:"table:trace_events,alias:te"`
 
-	ID        int64     `bun:"id,pk,autoincrement"  json:"id"`
-	SessionID string    `bun:"session_id,notnull"   json:"session_id"`
-	RunID     string    `bun:"run_id,notnull"       json:"run_id"`
-	Kind      string    `bun:"kind,notnull"         json:"kind"`
-	SpanID    string    `bun:"span_id"              json:"span_id,omitempty"`
-	ParentID  string    `bun:"parent_id"            json:"parent_id,omitempty"`
-	Name      string    `bun:"name,notnull"         json:"name"`
-	Detail    string    `bun:"detail"               json:"detail,omitempty"`
-	Error     string    `bun:"error"                json:"error,omitempty"`
-	Data      string    `bun:"data"                 json:"data,omitempty"`
-	StartedAt string    `bun:"started_at"           json:"started_at,omitempty"`
-	EndedAt   string    `bun:"ended_at"             json:"ended_at,omitempty"`
-	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
+	ID        int64  `bun:"id,pk,autoincrement"  json:"id"`
+	SessionID string `bun:"session_id,notnull"   json:"session_id"`
+	RunID     string `bun:"run_id,notnull"       json:"run_id"`
+	// ParentRunID is the run's LINEAGE: for a task wake-up run, the run whose
+	// spawn started the chain. Recorded on the trace itself so the panel's run
+	// grouping reads it directly — deriving it from task rows or notification
+	// text broke on every surface that does not carry them (forks above all).
+	ParentRunID string    `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
+	Kind        string    `bun:"kind,notnull"         json:"kind"`
+	SpanID      string    `bun:"span_id"              json:"span_id,omitempty"`
+	ParentID    string    `bun:"parent_id"            json:"parent_id,omitempty"`
+	Name        string    `bun:"name,notnull"         json:"name"`
+	Detail      string    `bun:"detail"               json:"detail,omitempty"`
+	Error       string    `bun:"error"                json:"error,omitempty"`
+	Data        string    `bun:"data"                 json:"data,omitempty"`
+	StartedAt   string    `bun:"started_at"           json:"started_at,omitempty"`
+	EndedAt     string    `bun:"ended_at"             json:"ended_at,omitempty"`
+	CreatedAt   time.Time `bun:"created_at,notnull"   json:"created_at"`
 }
 
 // SandboxConfig is the persisted definition of a code-execution sandbox backend.

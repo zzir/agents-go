@@ -118,6 +118,8 @@ detail.
 | DELETE | `/sessions/:id`           | Delete session and its entries and traces                            |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
+| GET    | `/sessions/:id/context`   | Context-window usage report (see [invariant 28](#design-invariants)) |
+| POST   | `/sessions/:id/compact`   | Force one compaction pass now (409 while a run is live)              |
 | POST   | `/sessions/:id/fork`      | Fork session into a new one                                          |
 | POST   | `/sessions/:id/branch`    | Switch the active branch (`{entry_id}`)                              |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
@@ -162,6 +164,44 @@ on. Each carries its `kind` (`item` / `annotation` / `compaction` / …), its
 recorded `display`, and its `usage` / `diagnostics`. Update entries are folded
 into their targets server-side, so a client never applies them itself. The path
 keeps its name for compatibility.
+
+`/sessions/:id/context` reports what the session's ACTIVE branch occupies of its
+model's context window — the Context panel's whole payload, recomputed per call
+from the entries (there is no live event for it; the panel refetches when a run
+ends). `input_tokens` is the LAST model call's input: the history, prompt and
+tool schemas in the window right now — not `session_input_tokens`, which totals
+every call and so counts re-sent history once per turn. `context_window` is the
+agent config's declared window (`provider.context_window`; 0 when unset, and the
+panel then shows occupancy without a denominator) and `items` are the heaviest
+entries still in context, each with the `anchor` the UI scrolls to (a tool call
+id, else an entry id) and the `response_id` that ties it to a generation span.
+Compacted and off-path entries keep their usage — the call happened — but leave
+`items` and `compaction_tokens`, because the model no longer sees them.
+
+The report costs the session's ROW COUNT, not its size: `entries` carries the
+usage and the character estimate of each entry as lifted columns (written by the
+append that stored it), so the endpoint reads bodies only for the five heaviest
+entries it actually names. Without them a report over a 234MB session took ~1.4s
+and re-read every byte; with them it is ~30ms. The compaction check on every
+append reads the same columns.
+
+`prompt` is what the session's last build put in front of the conversation: the
+instruction layers (`instructions` / `global_prompt` / `memory` /
+`skills_index`) and the tool surface bucketed by origin, all in CHARACTERS. It
+comes from the `context_profiles` snapshot the runner writes per run — only the
+build knows what it assembled, and rebuilding it in a read path would be a
+second copy of `buildAgentFromConfig`. MCP is the exception: its tools live on
+the server, not on the agent, so the read path asks each connected server
+(bounded, 2s) and reports one that cannot answer as `unavailable` rather than
+zero. Absent entirely until a run has built the session's agent once.
+
+`POST /sessions/:id/compact` forces one compaction pass right now — the
+panel's "Compact now". It reuses the run path's own construction (same
+summary-model resolution, same adapter), and `Force` skips only the threshold:
+the kept window, pairing-safe split and summary-of-summary guards all still
+apply, so the worst outcome is a 200 with `compacted: false` (nothing to
+fold). 409 while a run is executing — the run compacts at its own boundaries;
+400 when the session's agent has compaction disabled or no usable provider.
 
 **Pagination** — `messages` and `traces` accept optional `?limit=` and
 `?before_id=`. Without `limit` the full list is returned (oldest-first),
@@ -467,6 +507,15 @@ Known keys:
   arguments out of stored traces (generation spans carry only timing/usage
   metadata; the trace panel's Replay then has nothing to seed from). Empty or
   `true` records everything (the default). Applies to new runs
+- `trace_span_data_kb` — how much of a span's payload (model request, response,
+  tool schemas) is STORED, in kilobytes; empty or `0` uses the default 8192.
+  Past it the bulky fields are replaced with a marker and a Replay of that call
+  has nothing to seed from, so raise it if you replay large turns and can pay
+  the disk (a 74k-token request is roughly 300KB–1MB per generation span;
+  `trace_retention_days` is the other half of that budget). What travels over
+  the WEBSOCKET is a separate, fixed 256KB — the browser holds every span of
+  the session at once, and anything it drops is still in the row, one reopen
+  away. Applies to new runs
 - `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
   before it expires (default `1440` = 24h; `0` disables expiry)
 
@@ -1093,11 +1142,25 @@ When a change genuinely doesn't fit, update this list in the same PR.
     the summary that stands in for it — which is why the model sees
     `[summary, kept…]`: the projection drops what the checkpoint excluded and
     renders its summary up front, reading the kept turns from the session
-    itself rather than from a copy. The timeline moves the folded entries INSIDE
-    it: a reader scrolling back sees one "~12k → ~3k tokens" marker, not the
-    folded turns rendered as though the model still reads them. They stay real
-    and one expand away — an entry marked compacted that no checkpoint names
-    renders in place, because history is not what compaction deletes.
+    itself rather than from a copy. The pass is branch-scoped: it sizes and
+    folds only the ACTIVE branch — what the projector sends — so an abandoned
+    attempt neither trips the threshold nor leaks into the summary, and is
+    never itself folded (it is already out of the model's view). A pass can
+    also be forced by hand (`POST /sessions/:id/compact`, the Context panel's
+    "Compact now"): Force skips only the threshold — every other guard holds,
+    so a manual pass can never fold what an automatic one would have kept.
+    The summarization request carries the folded prefix as ONE plain-text
+    transcript under a single user message: the conversation is the summary's
+    DATA, not the summary model's history, so no provider's history validation
+    (call/output pairing, DeepSeek's reasoning round-trip) can reject the pass.
+    The TRANSCRIPT is decoupled from the fold: folded entries render in place,
+    in full — history is not what compaction deletes — and the checkpoint
+    renders where it sits as an inline "~39k → ~7.8k tokens" marker with the
+    summary one expand away. Which entries the model still reads is the
+    Context panel's question, never the transcript's: hiding folded turns
+    inside the marker made the conversation unreadable past every pass and
+    broke everything that reads the rendered timeline (the trace panel's run
+    grouping above all).
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change to an existing table means
     dropping and recreating the database (dev-tool stance, decided
@@ -1181,9 +1244,10 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `provider_routes`   | Model-prefix routing rules                                                          |
 | `sandbox_configs`   | Sandbox configurations                                                              |
 | `guardrails`        | Custom guardrail definitions                                                        |
-| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction)                      |
+| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage        |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 | `tasks`             | Background tasks spawned via `spawn_task` (durable identity, status, wake-up state) |
+| `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
 
 The database file can be deleted and recreated freely — there is no migration
 mechanism.

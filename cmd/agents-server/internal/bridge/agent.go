@@ -39,6 +39,7 @@ type AgentDeps struct {
 	ChatGPTOAuth     *ChatGPTOAuth
 	PendingApprovals *store.PendingApprovalStore
 	Tasks            *store.TaskStore
+	ContextProfiles  *store.ContextProfileStore
 	Workspace        string
 	// MaxTasks overrides the per-session live background-task cap when > 0
 	// (--max-tasks; 0 keeps the built-in default).
@@ -111,6 +112,13 @@ type BuildResult struct {
 	// off the root agent) to avoid double-running.
 	RunGuardrails []agents.Guardrail
 
+	// Profile is what this build put in front of the model before the
+	// conversation: the instruction layers and the tool surface, sized in
+	// characters. The runner persists it per session for the Context panel;
+	// it describes the ENTRY agent only, since a handoff target's surface
+	// applies only after a handoff has happened.
+	Profile store.PromptProfile
+
 	// releaseSandbox drops every sandbox-instance reference this build
 	// acquired — the entry agent's and each handoff target's, folded into one
 	// (see agentBuildCtx.releases). Nil when the build attached no sandbox.
@@ -157,7 +165,9 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	if err == nil && !taskRun && deps.TaskManager != nil {
 		// The session id reaches the tools through the run context, not the
 		// model: otherwise one conversation could spawn tasks onto another.
+		mark := len(result.Agent.Tools)
 		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.Tools(nil)...)
+		bucketToolsSince(result.Agent, mark, store.ToolSourceTasks, &result.Profile)
 	}
 	if err != nil {
 		// A failed build returns no result to Release, so the sandbox
@@ -194,12 +204,14 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// above. Task runs are excluded: nobody sits on the other side of a
 	// background task's plan review.
 	if !taskRun && result.Agent != nil {
+		mark := len(result.Agent.Tools)
 		if result.Behavior.TodoList {
 			result.Agent = middleware.Todo{}.Apply(result.Agent)
 		}
 		if result.Behavior.PlanMode {
 			result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
 		}
+		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflow, &result.Profile)
 	}
 	return result, nil
 }
@@ -324,30 +336,45 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		return nil, err
 	}
 
+	// Every layer below is also MEASURED into result.Profile as it is added —
+	// what each contributes to the request is knowable here and nowhere else
+	// (see store.ContextProfile).
+	result.Profile.InstructionsChars = len(ac.Instructions)
+
 	// Global system prompt
 	if globalSystemPrompt != "" {
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, globalSystemPrompt, "")
+		result.Profile.GlobalPromptChars = len(globalSystemPrompt)
 	}
 
 	// Memory
 	memories, err := deps.Memories.ListForAgent(ctx, configID)
 	if err == nil && len(memories) > 0 {
-		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", buildMemoryBlock(memories))
+		memoryBlock := buildMemoryBlock(memories)
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", memoryBlock)
+		result.Profile.MemoryChars = len(memoryBlock)
 	}
 
 	// MCP servers — an id whose server is not currently connected is skipped.
-	attachMCPServers(ctx, deps, agent, spec)
+	// Their tools are not measured here: they live on the server, and asking it
+	// is a network call the build must not make (see the Context handler).
+	result.Profile.MCPServerIDs = attachMCPServers(ctx, deps, agent, spec)
+
+	mark := len(agent.Tools)
 
 	// Sandbox tools — "" means none; a build failure fails the run.
 	if err := attachSandboxTools(ctx, deps, bc, agent, sandboxID, approveCommands); err != nil {
 		return nil, err
 	}
+	mark = bucketToolsSince(agent, mark, store.ToolSourceSandbox, &result.Profile)
 
 	// Brave Search
 	attachBraveSearch(ctx, deps, agent, proxyClient)
+	mark = bucketToolsSince(agent, mark, store.ToolSourceBrave, &result.Profile)
 
 	// Skills — loaded from <workspace>/skills; spec may restrict the selection.
-	attachSkills(deps, agent, spec)
+	result.Profile.SkillsIndexChars = attachSkills(deps, agent, spec)
+	bucketToolsSince(agent, mark, store.ToolSourceSkills, &result.Profile)
 
 	// Handoffs — recursively built; a target with its own provider gets its model
 	// pre-resolved so the run uses the target's backend, not the main agent's.
@@ -447,15 +474,20 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, configID string, ac *
 }
 
 // attachMCPServers wires the config's selected MCP servers onto the agent,
-// skipping any whose server is not currently connected.
-func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) {
+// skipping any whose server is not currently connected. It returns the ids it
+// attached — the profile records the decision actually made, not a re-derivation
+// that could race a reconnect.
+func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) []string {
+	var attached []string
 	for _, id := range spec.Tools {
 		if srv := deps.McpManager.Get(id); srv != nil {
 			agent.MCPServers = append(agent.MCPServers, srv)
+			attached = append(attached, id)
 		} else {
 			zerolog.Ctx(ctx).Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
 		}
 	}
+	return attached
 }
 
 // attachBraveSearch adds the Brave Search tool when a brave_api_key is set; a
@@ -501,15 +533,17 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 // attachSkills loads skills from <workspace>/skills and, when spec restricts the
 // selection, filters to the advertised ones; the rendered index and ReadFileTool
 // share the skills root so relative paths resolve. Best-effort: a load error is
-// skipped, not fatal.
-func attachSkills(deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) {
+// skipped, not fatal. Returns the size of the index it added to the
+// instructions, which no caller can recover afterwards (it is wrapped into one
+// string with every other layer).
+func attachSkills(deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) int {
 	if deps.Workspace == "" {
-		return
+		return 0
 	}
 	skillsDir := filepath.Join(deps.Workspace, "skills")
 	loadedSkills, err := skills.LoadRecursive(skillsDir)
 	if err != nil {
-		return
+		return 0
 	}
 	if spec.SkillsSet {
 		allowed := make(map[string]bool, len(spec.Skills))
@@ -524,10 +558,29 @@ func attachSkills(deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) {
 		}
 		loadedSkills = filtered
 	}
-	if len(loadedSkills) > 0 {
-		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", skills.RenderIndex(loadedSkills))
-		agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
+	if len(loadedSkills) == 0 {
+		return 0
 	}
+	index := skills.RenderIndex(loadedSkills)
+	agent.Instructions = agents.WrapInstructions(agent.Instructions, "", index)
+	agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
+	return len(index)
+}
+
+// bucketToolsSince records the tools appended since mark under source, and
+// returns the new mark. Positional rather than name-matched: the build knows
+// which step added what, and a name list would have to be kept in step with
+// every tool the bridge ever attaches.
+func bucketToolsSince(agent *agents.Agent, mark int, source string, prof *store.PromptProfile) int {
+	if len(agent.Tools) == mark {
+		return mark
+	}
+	b := store.ToolBucket{Source: source, Count: len(agent.Tools) - mark}
+	for _, t := range agent.Tools[mark:] {
+		b.Chars += store.ToolChars(t)
+	}
+	prof.Tools = append(prof.Tools, b)
+	return len(agent.Tools)
 }
 
 // staticLocalToolNames returns the fixed names of every tool the bridge

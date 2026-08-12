@@ -2,16 +2,21 @@ package handler
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -30,13 +35,31 @@ type RunStopper interface {
 	ReleaseSessionBinding(sandboxID, workDir string)
 }
 
+// MCPToolLister answers what a connected MCP server currently exposes;
+// implemented by the bridge's McpManager. The Context report sizes an MCP tool
+// surface by asking, because those tools live on the server rather than on the
+// agent — the build never sees them.
+type MCPToolLister interface {
+	ListToolsFor(ctx context.Context, serverID string) (name string, tools []*agents.Tool, err error)
+}
+
+// SessionCompactor runs one forced compaction pass on a session outside any
+// run; implemented by the bridge's Runner. compacted=false with a nil error
+// means the guards found nothing to fold.
+type SessionCompactor interface {
+	CompactSession(ctx context.Context, sessionID string) (compacted bool, beforeItems, afterItems int, err error)
+}
+
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
 type SessionHandler struct {
-	sessions *store.SessionStore
-	entries  *store.EntryStore
-	traces   *store.TraceStore
-	agents   *store.AgentConfigStore
-	stopper  RunStopper
+	sessions  *store.SessionStore
+	entries   *store.EntryStore
+	traces    *store.TraceStore
+	agents    *store.AgentConfigStore
+	profiles  *store.ContextProfileStore
+	mcp       MCPToolLister
+	stopper   RunStopper
+	compactor SessionCompactor
 }
 
 // NewSessionHandler returns a handler backed by the session, message, trace,
@@ -45,9 +68,24 @@ func NewSessionHandler(sessions *store.SessionStore, entries *store.EntryStore, 
 	return &SessionHandler{sessions: sessions, entries: entries, traces: traces, agents: agents}
 }
 
+// WithContextProfiles wires what the Context report needs beyond the session's
+// own entries: the per-session build snapshot, and a way to ask a connected MCP
+// server what it currently exposes.
+func (h *SessionHandler) WithContextProfiles(profiles *store.ContextProfileStore, mcp MCPToolLister) *SessionHandler {
+	h.profiles = profiles
+	h.mcp = mcp
+	return h
+}
+
 // WithRunStopper wires the runner so deletes stop the session tree first.
 func (h *SessionHandler) WithRunStopper(s RunStopper) *SessionHandler {
 	h.stopper = s
+	return h
+}
+
+// WithCompactor wires the runner's manual compaction pass.
+func (h *SessionHandler) WithCompactor(compactor SessionCompactor) *SessionHandler {
+	h.compactor = compactor
 	return h
 }
 
@@ -334,6 +372,148 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, entries)
+}
+
+// Context responds with the session's context-window report.
+//
+//	@Summary		Session context usage
+//	@Description	What the session's active branch occupies of its model's context window: the last call's provider token counts, the session totals, the per-call growth curve, the compaction estimate, and the heaviest entries still in context. Window figures are the provider's; compaction figures and item sizes are character estimates — the two are not the same ruler.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{object}	store.ContextReport
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/context [get]
+func (h *SessionHandler) Context(c *gin.Context) {
+	ctx := c.Request.Context()
+	sess, err := h.sessions.Get(ctx, c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	ref, err := h.entries.RefFor(ctx, sess.ID)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	rep, err := h.entries.ContextReport(ctx, ref)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	// The window and the compaction threshold are the agent's, not the
+	// session's. A session with no agent bound yet (or one whose config was
+	// deleted) still reports its own usage — just without a denominator.
+	if sess.AgentConfigID != "" {
+		if ac, err := h.agents.Get(ctx, sess.AgentConfigID); err == nil {
+			rep.Model = ac.Model
+			rep.ContextWindow = ac.Provider.ContextWindow
+			rep.CompactionEnabled = ac.Compaction.Enabled
+			if ac.Compaction.Enabled {
+				// Same fallback rule as NewCompactionAdapter (<= 0, not just
+				// 0), so the threshold drawn is the threshold that fires.
+				rep.CompactionThreshold = ac.Compaction.Threshold
+				if rep.CompactionThreshold <= 0 {
+					rep.CompactionThreshold = store.DefaultCompactionThresholdTokens
+				}
+			}
+		}
+	}
+	// What the last run put in front of the conversation. Absent until a run
+	// has built the agent once — nothing else knows what a build assembled.
+	if h.profiles != nil {
+		if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("context report: prompt profile unreadable")
+		} else if prof != nil {
+			prof.Tools = append(prof.Tools, h.mcpBuckets(ctx, prof.MCPServerIDs)...)
+			rep.Prompt = prof
+		}
+	}
+	c.JSON(http.StatusOK, rep)
+}
+
+// CompactResponse reports what a manual compaction pass did. Compacted false
+// means the guards found nothing to fold — the kept window already covers the
+// history.
+type CompactResponse struct {
+	Compacted   bool `json:"compacted"`
+	BeforeItems int  `json:"before_items,omitempty"`
+	AfterItems  int  `json:"after_items,omitempty"`
+}
+
+// Compact runs one forced compaction pass on the session, outside any run.
+//
+//	@Summary		Compact session history
+//	@Description	Folds the session's active branch down to its kept window plus a summary checkpoint, regardless of the threshold — the Context panel's "Compact now". A 200 with compacted=false means there was nothing to fold (the kept window already covers the history). Fails 409 while a run is executing and 400 when the session's agent has compaction disabled or no usable provider.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{object}	CompactResponse
+//	@Failure		400	{object}	ErrorResponse
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse	"session already has an active run"
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/compact [post]
+func (h *SessionHandler) Compact(c *gin.Context) {
+	if h.compactor == nil {
+		internalError(c, errors.New("compaction is not wired"))
+		return
+	}
+	compacted, before, after, err := h.compactor.CompactSession(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
+			conflict(c, busy.Error())
+			return
+		}
+		if errors.Is(err, bridge.ErrCompactionUnavailable) {
+			badRequest(c, err.Error())
+			return
+		}
+		storeError(c, err) // not-found → 404, anything else → 500
+		return
+	}
+	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
+}
+
+// contextMCPTimeout bounds the tools/list calls one context report makes. The
+// panel is a diagnostic: a slow server costs it that server's row, not the
+// report.
+const contextMCPTimeout = 2 * time.Second
+
+// mcpBuckets sizes each connected MCP server's tool surface. A server that is
+// gone or slow is reported UNAVAILABLE rather than zero — "0 tokens of MCP" and
+// "we could not ask" are opposite answers for someone hunting a full window.
+//
+// The servers are asked CONCURRENTLY: sequentially, three slow ones would spend
+// the whole budget one after another and the panel would wait for the sum.
+func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.ToolBucket {
+	if h.mcp == nil || len(ids) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, contextMCPTimeout)
+	defer cancel()
+	buckets := make([]store.ToolBucket, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Go(func() {
+			name, tools, err := h.mcp.ListToolsFor(ctx, id)
+			b := store.ToolBucket{Source: store.ToolSourceMCP + cmp.Or(name, id)}
+			if err != nil {
+				b.Unavailable = true
+			} else {
+				b.Count = len(tools)
+				for _, t := range tools {
+					b.Chars += store.ToolChars(t)
+				}
+			}
+			buckets[i] = b
+		})
+	}
+	wg.Wait()
+	return buckets
 }
 
 type branchReq struct {

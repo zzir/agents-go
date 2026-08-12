@@ -64,17 +64,19 @@ func (t taskLauncher) Launch(_ context.Context, req tasks.LaunchRequest) error {
 	in := store.DecodeInherit(req.Inherit)
 	if req.Wake {
 		// The parent's wake-up run: same agent and sandbox the spawning run
-		// had, so the notification is read by the agent that asked for it.
+		// had, so the notification is read by the agent that asked for it. The
+		// lineage rides along so the run's trace records which run spawned the
+		// delivered task(s).
 		if in.AgentConfigID == "" {
 			return fmt.Errorf("task notification undeliverable: no agent config for session %s", req.SessionID)
 		}
-		_, err := t.r.StartRun(req.SessionID, in.AgentConfigID, in.SandboxID, in.WorkDir, req.Input, nil)
+		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.SandboxID, in.WorkDir, req.Input, req.ParentRunID, nil)
 		return err
 	}
 	// The task's own run. It shares the parent's sandbox (and workdir), and
 	// thereby its command-trust scope; the child's first run CAS-binds its
 	// hidden session with the same pair.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.WorkDir, req.Input, nil)
+	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.WorkDir, req.Input, "", nil)
 	return err
 }
 

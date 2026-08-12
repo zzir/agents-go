@@ -701,7 +701,10 @@ func TestAppendPointMatchesTheFold(t *testing.T) {
 		}},
 		{"append onto the branch", func(t *testing.T) {
 			t.Helper()
-			seed(t, s, userEntry(t, "five"))
+			// Enough that the pass below folds an on-path prefix: it sizes and
+			// folds the ACTIVE branch only, and the branch back moved the tip
+			// past everything appended before it.
+			seed(t, s, userEntry(t, "five"), userEntry(t, "six"), userEntry(t, "seven"))
 		}},
 		{"compaction pass", func(t *testing.T) {
 			t.Helper()

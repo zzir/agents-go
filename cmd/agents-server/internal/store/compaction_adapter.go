@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/uptrace/bun"
 
@@ -13,6 +14,14 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
+
+// DefaultCompactionThresholdTokens is the estimated history size a pass fires
+// at when the agent config names none. The Context panel reports the same
+// number, so the threshold it draws is the one that will actually trip.
+const DefaultCompactionThresholdTokens = 50000
+
+// DefaultCompactionWindow is the entry count the kept tail defaults to.
+const DefaultCompactionWindow = 10
 
 // CompactionNotifier receives compaction lifecycle notifications. OnStart
 // fires right before the (potentially slow) summarization request, so the UI
@@ -56,10 +65,10 @@ func NewCompactionAdapter(
 	notify CompactionNotifier,
 ) *CompactionAdapter {
 	if threshold <= 0 {
-		threshold = 50000
+		threshold = DefaultCompactionThresholdTokens
 	}
 	if windowSize <= 0 {
-		windowSize = 10
+		windowSize = DefaultCompactionWindow
 	}
 	summaryPrompt = cmp.Or(summaryPrompt, session.DefaultSummaryPrompt)
 	return &CompactionAdapter{
@@ -75,16 +84,33 @@ func NewCompactionAdapter(
 // RunCompaction implements session.CompactionAware. It marks older entries
 // compacted and appends a compaction checkpoint, keeping the most recent
 // windowSize non-compacted entries intact.
+//
+// Only the ACTIVE branch is sized and folded: the pass exists to fit what the
+// projector sends, and an abandoned attempt neither fills the window nor
+// belongs in the summary. Off-path rows are left as they are — already
+// invisible to the model, still visible to the UI.
 func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
-	var active []entryRow
+	// The generation's rows WITHOUT bodies: the check runs on every append and
+	// says no far more often than yes, and the lifted columns answer it.
 	// Through scoped, like every other read: the generation is part of the
 	// address, and a select that names only the session id folds another
 	// generation's history into this one's compaction pass.
-	if err := ca.scoped(ca.db.NewSelect().Model(&active)).
-		Where("compacted = ?", false).
+	var rows []entryRow
+	if err := ca.scoped(ca.db.NewSelect().Model(&rows)).
+		ExcludeColumn("entry").
 		OrderExpr("id ASC").
 		Scan(ctx); err != nil {
-		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
+		return fmt.Errorf("compaction adapter: loading entries: %w", err)
+	}
+	onPath, err := ca.activeBranchOfRows(ctx, ca.ref, rows)
+	if err != nil {
+		return fmt.Errorf("compaction adapter: resolving the active branch: %w", err)
+	}
+	var active []entryRow
+	for i := range rows {
+		if onPath[rows[i].EntryID] && !rows[i].Compacted {
+			active = append(active, rows[i])
+		}
 	}
 
 	if !args.Force && activeTokens(active) < ca.threshold {
@@ -95,37 +121,37 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil
 	}
 
+	// Only a firing pass needs bodies, and only the active rows'.
+	bodies, err := ca.entryBodies(ctx, ca.ref, rowIDs(active))
+	if err != nil {
+		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
+	}
+
 	// Convert every active entry to its replayable item, remembering which row
 	// each item came from. Rows that don't convert (annotations, reasoning items
-	// dropped for foreign replay, malformed JSON) carry no pairing constraints;
-	// the row-split mapping below leaves them on the same side as their
-	// preceding convertible neighbor.
-	items := make([]agents.InputItem, 0, len(active))
+	// dropped for foreign replay, undecodable bodies) carry no pairing
+	// constraints; the row-split mapping below leaves them on the same side as
+	// their preceding convertible neighbor.
 	entries := make([]session.Entry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
-		var e session.Entry
-		if json.Unmarshal([]byte(active[i].Entry), &e) != nil {
+		e, ok := bodies[active[i].ID]
+		if !ok {
 			continue
 		}
 		if e.Kind != session.EntryKindItem || len(e.Item) == 0 {
 			continue
 		}
-		// The summary model is generally not the model that produced these
-		// items, so always adapt them for foreign replay (drop reasoning
-		// items, strip provider-assigned ids) before summarizing.
+		// Adapted like foreign replay (drop reasoning items, strip
+		// provider-assigned ids): the summary reads content, not provenance.
 		raw := adaptForeignItemJSON(e.Item)
 		if raw == nil {
 			continue
 		}
 		normalized := NormalizeItemJSON(raw)
-		item, err := session.UnmarshalInputItem(normalized)
-		if err != nil {
+		if _, err := session.UnmarshalInputItem(normalized); err != nil {
 			continue
 		}
-		items = append(items, item)
-		// The grouping below reads the wire JSON, so carry it alongside rather
-		// than re-marshaling what we just decoded.
 		entries = append(entries, session.Entry{Kind: session.EntryKindItem, Item: normalized})
 		itemMsgIdx = append(itemMsgIdx, i)
 	}
@@ -133,7 +159,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	// The count-based split in row space, translated to item space.
 	msgSplit := len(active) - ca.windowSize
 	itemSplit := 0
-	for itemSplit < len(items) && itemMsgIdx[itemSplit] < msgSplit {
+	for itemSplit < len(entries) && itemMsgIdx[itemSplit] < msgSplit {
 		itemSplit++
 	}
 	if itemSplit == 0 {
@@ -141,18 +167,27 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	}
 
 	// A pure count-based split can cut through a function_call / output pair,
-	// making the summary request itself invalid or leaving the kept history
-	// starting with an orphaned output. Snap the split to a group boundary so
-	// both sides stay self-consistent; 0 means no valid non-empty prefix
-	// exists, so skip this pass rather than risk corrupting the history.
+	// leaving the kept history starting with an orphaned output. Snap the split
+	// to a group boundary so it stays self-consistent; 0 means no valid
+	// non-empty prefix exists, so skip this pass rather than risk corrupting
+	// the history.
 	itemSplit = compaction.SafeSplit(entries, itemSplit)
 	if itemSplit <= 0 {
 		return nil
 	}
-	toSummarize := items[:itemSplit]
 
 	// Summarizing a summary produces a paraphrase of a paraphrase.
 	if compaction.IsSummaryOnly(entries[:itemSplit]) {
+		return nil
+	}
+
+	// The folded prefix goes to the summary model as ONE plain-text transcript
+	// under a single user message. The conversation is the summary's DATA, not
+	// the summary model's history — replaying it as items lets every provider's
+	// history validation reject the pass (DeepSeek requires reasoning round-trip
+	// on assistant turns, others require strict call/output pairing).
+	transcript := renderTranscript(entries[:itemSplit])
+	if transcript == "" {
 		return nil
 	}
 
@@ -177,7 +212,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 
 	resp, err := ca.summaryModel.Respond(ctx, agents.ModelRequest{
 		SystemInstructions: ca.summaryPrompt,
-		Input:              toSummarize,
+		Input:              agents.InputItemsFromText(transcript),
 	})
 	if err != nil {
 		return fmt.Errorf("compaction adapter: summarizing: %w", err)
@@ -231,31 +266,87 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	return nil
 }
 
-// activeTokens sizes the non-compacted history in tokens. The most recent
+// activeTokens sizes the non-compacted history the way the threshold compares
+// it (ActiveContextTokens is the definition, and is what the Context panel
+// reports, so the number a reader watches is the number that fires the pass).
+//
+// It reads the lifted columns rather than the entries: the decision runs on
+// every append, and decoding a whole session to make it costs more than the
+// pass saves.
+func activeTokens(active []entryRow) int {
+	sizes := make([]ContextSize, 0, len(active))
+	for i := range active {
+		sizes = append(sizes, sizeOfRow(active[i]))
+	}
+	return ActiveContextTokens(sizes)
+}
+
+// sizeOfRow reduces a row to what sizing needs, from its columns alone.
+func sizeOfRow(row entryRow) ContextSize {
+	out := ContextSize{
+		Est:        row.EstTokens,
+		Checkpoint: row.Kind == string(session.EntryKindCompaction),
+	}
+	if row.Usage != "" {
+		var u session.RequestUsage
+		if json.Unmarshal([]byte(row.Usage), &u) == nil {
+			out.Usage = &u
+		}
+	}
+	return out
+}
+
+// ContextSize is one entry reduced to what sizing needs: what a call priced,
+// what it estimates to, and whether it is a compaction checkpoint. All are
+// columns on the row, so neither the compaction check nor the Context panel
+// has to hold a session's contents to size it.
+type ContextSize struct {
+	Usage      *session.RequestUsage
+	Est        int
+	Checkpoint bool
+}
+
+// ActiveContextTokens sizes a non-compacted history in tokens. The most recent
 // entry carrying real usage prices everything up to and including itself —
 // exactly one entry per response carries usage, and its call's input covered
 // the history before it (session_entry.go: "a reader estimating how large it
 // has grown reads the most recent one"). Entries after it, which no call has
-// priced yet, are byte-estimated. With no usage anywhere (a fresh or
+// priced yet, are estimated. With no usage anywhere (a fresh or
 // never-successful session) everything is estimated.
-func activeTokens(active []entryRow) int {
-	est := compaction.CharEstimator{}
-	entries := make([]session.Entry, len(active))
-	last := -1
-	for i := range active {
-		if json.Unmarshal([]byte(active[i].Entry), &entries[i]) != nil {
-			continue
+//
+// It is therefore MOSTLY a provider number: the last call's total, which
+// covered the system prompt and tool schemas too, plus an estimated tail. Not a
+// character sum over the history, which would omit everything the conversation
+// does not contain and drift from the threshold it is compared against.
+//
+// A fold NEWER than the last pricing invalidates it: that call's total covered
+// history the fold has since removed from the projection, and carrying it
+// forward would hold the figure at its pre-fold height until the next call.
+// The history is then fully estimated — the active rows are the kept tail, the
+// checkpoint (≈ its summary) and the turns since — until the next
+// usage-bearing entry re-anchors the figure on the provider.
+func ActiveContextTokens(sizes []ContextSize) int {
+	lastUsage, lastFold := -1, -1
+	for i := range sizes {
+		if sizes[i].Usage != nil && sizes[i].Usage.TotalTokens > 0 {
+			lastUsage = i
 		}
-		if entries[i].Usage != nil && entries[i].Usage.TotalTokens > 0 {
-			last = i
+		if sizes[i].Checkpoint {
+			lastFold = i
 		}
 	}
 	total := 0
-	if last >= 0 {
-		total = int(entries[last].Usage.TotalTokens)
+	if lastFold > lastUsage {
+		for i := range sizes {
+			total += sizes[i].Est
+		}
+		return total
 	}
-	for i := last + 1; i < len(entries); i++ {
-		total += est.Estimate(entries[i])
+	if lastUsage >= 0 {
+		total = int(sizes[lastUsage].Usage.TotalTokens)
+	}
+	for i := lastUsage + 1; i < len(sizes); i++ {
+		total += sizes[i].Est
 	}
 	return total
 }
@@ -263,27 +354,117 @@ func activeTokens(active []entryRow) int {
 // estimateFold sizes the context on either side of the pass, so the checkpoint
 // can report what compaction bought without the reader recomputing it.
 //
-// Estimates by construction — CharEstimator is a character ratio, not a
-// tokenizer. The point is to say "12k became 3k", not to predict a bill.
+// Estimates by construction — the lifted est_tokens column is CharEstimator's
+// character ratio, not a tokenizer. The point is to say "12k became 3k", not to
+// predict a bill.
 func estimateFold(active, folded []entryRow, summaryText string) (before, after int) {
-	est := compaction.CharEstimator{}
-	sizeOf := func(row entryRow) int {
-		var e session.Entry
-		if json.Unmarshal([]byte(row.Entry), &e) != nil {
-			return 0
-		}
-		return est.Estimate(e)
-	}
 	for i := range active {
-		before += sizeOf(active[i])
+		before += active[i].EstTokens
 	}
 	after = before
 	for i := range folded {
-		after -= sizeOf(folded[i])
+		after -= folded[i].EstTokens
 	}
 	// The summary replaces what it folded, so it counts toward the new size.
 	after += len(summaryText) / 4
 	return before, after
+}
+
+// rowIDs is the rows' primary keys, for a bodies fetch.
+func rowIDs(rows []entryRow) []int64 {
+	ids := make([]int64, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	return ids
+}
+
+// renderTranscript flattens the folded items into the plain-text record the
+// summarization request carries. Lossy on purpose (reasoning is already
+// dropped, tool payloads render as text): a summary needs the content, and
+// text is the one shape no provider can reject.
+func renderTranscript(entries []session.Entry) string {
+	var b strings.Builder
+	for _, e := range entries {
+		line := renderItemText(e.Item)
+		if line == "" {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteString("\n\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// renderItemText renders one normalized item as transcript text; "" for items
+// with nothing to say (unparseable, or types with no content).
+func renderItemText(raw json.RawMessage) string {
+	var it struct {
+		Type      string          `json:"type"`
+		Role      string          `json:"role"`
+		Content   json.RawMessage `json:"content"`
+		Name      string          `json:"name"`
+		Arguments string          `json:"arguments"`
+		Output    json.RawMessage `json:"output"`
+	}
+	if json.Unmarshal(raw, &it) != nil {
+		return ""
+	}
+	switch {
+	case it.Type == "function_call":
+		return "[assistant called tool " + it.Name + " with arguments " + it.Arguments + "]"
+	case it.Type == "function_call_output":
+		out := jsonAsText(it.Output)
+		if out == "" {
+			return ""
+		}
+		return "[tool output]\n" + out
+	case it.Role != "":
+		text := contentAsText(it.Content)
+		if text == "" {
+			return ""
+		}
+		return strings.ToUpper(it.Role[:1]) + it.Role[1:] + ":\n" + text
+	}
+	return ""
+}
+
+// contentAsText joins a message's content: either a bare string or an array of
+// parts whose text fields carry the words.
+func contentAsText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		return ""
+	}
+	var texts []string
+	for _, p := range parts {
+		if p.Text != "" {
+			texts = append(texts, p.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+// jsonAsText unwraps a JSON string, and falls back to the raw JSON for
+// structured payloads — the summary model can read either.
+func jsonAsText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return string(raw)
 }
 
 // persistCompaction marks the folded entries compacted and appends the

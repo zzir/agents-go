@@ -95,6 +95,7 @@ func run(_ *cobra.Command, _ []string) error {
 	guardrailStore := store.NewGuardrailStore(db)
 	pendingApprovalStore := store.NewPendingApprovalStore(db)
 	taskStore := store.NewTaskStore(db)
+	contextProfileStore := store.NewContextProfileStore(db)
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
 	mcpManager := bridge.NewMcpManager(ctx, settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
@@ -122,12 +123,14 @@ func run(_ *cobra.Command, _ []string) error {
 		ChatGPTOAuth:     chatgptOAuth,
 		PendingApprovals: pendingApprovalStore,
 		Tasks:            taskStore,
+		ContextProfiles:  contextProfileStore,
 		Workspace:        flagWorkspace,
 		MaxTasks:         flagMaxTasks,
 	}
 	runner := bridge.NewRunner(ctx, db, deps)
 
-	sessionHandler := handler.NewSessionHandler(sessionStore, entryStore, traceStore, agentConfigStore).WithRunStopper(runner)
+	sessionHandler := handler.NewSessionHandler(sessionStore, entryStore, traceStore, agentConfigStore).
+		WithRunStopper(runner).WithContextProfiles(contextProfileStore, mcpManager).WithCompactor(runner)
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver)
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)

@@ -23,6 +23,7 @@ var schemaModels = []any{
 	(*Guardrail)(nil),
 	(*PendingApproval)(nil),
 	(*Task)(nil),
+	(*ContextProfile)(nil),
 }
 
 // CreateSchema creates every table and supporting index if they do not

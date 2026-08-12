@@ -193,7 +193,7 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			return fmt.Errorf("listing task sessions for %s: %w", id, err)
 		}
 		for _, child := range childIDs {
-			for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil)} {
+			for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil)} {
 				if _, err := tx.NewDelete().Model(model).
 					Where("session_id = ?", child).
 					Exec(ctx); err != nil {
@@ -238,6 +238,11 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting pending approvals for session %s: %w", id, err)
+		}
+		if _, err := tx.NewDelete().Model((*ContextProfile)(nil)).
+			Where("session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting the context profile for session %s: %w", id, err)
 		}
 		res, err := tx.NewDelete().Model((*Session)(nil)).
 			Where("id = ?", id).

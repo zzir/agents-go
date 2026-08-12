@@ -36,6 +36,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sessions.PATCH("/:id", h.Sessions.Patch)
 		sessions.DELETE("/:id", h.Sessions.Delete)
 		sessions.GET("/:id/messages", h.Sessions.Messages)
+		sessions.GET("/:id/context", h.Sessions.Context)
+		sessions.POST("/:id/compact", h.Sessions.Compact)
 		sessions.POST("/:id/fork", h.Sessions.Fork)
 		sessions.POST("/:id/branch", h.Sessions.Branch)
 		sessions.GET("/:id/traces", h.Traces.ListBySession)

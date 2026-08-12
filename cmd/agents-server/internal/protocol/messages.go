@@ -441,14 +441,17 @@ type SessionSandboxBound struct {
 // TraceSpan carries a single tracing span (its IDs, name, type, timing, error
 // state, and data) to the client.
 type TraceSpan struct {
-	RunID     string         `json:"run_id"`
-	TraceID   string         `json:"trace_id"`
-	SpanID    string         `json:"span_id"`
-	ParentID  string         `json:"parent_id,omitempty"`
-	Name      string         `json:"name"`
-	Type      string         `json:"type"`
-	Error     string         `json:"error,omitempty"`
-	StartedAt string         `json:"started_at"`
-	EndedAt   string         `json:"ended_at,omitempty"`
-	Data      map[string]any `json:"data,omitempty"`
+	RunID string `json:"run_id"`
+	// ParentRunID is the run's lineage (a wake-up run's spawning run), so the
+	// live client groups runs the same way stored trace rows do.
+	ParentRunID string         `json:"parent_run_id,omitempty"`
+	TraceID     string         `json:"trace_id"`
+	SpanID      string         `json:"span_id"`
+	ParentID    string         `json:"parent_id,omitempty"`
+	Name        string         `json:"name"`
+	Type        string         `json:"type"`
+	Error       string         `json:"error,omitempty"`
+	StartedAt   string         `json:"started_at"`
+	EndedAt     string         `json:"ended_at,omitempty"`
+	Data        map[string]any `json:"data,omitempty"`
 }

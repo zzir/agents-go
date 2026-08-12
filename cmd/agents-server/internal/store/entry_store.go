@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/compaction"
 	"github.com/zzir/agents-go/agents/session"
 )
 
@@ -39,6 +40,17 @@ type entryRow struct {
 	// session against a different one can adapt or drop what that one would
 	// reject — reasoning items above all.
 	SourceModel string `bun:"source_model" json:"-"`
+	// Usage and EstTokens are lifted out of Entry so a reader can total and
+	// rank a session without reading its contents — the difference between a
+	// cost proportional to the session's BYTES and one proportional to its row
+	// count (see ContextReport). Usage is the entry's RequestUsage as JSON,
+	// empty for the entries that carry none; EstTokens is CharEstimator's size
+	// for the entry as stored, which is what the compaction pass compares.
+	// Both are written by every append, and a database from a build that had
+	// neither refuses to start (verifySchema), so a reader never has to wonder
+	// whether a row was measured.
+	Usage     string `bun:"usage,nullzero" json:"-"`
+	EstTokens int    `bun:"est_tokens"     json:"-"`
 	// Compacted marks an entry the compaction pass folded away. It is a
 	// soft delete: the row stays so the UI can still show what was folded.
 	Compacted bool      `bun:"compacted"          json:"compacted,omitempty"`
@@ -221,6 +233,10 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...sessio
 		if err != nil {
 			return fmt.Errorf("encoding entry %q: %w", prepared[i].ID, err)
 		}
+		usage, size, err := liftedFields(prepared[i])
+		if err != nil {
+			return fmt.Errorf("entry %q: %w", prepared[i].ID, err)
+		}
 		rows = append(rows, entryRow{
 			SessionID:   s.ref.ID,
 			Gen:         s.ref.Gen,
@@ -231,6 +247,8 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...sessio
 			Kind:        string(prepared[i].Kind),
 			RunID:       s.runID,
 			Entry:       string(raw),
+			Usage:       usage,
+			EstTokens:   size,
 			CreatedAt:   prepared[i].CreatedAt,
 		})
 	}
@@ -241,6 +259,19 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...sessio
 		return err
 	}
 	return s.touchSessionIn(ctx, db)
+}
+
+// liftedFields are what an entry carries in columns beside its body: its usage
+// as JSON (empty when it carries none) and CharEstimator's size for it.
+func liftedFields(e session.Entry) (usageJSON string, estTokens int, err error) {
+	if e.Usage != nil {
+		raw, err := json.Marshal(e.Usage)
+		if err != nil {
+			return "", 0, fmt.Errorf("encoding usage: %w", err)
+		}
+		usageJSON = string(raw)
+	}
+	return usageJSON, compaction.CharEstimator{}.Estimate(e), nil
 }
 
 // appendPointAfter reports where the session stands once prepared has been

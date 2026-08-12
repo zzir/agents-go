@@ -13,6 +13,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
 )
@@ -374,6 +375,19 @@ func (m *McpManager) Get(id string) *mcp.Server {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.servers[id]
+}
+
+// ListToolsFor returns the server's display name and the tools it exposes
+// right now, for a caller sizing its share of an agent's tool surface. It is a
+// live call — MCP tools are the server's, not the agent's — so the caller bounds
+// it with a context deadline.
+func (m *McpManager) ListToolsFor(ctx context.Context, id string) (string, []*agents.Tool, error) {
+	srv := m.Get(id)
+	if srv == nil {
+		return "", nil, fmt.Errorf("mcp server %s is not connected", id)
+	}
+	tools, err := srv.ListTools(ctx, nil, nil)
+	return srv.Name(), tools, err
 }
 
 // IsConnected reports whether a server with the given ID is connected.

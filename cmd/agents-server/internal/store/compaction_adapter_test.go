@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -40,6 +41,24 @@ func (m *summaryFakeModel) StreamResponse(context.Context, agents.ModelRequest) 
 func mustQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// summaryTranscript asserts the transcript-as-data contract — the summary
+// request carries exactly ONE user message — and returns its JSON for content
+// checks.
+func summaryTranscript(t *testing.T, input []agents.InputItem) string {
+	t.Helper()
+	if len(input) != 1 {
+		t.Fatalf("summary request carries %d items, want 1 transcript message", len(input))
+	}
+	raw, err := json.Marshal(input[0])
+	if err != nil {
+		t.Fatalf("marshal summary input: %v", err)
+	}
+	if !strings.Contains(string(raw), `"user"`) {
+		t.Fatalf("transcript should ride a user message, got %s", raw)
+	}
+	return string(raw)
 }
 
 // insertItemRows appends one entry per raw item JSON (empty string = an
@@ -112,8 +131,13 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 	if model.calls != 1 {
 		t.Fatalf("summary model calls = %d, want 1", model.calls)
 	}
-	if got := len(model.inputs[0]); got != 1 {
-		t.Fatalf("summary input items = %d, want 1 (only the pre-pair prefix)", got)
+	transcript := summaryTranscript(t, model.inputs[0])
+	if !strings.Contains(transcript, "question") {
+		t.Fatalf("the folded user message should be in the transcript: %s", transcript)
+	}
+	// The call/output pair stays on the KEEP side — out of the summary.
+	if strings.Contains(transcript, "get_weather") || strings.Contains(transcript, "sunny") {
+		t.Fatalf("kept entries leaked into the summary transcript: %s", transcript)
 	}
 	if !spanStarted {
 		t.Error("StartSpan was not called before summarizing")
@@ -189,8 +213,8 @@ func TestCompactionAdapterMapsSplitAcrossUnconvertibleRows(t *testing.T) {
 			t.Errorf("entry %d compacted = %v, want %v", i, rows[i].Compacted, wantCompacted[i])
 		}
 	}
-	if got := len(model.inputs[0]); got != 1 {
-		t.Errorf("summary input items = %d, want 1 (annotation rows are never summarized)", got)
+	if boom := summaryTranscript(t, model.inputs[0]); strings.Contains(boom, "boom") {
+		t.Errorf("annotation rows are never summarized, got %s", boom)
 	}
 }
 
@@ -248,8 +272,11 @@ func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 	if err := ca.RunCompaction(context.Background(), session.CompactionArgs{}); err != nil {
 		t.Fatalf("RunCompaction: %v", err)
 	}
-	if model.calls != 1 || len(model.inputs[0]) != 3 {
-		t.Fatalf("summary call wrong: calls=%d inputs=%d, want 1 call with 3 items", model.calls, len(model.inputs[0]))
+	if model.calls != 1 {
+		t.Fatalf("summary model calls = %d, want 1", model.calls)
+	}
+	if tr := summaryTranscript(t, model.inputs[0]); !strings.Contains(tr, "question") || !strings.Contains(tr, "answer") {
+		t.Fatalf("the folded prefix should be in the transcript: %s", tr)
 	}
 	rows := loadRows(t, db, sessionID)
 	for i := range 3 {
@@ -400,5 +427,56 @@ func TestCompactionAdapterTokenTrigger(t *testing.T) {
 	}
 	if model.calls != 1 {
 		t.Fatalf("above-threshold pass must summarize once; got %d calls", model.calls)
+	}
+}
+
+// The pass sizes and folds the ACTIVE branch only: an abandoned attempt does
+// not push the history over the threshold, does not leak into the summary
+// request, and is never itself folded.
+func TestCompactionAdapterScopedToActiveBranch(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessionID := NewID()
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
+
+	// A small exchange, then a fat answer the user regenerates away.
+	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
+	seed(t, sa, toolOutputEntry(t, "call_dead", strings40k()))
+	entries, err := sa.load(ctx, false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := session.NewSession(sa).Branch(ctx, entries[1].ID); err != nil {
+		t.Fatalf("branch: %v", err)
+	}
+	// The retake and more small turns — the active branch.
+	insertItemRows(t, sa, []string{assistantItemJSON, userItemJSON, assistantItemJSON, userItemJSON, assistantItemJSON})
+
+	// ~10k estimated tokens sit on the abandoned branch; the active one is tiny.
+	model := &summaryFakeModel{summary: "compact"}
+	ca := NewCompactionAdapter(sa, model, 1000, 2, "", CompactionNotifier{})
+	if err := ca.RunCompaction(ctx, session.CompactionArgs{}); err != nil {
+		t.Fatalf("RunCompaction: %v", err)
+	}
+	if model.calls != 0 {
+		t.Fatal("an off-path entry pushed the history over the threshold")
+	}
+
+	// A firing pass folds the active prefix and leaves the abandoned attempt
+	// alone: out of the summary request, not marked compacted.
+	ca = NewCompactionAdapter(sa, model, 1, 2, "", CompactionNotifier{})
+	if err := ca.RunCompaction(ctx, session.CompactionArgs{}); err != nil {
+		t.Fatalf("RunCompaction: %v", err)
+	}
+	if model.calls != 1 {
+		t.Fatalf("summary model calls = %d, want 1", model.calls)
+	}
+	if strings.Contains(summaryTranscript(t, model.inputs[0]), "call_dead") {
+		t.Fatal("abandoned attempt leaked into the summary request")
+	}
+	for _, row := range loadRows(t, db, sessionID) {
+		if row.Compacted && strings.Contains(row.Entry, "call_dead") {
+			t.Fatal("off-path row was folded")
+		}
 	}
 }
