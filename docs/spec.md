@@ -1644,6 +1644,12 @@ was ending:
 - The runner installs the generation span as parent for the model call (retries
   nest under it) and the function span for a tool invocation (MCP and sandbox
   work nests under the call that caused it).
+- **A span carries the id that joins it to what it produced**: `call_id` on a
+  function span, `response_id` on a generation span. Both are recorded whether
+  or not sensitive data is — they are ids, not payload — so a consumer holding
+  a session entry can find the span that produced it (and a consumer holding a
+  span can find the entry) without matching on tool name and arrival order,
+  which four identical calls in one turn defeat.
 - Sandbox is instrumented at the **tool** layer, the one place every backend
   (local, Docker, SSH) is reached through, rather than per backend.
 - OTel semantic conventions are **pinned** (`SemConvVersion`); the GenAI

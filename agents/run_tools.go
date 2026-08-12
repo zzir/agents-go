@@ -183,6 +183,10 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 			if span.Span != nil {
 				tc.functionSpanID = span.Span.SpanID
 			}
+			// The call id is what ties this span back to the conversation item
+			// the tool produced — an id, not payload, so it is recorded whether
+			// or not sensitive data is.
+			span.Set("call_id", run.Call.CallID)
 			// Record the call arguments and result on the span, gated like generation
 			// payloads.
 			logToolData := r.traceIncludeSensitiveData()

@@ -23,7 +23,7 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 |---|---|---|
 | `agent:<name>` | `SpanTypeAgent` | One agent's tenure (per handoff segment); parent of the spans below |
 | `generation:<name>` | `SpanTypeGeneration` | One model call (records `response_id`, per-call `input_tokens`/`output_tokens`/`total_tokens`, and — see below — the full request/response) |
-| `function:<tool>` | `SpanTypeFunction` | One function tool invocation (errors recorded) |
+| `function:<tool>` | `SpanTypeFunction` | One function tool invocation (records `call_id`; errors recorded) |
 | `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution |
 | `guardrail:input` / `guardrail:output` | `SpanTypeGuardrail` | Guardrail batches (tripwires recorded as errors) |
 | `compaction` | `SpanTypeCompaction` | A compaction pass (entries before/after) |
@@ -124,7 +124,7 @@ Span callbacks can fire from concurrent goroutines (parallel tools, input guardr
 
 ## Sensitive data
 
-Spans record names, timing, error messages and small attributes such as `response_id` — not prompts, completions or tool payloads. If you add attributes from your own hooks, apply your data policies accordingly.
+Spans record names, timing, error messages and small attributes such as `response_id` and `call_id` — not prompts, completions or tool payloads. Those two ids stay on the span with sensitive data off, so a consumer can still join a span to the session entry it produced. If you add attributes from your own hooks, apply your data policies accordingly.
 
 ## OpenTelemetry
 
