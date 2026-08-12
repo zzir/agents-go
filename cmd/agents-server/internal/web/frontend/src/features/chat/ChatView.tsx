@@ -20,7 +20,8 @@ import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
-import { TraceDrawer, type TraceEventData } from '@/features/chat/TracePanel';
+import { TraceDrawer, type TraceEventData, type TraceReveal } from '@/features/chat/TracePanel';
+import { ContextPanel, type ContextItem } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, FileDirectoryIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
@@ -28,7 +29,7 @@ import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
 
-export type InspectorPanel = null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string };
+export type InspectorPanel = null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string } | { kind: 'context' };
 
 interface ChatMessage {
   role: string;
@@ -409,6 +410,12 @@ interface ProcessTimelineProps {
   taskLabelById?: Record<string, string>;
 }
 
+// Space-separated tool call ids across a turn's parts, for the group's
+// data-anchor-ids attribute.
+function toolCallIds(parts: TurnPart[]): string {
+  return parts.flatMap(p => (p.type === 'tools' ? p.toolCalls.map(tc => tc.tool_call_id) : [])).join(' ');
+}
+
 // One collapsible group of thinking + tool-call parts. `live` marks the group
 // still executing (the trailing one while its run is live): it stays open and
 // shows a status label; settled groups collapse to "N steps".
@@ -459,7 +466,10 @@ function ProcessTimeline({ parts, live, reasoning, textStreaming, compacting, di
       : stepCount + ' step' + (stepCount > 1 ? 's' : '');
 
   return (
-    <div className="process-group">
+    // The call ids this group holds, so a jump aimed at a tool card inside a
+    // COLLAPSED group can find the group (the cards themselves are not in the
+    // DOM until it opens) and expand it.
+    <div className="process-group" data-anchor-ids={toolCallIds(parts) || undefined}>
       <div
         className={'process-group-toggle' + (shouldShow ? ' expanded' : '')}
         onClick={() => setExpanded(!shouldShow)}
@@ -719,52 +729,20 @@ function compactTokens(n: number): string {
   return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
 }
 
-// FoldedHistory renders what a checkpoint stands in for: the real entries,
-// read-only. No approve, regenerate or fork — this is the archive of a turn
-// the model no longer reads, and offering to act on it would be offering to
-// act on something that is no longer in the conversation.
-const FoldedHistory = memo(function FoldedHistory({ entries }: { entries: TimelineEntry[] }) {
-  return (
-    <div className="compaction-folded">
-      {entries.map((m, i) => {
-        if (m.role === 'turn') {
-          return <FoldedTurn key={entryKey(m, i, 'folded-turn')} parts={m.parts || []} />;
-        }
-        if (m.role === 'compaction') {
-          // An earlier checkpoint that a later pass folded in turn.
-          return <CompactionCard key={entryKey(m, i, 'folded-compaction')} {...m} />;
-        }
-        return <MessageBubble key={entryKey(m, i, 'folded-msg')} role={m.role} content={m.content || ''} />;
-      })}
-    </div>
-  );
-});
-
-const FoldedTurn = memo(function FoldedTurn({ parts }: { parts: TurnPart[] }) {
-  const text = parts.filter(p => p.type === 'text').map(p => (p as { content: string }).content).join('\n\n');
-  const html = useAsyncMarkdown(text);
-  const tools = parts.flatMap(p => (p.type === 'tools' ? (p as { toolCalls: Array<{ tool_call_id: string; tool_name: string }> }).toolCalls : []));
-  return (
-    <div className="compaction-folded-turn">
-      {tools.length > 0 && (
-        <div className="compaction-folded-tools">
-          {tools.map(tc => <Label key={tc.tool_call_id} variant="secondary">{tc.tool_name}</Label>)}
-        </div>
-      )}
-      {text && <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />}
-    </div>
-  );
-});
-
+// CompactionCard is an inline marker where a pass happened: the history it
+// folded renders in place ABOVE it (the transcript is decoupled from the
+// model's context — see the Context panel for what the model still reads), so
+// the card carries only the shrink figures and, one expand away, the summary
+// that now stands in for that history in the model's view.
 interface CompactionCardProps {
   content?: string;
-  folded?: TimelineEntry[];
+  entryId?: string;
   tokensBefore?: number;
   tokensAfter?: number;
 }
 
 const CompactionCard = memo(function CompactionCard(
-  { content, folded = [], tokensBefore, tokensAfter }: CompactionCardProps,
+  { content, entryId, tokensBefore, tokensAfter }: CompactionCardProps,
 ) {
   const [expanded, setExpanded] = useState(false);
   const summaryText = (content || '').replace(/^\[Conversation Summary\]\s*/, '');
@@ -772,18 +750,15 @@ const CompactionCard = memo(function CompactionCard(
   const shrank = tokensBefore && tokensAfter && tokensBefore > tokensAfter;
 
   return (
-    <div className="compaction-card">
+    // data-anchor-id: a checkpoint's summary can rank among the heaviest
+    // items, and this marker is what that item jumps to.
+    <div className="compaction-card" data-anchor-id={entryId || undefined}>
       <div
         className={'compaction-card-toggle' + (expanded ? ' expanded' : '')}
         onClick={() => setExpanded(!expanded)}
       >
         <ChevronRightIcon size={16} className="process-icon" />
         <span>Compaction</span>
-        {folded.length > 0 && (
-          <Label variant="attention" className="process-status">
-            {folded.length} folded
-          </Label>
-        )}
         {shrank && (
           <span className="compaction-card-savings">
             ~{compactTokens(tokensBefore)} → ~{compactTokens(tokensAfter)} tokens
@@ -792,8 +767,10 @@ const CompactionCard = memo(function CompactionCard(
       </div>
       {expanded && (
         <div className="compaction-card-body">
+          <div className="compaction-card-note">
+            The history above stays in full — the model now reads this summary in its place.
+          </div>
           {summaryText && <div className="markdown-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />}
-          {folded.length > 0 && <FoldedHistory entries={folded} />}
         </div>
       )}
     </div>
@@ -805,6 +782,8 @@ interface UserMessageProps {
   traceRunId?: string | null;
   onTrace?: (runId: string) => void;
   msgIdx: number;
+  // The durable entry id, so the Context panel can scroll to this bubble.
+  entryId?: string;
 }
 
 // Restartable jump-target flash, shared by trace reverse-navigation and the
@@ -817,7 +796,7 @@ function flashMessage(el: Element) {
   window.setTimeout(() => el.classList.remove('msg-jump-flash'), 1800);
 }
 
-const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace, msgIdx }: UserMessageProps) {
+const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace, msgIdx, entryId }: UserMessageProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -839,7 +818,7 @@ const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace, ms
   if (parseTaskNotification(content)) return null;
 
   return (
-    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx}>
+    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx} data-anchor-id={entryId || undefined}>
       <div className="message-body">{content}</div>
       <div className="message-user-actions">
         {traceRunId && onTrace && (
@@ -945,6 +924,9 @@ interface ChatViewProps {
   onLoadEarlier?: () => void;
   // Switches the session's active branch to another attempt.
   onSwitchBranch?: (tipEntryId: string) => void;
+  // Forces one compaction pass now (the Context panel's button); resolves
+  // after the timeline reload that follows a fold.
+  onCompact?: () => Promise<void>;
   onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string, workDir?: string) => void;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
@@ -968,7 +950,7 @@ export function ChatView({
   sessionId, sessionName, messages, entries, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
-  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onRegenerate, settingsReloadKey, bindingsVersion,
+  onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate, settingsReloadKey, bindingsVersion,
   sessionBinding, panel, onPanelChange, onTerminalOpen,
 }: ChatViewProps) {
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -1003,6 +985,19 @@ export function ChatView({
     saveSessionWorkdir(sessionId || '', '');
   }, [sessionId]);
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
+  // The span a Context panel jump asked the trace to open, and the counter that
+  // makes repeating the same jump a fresh instruction.
+  const [traceReveal, setTraceReveal] = useState<TraceReveal | null>(null);
+  const revealSeq = useRef(1);
+  // A reveal is one instruction, not a standing state: once the trace panel
+  // closes (or the session changes), a later manual open must not replay the
+  // old jump's scroll.
+  useEffect(() => {
+    if (panel?.kind !== 'trace') setTraceReveal(null);
+  }, [panel?.kind]);
+  useEffect(() => {
+    setTraceReveal(null);
+  }, [sessionId]);
   const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>);
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
   // Bound sessions aggregated into the picker's "recent projects" — the same
@@ -1165,29 +1160,55 @@ export function ChatView({
     return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels, staleRuns: stale };
   }, [messages, entries, traceRuns]);
 
-  // Wake-up run → the run whose spawn_task started the chain. A wake run's
-  // first item is the task notification; its task ids resolve to parentRunId
-  // via the task list, letting the trace panel nest the "task result" card
-  // under its originating run instead of presenting two unrelated traces.
+  // Wake-up run → the run whose spawn_task started the chain, read straight
+  // off the trace: a wake run's spans carry parent_run_id, recorded at launch.
+  // The lineage lives on the run's own durable output — deriving it here from
+  // task rows and notification text broke on every surface that does not carry
+  // them (a fork copies traces but not task rows; a fold moves the
+  // notification out of the rendered timeline).
   const traceRunParents = useMemo(() => {
     const parents: Record<string, string> = {};
-    for (const entry of messages as any[]) {
-      const rid = entry.runId;
-      if (!rid || entry.role !== 'user' || parents[rid]) continue;
-      const notif = parseTaskNotification(entry.content);
-      if (!notif) continue;
-      for (const it of notif.items) {
-        const parent = tasks?.[it.taskId]?.parentRunId;
-        if (parent && parent !== rid) { parents[rid] = parent; break; }
+    for (const [rid, evs] of Object.entries(traceRuns)) {
+      for (const ev of evs) {
+        if (ev.parent_run_id && ev.parent_run_id !== rid) {
+          parents[rid] = ev.parent_run_id;
+          break;
+        }
       }
     }
     return parents;
-  }, [messages, tasks]);
+  }, [traceRuns]);
 
   const openTrace = useCallback((runId: string) => {
     onPanelChange({ kind: 'trace' });
     setTraceActiveRun(runId);
   }, [onPanelChange]);
+
+  // The span that produced a context item: a tool item joins on the call id its
+  // function span records, anything else on the response id of the generation
+  // span it came out of (spec §2.11e). Nothing else is worth guessing — matching
+  // on tool name and order breaks on the four identical calls that are the
+  // reason someone opened this panel.
+  const spanForItem = useCallback((item: ContextItem): TraceReveal | null => {
+    if (!item.run_id) return null;
+    for (const ev of traceRuns[item.run_id] || []) {
+      if (ev.kind !== 'span' || !ev.span_id || !ev.data) continue;
+      const joined = ev.type === 'function' ? ev.data.call_id : ev.type === 'generation' ? ev.data.response_id : null;
+      if (!joined) continue;
+      if (joined === item.anchor || (item.response_id && joined === item.response_id)) {
+        return { runId: item.run_id, spanId: ev.span_id, nonce: 0 };
+      }
+    }
+    return null;
+  }, [traceRuns]);
+
+  const openItemTrace = useCallback((item: ContextItem) => {
+    const found = spanForItem(item);
+    if (!found) return;
+    onPanelChange({ kind: 'trace' });
+    setTraceActiveRun(found.runId);
+    setTraceReveal({ ...found, nonce: revealSeq.current++ });
+  }, [spanForItem, onPanelChange]);
 
   const openTaskDetail = useCallback((taskId: string) => {
     onPanelChange({ kind: 'task', taskId });
@@ -1252,6 +1273,81 @@ export function ChatView({
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     flashMessage(el);
   }, []);
+
+  // The exchange an entry belongs to: the nearest RENDERED user message at or
+  // before it on the branch. Assistant text and reasoning are rendered as
+  // parts of a turn and have no node of their own, so their question stands in
+  // for them. Task notifications are skipped: they never render (UserMessage
+  // returns null for them), so a wake-up run's items keep walking back to the
+  // human question that started the chain.
+  const exchangeAnchorOf = useCallback((entryId: string): string | null => {
+    const list = entries || [];
+    let i = list.findIndex(e => e.entry_id === entryId);
+    if (i < 0) return null;
+    for (; i >= 0; i--) {
+      if (list[i].role === 'user' && list[i].entry_id && !parseTaskNotification(list[i].content || '')) {
+        return list[i].entry_id!;
+      }
+    }
+    return null;
+  }, [entries]);
+
+  // Context panel → the item it measured. The anchor is a tool call id (tool
+  // cards, which may be inside a collapsed step group) or an entry id (user
+  // messages); anything else lands on its exchange, and only a jump with
+  // nothing at all to aim at falls back to the run.
+  const jumpToContextItem = useCallback((item: ContextItem) => {
+    const anchor = item.anchor;
+    const find = (id?: string | null) => (id
+      ? document.querySelector(`.chat-messages [data-anchor-id="${CSS.escape(id)}"]`)
+      : null);
+    const land = (el: Element) => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      flashMessage(el);
+    };
+    const el = find(anchor);
+    if (el) {
+      land(el);
+      return;
+    }
+    // A tool card inside a collapsed step group is not rendered at all. Open
+    // the group that claims the id, then land on the card it just mounted.
+    const toggle = anchor
+      ? document.querySelector<HTMLElement>(`.chat-messages .process-group[data-anchor-ids~="${CSS.escape(anchor)}"] .process-group-toggle`)
+      : null;
+    if (toggle) {
+      if (!toggle.classList.contains('expanded')) toggle.click();
+      // A discrete-event click may flush the expansion synchronously — the
+      // card can already be there. Only otherwise wait for it to mount, with
+      // a bound; the group itself is the last resort, because unlike the
+      // run's user message it is on screen for certain (a wake-up run's user
+      // message is a task notification, which never renders).
+      const now = find(anchor);
+      if (now) {
+        land(now);
+        return;
+      }
+      const obs = new MutationObserver(() => {
+        const opened = find(anchor);
+        if (!opened) return;
+        obs.disconnect();
+        window.clearTimeout(timer);
+        land(opened);
+      });
+      const timer = window.setTimeout(() => {
+        obs.disconnect();
+        land(toggle.closest('.process-group') || toggle);
+      }, 500);
+      obs.observe(document.body, { childList: true, subtree: true });
+      return;
+    }
+    const exchange = anchor ? find(exchangeAnchorOf(anchor)) : null;
+    if (exchange) {
+      land(exchange);
+      return;
+    }
+    if (item.run_id) jumpToRun(item.run_id);
+  }, [jumpToRun, exchangeAnchorOf]);
 
   // TOC rail: one entry per user prompt; click scrolls to the message. The
   // upward smooth scroll trips the scroll hook's moved-up intent detection,
@@ -1346,7 +1442,6 @@ export function ChatView({
       panel={panel}
       onPanelChange={onPanelChange}
       tasks={tasks}
-      traceCount={Object.keys(traceRuns).length}
       terminalEnabled={!!onTerminalOpen && !!sandboxConfigs?.some(s => s.terminal)}
       onTerminalOpen={onTerminalOpen
         ? () => {
@@ -1650,6 +1745,7 @@ export function ChatView({
                   traceRunId={rid || null}
                   onTrace={openTrace}
                   msgIdx={i}
+                  entryId={m.entryId}
                 />
               );
             }
@@ -1690,6 +1786,21 @@ export function ChatView({
           onClose={() => onPanelChange(null)}
           onJumpToRun={jumpToRun}
           messageRunIds={messageRunIds}
+          reveal={traceReveal || undefined}
+        />
+      )}
+      {panel?.kind === 'context' && sessionId && (
+        <ContextPanel
+          sessionId={sessionId}
+          running={running}
+          // entries is replaced by every server re-read of the timeline — a
+          // branch switch included, which running alone would miss.
+          reloadKey={entries}
+          onClose={() => onPanelChange(null)}
+          onJump={jumpToContextItem}
+          onOpenTrace={openItemTrace}
+          hasTrace={item => !!spanForItem(item)}
+          onCompact={onCompact}
         />
       )}
       {panel?.kind === 'tasks' && (

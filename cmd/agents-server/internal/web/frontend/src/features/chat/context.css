@@ -1,0 +1,265 @@
+/* Context panel (right panel) — the drawer chrome is the generic .side-panel*
+   in globals.css; bars, labels and the Blankslate are Primer. This file styles
+   only what neither provides: the section rhythm and the item rows. */
+.ctx-body {
+  padding: 0 var(--base-size-12, 12px) var(--base-size-12, 12px);
+  font-size: 12px;
+}
+.ctx-loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--base-size-24, 24px);
+}
+
+.ctx-sec {
+  padding: var(--base-size-12, 12px) 0;
+  border-bottom: 1px solid var(--borderColor-muted);
+}
+.ctx-sec:last-child {
+  border-bottom: 0;
+}
+.ctx-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8, 8px);
+  margin-bottom: var(--base-size-8, 8px);
+  color: var(--fgColor-muted);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+/* Values inside an uppercased heading are data, not a heading. */
+.ctx-sec-head .ctx-mono {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.ctx-mono {
+  font-family: var(--fontStack-monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.ctx-muted { color: var(--fgColor-muted); }
+.ctx-ok { color: var(--fgColor-success); }
+
+.ctx-big {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: var(--base-size-8, 8px);
+}
+.ctx-num {
+  font-size: 24px;
+  font-weight: var(--base-text-weight-semibold, 600);
+  letter-spacing: -0.01em;
+}
+.ctx-slash { color: var(--fgColor-muted); }
+
+.ctx-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-12, 12px);
+  margin-top: var(--base-size-8, 8px);
+  color: var(--fgColor-muted);
+  font-size: 11px;
+}
+/* The source chip sits at the far end of whichever legend it labels. */
+.ctx-legend > [data-component='Label'] { margin-left: auto; }
+.ctx-legend-end { margin-left: auto; }
+
+.ctx-note {
+  margin-top: var(--base-size-8, 8px);
+  color: var(--fgColor-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+/* Compaction reads on a different ruler than the window bar above it, so it is
+   indented behind its own rule rather than sharing that gauge. */
+.ctx-sub {
+  margin-top: var(--base-size-16, 16px);
+  padding-left: 10px;
+  border-left: 2px solid var(--borderColor-muted);
+}
+.ctx-sub-head {
+  display: flex;
+  flex-wrap: wrap; /* a narrow panel wraps the VALUE whole, never inside it */
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px var(--base-size-8, 8px);
+  margin-bottom: 7px;
+  color: var(--fgColor-muted);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.ctx-sub-val {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fgColor-default);
+  white-space: nowrap;
+  margin-left: auto;
+}
+.ctx-sub-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-8, 8px);
+}
+/* "Compact now" — a quiet inline control beside the sub-head label, sized to
+   its 11px type. */
+.ctx-compact-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-small, 4px);
+  background: none;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fgColor-muted);
+  cursor: pointer;
+}
+.ctx-compact-btn:hover:not(:disabled) {
+  color: var(--fgColor-accent);
+  border-color: var(--fgColor-accent);
+}
+.ctx-compact-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ctx-spark {
+  width: 100%;
+  height: 46px;
+  display: block;
+}
+.ctx-spark-area { fill: var(--bgColor-accent-muted); }
+.ctx-spark-line {
+  fill: none;
+  stroke: var(--fgColor-accent);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.ctx-spark-dot { fill: var(--fgColor-accent); }
+
+.ctx-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-4, 4px);
+}
+/* The row is the jump-to-chat target; the trace button (a sibling — it cannot
+   nest inside the row, which is itself a button) swaps in WHERE the token
+   figure sits: hovering a traceable row hides the figure and shows the button
+   in its slot, the VS Code tree-item pattern. Nothing is reserved (the figures
+   stay flush with the panel edge like every other section) and nothing is
+   half-covered. Rows without a trace keep their figure under the cursor.
+   The button is a bare glyph sized to the TEXT line, so it never reaches the
+   bar on the line below. */
+.ctx-row-wrap {
+  position: relative;
+}
+.ctx-row-trace {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 0;
+  background: none;
+  border-radius: var(--borderRadius-small, 4px);
+  color: var(--fgColor-muted);
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0;
+}
+.ctx-row-trace:hover {
+  color: var(--fgColor-accent);
+}
+.ctx-row-trace:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, var(--fgColor-accent));
+  outline-offset: -2px;
+}
+.ctx-row-has-trace:hover .ctx-row-trace,
+.ctx-row-has-trace:focus-within .ctx-row-trace {
+  opacity: 1;
+}
+.ctx-row-has-trace:hover .ctx-row-tok,
+.ctx-row-has-trace:focus-within .ctx-row-tok {
+  opacity: 0;
+}
+.ctx-row {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 5px 6px;
+  border-radius: var(--borderRadius-small, 4px);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.ctx-row:hover { background: var(--bgColor-neutral-muted); }
+.ctx-row-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+.ctx-kind {
+  flex-shrink: 0;
+  font-family: var(--fontStack-monospace);
+  font-size: 10px;
+  color: var(--fgColor-muted);
+  background: var(--bgColor-neutral-muted);
+  border-radius: var(--borderRadius-small, 4px);
+  padding: 1px 5px;
+}
+.ctx-row-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctx-row-tok {
+  flex-shrink: 0;
+  color: var(--fgColor-muted);
+}
+.ctx-row-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bgColor-neutral-muted);
+  overflow: hidden;
+}
+.ctx-row-fill {
+  display: block;
+  height: 100%;
+  background: var(--fgColor-accent);
+  opacity: 0.6;
+}
+
+/* Breakdown rows carry no jump, so they are list items rather than buttons. */
+.ctx-rows-plain > li {
+  padding: 3px 6px;
+}
+.ctx-rows-plain .ctx-row-top {
+  margin-bottom: 5px;
+}
+.ctx-big-small {
+  margin-bottom: 10px;
+}
+.ctx-num-small {
+  font-size: 18px;
+}

@@ -1098,11 +1098,23 @@ When a change genuinely doesn't fit, update this list in the same PR.
     and the Inspector are the human-facing surfaces; the model reads the text
     verbatim. The prefix carries no privileged behavior: a user typing it
     merely hides their own message from the transcript view.
-22. **The right side panel is a single-instance Inspector.** Traces, the task
-    list, and one task's detail (live transcript + trace, assembled with the
-    same streamReducer/timeline code as the chat) are lenses of one panel —
-    a new inspection surface is a new lens, not a second drawer. Task detail
-    accumulates live child-run events only while open (watchTask/unwatchTask).
+22. **The right side panel is a single-instance Inspector.** Traces, context
+    usage, the task list, and one task's detail (live transcript + trace,
+    assembled with the same streamReducer/timeline code as the chat) are lenses
+    of one panel — a new inspection surface is a new lens, not a second drawer.
+    Task detail accumulates live child-run events only while open
+    (watchTask/unwatchTask). Persisted spans load on the first open of a lens
+    that reads them (trace or context), not on session open — a stored
+    generation span can carry a whole model request, and every session open
+    paying that download for a panel nobody may open is the wrong default.
+    Live runs stream their spans over the WS regardless. Run LINEAGE — which
+    run's spawn a wake-up belongs to, what nests the "task result" card under
+    its originating card — is recorded on the trace itself
+    (`trace_events.parent_run_id`, stamped at launch from
+    `LaunchRequest.ParentRunID`) and read directly. It is never derived from
+    task rows, notification text or the rendered timeline: each derivation
+    broke on a surface that does not carry its inputs (a fork copies traces
+    but not task rows; a fold moves the notification out of the timeline).
 23. **A task's terminal state is written exactly once, via row CAS.** The
     durable row is the terminal authority: `Finalize` (status + full result +
     notification debt in one UPDATE) only wins while the row is non-terminal,
@@ -1227,6 +1239,34 @@ When a change genuinely doesn't fit, update this list in the same PR.
     open terminal is never torn off its connection. Task child sessions
     inherit the parent's pair through `Inherit` and bind their own hidden
     sessions with it.
+
+28. **Every figure in the Context panel says which ruler it is on, and they are
+    never mixed.** `/sessions/:id/context` reports three kinds of number and the
+    panel draws them apart. (a) The WINDOW figures — `input_tokens`,
+    `cached_tokens`, `cache_write_tokens` — are the provider's own counts for
+    the last model call, covering everything it sent: history, system prompt,
+    tool schemas. (b) `compaction_tokens` is *exactly what the pass compares* —
+    `store.ActiveContextTokens` over the same rows, both sides resolving the
+    active branch with the same walk (`activeBranchOfRows`): the most recent
+    usage-bearing entry's TOTAL prices the history through itself, plus a
+    character estimate for the turns since. A fold NEWER than that pricing
+    invalidates it — the priced history included what the fold removed — so the
+    figure is fully estimated (kept tail + summary + turns since) until the
+    next call re-anchors it; without this the number would hold its pre-fold
+    height, and a manual Compact would look like it did nothing. It is therefore mostly a provider
+    number, not a character sum — a character sum would draw a threshold line
+    that does not match the one that fires — and because it counts output too
+    and only non-folded on-branch entries, it is not comparable to the window
+    bar and gets its own indented row rather than a mark on it. (c) Item sizes
+    and the `prompt` breakdown are character estimates (`CharEstimator`, ~4
+    chars per token): good for ranking and for "roughly what does this cost",
+    never for arithmetic against (a) or (b). The UI does not BADGE them — a
+    badge is skipped by the eye that reads the digits, and four exact-looking
+    digits claim a measurement the estimator never made. It renders them to the
+    precision they have: two significant figures behind a `~`. A figure without
+    one is the provider's own count, which is the whole labelling scheme. Sub-agents appear in none of them — a task runs on its own session with
+    its own window (invariant 22's Inspector shows that one); what lands in the
+    parent's context is the result text, counted like any other tool output.
 
 ## Database
 

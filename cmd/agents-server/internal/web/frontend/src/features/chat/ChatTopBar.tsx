@@ -1,5 +1,5 @@
 import { IconButton } from '@primer/react';
-import { DiffIcon, FileDirectoryIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
+import { DiffIcon, FileDirectoryIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import type { TaskState } from '@/lib/useAgentSocket';
@@ -11,7 +11,6 @@ interface ChatTopBarProps {
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
   tasks?: Record<string, TaskState>;
-  traceCount: number;
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
   /* The session's sandbox binding, rendered as a quiet read-only label beside
@@ -29,7 +28,6 @@ export function ChatTopBar({
   panel,
   onPanelChange,
   tasks,
-  traceCount,
   terminalEnabled,
   onTerminalOpen,
   binding,
@@ -64,10 +62,21 @@ export function ChatTopBar({
           variant="invisible"
           size="small"
           aria-label="Traces"
-          disabled={!sessionId || traceCount === 0}
+          // Not gated on having spans in memory: they load lazily when this
+          // panel first opens, so a count gate would lock the door that loads
+          // them.
+          disabled={!sessionId}
           onClick={() => onPanelChange(panel?.kind === 'trace' ? null : { kind: 'trace' })}
         />
         <IconButton icon={DiffIcon} variant="invisible" size="small" aria-label="Diff" disabled />
+        <IconButton
+          icon={MeterIcon}
+          variant="invisible"
+          size="small"
+          aria-label="Context"
+          disabled={!sessionId}
+          onClick={() => onPanelChange(panel?.kind === 'context' ? null : { kind: 'context' })}
+        />
         <IconButton
           icon={TerminalIcon}
           variant="invisible"

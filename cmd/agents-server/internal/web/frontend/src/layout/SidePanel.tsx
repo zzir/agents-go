@@ -11,7 +11,8 @@ const MAX_WIDTH = 960;
 interface SidePanelProps {
   icon: Icon;
   title: string;
-  count?: number;
+  /** Header badge: a count for list panels, a formatted value ("37%") where a bare number would read as one. */
+  count?: number | string;
   onClose: () => void;
   children: ReactNode;
   /** localStorage key for the persisted width — give each panel type (trace, diff, ...) its own. */

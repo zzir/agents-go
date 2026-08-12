@@ -558,3 +558,10 @@
   line-height: 16px;
   white-space: nowrap;
 }
+
+/* A span the Context panel sent the reader to — same 1.8s outline the chat
+   uses for a jumped-to message, so both directions of the jump read alike. */
+.trace-span.trace-span-revealed {
+  animation: msg-jump-flash 1.8s ease-out;
+  border-radius: var(--borderRadius-small, 4px);
+}

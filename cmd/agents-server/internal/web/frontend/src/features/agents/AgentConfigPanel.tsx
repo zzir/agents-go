@@ -14,7 +14,7 @@ import { PROVIDERS, providerMeta, providerFacts, type ProviderTypeInfo } from '@
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  provider: ['provider_type', 'auth_mode', 'api_key', 'base_url'],
+  provider: ['provider_type', 'auth_mode', 'api_key', 'base_url', 'context_window'],
   behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'plan_mode', 'todo_list'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
@@ -52,6 +52,7 @@ interface AgentFormData {
   auth_mode: string;
   api_key: string;
   base_url: string;
+  context_window: number;
   max_turns: number;
   handoff_description: string;
   disable_tool_choice_reset: boolean;
@@ -136,7 +137,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
   const [form, setForm] = useState<AgentFormData>({
     name: '', instructions: '', model: 'gpt-5.5',
-    provider_type: '', auth_mode: '', api_key: '', base_url: '',
+    provider_type: '', auth_mode: '', api_key: '', base_url: '', context_window: 0,
     max_turns: 0, handoff_description: '',
     disable_tool_choice_reset: false, plan_mode: false, todo_list: false, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
@@ -273,6 +274,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
       <div className="form-group">
         <div className="form-group-title">Model</div>
         {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} placeholder={meta.modelPlaceholder} block />)}
+        {fc('Context window',
+          <TextInput block type="number" min={0} step={1000} value={String(form.context_window || 0)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', parseInt(e.target.value) || 0)} />,
+          'Tokens this model accepts — the Context panel needs it to show how full the window is (0 = unknown, no provider reports it)')}
         <div style={{ display: 'flex', gap: 12 }}>
           <div style={{ flex: 1 }}>
             {fc('Temperature', <TextInput type="number" step={0.1} min={0} max={2} value={temperature} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTemperature(e.target.value)} block />)}

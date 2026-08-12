@@ -21,12 +21,26 @@ export interface TraceEventData {
   type?: string;
   span_id?: string;
   parent_id?: string;
+  // The run's lineage (a wake-up run's spawning run), carried by the trace
+  // itself — what the drawer's run grouping reads.
+  parent_run_id?: string;
   error?: string;
   started_at?: string;
   ended_at?: string;
   data?: Record<string, unknown> | null;
   duration?: string;
 }
+
+// A Context panel jump: which span to open and take the reader to. The nonce
+// makes a second click on the same item a new instruction rather than a no-op.
+export interface TraceReveal {
+  runId: string;
+  spanId: string;
+  nonce: number;
+}
+
+// What a span row needs of it — the run is already resolved by then.
+type SpanReveal = Pick<TraceReveal, 'spanId' | 'nonce'>;
 
 // Span type → icon + color, mirroring the SDK's typed span constructors.
 const SPAN_META: Record<string, { color: string; icon: Icon }> = {
@@ -812,8 +826,12 @@ function spanHasDetails(s: TraceEventData): boolean {
 
 // alignChevron: reserve the chevron slot even without details, so icons line
 // up when siblings on the same level are expandable.
-function SpanRow({ node, depth, range, alignChevron }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean }) {
+// reveal: the span the Context panel sent the reader to — it opens, scrolls
+// into view and flashes. Its children are already rendered, so a sandbox or MCP
+// span under it needs no separate reveal. The nonce re-fires the same target.
+function SpanRow({ node, depth, range, alignChevron, reveal }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; reveal?: SpanReveal }) {
   const [open, setOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const s = node.span;
   const failed = !!s.error;
   const running = !s.ended_at;
@@ -824,6 +842,17 @@ function SpanRow({ node, depth, range, alignChevron }: { node: SpanNode; depth: 
   const extraData = !!s.data && Object.keys(s.data).length > 0;
   const hasData = spanHasDetails(s);
   const childExpandable = node.children.some(c => spanHasDetails(c.span));
+
+  const revealed = !!reveal && s.span_id === reveal.spanId;
+  useEffect(() => {
+    if (!revealed || !rowRef.current) return;
+    if (hasData) setOpen(true);
+    rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const el = rowRef.current;
+    el.classList.add('trace-span-revealed');
+    const t = window.setTimeout(() => el.classList.remove('trace-span-revealed'), 1800);
+    return () => window.clearTimeout(t);
+  }, [revealed, hasData, reveal?.nonce]);
 
   let bar: { left: string; width: string } | null = null;
   if (range && s.started_at) {
@@ -838,6 +867,7 @@ function SpanRow({ node, depth, range, alignChevron }: { node: SpanNode; depth: 
   return (
     <>
       <div
+        ref={rowRef}
         className={'trace-span' + (hasData ? ' trace-span-clickable' : '')}
         style={{ paddingLeft: 2 + depth * 10 }}
         onClick={hasData ? () => setOpen(o => !o) : undefined}
@@ -880,7 +910,7 @@ function SpanRow({ node, depth, range, alignChevron }: { node: SpanNode; depth: 
                 {JSON.stringify(s.data, null, 2)}
               </pre>
       )}
-      {node.children.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} />)}
+      {node.children.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} reveal={reveal} />)}
     </>
   );
 }
@@ -912,9 +942,11 @@ interface TraceRunProps {
   // onJump scrolls the chat to this run's user message; absent when the
   // conversation has no message for the run.
   onJump?: () => void;
+  // reveal is the span to open and scroll to (a Context panel jump).
+  reveal?: SpanReveal;
 }
 
-export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump }: TraceRunProps) {
+export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, reveal }: TraceRunProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   const { parts, tokens, spanCount } = useMemo(() => {
@@ -984,7 +1016,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       {parts.map(p => (
         <div key={p.runId} className="trace-run-segment">
           {p.label && <div className="trace-segment-label">{p.label}</div>}
-          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} />)}
+          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} reveal={reveal} />)}
         </div>
       ))}
     </Disclosure>
@@ -1008,9 +1040,13 @@ interface TraceDrawerProps {
   // lists the runs that actually have one, gating the jump control.
   onJumpToRun?: (runId: string) => void;
   messageRunIds?: Set<string>;
+  // reveal is a Context panel jump: open the card holding this run and take
+  // the reader to the span. A new object identity re-fires it, so clicking the
+  // same item twice works.
+  reveal?: TraceReveal;
 }
 
-export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
+export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds, reveal }: TraceDrawerProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // One card per conversation exchange: a run plus the wake-up runs its tasks
   // triggered, in chronological (insertion) order. rootOf routes expand/live
@@ -1064,6 +1100,13 @@ export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, stal
     }
   }, [liveRunId, rootOf]);
 
+  // A revealed span's card must be open before the row can scroll itself in.
+  useEffect(() => {
+    if (!reveal) return;
+    const root = rootOf[reveal.runId] || reveal.runId;
+    setExpanded(prev => prev[root] ? prev : { ...prev, [root]: true });
+  }, [reveal, rootOf]);
+
   const toggle = (rid: string) => setExpanded(prev => ({ ...prev, [rid]: !prev[rid] }));
 
   return (
@@ -1082,6 +1125,7 @@ export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, stal
           isExpanded={!!expanded[rootId]}
           onToggle={() => toggle(rootId)}
           onJump={onJumpToRun && messageRunIds && messageRunIds.has(rootId) ? () => onJumpToRun(rootId) : undefined}
+          reveal={reveal && segments.some(s => s.runId === reveal.runId) ? reveal : undefined}
         />
       ))}
     </SidePanel>

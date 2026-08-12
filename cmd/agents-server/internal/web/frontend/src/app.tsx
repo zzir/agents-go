@@ -193,11 +193,12 @@ function panelKey(p: InspectorPanel): string {
 
 function readHash(): { sessionId: string | null; panel: InspectorPanel } {
   const h = window.location.hash;
-  const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
+  const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|context|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
   if (!m) return { sessionId: null, panel: null };
   let panel: InspectorPanel = null;
   if (m[2] === 'trace') panel = { kind: 'trace' };
   else if (m[2] === 'tasks') panel = { kind: 'tasks' };
+  else if (m[2] === 'context') panel = { kind: 'context' };
   else if (m[3]) panel = { kind: 'task', taskId: m[3] };
   return { sessionId: m[1], panel };
 }
@@ -208,6 +209,7 @@ function writeHash(sessionId: string | null, panel: InspectorPanel) {
     next = `#/session/${sessionId}`;
     if (panel?.kind === 'trace') next += '/trace';
     else if (panel?.kind === 'tasks') next += '/tasks';
+    else if (panel?.kind === 'context') next += '/context';
     else if (panel?.kind === 'task') next += `/task/${panel.taskId}`;
   }
   if (window.location.hash !== next) {
@@ -310,7 +312,7 @@ export default function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  const { wsRef, sessionRunRef, loadSession, loadTraces, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -371,6 +373,14 @@ export default function App() {
       });
     return () => { cancelled = true; };
   }, [activeSession, loadSession]);
+
+  // Persisted traces backfill on the first open of a lens that reads them —
+  // the trace panel, or the context panel (it joins its items to spans). Also
+  // covers deep links (#/session/x/trace): the hash seeds activePanel.
+  useEffect(() => {
+    if (!activeSession) return;
+    if (activePanel?.kind === 'trace' || activePanel?.kind === 'context') loadTraces(activeSession);
+  }, [activeSession, activePanel, loadTraces]);
 
   useEffect(() => {
     if (!wsRef.current) return;
@@ -529,6 +539,26 @@ export default function App() {
     }
   }, [activeSession, reloadTimeline]);
 
+  // The Context panel's "Compact now": one forced pass, then the timeline
+  // reload — the fold marks entries compacted and appends a checkpoint, which
+  // no local patch can express. Toasts carry the outcome either way; errors
+  // (409 while a run is live, 400 when compaction is off) surface their
+  // message.
+  const handleCompact = useCallback(async () => {
+    if (!activeSession) return;
+    try {
+      const res = await api.sessions.compact(activeSession) as { compacted?: boolean; before_items?: number; after_items?: number };
+      if (res.compacted) {
+        toast.success(`Compacted ${res.before_items} items into ${res.after_items}`);
+        await reloadTimeline(activeSession);
+      } else {
+        toast.info('Nothing to fold — the kept window already covers the history');
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Compaction failed');
+    }
+  }, [activeSession, reloadTimeline]);
+
   // Regenerating branches back to the user's message and runs again IN PLACE.
   // It used to fork a whole new session per attempt, which is why a chat list
   // filled up with "(regen 2)", "(regen 3)" and no way to compare them — the
@@ -668,6 +698,7 @@ export default function App() {
       loadingMore={currentSS.loadingMore}
       onLoadEarlier={handleLoadEarlier}
       onSwitchBranch={handleSwitchBranch}
+      onCompact={handleCompact}
       onRegenerate={handleRegenerate}
       settingsReloadKey={settingsReloadKey}
       bindingsVersion={bindingsVersion}

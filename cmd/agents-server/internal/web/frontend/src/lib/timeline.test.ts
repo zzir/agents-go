@@ -486,41 +486,34 @@ describe('stream/replay isomorphism', () => {
     expect(parts.filter(p => p.type === 'cancelled')).toHaveLength(1); // marker idempotent
   });
 
-  it('compaction: the checkpoint swallows what it folded, and keeps it expandable', () => {
+  it('compaction: folded history renders in place, the checkpoint is an inline marker', () => {
     const timeline = buildTimeline([
       { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'old question' },
       { id: 2, entry_id: 'e2', kind: 'item', role: 'assistant', content: 'old answer', display: { kind: 'message', text: 'old answer' } },
       { id: 3, entry_id: 'e3', kind: 'compaction', role: 'compaction', content: 'summary of the above', compaction: { excluded_ids: ['e1', 'e2'], tokens_before: 12400, tokens_after: 3100 } },
       { id: 4, entry_id: 'e4', kind: 'item', role: 'user', content: 'new question' },
     ]);
-    // The folded pair is NOT loose in the history — the checkpoint stands for it.
-    expect(timeline.map(m => m.role)).toEqual(['compaction', 'user']);
-    const cp = timeline[0] as { folded?: Array<{ role: string }>; tokensBefore?: number; tokensAfter?: number };
+    // The transcript is decoupled from the fold: history stays loose and in
+    // full, the marker sits where the pass happened.
+    expect(timeline.map(m => m.role)).toEqual(['user', 'turn', 'compaction', 'user']);
+    const cp = timeline[2] as { tokensBefore?: number; tokensAfter?: number };
     expect(cp.tokensBefore).toBe(12400);
     expect(cp.tokensAfter).toBe(3100);
-    // …but it is still there, in full, one expand away.
-    expect(cp.folded?.map(m => m.role)).toEqual(['user', 'turn']);
   });
 
-  it('compaction: a second pass folds the first checkpoint under it', () => {
+  it('compaction: a second pass leaves the first marker and the history in place', () => {
     const timeline = buildTimeline([
       { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'oldest' },
       { id: 2, entry_id: 'e2', kind: 'compaction', role: 'compaction', content: 'first summary', compaction: { excluded_ids: ['e1'] } },
       { id: 3, entry_id: 'e3', kind: 'item', role: 'user', content: 'middle' },
       { id: 4, entry_id: 'e4', kind: 'compaction', role: 'compaction', content: 'second summary', compaction: { excluded_ids: ['e1', 'e2', 'e3'] } },
     ]);
-    expect(timeline.map(m => m.role)).toEqual(['compaction']);
-    const outer = timeline[0] as { content: string; folded?: Array<{ role: string; folded?: Array<{ role: string }> }> };
-    expect(outer.content).toBe('second summary');
-    // e1 is named by BOTH checkpoints; the later one wins, so the inner
-    // checkpoint keeps its marker but no longer owns the entry.
-    expect(outer.folded?.map(m => m.role)).toEqual(['user', 'compaction', 'user']);
-    expect(outer.folded?.[1].folded).toBeUndefined();
+    expect(timeline.map(m => m.role)).toEqual(['user', 'compaction', 'user', 'compaction']);
+    expect((timeline[3] as { content: string }).content).toBe('second summary');
   });
 
-  it('compaction: an entry marked compacted but named by no checkpoint stays in place', () => {
-    // Soft-deleted by an older compaction whose checkpoint predates ExcludedIDs.
-    // Hiding it would make a whole run vanish from the history.
+  it('compaction: an entry marked compacted stays in place', () => {
+    // Soft-deleted from the model's context, not from what happened.
     const timeline = buildTimeline([
       { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'orphaned', compacted: true },
       { id: 2, entry_id: 'e2', kind: 'item', role: 'user', content: 'current' },

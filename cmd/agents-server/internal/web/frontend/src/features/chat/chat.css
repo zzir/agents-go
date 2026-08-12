@@ -332,30 +332,10 @@
   font-variant-numeric: tabular-nums;
   color: var(--fgColor-muted);
 }
-
-/* Folded history: the archive the checkpoint stands in for. Muted and
-   full-width-reset, so an expanded fold reads as a quotation of what happened
-   rather than as live conversation. */
-.compaction-folded {
-  margin-top: var(--base-size-12);
-  padding-top: var(--base-size-8);
-  border-top: 1px solid var(--borderColor-muted);
+.compaction-card-note {
+  margin-bottom: var(--base-size-8);
+  font-style: italic;
   opacity: 0.85;
-}
-.compaction-folded .message,
-.compaction-folded .compaction-card {
-  max-width: none;
-  margin-left: 0;
-  margin-right: 0;
-}
-.compaction-folded-turn {
-  padding: var(--base-size-4) 0 var(--base-size-8);
-}
-.compaction-folded-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--base-size-4);
-  margin-bottom: var(--base-size-4);
 }
 
 /* Assistant turn (one run: text + tool calls as one block) */

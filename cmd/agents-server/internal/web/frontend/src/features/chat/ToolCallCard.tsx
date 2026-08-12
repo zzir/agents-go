@@ -285,6 +285,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       // items the user tracks progress by.
       defaultOpen={body.kind === 'todos'}
       className="ToolCallCard"
+      anchorId={tool_call_id}
     >
       {body.kind === 'patch' ? (
         <div className="ToolCallCard-diff markdown-body" dangerouslySetInnerHTML={{ __html: diffHtml }} />

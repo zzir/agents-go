@@ -207,11 +207,9 @@ interface CompactionEntry {
   role: 'compaction';
   content: string;
   messageId: number | undefined;
-  // folded are the entries this checkpoint stands in for, rendered inside it
-  // rather than loose in the history. They are still the real entries — a
-  // compaction soft-deletes from the MODEL's context, not from what happened —
-  // so collapsing them is a display choice the reader can undo.
-  folded?: TimelineEntry[];
+  // The durable entry id — the Context panel's jump target for a checkpoint
+  // that ranks among the heaviest items.
+  entryId?: string;
   tokensBefore?: number;
   tokensAfter?: number;
 }
@@ -251,11 +249,13 @@ export { DISPLAY };
 // model: the runner knew this was a tool call when it made one, and the reader
 // should not be re-deducing it from a projection.
 //
-// Entries a compaction checkpoint folded away are moved INSIDE that checkpoint
-// rather than left loose in the history: a reader scrolling back should see
-// "12k tokens became 3k here" as one marker, not the folded turns rendered as
-// though the model still reads them. They stay real and expandable — compaction
-// soft-deletes from the model's context, never from what happened.
+// The timeline is DECOUPLED from compaction: folded entries render in place,
+// in full, and the checkpoint renders where it sits as an inline marker.
+// Compaction soft-deletes from the MODEL's context, never from what happened —
+// which entries the model still reads is the Context panel's question, not the
+// transcript's. (Hiding the folded turns inside the marker made the
+// conversation unreadable past every pass, and broke everything that reads the
+// rendered timeline — the trace panel's run grouping above all.)
 export function buildTimeline(entries: EntryView[] | null | undefined): TimelineEntry[] {
   if (!entries) return [];
 
@@ -268,28 +268,7 @@ export function buildTimeline(entries: EntryView[] | null | undefined): Timeline
   // persisted anything yet, and the switch's leaf is not a child), so a fork
   // gate would leave the old answer on screen for the whole regeneration.
   const forks = findForks(entries);
-  entries = entries.filter(e => e.on_path !== false);
-
-  // Which checkpoint folded each entry. A checkpoint is appended AFTER what it
-  // folds, so this needs its own pass. A later checkpoint wins when two name
-  // the same entry, which is what puts a re-compacted range under the newest
-  // marker (and the older checkpoint itself under it too).
-  const foldedBy = new Map<string, string>();
-  for (const e of entries) {
-    if (e.kind !== 'compaction' || !e.entry_id) continue;
-    for (const id of e.compaction?.excluded_ids || []) foldedBy.set(id, e.entry_id);
-  }
-  if (foldedBy.size === 0) return assemble(entries, null, forks);
-
-  const buckets = new Map<string, EntryView[]>();
-  const main: EntryView[] = [];
-  for (const e of entries) {
-    const owner = e.entry_id ? foldedBy.get(e.entry_id) : undefined;
-    if (!owner) { main.push(e); continue; }
-    const bucket = buckets.get(owner);
-    if (bucket) bucket.push(e); else buckets.set(owner, [e]);
-  }
-  return assemble(main, buckets, forks);
+  return assemble(entries.filter(e => e.on_path !== false), forks);
 }
 
 // findForks locates every point where the conversation was answered more than
@@ -336,7 +315,6 @@ function findForks(entries: EntryView[]): Map<string, Branches> {
 
 function assemble(
   entries: EntryView[],
-  buckets: Map<string, EntryView[]> | null,
   forks: Map<string, Branches>,
 ): TimelineEntry[] {
   const timeline: TimelineEntry[] = [];
@@ -359,23 +337,20 @@ function assemble(
 
   for (const e of entries) {
     const d = e.display;
-    // A compaction checkpoint: what the pass folded away, standing in for it.
+    // A compaction checkpoint: an inline marker where the pass happened. The
+    // history it folded renders in place above it.
     if (e.kind === 'compaction') {
       finishTurn();
-      const inner = (buckets && e.entry_id) ? buckets.get(e.entry_id) : undefined;
       timeline.push({
         role: 'compaction',
         content: e.content || '',
         messageId: e.id,
-        folded: inner ? assemble(inner, buckets, forks) : undefined,
+        entryId: e.entry_id,
         tokensBefore: e.compaction?.tokens_before,
         tokensAfter: e.compaction?.tokens_after,
       });
       continue;
     }
-    // An entry marked compacted but named by no checkpoint still renders in
-    // place: it is history, and the model no longer reading it is not a reason
-    // to hide it. Dropping these outright made whole runs vanish.
     if (e.role === 'user') {
       finishTurn();
       if (e.content) timeline.push({ role: 'user', content: e.content, messageId: e.id, entryId: e.entry_id, runId: e.run_id });

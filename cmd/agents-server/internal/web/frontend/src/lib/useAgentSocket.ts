@@ -159,6 +159,8 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // being dropped as if it were a replay.
   const appendedItemsRef = useRef<Record<string, Set<string>>>({});
   const loadedRef = useRef<Set<string>>(new Set());
+  // Sessions whose persisted traces have been pulled (see loadTraces).
+  const tracesLoadedRef = useRef<Set<string>>(new Set());
   // Per-session timeline generation, bumped by forgetLoaded (a branch move).
   // A fetch launched before the bump describes a path the session is no longer
   // on; its late resolution must be dropped, not applied — a pre-branch
@@ -356,7 +358,19 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           return { ...s, tasks };
         });
       }).catch(() => undefined);
-    api.sessions.traces(sid).then((events: Array<{ run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
+    return msgP;
+  }, [fetchTimeline, updateSS]);
+
+  // loadTraces pulls the session's persisted spans, once per session — on the
+  // first open of a lens that reads them (trace / context), not on session
+  // open: stored generation spans carry whole model requests, and every
+  // session open paying that download for lenses nobody may open is the wrong
+  // default. Live runs stream their spans over the WS regardless; this
+  // backfills history.
+  const loadTraces = useCallback((sid: string) => {
+    if (!sid || tracesLoadedRef.current.has(sid)) return;
+    tracesLoadedRef.current.add(sid);
+    api.sessions.traces(sid).then((events: Array<{ run_id?: string; parent_run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
       for (const ev of events) {
@@ -376,7 +390,8 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         }
         runs[rid].push({
           kind: 'span', name: ev.name || '', type: ev.detail || '',
-          span_id: ev.span_id, parent_id: ev.parent_id, error: ev.error,
+          span_id: ev.span_id, parent_id: ev.parent_id, parent_run_id: ev.parent_run_id,
+          error: ev.error,
           started_at: ev.started_at, ended_at: ev.ended_at,
           data: Object.keys(parsed).length > 0 ? parsed : null,
           duration,
@@ -387,12 +402,16 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       // entry — the old all-or-nothing guard dropped every persisted run's
       // trace whenever any live run existed.
       updateSS(sid, s => ({ ...s, traceRuns: { ...runs, ...s.traceRuns } }));
-    }).catch(() => {});
-    return msgP;
-  }, [fetchTimeline, updateSS]);
+    }).catch(() => {
+      // Roll back the mark so the next lens open retries instead of leaving
+      // the panel empty for good.
+      tracesLoadedRef.current.delete(sid);
+    });
+  }, [updateSS]);
 
   const deleteSession = useCallback((deletedId: string) => {
     loadedRef.current.delete(deletedId);
+    tracesLoadedRef.current.delete(deletedId);
   }, []);
 
   useEffect(() => {
@@ -966,7 +985,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       });
     });
 
-    ws.on(EV.traceSpan, (p: { run_id: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
+    ws.on(EV.traceSpan, (p: { run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
       if (taskRunsRef.current[p.run_id]) {
         updateTaskView(p.run_id, v => {
           let duration = '';
@@ -976,7 +995,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           }
           const ev: TraceEvent = {
             kind: 'span', name: p.name, type: p.type || '',
-            span_id: p.span_id, parent_id: p.parent_id,
+            span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
             error: p.error, started_at: p.started_at, ended_at: p.ended_at,
             data: p.data || null, duration,
           };
@@ -1000,7 +1019,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         }
         const ev: TraceEvent = {
           kind: 'span', name: p.name, type: p.type || '',
-          span_id: p.span_id, parent_id: p.parent_id,
+          span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
           error: p.error, started_at: p.started_at, ended_at: p.ended_at,
           data: p.data || null, duration,
         };
@@ -1190,5 +1209,5 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     updateSS(sid, s => ({ ...s, loaded: false, entries: [], hasMore: false }));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, loadSession, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
+  return { wsRef, sessionRunRef, loadSession, loadTraces, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
 }

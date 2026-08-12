@@ -26,6 +26,7 @@ const DEFAULT_KEYS: SettingDef[] = [
   { key: 'brave_api_key', label: 'Brave Search API key', placeholder: 'BSA-xxxxxxxx', description: 'When set, a brave_search tool is injected into all agents. Get a key at brave.com/search/api.' },
   { key: 'trace_retention_days', label: 'Trace retention (days)', placeholder: 'e.g. 30 — empty disables pruning', description: 'Trace events older than this many days are pruned daily. Leave empty (or 0) to keep everything.' },
   { key: 'trace_include_sensitive_data', label: 'Trace sensitive data', placeholder: 'true (default) or false', description: 'Set to false to keep prompts, outputs and tool arguments out of stored traces — spans then carry only timing and usage metadata (the trace panel\'s Replay has nothing to seed from). Applies to new runs.' },
+  { key: 'trace_span_data_kb', label: 'Stored span payload (KB)', placeholder: 'e.g. 8192 — empty uses the default', description: 'How much of a span\'s model request and response is stored. Past it the payload is replaced with a marker and a Replay of that call has nothing to seed from — raise it if you replay large turns. Live updates to the browser are capped separately at 256KB; what they drop is still in the trace. Applies to new runs.' },
 ];
 
 export function SettingsPanel() {

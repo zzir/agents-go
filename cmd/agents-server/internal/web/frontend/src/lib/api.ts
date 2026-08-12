@@ -93,6 +93,12 @@ export const api = {
     },
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
+    // What the session's active branch occupies of the model's context window.
+    // Recomputed per call from the entries — there is no live event for it, so
+    // the panel refetches when a run ends.
+    context: (id: string | number) => request(`/sessions/${id}/context`),
+    // Forces one compaction pass now; {compacted:false} means nothing to fold.
+    compact: (id: string | number) => request(`/sessions/${id}/compact`, { method: 'POST' }),
     approvals: (id: string | number) => request(`/sessions/${id}/approvals`),
     // Moves the session's active branch to an entry. Append-only: the
     // abandoned attempt stays recorded and can be switched back to.
