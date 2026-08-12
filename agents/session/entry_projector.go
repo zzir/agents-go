@@ -41,15 +41,19 @@ const SummaryMarker = "[Conversation Summary]"
 // DefaultSummaryPrompt is the default system prompt used to summarize
 // conversation history during compaction.
 var DefaultSummaryPrompt = strings.TrimSpace(`
-You are a conversation summarizer. You will receive a portion of a
-conversation between a user and an AI assistant. Summarize it into a
-concise factual account that preserves:
+You are a conversation summarizer. You will receive a plain-text transcript
+of a portion of a conversation between a user and an AI assistant. Summarize
+it into a concise factual account that preserves:
 - Key decisions and conclusions
 - Important facts, names, numbers, and code identifiers mentioned
 - The current state of any ongoing task
 - Any commitments or action items
 
 Be concise but complete. Do not add commentary. Do not invent information.
+Write plain prose only: never emit tool-call syntax, function-call markup, or
+model control tokens — describe in words what a tool call did instead. The
+summary is injected into future conversations as text, where such markup would
+read as instructions rather than history.
 Output only the summary text.
 `)
 
