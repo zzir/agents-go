@@ -34,6 +34,12 @@ type LaunchRequest struct {
 	// A host may treat the two differently — different tools, no task tools on
 	// a task run — and cannot tell them apart otherwise.
 	Wake bool
+	// ParentRunID, on a Wake launch, is the run that spawned the task(s) being
+	// delivered (the first one carrying it when several drained at once). It is
+	// the run's LINEAGE, handed to the host at launch so it can be recorded on
+	// the run's own durable output (traces) rather than re-derived later from
+	// task rows or notification text — which a fork or a fold does not carry.
+	ParentRunID string
 }
 
 // StopOutcome is what a host did with a stop request. "No error" is not enough

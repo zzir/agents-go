@@ -898,3 +898,30 @@ func TestGracefulStopLeavesTheOutcomeToTheRun(t *testing.T) {
 		t.Fatal("the row was finalized here, racing the run that was told to finish its turn")
 	}
 }
+
+// A wake-up launch carries its lineage: the run whose spawn started the
+// delivered task, handed to the host at launch so it can land on the run's own
+// durable output (traces) instead of being re-derived from task rows or
+// notification text — which a fork or a fold does not carry.
+func TestNotify_WakeLaunchCarriesLineage(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	info, err := h.m.Spawn(ctx, SpawnRequest{
+		ParentSessionID: "parent", AgentName: "worker", Input: "do it",
+		ParentRunID: "run_origin",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+
+	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
+	h.m.DrainPending(ctx, "parent")
+
+	wakes := h.launcher.wakes()
+	if len(wakes) == 0 {
+		t.Fatal("no wake launch recorded")
+	}
+	if wakes[0].ParentRunID != "run_origin" {
+		t.Fatalf("wake lineage = %q, want run_origin", wakes[0].ParentRunID)
+	}
+}

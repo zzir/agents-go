@@ -977,21 +977,27 @@ func (m *Manager) DrainPending(ctx context.Context, parentSessionID string) {
 	}
 
 	// The wake-up runs under the configuration the SPAWNING run had, snapshotted
-	// on the task — not whatever the parent is configured with now.
+	// on the task — not whatever the parent is configured with now. Its lineage
+	// is picked the same way: the first task carrying one names the spawning
+	// run.
 	var inherit json.RawMessage
+	var parentRunID string
 	for i := range pending {
-		if len(pending[i].Inherit) > 0 {
+		if inherit == nil && len(pending[i].Inherit) > 0 {
 			inherit = pending[i].Inherit
-			break
+		}
+		if parentRunID == "" && pending[i].ParentRunID != "" {
+			parentRunID = pending[i].ParentRunID
 		}
 	}
 
 	if err := m.cfg.Launcher(ctx, LaunchRequest{
-		RunID:     m.cfg.NewID(),
-		SessionID: parentSessionID,
-		Input:     m.cfg.NotifyFormatter(pending),
-		Inherit:   inherit,
-		Wake:      true,
+		RunID:       m.cfg.NewID(),
+		SessionID:   parentSessionID,
+		Input:       m.cfg.NotifyFormatter(pending),
+		Inherit:     inherit,
+		Wake:        true,
+		ParentRunID: parentRunID,
 	}); err != nil {
 		// Lost a race with a new user run: the debts stay pending and the
 		// winner's boundary re-drains them.

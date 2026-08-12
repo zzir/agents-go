@@ -1858,6 +1858,11 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   the very same line — forging a card for a task the sender does not own.
 - **A wake-up runs under the configuration snapshotted at spawn**, not resolved
   fresh: the parent may be configured differently by then.
+- **A wake-up launch carries its lineage.** `LaunchRequest.ParentRunID` names
+  the run that spawned the delivered task(s) — the first task carrying one when
+  several drained at once — so a host can record the relationship on the run's
+  own durable output (its traces) instead of re-deriving it later from task
+  rows or notification text, which a fork or a fold does not carry.
 - **A restart fails what it interrupted** and owes each parent a wake-up, so
   the news is delivered rather than lost. `input_required` is left alone: its
   approval persists.
