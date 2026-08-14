@@ -59,6 +59,21 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 	}
 }
 
+// An unconfigured agent feeds a bad tool name BACK to the model instead of
+// ending the run: models invent tool names, and plan mode hides real ones, so
+// aborting would take down the turn and any workflow driving it over a slip
+// the model corrects on being told. "error" restores the abort.
+func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
+	built := &BuildResult{}
+	if got := runOptionsFor(built, nil, nil, nil, ""); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundReturnToModel {
+		t.Fatalf("unset behavior = %v, want return-to-model", got.Exec.ToolNotFoundBehavior)
+	}
+	built.Behavior.ToolNotFoundBehavior = "error"
+	if got := runOptionsFor(built, nil, nil, nil, ""); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundError {
+		t.Fatalf("explicit error = %v, want the abort", got.Exec.ToolNotFoundBehavior)
+	}
+}
+
 // The tri-state read of trace_include_sensitive_data: unset and garbage defer
 // to the SDK default (nil), an explicit value comes through as a pointer.
 func TestSensitiveTraceSettingTriState(t *testing.T) {

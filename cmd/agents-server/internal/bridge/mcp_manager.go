@@ -341,6 +341,12 @@ func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredConte
 		ToolNamePrefix:       name + "__",
 		MaxRetryAttempts:     retry.MaxRetryAttempts,
 		UseStructuredContent: useStructuredContent,
+		// One fetch, then serve from memory: every chat turn lists each server's
+		// tools, and the Context panel lists them on open — without the cache
+		// each is a live round trip (a remote server put the panel >100ms). The
+		// SDK invalidates on notifications/tools/list_changed, so a server that
+		// changes its tools is still picked up.
+		CacheToolsList: true,
 	}
 	if retry.RetryBackoffMs > 0 {
 		opts.RetryBackoffBase = time.Duration(retry.RetryBackoffMs) * time.Millisecond

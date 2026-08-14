@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/agents/middleware"
@@ -32,6 +33,7 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 
 	deps := &AgentDeps{
 		AgentConfigs: agentConfigs,
+		Providers:    store.NewProviderStore(db),
 		Settings:     store.NewSettingStore(db),
 		Memories:     store.NewMemoryStore(db),
 	}
@@ -45,21 +47,62 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 	}
 }
 
-// behavior.plan_mode / todo_list rewrite the built ENTRY agent at build time —
-// the registry a resume rebuilds must carry submit_plan/todo_write, or the
-// approved call fails with "tool not found on agent".
+// A background run is TOLD it is one. Removing its tools stops it doing the
+// wrong things; it does not stop it ending a turn with a question, which in a
+// session nobody reads is a deliverable nobody can answer.
+func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	agentConfigs := store.NewAgentConfigStore(db)
+	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test", Instructions: "Be helpful."}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	deps := &AgentDeps{
+		AgentConfigs: agentConfigs,
+		Providers:    store.NewProviderStore(db),
+		Settings:     store.NewSettingStore(db),
+		Memories:     store.NewMemoryStore(db),
+	}
+	instructionsOf := func(background bool) string {
+		built, err := buildFullAgent(ctx, deps, ac.ID, "", "", background)
+		if err != nil {
+			t.Fatalf("build (background=%v): %v", background, err)
+		}
+		text, err := built.Agent.Instructions(ctx, nil, built.Agent)
+		if err != nil {
+			t.Fatalf("instructions (background=%v): %v", background, err)
+		}
+		return text
+	}
+	bg := instructionsOf(true)
+	if !strings.Contains(bg, BackgroundInstructions) {
+		t.Fatalf("a background build must carry the preamble; got:\n%s", bg)
+	}
+	if !strings.Contains(bg, "Be helpful.") {
+		t.Error("the agent's own instructions must survive")
+	}
+	// And it stays off a chat run, which does have somebody to ask.
+	if chat := instructionsOf(false); strings.Contains(chat, BackgroundInstructions) {
+		t.Errorf("a chat build must not be told nobody is reading; got:\n%s", chat)
+	}
+}
+
+// Plan and Todo rewrite the built ENTRY agent at build time, for every chat
+// agent — the registry a resume rebuilds must carry submit_plan/todo_write, or
+// the approved call fails with "tool not found on agent".
 func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 
-	ac := &store.AgentConfig{Name: "wf", Model: "gpt-test",
-		Behavior: store.BehaviorGroup{PlanMode: true, TodoList: true}}
+	ac := &store.AgentConfig{Name: "wf", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
 	deps := &AgentDeps{
 		AgentConfigs: agentConfigs,
+		Providers:    store.NewProviderStore(db),
 		Settings:     store.NewSettingStore(db),
 		Memories:     store.NewMemoryStore(db),
 	}

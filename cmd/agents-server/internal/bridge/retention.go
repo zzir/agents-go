@@ -20,7 +20,9 @@ const defaultApprovalTTLMinutes = 24 * 60
 // past the TTL. On expiry it drops the record and writes a session annotation
 // so the timeout is visible instead of silently vanishing. It runs at startup
 // and hourly until ctx ends — run it in a goroutine.
-func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore) {
+// onExpired, when set, is told the session an expired approval belonged to, so
+// a caller that owns other work on it (a workflow execution) can end that too.
+func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, wakeups *store.WakeupStore, onExpired func(context.Context, string)) {
 	log := zerolog.Ctx(ctx)
 	reap := func() {
 		ttl := defaultApprovalTTLMinutes
@@ -63,12 +65,22 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 					// expired. The run-id predicate makes the stale case a
 					// silent no-op instead.
 					if won, _ := tasks.Finalize(ctx, task.ID, p.RunID, "cancelled",
-						"approval expired after "+strconv.Itoa(ttl)+" minutes", ""); won {
+						"approval expired after "+strconv.Itoa(ttl)+" minutes", "", nil); won {
 						// Cancellations owe no wake-up; the timeout annotation
 						// above is the parent's record.
-						_ = tasks.ConsumeNotify(ctx, task.ID, p.RunID)
+						if wakeups != nil {
+							if err := wakeups.CancelFor(ctx, WakeKindTask, task.ID, p.RunID); err != nil {
+								log.Warn().Err(err).Str("task_id", task.ID).Msg("cancelling an expired task's wake-up")
+							}
+						}
 					}
 				}
+			}
+			// A workflow's step waiting on this approval will never resume, so
+			// the execution has to be ended too — otherwise it stays running
+			// forever with nothing left that could finish it.
+			if onExpired != nil {
+				onExpired(ctx, p.SessionID)
 			}
 			log.Info().Str("run_id", p.RunID).Str("session_id", p.SessionID).Msg("expired pending approval")
 		}

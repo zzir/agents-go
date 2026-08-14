@@ -76,7 +76,7 @@ func (t taskLauncher) Launch(_ context.Context, req tasks.LaunchRequest) error {
 	// The task's own run. It shares the parent's sandbox (and workdir), and
 	// thereby its command-trust scope; the child's first run CAS-binds its
 	// hidden session with the same pair.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.WorkDir, req.Input, "", nil)
+	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.WorkDir, req.Input, "", nil, nil)
 	return err
 }
 
@@ -134,32 +134,6 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 	}
 	t.r.publishTaskCancelled(runID)
 	return tasks.StopCancelled, nil
-}
-
-// taskWakeGuard answers "may this parent be woken now". It refuses three cases:
-// a session mid-delete (a wake would outlive the cascade), a session with a live
-// run (let that run's own boundary drain), and a session paused on a human
-// decision (it belongs to the human). A failed query counts as a refusal.
-type taskWakeGuard struct{ r *Runner }
-
-// CanWake implements tasks.WakeGuard.
-func (t taskWakeGuard) CanWake(ctx context.Context, parentSessionID string) bool {
-	if t.r.hub.SessionDeleting(parentSessionID) {
-		return false
-	}
-	if _, busy := t.r.hub.ActiveRunForSession(parentSessionID); busy {
-		return false
-	}
-	if t.r.Deps.PendingApprovals == nil {
-		return true
-	}
-	approvals, err := t.r.Deps.PendingApprovals.ListBySession(ctx, parentSessionID)
-	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", parentSessionID).
-			Msg("checking pending approvals before task wake; skipping")
-		return false
-	}
-	return len(approvals) == 0
 }
 
 // onTaskUpdate records a task's changed state against the spawn call's card,

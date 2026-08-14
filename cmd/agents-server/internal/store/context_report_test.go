@@ -69,7 +69,7 @@ func TestContextReportUsageIsPerCallNotCumulative(t *testing.T) {
 }
 
 // A compacted entry is out of the model's context but its call still happened:
-// it leaves the item list and the estimate, and keeps its usage.
+// it leaves the conversation estimate, and keeps its usage.
 func TestContextReportExcludesCompactedFromContextNotFromSpend(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -83,8 +83,9 @@ func TestContextReportExcludesCompactedFromContextNotFromSpend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
-	if len(before.Items) == 0 || before.Items[0].Anchor != "call_1" {
-		t.Fatalf("heaviest item should be the tool output anchored on its call id, got %+v", before.Items)
+	// The 40k-char output dominates the estimate (~10k tokens at 4 chars/token).
+	if before.ConversationTokens < 10000 {
+		t.Fatalf("conversation estimate should carry the fat tool output, got %d", before.ConversationTokens)
 	}
 
 	var ids []string
@@ -103,10 +104,9 @@ func TestContextReportExcludesCompactedFromContextNotFromSpend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("context report after compaction: %v", err)
 	}
-	for _, it := range after.Items {
-		if it.Anchor == "call_1" {
-			t.Fatalf("compacted entry still listed as occupying context: %+v", it)
-		}
+	if after.ConversationTokens >= before.ConversationTokens {
+		t.Fatalf("compacted entry still counted in the conversation estimate: %d -> %d",
+			before.ConversationTokens, after.ConversationTokens)
 	}
 	if after.SessionInputTokens != before.SessionInputTokens {
 		t.Fatalf("compaction rewrote what was already spent: %d -> %d", before.SessionInputTokens, after.SessionInputTokens)
@@ -138,10 +138,9 @@ func TestContextReportCountsOnlyTheActiveBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
-	for _, it := range rep.Items {
-		if it.Anchor == "call_dead" {
-			t.Fatalf("off-path entry counted as context: %+v", it)
-		}
+	// The abandoned 40k-char output (~10k estimated tokens) must not count.
+	if rep.ConversationTokens >= 10000 {
+		t.Fatalf("off-path entry counted as context: estimate %d", rep.ConversationTokens)
 	}
 }
 

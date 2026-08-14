@@ -52,7 +52,7 @@ func TestProviderTypesServesMachineFacts(t *testing.T) {
 		byType[info.Type] = info
 	}
 	oa := byType[ProviderTypeOpenAI]
-	if !slices.Contains(oa.AuthModes, authModeChatGPTLogin) {
+	if !slices.Contains(oa.AuthModes, AuthModeChatGPTLogin) {
 		t.Errorf("openai auth_modes = %v, want chatgpt_login listed", oa.AuthModes)
 	}
 	ant := byType[ProviderTypeAnthropic]

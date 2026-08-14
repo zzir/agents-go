@@ -37,11 +37,18 @@ func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskS
 	agentConfigs := store.NewAgentConfigStore(db)
 	runner := NewRunner(context.Background(), db, &AgentDeps{
 		AgentConfigs:     agentConfigs,
+		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
 		Settings:         store.NewSettingStore(db),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		Tasks:            tasks,
+		// Wired here rather than per test: a run's spans are persisted on the
+		// run's own goroutine, so a nil store panics the test binary from a
+		// stack that has nothing to do with what the test is checking. The
+		// wake-up debts are the same kind of trap.
+		Traces:  store.NewTraceStore(db),
+		Wakeups: store.NewWakeupStore(db),
 	})
 	return runner, sessions, tasks, agentConfigs
 }
@@ -140,29 +147,36 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	if err := tasks.Create(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	// Finalize owes the wake-up on the row (notify_state = pending).
-	if won, err := tasks.Finalize(ctx, task.ID, task.RunID, protocol.TaskCompleted, "all green", ""); err != nil || !won {
+	// Finalize through the adapter: the wake-up debt is written in the SAME
+	// transaction as the terminal state — no window where the task is done but
+	// its parent is owed nothing.
+	adapter := store.NewTaskAdapter(tasks)
+	if won, err := adapter.Finalize(ctx, task.ID, task.RunID, sdktasks.StatusCompleted, "all green", ""); err != nil || !won {
 		t.Fatalf("Finalize won=%v err=%v", won, err)
 	}
-
-	// Busy parent: the debt stays pending on the row.
+	// Busy parent: the debt stays pending — draining refuses while a run holds
+	// the session, and taskFinished (OnFinished) now only drains.
 	if _, _, err := runner.hub.register("busy-run", parent.ID, ac.ID, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	runner.tasks.DrainPending(ctx, parent.ID)
-	row, err := tasks.Get(ctx, task.ID)
+	runner.taskFinished(ctx, &sdktasks.Task{
+		ID: task.ID, RunID: task.RunID, ParentSessionID: parent.ID, Label: task.Label,
+		Status: sdktasks.StatusCompleted, Summary: "all green",
+		Inherit: store.EncodeInherit(store.Inherit{AgentConfigID: ac.ID}),
+	})
+	pending, err := runner.Deps.Wakeups.Pending(ctx, parent.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.NotifyState != store.NotifyPending {
-		t.Fatalf("notify_state = %q, want pending while parent is busy", row.NotifyState)
+	if len(pending) != 1 {
+		t.Fatalf("%d debts pending while the parent is busy, want 1", len(pending))
 	}
 
 	// Free the parent: the drain starts a notification run. The test config has
 	// no API key, so the run fails at the provider stage — but that failure
 	// path persists the prompt, which is exactly the observable we need.
 	runner.hub.finish("busy-run", false)
-	runner.tasks.DrainPending(ctx, parent.ID)
+	(Waker{runner}).Drain(ctx, parent.ID)
 
 	// The notification run executes on a background goroutine; poll for its
 	// persisted prompt (the keyless test config fails at the provider stage,
@@ -187,12 +201,12 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	if !found {
 		t.Fatal("no task-notification prompt persisted")
 	}
-	row, err = tasks.Get(ctx, task.ID)
+	settled, err := runner.Deps.Wakeups.Pending(ctx, parent.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.NotifyState != store.NotifyDelivered {
-		t.Fatalf("notify_state = %q, want delivered after the drain", row.NotifyState)
+	if len(settled) != 0 {
+		t.Fatalf("%d debts still pending after the drain, want 0", len(settled))
 	}
 }
 
@@ -219,12 +233,10 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Boot sequence: reconcile orphans (working -> failed, wake-up owed),
-	// then sweep the owed notifications.
-	if n, err := tasks.FailOrphans(ctx); err != nil || n != 1 {
-		t.Fatalf("FailOrphans n=%d err=%v", n, err)
-	}
-	runner.DrainPendingTaskNotifications(ctx)
+	// Boot sequence: reconcile orphans (working -> failed, each reported so a
+	// debt is recorded), then sweep what is owed.
+	runner.FailOrphanedTasks(ctx)
+	runner.DrainPendingWakeups(ctx)
 
 	entries := store.NewSharedEntryStore(runner.db)
 	found := false
@@ -295,4 +307,15 @@ func mustRef(t *testing.T, db *bun.DB, id string) session.Ref {
 		t.Fatalf("resolving session %s: %v", id, err)
 	}
 	return ref
+}
+
+// testProvider creates a provider row and returns its id, for agent configs
+// that need a working endpoint.
+func testProvider(t *testing.T, db *bun.DB, name, apiKey, baseURL string) string {
+	t.Helper()
+	pv := &store.Provider{Name: name, APIKey: apiKey, BaseURL: baseURL}
+	if err := store.NewProviderStore(db).Create(context.Background(), pv); err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	return pv.ID
 }

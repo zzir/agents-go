@@ -95,21 +95,25 @@ func run(_ *cobra.Command, _ []string) error {
 	guardrailStore := store.NewGuardrailStore(db)
 	pendingApprovalStore := store.NewPendingApprovalStore(db)
 	taskStore := store.NewTaskStore(db)
+	providerStore := store.NewProviderStore(db)
+	workflowStore := store.NewWorkflowStore(db)
+	workflowRunStore := store.NewWorkflowRunStore(db)
+	wakeupStore := store.NewWakeupStore(db)
 	contextProfileStore := store.NewContextProfileStore(db)
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
 	mcpManager := bridge.NewMcpManager(ctx, settingStore)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
-	chatgptOAuth := bridge.NewChatGPTOAuth(agentConfigStore)
+	chatgptOAuth := bridge.NewChatGPTOAuth(providerStore)
 	chatgptOAuth.UseSettings(settingStore) // route token refresh/exchange through configured proxy
 	defer mcpManager.CloseAll()
 	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
 	go bridge.RunTraceRetention(ctx, settingStore, traceStore)
-	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, entryStore, taskStore)
 	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
 	deps := &bridge.AgentDeps{
 		AgentConfigs:     agentConfigStore,
+		Providers:        providerStore,
 		McpServers:       mcpServerStore,
 		SandboxConfigs:   sandboxStore,
 		Memories:         memoryStore,
@@ -124,19 +128,28 @@ func run(_ *cobra.Command, _ []string) error {
 		PendingApprovals: pendingApprovalStore,
 		Tasks:            taskStore,
 		ContextProfiles:  contextProfileStore,
+		Workflows:        workflowStore,
+		WorkflowRuns:     workflowRunStore,
+		Wakeups:          wakeupStore,
 		Workspace:        flagWorkspace,
 		MaxTasks:         flagMaxTasks,
 	}
 	runner := bridge.NewRunner(ctx, db, deps)
 
+	// After the runner: expiring a workflow step's approval has to end that
+	// execution too, and only the runner can claim the ending.
+	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, entryStore, taskStore, wakeupStore, runner.FailWorkflowForExpiredApproval)
+
 	sessionHandler := handler.NewSessionHandler(sessionStore, entryStore, traceStore, agentConfigStore).
-		WithRunStopper(runner).WithContextProfiles(contextProfileStore, mcpManager).WithCompactor(runner)
-	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver)
+		WithRunStopper(runner).WithContextProfiles(contextProfileStore, mcpManager, mcpServerStore).WithCompactor(runner)
+	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore).WithMcpStore(mcpServerStore).WithGuardrails(guardrailResolver).WithProviders(providerStore)
 	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
 	settingHandler := handler.NewSettingHandler(settingStore)
 	skillHandler := handler.NewSkillHandler(flagWorkspace)
-	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore)
+	providerHandler := handler.NewProviderHandler(providerStore)
+	workflowHandler := handler.NewWorkflowHandler(workflowStore, workflowRunStore, agentConfigStore, runner)
+	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore, providerStore)
 	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
 	terminalHandler := handler.NewTerminalHandler(sandboxStore, sandboxManager)
 	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox).
@@ -164,7 +177,8 @@ func run(_ *cobra.Command, _ []string) error {
 	// runner.OnRunAttach, an ordinary field with no synchronization, and a run
 	// starting here would read it while the main goroutine was still writing.
 	runner.FailOrphanedTasks(ctx)
-	go runner.DrainPendingTaskNotifications(ctx)
+	runner.FailInterruptedWorkflows(ctx)
+	go runner.DrainPendingWakeups(ctx)
 
 	token := flagToken
 	if token == "" {
@@ -183,6 +197,8 @@ func run(_ *cobra.Command, _ []string) error {
 		Memories:       memoryHandler,
 		Settings:       settingHandler,
 		Skills:         skillHandler,
+		Providers:      providerHandler,
+		Workflows:      workflowHandler,
 		ProviderRoutes: providerRouteHandler,
 		Guardrails:     guardrailHandler,
 		Sandboxes:      sandboxHandler,

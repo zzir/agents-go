@@ -8,16 +8,16 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-func TestValidateProviderSelection(t *testing.T) {
-	ok := func(providerType, authMode string) *store.AgentConfig {
-		ac := &store.AgentConfig{}
-		ac.Provider.ProviderType = providerType
-		ac.Provider.AuthMode = authMode
-		return ac
+func TestValidateProvider(t *testing.T) {
+	ok := func(providerType, authMode string) *store.Provider {
+		return &store.Provider{Type: providerType, AuthMode: authMode}
+	}
+	withBase := func(providerType, authMode, baseURL string) *store.Provider {
+		return &store.Provider{Type: providerType, AuthMode: authMode, BaseURL: baseURL}
 	}
 	for _, tc := range []struct {
 		name    string
-		ac      *store.AgentConfig
+		pv      *store.Provider
 		wantSub string
 	}{
 		{"empty defaults to openai", ok("", ""), ""},
@@ -27,8 +27,12 @@ func TestValidateProviderSelection(t *testing.T) {
 		{"empty type chatgpt_login", ok("", "chatgpt_login"), ""},
 		{"anthropic chatgpt_login", ok("anthropic", "chatgpt_login"), "chatgpt_login"},
 		{"unknown type", ok("gemini", ""), "unknown provider"},
+		// The OAuth token is only ever sent to ChatGPT, so a custom base_url is
+		// refused with chatgpt_login — but fine with a plain API key.
+		{"chatgpt_login + custom base_url", withBase("openai", "chatgpt_login", "https://evil.test"), "base_url cannot be set"},
+		{"api key + custom base_url", withBase("openai", "", "https://proxy.internal"), ""},
 	} {
-		err := ValidateProviderSelection(tc.ac)
+		err := ValidateProvider(tc.pv)
 		if tc.wantSub == "" {
 			if err != nil {
 				t.Errorf("%s: unexpected error: %v", tc.name, err)

@@ -187,10 +187,17 @@ func (r *Runner) MaxTaskAttempts() int {
 // task manager, which advances a task's state or — for an ordinary chat session
 // — drains the wake-ups that queued while it was busy.
 func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
+	ctx := r.hub.rootCtx
+	// A workflow's next step is driven from HERE rather than from the callback
+	// of the run that started it: an approval resume passes no callback, so the
+	// sequence would be lost at the first paused step.
+	r.advanceWorkflow(ctx, runID, result)
+	// Any run ending is a session becoming free, which is when a debt owed to
+	// it can finally be paid.
+	(Waker{r}).Drain(ctx, sessionID)
 	if r.tasks == nil {
 		return
 	}
-	ctx := r.hub.rootCtx
 	info, ok := r.hub.Info(runID)
 	if !ok {
 		return
@@ -222,17 +229,10 @@ func (r *Runner) FailOrphanedTasks(ctx context.Context) {
 	}
 }
 
-// DrainPendingTaskNotifications is the second half: every parent owed a wake-up
-// is drained, so the auto-wake survives a restart. It starts runs, which is why
-// it is separate from the sweep above.
-func (r *Runner) DrainPendingTaskNotifications(ctx context.Context) {
-	if r.tasks == nil {
-		return
-	}
-	if err := r.tasks.DrainAllPending(ctx); err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("task recovery sweep")
-	}
-}
+// DrainPendingWakeups is the second half: every session owed a turn is woken,
+// so a result that landed while the process was down still arrives. It starts
+// runs, which is why it is separate from the sweeps above.
+func (r *Runner) DrainPendingWakeups(ctx context.Context) { (Waker{r}).DrainAll(ctx) }
 
 // Shutdown drains the hub: every live run is cancelled and waited for so its
 // partial turn persists before the process exits.
@@ -287,6 +287,33 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		cancelStop()
 		if err != nil {
 			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("stopping session tasks")
+		}
+	}
+	// Running workflows are the other background work a delete must stop: their
+	// steps execute on a hidden child session, so the parent-run cancel above
+	// never touched them, and the cascade would otherwise remove the rows while
+	// a step kept running tools and causing external side effects.
+	if r.Deps.WorkflowRuns != nil {
+		runs, err := r.Deps.WorkflowRuns.ListBySession(ctx, sessionID)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("listing workflows for session stop")
+		}
+		for i := range runs {
+			if runs[i].Status != store.WorkflowRunning {
+				continue
+			}
+			// Wait on the run StopWorkflow ACTUALLY cancelled (its return value),
+			// not the snapshot's: the execution may have advanced from run1 to
+			// run2 between the list read and the stop, and run1's goroutine is
+			// already gone while run2 is the one now being torn down.
+			after, serr := r.StopWorkflow(ctx, runs[i].ID)
+			if serr != nil {
+				zerolog.Ctx(ctx).Warn().Err(serr).Str("workflow_run_id", runs[i].ID).Msg("stopping a session's workflow")
+				continue
+			}
+			if after != nil && after.RunID != "" {
+				waits = append(waits, after.RunID)
+			}
 		}
 	}
 	for _, rid := range waits {

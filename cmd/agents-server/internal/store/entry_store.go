@@ -125,34 +125,38 @@ func (s *EntryStore) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
 
-// PlanUnlockedKind marks the annotation entry recording that a plan-mode
-// run's approved submit_plan actually EXECUTED — the durable "plan phase is
-// over" mark a resume consults. Neither the approval ledger (an approved call
-// can still fail argument validation and never execute) nor the tool's output
-// text (rewritable by a guardrail) can stand in for it. The kind is unknown
-// to the timeline renderer, so the entry never displays; annotations never
-// reach the model.
-const PlanUnlockedKind = "plan_unlocked"
+// SessionIsPlanning reports whether the session should START its next run in
+// the planning phase — which it does only when somebody ASKED for a plan and
+// has not since had one approved. It is a single-row read of the materialized
+// column (see Session.Planning), not a scan of the entry log.
+//
+// The state belongs to the SESSION, not a run: a plan approved in one turn is
+// not re-asked in the next, which is what a person means by approving a plan.
+func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bool, error) {
+	var planning bool
+	err := s.db.NewSelect().Model((*Session)(nil)).Column("planning").
+		Where("id = ?", ref.ID).Scan(ctx, &planning)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil // a session that no longer exists plans for nobody
+		}
+		return false, fmt.Errorf("reading plan phase for session %s: %w", ref.ID, err)
+	}
+	return planning, nil
+}
 
-// RunHasAnnotation reports whether the run persisted an annotation entry with
-// the given display kind.
-func (s *EntryStore) RunHasAnnotation(ctx context.Context, runID, kind string) (bool, error) {
-	var rows []entryRow
-	if err := s.scoped(s.db.NewSelect().Model(&rows)).
-		Where("run_id = ?", runID).
-		Scan(ctx); err != nil {
-		return false, fmt.Errorf("scanning run %s entries: %w", runID, err)
+// SetSessionPlanning writes the session's plan phase. The last write wins, and
+// the approved submit_plan's unlock is one of them — persisting it is the
+// precondition for a run leaving the planning phase (see armPlanUnlock).
+func (s *EntryStore) SetSessionPlanning(ctx context.Context, ref session.Ref, planning bool) error {
+	_, err := s.db.NewUpdate().Model((*Session)(nil)).
+		Set("planning = ?", planning).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", ref.ID).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("writing plan phase for session %s: %w", ref.ID, err)
 	}
-	for i := range rows {
-		var e session.Entry
-		if json.Unmarshal([]byte(rows[i].Entry), &e) != nil {
-			continue
-		}
-		if e.Kind == session.EntryKindAnnotation && e.Display != nil && e.Display.Kind == kind {
-			return true, nil
-		}
-	}
-	return false, nil
+	return nil
 }
 
 // RunHasItems reports whether the run persisted any replayable item entry —

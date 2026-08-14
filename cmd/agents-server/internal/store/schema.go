@@ -17,12 +17,16 @@ var schemaModels = []any{
 	(*McpServerConfig)(nil),
 	(*Memory)(nil),
 	(*Setting)(nil),
+	(*Provider)(nil),
+	(*Workflow)(nil),
+	(*WorkflowRun)(nil),
 	(*ProviderRoute)(nil),
 	(*SandboxConfig)(nil),
 	(*TraceEvent)(nil),
 	(*Guardrail)(nil),
 	(*PendingApproval)(nil),
 	(*Task)(nil),
+	(*Wakeup)(nil),
 	(*ContextProfile)(nil),
 }
 
@@ -165,8 +169,70 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating mcp_servers unique name index: %w", err)
 	}
-	// Provider routes map a model-name prefix to credentials; a duplicate prefix
-	// makes which credentials win order-dependent (last into the router map).
+	// A workflow's name is how a person picks it to run; two sharing one make
+	// the choice a coin flip. COLLATE NOCASE because the tool matches the name
+	// case-INSENSITIVELY (EqualFold) — "Build" and "build" must not both exist,
+	// or the model naming one hits whichever the listing happens to return.
+	if _, err := db.NewCreateIndex().
+		Model((*Workflow)(nil)).
+		Index("idx_workflows_name").
+		Unique().
+		ColumnExpr("name COLLATE NOCASE").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating workflows unique name index: %w", err)
+	}
+	// Executions are read per parent session, newest first.
+	if _, err := db.NewCreateIndex().
+		Model((*WorkflowRun)(nil)).
+		Index("idx_workflow_runs_parent_session_id").
+		Column("parent_session_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating workflow_runs parent session index: %w", err)
+	}
+	// Every run that ends asks "does an execution own you?" — by run id, since
+	// the steps run on a child session the asker knows nothing about.
+	if _, err := db.NewCreateIndex().
+		Model((*WorkflowRun)(nil)).
+		Index("idx_workflow_runs_run_id").
+		Column("run_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating workflow_runs run index: %w", err)
+	}
+	// Every run start asks "am I a workflow's step?" by child session.
+	if _, err := db.NewCreateIndex().
+		Model((*WorkflowRun)(nil)).
+		Index("idx_workflow_runs_child_session_id").
+		Column("child_session_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating workflow_runs child session index: %w", err)
+	}
+	// Draining asks for one session's debts, and the restart sweep asks for
+	// every session owed one.
+	if _, err := db.NewCreateIndex().
+		Model((*Wakeup)(nil)).
+		Index("idx_wakeups_session_state").
+		Column("session_id", "state").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating wakeups index: %w", err)
+	}
+	// A provider's name is how a person picks it in every config UI, so two
+	// sharing one make the choice a coin flip. Enforce it at the DB.
+	if _, err := db.NewCreateIndex().
+		Model((*Provider)(nil)).
+		Index("idx_providers_name").
+		Unique().
+		Column("name").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating providers unique name index: %w", err)
+	}
+	// Provider routes map a model-name prefix to a provider; a duplicate prefix
+	// makes which one wins order-dependent (last into the router map).
 	if _, err := db.NewCreateIndex().
 		Model((*ProviderRoute)(nil)).
 		Index("idx_provider_routes_prefix").

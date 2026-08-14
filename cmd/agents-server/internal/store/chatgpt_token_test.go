@@ -6,32 +6,46 @@ import (
 	"testing"
 )
 
-// SaveChatGPTToken against a non-existent agent must report ErrNotFound rather
-// than silently succeeding — a no-op UPDATE would strand the OAuth token and
-// make the callback look successful while the token is lost.
-func TestSaveChatGPTTokenMissingAgentIsNotFound(t *testing.T) {
+// SaveChatGPTToken against a non-existent provider must report ErrNotFound
+// rather than silently succeeding — a no-op UPDATE would strand the OAuth token
+// and make the callback look successful while the token is lost.
+func TestSaveChatGPTTokenMissingProviderIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewAgentConfigStore(db)
+	s := NewProviderStore(db)
 
 	if err := s.SaveChatGPTToken(ctx, "does-not-exist", "{}"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("save to missing agent: err = %v, want ErrNotFound", err)
+		t.Fatalf("save to missing provider: err = %v, want ErrNotFound", err)
 	}
 
-	// A real agent saves and clears fine.
-	ac := &AgentConfig{Name: "a", Model: "m"}
-	if err := s.Create(ctx, ac); err != nil {
+	// A real provider saves and clears fine.
+	pv := &Provider{Name: "a"}
+	if err := s.Create(ctx, pv); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := s.SaveChatGPTToken(ctx, ac.ID, "{}"); err != nil {
-		t.Fatalf("save to existing agent: %v", err)
+	if err := s.SaveChatGPTToken(ctx, pv.ID, "{}"); err != nil {
+		t.Fatalf("save to existing provider: %v", err)
 	}
-	if err := s.ClearChatGPTToken(ctx, ac.ID); err != nil {
-		t.Fatalf("clear existing agent: %v", err)
+	if err := s.ClearChatGPTToken(ctx, pv.ID); err != nil {
+		t.Fatalf("clear existing provider: %v", err)
 	}
-	// Clearing a missing agent is also not-found.
+	// Clearing a missing provider is also not-found.
 	if err := s.ClearChatGPTToken(ctx, "nope"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("clear missing agent: err = %v, want ErrNotFound", err)
+		t.Fatalf("clear missing provider: err = %v, want ErrNotFound", err)
+	}
+}
+
+// A provider's name is how every config UI names it, so the DB enforces
+// uniqueness and the violation classifies for a 409.
+func TestProviderNameUniqueIndex(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewProviderStore(db)
+	if err := s.Create(ctx, &Provider{Name: "dup"}); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, ok := UniqueViolation(s.Create(ctx, &Provider{Name: "dup"})); !ok {
+		t.Error("duplicate provider name must violate the unique index")
 	}
 }
 

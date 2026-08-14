@@ -30,9 +30,8 @@ type Runner struct {
 	Deps *AgentDeps
 	hub  *RunHub
 	// tasks owns the background-task lifecycle. Nil when the server runs without
-	// a task store. Completion wake-ups keep no in-memory state here: the debt
-	// lives on the tasks row (notify_state), drained by
-	// DrainPendingTaskNotifications.
+	// a task store. It keeps no wake-up state of its own: a finished task is
+	// reported through OnFinished and the debt lives in wakeups (see Waker).
 	tasks *tasks.Manager
 
 	// OnRunAttach, when set, is invoked with the run id right after a run
@@ -81,7 +80,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 			MaxToolConcurrency:    built.Behavior.MaxToolConcurrency,
 			ErrorHandlers:         built.ErrorHandlers,
 			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
-			ToolNotFoundBehavior:  agents.ParseToolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
+			ToolNotFoundBehavior:  toolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
 			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
 			// Context overflow → forced compaction pass → retry the turn. Only
 			// bites when the session is compaction-aware; otherwise the overflow
@@ -96,6 +95,19 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
 	return opts
+}
+
+// toolNotFoundBehavior resolves the agent's setting. Unset means RETURN TO
+// MODEL here, not the SDK's stricter default: a model inventing a tool name —
+// or reaching for one plan mode is hiding, or one a session without a sandbox
+// never had — is a routine slip, and ending the run over it takes down the
+// turn, and any workflow driving it, for something the model corrects on being
+// told. Set "error" to get the abort back.
+func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
+	if s == "" {
+		return agents.ToolNotFoundReturnToModel
+	}
+	return agents.ParseToolNotFoundBehavior(s)
 }
 
 // wrapCompaction wraps sa with the compaction adapter when the agent config
@@ -143,14 +155,30 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 			Resolver:               taskResolver{r}.Resolve,
 			Launcher:               taskLauncher{r}.Launch,
 			Stopper:                taskStopper{r}.Stop,
-			Guard:                  taskWakeGuard{r}.CanWake,
+			OnFinished:             r.taskFinished,
+			OnResultDelivered:      r.taskResultDelivered,
 			MaxConcurrentPerParent: r.hub.maxTasks,
 			OnTaskUpdate:           r.onTaskUpdate,
 			NewID:                  store.NewID,
+			// Workflows share the per-session background budget: a task spawn
+			// counts running workflow executions too, the mirror of
+			// checkBackgroundBudget counting tasks. 0 on error never wrongly
+			// blocks a spawn.
+			ExtraLiveCount: func(ctx context.Context, parentSessionID string) int {
+				if r.Deps.WorkflowRuns == nil {
+					return 0
+				}
+				n, err := r.Deps.WorkflowRuns.CountLive(ctx, parentSessionID)
+				if err != nil {
+					return 0
+				}
+				return n
+			},
 		})
 	}
 	// Agent building reaches the task tools through the manager, not the runner.
 	deps.TaskManager = r.tasks
+	deps.WorkflowTools = r.workflowTools
 	return r
 }
 
@@ -190,14 +218,14 @@ type RunOutcome struct {
 // started it). It returns the run id; subscribe via Hub() to stream events.
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
 // ErrSessionBusy when the session already has a live run.
-func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, workDir, input string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, "", onDone)
+func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, workDir, input string, plan *bool, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, "", plan, onDone)
 }
 
 // StartWakeRun is StartRun for a task notification delivery: same launch, plus
 // the lineage (the run whose spawn started the chain) the trace records.
 func (r *Runner) StartWakeRun(sessionID, agentConfigID, sandboxID, workDir, input, parentRunID string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, parentRunID, onDone)
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, workDir, input, parentRunID, nil, onDone)
 }
 
 // bindingPlan is one run request's resolved sandbox context: the effective
@@ -246,7 +274,7 @@ const maxBindAttempts = 3
 
 // startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
 // task's run id up front so the row can carry it before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, workDir, input, wakeParentRunID string, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, workDir, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
 	var (
 		seg      *runSegment
 		ctx      context.Context
@@ -298,6 +326,14 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, work
 		if attempt == maxBindAttempts {
 			return "", ErrBindingContention
 		}
+	}
+	// The reservation is held (register succeeded): no other run can start on
+	// this session now, so setting its plan phase here is atomic with the run
+	// that will use it, and a request refused above (busy/limit) never reached
+	// this line — its plan intent left the session untouched.
+	if err := r.ApplyPlanIntent(r.hub.rootCtx, sessionID, planIntent); err != nil {
+		r.hub.unregister(runID, seg)
+		return "", err
 	}
 	if r.OnRunAttach != nil {
 		r.OnRunAttach(runID)
@@ -406,6 +442,17 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		started.Label = task.Label
 		started.Attempt = task.Attempt
 		started.MaxAttempts = task.MaxAttempts
+	} else if r.Deps.WorkflowRuns != nil {
+		// A workflow step announces its execution and parent, so every browser
+		// keeps the hidden child session off its chat path — without this only
+		// the one with the detail lens open knew. Best-effort: a failed lookup
+		// here fails the run for real a few lines down (isBackgroundRun).
+		if wf, err := r.Deps.WorkflowRuns.ByChildSessionAny(ctx, sessionID); err == nil && wf != nil {
+			started.WorkflowRunID = wf.ID
+			started.ParentSessionID = wf.ParentSessionID
+			started.ParentRunID = wf.OriginRunID
+			started.Label = wf.Name
+		}
 	}
 	sendEvent(protocol.EventRunStarted, started)
 
@@ -481,9 +528,14 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		}
 	}
 
-	// Build fully configured agent from DB config. Task runs never get the
-	// task tools themselves: one level of spawning, no recursive fan-out.
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, task != nil)
+	// Build fully configured agent from DB config. A BACKGROUND run — a task's,
+	// a workflow step's — is built without the tools and modes that only make
+	// sense with a person in front of them.
+	background, err := r.isBackgroundRun(ctx, sessionID, task)
+	if err != nil {
+		return failTurn("", protocol.CodeConfigError, err, "", "")
+	}
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, background)
 	if err != nil {
 		return failTurn("", protocol.CodeConfigError, err, "", "")
 	}
@@ -522,11 +574,14 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
 	if spec.fresh {
-		// Arm the plan phase's first unlock to persist its durable marker through
-		// this run's store. Fresh-only: a resume runs the ResolveApproval rebuild,
-		// whose phase restorePlanPhase already armed; THIS build's phase hangs off
-		// an agent the resume never runs.
-		armPlanUnlock(built.PlanPhase, sa)
+		// The session's plan phase, not this run's: an approved plan is not
+		// re-asked next turn. Also arms the marker persistence for an unlock
+		// this run may perform. Fresh-only: a resume runs the ResolveApproval
+		// rebuild, whose phase restorePlanPhase already handled; THIS build's
+		// phase hangs off an agent the resume never runs.
+		if err := r.restorePlanPhase(ctx, built.PlanPhase, sa, sessionRef); err != nil {
+			return failTurn("", protocol.CodeConfigError, err, "", "")
+		}
 	}
 	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, spanDataCap(ctx, r.Deps.Settings))
 
@@ -582,14 +637,27 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // continuation terminates. Fails with ErrSessionBusy if the session has a live
 // run. The resume reopens the SAME hub run (same event stream and sequence), so
 // one logical run keeps one id across interrupt/resume.
-func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID, workDir string, onDone func(*RunOutcome)) (string, error) {
+// verify, when non-nil, runs AFTER the run is registered (so it is live and a
+// concurrent stop's cancel can find it) but BEFORE the goroutine launches. If it
+// returns an error the run is withdrawn and nothing executes — this is what
+// closes the window where an approved tool could run and cause a side effect
+// before a post-launch recheck could cancel it.
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID, workDir string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
 		return "", err
 	}
-	seg, ctx, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, workDir, meta)
+	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, workDir, meta)
 	if err != nil {
 		return "", err
+	}
+	if verify != nil {
+		if verr := verify(); verr != nil {
+			// Withdraw, don't unregister: a reopened record still has its
+			// history and attached subscribers, and goes back to interrupted.
+			r.hub.abortResume(runID, seg, reopened)
+			return "", verr
+		}
 	}
 	if r.OnRunAttach != nil {
 		r.OnRunAttach(runID)

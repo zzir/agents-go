@@ -12,19 +12,6 @@ import (
 // text column via the Value/Scan pair below and serializes to a nested object in
 // the REST API.
 
-// ProviderGroup holds the model-provider connection settings.
-type ProviderGroup struct {
-	ProviderType string `json:"provider_type,omitempty"`
-	AuthMode     string `json:"auth_mode,omitempty"`
-	APIKey       string `json:"api_key,omitempty"`
-	BaseURL      string `json:"base_url,omitempty"`
-	// ContextWindow is the model's context window in tokens. Declared rather
-	// than discovered: no provider reports it on a response, and a wrong guess
-	// would put a fraction on the Context panel that reads as fact. 0 leaves
-	// the panel showing occupancy without a denominator.
-	ContextWindow int `json:"context_window,omitempty"`
-}
-
 // BehaviorGroup holds the run-behavior knobs.
 type BehaviorGroup struct {
 	MaxTurns               int    `json:"max_turns,omitempty"`
@@ -40,13 +27,6 @@ type BehaviorGroup struct {
 	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
 	// turns) or "omit" (strip them).
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
-	// PlanMode has each run start read-only: the agent explores, submits a
-	// plan through submit_plan (an approval pause — the review), and only an
-	// approved plan unlocks the full toolset for the rest of the run.
-	PlanMode bool `json:"plan_mode,omitempty"`
-	// TodoList gives the agent a todo_write tool and a preamble telling it to
-	// keep a working list; the chat renders the calls as a checklist.
-	TodoList bool `json:"todo_list,omitempty"`
 }
 
 // ResilienceGroup holds model retry/fallback settings.
@@ -125,12 +105,6 @@ func jsonGroupScan(dst, src any) error {
 	}
 	return json.Unmarshal(b, dst)
 }
-
-// Value implements driver.Valuer.
-func (g ProviderGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
-
-// Scan implements sql.Scanner.
-func (g *ProviderGroup) Scan(src any) error { return jsonGroupScan(g, src) }
 
 // Value implements driver.Valuer.
 func (g BehaviorGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }

@@ -8,16 +8,16 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// IsLoggedIn / StartLogin must distinguish a missing agent (ErrNotFound → the
-// handler answers 404) from an existing agent that simply isn't logged in, so
+// IsLoggedIn / StartLogin must distinguish a missing provider (ErrNotFound →
+// the handler answers 404) from an existing one that simply isn't logged in, so
 // the ChatGPT OAuth endpoints have consistent resource semantics.
-func TestChatGPTOAuthMissingAgent(t *testing.T) {
+func TestChatGPTOAuthMissingProvider(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	agents := store.NewAgentConfigStore(db)
-	o := NewChatGPTOAuth(agents)
+	providers := store.NewProviderStore(db)
+	o := NewChatGPTOAuth(providers)
 
-	// Missing agent -> ErrNotFound, not a folded logged_in:false.
+	// Missing provider -> ErrNotFound, not a folded logged_in:false.
 	if _, err := o.IsLoggedIn(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("IsLoggedIn(missing) err = %v, want ErrNotFound", err)
 	}
@@ -25,16 +25,16 @@ func TestChatGPTOAuthMissingAgent(t *testing.T) {
 		t.Fatalf("StartLogin(missing) err = %v, want ErrNotFound", err)
 	}
 
-	// Existing agent with no token -> (false, nil), a real "not logged in".
-	ac := &store.AgentConfig{Name: "a", Model: "m"}
-	if err := agents.Create(ctx, ac); err != nil {
+	// Existing provider with no token -> (false, nil), a real "not logged in".
+	pv := &store.Provider{Name: "a"}
+	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	loggedIn, err := o.IsLoggedIn(ctx, ac.ID)
+	loggedIn, err := o.IsLoggedIn(ctx, pv.ID)
 	if err != nil {
 		t.Fatalf("IsLoggedIn(existing) err = %v, want nil", err)
 	}
 	if loggedIn {
-		t.Error("a token-less agent must report not logged in")
+		t.Error("a token-less provider must report not logged in")
 	}
 }

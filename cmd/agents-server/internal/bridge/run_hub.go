@@ -415,23 +415,25 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 // run id, keeping the record's sequence counter, replay buffer, and subscribers
 // so attached clients and SSE Last-Event-ID cursors stay valid. If the record
 // is gone (server restart, retention GC), a fresh one is created under the same
-// id with the sequence restarting at zero. The caller's goroutine owns the
-// returned segment and MUST call seg.finalize() when it ends. Fails with
-// ErrSessionBusy, ErrSessionDeleting, or ErrRunNotResumable (record not paused).
-func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID, workDir string, task *TaskMeta) (*runSegment, context.Context, error) {
+// id with the sequence restarting at zero — reopened reports which of the two
+// happened, so a withdrawal (abortResume) knows what to put back. The caller's
+// goroutine owns the returned segment and MUST call seg.finalize() when it
+// ends. Fails with ErrSessionBusy, ErrSessionDeleting, or ErrRunNotResumable
+// (record not paused).
+func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID, workDir string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
-		return nil, nil, ErrShuttingDown{}
+		return nil, nil, false, ErrShuttingDown{}
 	}
 	if err := h.deletingLocked(sessionID, task); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if existing, ok := h.bySession[sessionID]; ok {
-		return nil, nil, ErrSessionBusy{RunID: existing}
+		return nil, nil, false, ErrSessionBusy{RunID: existing}
 	}
 	ctx, cancel := context.WithCancel(h.rootCtx)
-	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
+	seg = &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := h.runs[runID]
 	if rec == nil {
 		rec = &runRecord{
@@ -442,7 +444,7 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID, workDir stri
 		}
 		h.runs[runID] = rec
 		h.bySession[sessionID] = runID
-		return seg, ctx, nil
+		return seg, ctx, false, nil
 	}
 	rec.mu.Lock()
 	// Only a paused run resumes: reviving a finished record would let an approve
@@ -451,7 +453,7 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID, workDir stri
 		st := rec.info.Status
 		rec.mu.Unlock()
 		cancel()
-		return nil, nil, ErrRunNotResumable{RunID: runID, Status: st}
+		return nil, nil, false, ErrRunNotResumable{RunID: runID, Status: st}
 	}
 	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
@@ -467,7 +469,38 @@ func (h *RunHub) resume(runID, sessionID, agentConfigID, sandboxID, workDir stri
 	rec.endedAt = time.Time{}
 	rec.mu.Unlock()
 	h.bySession[sessionID] = runID
-	return seg, ctx, nil
+	return seg, ctx, true, nil
+}
+
+// abortResume withdraws a resume whose pre-launch verify refused: the segment
+// never ran and published nothing, so the record goes back to what resume
+// found. A REOPENED record returns to interrupted with its history, fanout and
+// subscribers intact — the pause they observe is still the truth — while a
+// record resume CREATED (a post-restart resume) is withdrawn entirely, like
+// any failed fresh start.
+func (h *RunHub) abortResume(runID string, seg *runSegment, reopened bool) {
+	if !reopened {
+		h.unregister(runID, seg)
+		return
+	}
+	h.mu.Lock()
+	rec := h.runs[runID]
+	if rec != nil {
+		if h.bySession[rec.info.SessionID] == runID {
+			delete(h.bySession, rec.info.SessionID)
+		}
+	}
+	h.mu.Unlock()
+	if rec != nil {
+		rec.mu.Lock()
+		rec.info.Status = RunInterrupted
+		rec.ctrl = nil
+		rec.endedAt = time.Now()
+		rec.mu.Unlock()
+	}
+	// Closes the fresh segment's done gate (rec.done points at it) and releases
+	// its context; the record itself stays.
+	seg.finalize()
 }
 
 // ErrRunNotResumable is returned by resume when a run's segment is not paused

@@ -74,7 +74,9 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	// A background build keeps the raw list (no plan gate), which is where the
+	// routing filter is observable.
+	built, err := buildFullAgent(ctx, deps, ac.ID, "", "", true)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -85,5 +87,16 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	}
 	if len(built.Agent.ApproveTools) != 1 || built.Agent.ApproveTools[0] != "other_tool" {
 		t.Fatalf("ApproveTools = %v, want [other_tool]", built.Agent.ApproveTools)
+	}
+
+	// A foreground build hands the (filtered) list to the plan gate, which
+	// translates it into per-tool predicates and clears it — the phase must be
+	// able to suppress approval on a call it is refusing anyway.
+	fg, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	if err != nil {
+		t.Fatalf("foreground build: %v", err)
+	}
+	if len(fg.Agent.ApproveTools) != 0 {
+		t.Fatalf("foreground ApproveTools = %v, want none (translated by the plan gate)", fg.Agent.ApproveTools)
 	}
 }

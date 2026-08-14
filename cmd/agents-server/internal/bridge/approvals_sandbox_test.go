@@ -21,7 +21,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	agentConfigs := store.NewAgentConfigStore(db)
 	sandboxes := store.NewSandboxStore(db)
 
-	ac := &store.AgentConfig{Name: "coder", Model: "gpt-test", Provider: store.ProviderGroup{APIKey: "sk-x"}}
+	ac := &store.AgentConfig{Name: "coder", Model: "gpt-test", ProviderID: testProvider(t, db, "p", "sk-x", "")}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
@@ -33,6 +33,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:   agentConfigs,
+		Providers:      store.NewProviderStore(db),
 		SandboxConfigs: sandboxes,
 		Settings:       store.NewSettingStore(db),
 		Memories:       store.NewMemoryStore(db),

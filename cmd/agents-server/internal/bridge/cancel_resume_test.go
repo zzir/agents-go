@@ -32,7 +32,7 @@ func TestCancelResumeNoDataRace(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			if seg2, _, rerr := h.resume("run1", "sess1", "", "", "", nil); rerr == nil {
+			if seg2, _, _, rerr := h.resume("run1", "sess1", "", "", "", nil); rerr == nil {
 				seg2.finalize()
 			}
 		}()

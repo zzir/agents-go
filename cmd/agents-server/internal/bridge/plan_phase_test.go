@@ -9,71 +9,56 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// countPlanMarkers counts persisted plan_unlocked annotations for a session.
-func countPlanMarkers(t *testing.T, sa *store.EntryStore, ref session.Ref) int {
-	t.Helper()
-	views, err := sa.GetEntries(context.Background(), ref, 0, 0)
-	if err != nil {
-		t.Fatalf("list entries: %v", err)
-	}
-	n := 0
-	for _, v := range views {
-		if v.Kind == "annotation" && v.Display != nil && v.Display.Kind == store.PlanUnlockedKind {
-			n++
-		}
-	}
-	return n
-}
-
-// The write half of the marker chain: persisting the marker is the unlock's
-// precondition, it lands exactly once, and a failed write keeps the phase
-// locked instead of letting behavior run ahead of the durable record.
-func TestPlanUnlockMarkerPersistence(t *testing.T) {
+// The write half: persisting the unlock (clearing the session's planning
+// column) is the unlock's precondition, it is idempotent, and a failed write
+// keeps the phase locked instead of letting behavior run ahead of the record.
+func TestPlanUnlockClearsThePhase(t *testing.T) {
+	ctx := context.Background()
 	db := newTestDB(t)
-	sessionID := store.NewID()
-	sa := store.NewEntryStoreFor(db, session.Direct(sessionID))
-	sa.SetRunID("r1")
+	sessions := store.NewSessionStore(db)
+	sess := &store.Session{ID: store.NewID(), Name: "s", Planning: true}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	ref := session.Direct(sess.ID)
+	sa := store.NewEntryStoreFor(db, ref)
 
 	phase := &middleware.PlanPhase{}
-	armPlanUnlock(phase, sa)
+	armPlanUnlock(phase, sa, ref)
 	if err := phase.Unlock(); err != nil {
 		t.Fatalf("unlock: %v", err)
 	}
 	if !phase.Executing() {
 		t.Fatal("phase must be executing after a successful unlock")
 	}
-	if got, err := sa.RunHasAnnotation(context.Background(), "r1", store.PlanUnlockedKind); err != nil || !got {
-		t.Fatalf("marker not found after unlock (err=%v)", err)
+	if planning, err := sa.SessionIsPlanning(ctx, ref); err != nil || planning {
+		t.Fatalf("session still planning after unlock (err=%v)", err)
 	}
-	// A second unlock is a no-op: still exactly one marker.
+	// A second unlock is a no-op — still cleared.
 	if err := phase.Unlock(); err != nil {
 		t.Fatalf("idempotent unlock: %v", err)
-	}
-	if n := countPlanMarkers(t, sa, session.Ref{ID: sessionID}); n != 1 {
-		t.Fatalf("marker rows = %d, want 1", n)
 	}
 
 	// A failed write fails the unlock and the phase stays planning.
 	db2 := newTestDB(t)
-	sa2 := store.NewEntryStoreFor(db2, session.Direct(store.NewID()))
-	sa2.SetRunID("r2")
+	ref2 := session.Direct(store.NewID())
+	sa2 := store.NewEntryStoreFor(db2, ref2)
 	if err := db2.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
 	phase2 := &middleware.PlanPhase{}
-	armPlanUnlock(phase2, sa2)
+	armPlanUnlock(phase2, sa2, ref2)
 	if err := phase2.Unlock(); err == nil {
-		t.Fatal("a failed marker write must fail the unlock")
+		t.Fatal("a failed write must fail the unlock")
 	}
 	if phase2.Executing() {
-		t.Fatal("the phase must stay locked when the marker write fails")
+		t.Fatal("the phase must stay locked when the write fails")
 	}
 }
 
-// The read half: restorePlanPhase puts a rebuilt run into the phase its
-// marker says, replaying without duplicating, and a failed read is an error
-// (the pending approval is unclaimed at that point — the decision retries)
-// rather than a silent fall-back into planning.
+// The read half: restorePlanPhase puts a run into the phase the SESSION's
+// marker says — every run, not only a resume, so an approved plan is not
+// re-asked next turn — replaying without duplicating.
 func TestRestorePlanPhase(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -92,34 +77,52 @@ func TestRestorePlanPhase(t *testing.T) {
 		SandboxManager: NewSandboxManager(t.TempDir()),
 	})
 
-	// No marker: the rebuilt run stays planning, and the armed hook persists
-	// the marker when THIS resume unlocks.
-	phase := &middleware.PlanPhase{}
-	if err := runner.restorePlanPhase(ctx, phase, sess.ID, "r1"); err != nil {
+	ref0, err := store.RefFor(ctx, db, sess.ID)
+	if err != nil {
+		t.Fatalf("ref: %v", err)
+	}
+	sa := store.NewEntryStoreFor(db, ref0)
+	sa.SetRunID("r1")
+
+	// No marker: nobody asked for a plan, so the run executes. Plan mode is a
+	// restraint, and who imposes it is the person, not the agent's build.
+	fresh := &middleware.PlanPhase{}
+	if err := runner.restorePlanPhase(ctx, fresh, sa, ref0); err != nil {
 		t.Fatalf("restore (no marker): %v", err)
 	}
+	if !fresh.Executing() {
+		t.Fatal("a session nobody asked a plan of must start executing")
+	}
+
+	// Asked for one: the locked marker puts the next run into planning, and the
+	// armed hook persists the unlock when THIS run's plan is approved.
+	if err := sa.SetSessionPlanning(ctx, ref0, true); err != nil {
+		t.Fatalf("set planning: %v", err)
+	}
+	phase := &middleware.PlanPhase{}
+	if err := runner.restorePlanPhase(ctx, phase, sa, ref0); err != nil {
+		t.Fatalf("restore (asked to plan): %v", err)
+	}
 	if phase.Executing() {
-		t.Fatal("no marker must mean planning phase")
+		t.Fatal("a session asked for a plan must start in the planning phase")
 	}
 	if err := phase.Unlock(); err != nil {
 		t.Fatalf("unlock after restore: %v", err)
 	}
 
-	// Marker present: a fresh rebuild restores straight into executing, and
-	// the replayed unlock does not write a second marker.
+	// Unlocked: a LATER run — a different run id entirely — starts executing,
+	// which is the whole point: the person approved once.
 	phase2 := &middleware.PlanPhase{}
-	if err := runner.restorePlanPhase(ctx, phase2, sess.ID, "r1"); err != nil {
-		t.Fatalf("restore (marker present): %v", err)
+	sa2 := store.NewEntryStoreFor(db, ref0)
+	sa2.SetRunID("r2")
+	if err := runner.restorePlanPhase(ctx, phase2, sa2, ref0); err != nil {
+		t.Fatalf("restore (already unlocked): %v", err)
 	}
 	if !phase2.Executing() {
-		t.Fatal("the marker must restore the executing phase")
+		t.Fatal("an unlocked session must restore the executing phase")
 	}
-	ref, err := store.RefFor(ctx, db, sess.ID)
-	if err != nil {
-		t.Fatalf("ref: %v", err)
-	}
-	if n := countPlanMarkers(t, store.NewEntryStoreFor(db, ref), ref); n != 1 {
-		t.Fatalf("marker rows after replayed restore = %d, want 1", n)
+	if planning, err := sa.SessionIsPlanning(ctx, ref0); err != nil || planning {
+		t.Fatalf("session must read as unlocked after the approved plan (err=%v)", err)
 	}
 
 	// A failed read surfaces as an error — never a silent planning phase.
@@ -141,7 +144,47 @@ func TestRestorePlanPhase(t *testing.T) {
 	if err := dbBroken.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
-	if err := broken.restorePlanPhase(ctx, &middleware.PlanPhase{}, sess2.ID, "r1"); err == nil {
-		t.Fatal("a failed marker read must abort the resolve, not fall back to planning")
+	brokenRef, err := store.RefFor(context.Background(), dbBroken, sess2.ID)
+	if err != nil {
+		brokenRef = session.Ref{ID: sess2.ID}
+	}
+	if err := broken.restorePlanPhase(ctx, &middleware.PlanPhase{}, store.NewEntryStoreFor(dbBroken, brokenRef), brokenRef); err == nil {
+		t.Fatal("a failed marker read must abort the run, not fall back to planning")
+	}
+}
+
+// A run request that is REFUSED (the session is busy) must not have changed the
+// session's plan phase — the intent is applied inside the reservation, after
+// the register that would refuse it, so a losing request leaves no trace.
+func TestPlanIntentIsNotAppliedWhenTheRunIsRefused(t *testing.T) {
+	ctx := context.Background()
+	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
+	ac := &store.AgentConfig{Name: "a", Model: "gpt-test"}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	// Occupy the session so the next start is refused as busy.
+	if _, _, err := runner.hub.register("holder", sess.ID, ac.ID, "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := true
+	if _, err := runner.StartRun(sess.ID, ac.ID, "", "", "hi", &plan, nil); err == nil {
+		t.Fatal("a busy session must refuse the run")
+	}
+	ref, err := store.RefFor(ctx, runner.db, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planning, err := store.NewEntryStoreFor(runner.db, ref).SessionIsPlanning(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planning {
+		t.Fatal("a refused plan:true request must not have entered plan mode")
 	}
 }

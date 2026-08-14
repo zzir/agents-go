@@ -60,7 +60,13 @@ const (
 	// run permanently bound (sandbox_id, work_dir) to it — published exactly
 	// once, by the run that won the bind.
 	EventSessionSandboxBound = "session.sandbox_bound"
-	EventTraceSpan           = "trace.span"
+	// EventWorkflowUpdated tells a parent session's subscribers that one of its
+	// workflow executions changed state. The steps run on a hidden child
+	// session with no parent run to piggyback on, so this rides the STEP run's
+	// stream (every connection is attached to it) and carries the parent id the
+	// client filters on. It is a nudge, not the data — the client refetches.
+	EventWorkflowUpdated = "workflow.updated"
+	EventTraceSpan       = "trace.span"
 
 	// Terminal events, exchanged on /ws/terminal (one terminal per
 	// connection). Control frames are JSON Envelopes (text); the terminal
@@ -114,6 +120,11 @@ type RunCreate struct {
 	AgentConfigID string `json:"agent_config_id,omitempty"`
 	SandboxID     string `json:"sandbox_id,omitempty"`
 	WorkDir       string `json:"work_dir,omitempty"`
+	// Plan is what this request asks of the session's plan phase: true runs it
+	// read-only until a plan is approved, false leaves planning, and ABSENT
+	// leaves the phase as it stands — a client that knows nothing about plan
+	// mode cannot knock a session out of it.
+	Plan *bool `json:"plan,omitempty"`
 }
 
 // RunCancel is the client request to cancel an in-flight run.
@@ -217,6 +228,11 @@ type RunStarted struct {
 	TaskID     string `json:"task_id,omitempty"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	Label      string `json:"label,omitempty"`
+	// WorkflowRunID marks a workflow step's run, with ParentSessionID naming
+	// the conversation that owns the execution. The client routes such runs
+	// off the chat path exactly like a task's — SessionID is the hidden child
+	// session the steps share, which no timeline should register.
+	WorkflowRunID string `json:"workflow_run_id,omitempty"`
 	// Attempt is which run of the task this is: 1 for the original, more after
 	// a retry. A client whose card shows the task as finished uses it to tell a
 	// NEW attempt from a replay, and to stop rendering the previous attempt's
@@ -238,11 +254,11 @@ const (
 	TaskCancelled     = "cancelled"
 )
 
-// TaskNotificationPrefix marks a user-input message injected when a background
-// task finishes (the parent run "wakes" on it). The client renders such messages
-// as task notifications rather than user bubbles; the model sees the prefixed
-// text verbatim. Aliased from the SDK's constant (which formats these messages)
-// so it cannot drift.
+// TaskNotificationPrefix marks a user-input message injected when background
+// work finishes — a task or a workflow execution (the parent run "wakes" on
+// it). The client renders such messages as notifications rather than user
+// bubbles; the model sees the prefixed text verbatim. Aliased from the SDK's
+// constant (which formats the task ones) so it cannot drift.
 const TaskNotificationPrefix = tasks.NotificationPrefix
 
 // RunToolProgress is a partial result from a tool that is still running: a
@@ -434,6 +450,16 @@ type SessionSandboxBound struct {
 	SessionID string `json:"session_id"`
 	SandboxID string `json:"sandbox_id"`
 	WorkDir   string `json:"work_dir,omitempty"`
+}
+
+// WorkflowUpdated notifies a PARENT session's subscribers that one of its
+// workflow executions moved — a step started, paused for approval, advanced, or
+// the sequence ended. The client refetches the session's workflow runs and
+// approvals; the fields are only what it needs to route and log.
+type WorkflowUpdated struct {
+	ParentSessionID string `json:"parent_session_id"`
+	WorkflowRunID   string `json:"workflow_run_id"`
+	Status          string `json:"status"`
 }
 
 // Tracing events

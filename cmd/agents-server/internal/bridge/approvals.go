@@ -99,8 +99,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, workDir string, taskRun bool) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, taskRun)
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, workDir string, background bool) (map[string]*agents.Agent, *BuildResult, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, background)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -130,59 +130,87 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxI
 // run's own cancel — behind whatever holds the connection.
 const planUnlockPersistTimeout = 10 * time.Second
 
-// armPlanUnlock makes persisting the plan_unlocked annotation the
-// PRECONDITION of the phase's first unlock: the hook's error fails the
-// unlock, so the run is never executing ahead of its durable record — a
-// failed write surfaces as a submit_plan tool error and the review repeats.
-func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore) {
+// errResumeStopped is the verify hook's refusal: the task or workflow this
+// approval belonged to was stopped between the claim and the launch, so the
+// resumed run must not start. It is not a failure to restore from — the work is
+// terminal and the approval is void.
+var errResumeStopped = errors.New("the work was stopped before the approval could resume it")
+
+// armPlanUnlock makes clearing the session's planning column the PRECONDITION
+// of the phase's first unlock: the hook's error fails the unlock, so the run is
+// never executing ahead of its durable record — a failed write surfaces as a
+// submit_plan tool error and the review repeats.
+func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) {
 	if phase == nil {
 		return
 	}
 	phase.OnUnlock(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), planUnlockPersistTimeout)
 		defer cancel()
-		entry := session.NewAnnotationEntry(
-			agents.ItemDisplay{Kind: store.PlanUnlockedKind},
-			agents.Source{Type: agents.SourceTool, ID: middleware.PlanToolName},
-		)
-		if err := sa.Append(ctx, entry); err != nil {
+		// Clearing the session's plan phase IS the durable record that the plan
+		// was approved; persisting it is the precondition for the run leaving
+		// the planning phase. Idempotent, so a replayed unlock is a no-op.
+		if err := sa.SetSessionPlanning(ctx, ref, false); err != nil {
 			return fmt.Errorf("persisting the plan-unlock record: %w", err)
 		}
 		return nil
 	})
 }
 
-// restorePlanPhase puts a rebuilt plan-mode run back into the phase its
-// durable record says it is in, and arms marker persistence for the unlock
-// this resume may perform. A marker READ failure is an error, not a warning:
-// nothing has been claimed yet, so failing here leaves the pending approval
-// intact for a retry — silently resuming in the planning phase would strip a
-// mid-execution run of its write tools.
+// ApplyPlanIntent records what a run request asked of the session's plan phase,
+// before the run starts. It is the ONLY way in: plan mode is a restraint, so a
+// person turns it on with the message it applies to, which also makes the two
+// atomic — setting the phase and starting the run cannot interleave with
+// another run any more.
 //
-// The annotation stays the truth here even though agents.RunState.Extra could
-// carry the same bit: the marker is written the moment the unlock EXECUTES
-// (OnUnlock persists as a precondition), so it survives a crash with no pause
-// — a window Extra, written only when a pause serializes state, cannot cover.
-func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sessionID, runID string) error {
-	if phase == nil {
+// A nil intent leaves the phase alone (a client that knows nothing about plan
+// mode cannot knock a session out of it), and an intent that already matches
+// writes nothing — the markers are entries, and one per turn would be noise.
+func (r *Runner) ApplyPlanIntent(ctx context.Context, sessionID string, plan *bool) error {
+	if plan == nil {
 		return nil
 	}
 	ref, err := store.RefFor(ctx, r.db, sessionID)
 	if err != nil {
-		return fmt.Errorf("resolving session for plan phase: %w", err)
+		return err
 	}
 	sa := store.NewEntryStoreFor(r.db, ref)
-	sa.SetRunID(runID)
-	unlocked, err := sa.RunHasAnnotation(ctx, runID, store.PlanUnlockedKind)
+	planning, err := sa.SessionIsPlanning(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if planning == *plan {
+		return nil
+	}
+	return sa.SetSessionPlanning(ctx, ref, *plan)
+}
+
+// restorePlanPhase puts a plan-mode run into the phase the SESSION's column
+// says it is in, and arms the unlock this run may perform. Every run consults
+// it, fresh or resumed: a plan approved in one turn is not re-asked in the next.
+//
+// A READ failure is an error, not a warning: nothing has been claimed yet, so
+// failing here leaves a pending approval intact for a retry — silently resuming
+// in the planning phase would strip a mid-execution run of its write tools.
+//
+// The column stays the truth even though agents.RunState.Extra could carry the
+// same bit: it is written the moment the unlock EXECUTES (OnUnlock persists as a
+// precondition), so it survives a crash with no pause — a window Extra, written
+// only when a pause serializes state, cannot cover.
+func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) error {
+	if phase == nil {
+		return nil
+	}
+	planning, err := sa.SessionIsPlanning(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("reading plan-unlock marker: %w", err)
 	}
-	if unlocked {
+	if !planning {
 		// No hook is armed yet, so this cannot fail — arming AFTER is also
-		// what keeps a replayed unlock from writing a second marker.
+		// what keeps a replayed unlock from writing the column twice.
 		_ = phase.Unlock()
 	}
-	armPlanUnlock(phase, sa)
+	armPlanUnlock(phase, sa, ref)
 	return nil
 }
 
@@ -211,6 +239,30 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// state changed, which is safe to retry.
 	mctx := context.WithoutCancel(ctx)
 
+	// A step's approval outlives its workflow being stopped: StopWorkflow
+	// deletes the pending row, but a resume already in flight could have read it
+	// first. If the workflow this session belongs to is no longer running,
+	// refuse — resuming would run the step as a foreground chat turn on a hidden
+	// session (isBackgroundRun filters on running), the exact case the stop
+	// meant to end. Checked BEFORE the schema window: a dead workflow's approval
+	// should not be resumed whatever its state decodes to. Discard the stale row
+	// so the decision stops wedging.
+	if r.Deps.WorkflowRuns != nil {
+		wf, wErr := r.Deps.WorkflowRuns.ByChildSessionAny(ctx, pending.SessionID)
+		if wErr != nil {
+			// "Cannot tell" is not "not a workflow's": resuming a stopped step as
+			// a chat-shaped run on a hidden session is exactly what this check
+			// exists to stop. Nothing is claimed yet, so the decision retries.
+			return "", pending.SessionID, fmt.Errorf("resolving the approval's workflow: %w", wErr)
+		}
+		if wf != nil && wf.Status != store.WorkflowRunning {
+			if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
+				zerolog.Ctx(ctx).Warn().Err(delErr).Str("run_id", pending.RunID).Msg("discarding a stopped workflow's approval")
+			}
+			return "", pending.SessionID, fmt.Errorf("%w: its workflow is no longer running", ErrWorkflowUnavailable)
+		}
+	}
+
 	// A RunState outside the SDK's decode window can never be resumed. Detect
 	// that up front so it surfaces as a clear, actionable error instead of a
 	// masked 500, and discard the stale row so it stops wedging the session (a
@@ -233,7 +285,11 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// skip its reclaim; refuse rather than guess.
 		return "", pending.SessionID, err
 	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, taskMeta != nil)
+	background, err := r.isBackgroundRun(ctx, pending.SessionID, taskMeta)
+	if err != nil {
+		return "", pending.SessionID, err
+	}
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, background)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -255,11 +311,17 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// A plan-mode rebuild starts in the planning phase, but this run may have
 	// moved past it: without the unlock, a pause AFTER the plan phase ended
 	// (an exec_command approval, say) would resume into a run whose write
-	// tools had vanished again. The durable truth is the plan_unlocked
-	// annotation, written the moment the approved submit_plan EXECUTED. A
-	// failed read aborts the resolve — the pending approval is still
-	// unclaimed at this point, so the decision simply retries.
-	if err := r.restorePlanPhase(ctx, rebuilt.PlanPhase, pending.SessionID, pending.RunID); err != nil {
+	// tools had vanished again. The durable truth is the session's planning
+	// column, cleared the moment the approved submit_plan EXECUTED. A failed
+	// read aborts the resolve — the pending approval is still unclaimed at this
+	// point, so the decision simply retries.
+	resumeRef, refErr := store.RefFor(ctx, r.db, pending.SessionID)
+	if refErr != nil {
+		return "", pending.SessionID, fmt.Errorf("resolving session for plan phase: %w", refErr)
+	}
+	resumeStore := store.NewEntryStoreFor(r.db, resumeRef)
+	resumeStore.SetRunID(pending.RunID)
+	if err := r.restorePlanPhase(ctx, rebuilt.PlanPhase, resumeStore, resumeRef); err != nil {
 		return "", pending.SessionID, err
 	}
 
@@ -339,7 +401,32 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 			onDone(res)
 		}
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, resumeDone)
+	// verify runs after the run registers but BEFORE its goroutine launches: a
+	// stop that finalized the task/workflow between our claim and here means the
+	// approved tool must not run at all. Checking after the launch (as before)
+	// let the tool fire and cause a side effect before the cancel could land.
+	verify := func() error {
+		if taskMeta != nil && taskMeta.TaskID != "" {
+			if cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID); gerr == nil && isTerminalTaskStatus(cur.Status) {
+				return errResumeStopped
+			}
+		}
+		if r.Deps.WorkflowRuns != nil {
+			if wf, gerr := r.Deps.WorkflowRuns.ByChildSessionAny(mctx, pending.SessionID); gerr == nil &&
+				wf != nil && wf.Status != store.WorkflowRunning {
+				return errResumeStopped
+			}
+		}
+		return nil
+	}
+	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, verify, resumeDone)
+	if errors.Is(err, errResumeStopped) {
+		// The work was stopped in the window between the claim and the launch.
+		// The approval is void and the run never started — nothing to restore,
+		// nothing executed. Surfaced as the same 409 a terminal run gives, not a
+		// 500: it is a state conflict, not a fault.
+		return "", pending.SessionID, ErrRunNotResumable{RunID: pending.RunID, Status: RunCancelled}
+	}
 	if err != nil {
 		// Give the approval back (e.g. the session has a live run right now) so
 		// the decision can be retried once the session frees up — losing the row
@@ -354,15 +441,13 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, err
 	}
 	handedOff = true
-
-	// A stop may have finalized the task cancelled in the narrow window between
-	// our ReclaimWorking and the resumed segment registering as live — its own
-	// cancel would then have found no live run to stop. Re-check: if the task is
-	// now terminal, the run we just started is a zombie (executing under a
-	// cancelled task), so cancel it to keep execution consistent with the row.
-	if taskMeta != nil && taskMeta.TaskID != "" {
-		if cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID); gerr == nil && isTerminalTaskStatus(cur.Status) {
-			r.hub.Cancel(runID)
+	// A paused workflow step shows as "needs your decision" on the parent's
+	// strip, derived from the approvals list — and nothing else republishes
+	// when a decision lands (the step's next event is its ending or its next
+	// pause, minutes away). Nudge the strip off that state now.
+	if r.Deps.WorkflowRuns != nil {
+		if wf, gerr := r.Deps.WorkflowRuns.ByChildSession(mctx, pending.SessionID); gerr == nil && wf != nil {
+			r.publishWorkflowUpdate(wf.ParentSessionID, wf.ID, runID, store.WorkflowRunning)
 		}
 	}
 	return runID, pending.SessionID, nil

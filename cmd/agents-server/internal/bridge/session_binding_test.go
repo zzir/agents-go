@@ -33,7 +33,7 @@ func createSandboxConfig(t *testing.T, r *Runner, id string) {
 func startAndWait(t *testing.T, r *Runner, sessionID, sandboxID, workDir string) string {
 	t.Helper()
 	done := make(chan struct{})
-	runID, err := r.StartRun(sessionID, "", sandboxID, workDir, "hi", func(*RunOutcome) { close(done) })
+	runID, err := r.StartRun(sessionID, "", sandboxID, workDir, "hi", nil, func(*RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 	}
 	defer runner.hub.unregister("run-live", seg)
 
-	if _, err := runner.StartRun(sess.ID, "", "sb-1", "/w1", "hi", nil); err == nil {
+	if _, err := runner.StartRun(sess.ID, "", "sb-1", "/w1", "hi", nil, nil); err == nil {
 		t.Fatal("StartRun succeeded on a busy session")
 	}
 	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "" {
@@ -195,7 +195,7 @@ func TestInvalidBindingRefusedUnbound(t *testing.T) {
 		"unknown sandbox":     {"sb-ghost", "/w"},
 		"ssh with no workdir": {"sb-bare", ""},
 	} {
-		_, err := runner.StartRun(sess.ID, "", req.sandboxID, req.workDir, "hi", nil)
+		_, err := runner.StartRun(sess.ID, "", req.sandboxID, req.workDir, "hi", nil, nil)
 		if _, ok := errorsAsInvalidBinding(err); !ok {
 			t.Errorf("%s: err = %v, want ErrInvalidBinding", name, err)
 		}

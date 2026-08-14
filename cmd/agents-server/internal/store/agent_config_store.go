@@ -11,40 +11,43 @@ import (
 // AgentConfigStore persists agent configurations.
 type AgentConfigStore struct {
 	*CrudStore[AgentConfig]
+	db *bun.DB
 }
 
 // NewAgentConfigStore returns an AgentConfigStore backed by db. Agent-name
 // uniqueness is enforced by the DB (idx_agent_configs_name); a duplicate
 // surfaces as a UNIQUE-constraint error that handlers map to 409.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
-	return &AgentConfigStore{NewCrudStore[AgentConfig](db, "agent config", "created_at DESC")}
+	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC"), db: db}
 }
 
-// Update overwrites the agent config but preserves the chatgpt_token column.
-// Returns an ErrNotFound-wrapping error when the row doesn't exist.
+// Create writes the agent only if its provider still exists, atomically — the
+// same check-then-write guard the route store has, so a provider deleted
+// between the handler's validation and this write cannot leave a dangling
+// provider_id (ErrProviderRef if it does; an empty provider_id is the default).
+func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
+	return writeReferencingProvider(ctx, s.db, ac.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewInsert().Model(ac).Exec(ctx)
+		return err
+	})
+}
+
+// Update overwrites the agent config, under the same provider guard as Create
+// — re-pointing an agent at a provider races a delete exactly like a create
+// does. Returns an ErrNotFound-wrapping error when the row doesn't exist.
 func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig) error {
-	res, err := s.db.NewUpdate().Model(m).
-		ExcludeColumn("id", "created_at", "chatgpt_token").
-		Where("id = ?", id).
-		Exec(ctx)
-	if err == nil {
-		err = requireRows(res)
-	}
+	err := writeReferencingProvider(ctx, s.db, m.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewUpdate().Model(m).
+			ExcludeColumn("id", "created_at").
+			Where("id = ?", id).
+			Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("updating agent config %s: %w", id, err)
 	}
 	return nil
-}
-
-// SaveChatGPTToken persists the serialized ChatGPT OAuth token for the given
-// agent, updating only the chatgpt_token column. updateColumn enforces the row
-// exists (ErrNotFound otherwise) so a token for a non-existent agent doesn't
-// silently vanish.
-func (s *AgentConfigStore) SaveChatGPTToken(ctx context.Context, id, tokenJSON string) error {
-	return updateColumn(ctx, s.db, (*AgentConfig)(nil), "agent chatgpt token", id, "chatgpt_token", tokenJSON)
-}
-
-// ClearChatGPTToken removes the ChatGPT OAuth token for the given agent.
-func (s *AgentConfigStore) ClearChatGPTToken(ctx context.Context, id string) error {
-	return s.SaveChatGPTToken(ctx, id, "")
 }

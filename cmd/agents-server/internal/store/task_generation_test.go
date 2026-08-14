@@ -27,7 +27,7 @@ func TestTaskRowsAreBoundToASessionGeneration(t *testing.T) {
 
 	task := &Task{
 		ID: "t1", RunID: "r1", ParentSessionID: "s1", ChildSessionID: "c1",
-		Status: taskWorking, NotifyState: NotifyPending,
+		Status: taskWorking,
 	}
 	if err := tasks.Create(ctx, task); err != nil {
 		t.Fatal(err)
@@ -51,21 +51,6 @@ func TestTaskRowsAreBoundToASessionGeneration(t *testing.T) {
 	if got, err := tasks.ListByParent(ctx, "s1"); err != nil || len(got) != 0 {
 		t.Fatalf("the replacement session inherited %d task(s) (err=%v)", len(got), err)
 	}
-	if got, err := tasks.ListPendingNotify(ctx, "s1"); err != nil || len(got) != 0 {
-		t.Fatalf("the replacement session owes %d wake-up(s) it never asked for (err=%v)", len(got), err)
-	}
-	parents, err := tasks.PendingNotifyParents(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range parents {
-		if p == "s1" {
-			t.Fatal("the restart sweep would wake the replacement for a dead incarnation's task")
-		}
-	}
-	if _, err := tasks.ByChildSession(ctx, "c1"); err == nil {
-		t.Fatal("a stale row resolved a child session it no longer owns")
-	}
 }
 
 // Deleting a session takes its task rows with it, in both roles — the cascade
@@ -86,7 +71,7 @@ func TestSessionDeleteCascadesTaskRows(t *testing.T) {
 	}
 	if err := tasks.Create(ctx, &Task{
 		ID: "t1", RunID: "r1", ParentSessionID: "s1", ChildSessionID: "c1",
-		Status: taskWorking, NotifyState: NotifyPending,
+		Status: taskWorking,
 	}); err != nil {
 		t.Fatal(err)
 	}

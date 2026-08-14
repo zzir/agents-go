@@ -47,7 +47,7 @@ func TestCompactSessionFoldsOutsideARun(t *testing.T) {
 	ac := &store.AgentConfig{
 		Name:       "worker",
 		Model:      "gpt-test",
-		Provider:   store.ProviderGroup{ProviderType: "openai", APIKey: "k", BaseURL: srv.URL},
+		ProviderID: testProvider(t, runner.db, "sum", "k", srv.URL),
 		Compaction: store.CompactionGroup{Enabled: true, Threshold: 1_000_000, Window: 1},
 	}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
@@ -108,9 +108,9 @@ func TestCompactSessionGuards(t *testing.T) {
 
 	// Compaction disabled on the agent.
 	ac := &store.AgentConfig{
-		Name:     "worker",
-		Model:    "gpt-test",
-		Provider: store.ProviderGroup{ProviderType: "openai", APIKey: "k"},
+		Name:       "worker",
+		Model:      "gpt-test",
+		ProviderID: testProvider(t, runner.db, "keyed", "k", ""),
 	}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)

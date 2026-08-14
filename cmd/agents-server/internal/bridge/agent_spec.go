@@ -147,6 +147,20 @@ func (e *ErrorHandlerEntry) staticHandler() agents.RunErrorHandler {
 func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	spec := &AgentSpec{}
 
+	// Enum fields are refused at save rather than silently coerced at run
+	// time: an unknown tool_not_found_behavior parses as "error" — the abort
+	// behavior — while the config UI would keep showing something else.
+	switch ac.Behavior.ToolNotFoundBehavior {
+	case "", "return_to_model", "return_error_to_model", "error":
+	default:
+		return nil, fmt.Errorf("tool_not_found_behavior %q: use return_to_model, error, or leave it unset", ac.Behavior.ToolNotFoundBehavior)
+	}
+	switch ac.Behavior.ReasoningItemIDPolicy {
+	case "", "preserve", "omit":
+	default:
+		return nil, fmt.Errorf("reasoning_item_id_policy %q: use preserve, omit, or leave it unset", ac.Behavior.ReasoningItemIDPolicy)
+	}
+
 	if ac.ModelSettings != "" {
 		var ms agents.ModelSettings
 		// A malformed or wrong-typed model_settings (e.g. temperature: "hot")

@@ -45,12 +45,10 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 		{"malformed handoffs", func(a *store.AgentConfig) { a.HandoffsJSON = "{bad" }, "handoffs"},
 		{"malformed tools", func(a *store.AgentConfig) { a.ToolsJSON = "not-json" }, "tools"},
 		{"malformed retry_policy", func(a *store.AgentConfig) {
-			a.Provider.APIKey = "sk-x"
 			a.Resilience.RetryEnabled = true
 			a.Resilience.RetryPolicy = "{bad"
 		}, "retry_policy"},
 		{"malformed fallback_models", func(a *store.AgentConfig) {
-			a.Provider.APIKey = "sk-x"
 			a.Resilience.FallbackModels = "{bad"
 		}, "fallback_models"},
 	}

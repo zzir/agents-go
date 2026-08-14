@@ -32,8 +32,16 @@ type Session struct {
 	// BindSandboxIfEmpty) and they are never rewritten — the session's file
 	// system context must not change under a conversation that already touched
 	// it. An empty WorkDir means "the sandbox's own default".
-	SandboxID string    `bun:"sandbox_id"           json:"sandbox_id,omitempty"`
-	WorkDir   string    `bun:"work_dir"             json:"work_dir,omitempty"`
+	SandboxID string `bun:"sandbox_id"           json:"sandbox_id,omitempty"`
+	WorkDir   string `bun:"work_dir"             json:"work_dir,omitempty"`
+	// Planning is the session's plan phase: true means its next run starts
+	// read-only until a plan is approved. It is materialized here — not derived
+	// from the entry log — because it is read on every run and every session GET,
+	// and a scan of the whole history for the last marker was O(n) per read.
+	// The person sets it (the composer's plan toggle / a `/plan` message); the
+	// approved submit_plan clears it. A fork copies it, so a branched session
+	// inherits the phase it forked in.
+	Planning  bool      `bun:"planning"             json:"planning"`
 	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"   json:"updated_at"`
 }
@@ -90,12 +98,6 @@ type Task struct {
 	// notification) stay truncated to keep prompts and lists lean; the parent
 	// model pulls this on demand through task_status.
 	Result string `bun:"result,nullzero" json:"-"`
-	// NotifyState tracks the completion wake-up owed to the parent session:
-	// "" (none yet) -> "pending" (terminal result written, wake-up owed) ->
-	// "consumed" (model pulled the result in-turn via task_status) or
-	// "delivered" (wake-up run injected). Persisted so the auto-wake
-	// survives restarts.
-	NotifyState string `bun:"notify_state,nullzero" json:"-"`
 	// MaxAttempts is the ceiling this row's attempt is measured against —
 	// filled for the wire, not stored, because it is the task manager's
 	// configuration rather than a fact about the task. Clients take the
@@ -116,11 +118,23 @@ type AgentConfig struct {
 	Name         string `bun:"name,notnull"   json:"name"`
 	Instructions string `bun:"instructions"   json:"instructions"`
 	Model        string `bun:"model"          json:"model"`
+	// ProviderID names the Provider row this agent reaches its model through —
+	// a COLUMN rather than a field in a JSON group, because it is a reference
+	// and referential integrity has to be expressible in SQL (the same reason
+	// sessions.sandbox_id is one). Empty means the built-in default: the
+	// openai backend on the global api-key setting, which is what an agent
+	// created before any provider existed runs on.
+	ProviderID string `bun:"provider_id" json:"provider_id,omitempty"`
+	// ContextWindow is the model's window in tokens, declared rather than
+	// discovered — no provider reports it on a response. It sits beside Model
+	// because it describes the model, not the endpoint: two agents on one
+	// provider may run different models. 0 leaves the Context panel showing
+	// occupancy without a denominator.
+	ContextWindow int `bun:"context_window" json:"context_window,omitempty"`
 
 	// The remaining knobs are grouped into JSON category columns (see
 	// agent_config_groups.go) so the table holds only category columns and a new
 	// setting needs no schema change. In the REST API each is a nested object.
-	Provider   ProviderGroup   `bun:"provider,type:text,nullzero"   json:"provider"`
 	Behavior   BehaviorGroup   `bun:"behavior,type:text,nullzero"   json:"behavior"`
 	Resilience ResilienceGroup `bun:"resilience,type:text,nullzero" json:"resilience"`
 	Guardrails GuardrailGroup  `bun:"guardrails,type:text,nullzero" json:"guardrails"`
@@ -139,12 +153,38 @@ type AgentConfig struct {
 	// Empty means every run error stays fatal.
 	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 
-	// ChatGPT OAuth token (JSON-serialized). Never serialized to the API
-	// (json:"-"); preserved across regular CRUD updates (the store excludes the
-	// column) so editing an agent doesn't erase its token.
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
+// Provider is one configured backend endpoint and the credential that reaches
+// it. It is the single place a model-API key lives: agents and provider routes
+// REFERENCE it by id rather than each carrying a copy, because the credential
+// belongs to the external system and has its own lifecycle (rotation, OAuth
+// refresh, an endpoint that moves) — none of which is a property of the agent
+// that happens to talk through it.
+type Provider struct {
+	bun.BaseModel `bun:"table:providers,alias:pv"`
+
+	ID   string `bun:"id,pk"        json:"id"`
+	Name string `bun:"name,notnull" json:"name"`
+	// Type selects the backend (bridge.ProviderType*). Empty means openai, the
+	// value that predates the field.
+	Type string `bun:"type"      json:"type,omitempty"`
+	// AuthMode is "" (API key) or a mode the backend offers, validated against
+	// the provider registry on save.
+	AuthMode string `bun:"auth_mode" json:"auth_mode,omitempty"`
+	// APIKey is masked on the way out (see sanitizeProvider) and restored from
+	// the stored row when a client sends the mask back.
+	APIKey  string `bun:"api_key"   json:"api_key,omitempty"`
+	BaseURL string `bun:"base_url"  json:"base_url,omitempty"`
+	// ChatGPTToken is the serialized OAuth token for auth_mode chatgpt_login.
+	// It lives on the provider because it IS this endpoint's credential — every
+	// agent pointed here shares the one login instead of each re-authenticating.
+	// Never serialized (json:"-"); preserved across CRUD updates.
 	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"-"`
-	// ChatGPTLoggedIn is the API-facing derived login signal (set by the
-	// handler when sanitizing); the token itself never leaves the server.
+	// ChatGPTLoggedIn is the API-facing derived login signal (set when
+	// sanitizing); the token itself never leaves the server.
 	ChatGPTLoggedIn bool `bun:"-" json:"chatgpt_logged_in,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
@@ -291,6 +331,8 @@ const (
 	ToolSourceSkills   = "skills"
 	ToolSourceTasks    = "tasks"
 	ToolSourceWorkflow = "workflow"
+	ToolSourceTodo     = "todo"
+	ToolSourcePlan     = "plan"
 	// ToolSourceMCP is a prefix: "mcp:<server name>".
 	ToolSourceMCP = "mcp:"
 )
@@ -310,13 +352,12 @@ type ProviderRoute struct {
 
 	ID     string `bun:"id,pk"          json:"id"`
 	Prefix string `bun:"prefix,notnull" json:"prefix"`
-	// ProviderType selects the backend ("openai" / "anthropic"); empty is
-	// openai.
-	ProviderType string    `bun:"provider_type"      json:"provider_type,omitempty"`
-	APIKey       string    `bun:"api_key"            json:"api_key,omitempty"`
-	BaseURL      string    `bun:"base_url"           json:"base_url,omitempty"`
-	CreatedAt    time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt    time.Time `bun:"updated_at,notnull" json:"updated_at"`
+	// ProviderID names the Provider this prefix routes to. A route used to
+	// carry its own type/key/base_url — a third copy of the same credential —
+	// and now references the one row that holds it.
+	ProviderID string    `bun:"provider_id"        json:"provider_id"`
+	CreatedAt  time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt  time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
 // TraceEvent is one persisted tracing record (a trace or span) for a session run.
@@ -520,6 +561,21 @@ func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) erro
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *Memory) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *Workflow) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *WorkflowRun) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *Provider) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

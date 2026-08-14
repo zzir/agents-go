@@ -185,6 +185,8 @@ func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, workDir 
 // its own, so anything left behind would be unreachable forever.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Every hidden session this one owns: a task's and a workflow's alike.
+		// Both are unreachable once their owner is gone.
 		var childIDs []string
 		if err := tx.NewSelect().Model((*Task)(nil)).
 			Column("child_session_id").
@@ -192,8 +194,20 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Scan(ctx, &childIDs); err != nil {
 			return fmt.Errorf("listing task sessions for %s: %w", id, err)
 		}
+		var workflowChildren []string
+		if err := tx.NewSelect().Model((*WorkflowRun)(nil)).
+			Column("child_session_id").
+			Where("parent_session_id = ?", id).
+			Scan(ctx, &workflowChildren); err != nil {
+			return fmt.Errorf("listing workflow sessions for %s: %w", id, err)
+		}
+		for _, child := range workflowChildren {
+			if child != "" {
+				childIDs = append(childIDs, child)
+			}
+		}
 		for _, child := range childIDs {
-			for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil)} {
+			for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil)} {
 				if _, err := tx.NewDelete().Model(model).
 					Where("session_id = ?", child).
 					Exec(ctx); err != nil {
@@ -243,6 +257,18 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting the context profile for session %s: %w", id, err)
+		}
+		// Both ends: a deleted chat takes its executions with it, and a deleted
+		// child session (a workflow's own) leaves no row pointing at nothing.
+		if _, err := tx.NewDelete().Model((*WorkflowRun)(nil)).
+			Where("parent_session_id = ? OR child_session_id = ?", id, id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting workflow runs for session %s: %w", id, err)
+		}
+		if _, err := tx.NewDelete().Model((*Wakeup)(nil)).
+			Where("session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting wake-ups for session %s: %w", id, err)
 		}
 		res, err := tx.NewDelete().Model((*Session)(nil)).
 			Where("id = ?", id).

@@ -84,6 +84,33 @@ func (s *PendingApprovalStore) ListByParentTasks(ctx context.Context, parentSess
 	return out, nil
 }
 
+// WorkflowApproval is a pending approval inside a workflow's child session,
+// tagged with the owning execution.
+type WorkflowApproval struct {
+	PendingApproval
+	WorkflowRunID string `bun:"workflow_run_id" json:"workflow_run_id"`
+	WorkflowName  string `bun:"workflow_name"   json:"workflow_name,omitempty"`
+}
+
+// ListByParentWorkflows returns the pending approvals of every workflow running
+// for the given chat session. Without it a step that pauses is unanswerable:
+// its approval lives in a session the chat cannot open, so the sequence waits
+// forever on a decision nobody can see.
+func (s *PendingApprovalStore) ListByParentWorkflows(ctx context.Context, parentSessionID string) ([]WorkflowApproval, error) {
+	var out []WorkflowApproval
+	if err := s.db.NewSelect().Model((*PendingApproval)(nil)).
+		ColumnExpr("pa.*").
+		ColumnExpr("w.id AS workflow_run_id").
+		ColumnExpr("w.name AS workflow_name").
+		Join("JOIN workflow_runs AS w ON w.child_session_id = pa.session_id").
+		Where("w.parent_session_id = ?", parentSessionID).
+		OrderExpr("pa.created_at ASC").
+		Scan(ctx, &out); err != nil {
+		return nil, fmt.Errorf("listing workflow approvals for session %s: %w", parentSessionID, err)
+	}
+	return out, nil
+}
+
 // List returns every pending approval, oldest first (FindByToolCall scans it;
 // recovery after a restart is lazy — approvals resume from these rows on the
 // next approve/reject, nothing is preloaded).

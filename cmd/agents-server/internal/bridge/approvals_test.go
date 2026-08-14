@@ -51,6 +51,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:     agentConfigs,
+		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
 		Settings:         store.NewSettingStore(db),
 		Memories:         store.NewMemoryStore(db),
@@ -144,6 +145,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	}
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:     agentConfigs,
+		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
 		Settings:         store.NewSettingStore(db),
 		Memories:         store.NewMemoryStore(db),
@@ -200,6 +202,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	}
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:     agentConfigs,
+		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
 		Settings:         store.NewSettingStore(db),
 		Memories:         store.NewMemoryStore(db),
@@ -275,6 +278,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:     agentConfigs,
+		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
 		Settings:         store.NewSettingStore(db),
 		Memories:         store.NewMemoryStore(db),

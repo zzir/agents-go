@@ -106,36 +106,67 @@ const (
 const taskTerminalSet = "('completed', 'failed', 'cancelled')"
 
 // NotifyState values for the completion wake-up owed to the parent session.
-const (
-	NotifyPending   = "pending"
-	NotifyConsumed  = "consumed"
-	NotifyDelivered = "delivered"
-)
 
-// Finalize implements the tasks.Store contract (one atomic CAS on
-// non-terminality AND the attempt named by runID — see the interface) as a
-// single conditional UPDATE: status, result and the wake-up debt
-// (notify_state = pending) land together or not at all.
-func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string) (bool, error) {
-	q := s.db.NewUpdate().Model((*Task)(nil)).
-		Set("status = ?", status).
-		Set("notify_state = ?", NotifyPending).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Where("run_id = ?", runID).
-		Where("status NOT IN " + taskTerminalSet)
-	if summary != "" {
-		q = q.Set("summary = ?", summary)
+// Finalize is the CAS to a terminal status (on non-terminality AND the attempt
+// named by runID), plus the wake-up the finished task owes its parent — BOTH in
+// one transaction, so a crash can never leave a completed task whose parent is
+// never told. buildWakeup turns the row — read in the SAME tx, so a failed
+// read aborts rather than silently dropping the debt — into what is owed; nil
+// (the function, or its answer) owes nothing. The debt is written only when
+// the CAS actually won: a superseded attempt owes nothing.
+func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string, buildWakeup func(*Task) *Wakeup) (bool, error) {
+	var won bool
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		row, err := taskRowForWakeup(ctx, tx, id, buildWakeup)
+		if err != nil {
+			return err
+		}
+		q := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", status).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", id).
+			Where("run_id = ?", runID).
+			Where("status NOT IN " + taskTerminalSet)
+		if summary != "" {
+			q = q.Set("summary = ?", summary)
+		}
+		if result != "" {
+			q = q.Set("result = ?", result)
+		}
+		res, err := q.Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("finalizing task %s: %w", id, err)
+		}
+		n, _ := res.RowsAffected()
+		won = n > 0
+		if won && row != nil {
+			if wk := buildWakeup(row); wk != nil {
+				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
+					return fmt.Errorf("recording task %s wake-up: %w", id, err)
+				}
+			}
+		}
+		return nil
+	})
+	return won, err
+}
+
+// taskRowForWakeup reads the row a debt will be addressed from, inside the
+// caller's tx. A missing row is nil (the CAS will report the miss); any other
+// read failure is an error — proceeding without it would finalize a task and
+// silently lose what its parent is owed.
+func taskRowForWakeup(ctx context.Context, tx bun.Tx, id string, buildWakeup func(*Task) *Wakeup) (*Task, error) {
+	if buildWakeup == nil {
+		return nil, nil
 	}
-	if result != "" {
-		q = q.Set("result = ?", result)
+	row := new(Task)
+	if err := tx.NewSelect().Model(row).Where("id = ?", id).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading task %s for its wake-up: %w", id, err)
 	}
-	res, err := q.Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("finalizing task %s: %w", id, err)
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return row, nil
 }
 
 // RetryClaim implements the tasks.Store contract as one conditional UPDATE,
@@ -145,26 +176,47 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 // must not come back to life and start a run on an id that now answers to
 // someone else.
 func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (bool, error) {
-	q := s.db.NewUpdate().Model((*Task)(nil)).
-		Set("status = ?", taskWorking).
-		Set("run_id = ?", newRunID).
-		// Zero counts as the first attempt, here as everywhere.
-		Set("attempt = CASE WHEN attempt < 1 THEN 2 ELSE attempt + 1 END").
-		Set("summary = ?", "").
-		Set("result = ?", "").
-		Set("notify_state = ?", "").
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Where("status = ?", "failed").
-		Where(liveParent).Where(liveChild)
-	if maxAttempts > 0 {
-		q = q.Where("CASE WHEN attempt < 1 THEN 1 ELSE attempt END < ?", maxAttempts)
-	}
-	res, err := q.Exec(ctx)
+	var won bool
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		q := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", taskWorking).
+			Set("run_id = ?", newRunID).
+			// Zero counts as the first attempt, here as everywhere.
+			Set("attempt = CASE WHEN attempt < 1 THEN 2 ELSE attempt + 1 END").
+			Set("summary = ?", "").
+			Set("result = ?", "").
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", id).
+			Where("status = ?", "failed").
+			Where(liveParent).Where(liveChild)
+		if maxAttempts > 0 {
+			q = q.Where("CASE WHEN attempt < 1 THEN 1 ELSE attempt END < ?", maxAttempts)
+		}
+		res, err := q.Exec(ctx)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		won = n > 0
+		if won {
+			// The prior attempt's failure debt is stale the instant a retry is
+			// claimed — otherwise a busy parent would still be told the old
+			// failure while the new attempt runs. Cancel it in the SAME tx.
+			if _, err := tx.NewUpdate().Model((*Wakeup)(nil)).
+				Set("state = ?", WakeCancelled).
+				Where("kind = ?", WakeKindTask).
+				Where("source_id = ?", id).
+				Where("state = ?", WakePending).
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return false, fmt.Errorf("claiming a retry of task %s: %w", id, err)
 	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+	if won {
 		return true, nil
 	}
 	// Zero rows is "could not claim" or "no such task", and a caller acts
@@ -182,27 +234,48 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 
 // ReleaseRetryClaim undoes a RetryClaim whose run never launched: status back
 // to failed, the attempt count back down (the claimed run started nothing, and
-// attempt counts runs the task has HAD), the launch failure recorded, and the
-// wake-up debt reopened. One conditional UPDATE bound to the claimed run id,
-// like Finalize: only the claim's owner can release it.
-func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
-	res, err := s.db.NewUpdate().Model((*Task)(nil)).
-		Set("status = ?", "failed").
-		// The floor mirrors AttemptNo(): never below the original run.
-		Set("attempt = CASE WHEN attempt <= 1 THEN 1 ELSE attempt - 1 END").
-		Set("summary = ?", summary).
-		Set("result = ?", result).
-		Set("notify_state = ?", NotifyPending).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Where("run_id = ?", runID).
-		Where("status = ?", taskWorking).
-		Exec(ctx)
+// attempt counts runs the task has HAD), the launch failure recorded, and — in
+// the SAME tx — a FRESH failure debt owed (buildWakeup, as in Finalize).
+// RetryClaim cancelled the prior debt, so without this a launch that failed
+// after an already-delivered failure would leave the parent with no notice at
+// all. Bound to the claimed run id like Finalize: only the claim's owner can
+// release it.
+func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string, buildWakeup func(*Task) *Wakeup) (bool, error) {
+	var won bool
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		row, err := taskRowForWakeup(ctx, tx, id, buildWakeup)
+		if err != nil {
+			return err
+		}
+		res, err := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", "failed").
+			// The floor mirrors AttemptNo(): never below the original run.
+			Set("attempt = CASE WHEN attempt <= 1 THEN 1 ELSE attempt - 1 END").
+			Set("summary = ?", summary).
+			Set("result = ?", result).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", id).
+			Where("run_id = ?", runID).
+			Where("status = ?", taskWorking).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		won = n > 0
+		if won && row != nil {
+			if wk := buildWakeup(row); wk != nil {
+				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return false, fmt.Errorf("releasing the retry claim of task %s: %w", id, err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return won, nil
 }
 
 // MarkInputRequired flips a working task to input_required (the run paused on
@@ -254,72 +327,6 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool,
 	return false, nil
 }
 
-// ConsumeNotify marks a pending wake-up as consumed: the model already pulled
-// the final result in-turn (task_status), so no wake-up run is owed. A no-op
-// once the notification was delivered (a later status poll is an idempotent
-// read, not a second consumption). Notification bookkeeping deliberately does
-// NOT touch updated_at: for a terminal task that column is its finish time
-// (created_at → updated_at is the duration the UI shows), and delivery can
-// happen much later.
-// It applies only while runID is the task's current attempt: a consume decided
-// against the previous attempt must not swallow the debt of the one that
-// replaced it.
-func (s *TaskStore) ConsumeNotify(ctx context.Context, id, runID string) error {
-	if _, err := s.db.NewUpdate().Model((*Task)(nil)).
-		Set("notify_state = ?", NotifyConsumed).
-		Where("id = ?", id).
-		Where("run_id = ?", runID).
-		Where("notify_state = ?", NotifyPending).
-		Exec(ctx); err != nil {
-		return fmt.Errorf("consuming task %s notification: %w", id, err)
-	}
-	return nil
-}
-
-// MarkNotifyDelivered records that the wake-up run carrying this task's
-// result was injected into the parent session. Like ConsumeNotify it leaves
-// updated_at alone — see there.
-func (s *TaskStore) MarkNotifyDelivered(ctx context.Context, id, runID string) error {
-	if _, err := s.db.NewUpdate().Model((*Task)(nil)).
-		Set("notify_state = ?", NotifyDelivered).
-		Where("id = ?", id).
-		Where("run_id = ?", runID).
-		Where("notify_state = ?", NotifyPending).
-		Exec(ctx); err != nil {
-		return fmt.Errorf("marking task %s notification delivered: %w", id, err)
-	}
-	return nil
-}
-
-// ListPendingNotify returns the parent session's tasks that still owe it a
-// completion wake-up, oldest first (the wake-up message lists them in order).
-func (s *TaskStore) ListPendingNotify(ctx context.Context, parentSessionID string) ([]Task, error) {
-	var tasks []Task
-	if err := s.db.NewSelect().Model(&tasks).
-		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
-		Where("notify_state = ?", NotifyPending).
-		OrderExpr("updated_at ASC").
-		Scan(ctx); err != nil {
-		return nil, fmt.Errorf("listing pending notifications for %s: %w", parentSessionID, err)
-	}
-	return tasks, nil
-}
-
-// PendingNotifyParents returns every parent session owed at least one wake-up
-// — the startup reconciliation sweep that makes the auto-wake survive
-// restarts.
-func (s *TaskStore) PendingNotifyParents(ctx context.Context) ([]string, error) {
-	var ids []string
-	if err := s.db.NewSelect().Model((*Task)(nil)).
-		ColumnExpr("DISTINCT parent_session_id").
-		Where("notify_state = ?", NotifyPending).
-		Where(liveParent).
-		Scan(ctx, &ids); err != nil {
-		return nil, fmt.Errorf("listing notify-pending parents: %w", err)
-	}
-	return ids, nil
-}
-
 // DeleteByID removes a task row — only used to unwind a spawn whose run never
 // started (the tool error is the model's record of that attempt).
 func (s *TaskStore) DeleteByID(ctx context.Context, id string) error {
@@ -329,26 +336,50 @@ func (s *TaskStore) DeleteByID(ctx context.Context, id string) error {
 	return nil
 }
 
-// FailOrphans marks every task still recorded as working as failed. Called
-// once at startup: task runs do not survive a process restart, and their
-// terminal status is written by the run goroutine — a row stuck at "working"
-// after boot can never progress. input_required rows are kept: their pending
-// approval persists and resumes the run.
-func (s *TaskStore) FailOrphans(ctx context.Context) (int64, error) {
-	res, err := s.db.NewUpdate().Model((*Task)(nil)).
-		Set("status = ?", "failed").
-		Set("summary = ?", "server restarted while the task was running").
-		// The failure is news the parent session never heard — owe it the
-		// wake-up so the startup drain can deliver it.
-		Set("notify_state = ?", NotifyPending).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("status = ?", "working").
-		Exec(ctx)
+// FailOrphans fails every task left at "working" by a restart (a task run does
+// not survive the process, so such a row can never progress) and, in the SAME
+// transaction, records the wake-up each owes its parent — buildWakeup turns a
+// failed row into the debt (nil owes nothing). Atomic for the same reason
+// Finalize is: an orphan failed but never notified is a parent that waits
+// forever. input_required rows are kept: their pending approval persists and
+// resumes the run.
+func (s *TaskStore) FailOrphans(ctx context.Context, buildWakeup func(*Task) *Wakeup) ([]Task, error) {
+	var orphans []Task
+	const summary = "server restarted while the task was running"
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Read first, then write: the caller has to TELL each parent, and an
+		// update that only reports a count leaves it with nobody to tell.
+		if err := tx.NewSelect().Model(&orphans).Where("status = ?", "working").Scan(ctx); err != nil {
+			return fmt.Errorf("listing orphaned tasks: %w", err)
+		}
+		if len(orphans) == 0 {
+			return nil
+		}
+		if _, err := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", "failed").
+			Set("summary = ?", summary).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("status = ?", "working").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("failing orphaned tasks: %w", err)
+		}
+		for i := range orphans {
+			orphans[i].Status, orphans[i].Summary = "failed", summary
+			if buildWakeup == nil {
+				continue
+			}
+			if wk := buildWakeup(&orphans[i]); wk != nil {
+				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
+					return fmt.Errorf("recording orphan %s wake-up: %w", orphans[i].ID, err)
+				}
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("failing orphaned tasks: %w", err)
+		return nil, err
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return orphans, nil
 }
 
 // ByChildSession returns the task owning the given hidden child session, or

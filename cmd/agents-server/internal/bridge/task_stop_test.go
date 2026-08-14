@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uptrace/bun"
 	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -29,11 +30,11 @@ func sseWriter(w http.ResponseWriter) func(event string, payload any) {
 	}
 }
 
-func sseCreated(send func(string, any), turn int) {
+func sseCreated(send func(string, any)) {
 	send("response.created", map[string]any{
 		"type": "response.created", "sequence_number": 0,
 		"response": map[string]any{
-			"id": fmt.Sprintf("resp_%d", turn), "object": "response", "created_at": 0,
+			"id": "resp_1", "object": "response", "created_at": 0,
 			"status": "in_progress", "model": "gpt-test", "output": []any{},
 		},
 	})
@@ -53,7 +54,7 @@ func (m *endlessModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 	send := sseWriter(w)
-	sseCreated(send, 1)
+	sseCreated(send)
 	for i := 1; ; i++ {
 		select {
 		case <-r.Context().Done():
@@ -84,7 +85,7 @@ func (m *toolThenSilence) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 	send := sseWriter(w)
-	sseCreated(send, 1)
+	sseCreated(send)
 	select {
 	case m.calls <- 1:
 	default:
@@ -108,12 +109,12 @@ func (m *toolThenSilence) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // fakeModelAgent registers an agent config whose provider points at srv.
-func fakeModelAgent(t *testing.T, configs *store.AgentConfigStore, url string) {
+func fakeModelAgent(t *testing.T, db *bun.DB, configs *store.AgentConfigStore, url string) {
 	t.Helper()
 	ac := &store.AgentConfig{
-		Name:     "worker",
-		Model:    "gpt-test",
-		Provider: store.ProviderGroup{ProviderType: "openai", APIKey: "k", BaseURL: url},
+		Name:       "worker",
+		Model:      "gpt-test",
+		ProviderID: testProvider(t, db, "worker-endpoint", "k", url),
 	}
 	if err := configs.Create(context.Background(), ac); err != nil {
 		t.Fatal(err)
@@ -150,8 +151,7 @@ func TestStopTaskCancelsALiveRun(t *testing.T) {
 	defer srv.Close()
 
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
-	runner.Deps.Traces = store.NewTraceStore(runner.db)
-	fakeModelAgent(t, agentConfigs, srv.URL)
+	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
 	parent := &store.Session{ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
@@ -205,14 +205,13 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 	workspace := t.TempDir()
-	runner.Deps.Traces = store.NewTraceStore(runner.db)
 	runner.Deps.SandboxConfigs = store.NewSandboxStore(runner.db)
 	runner.Deps.SandboxManager = NewSandboxManager(workspace)
 	sb := &store.SandboxConfig{ID: store.NewID(), Name: "local", Type: "local"}
 	if err := runner.Deps.SandboxConfigs.Create(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
-	fakeModelAgent(t, agentConfigs, srv.URL)
+	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
 	parent := &store.Session{ID: store.NewID(), Name: "chat", SandboxID: sb.ID, WorkDir: workspace}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)

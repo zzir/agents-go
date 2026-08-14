@@ -31,7 +31,7 @@ func TestSegmentFinalizeNoDoubleClose(t *testing.T) {
 
 	// A racing approve resumes: a fresh segment (new done gate) is swapped onto
 	// the record while seg1 is still in flight.
-	seg2, _, err := h.resume("run1", "sess1", "", "", "", nil)
+	seg2, _, _, err := h.resume("run1", "sess1", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestResumeClearsStaleStopHook(t *testing.T) {
 	h.setControl("run1", &fakeControl{onStop: func() { stale++ }})
 	h.finish("run1", true)
 
-	if _, _, err := h.resume("run1", "sess1", "", "", "", nil); err != nil {
+	if _, _, _, err := h.resume("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	// The stale hook must be gone: no hook installed on the fresh segment yet.
@@ -126,7 +126,7 @@ func TestRegisterRefusesDeletingSession(t *testing.T) {
 	if !errors.As(err, &ErrSessionDeleting{}) {
 		t.Fatalf("register on a deleting session: err = %v, want ErrSessionDeleting", err)
 	}
-	if _, _, err := h.resume("run1", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionDeleting{}) {
+	if _, _, _, err := h.resume("run1", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionDeleting{}) {
 		t.Fatalf("resume on a deleting session: err = %v, want ErrSessionDeleting", err)
 	}
 	// A different session is unaffected.

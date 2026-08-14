@@ -23,9 +23,9 @@ const (
 	ProviderTypeAnthropic = "anthropic"
 )
 
-// authModeChatGPTLogin is the one auth mode beyond a plain API key, and it is
+// AuthModeChatGPTLogin is the one auth mode beyond a plain API key, and it is
 // OpenAI-only: its middleware rewrites Responses-shaped request bodies.
-const authModeChatGPTLogin = "chatgpt_login"
+const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 
 // providerDef is one backend the server can build providers for. It is an
 // INTERNAL table, not a plugin API: everything provider-selection touches —
@@ -59,7 +59,7 @@ var providerDefs = []providerDef{
 	{
 		Type:         ProviderTypeOpenAI,
 		SettingKey:   "openai_api_key",
-		AuthModes:    []string{authModeChatGPTLogin},
+		AuthModes:    []string{AuthModeChatGPTLogin},
 		Build:        newOpenAIModelProvider,
 		Capabilities: openaiProvider.Capabilities(),
 	},
@@ -160,16 +160,22 @@ func ValidateProviderType(t string) error {
 	return err
 }
 
-// ValidateProviderSelection checks the provider group's cross-field
-// constraints: a registered provider_type, and an auth_mode the backend
-// actually offers.
-func ValidateProviderSelection(ac *store.AgentConfig) error {
-	def, err := providerDefFor(ac.Provider.ProviderType)
+// ValidateProvider checks a provider row's cross-field constraints: a
+// registered type, and an auth_mode the backend actually offers. The zero
+// value passes — it is the built-in default (openai on the global key).
+func ValidateProvider(pv *store.Provider) error {
+	def, err := providerDefFor(pv.Type)
 	if err != nil {
-		return fmt.Errorf("provider_type: %w", err)
+		return fmt.Errorf("type: %w", err)
 	}
-	if mode := ac.Provider.AuthMode; mode != "" && !slices.Contains(def.AuthModes, mode) {
-		return fmt.Errorf("auth_mode %q is not available on the %s provider — use an API key or switch provider_type", mode, def.Type)
+	if mode := pv.AuthMode; mode != "" && !slices.Contains(def.AuthModes, mode) {
+		return fmt.Errorf("auth_mode %q is not available on the %s provider — use an API key or switch the type", mode, def.Type)
+	}
+	// A ChatGPT-login provider sends the account's OAuth access token as its
+	// bearer. Pointed at a custom base URL, that token would be handed to
+	// whatever host it names — so the endpoint is fixed, not configurable.
+	if pv.AuthMode == AuthModeChatGPTLogin && pv.BaseURL != "" {
+		return fmt.Errorf("base_url cannot be set with chatgpt_login: the OAuth token is only ever sent to ChatGPT")
 	}
 	return nil
 }

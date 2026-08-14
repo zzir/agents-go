@@ -40,7 +40,7 @@ const chatgptHTTPTimeout = 30 * time.Second
 
 // ChatGPTOAuth manages the OAuth flow for ChatGPT subscription authentication.
 type ChatGPTOAuth struct {
-	agents *store.AgentConfigStore
+	providers *store.ProviderStore
 	// settings, when wired via UseSettings, routes token endpoint calls through
 	// the configured proxy. Optional: nil means a direct (still timed) client.
 	settings *store.SettingStore
@@ -55,17 +55,17 @@ type ChatGPTOAuth struct {
 }
 
 type chatgptPending struct {
-	agentConfigID string
-	codeVerifier  string
-	redirectURI   string
-	cancel        context.CancelFunc
+	providerID   string
+	codeVerifier string
+	redirectURI  string
+	cancel       context.CancelFunc
 }
 
 // NewChatGPTOAuth creates a new ChatGPT OAuth manager.
-func NewChatGPTOAuth(agents *store.AgentConfigStore) *ChatGPTOAuth {
+func NewChatGPTOAuth(providers *store.ProviderStore) *ChatGPTOAuth {
 	return &ChatGPTOAuth{
-		agents:  agents,
-		pending: make(map[string]*chatgptPending),
+		providers: providers,
+		pending:   make(map[string]*chatgptPending),
 	}
 }
 
@@ -96,23 +96,23 @@ type ChatGPTLoginResult struct {
 	State        string `json:"state"`
 }
 
-// StartLogin begins the ChatGPT OAuth PKCE flow for the given agent. It fails
-// with store.ErrNotFound if the agent does not exist — otherwise the flow
+// StartLogin begins the ChatGPT OAuth PKCE flow for the given provider. It
+// fails with store.ErrNotFound if the provider does not exist — otherwise the flow
 // would run to completion and then silently lose the token on the final
 // (no-op) update to a missing row.
-func (o *ChatGPTOAuth) StartLogin(ctx context.Context, agentConfigID string) (*ChatGPTLoginResult, error) {
-	if agentConfigID == "" {
-		return nil, fmt.Errorf("agent_config_id is required")
+func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*ChatGPTLoginResult, error) {
+	if providerID == "" {
+		return nil, fmt.Errorf("provider_id is required")
 	}
-	ac, err := o.agents.Get(ctx, agentConfigID)
+	pv, err := o.providers.Get(ctx, providerID)
 	if err != nil {
 		return nil, err
 	}
-	// An agent whose backend does not offer chatgpt_login can never use the
+	// A provider that does not authenticate by chatgpt_login can never use the
 	// token, so completing the flow would only strand a credential in the
 	// database with no UI path to revoke it — the disconnect button renders
-	// for chatgpt_login agents only.
-	if err := chatGPTLoginAvailable(ac); err != nil {
+	// for chatgpt_login providers only.
+	if err := chatGPTLoginAvailable(pv); err != nil {
 		return nil, err
 	}
 
@@ -148,10 +148,10 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, agentConfigID string) (*C
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 
 	p := &chatgptPending{
-		agentConfigID: agentConfigID,
-		codeVerifier:  verifier,
-		redirectURI:   redirectURI,
-		cancel:        cancel,
+		providerID:   providerID,
+		codeVerifier: verifier,
+		redirectURI:  redirectURI,
+		cancel:       cancel,
 	}
 
 	o.mu.Lock()
@@ -232,7 +232,7 @@ func (o *ChatGPTOAuth) serveCallback(ctx context.Context, ln net.Listener, state
 			return
 		}
 
-		if err := o.saveTokens(r.Context(), p.agentConfigID, tokens); err != nil {
+		if err := o.saveTokens(r.Context(), p.providerID, tokens); err != nil {
 			writeHTML(w, "error", err.Error())
 			o.cleanupPending(state)
 			shutdown()
@@ -276,23 +276,23 @@ type ChatGPTCredentials struct {
 	AccountID   string
 }
 
-// GetCredentials returns the ChatGPT credentials for the given agent config.
-func (o *ChatGPTOAuth) GetCredentials(ctx context.Context, agentConfigID string) (*ChatGPTCredentials, error) {
-	ac, err := o.agents.Get(ctx, agentConfigID)
+// GetCredentials returns the ChatGPT credentials stored on the provider.
+func (o *ChatGPTOAuth) GetCredentials(ctx context.Context, providerID string) (*ChatGPTCredentials, error) {
+	pv, err := o.providers.Get(ctx, providerID)
 	if err != nil {
-		return nil, fmt.Errorf("loading agent config: %w", err)
+		return nil, fmt.Errorf("loading provider: %w", err)
 	}
-	if ac.ChatGPTToken == "" {
-		return nil, fmt.Errorf("not logged in to ChatGPT for agent %s", agentConfigID)
+	if pv.ChatGPTToken == "" {
+		return nil, fmt.Errorf("not logged in to ChatGPT for provider %s", providerID)
 	}
 
 	var tok chatgptTokens
-	if err := json.Unmarshal([]byte(ac.ChatGPTToken), &tok); err != nil {
+	if err := json.Unmarshal([]byte(pv.ChatGPTToken), &tok); err != nil {
 		return nil, fmt.Errorf("invalid stored tokens: %w", err)
 	}
 
 	if tokenExpiring(tok) {
-		refreshed, err := o.refreshCredentials(ctx, agentConfigID, tok)
+		refreshed, err := o.refreshCredentials(ctx, providerID, tok)
 		if err != nil {
 			return nil, err
 		}
@@ -316,15 +316,15 @@ func tokenExpiring(tok chatgptTokens) bool {
 // callers don't both spend the single-use refresh token. After taking the
 // lock it re-reads the stored token: if another goroutine already refreshed it,
 // that result is reused instead of spending the refresh token a second time.
-func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, agentConfigID string, tok chatgptTokens) (chatgptTokens, error) {
+func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, providerID string, tok chatgptTokens) (chatgptTokens, error) {
 	o.refreshMu.Lock()
 	defer o.refreshMu.Unlock()
 
 	// Double-check under the lock: a racing refresh may have already rotated the
 	// token while we waited.
-	if ac, err := o.agents.Get(ctx, agentConfigID); err == nil {
+	if pv, err := o.providers.Get(ctx, providerID); err == nil {
 		var current chatgptTokens
-		if json.Unmarshal([]byte(ac.ChatGPTToken), &current) == nil && current.AccessToken != "" {
+		if json.Unmarshal([]byte(pv.ChatGPTToken), &current) == nil && current.AccessToken != "" {
 			if !tokenExpiring(current) {
 				return current, nil
 			}
@@ -336,7 +336,7 @@ func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, agentConfigID str
 	if err != nil {
 		return chatgptTokens{}, fmt.Errorf("token refresh failed: %w", err)
 	}
-	if err := o.saveTokens(ctx, agentConfigID, refreshed); err != nil {
+	if err := o.saveTokens(ctx, providerID, refreshed); err != nil {
 		return chatgptTokens{}, err
 	}
 	return *refreshed, nil
@@ -362,25 +362,24 @@ func decodeAccountID(jwt string) string {
 	return claims.Auth.AccountID
 }
 
-// IsLoggedIn returns whether the given agent has a ChatGPT token stored.
-// IsLoggedIn reports whether the agent has a stored ChatGPT token. It returns
-// the store error (e.g. store.ErrNotFound) so callers can distinguish "agent
-// does not exist" from "exists but not logged in" — matching the 404 the
-// login/logout endpoints give for a missing agent.
-func (o *ChatGPTOAuth) IsLoggedIn(ctx context.Context, agentConfigID string) (bool, error) {
-	if agentConfigID == "" {
-		return false, fmt.Errorf("agent_config_id is required")
+// IsLoggedIn reports whether the provider has a stored ChatGPT token. It
+// returns the store error (e.g. store.ErrNotFound) so callers can distinguish
+// "provider does not exist" from "exists but not logged in" — matching the 404
+// the login/logout endpoints give for a missing provider.
+func (o *ChatGPTOAuth) IsLoggedIn(ctx context.Context, providerID string) (bool, error) {
+	if providerID == "" {
+		return false, fmt.Errorf("provider_id is required")
 	}
-	ac, err := o.agents.Get(ctx, agentConfigID)
+	pv, err := o.providers.Get(ctx, providerID)
 	if err != nil {
 		return false, err
 	}
-	return ac.ChatGPTToken != "", nil
+	return pv.ChatGPTToken != "", nil
 }
 
-// Logout clears the ChatGPT token for the given agent.
-func (o *ChatGPTOAuth) Logout(ctx context.Context, agentConfigID string) error {
-	return o.agents.ClearChatGPTToken(ctx, agentConfigID)
+// Logout clears the provider stored ChatGPT token.
+func (o *ChatGPTOAuth) Logout(ctx context.Context, providerID string) error {
+	return o.providers.ClearChatGPTToken(ctx, providerID)
 }
 
 type chatgptTokens struct {
@@ -390,35 +389,41 @@ type chatgptTokens struct {
 	ExpiresAt    int64  `json:"expires_at,omitempty"`
 }
 
-// ErrChatGPTLoginUnavailable marks a login attempt this agent's configuration
+// ErrChatGPTLoginUnavailable marks a login attempt this provider configuration
 // can never use — a client error the handler maps to 400, not a server fault.
 var ErrChatGPTLoginUnavailable = errors.New("chatgpt login unavailable")
 
-// chatGPTLoginAvailable reports whether the agent's backend offers
+// chatGPTLoginAvailable reports whether the provider backend offers
 // chatgpt_login. It gates BOTH ends of the OAuth flow: StartLogin, and
-// saveTokens — the config can change during the authorize window, and a token
-// persisted onto an agent that cannot use it has no UI path to revoke it.
-func chatGPTLoginAvailable(ac *store.AgentConfig) error {
-	def, err := providerDefFor(ac.Provider.ProviderType)
+// saveTokens — the row can change during the authorize window, and a token
+// persisted onto a provider that cannot use it has no UI path to revoke it.
+func chatGPTLoginAvailable(pv *store.Provider) error {
+	def, err := providerDefFor(pv.Type)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrChatGPTLoginUnavailable, err)
 	}
-	if !slices.Contains(def.AuthModes, authModeChatGPTLogin) {
-		return fmt.Errorf("%w: not offered by the %s provider — switch provider_type or use an API key", ErrChatGPTLoginUnavailable, def.Type)
+	if !slices.Contains(def.AuthModes, AuthModeChatGPTLogin) {
+		return fmt.Errorf("%w: not offered by the %s provider — switch the provider type or use an API key", ErrChatGPTLoginUnavailable, def.Type)
+	}
+	// The ROW's own mode, not only the type's menu: logging in a provider that
+	// authenticates by API key would strand a token nothing ever uses or shows
+	// a disconnect button for.
+	if pv.AuthMode != AuthModeChatGPTLogin {
+		return fmt.Errorf("%w: this provider authenticates by API key — set auth_mode to %s first", ErrChatGPTLoginUnavailable, AuthModeChatGPTLogin)
 	}
 	return nil
 }
 
-func (o *ChatGPTOAuth) saveTokens(ctx context.Context, agentConfigID string, tok *chatgptTokens) error {
-	ac, err := o.agents.Get(ctx, agentConfigID)
+func (o *ChatGPTOAuth) saveTokens(ctx context.Context, providerID string, tok *chatgptTokens) error {
+	pv, err := o.providers.Get(ctx, providerID)
 	if err != nil {
 		return err
 	}
-	if err := chatGPTLoginAvailable(ac); err != nil {
+	if err := chatGPTLoginAvailable(pv); err != nil {
 		return err
 	}
 	data, _ := json.Marshal(tok)
-	return o.agents.SaveChatGPTToken(ctx, agentConfigID, string(data))
+	return o.providers.SaveChatGPTToken(ctx, providerID, string(data))
 }
 
 func exchangeCode(ctx context.Context, client *http.Client, code, verifier, redirectURI string) (*chatgptTokens, error) {

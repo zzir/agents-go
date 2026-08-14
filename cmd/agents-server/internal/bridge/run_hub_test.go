@@ -165,7 +165,7 @@ func TestRunHubResumeSameID(t *testing.T) {
 	}
 
 	// Resume reopens the same record: same id, seq continues, sub still fed.
-	_, ctx, err := h.resume("run1", "sess1", "ac", "sb", "", nil)
+	_, ctx, _, err := h.resume("run1", "sess1", "ac", "sb", "", nil)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -205,11 +205,11 @@ func TestRunHubResumeBusy(t *testing.T) {
 	if _, _, err := h.register("blocker", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register blocker: %v", err)
 	}
-	if _, _, err := h.resume("paused", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionBusy{}) {
+	if _, _, _, err := h.resume("paused", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionBusy{}) {
 		t.Fatalf("resume while busy: err = %v, want ErrSessionBusy", err)
 	}
 	h.finish("blocker", false)
-	if _, _, err := h.resume("paused", "sess1", "", "", "", nil); err != nil {
+	if _, _, _, err := h.resume("paused", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("resume after free: %v", err)
 	}
 }
@@ -246,7 +246,7 @@ func TestFinalVsTerminalRunEvent(t *testing.T) {
 	h.publish("r", env("run.started"))
 	h.publish("r", env("run.interrupted"))
 	h.finish("r", true)
-	_, _, _ = h.resume("r", "s", "", "", "", nil)
+	_, _, _, _ = h.resume("r", "s", "", "", "", nil)
 	h.publish("r", env("run.started"))
 	h.publish("r", env("run.output"))
 
@@ -274,7 +274,7 @@ func TestFinalVsTerminalRunEvent(t *testing.T) {
 // fresh one under the same id so the continuation still streams.
 func TestRunHubResumeAfterRestart(t *testing.T) {
 	h := NewRunHub(context.Background())
-	_, ctx, err := h.resume("ghost-run", "sess1", "ac", "", "", nil)
+	_, ctx, _, err := h.resume("ghost-run", "sess1", "ac", "", "", nil)
 	if err != nil {
 		t.Fatalf("resume without record: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestResumeRefusesFinishedRecord(t *testing.T) {
 	}
 	h.publish("r2", env)
 	h.finish("r2", false)
-	if _, _, err := h.resume("r2", "s2", "", "", "", nil); err == nil {
+	if _, _, _, err := h.resume("r2", "s2", "", "", "", nil); err == nil {
 		t.Fatal("resume revived a cancelled record")
 	}
 	// An interrupted record resumes fine.
@@ -359,7 +359,7 @@ func TestResumeRefusesFinishedRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.finish("r3", true)
-	if _, _, err := h.resume("r3", "s3", "", "", "", nil); err != nil {
+	if _, _, _, err := h.resume("r3", "s3", "", "", "", nil); err != nil {
 		t.Fatalf("resume of interrupted record: %v", err)
 	}
 }
