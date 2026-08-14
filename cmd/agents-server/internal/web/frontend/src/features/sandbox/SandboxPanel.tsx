@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
+import { BADGE } from '@/lib/badges';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
@@ -260,7 +261,6 @@ export function SandboxPanel() {
   };
 
   const typeLabel = (t: string) => TYPE_LABELS[t] || t;
-  const typeVariant = (t: string): 'accent' | 'success' | 'secondary' => t === 'docker' ? 'accent' : t === 'ssh' ? 'success' : 'secondary';
 
   return (
     <Stack gap="normal">
@@ -278,7 +278,7 @@ export function SandboxPanel() {
             <div className="resource-row-main">
               <div className="resource-row-head">
                 <span className="resource-row-title">{s.name}</span>
-                <Label variant={typeVariant(s.type)}>{typeLabel(s.type)}</Label>
+                <Label variant={BADGE.type}>{typeLabel(s.type)}</Label>
               </div>
               <div className="resource-row-sub">{sandboxSummary(s)}</div>
             </div>

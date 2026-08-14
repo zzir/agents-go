@@ -4,6 +4,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
+import { BADGE } from '@/lib/badges';
 
 // config travels as a JSON object in both directions (the API-wide contract
 // for config blobs) — never as a stringified JSON payload.
@@ -169,7 +170,7 @@ export function GuardrailPanel() {
             <div className="resource-row-main">
               <div className="resource-row-head">
                 <span className="resource-row-title">{g.name}</span>
-                {isBuiltin(g) && <Label>built-in</Label>}
+                {isBuiltin(g) && <Label variant={BADGE.builtin}>built-in</Label>}
               </div>
               <div className="resource-row-sub">
                 {[(g.stages || []).map(st => STAGE_LABELS[st] || st).join(', '), g.mode].filter(Boolean).join(' · ')}

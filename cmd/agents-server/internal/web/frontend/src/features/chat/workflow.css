@@ -1,0 +1,88 @@
+/* A background sequence, seen from the conversation that asked for it: sized to
+   the composer, since that is what it sits above. */
+.wf-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8, 8px);
+  width: calc(100% - 2 * var(--base-size-16, 16px));
+  max-width: 880px;
+  margin: 0 auto var(--base-size-4, 4px);
+  padding: 5px var(--base-size-8, 8px);
+  border: 1px solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium, 6px);
+  background: var(--bgColor-muted);
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  cursor: pointer;
+}
+.wf-bar:hover { border-color: var(--borderColor-default); }
+/* Pushed to the right edge on the variants that have no progress track (the
+   track's flex:1 already does it on the one that has). */
+.wf-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4, 4px);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.chat-content-centered .wf-bar {
+  width: 100%;
+  max-width: 860px;
+}
+.wf-bar-name {
+  font-weight: var(--base-text-weight-semibold, 600);
+  color: var(--fgColor-default);
+  white-space: nowrap;
+}
+.wf-bar-step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The bar takes the leftover width, so the step label never fights it. */
+.wf-bar-track {
+  flex: 1;
+  min-width: 40px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bgColor-neutral-muted);
+  overflow: hidden;
+}
+.wf-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--fgColor-accent);
+  transition: width 0.2s ease;
+}
+
+/* Step editor rows in the Workflows panel. */
+.wf-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-4, 4px);
+  padding: var(--base-size-8, 8px);
+  margin-bottom: var(--base-size-8, 8px);
+  border: 1px solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium, 6px);
+}
+.wf-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4, 4px);
+}
+.wf-step-name {
+  flex: 1;
+  min-width: 0;
+}
+.wf-step-opt {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+/* The two edge pickers share a row and wrap on a narrow panel. */
+.wf-step-edges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--base-size-8, 8px) var(--base-size-16, 16px);
+  align-items: center;
+}

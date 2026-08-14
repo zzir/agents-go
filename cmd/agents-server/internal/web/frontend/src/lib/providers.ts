@@ -19,10 +19,8 @@ export interface ProviderMeta {
   /** The wire value the server reports for this entry ('' maps to 'openai'). */
   type: string;
   label: string;
-  /** Short list-row badge text. */
+  /** Short list-row badge text; its color is BADGE.providerType (see lib/badges). */
   badge: string;
-  /** Primer Label variant for the list-row badge. */
-  badgeVariant: 'secondary' | 'attention';
   defaultModel: string;
   modelPlaceholder: string;
   keyPlaceholder: string;
@@ -43,7 +41,6 @@ export const PROVIDERS: ProviderMeta[] = [
     type: 'openai',
     label: 'OpenAI (Responses API)',
     badge: 'OpenAI',
-    badgeVariant: 'secondary',
     defaultModel: 'gpt-5.5',
     modelPlaceholder: 'gpt-5.5',
     keyPlaceholder: 'sk-...',
@@ -55,7 +52,6 @@ export const PROVIDERS: ProviderMeta[] = [
     type: 'anthropic',
     label: 'Anthropic (Messages API)',
     badge: 'Anthropic',
-    badgeVariant: 'attention',
     defaultModel: 'claude-opus-5',
     modelPlaceholder: 'claude-opus-5',
     keyPlaceholder: 'sk-ant-...',

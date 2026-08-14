@@ -1,8 +1,7 @@
 import { IconButton } from '@primer/react';
-import { DiffIcon, FileDirectoryIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
+import { FileDirectoryIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
-import type { TaskState } from '@/lib/useAgentSocket';
 import { projectBase } from '@/lib/binding';
 
 interface ChatTopBarProps {
@@ -10,7 +9,9 @@ interface ChatTopBarProps {
   sessionId: string | null;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
-  tasks?: Record<string, TaskState>;
+  // Tasks and workflow executions both — the panel holds either, so a session
+  // with only a workflow must not find the button greyed out.
+  backgroundCount: number;
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
   /* The session's sandbox binding, rendered as a quiet read-only label beside
@@ -27,12 +28,11 @@ export function ChatTopBar({
   sessionId,
   panel,
   onPanelChange,
-  tasks,
+  backgroundCount,
   terminalEnabled,
   onTerminalOpen,
   binding,
 }: ChatTopBarProps): ReactElement {
-  const taskList = tasks ? Object.values(tasks) : [];
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-info">
@@ -55,7 +55,7 @@ export function ChatTopBar({
           size="small"
           aria-label="Tasks"
           onClick={() => onPanelChange(panel?.kind === 'tasks' ? null : { kind: 'tasks' })}
-          disabled={!sessionId || taskList.length === 0}
+          disabled={!sessionId || backgroundCount === 0}
         />
         <IconButton
           icon={PulseIcon}
@@ -68,7 +68,6 @@ export function ChatTopBar({
           disabled={!sessionId}
           onClick={() => onPanelChange(panel?.kind === 'trace' ? null : { kind: 'trace' })}
         />
-        <IconButton icon={DiffIcon} variant="invisible" size="small" aria-label="Diff" disabled />
         <IconButton
           icon={MeterIcon}
           variant="invisible"

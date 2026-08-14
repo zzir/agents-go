@@ -147,6 +147,10 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // routed into the PARENT session's task list — never a chat timeline — so
   // they must be intercepted before the runMap lookup the chat handlers use.
   const taskRunsRef = useRef<Record<string, { parentSid: string; label: string; taskId: string; toolCallId?: string }>>({});
+  // Workflow step runs, run id → workflow-execution id. Marks the run as
+  // background in every browser (the strip reads durable rows, so no chip
+  // state lives here — the registry only keeps step events off the chat path).
+  const workflowRunsRef = useRef<Record<string, string>>({});
   // The task the Inspector is watching: its child-run events additionally
   // feed SessionState.taskView (accumulated only while open).
   const taskWatchRef = useRef<{ sid: string; taskId: string; childSessionId: string } | null>(null);
@@ -199,7 +203,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
   // Fetching both together and applying the result as one state update removes
   // the messages/approvals race that made the approval card flicker.
   const fetchTimeline = useCallback(async (sid: string, limit = HISTORY_PAGE): Promise<TimelinePage> => {
-    type PendingApproval = { run_id: string; user_input?: string; task_id?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
+    type PendingApproval = { run_id: string; user_input?: string; task_id?: string; workflow_run_id?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
     const [msgs, pendingAll] = await Promise.all([
       api.sessions.messages(sid, { limit }) as Promise<EntryView[]>,
       (api.sessions.approvals(sid) as Promise<PendingApproval[]>).catch(() => [] as PendingApproval[]),
@@ -229,7 +233,10 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // row (switching back puts the run's entries on path again, which
     // re-admits it here and lets the pause resume).
     const offPathRuns = new Set(entries.filter(e => e.run_id && e.on_path === false).map(e => e.run_id));
-    const pending = (pendingAll || []).filter(p => !p.task_id && !offPathRuns.has(p.run_id));
+    // A workflow step's approval belongs to the execution's own session: it is
+    // answered from the workflow strip, and merging it here would rebuild the
+    // step's prompt as a user bubble the person never typed.
+    const pending = (pendingAll || []).filter(p => !p.task_id && !p.workflow_run_id && !offPathRuns.has(p.run_id));
     // A short page means we reached the beginning; a full one means there may
     // be more, and the next fetch settles it.
     const page = { entries, hasMore: limit > 0 && entries.length >= limit };
@@ -427,7 +434,18 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       toast.error('Session expired — please sign in again');
     };
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; workflow_run_id?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
+      // A workflow step's run: background by identity, in every browser — the
+      // strip reads the durable rows (workflow.updated nudges the refetch), so
+      // unlike the task branch nothing per-session is written here. Checked
+      // BEFORE the task branch: step runs now carry parent_session_id too.
+      if (p.workflow_run_id) {
+        workflowRunsRef.current[p.run_id] = p.workflow_run_id;
+        // The step being inspected gets a live turn to stream into, its
+        // prompt as the user bubble.
+        updateTaskView(p.run_id, v => ({ ...v, messages: ensureLiveTurn(v.messages, p.run_id, p.input) || v.messages }));
+        return;
+      }
       // A background task run: track it under its parent session's task list
       // and keep it out of every chat-timeline path. Task identity (task_id)
       // and run attempt (run_id) are separate: events route by run id through
@@ -481,17 +499,31 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       });
     });
 
-    // updateTaskView applies fn to the inspected task's view iff runId is the
-    // watched task. Returns true when it was. taskView is keyed by the DURABLE
-    // task id, not the run attempt id — so both the outer watch guard and the
-    // inner taskView guard must map runId → taskId before comparing (comparing
-    // taskView.taskId against the raw runId is always false, which silently
-    // dropped every live Inspector update).
+    // The Inspector watch is keyed by item id; run events carry a run id. Both
+    // registries map a run to its durable item id; the child-session fallback
+    // covers a run neither registered (its run.started predates this page).
+    const isWatchedRun = (runId: string) => {
+      const w = taskWatchRef.current;
+      if (!w) return false;
+      return (taskRunsRef.current[runId]?.taskId || runId) === w.taskId
+        || workflowRunsRef.current[runId] === w.taskId
+        || runMapRef.current[runId] === w.childSessionId;
+    };
+
+    // isBackgroundRun: this run's events belong in a task list or the Inspector,
+    // never in a chat timeline. Task and workflow-step runs always (their child
+    // session is not a conversation anyone is reading).
+    const isBackgroundRun = (runId: string) => !!taskRunsRef.current[runId] || !!workflowRunsRef.current[runId] || isWatchedRun(runId);
+
+    // updateTaskView applies fn to the inspected item's view iff runId is one of
+    // its runs. Returns true when it was. taskView is keyed by the DURABLE item
+    // id, never a run id, so the guard goes through isWatchedRun rather than
+    // comparing raw ids (comparing taskView.taskId against a run id is always
+    // false, which silently dropped every live Inspector update).
     const updateTaskView = (runId: string, fn: (v: TaskViewState) => TaskViewState) => {
       const w = taskWatchRef.current;
-      const taskId = taskRunsRef.current[runId]?.taskId ?? runId;
-      if (!w || taskId !== w.taskId) return false;
-      updateSS(w.sid, s => (s.taskView && s.taskView.taskId === taskId ? { ...s, taskView: fn(s.taskView) } : s));
+      if (!w || !isWatchedRun(runId)) return false;
+      updateSS(w.sid, s => (s.taskView && s.taskView.taskId === w.taskId ? { ...s, taskView: fn(s.taskView) } : s));
       return true;
     };
 
@@ -501,15 +533,33 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // to the inspected task).
     const refetchTaskView = (runId: string) => {
       const w = taskWatchRef.current;
-      if (!w || (taskRunsRef.current[runId]?.taskId || runId) !== w.taskId) return;
+      if (!w || !isWatchedRun(runId)) return;
+      // Applied against the watch captured HERE, not re-derived when the fetch
+      // resolves: the terminal handlers drop the run's registry entries as they
+      // return, and a guard that re-derives from them would drop this update.
       fetchTimeline(w.childSessionId).then(({ timeline }) => {
-        updateTaskView(runId, v => ({ ...v, messages: timeline, streaming: '', reasoning: '', loaded: true }));
+        updateSS(w.sid, s => (s.taskView && s.taskView.taskId === w.taskId
+          ? { ...s, taskView: { ...s.taskView, messages: timeline, streaming: '', reasoning: '', loaded: true } }
+          : s));
       }).catch(() => undefined).finally(() => {
         // This is the terminal refetch (the terminal handler kept the run→task
         // entry alive only for it). Drop it now so a watched task that ended
         // doesn't leak its routing entry for the life of the page.
         delete taskRunsRef.current[runId];
       });
+    };
+
+    // dropRunRefs clears a terminal run's routing bookkeeping — the workflow
+    // registry entry, plus any chat-path refs a run acquired before its
+    // background identity was known (safe no-ops otherwise).
+    const dropRunRefs = (runId: string) => {
+      const sid = runMapRef.current[runId];
+      delete workflowRunsRef.current[runId];
+      delete streamBufsRef.current[runId];
+      delete reasoningBufsRef.current[runId];
+      delete appendedItemsRef.current[runId];
+      delete runMapRef.current[runId];
+      if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
     };
 
     const updateTask = (runId: string, patch: Partial<TaskState>) => {
@@ -542,15 +592,8 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
       return true;
     };
 
-    // The Inspector watch is keyed by task id; run events carry a run id —
-    // map through the registry before comparing.
-    const isWatchedRun = (runId: string) => {
-      const w = taskWatchRef.current;
-      return !!w && (taskRunsRef.current[runId]?.taskId || runId) === w.taskId;
-    };
-
     ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         if (isWatchedRun(p.run_id)) {
           taskViewBufRef.current.text += p.delta;
           scheduleFrame('taskview:step', () => {
@@ -570,7 +613,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         if (isWatchedRun(p.run_id)) {
           taskViewBufRef.current.reasoning += p.delta;
           scheduleFrame('taskview:reasoning', () => {
@@ -594,7 +637,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // previewed it: the delta buffer is dropped so the tool_call flush (and
     // run.output) cannot append the same text again.
     ws.on(EV.runMessage, (p: { run_id: string; text: string; item_id?: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         if (p.text && isWatchedRun(p.run_id)) {
           taskViewBufRef.current.text = '';
           updateTaskView(p.run_id, v => {
@@ -625,7 +668,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // "Thinking…" preview to the current turn and is the only thinking signal
     // on backends that stream no reasoning deltas.
     ws.on(EV.runReasoningItem, (p: { run_id: string; text: string; item_id?: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         if (p.text && isWatchedRun(p.run_id)) {
           taskViewBufRef.current.reasoning = '';
           updateTaskView(p.run_id, v => {
@@ -650,7 +693,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runOutput, (p: { run_id: string; final_output?: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         updateTask(p.run_id, { status: 'completed', summary: (p.final_output || '').slice(0, 300), pendingCallId: undefined });
         if (isWatchedRun(p.run_id)) {
           const remaining = taskViewBufRef.current;
@@ -665,6 +708,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
         // Keep the watched run's entry — its async refetchTaskView still maps
         // runId → taskId when the fetch resolves.
         if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
+        dropRunRefs(p.run_id);
         return;
       }
       const sid = runMapRef.current[p.run_id];
@@ -684,7 +728,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runError, (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
-      if (p.run_id && taskRunsRef.current[p.run_id]) {
+      if (p.run_id && isBackgroundRun(p.run_id)) {
         updateTask(p.run_id, { status: 'failed', summary: p.message?.slice(0, 300), pendingCallId: undefined });
         if (isWatchedRun(p.run_id)) {
           const remaining = taskViewBufRef.current;
@@ -698,6 +742,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           refetchTaskView(rid);
         }
         if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
+        dropRunRefs(p.run_id);
         return;
       }
       // The session already has a live run (e.g. double-send from another
@@ -784,7 +829,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
-      if (p?.run_id && taskRunsRef.current[p.run_id]) {
+      if (p?.run_id && isBackgroundRun(p.run_id)) {
         updateTask(p.run_id, { status: 'cancelled', pendingCallId: undefined });
         if (isWatchedRun(p.run_id)) {
           const remaining = taskViewBufRef.current;
@@ -796,6 +841,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
           refetchTaskView(p.run_id);
         }
         if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
+        dropRunRefs(p.run_id);
         return;
       }
       const rid = p?.run_id;
@@ -819,7 +865,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.runToolCall, (p: { run_id: string; tool_call_id: string; tool_name: string; arguments: string; needs_approval?: boolean }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         updateTask(p.run_id, p.needs_approval
           ? { lastTool: p.tool_name, pendingCallId: p.tool_call_id, pendingToolName: p.tool_name }
           : { lastTool: p.tool_name });
@@ -866,7 +912,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // run.tool_result is — so it accumulates on the card and is replaced when
     // the result lands.
     ws.on(EV.runToolProgress, (p: { run_id: string; call_id: string; delta: string; renderer?: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         if (isWatchedRun(p.run_id)) {
           updateTaskView(p.run_id, v => {
             const msgs = appendToolProgress(v.messages, p.call_id, p.delta, p.renderer);
@@ -886,7 +932,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // Single registration: WSClient.on is overwrite-semantics (one handler per
     // event type), so the task branch must live INSIDE the chat handler.
     ws.on(EV.runToolResult, (p: { run_id: string; tool_call_id: string; output: string; title?: string; summary?: string; renderer?: string; is_error?: boolean; extra?: DisplayExtra }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         updateTask(p.run_id, { pendingCallId: undefined, pendingToolName: undefined });
         updateTaskView(p.run_id, v => {
           const msgs = applyToolResult(v.messages, p.tool_call_id, p.output, p);
@@ -908,11 +954,13 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // The mappings stay: the approval decision RESUMES THE SAME run id, so a
     // later run.started on this id flips the session back to live seamlessly.
     ws.on(EV.runInterrupted, (p: { run_id: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         updateTask(p.run_id, { status: 'input_required' });
         // High-signal, once per pause: background approvals are otherwise
-        // easy to miss (the conversation itself stays quiet).
-        toast.info('Task "' + (taskRunsRef.current[p.run_id].label || p.run_id.slice(0, 8)) + '" needs approval');
+        // easy to miss (the conversation itself stays quiet). A workflow step
+        // has no entry here — its name lives on the execution row.
+        const meta = taskRunsRef.current[p.run_id];
+        toast.info(meta ? 'Task "' + (meta.label || p.run_id.slice(0, 8)) + '" needs approval' : 'A workflow step needs approval');
         return;
       }
       const sid = runMapRef.current[p.run_id];
@@ -966,7 +1014,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     // live rendering for the rest of the run. handoff_requested events (no
     // `to` yet) are preview noise and are skipped.
     ws.on(EV.runHandoff, (p: { run_id: string; from: string; to?: string }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         if (p.to) {
           updateTaskView(p.run_id, v => {
             const msgs = appendHandoffPart(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.from + ' → ' + p.to);
@@ -986,7 +1034,7 @@ export function useAgentSocket(updateSS: UpdateSSFn) {
     });
 
     ws.on(EV.traceSpan, (p: { run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
-      if (taskRunsRef.current[p.run_id]) {
+      if (isBackgroundRun(p.run_id)) {
         updateTaskView(p.run_id, v => {
           let duration = '';
           if (p.started_at && p.ended_at) {

@@ -45,6 +45,10 @@ export const EV = {
   // The session's first sandbox-carrying run permanently bound
   // (sandbox_id, work_dir) — published once, by the run that won the bind.
   sessionSandboxBound: 'session.sandbox_bound',
+  // One of a session's workflow executions moved (a step started, paused for
+  // approval, advanced, or the sequence ended). Rides the step run's stream —
+  // there is no live parent run — so the client refetches the parent's strip.
+  workflowUpdated: 'workflow.updated',
   traceSpan: 'trace.span',
 
   // terminal (on /ws/terminal; binary frames carry the byte stream)

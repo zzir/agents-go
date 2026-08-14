@@ -5,6 +5,7 @@ import { ChevronRightIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { type Skill, groupByRepo } from '@/lib/skills';
+import { BADGE } from '@/lib/badges';
 
 export function SkillsPanel() {
   const [skills, setSkills] = useState<Skill[] | null>(null);
@@ -132,7 +133,7 @@ export function SkillsPanel() {
                     <ChevronRightIcon size={12} />
                     {group.repo}
                   </button>
-                  <Label variant="secondary">{group.skills.length}</Label>
+                  <Label variant={BADGE.count}>{'Skills·' + group.skills.length}</Label>
                 </div>
                 <div className="resource-row-actions">
                   <Button

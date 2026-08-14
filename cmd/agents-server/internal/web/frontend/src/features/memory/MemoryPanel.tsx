@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
+import { BADGE } from '@/lib/badges';
 
 interface Memory {
   id: string;
@@ -128,9 +129,11 @@ export function MemoryPanel() {
             <div className="resource-row-main">
               <div className="resource-row-head">
                 <span className="resource-row-title">{m.key}</span>
-                <Label variant={m.agent_config_id ? 'accent' : 'secondary'}>
-                  {agentName(m.agent_config_id)}
-                </Label>
+                {/* Global is the default and says nothing — only a SCOPED
+                    memory carries a badge: the agent it belongs to. */}
+                {m.agent_config_id && (
+                  <Label variant={BADGE.ref}>{agentName(m.agent_config_id)}</Label>
+                )}
               </div>
               <div className="resource-row-sub">
                 {m.content.substring(0, 120) +

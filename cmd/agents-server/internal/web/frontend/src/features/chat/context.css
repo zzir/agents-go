@@ -89,7 +89,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 2px var(--base-size-8, 8px);
-  margin-bottom: 7px;
   color: var(--fgColor-muted);
   font-size: 11px;
   letter-spacing: 0.03em;
@@ -131,6 +130,27 @@
   opacity: 0.5;
   cursor: default;
 }
+/* On the big-number row: pushed to the far end, centered on the line rather
+   than sitting on the digits' baseline. */
+.ctx-compact-btn--end {
+  margin-left: auto;
+  align-self: center;
+}
+
+/* The window bar with the compaction tick on it: one track, two stories. The
+   tick is a hairline the fill passes under; its title carries the numbers. */
+.ctx-track {
+  position: relative;
+}
+.ctx-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--fgColor-attention);
+}
 
 .ctx-spark {
   width: 100%;
@@ -155,75 +175,11 @@
   flex-direction: column;
   gap: var(--base-size-4, 4px);
 }
-/* The row is the jump-to-chat target; the trace button (a sibling — it cannot
-   nest inside the row, which is itself a button) swaps in WHERE the token
-   figure sits: hovering a traceable row hides the figure and shows the button
-   in its slot, the VS Code tree-item pattern. Nothing is reserved (the figures
-   stay flush with the panel edge like every other section) and nothing is
-   half-covered. Rows without a trace keep their figure under the cursor.
-   The button is a bare glyph sized to the TEXT line, so it never reaches the
-   bar on the line below. */
-.ctx-row-wrap {
-  position: relative;
-}
-.ctx-row-trace {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  border: 0;
-  background: none;
-  border-radius: var(--borderRadius-small, 4px);
-  color: var(--fgColor-muted);
-  cursor: pointer;
-  line-height: 0;
-  opacity: 0;
-}
-.ctx-row-trace:hover {
-  color: var(--fgColor-accent);
-}
-.ctx-row-trace:focus-visible {
-  outline: 2px solid var(--focus-outlineColor, var(--fgColor-accent));
-  outline-offset: -2px;
-}
-.ctx-row-has-trace:hover .ctx-row-trace,
-.ctx-row-has-trace:focus-within .ctx-row-trace {
-  opacity: 1;
-}
-.ctx-row-has-trace:hover .ctx-row-tok,
-.ctx-row-has-trace:focus-within .ctx-row-tok {
-  opacity: 0;
-}
-.ctx-row {
-  display: block;
-  width: 100%;
-  border: 0;
-  background: none;
-  padding: 5px 6px;
-  border-radius: var(--borderRadius-small, 4px);
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font: inherit;
-}
-.ctx-row:hover { background: var(--bgColor-neutral-muted); }
 .ctx-row-top {
   display: flex;
   align-items: center;
   gap: 7px;
   margin-bottom: 5px;
-}
-.ctx-kind {
-  flex-shrink: 0;
-  font-family: var(--fontStack-monospace);
-  font-size: 10px;
-  color: var(--fgColor-muted);
-  background: var(--bgColor-neutral-muted);
-  border-radius: var(--borderRadius-small, 4px);
-  padding: 1px 5px;
 }
 .ctx-row-name {
   flex: 1;
@@ -234,7 +190,9 @@
 }
 .ctx-row-tok {
   flex-shrink: 0;
-  color: var(--fgColor-muted);
+  min-width: 34px;
+  text-align: right;
+  color: var(--fgColor-default);
 }
 .ctx-row-track {
   display: block;
@@ -250,12 +208,9 @@
   opacity: 0.6;
 }
 
-/* Breakdown rows carry no jump, so they are list items rather than buttons. */
+/* Composition rows carry no interaction, so they are plain list items. */
 .ctx-rows-plain > li {
   padding: 3px 6px;
-}
-.ctx-rows-plain .ctx-row-top {
-  margin-bottom: 5px;
 }
 .ctx-big-small {
   margin-bottom: 10px;

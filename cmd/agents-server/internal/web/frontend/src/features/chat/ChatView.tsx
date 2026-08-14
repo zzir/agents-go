@@ -14,14 +14,17 @@ import { useRecentProjects } from '@/lib/useRecentProjects';
 import { fc } from '@/lib/form';
 import { parseTaskNotification, DIAGNOSTIC_LABELS, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
 import { taskRetryable, type TaskState, type TaskViewState } from '@/lib/useAgentSocket';
-import { TaskListPanel, TaskDetailPanel } from '@/features/chat/TaskPanel';
+import { mergeBackground, type BackgroundItem, type SessionApproval, type WorkflowRunRow } from '@/lib/background';
+import { BackgroundListPanel, BackgroundDetailPanel } from '@/features/chat/BackgroundPanel';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
+import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
+import { SlashMenu } from '@/features/chat/SlashMenu';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { TraceDrawer, type TraceEventData, type TraceReveal } from '@/features/chat/TracePanel';
-import { ContextPanel, type ContextItem } from '@/features/chat/ContextPanel';
+import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { ArrowDownIcon, ArrowSwitchIcon, ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, CommentDiscussionIcon, PulseIcon, PlusIcon, DependabotIcon, CodeIcon, EyeIcon, AlertIcon, FileDirectoryIcon, LightBulbIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
@@ -29,11 +32,15 @@ import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
 
+// `task` is the detail lens over ONE piece of background work — taskId is a
+// task id or a workflow-execution id, whichever the list row was.
 export type InspectorPanel = null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string } | { kind: 'context' };
 
 interface ChatMessage {
   role: string;
   content?: string;
+  // The run that produced this row — what groups a workflow's turns together.
+  runId?: string;
   messageId?: string;
   // The durable entry id — what a branch switch and a regenerate aim at.
   entryId?: string;
@@ -807,14 +814,10 @@ const UserMessage = memo(function UserMessage({ content, traceRunId, onTrace, ms
     });
   }, [content]);
 
-  // A server-injected task notification renders as a compact system-style
-  // card, not a user bubble — the model still saw the full text; the UI clamps
-  // it because the complete result lives in the task's Inspector detail,
-  // which clicking the card opens.
-  // A server-injected task notification never renders in the timeline: the
-  // model reads it verbatim, but for the human the composer's task indicator
-  // and the Inspector are the (only) surfaces — an in-flow card duplicated
-  // them mid-conversation.
+  // A server-injected notification (a finished task or workflow) never renders
+  // in the timeline: the model reads it verbatim, but for the person the
+  // composer's indicators and the Tasks panel are the surfaces — an in-flow
+  // card duplicated them mid-conversation.
   if (parseTaskNotification(content)) return null;
 
   return (
@@ -938,6 +941,14 @@ interface ChatViewProps {
   sessionBinding?: SessionBinding | null;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
+  // Bumped by a workflow.updated event — refetches the strip and Tasks panel
+  // when a background sequence moves (a step has no parent run to flip
+  // `running`).
+  workflowTick: number;
+  // The composer's plan checkbox: seeded from the session, then this person's
+  // intent until the next message carries it to the server.
+  planning: boolean;
+  onPlanningChange: (planning: boolean) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. When
   // the session is bound to a terminal-capable sandbox its (sandbox, workdir)
@@ -950,6 +961,7 @@ export function ChatView({
   sessionId, sessionName, messages, entries, loaded, streaming, reasoning, running, compacting, diagnostics,
   traceRuns, liveRunId, liveStartedAt, liveAgentName, awaiting, tasks, taskView,
   onWatchTask, onUnwatchTask, onPatchTask,
+  workflowTick, planning, onPlanningChange,
   onSend, onCancel, onApprove, onReject, onFork, hasMore, loadingMore, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate, settingsReloadKey, bindingsVersion,
   sessionBinding, panel, onPanelChange, onTerminalOpen,
 }: ChatViewProps) {
@@ -988,7 +1000,6 @@ export function ChatView({
   // The span a Context panel jump asked the trace to open, and the counter that
   // makes repeating the same jump a fresh instruction.
   const [traceReveal, setTraceReveal] = useState<TraceReveal | null>(null);
-  const revealSeq = useRef(1);
   // A reveal is one instruction, not a standing state: once the trace panel
   // closes (or the session changes), a later manual open must not replay the
   // old jump's scroll.
@@ -1086,6 +1097,7 @@ export function ChatView({
     onSend(text, agentConfigId, sandboxId, sandboxView.effectiveWorkDir);
   }, [agentConfigId, sandboxId, workDir, sandboxConfigs, sessionBinding, sandboxView.effectiveWorkDir, onSend]);
 
+
   const handleCancel = useCallback((graceful?: boolean) => {
     onCancel(graceful);
     toast.info(graceful ? 'Stopping after the current turn…' : 'Run cancelled');
@@ -1099,6 +1111,9 @@ export function ChatView({
     if (!notif) return content;
     const labels = notif.items.map(it => it.label).filter(Boolean);
     const which = labels.length > 1 ? labels.join(', ') : (labels[0] || notif.taskId || '');
+    // A workflow's notification has no Task lines to parse: its first line
+    // already names the sequence and says how it ended.
+    if (!which) return notif.text.split('\n')[0];
     return 'task result: ' + which;
   };
 
@@ -1184,74 +1199,102 @@ export function ChatView({
     setTraceActiveRun(runId);
   }, [onPanelChange]);
 
-  // The span that produced a context item: a tool item joins on the call id its
-  // function span records, anything else on the response id of the generation
-  // span it came out of (spec §2.11e). Nothing else is worth guessing — matching
-  // on tool name and order breaks on the four identical calls that are the
-  // reason someone opened this panel.
-  const spanForItem = useCallback((item: ContextItem): TraceReveal | null => {
-    if (!item.run_id) return null;
-    for (const ev of traceRuns[item.run_id] || []) {
-      if (ev.kind !== 'span' || !ev.span_id || !ev.data) continue;
-      const joined = ev.type === 'function' ? ev.data.call_id : ev.type === 'generation' ? ev.data.response_id : null;
-      if (!joined) continue;
-      if (joined === item.anchor || (item.response_id && joined === item.response_id)) {
-        return { runId: item.run_id, spanId: ev.span_id, nonce: 0 };
-      }
-    }
-    return null;
-  }, [traceRuns]);
-
-  const openItemTrace = useCallback((item: ContextItem) => {
-    const found = spanForItem(item);
-    if (!found) return;
-    onPanelChange({ kind: 'trace' });
-    setTraceActiveRun(found.runId);
-    setTraceReveal({ ...found, nonce: revealSeq.current++ });
-  }, [spanForItem, onPanelChange]);
-
   const openTaskDetail = useCallback((taskId: string) => {
     onPanelChange({ kind: 'task', taskId });
   }, [onPanelChange]);
 
-  const stopTask = useCallback((taskId: string) => {
-    (api.tasks.stop(taskId) as Promise<{ status?: string }>)
-      .then(info => {
-        // Apply the confirmed state directly: after a restart the hub has no
-        // record of the run, so no run.cancelled broadcast will arrive.
-        if (sessionId && info?.status) {
-          onPatchTask?.(sessionId, taskId, { status: info.status as TaskStatus, pendingCallId: undefined, pendingToolName: undefined });
-        }
-      })
-      .catch((e: Error) => toast.error(e.message || 'Stop failed'));
+  // The session's workflow executions, and the decisions its background work is
+  // waiting on. A step runs in a hidden child session, so the parent's `running`
+  // does NOT flip when one starts or pauses — workflowTick (a workflow.updated
+  // nudge from that step's run) is what carries a mid-sequence move here; the
+  // `running` flip still covers the start_workflow turn and the wake-up.
+  const { data: workflowRuns, reload: reloadWorkflowRuns } = useApi<WorkflowRunRow[]>(
+    () => (sessionId ? api.sessions.workflowRuns(sessionId) : Promise.resolve([])) as Promise<WorkflowRunRow[]>,
+    [sessionId, running, workflowTick],
+  );
+  const { data: backgroundApprovals } = useApi<SessionApproval[]>(
+    () => (sessionId ? api.sessions.approvals(sessionId) : Promise.resolve([])) as Promise<SessionApproval[]>,
+    [sessionId, running, workflowTick],
+  );
+  // Tasks and workflow executions as one list: the strip above the composer,
+  // the Tasks panel and the top bar's gate all read it. The runs are filtered
+  // to this session: useApi is a single slot, so during a switch it still
+  // holds the previous session's rows (with live Approve buttons). Approvals
+  // only surface through a matching run, so filtering runs covers both.
+  const backgroundItems = useMemo(
+    () => mergeBackground(tasks, (workflowRuns || []).filter(wr => wr.parent_session_id === sessionId), backgroundApprovals),
+    [tasks, workflowRuns, backgroundApprovals, sessionId],
+  );
+  const inspectedItem = panel?.kind === 'task' ? backgroundItems.find(it => it.id === panel.taskId) : undefined;
+
+  // Stop and retry dispatch on the kind — different endpoints are the only
+  // thing the merged list still has to tell the two apart for.
+  const stopWork = useCallback(async (item: BackgroundItem) => {
+    try {
+      if (item.kind === 'workflow') {
+        await api.workflowRuns.stop(item.id);
+        reloadWorkflowRuns();
+        return;
+      }
+      const info = await (api.tasks.stop(item.id) as Promise<{ status?: string }>);
+      // Apply the confirmed state directly: after a restart the hub has no
+      // record of the run, so no run.cancelled broadcast will arrive.
+      if (sessionId && info?.status) {
+        onPatchTask?.(sessionId, item.id, { status: info.status as TaskStatus, pendingCallId: undefined, pendingToolName: undefined });
+      }
+    } catch (e) {
+      toast.error((e as Error).message || 'Stop failed');
+    }
+  }, [sessionId, onPatchTask, reloadWorkflowRuns]);
+
+  // By id, because the spawn card in the transcript has a task and nothing else.
+  const retryTask = useCallback(async (taskId: string) => {
+    try {
+      const info = await (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number; max_attempts?: number }>);
+      // The confirmed state, applied without waiting for the broadcast — the
+      // same reason stopWork does: the answer is already in hand, and a button
+      // that stays on "failed" invites a second click that will be refused. The
+      // failed attempt's summary goes with it.
+      if (sessionId && info?.status) {
+        onPatchTask?.(sessionId, taskId, {
+          status: info.status as TaskStatus, attempt: info.attempt,
+          maxAttempts: info.max_attempts, summary: undefined,
+        });
+      }
+    } catch (e) {
+      toast.error((e as Error).message || 'Retry failed');
+    }
   }, [sessionId, onPatchTask]);
 
-  const retryTask = useCallback((taskId: string) => {
-    (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number; max_attempts?: number }>)
-      .then(info => {
-        // The confirmed state, applied without waiting for the broadcast — the
-        // same reason stopTask does: the answer is already in hand, and a
-        // button that stays on "failed" invites a second click that will be
-        // refused. The failed attempt's summary goes with it.
-        if (sessionId && info?.status) {
-          onPatchTask?.(sessionId, taskId, {
-            status: info.status as TaskStatus, attempt: info.attempt,
-            maxAttempts: info.max_attempts, summary: undefined,
-          });
-        }
-      })
-      .catch((e: Error) => toast.error(e.message || 'Retry failed'));
-  }, [sessionId, onPatchTask]);
+  const retryWork = useCallback(async (item: BackgroundItem) => {
+    if (item.kind === 'task') return retryTask(item.id);
+    try {
+      await api.workflowRuns.retry(item.id);
+      reloadWorkflowRuns();
+    } catch (e) {
+      toast.error((e as Error).message || 'Retry failed');
+    }
+  }, [retryTask, reloadWorkflowRuns]);
 
-  // The task-detail lens is live: tell the socket layer which task to tail.
-  const inspectedTaskId = panel?.kind === 'task' ? panel.taskId : null;
+  // Workflow only: hides the failed bar without giving up the row (the Tasks
+  // panel keeps it, and a retry un-dismisses server-side).
+  const dismissWork = useCallback(async (item: BackgroundItem) => {
+    try {
+      await api.workflowRuns.dismiss(item.id);
+      reloadWorkflowRuns();
+    } catch (e) {
+      toast.error((e as Error).message || 'Dismiss failed');
+    }
+  }, [reloadWorkflowRuns]);
+
+  // The detail lens is live: tell the socket layer which child session to tail.
+  const inspectedChild = inspectedItem?.childSessionId;
+  const inspectedId = inspectedItem?.id;
   useEffect(() => {
-    if (!sessionId || !inspectedTaskId || !onWatchTask || !onUnwatchTask) return;
-    const child = tasks?.[inspectedTaskId]?.childSessionId;
-    if (!child) return;
-    onWatchTask(sessionId, inspectedTaskId, child);
+    if (!sessionId || !inspectedId || !inspectedChild || !onWatchTask || !onUnwatchTask) return;
+    onWatchTask(sessionId, inspectedId, inspectedChild);
     return () => onUnwatchTask(sessionId);
-  }, [sessionId, inspectedTaskId, onWatchTask, onUnwatchTask, tasks?.[inspectedTaskId || '']?.childSessionId]);
+  }, [sessionId, inspectedId, inspectedChild, onWatchTask, onUnwatchTask]);
 
   // Runs that have a user message in this conversation — gates the trace
   // panel's jump-to-message control.
@@ -1273,81 +1316,6 @@ export function ChatView({
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     flashMessage(el);
   }, []);
-
-  // The exchange an entry belongs to: the nearest RENDERED user message at or
-  // before it on the branch. Assistant text and reasoning are rendered as
-  // parts of a turn and have no node of their own, so their question stands in
-  // for them. Task notifications are skipped: they never render (UserMessage
-  // returns null for them), so a wake-up run's items keep walking back to the
-  // human question that started the chain.
-  const exchangeAnchorOf = useCallback((entryId: string): string | null => {
-    const list = entries || [];
-    let i = list.findIndex(e => e.entry_id === entryId);
-    if (i < 0) return null;
-    for (; i >= 0; i--) {
-      if (list[i].role === 'user' && list[i].entry_id && !parseTaskNotification(list[i].content || '')) {
-        return list[i].entry_id!;
-      }
-    }
-    return null;
-  }, [entries]);
-
-  // Context panel → the item it measured. The anchor is a tool call id (tool
-  // cards, which may be inside a collapsed step group) or an entry id (user
-  // messages); anything else lands on its exchange, and only a jump with
-  // nothing at all to aim at falls back to the run.
-  const jumpToContextItem = useCallback((item: ContextItem) => {
-    const anchor = item.anchor;
-    const find = (id?: string | null) => (id
-      ? document.querySelector(`.chat-messages [data-anchor-id="${CSS.escape(id)}"]`)
-      : null);
-    const land = (el: Element) => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      flashMessage(el);
-    };
-    const el = find(anchor);
-    if (el) {
-      land(el);
-      return;
-    }
-    // A tool card inside a collapsed step group is not rendered at all. Open
-    // the group that claims the id, then land on the card it just mounted.
-    const toggle = anchor
-      ? document.querySelector<HTMLElement>(`.chat-messages .process-group[data-anchor-ids~="${CSS.escape(anchor)}"] .process-group-toggle`)
-      : null;
-    if (toggle) {
-      if (!toggle.classList.contains('expanded')) toggle.click();
-      // A discrete-event click may flush the expansion synchronously — the
-      // card can already be there. Only otherwise wait for it to mount, with
-      // a bound; the group itself is the last resort, because unlike the
-      // run's user message it is on screen for certain (a wake-up run's user
-      // message is a task notification, which never renders).
-      const now = find(anchor);
-      if (now) {
-        land(now);
-        return;
-      }
-      const obs = new MutationObserver(() => {
-        const opened = find(anchor);
-        if (!opened) return;
-        obs.disconnect();
-        window.clearTimeout(timer);
-        land(opened);
-      });
-      const timer = window.setTimeout(() => {
-        obs.disconnect();
-        land(toggle.closest('.process-group') || toggle);
-      }, 500);
-      obs.observe(document.body, { childList: true, subtree: true });
-      return;
-    }
-    const exchange = anchor ? find(exchangeAnchorOf(anchor)) : null;
-    if (exchange) {
-      land(exchange);
-      return;
-    }
-    if (item.run_id) jumpToRun(item.run_id);
-  }, [jumpToRun, exchangeAnchorOf]);
 
   // TOC rail: one entry per user prompt; click scrolls to the message. The
   // upward smooth scroll trips the scroll hook's moved-up intent detection,
@@ -1441,7 +1409,7 @@ export function ChatView({
       sessionId={sessionId}
       panel={panel}
       onPanelChange={onPanelChange}
-      tasks={tasks}
+      backgroundCount={backgroundItems.length}
       terminalEnabled={!!onTerminalOpen && !!sandboxConfigs?.some(s => s.terminal)}
       onTerminalOpen={onTerminalOpen
         ? () => {
@@ -1495,6 +1463,7 @@ export function ChatView({
           aria-label="Add context"
           disabled
         />
+        <SlashMenu planning={planning} onChange={onPlanningChange} running={running} />
         {/* Bound sessions show nothing here — the binding lives in the top
             bar's badge. Before binding the picker offers PROJECTS — recent
             (directory, sandbox) pairs aggregated from bound sessions — because
@@ -1642,6 +1611,74 @@ export function ChatView({
     </>
   );
 
+  // One transcript row. Extracted from the render so the workflow grouping can
+  // wrap a span of them without the map body moving.
+  const renderMessage = (m: ChatMessage, i: number) => {
+    if (m.role === 'turn') {
+        const isLive = running && i === messages.length - 1;
+        let prevUserContent: string | null = null;
+        let prevUserEntryId: string | undefined;
+        for (let j = i - 1; j >= 0; j--) {
+          if (messages[j].role === 'user') {
+            prevUserContent = messages[j].content ?? null;
+            prevUserEntryId = messages[j].entryId;
+            break;
+          }
+        }
+        const rid = turnRunMap[i];
+        const turnDuration = rid && traceRuns[rid]
+          ? traceRuns[rid].find(e => e.kind === 'span' && e.duration)?.duration
+          : undefined;
+        return (
+          <TurnBlock
+            key={entryKey(m, i, 'turn')}
+            onInspectTask={openTaskDetail}
+            onRetryTask={retryTask}
+            retryableByCallId={retryableByCallId}
+            parts={m.parts || []}
+            streaming={isLive ? streaming : null}
+            reasoning={isLive ? reasoning : null}
+            isLive={isLive}
+            liveAgentName={isLive ? liveAgentName : null}
+            onApprove={onApprove}
+            onReject={onReject}
+            regenMessageId={prevUserEntryId || null}
+            regenContent={prevUserContent}
+            onRegenerate={onRegenerate ? handleRegen : undefined}
+            running={running}
+            compacting={isLive ? compacting : false}
+            diagnostics={isLive ? diagnostics : undefined}
+            duration={turnDuration}
+            liveStartedAt={isLive ? liveStartedAt : undefined}
+            messageId={m.messageId}
+            branches={m.branches}
+            onSwitchBranch={onSwitchBranch}
+            onFork={onFork}
+            liveTaskStatusByCallId={liveTaskStatusByCallId}
+            liveTaskLabelByCallId={liveTaskLabelByCallId}
+            taskLabelById={taskLabelById}
+          />
+        );
+      }
+      if (m.role === 'user') {
+        const rid = userRunMap[i];
+        return (
+          <UserMessage
+            key={entryKey(m, i, 'user')}
+            content={m.content || ''}
+            traceRunId={rid || null}
+            onTrace={openTrace}
+            msgIdx={i}
+            entryId={m.entryId}
+          />
+        );
+      }
+      if (m.role === 'compaction') {
+        return <CompactionCard key={entryKey(m, i, 'compaction')} {...m} />;
+      }
+      return <MessageBubble key={entryKey(m, i, 'msg')} role={m.role} content={m.content || ''} />;
+  };
+
   const isEmpty = loaded && messages.length === 0;
 
   if (!loaded && messages.length === 0) {
@@ -1661,6 +1698,7 @@ export function ChatView({
           {topBar}
           <div className="chat-content chat-content-centered">
             <Greeting key={`greeting-${sessionId}`} />
+            <WorkflowStrip items={backgroundItems} onOpen={openTaskDetail} onApprove={onApprove} onReject={onReject} onStop={stopWork} onRetry={retryWork} onDismiss={dismissWork} />
             <MessageInput
               key={`input-${sessionId}`}
               sessionId={sessionId}
@@ -1689,71 +1727,7 @@ export function ChatView({
               </Button>
             </div>
           )}
-          {messages.map((m, i) => {
-            if (m.role === 'turn') {
-              const isLive = running && i === messages.length - 1;
-              let prevUserContent: string | null = null;
-              let prevUserEntryId: string | undefined;
-              for (let j = i - 1; j >= 0; j--) {
-                if (messages[j].role === 'user') {
-                  prevUserContent = messages[j].content ?? null;
-                  prevUserEntryId = messages[j].entryId;
-                  break;
-                }
-              }
-              const rid = turnRunMap[i];
-              const turnDuration = rid && traceRuns[rid]
-                ? traceRuns[rid].find(e => e.kind === 'span' && e.duration)?.duration
-                : undefined;
-              return (
-                <TurnBlock
-                  key={entryKey(m, i, 'turn')}
-                  onInspectTask={openTaskDetail}
-                  onRetryTask={retryTask}
-                  retryableByCallId={retryableByCallId}
-                  parts={m.parts || []}
-                  streaming={isLive ? streaming : null}
-                  reasoning={isLive ? reasoning : null}
-                  isLive={isLive}
-                  liveAgentName={isLive ? liveAgentName : null}
-                  onApprove={onApprove}
-                  onReject={onReject}
-                  regenMessageId={prevUserEntryId || null}
-                  regenContent={prevUserContent}
-                  onRegenerate={onRegenerate ? handleRegen : undefined}
-                  running={running}
-                  compacting={isLive ? compacting : false}
-                  diagnostics={isLive ? diagnostics : undefined}
-                  duration={turnDuration}
-                  liveStartedAt={isLive ? liveStartedAt : undefined}
-                  messageId={m.messageId}
-                  branches={m.branches}
-                  onSwitchBranch={onSwitchBranch}
-                  onFork={onFork}
-                  liveTaskStatusByCallId={liveTaskStatusByCallId}
-                  liveTaskLabelByCallId={liveTaskLabelByCallId}
-                  taskLabelById={taskLabelById}
-                />
-              );
-            }
-            if (m.role === 'user') {
-              const rid = userRunMap[i];
-              return (
-                <UserMessage
-                  key={entryKey(m, i, 'user')}
-                  content={m.content || ''}
-                  traceRunId={rid || null}
-                  onTrace={openTrace}
-                  msgIdx={i}
-                  entryId={m.entryId}
-                />
-              );
-            }
-            if (m.role === 'compaction') {
-              return <CompactionCard key={entryKey(m, i, 'compaction')} {...m} />;
-            }
-            return <MessageBubble key={entryKey(m, i, 'msg')} role={m.role} content={m.content || ''} />;
-          })}
+          {messages.map(renderMessage)}
         </div>
 
         {!isSticky && (
@@ -1763,7 +1737,7 @@ export function ChatView({
         )}
         <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
         </div>
-
+        <WorkflowStrip items={backgroundItems} onOpen={openTaskDetail} onApprove={onApprove} onReject={onReject} onStop={stopWork} onRetry={retryWork} onDismiss={dismissWork} />
         <MessageInput
           key={`input-${sessionId}`}
           sessionId={sessionId}
@@ -1797,33 +1771,30 @@ export function ChatView({
           // branch switch included, which running alone would miss.
           reloadKey={entries}
           onClose={() => onPanelChange(null)}
-          onJump={jumpToContextItem}
-          onOpenTrace={openItemTrace}
-          hasTrace={item => !!spanForItem(item)}
           onCompact={onCompact}
         />
       )}
       {panel?.kind === 'tasks' && (
-        <TaskListPanel
-          tasks={tasks || {}}
-          onOpenTask={taskId => onPanelChange({ kind: 'task', taskId })}
+        <BackgroundListPanel
+          items={backgroundItems}
+          onOpen={openTaskDetail}
           onClose={() => onPanelChange(null)}
           onApprove={onApprove}
           onReject={onReject}
-          onStop={stopTask}
-          onRetry={retryTask}
+          onStop={stopWork}
+          onRetry={retryWork}
         />
       )}
-      {panel?.kind === 'task' && tasks?.[panel.taskId] && (
-        <TaskDetailPanel
-          task={tasks[panel.taskId]}
-          view={taskView && taskView.taskId === panel.taskId ? taskView : null}
+      {panel?.kind === 'task' && inspectedItem && (
+        <BackgroundDetailPanel
+          item={inspectedItem}
+          view={taskView && taskView.taskId === inspectedItem.id ? taskView : null}
           onBack={() => onPanelChange({ kind: 'tasks' })}
           onClose={() => onPanelChange(null)}
           onApprove={onApprove}
           onReject={onReject}
-          onStop={stopTask}
-          onRetry={retryTask}
+          onStop={stopWork}
+          onRetry={retryWork}
         />
       )}
     </div>

@@ -1,15 +1,21 @@
 import { useState, useEffect, useMemo, memo } from 'react';
 import { Button, IconButton } from '@primer/react';
-import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon } from '@primer/octicons-react';
+import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
 import { useAsyncMarkdown } from '@/lib/markdown';
-import { taskRetryable, type TaskState, type TaskViewState } from '@/lib/useAgentSocket';
+import type { BackgroundItem } from '@/lib/background';
+import type { TaskViewState } from '@/lib/useAgentSocket';
 import type { TurnPart } from '@/lib/timeline';
 
-// statusDot carries the task state as color (with the words in the
+// This is the panel behind the top bar's Tasks button. It holds both kinds of
+// background work — spawned tasks and workflow executions — because to a
+// person they are one thing: work happening in a session they are not in. The
+// UI keeps saying "Tasks"; a second word would be a second concept.
+
+// statusDot carries the state as color (with the words in the
 // tooltip/aria-label): in the list the group headers name the state, in the
 // detail header the action buttons spell it out. Live states pulse, same
 // rhythm as the trace live dot.
@@ -29,40 +35,42 @@ function fmtDuration(ms: number): string {
   return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') + 'm';
 }
 
-// taskDuration: live tasks tick against now; terminal tasks are fixed at
-// their finish time (updatedAt).
-function taskDuration(t: TaskState, now: number): string {
-  if (!t.createdAt) return '';
-  const active = t.status === 'working' || t.status === 'input_required';
-  const end = active ? now : (t.updatedAt || 0);
-  return end > t.createdAt ? fmtDuration(end - t.createdAt) : '';
+function isLive(status: string): boolean {
+  return status === 'working' || status === 'input_required';
+}
+
+// itemDuration: live work ticks against now; finished work is fixed at its
+// finish time (updatedAt).
+function itemDuration(it: BackgroundItem, now: number): string {
+  if (!it.createdAt) return '';
+  const end = isLive(it.status) ? now : (it.updatedAt || 0);
+  return end > it.createdAt ? fmtDuration(end - it.createdAt) : '';
 }
 
 // The list's group order: live work first, then terminal states by kind.
-const TASK_GROUPS: Array<{ title: string; match: (s: TaskState['status']) => boolean }> = [
+const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boolean }> = [
   { title: 'Active', match: s => s === 'working' || s === 'input_required' },
   { title: 'Completed', match: s => s === 'completed' },
   { title: 'Failed', match: s => s === 'failed' },
   { title: 'Cancelled', match: s => s === 'cancelled' },
 ];
 
-interface TaskListPanelProps {
-  tasks: Record<string, TaskState>;
-  onOpenTask: (taskId: string) => void;
+interface BackgroundListPanelProps {
+  items: BackgroundItem[];
+  onOpen: (id: string) => void;
   onClose: () => void;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
-  onStop: (taskId: string) => void;
-  onRetry: (taskId: string) => void;
+  onStop: (item: BackgroundItem) => void;
+  onRetry: (item: BackgroundItem) => void;
 }
 
-// TaskListPanel is the Inspector's "tasks" lens: tasks grouped by state
-// (Active first, then terminal kinds), newest first inside each group. State
-// is the row's leading dot + its group header; the right-hand label is the
-// task's duration (ticking while live). Rows open the detail lens.
-export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject, onStop, onRetry }: TaskListPanelProps) {
-  const list = Object.values(tasks);
-  const hasActive = list.some(t => t.status === 'working' || t.status === 'input_required');
+// BackgroundListPanel is the Inspector's "tasks" lens: background work grouped
+// by state (Active first, then terminal kinds), newest first inside each group.
+// State is the row's leading dot + its group header; the right-hand label is
+// the duration (ticking while live). Rows open the detail lens.
+export function BackgroundListPanel({ items, onOpen, onClose, onApprove, onReject, onStop, onRetry }: BackgroundListPanelProps) {
+  const hasActive = items.some(it => isLive(it.status));
   // Live durations tick once a second while anything is active.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -70,48 +78,50 @@ export function TaskListPanel({ tasks, onOpenTask, onClose, onApprove, onReject,
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [hasActive]);
-  const groups = useMemo(() => TASK_GROUPS
-    .map(g => ({ title: g.title, items: list.filter(t => g.match(t.status)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) }))
-    .filter(g => g.items.length > 0), [list]);
+  const groups = useMemo(() => GROUPS
+    .map(g => ({ title: g.title, items: items.filter(it => g.match(it.status)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) }))
+    .filter(g => g.items.length > 0), [items]);
 
   return (
-    <SidePanel icon={StackIcon} title="Tasks" count={list.length} onClose={onClose} storageKey="inspectorWidth">
-      {list.length === 0 && <div className="trace-empty">No background tasks in this session.</div>}
+    <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose} storageKey="inspectorWidth">
+      {items.length === 0 && <div className="trace-empty">No background work in this session.</div>}
       {/* One line per row by default (the full result lives in the detail
-          lens). Live tasks add one action line — activity or Approve/Reject
+          lens). Live rows add one action line — activity or Approve/Reject
           on the left, Stop isolated on the right. failed is the only terminal
           state that keeps a second line: its error excerpt explains itself
           without a click. */}
       {groups.map(g => (
         <div key={g.title} className="task-group">
           <div className="task-group-title">{g.title}</div>
-          {g.items.map(t => (
-            <div key={t.taskId} className="task-row" onClick={() => onOpenTask(t.taskId)} role="button" tabIndex={0}
-              onKeyDown={e => { if (e.key === 'Enter') onOpenTask(t.taskId); }}>
+          {g.items.map(it => (
+            <div key={it.id} className="task-row" onClick={() => onOpen(it.id)} role="button" tabIndex={0}
+              onKeyDown={e => { if (e.key === 'Enter') onOpen(it.id); }}>
               <div className="task-row-head">
-                {statusDot(t.status)}
-                <span className="task-row-label">{t.label || t.taskId.slice(0, 8)}</span>
-                {taskDuration(t, now) && <span className="task-row-duration">{taskDuration(t, now)}</span>}
+                {statusDot(it.status)}
+                {/* A sequence is marked; a task is the unmarked default. */}
+                {it.kind === 'workflow' && <WorkflowIcon size={12} className="task-row-kind" />}
+                <span className="task-row-label">{it.label}</span>
+                {itemDuration(it, now) && <span className="task-row-duration">{itemDuration(it, now)}</span>}
               </div>
-              {t.status === 'failed' && t.summary && <div className="task-row-error">{t.summary}</div>}
-              {t.status === 'failed' && ((t.attempt || 1) > 1 || taskRetryable(t)) && (
+              {it.status === 'failed' && it.error && <div className="task-row-error">{it.error}</div>}
+              {it.status === 'failed' && ((it.attempt || 1) > 1 || it.retryable) && (
                 <div className="task-row-actions" onClick={e => e.stopPropagation()}>
-                  {(t.attempt || 1) > 1 && <span className="task-row-activity">attempt {t.attempt}</span>}
+                  {(it.attempt || 1) > 1 && <span className="task-row-activity">attempt {it.attempt}</span>}
                   {/* Derived from the ceiling the server sends, so the offer
                       follows the status: an exhausted task shows nothing. */}
-                  {taskRetryable(t) && <Button size="small" className="task-row-stop" onClick={() => onRetry(t.taskId)}>Retry</Button>}
+                  {it.retryable && <Button size="small" className="task-row-stop" onClick={() => onRetry(it)}>Retry</Button>}
                 </div>
               )}
-              {(t.status === 'working' || t.status === 'input_required') && (
+              {isLive(it.status) && (
                 <div className="task-row-actions" onClick={e => e.stopPropagation()}>
-                  {t.status === 'input_required' && t.pendingCallId && onApprove && onReject && (
+                  {it.status === 'input_required' && it.pendingCallId && onApprove && onReject && (
                     <>
-                      <Button size="small" variant="primary" onClick={() => onApprove(t.pendingCallId!)}>Approve</Button>
-                      <Button size="small" variant="danger" onClick={() => onReject(t.pendingCallId!)}>Reject</Button>
+                      <Button size="small" variant="primary" onClick={() => onApprove(it.pendingCallId!)}>Approve</Button>
+                      <Button size="small" variant="danger" onClick={() => onReject(it.pendingCallId!)}>Reject</Button>
                     </>
                   )}
-                  {t.status === 'working' && t.lastTool && <span className="task-row-activity">{t.lastTool}</span>}
-                  <Button size="small" className="task-row-stop" onClick={() => onStop(t.taskId)}>Stop</Button>
+                  {it.activity && <span className="task-row-activity">{it.activity}</span>}
+                  <Button size="small" className="task-row-stop" onClick={() => onStop(it)}>Stop</Button>
                 </div>
               )}
             </div>
@@ -128,32 +138,34 @@ const MdBlock = memo(function MdBlock({ text }: { text: string }) {
   return <div className="markdown-body task-view-text" dangerouslySetInnerHTML={{ __html: html }} />;
 });
 
-interface TaskDetailPanelProps {
-  task: TaskState;
+interface BackgroundDetailPanelProps {
+  item: BackgroundItem;
   view: TaskViewState | null;
   onBack: () => void;
   onClose: () => void;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
-  onStop: (taskId: string) => void;
-  onRetry: (taskId: string) => void;
+  onStop: (item: BackgroundItem) => void;
+  onRetry: (item: BackgroundItem) => void;
 }
 
-// TaskDetailPanel is the Inspector's "task" lens: the child session's
-// transcript (read-only, live-tailing while the task runs) and its trace.
-export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReject, onStop, onRetry }: TaskDetailPanelProps) {
+// BackgroundDetailPanel is the Inspector's "task" lens: the child session's
+// transcript (read-only, live-tailing while the work runs) and its trace. For a
+// workflow that transcript is every step's turns in order — the sequence shares
+// one session, which is the point of it.
+export function BackgroundDetailPanel({ item, view, onBack, onClose, onApprove, onReject, onStop, onRetry }: BackgroundDetailPanelProps) {
   const [tab, setTab] = useState<'transcript' | 'trace'>('transcript');
   const [traceExpanded, setTraceExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
-  const live = task.status === 'working' || task.status === 'input_required';
+  const live = isLive(item.status);
   // One segment per RUN — a retry starts a new run on the same child session,
-  // and its spans must not interleave with the previous run's on one
-  // waterfall. Group order is insertion order (load is row order, live runs
-  // append), so segments read oldest first; the labels only appear once there
-  // is more than one. "run N", NOT "attempt N": the index counts runs that
-  // left spans, and an attempt that died before its first span (a preflight
-  // failure) leaves no group — numbering the survivors as attempts would
-  // misname them.
+  // and a workflow's steps are runs in their own right, so their spans must not
+  // interleave on one waterfall. Group order is insertion order (load is row
+  // order, live runs append), so segments read oldest first; the labels only
+  // appear once there is more than one. "run N", NOT "attempt N": the index
+  // counts runs that left spans, and an attempt that died before its first span
+  // (a preflight failure) leaves no group — numbering the survivors as attempts
+  // would misname them.
   const { traceSegments, spanTotal } = useMemo(() => {
     const entries = Object.entries(view?.traceRuns || {});
     const segments = entries.map(([runId, events], i) => ({
@@ -165,28 +177,29 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
   }, [view?.traceRuns]);
 
   return (
-    <SidePanel icon={StackIcon} title={task.label || task.taskId.slice(0, 8)} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={item.kind === 'workflow' ? WorkflowIcon : StackIcon} title={item.label} onClose={onClose} storageKey="inspectorWidth">
       <div className="task-detail-head">
         <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" onClick={onBack} />
-        {statusDot(task.status)}
+        {statusDot(item.status)}
+        {item.activity && <span className="task-row-activity">{item.activity}</span>}
         <div className="task-detail-spacer" />
-        {/* Full id, right-aligned; only the action buttons (live tasks) may
+        {/* Full id, right-aligned; only the action buttons (live work) may
             compress it — then the text ellipsizes, never the buttons. */}
-        <button className="task-detail-id" title="Copy task id" onClick={() => {
-          navigator.clipboard.writeText(task.taskId).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+        <button className="task-detail-id" title="Copy id" onClick={() => {
+          navigator.clipboard.writeText(item.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
         }}>
-          <span className="task-detail-id-text">{task.taskId}</span> {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+          <span className="task-detail-id-text">{item.id}</span> {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
         </button>
-        {task.status === 'input_required' && task.pendingCallId && onApprove && onReject && (
+        {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
           <>
-            <Button size="small" variant="primary" onClick={() => onApprove(task.pendingCallId!)}>Approve</Button>
-            <Button size="small" variant="danger" onClick={() => onReject(task.pendingCallId!)}>Reject</Button>
+            <Button size="small" variant="primary" onClick={() => onApprove(item.pendingCallId!)}>Approve</Button>
+            <Button size="small" variant="danger" onClick={() => onReject(item.pendingCallId!)}>Reject</Button>
           </>
         )}
-        {live && <Button size="small" onClick={() => onStop(task.taskId)}>Stop</Button>}
+        {live && <Button size="small" onClick={() => onStop(item)}>Stop</Button>}
         {/* The transcript below is what a retry resumes from, so the action
             belongs beside it. */}
-        {taskRetryable(task) && <Button size="small" onClick={() => onRetry(task.taskId)}>Retry</Button>}
+        {item.retryable && <Button size="small" onClick={() => onRetry(item)}>Retry</Button>}
       </div>
       <div className="task-detail-tabs">
         <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
@@ -249,9 +262,9 @@ export function TaskDetailPanel({ task, view, onBack, onClose, onApprove, onReje
             <div className="trace-empty">No trace events yet.</div>
           ) : (
             <TraceRun
-              runId={task.taskId}
+              runId={item.id}
               segments={traceSegments}
-              label={task.label || task.taskId.slice(0, 8)}
+              label={item.label}
               isLive={live}
               isExpanded={traceExpanded}
               onToggle={() => setTraceExpanded(v => !v)}

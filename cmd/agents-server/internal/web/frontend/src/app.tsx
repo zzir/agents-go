@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { TextInput, Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
 import {
-  DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon,
+  DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon, CpuIcon, PlugIcon, WorkflowIcon,
   ContainerIcon, DatabaseIcon, GearIcon,
   XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
 } from '@primer/octicons-react';
@@ -73,18 +73,24 @@ function GlobalToast() {
   );
 }
 
+// Ordered so each section builds on the ones above it: a provider is what an
+// agent talks to, an agent is what a workflow step runs, then what an agent
+// attaches (tools, execution, state, the checks around it). General last.
 const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }> }[] = [
+  { key: 'providers',  label: 'Providers',  icon: CpuIcon,        load: () => import('@/features/providers/ProviderPanel') },
   { key: 'agents',     label: 'Agents',     icon: DependabotIcon, load: () => import('@/features/agents/AgentConfigPanel') },
+  { key: 'workflows',  label: 'Workflows',  icon: WorkflowIcon,   load: () => import('@/features/workflows/WorkflowPanel') },
   { key: 'mcp',        label: 'MCP',        icon: McpIcon,        load: () => import('@/features/mcp/McpServerPanel') },
-  { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
   { key: 'skills',     label: 'Skills',     icon: ZapIcon,        load: () => import('@/features/skills/SkillsPanel') },
   { key: 'sandbox',    label: 'Sandbox',    icon: ContainerIcon,  load: () => import('@/features/sandbox/SandboxPanel') },
   { key: 'memory',     label: 'Memory',     icon: DatabaseIcon,   load: () => import('@/features/memory/MemoryPanel') },
+  { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
+  { key: 'plugins',    label: 'Plugins',    icon: PlugIcon,       load: () => import('@/features/plugins/PluginsPanel') },
   { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
 ];
 
 function SettingsDialog({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState('agents');
+  const [tab, setTab] = useState('providers');
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
 
   useEffect(() => {
@@ -185,6 +191,10 @@ function nextClientMsgId(): string { return 'c' + (++clientMsgSeq); }
 
 const MemoizedChatView = memo(ChatView);
 
+// PLAN_COMMAND is the one slash command the composer takes: a prefix that puts
+// the session into plan mode before the request it leads runs.
+const PLAN_COMMAND = /^\/plan\b[ \t]*/;
+
 function panelKey(p: InspectorPanel): string {
   if (!p) return '';
   if (p.kind === 'task') return `task/${p.taskId}`;
@@ -229,12 +239,27 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
+  // Bumped by workflow.updated: the chat's workflow strip and Tasks panel
+  // refetch when a background sequence moves.
+  const [workflowTick, setWorkflowTick] = useState(0);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   // The active session's display name and sandbox binding. Captured from the
   // existence-check fetch below and kept fresh by the title_updated /
   // sandbox_bound events; the id guards against a stale response landing after
   // a session switch.
   const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; sandboxId: string; workDir: string } | null>(null);
+  // What the composer's plan checkbox shows: seeded from the session, then the
+  // person's own intent until the next message carries it. planDirty marks a
+  // hand toggle not yet delivered — only then does a send carry a `plan` flag;
+  // an untouched box sends nothing, so a re-sent stale value can't re-arm a
+  // session the server just unlocked (plan approved between run end and the
+  // refetch).
+  const [planning, setPlanning] = useState(false);
+  const [planDirty, setPlanDirty] = useState(false);
+  const handlePlanningChange = useCallback((v: boolean) => {
+    setPlanning(v);
+    setPlanDirty(true);
+  }, []);
   // Bindings announced over the socket, per session. The session GET races the
   // session.sandbox_bound broadcast (meta is cleared before the fetch, so the
   // event can arrive while prev is null), and a binding is immutable once set
@@ -343,6 +368,11 @@ export default function App() {
 
   useEffect(() => {
     setSessionMeta(null);
+    // The checkbox belongs to the session: disarm on every switch (and on New
+    // Chat) so the previous session's armed state can't leak into this one
+    // during the window before the GET below seeds the real phase.
+    setPlanning(false);
+    setPlanDirty(false);
     if (!activeSession) return;
     let cancelled = false;
     // The session id can come from the URL hash and may not exist (stale link,
@@ -354,7 +384,7 @@ export default function App() {
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
-        const s = sess as { name?: string; sandbox_id?: string; work_dir?: string };
+        const s = sess as { name?: string; sandbox_id?: string; work_dir?: string; planning?: boolean };
         // A binding announced while this fetch was in flight wins: the fetch
         // read the row before the bind landed, and bindings never change.
         const announced = announcedBindings.current[activeSession];
@@ -364,6 +394,7 @@ export default function App() {
           sandboxId: announced ? announced.sandboxId : (s?.sandbox_id || ''),
           workDir: announced ? announced.workDir : (s?.work_dir || ''),
         });
+        setPlanning(!!s?.planning);
         tryLoad();
       })
       .catch((e: { status?: number }) => {
@@ -373,6 +404,22 @@ export default function App() {
       });
     return () => { cancelled = true; };
   }, [activeSession, loadSession]);
+
+  // An approved plan unlocks the SESSION mid-run, so the checkbox is re-read
+  // when a run ENDS — the phase may have changed with nobody touching the box.
+  // Only on the true→false edge: session open already seeded it above.
+  const activeRunning = activeSession ? !!ss[activeSession]?.running : false;
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    const ended = wasRunning.current && !activeRunning;
+    wasRunning.current = activeRunning;
+    if (!ended || !activeSession) return;
+    let cancelled = false;
+    api.sessions.get(activeSession)
+      .then(sess => { if (!cancelled) setPlanning(!!(sess as { planning?: boolean }).planning); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeSession, activeRunning, ss]);
 
   // Persisted traces backfill on the first open of a lens that reads them —
   // the trace panel, or the context panel (it joins its items to spans). Also
@@ -393,6 +440,11 @@ export default function App() {
         setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
       }
     });
+    // A workflow execution moved in some session. The strip and Tasks panel
+    // read REST, and a hidden step has no parent run to flip `running`, so this
+    // is the only signal to refetch. A single counter is enough — the strip is
+    // scoped to the open session, so at worst one cheap refetch of it.
+    wsRef.current.on(EV.workflowUpdated, () => setWorkflowTick(k => k + 1));
     wsRef.current.on(EV.sessionSandboxBound, (p: { session_id?: string; sandbox_id?: string; work_dir?: string }) => {
       if (p?.session_id && p.sandbox_id) {
         // Record first, then patch the live meta. The record is what makes the
@@ -408,12 +460,22 @@ export default function App() {
     });
   }, [wsRef]);
 
-  const handleSend = useCallback(async (text: string, agentConfigId?: string, sandboxId?: string, workDir?: string) => {
+  const handleSend = useCallback(async (input: string, agentConfigId?: string, sandboxId?: string, workDir?: string) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('WebSocket disconnected — message not sent');
       return;
     }
+    // `/plan` asks for a plan before any change — the keyboard half of the
+    // composer's toggle. It is handled HERE, not in the composer, because it
+    // sets the SESSION's phase and a brand-new session has no id until the
+    // block below creates one.
+    const planned = PLAN_COMMAND.test(input);
+    const text = planned ? input.replace(PLAN_COMMAND, '') : input;
+    // The command is a hand toggle too: dirty makes a bare "/plan" carry the
+    // phase on the NEXT message.
+    if (planned) { setPlanning(true); setPlanDirty(true); }
+    if (planned && !text.trim()) return; // arms the checkbox for the next message
     // Typing straight into the box with no active session starts a new session,
     // instead of silently dropping the message. The freshly-created session has
     // no history, so mark it loaded to protect the optimistic message from the
@@ -435,7 +497,11 @@ export default function App() {
     }
     const clientMsgId = nextClientMsgId();
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId }], ...(isNew ? { loaded: true } : {}) }));
+    // The phase travels WITH the message — but only a message that carries a
+    // hand toggle says anything: an absent `plan` leaves the session's phase
+    // alone, so a send can't re-arm a session the server unlocked mid-window.
     const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
+    if (planned || planDirty) payload.plan = planned || planning;
     if (sandboxId) {
       payload.sandbox_id = sandboxId;
       if (workDir) payload.work_dir = workDir;
@@ -445,8 +511,11 @@ export default function App() {
       // back the optimistic bubble so it isn't left stranded with no run.
       updateSS(sid, s => ({ ...s, messages: s.messages.filter((m: { clientMsgId?: string }) => m.clientMsgId !== clientMsgId) }));
       toast.error('WebSocket disconnected — message not sent');
+      return;
     }
-  }, [activeSession, updateSS, wsRef]);
+    // Delivered: the toggle reached the server, the box is clean again.
+    setPlanDirty(false);
+  }, [activeSession, planning, planDirty, updateSS, wsRef]);
 
   const handleCancel = useCallback((graceful?: boolean) => {
     if (!wsRef.current || !activeSession) return;
@@ -677,6 +746,9 @@ export default function App() {
       streaming={currentSS.streaming}
       reasoning={currentSS.reasoning}
       running={currentSS.running}
+      workflowTick={workflowTick}
+      planning={planning}
+      onPlanningChange={handlePlanningChange}
       compacting={currentSS.compacting}
       diagnostics={currentSS.diagnostics}
       traceRuns={currentSS.traceRuns}

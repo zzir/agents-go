@@ -92,6 +92,8 @@ export const api = {
       return request(`/sessions/${id}/messages` + (qs ? '?' + qs : ''));
     },
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
+    // The session's workflow executions, newest first.
+    workflowRuns: (id: string | number) => request(`/sessions/${id}/workflow-runs`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
     // What the session's active branch occupies of the model's context window.
     // Recomputed per call from the entries — there is no live event for it, so
@@ -208,6 +210,17 @@ export const api = {
     ...crud('/guardrails'),
     list: () => request('/guardrails'),
   },
+  providers: crud('/providers'),
+  workflows: crud('/workflows'),
+  workflowRuns: {
+    get: (id: string | number) => request(`/workflow-runs/${id}`),
+    // Stop ends the whole sequence; retry resumes from the step it stopped at.
+    stop: (id: string | number) => request(`/workflow-runs/${id}/stop`, { method: 'POST' }),
+    retry: (id: string | number) => request(`/workflow-runs/${id}/retry`, { method: 'POST' }),
+    // Hides a terminal execution from the chat strip (409 while running); a
+    // retry brings it back.
+    dismiss: (id: string | number) => request(`/workflow-runs/${id}/dismiss`, { method: 'POST' }),
+  },
   providerRoutes: crud('/provider-routes'),
   providerTypes: {
     list: () => request('/provider-types'),
@@ -220,9 +233,11 @@ export const api = {
     ...crud('/sandboxes'),
     test: (id: string | number) => request(`/sandboxes/${id}/test`, { method: 'POST' }),
   },
+  // The OAuth flow belongs to the endpoint: the token is the provider's
+  // credential, shared by every agent pointed at it.
   chatgpt: {
-    login: (agentConfigId: string | number) => request(`/agents/${agentConfigId}/chatgpt/login`, { method: 'POST' }),
-    logout: (agentConfigId: string | number) => request(`/agents/${agentConfigId}/chatgpt/logout`, { method: 'POST' }),
-    status: (agentConfigId: string | number) => request(`/agents/${agentConfigId}/chatgpt/status`),
+    login: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/login`, { method: 'POST' }),
+    logout: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/logout`, { method: 'POST' }),
+    status: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/status`),
   },
 };

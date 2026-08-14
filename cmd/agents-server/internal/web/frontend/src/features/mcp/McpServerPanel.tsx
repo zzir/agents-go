@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
+import { BADGE } from '@/lib/badges';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
@@ -350,7 +351,7 @@ export function McpServerPanel() {
                 <div className="resource-row-head">
                   <span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />
                   <span className="resource-row-title">{s.name}</span>
-                  {s.config && s.config.auth_mode === 'oauth' && <Label variant="secondary">OAuth</Label>}
+                  {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
                 </div>
                 <div className="resource-row-sub">
                   {s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}

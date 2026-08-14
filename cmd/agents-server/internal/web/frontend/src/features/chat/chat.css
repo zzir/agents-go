@@ -546,6 +546,12 @@
   color: var(--fgColor-danger);
   padding: 0 8px;
 }
+/* The slash button while plan mode is armed — tinted so the standing
+   restraint is visible without opening the menu. */
+.chat-input-toolbar-left .slash-armed {
+  color: var(--fgColor-accent);
+  background: var(--bgColor-accent-muted);
+}
 
 /* Chat layout with trace drawer */
 .chat-content {
@@ -789,6 +795,8 @@
 }
 .task-row:hover { background: var(--bgColor-muted); }
 .task-row-head { display: flex; align-items: center; gap: var(--base-size-8); }
+/* A workflow execution's mark in the list; a task is the unmarked default. */
+.task-row-kind { color: var(--fgColor-muted); flex-shrink: 0; }
 .task-row-label {
   font-size: var(--text-body-size-small);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

@@ -458,6 +458,15 @@ a:hover {
     background: var(--fgColor-success);
 }
 
+/* The dot inside a form label's text line — smaller, and inline with the text
+   it annotates rather than a flex row's leading marker. */
+.form-status-dot--inline {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 4px;
+}
+
 .form-status-text {
     font-size: var(--base-text-size-xs);
     color: var(--fgColor-muted);

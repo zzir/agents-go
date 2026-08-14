@@ -1,23 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ProgressBar, Spinner } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { MeterIcon, PulseIcon } from '@primer/octicons-react';
+import { MeterIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import './context.css';
-
-// One entry's estimated share of the context, as the server ranks it.
-interface ContextItem {
-  kind: string;
-  label: string;
-  tokens: number;
-  anchor?: string;
-  run_id?: string;
-  // The model call that produced it — how a non-tool item finds its generation
-  // span. Tool items join on anchor, which is their call id.
-  response_id?: string;
-}
 
 // One origin's share of the tool surface. unavailable marks a server that
 // could not be asked — reported as unknown, never as zero.
@@ -50,7 +38,7 @@ interface ContextReport {
   compaction_enabled: boolean;
   compaction_threshold?: number;
   compaction_tokens: number;
-  items?: ContextItem[];
+  conversation_tokens?: number;
   prompt?: PromptProfile;
 }
 
@@ -60,9 +48,11 @@ interface ContextReport {
 const CHARS_PER_TOKEN = 4;
 const est = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
 
-// A prompt profile flattened into the rows the Breakdown draws: the
-// instruction layers, then one row per tool origin.
-function breakdownRows(p: PromptProfile): Array<{ label: string; tokens: number; unavailable?: boolean }> {
+// The window's composition: the prompt layers and tool surface the build sends
+// every turn, plus the conversation itself — one ruler (estimates), so the
+// shares can be honest percentages of their own total.
+function compositionRows(data: ContextReport): Array<{ label: string; tokens: number; unavailable?: boolean }> {
+  const p = data.prompt || {};
   const rows: Array<{ label: string; tokens: number; unavailable?: boolean }> = [
     { label: 'Instructions', tokens: est(p.instructions_chars || 0) },
     { label: 'System prompt', tokens: est(p.global_prompt_chars || 0) },
@@ -75,6 +65,9 @@ function breakdownRows(p: PromptProfile): Array<{ label: string; tokens: number;
       tokens: est(b.chars),
       unavailable: b.unavailable,
     });
+  }
+  if ((data.conversation_tokens || 0) > 0) {
+    rows.push({ label: 'Conversation', tokens: data.conversation_tokens! });
   }
   return rows;
 }
@@ -90,13 +83,6 @@ interface ContextPanelProps {
   // updates the report too.
   reloadKey?: unknown;
   onClose: () => void;
-  // onJump takes the reader to the item in the CHAT — what to do about a fat
-  // item is decided on its content. onOpenTrace is the secondary move: how it
-  // got there (arguments, timing, nested sandbox work). Absent for an item
-  // whose run left no trace.
-  onJump: (item: ContextItem) => void;
-  onOpenTrace?: (item: ContextItem) => void;
-  hasTrace?: (item: ContextItem) => boolean;
   // onCompact forces one compaction pass now; it owns the API call, the
   // toasts and the timeline reload — the panel only shows the pending state.
   onCompact?: () => Promise<void>;
@@ -113,6 +99,14 @@ function approx(n: number): string {
   if (n <= 0) return '0';
   const step = Math.pow(10, Math.max(0, Math.floor(Math.log10(n)) - 1));
   return '~' + (Math.round(n / step) * step).toLocaleString();
+}
+
+// A share of a same-ruler total. Whole percents; a sliver reads "<1%" rather
+// than rounding to an untruthful 0%.
+function pctOf(n: number, total: number): string {
+  if (total <= 0 || n <= 0) return '0%';
+  const p = (n / total) * 100;
+  return p < 1 ? '<1%' : `${Math.round(p)}%`;
 }
 
 // Sparkline over the per-call input tokens. Absolute values are already on the
@@ -134,7 +128,7 @@ function Growth({ points }: { points: number[] }) {
   );
 }
 
-export function ContextPanel({ sessionId, running, reloadKey, onClose, onJump, onOpenTrace, hasTrace, onCompact }: ContextPanelProps) {
+export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact }: ContextPanelProps) {
   const { data, loading } = useApi<ContextReport>(() => api.sessions.context(sessionId), [sessionId, running, reloadKey]);
   const [compacting, setCompacting] = useState(false);
   const compact = async () => {
@@ -154,10 +148,13 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onJump, o
   // legend's "fresh" is the remainder of, so the two cannot disagree.
   const cached = data?.cached_tokens || 0;
   const hitPct = used > 0 ? (cached / used) * 100 : 0;
-  const compactionPct = data?.compaction_threshold
-    ? Math.min(100, (data.compaction_tokens / data.compaction_threshold) * 100)
-    : 0;
-  const heaviest = data?.items?.[0]?.tokens || 1;
+  const threshold = (data?.compaction_enabled && data.compaction_threshold) || 0;
+  const compactionPct = threshold > 0 ? Math.min(100, ((data?.compaction_tokens || 0) / threshold) * 100) : 0;
+  // The fold point on the window's own scale — ONE bar carries both stories.
+  // The threshold compares against the compaction figure (last call's total
+  // plus estimates), so the tick is where the fold roughly lands, not a second
+  // meter; the numbers line below keeps the exact comparison.
+  const thresholdPct = windowSize > 0 && threshold > 0 ? Math.min(100, (threshold / windowSize) * 100) : 0;
 
   return (
     <SidePanel
@@ -183,13 +180,46 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onJump, o
             <div className="ctx-big">
               <span className="ctx-mono ctx-num">{fmt(used)}</span>
               {windowSize > 0 && <span className="ctx-mono ctx-slash">/ {fmt(windowSize)}</span>}
+              {data.compaction_enabled && onCompact && (
+                <button
+                  type="button"
+                  className="ctx-compact-btn ctx-compact-btn--end"
+                  disabled={running || compacting}
+                  title={running
+                    ? 'The run compacts at its own boundaries — wait for it to finish'
+                    : 'Fold older history into a summary now, keeping the recent window'}
+                  onClick={compact}
+                >
+                  {compacting ? 'Compacting…' : 'Compact now'}
+                </button>
+              )}
             </div>
             {windowSize > 0 ? (
               <>
-                <ProgressBar progress={pct} bg="accent.emphasis" aria-label={`${Math.round(pct)}% of the context window used`} />
+                <div className="ctx-track">
+                  <ProgressBar progress={pct} bg="accent.emphasis" aria-label={`${Math.round(pct)}% of the context window used`} />
+                  {thresholdPct > 0 && (
+                    <span
+                      className="ctx-tick"
+                      style={{ left: `${thresholdPct}%` }}
+                      title={`Auto-compaction fires around ${fmt(threshold)} tokens (${Math.round(thresholdPct)}% of the window)`}
+                    />
+                  )}
+                </div>
                 <div className="ctx-legend">
                   <span>used {Math.round(pct)}%</span>
+                  {thresholdPct > 0 && <span className="ctx-muted">compacts at ~{Math.round(thresholdPct)}%</span>}
                   <span className="ctx-muted">{fmt(Math.max(0, windowSize - used))} free</span>
+                </div>
+              </>
+            ) : threshold > 0 ? (
+              <>
+                {/* No window declared: the compaction meter is the only scale
+                    there is, so the single bar draws it directly. */}
+                <ProgressBar progress={compactionPct} bg="attention.emphasis" aria-label={`${Math.round(compactionPct)}% of the way to a compaction pass`} />
+                <div className="ctx-legend">
+                  <span>to next fold {Math.round(compactionPct)}%</span>
+                  <span className="ctx-muted">no context window set for this agent</span>
                 </div>
               </>
             ) : (
@@ -204,39 +234,63 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onJump, o
 
             {data.compaction_enabled && (
               <div className="ctx-sub">
+                {/* The exact trigger comparison, on its own ruler (the last
+                    call's total plus estimates — the tick's title says so). */}
                 <div className="ctx-sub-head">
-                  <span className="ctx-sub-label">
-                    Compaction
-                    {onCompact && (
-                      <button
-                        type="button"
-                        className="ctx-compact-btn"
-                        disabled={running || compacting}
-                        title={running
-                          ? 'The run compacts at its own boundaries — wait for it to finish'
-                          : 'Fold older history into a summary now, keeping the recent window'}
-                        onClick={compact}
-                      >
-                        {compacting ? 'Compacting…' : 'Compact now'}
-                      </button>
-                    )}
-                  </span>
+                  <span className="ctx-sub-label">Compaction</span>
                   <span className="ctx-mono ctx-sub-val">
                     {fmt(data.compaction_tokens)}
-                    {data.compaction_threshold ? <span className="ctx-muted"> / {fmt(data.compaction_threshold)}</span> : null}
+                    {threshold > 0 ? <span className="ctx-muted"> / {fmt(threshold)}</span> : null}
                   </span>
-                </div>
-                {data.compaction_threshold ? (
-                  <ProgressBar progress={compactionPct} bg="attention.emphasis" barSize="small"
-                    aria-label={`${Math.round(compactionPct)}% of the way to a compaction pass`} />
-                ) : null}
-                <div className="ctx-note ctx-sub-note">
-                  What the pass actually compares: the last call's total — input <em>and</em> output — plus an estimate
-                  for the turns since. Right after a fold it is fully estimated, until the next call re-prices.
                 </div>
               </div>
             )}
           </section>
+
+          {(() => {
+            const rows = compositionRows(data);
+            if (rows.length === 0) return null;
+            const total = rows.reduce((n, r) => n + r.tokens, 0);
+            return (
+              <section className="ctx-sec">
+                <div className="ctx-sec-head">
+                  <span>In the window</span>
+                  {windowSize > 0 && total > 0 && (() => {
+                    const share = pctOf(total, windowSize);
+                    // "<1%" already carries its own qualifier; "≈<1%" stacks two.
+                    return <span className="ctx-mono ctx-muted">{share.startsWith('<') ? share : `≈${share}`} of window</span>;
+                  })()}
+                </div>
+                <ul className="ctx-rows ctx-rows-plain">
+                  {/* Keyed by position too: two MCP servers may share a display
+                      name, and colliding keys would drop a row. */}
+                  {rows.map((r, i) => (
+                    <li key={`${i}-${r.label}`}>
+                      <div className="ctx-row-top">
+                        <span className="ctx-row-name">{r.label}</span>
+                        {r.unavailable ? (
+                          <span className="ctx-mono ctx-row-tok">unknown</span>
+                        ) : (
+                          // The share is the row's story; the absolute estimate
+                          // moves to hover, where a reader who wants it looks.
+                          <span className="ctx-mono ctx-row-tok" title={`${approx(r.tokens)} tokens (estimated)`}>
+                            {pctOf(r.tokens, total)}
+                          </span>
+                        )}
+                      </div>
+                      <span className="ctx-row-track">
+                        <span className="ctx-row-fill" style={{ width: r.unavailable ? '0%' : `${total > 0 ? (r.tokens / total) * 100 : 0}%` }} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="ctx-note">
+                  The window's composition, by the character estimator: the prompt layers and tool schemas the build
+                  sends every turn, and the conversation so far. Shares of their own total — not provider counts.
+                </div>
+              </section>
+            );
+          })()}
 
           {(cached > 0 || data.cache_write_tokens > 0) && (
             <section className="ctx-sec">
@@ -275,93 +329,8 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onJump, o
               </div>
             </section>
           )}
-
-          {data.prompt && breakdownRows(data.prompt).length > 0 && (() => {
-            const rows = breakdownRows(data.prompt!);
-            const total = rows.reduce((n, r) => n + r.tokens, 0);
-            const widest = Math.max(...rows.map(r => r.tokens), 1);
-            return (
-              <section className="ctx-sec">
-                <div className="ctx-sec-head">
-                  <span>Before the conversation</span>
-                </div>
-                <div className="ctx-big ctx-big-small">
-                  <span className="ctx-mono ctx-num ctx-num-small">{approx(total)}</span>
-                  <span className="ctx-mono ctx-slash">every turn</span>
-                </div>
-                <ul className="ctx-rows ctx-rows-plain">
-                  {/* Keyed by position too: two MCP servers may share a display
-                      name, and colliding keys would drop a row. */}
-                  {rows.map((r, i) => (
-                    <li key={`${i}-${r.label}`}>
-                      <div className="ctx-row-top">
-                        <span className="ctx-row-name">{r.label}</span>
-                        <span className="ctx-mono ctx-row-tok">{r.unavailable ? 'unknown' : approx(r.tokens)}</span>
-                      </div>
-                      <span className="ctx-row-track">
-                        <span className="ctx-row-fill" style={{ width: r.unavailable ? '0%' : `${(r.tokens / widest) * 100}%` }} />
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="ctx-note">
-                  Prompt layers and tool schemas from the last run's build — the part of the window the conversation
-                  never shrinks.
-                </div>
-              </section>
-            );
-          })()}
-
-          {(data.items?.length || 0) > 0 && (
-            <section className="ctx-sec">
-              <div className="ctx-sec-head">
-                <span>Heaviest items</span>
-              </div>
-              <ul className="ctx-rows">
-                {data.items!.map((it, i) => {
-                  // The trace button swaps in WHERE the token figure sits
-                  // (hover hides the figure, shows the button — the VS Code
-                  // tree-item pattern). No reserved column, so the figures
-                  // stay flush with the panel edge like every other section;
-                  // no overlay, so nothing is ever covered half-way.
-                  const traceable = !!onOpenTrace && !!hasTrace?.(it);
-                  return (
-                    <li key={it.anchor || i} className={'ctx-row-wrap' + (traceable ? ' ctx-row-has-trace' : '')}>
-                      <button className="ctx-row" onClick={() => onJump(it)} title="Jump to this item">
-                        <span className="ctx-row-top">
-                          <span className="ctx-kind">{it.kind}</span>
-                          <span className="ctx-row-name">{it.label || it.kind}</span>
-                          <span className="ctx-mono ctx-row-tok">{approx(it.tokens)}</span>
-                        </span>
-                        <span className="ctx-row-track">
-                          <span className="ctx-row-fill" style={{ width: `${(it.tokens / heaviest) * 100}%` }} />
-                        </span>
-                      </button>
-                      {traceable && (
-                        // A bare glyph, not an IconButton: the 28px control
-                        // chrome spanned both row lines and sat on the bar.
-                        // This lives inside the text line, where the figure it
-                        // replaces sits, and never touches the bar below.
-                        <button
-                          type="button"
-                          className="ctx-row-trace"
-                          aria-label="Show in trace"
-                          title="Show in trace"
-                          onClick={() => onOpenTrace!(it)}
-                        >
-                          <PulseIcon size={14} />
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          )}
         </div>
       )}
     </SidePanel>
   );
 }
-
-export type { ContextItem };

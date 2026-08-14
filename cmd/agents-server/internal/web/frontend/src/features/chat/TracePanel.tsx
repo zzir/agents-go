@@ -185,7 +185,7 @@ interface ReplayAttempt {
 const BUILTIN_TOOL_NAMES = new Set([
   'exec_command', 'read_file', 'write_file', 'list_files', 'apply_patch',
   'brave_search', 'spawn_task', 'task_status', 'task_stop',
-  // Workflow tools injected by plan_mode / todo_list agents.
+  // The plan/todo tools the chat build injects.
   'submit_plan', 'todo_write',
 ]);
 

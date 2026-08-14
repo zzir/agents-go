@@ -1,14 +1,16 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
-import { Button, TextInput, Textarea, FormControl, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { fc, seg } from '@/lib/form';
+import { fc } from '@/lib/form';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
-import { PROVIDERS, providerMeta } from '@/lib/providers';
 
 interface Setting { key: string; value: string }
-interface ProviderRoute { id: string; prefix: string; provider_type?: string; api_key: string; base_url: string }
+interface ProviderRoute { id: string; prefix: string; provider_id: string }
+
+// The endpoints a route can point at; managed under Providers.
+interface ProviderRef { id: string; name: string }
 
 interface SettingDef {
   key: string;
@@ -115,14 +117,15 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
   );
 }
 
-interface RouteDraft { prefix: string; provider_type?: string; api_key: string; base_url: string }
-const EMPTY_ROUTE: RouteDraft = { prefix: '', provider_type: '', api_key: '', base_url: '' };
+interface RouteDraft { prefix: string; provider_id: string }
+const EMPTY_ROUTE: RouteDraft = { prefix: '', provider_id: '' };
 
-function RouteForm({ initial, onSave, onCancel, onDelete }: {
+function RouteForm({ initial, onSave, onCancel, onDelete, providers }: {
   initial?: RouteDraft;
   onSave: (d: RouteDraft) => void;
   onCancel: () => void;
   onDelete?: () => void;
+  providers: ProviderRef[] | null;
 }) {
   const [draft, setDraft] = useState<RouteDraft>(initial || EMPTY_ROUTE);
 
@@ -136,27 +139,14 @@ function RouteForm({ initial, onSave, onCancel, onDelete }: {
           block
         />
       ))}
-      {seg('Provider', providerMeta(draft.provider_type).value, PROVIDERS.map(p => [p.value, p.label] as const),
-        v => setDraft(d => ({ ...d, provider_type: v })), 'Which API protocol this route speaks')}
-      {fc('API Key', (
-        <TextInput
-          value={draft.api_key}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, api_key: e.target.value }))}
-          placeholder="API Key (******** keeps the stored key)"
-          type="password"
-          block
-        />
-      ))}
-      {fc('Base URL', (
-        <TextInput
-          value={draft.base_url}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, base_url: e.target.value }))}
-          placeholder="https://api.groq.com/openai/v1"
-          block
-        />
-      ))}
+      {fc('Provider', (
+        <Select value={draft.provider_id} onChange={e => setDraft(d => ({ ...d, provider_id: e.target.value }))} block>
+          <Select.Option value="">Select a provider…</Select.Option>
+          {(providers || []).map(p => <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>)}
+        </Select>
+      ), 'The endpoint this prefix routes to — its credential lives there')}
       <div className="form-actions">
-        <Button onClick={() => { if (draft.prefix) onSave(draft); }} variant="primary" size="small">Save</Button>
+        <Button onClick={() => { if (draft.prefix && draft.provider_id) onSave(draft); }} variant="primary" size="small">Save</Button>
         <Button onClick={onCancel} size="small">Cancel</Button>
         {onDelete && <Button onClick={onDelete} variant="danger" size="small" style={{ marginLeft: 'auto' }}>Delete</Button>}
       </div>
@@ -167,6 +157,8 @@ function RouteForm({ initial, onSave, onCancel, onDelete }: {
 function ProviderRoutesSection() {
   const { items: routes, adding, editing, startAdd, startEdit, cancel, save, remove } =
     useCrud<ProviderRoute, RouteDraft>(api.providerRoutes);
+  const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
+  const providerName = (id: string) => (providers || []).find(p => p.id === id)?.name || id.slice(0, 8);
 
   return (
     <div className="form-group">
@@ -177,17 +169,16 @@ function ProviderRoutesSection() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
         <PageHeader.Description>Route model names by prefix (e.g. &quot;groq/llama-3&quot; &rarr; prefix &quot;groq&quot;). The agent&apos;s own provider is the fallback.</PageHeader.Description>
       </PageHeader>
-      {adding && <RouteForm onSave={save} onCancel={cancel} />}
-      {editing && <RouteForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} />}
+      {adding && <RouteForm onSave={save} onCancel={cancel} providers={providers} />}
+      {editing && <RouteForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} providers={providers} />}
       {!adding && !editing && <div className="Box">
         {routes.map(r => (
           <div key={r.id} className="Box-row">
             <div className="resource-row-main">
               <div className="resource-row-head">
                 <span className="resource-row-title">{r.prefix}/</span>
-                {r.provider_type && r.provider_type !== 'openai' && <span className="resource-row-sub">{r.provider_type}</span>}
+                <span className="resource-row-sub">&rarr; {providerName(r.provider_id)}</span>
               </div>
-              {r.base_url && <div className="resource-row-sub">{r.base_url}</div>}
             </div>
             <div className="resource-row-actions">
               <Button onClick={() => startEdit(r)} size="small" variant="invisible">Edit</Button>

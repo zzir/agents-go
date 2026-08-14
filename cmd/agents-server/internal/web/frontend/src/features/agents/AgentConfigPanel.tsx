@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, TextInput, Textarea, Label, FormControl, Checkbox, SegmentedControl, Stack, PageHeader } from '@primer/react';
+import React, { useState } from 'react';
+import { Button, TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -8,20 +8,24 @@ import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { ChevronRightIcon } from '@primer/octicons-react';
 import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
-import { PROVIDERS, providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
+import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
+import { BADGE } from '@/lib/badges';
 
 // The agent-config REST payload nests these scalar settings under JSON group
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  provider: ['provider_type', 'auth_mode', 'api_key', 'base_url', 'context_window'],
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'plan_mode', 'todo_list'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
   approval: ['approve_tools'],
   compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt'],
 };
+
+// The spellings the server reads as "feed the bad tool name back to the
+// model" — which is what an unset tool_not_found_behavior now means.
+const RETURN_TO_MODEL = new Set(['return_to_model', 'return_error_to_model']);
 
 function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!c) return {};
@@ -48,16 +52,11 @@ interface AgentFormData {
   name: string;
   instructions: string;
   model: string;
-  provider_type: string;
-  auth_mode: string;
-  api_key: string;
-  base_url: string;
+  provider_id: string;
   context_window: number;
   max_turns: number;
   handoff_description: string;
   disable_tool_choice_reset: boolean;
-  plan_mode: boolean;
-  todo_list: boolean;
   stop_at_tools: string;
   retry_enabled: boolean;
   retry_policy: string;
@@ -94,15 +93,20 @@ interface Agent {
   id: string | number;
   name: string;
   model: string;
-  // Provider settings are nested under the provider group in the API response.
-  provider?: { provider_type?: string; base_url?: string; auth_mode?: string };
+  provider_id?: string;
   instructions: string;
   handoffs: string;
   tools: string;
   // Empty/absent means "not customized" -> the agent gets every installed skill.
   skills?: string;
-  // Derived login signal from the backend; the token itself never reaches the API.
-  chatgpt_logged_in?: boolean;
+}
+
+// The referenced endpoints, for the picker and the list badge. Name and type
+// are all this panel needs — credentials never reach it.
+interface ProviderRef {
+  id: string;
+  name: string;
+  type?: string;
 }
 
 interface AgentFormProps {
@@ -114,9 +118,10 @@ interface AgentFormProps {
   skills?: Skill[];
   allAgents?: Agent[];
   providerTypes?: ProviderTypeInfo[];
+  providers?: ProviderRef[];
 }
 
-function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, allAgents, providerTypes }: AgentFormProps) {
+function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
   const initHandoffs = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
   };
@@ -137,9 +142,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
   const [form, setForm] = useState<AgentFormData>({
     name: '', instructions: '', model: 'gpt-5.5',
-    provider_type: '', auth_mode: '', api_key: '', base_url: '', context_window: 0,
+    provider_id: '', context_window: 0,
     max_turns: 0, handoff_description: '',
-    disable_tool_choice_reset: false, plan_mode: false, todo_list: false, stop_at_tools: '',
+    disable_tool_choice_reset: false, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
     fallback_models: '',
     guardrails: '', output_schema: '', error_handlers: '',
@@ -167,29 +172,15 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
-  // Wording comes from the static table; machine facts (auth modes,
-  // unsupported features) come from the server's provider registry, with a
-  // static assumption as the pre-fetch fallback so controls don't flicker.
-  const meta = providerMeta(form.provider_type);
-  const authModesFor = (value: string | undefined): string[] =>
-    providerFacts(providerTypes, value)?.auth_modes ?? (providerMeta(value).type === 'openai' ? ['chatgpt_login'] : []);
-  const supportsChatGPT = authModesFor(form.provider_type).includes('chatgpt_login');
-  const unsupported = providerFacts(providerTypes, form.provider_type)?.unsupported ?? [];
-  // A masked key or a base URL saved under a DIFFERENT backend is the trap to
-  // warn about: the field looks configured, but the credential belongs to the
-  // provider this agent was switched away from.
-  // The loaded config is the NESTED REST shape — provider_type lives under
-  // the provider group, so it must be read through flattenConfig, and both
-  // sides go through providerMeta so an explicitly stored "openai" compares
-  // equal to the form's '' default.
-  const initialProvider = (flattenConfig(initial as Record<string, unknown> | undefined).provider_type as string) || '';
-  const providerChanged = initial !== undefined && providerMeta(form.provider_type).type !== providerMeta(initialProvider).type;
-  const staleKeyHint = providerChanged && form.api_key === '********'
-    ? 'This stored key was saved for the previously selected provider — replace it, clear it, or switch back'
-    : 'Stored keys show as ******** — leave the mask to keep the current key, clear the field to remove it';
-  const unsupportedHint = unsupported.length > 0
-    ? `Fail loudly on this provider — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
-    : 'Which backend this agent calls';
+  // The backend's facts follow the REFERENCED provider: wording from the
+  // static table, machine facts (unsupported features) from the server's
+  // registry. An agent with no provider runs on the built-in openai default.
+  const selectedProvider = (providers || []).find(p => p.id === form.provider_id);
+  const meta = providerMeta(selectedProvider?.type ?? '');
+  const unsupported = providerFacts(providerTypes, selectedProvider?.type)?.unsupported ?? [];
+  const providerHint = unsupported.length > 0
+    ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
+    : 'Endpoints and their API keys are managed under Providers';
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id);
   const toggleHandoff = (id: string | number) => {
     setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -233,42 +224,18 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     <Stack gap="normal">
       {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
 
-      {/* The backend comes first: it decides the model placeholder, the auth
-          modes, and which of the settings below even apply. */}
+      {/* The endpoint is a reference: its backend, credential and base URL
+          live on the provider row, which is also where a key is entered. */}
       <div className="form-group">
         <div className="form-group-title">Provider</div>
-        {seg('Backend', meta.value, PROVIDERS.map(p => [p.value, p.label] as const), v => {
-          // An auth mode the new backend doesn't offer is cleared so the save
-          // is not rejected for a control that is no longer shown. An
-          // untouched default model name follows the backend, a customized
-          // one is the user's and stays.
-          setForm(prev => {
-            const next = { ...prev, provider_type: v };
-            if (prev.auth_mode && !authModesFor(v).includes(prev.auth_mode)) next.auth_mode = '';
-            if (prev.model === providerMeta(prev.provider_type).defaultModel) next.model = providerMeta(v).defaultModel;
-            return next;
-          });
-        }, unsupportedHint)}
-
-        {supportsChatGPT && fc('Auth mode', <SegmentedControl aria-label="Auth mode" size="small">
-          <SegmentedControl.Button
-            selected={form.auth_mode !== 'chatgpt_login'}
-            onClick={() => set('auth_mode', '')}
-          >API Key</SegmentedControl.Button>
-          <SegmentedControl.Button
-            selected={form.auth_mode === 'chatgpt_login'}
-            onClick={() => set('auth_mode', 'chatgpt_login')}
-          >ChatGPT Subscribe</SegmentedControl.Button>
-        </SegmentedControl>, 'Choose authentication method')}
-
-        {(!supportsChatGPT || form.auth_mode !== 'chatgpt_login') && <>
-          {fc('API key', <TextInput value={form.api_key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('api_key', e.target.value)} placeholder={meta.keyPlaceholder} type="password" block />, staleKeyHint)}
-          {fc('Base URL', <TextInput value={form.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('base_url', e.target.value)} placeholder={meta.baseURLPlaceholder} block />, providerChanged && form.base_url ? 'Saved for the previously selected provider — make sure it applies to this backend' : undefined)}
-        </>}
-
-        {supportsChatGPT && form.auth_mode === 'chatgpt_login' &&
-          fc('Base URL override', <TextInput value={form.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('base_url', e.target.value)} placeholder="Leave empty for ChatGPT default" block />, 'Only change if you know what you\'re doing')
-        }
+        {fc('Endpoint',
+          <Select value={form.provider_id} onChange={e => set('provider_id', e.target.value)} block>
+            <Select.Option value="">Default (OpenAI on the global API key)</Select.Option>
+            {(providers || []).map(p => (
+              <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
+            ))}
+          </Select>,
+          providerHint)}
       </div>
 
       <div className="form-group">
@@ -314,20 +281,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={5} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
       </div>
 
-      <div className="form-group">
-        <div className="form-group-title">Workflow</div>
-        <FormControl>
-          <Checkbox checked={form.plan_mode || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('plan_mode', e.target.checked)} />
-          <FormControl.Label>Plan mode</FormControl.Label>
-          <FormControl.Caption>Each run starts read-only: the agent explores, submits a plan for your approval, and only an approved plan unlocks the full toolset</FormControl.Caption>
-        </FormControl>
-        <FormControl>
-          <Checkbox checked={form.todo_list || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('todo_list', e.target.checked)} />
-          <FormControl.Label>Todo list</FormControl.Label>
-          <FormControl.Caption>The agent keeps a working todo list; the chat renders it as a live checklist</FormControl.Caption>
-        </FormControl>
-      </div>
-
       {mcpServers && mcpServers.length > 0 && <div className="form-group">
         <div className="form-group-title">MCP Servers</div>
         <div className="form-checkbox-group">
@@ -339,7 +292,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
                 <FormControl.Label>
                   {s.name}
                   {usable
-                    ? <span className="form-status-dot form-status-dot--success" style={{ width: 6, height: 6, marginLeft: 4, display: 'inline-block' }} />
+                    ? <span className="form-status-dot form-status-dot--success form-status-dot--inline" />
                     : <span className="resource-row-sub" style={{ marginLeft: 4 }}>({s.status === 'disabled' ? 'disabled' : 'not connected'})</span>}
                 </FormControl.Label>
               </FormControl>
@@ -435,7 +388,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
           {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
           {fc('Stop at tools', <TextInput value={form.stop_at_tools || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('stop_at_tools', e.target.value)} placeholder="tool1, tool2" block />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
-          {seg('Tool not found behavior', form.tool_not_found_behavior || '', [['', 'Error (default)'], ['return_to_model', 'Return to model']], v => set('tool_not_found_behavior', v))}
+          {/* Older configs spell the default out ("return_to_model" or its
+              alias); it is the default now, so those read as the unset button. */}
+          {seg('Tool not found behavior', RETURN_TO_MODEL.has(form.tool_not_found_behavior || '') ? '' : form.tool_not_found_behavior, [['', 'Return to model (default)'], ['error', 'End the run']], v => set('tool_not_found_behavior', v),
+            'What happens when the model calls a tool it does not have — a name it invented, or one plan mode is hiding')}
           {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
             'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
           <div className="form-checkbox-group">
@@ -500,11 +456,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
             catch { toast.error('Extra body is not valid JSON — fix or clear it before saving'); return; }
           }
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
-          // auth_mode is normalized at save too, not only in the provider
-          // onChange: a legacy row with an auth mode its backend doesn't offer
-          // would otherwise be rejected by a control the form no longer shows.
-          const auth_mode = form.auth_mode && authModesFor(form.provider_type).includes(form.auth_mode) ? form.auth_mode : '';
-          const flatPayload = { ...form, auth_mode, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
+          const flatPayload = { ...form, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
           onSave(nestConfig(flatPayload) as unknown as AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string });
         }} variant="primary">Save</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
@@ -515,66 +467,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
 }
 
 export function AgentConfigPanel() {
-  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, remove, reload } =
+  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, remove } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
-  const [signingIn, setSigningIn] = useState<Record<string | number, boolean>>({});
-  const pollRef = useRef<Record<string | number, { interval: ReturnType<typeof setInterval>; timeout: ReturnType<typeof setTimeout> }>>({});
-
-  const stopPoll = useCallback((id: string | number) => {
-    const entry = pollRef.current[id];
-    if (entry) {
-      clearInterval(entry.interval);
-      clearTimeout(entry.timeout);
-      delete pollRef.current[id];
-    }
-    setSigningIn(prev => {
-      if (!prev[id]) return prev;
-      return { ...prev, [id]: false };
-    });
-  }, []);
-
-  useEffect(() => () => {
-    for (const id of Object.keys(pollRef.current)) stopPoll(id);
-  }, [stopPoll]);
-
-  // The ChatGPT callback runs on a separate localhost server, so there is no
-  // postMessage from the popup — polling the status endpoint is the only
-  // completion signal. The button stays clickable while polling: a re-click
-  // supersedes the stale attempt (stopPoll + fresh login) instead of leaving
-  // the user stuck when the popup was closed or denied.
-  const handleLogin = async (id: string | number) => {
-    stopPoll(id);
-    setSigningIn(prev => ({ ...prev, [id]: true }));
-    try {
-      const d = await api.chatgpt.login(id) as { authorize_url: string };
-      window.open(d.authorize_url, 'chatgpt_oauth', 'width=500,height=700');
-      const interval = setInterval(async () => {
-        try {
-          const s = await api.chatgpt.status(id) as { logged_in: boolean };
-          if (s.logged_in) { stopPoll(id); reload(); }
-        } catch { /* ignore transient */ }
-      }, 2000);
-      // Give up after 2 minutes: the button reverts to "Sign in" and a later
-      // completed login still shows up on the next reload.
-      const timeout = setTimeout(() => { stopPoll(id); reload(); }, 2 * 60 * 1000);
-      pollRef.current[id] = { interval, timeout };
-    } catch (e) {
-      toast.error((e as Error).message);
-      setSigningIn(prev => ({ ...prev, [id]: false }));
-    }
-  };
-
-  const handleLogout = async (id: string | number) => {
-    try {
-      await api.chatgpt.logout(id);
-      reload();
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
+  const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
 
   // Number of MCP servers this agent references that still exist.
   const mcpCount = (toolsJson: string): number => {
@@ -605,40 +503,29 @@ export function AgentConfigPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
 
-      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} />}
-      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} />}
+      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />}
+      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />}
 
       {!adding && !editing && <div className="Box">
         {agents.map(a => {
-          const isChatGPT = a.provider?.auth_mode === 'chatgpt_login';
-          const loggedIn = isChatGPT && !!a.chatgpt_logged_in;
           const mcp = mcpCount(a.tools);
           const skl = skillCount(a.skills);
-          const pmeta = providerMeta(a.provider?.provider_type);
+          const rowProvider = (providers || []).find(p => p.id === a.provider_id);
+          const pmeta = providerMeta(rowProvider?.type ?? '');
           return (
             <div key={a.id} className="Box-row">
               <div className="resource-row-main">
                 <div className="resource-row-head">
-                  {isChatGPT && <span className="form-status-dot" style={{ background: loggedIn ? 'var(--fgColor-success)' : 'var(--fgColor-muted)' }} />}
                   <span className="resource-row-title">{a.name}</span>
-                  <Label variant={pmeta.badgeVariant}>{pmeta.badge}</Label>
-                  {isChatGPT && <Label variant={loggedIn ? 'success' : 'secondary'}>ChatGPT</Label>}
-                  {mcp > 0 && <Label variant="accent">{'MCP·' + mcp}</Label>}
-                  {skl > 0 && <Label variant="done">{'Skills·' + skl}</Label>}
+                  <Label variant={BADGE.ref}>{rowProvider?.name || pmeta.badge}</Label>
+                  {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
+                  {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
                 </div>
                 <div className="resource-row-meta">
-                  <span>{[a.model || 'default model', a.provider?.base_url && ('@ ' + a.provider.base_url)].filter(Boolean).join(' ')}</span>
+                  <span>{a.model || 'default model'}</span>
                 </div>
               </div>
               <div className="resource-row-actions">
-                {isChatGPT && (loggedIn
-                  ? <Button onClick={() => handleLogout(a.id)} size="small" variant="invisible">Disconnect</Button>
-                  : <Button
-                      onClick={() => handleLogin(a.id)}
-                      size="small"
-                      style={{ color: 'var(--fgColor-success)' }}
-                    >{signingIn[a.id] ? 'Signing in… (retry)' : 'Sign in'}</Button>
-                )}
                 <Button onClick={() => startEdit(a)} size="small" variant="invisible">Edit</Button>
               </div>
             </div>
