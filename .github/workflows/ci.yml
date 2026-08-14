@@ -14,6 +14,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
 
       - name: Vet
@@ -104,6 +105,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
       - name: govulncheck
         run: |
@@ -121,6 +123,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
       - uses: actions/setup-node@v4
         with:
