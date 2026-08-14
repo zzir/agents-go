@@ -418,7 +418,7 @@ func TestStopWorkflowClearsAPausedApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := runner.StopWorkflow(ctx, wr.ID); err != nil {
+	if _, err := runner.StopWorkflow(wr.ID); err != nil {
 		t.Fatalf("StopWorkflow: %v", err)
 	}
 	if got, _, err := approvals.FindByToolCall(ctx, "call_x"); err == nil && got != nil {
@@ -695,7 +695,7 @@ func TestRetryWorkflowResumesFromTheFailedStep(t *testing.T) {
 	}
 
 	healthy.Store(true)
-	if _, err := runner.RetryWorkflow(ctx, wr.ID); err != nil {
+	if _, err := runner.RetryWorkflow(wr.ID); err != nil {
 		t.Fatalf("RetryWorkflow: %v", err)
 	}
 	done := awaitWorkflow(t, runner, wr.ID, 30*time.Second)
@@ -712,7 +712,7 @@ func TestRetryWorkflowResumesFromTheFailedStep(t *testing.T) {
 
 	// Completed executions never retry — re-running a success repeats its side
 	// effects.
-	if _, err := runner.RetryWorkflow(ctx, wr.ID); !errors.Is(err, ErrWorkflowUnavailable) {
+	if _, err := runner.RetryWorkflow(wr.ID); !errors.Is(err, ErrWorkflowUnavailable) {
 		t.Fatalf("retry of a completed execution = %v, want ErrWorkflowUnavailable", err)
 	}
 }

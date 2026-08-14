@@ -312,10 +312,10 @@ func workflowWakePayload(wr *store.WorkflowRun, status, errMsg, result string) s
 
 // StopWorkflow ends the whole execution, not just the running step: stopping
 // one step and letting the next start is not what a person clicking stop means.
-func (r *Runner) StopWorkflow(ctx context.Context, workflowRunID string) (*store.WorkflowRun, error) {
+func (r *Runner) StopWorkflow(workflowRunID string) (*store.WorkflowRun, error) {
 	// The hub's root context, not the request's: the teardown must complete
 	// even if the HTTP caller disconnects mid-stop — same rule as RetryTask.
-	ctx = r.hub.rootCtx
+	ctx := r.hub.rootCtx
 	wr, err := r.Deps.WorkflowRuns.Get(ctx, workflowRunID)
 	if err != nil {
 		return nil, err
@@ -359,11 +359,11 @@ func (r *Runner) StopWorkflow(ctx context.Context, workflowRunID string) (*store
 // RetryWorkflow re-runs a terminal execution from the step it stopped at,
 // keeping the steps that already succeeded. It executes the SNAPSHOT, so a
 // definition edited since is not silently picked up mid-sequence.
-func (r *Runner) RetryWorkflow(ctx context.Context, workflowRunID string) (*store.WorkflowRun, error) {
+func (r *Runner) RetryWorkflow(workflowRunID string) (*store.WorkflowRun, error) {
 	// The hub's root context, not the request's: the run this starts outlives
 	// the HTTP call, and a disconnect between the claim and the launch would
 	// otherwise strand the row running with no live run.
-	ctx = r.hub.rootCtx
+	ctx := r.hub.rootCtx
 	wr, err := r.Deps.WorkflowRuns.Get(ctx, workflowRunID)
 	if err != nil {
 		return nil, err

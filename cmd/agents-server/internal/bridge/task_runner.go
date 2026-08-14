@@ -306,7 +306,7 @@ func (r *Runner) StopSessionTree(sessionID string) {
 			// not the snapshot's: the execution may have advanced from run1 to
 			// run2 between the list read and the stop, and run1's goroutine is
 			// already gone while run2 is the one now being torn down.
-			after, serr := r.StopWorkflow(ctx, runs[i].ID)
+			after, serr := r.StopWorkflow(runs[i].ID)
 			if serr != nil {
 				zerolog.Ctx(ctx).Warn().Err(serr).Str("workflow_run_id", runs[i].ID).Msg("stopping a session's workflow")
 				continue

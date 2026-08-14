@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -16,8 +15,8 @@ import (
 // something that read the conversation, so the only way in is the agent's
 // start_workflow tool.
 type WorkflowDriver interface {
-	StopWorkflow(ctx context.Context, workflowRunID string) (*store.WorkflowRun, error)
-	RetryWorkflow(ctx context.Context, workflowRunID string) (*store.WorkflowRun, error)
+	StopWorkflow(workflowRunID string) (*store.WorkflowRun, error)
+	RetryWorkflow(workflowRunID string) (*store.WorkflowRun, error)
 }
 
 // WorkflowHandler serves the workflow definitions and their executions.
@@ -222,7 +221,7 @@ func (h *WorkflowHandler) GetRun(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/workflow-runs/{id}/stop [post]
 func (h *WorkflowHandler) StopRun(c *gin.Context) {
-	wr, err := h.driver.StopWorkflow(c.Request.Context(), c.Param("id"))
+	wr, err := h.driver.StopWorkflow(c.Param("id"))
 	if err != nil {
 		h.driverError(c, err)
 		return
@@ -275,7 +274,7 @@ func (h *WorkflowHandler) DismissRun(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/workflow-runs/{id}/retry [post]
 func (h *WorkflowHandler) RetryRun(c *gin.Context) {
-	wr, err := h.driver.RetryWorkflow(c.Request.Context(), c.Param("id"))
+	wr, err := h.driver.RetryWorkflow(c.Param("id"))
 	if err != nil {
 		h.driverError(c, err)
 		return
