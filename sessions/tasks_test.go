@@ -103,7 +103,7 @@ func TestSQLTaskStore_FinalizeIsCompareAndSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Status.Terminal() || got.Result != "r" || got.NotifyState != tasks.NotifyPending {
+	if !got.Status.Terminal() || got.Result != "r" {
 		t.Errorf("task = %+v, want a complete terminal transition", got)
 	}
 }
@@ -119,22 +119,8 @@ func TestSQLTaskStore_DeliveryDoesNotTouchUpdatedAt(t *testing.T) {
 	if _, err := s.Finalize(ctx, "t1", "t1-run", tasks.StatusCompleted, "s", "r"); err != nil {
 		t.Fatal(err)
 	}
-	finished, err := s.Get(ctx, "t1")
-	if err != nil {
+	if _, err := s.Get(ctx, "t1"); err != nil {
 		t.Fatal(err)
-	}
-	if err := s.MarkNotifyDelivered(ctx, "t1", "t1-run"); err != nil {
-		t.Fatal(err)
-	}
-	after, err := s.Get(ctx, "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !after.UpdatedAt.Equal(finished.UpdatedAt) {
-		t.Errorf("updated_at moved on delivery: %v → %v", finished.UpdatedAt, after.UpdatedAt)
-	}
-	if after.NotifyState != tasks.NotifyDelivered {
-		t.Errorf("notify state = %q", after.NotifyState)
 	}
 }
 
@@ -156,20 +142,6 @@ func TestSQLTaskStore_Listings(t *testing.T) {
 	}
 	if len(live) != 2 {
 		t.Errorf("%d live tasks, want 2", len(live))
-	}
-	pending, err := s.ListPendingNotify(ctx, "parent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending) != 1 || pending[0].ID != "t2" {
-		t.Errorf("pending = %+v, want just t2", pending)
-	}
-	parents, err := s.PendingNotifyParents(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(parents) != 1 || parents[0] != "parent" {
-		t.Errorf("parents = %v", parents)
 	}
 	all, err := s.ListByParent(ctx, "parent")
 	if err != nil {

@@ -34,7 +34,7 @@ func spawnedTask(t *testing.T, s *sessions.TaskStore, id, parent, child string) 
 	if err := s.Create(context.Background(), &tasks.Task{
 		ID: id, RunID: id + "-run", Label: "job " + id,
 		ParentSessionID: parent, ChildSessionID: child,
-		Depth: 1, Status: tasks.StatusWorking, NotifyState: tasks.NotifyPending,
+		Depth: 1, Status: tasks.StatusWorking,
 	}); err != nil {
 		t.Fatalf("create task %s: %v", id, err)
 	}
@@ -86,8 +86,7 @@ func TestTaskRowsDoNotCrossSessionIncarnations(t *testing.T) {
 			"parent_session_id": "s1", "parent_session_gen": "a-dead-generation",
 			"child_session_id": "child-1", "child_session_gen": "a-dead-generation",
 			"depth": 1, "status": string(tasks.StatusWorking),
-			"notify_state": string(tasks.NotifyPending),
-			"created_at":   "2020-01-01 00:00:00+00:00", "updated_at": "2020-01-01 00:00:00+00:00",
+			"created_at": "2020-01-01 00:00:00+00:00", "updated_at": "2020-01-01 00:00:00+00:00",
 		}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -95,20 +94,31 @@ func TestTaskRowsDoNotCrossSessionIncarnations(t *testing.T) {
 	if got, err := store.ListByParent(ctx, "s1"); err != nil || len(got) != 0 {
 		t.Fatalf("the recreated session inherited %d task(s) (err=%v); a task row is bound to one generation", len(got), err)
 	}
-	if got, err := store.ListPendingNotify(ctx, "s1"); err != nil || len(got) != 0 {
-		t.Fatalf("the recreated session owes %d wake-up(s) it never asked for (err=%v)", len(got), err)
+	if _, err := store.ByChildSession(ctx, "child-1"); err == nil {
+		t.Fatal("a stale row resolved a child session it no longer owns")
 	}
-	parents, err := store.PendingNotifyParents(ctx)
+
+	// The restart sweep obeys the same rule: a live working row is failed AND
+	// reported, while the dead-generation row is neither — reporting it would
+	// tell the replacement session of work it never spawned.
+	spawnedTask(t, store, "t4", "s1", "child-4")
+	orphans, err := store.FailOrphans(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range parents {
-		if p == "s1" {
-			t.Fatal("the restart sweep would wake the replacement for a dead incarnation's task")
-		}
+	if len(orphans) != 1 || orphans[0].ID != "t4" {
+		t.Fatalf("sweep reported %+v, want exactly the live orphan t4", orphans)
 	}
-	if _, err := store.ByChildSession(ctx, "child-1"); err == nil {
-		t.Fatal("a stale row resolved a child session it no longer owns")
+	if orphans[0].Status != tasks.StatusFailed || orphans[0].Summary == "" {
+		t.Fatalf("reported orphan does not carry its failure: %+v", orphans[0])
+	}
+	var status string
+	if err := db.NewSelect().Table("agent_tasks").Column("status").
+		Where("id = ?", "t3").Scan(ctx, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(tasks.StatusWorking) {
+		t.Fatalf("the sweep wrote to a dead-generation row (status %q)", status)
 	}
 }
 

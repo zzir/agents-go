@@ -66,7 +66,7 @@ func TestSQLTaskStore_RetryClaimIsCompareAndSet(t *testing.T) {
 	if got.RunID == "t1-run" {
 		t.Error("the claim kept the failed run's id")
 	}
-	if got.Summary != "" || got.Result != "" || got.NotifyState != tasks.NotifyNone {
+	if got.Summary != "" || got.Result != "" {
 		t.Errorf("the previous attempt survived the claim: %+v", got)
 	}
 }
@@ -85,8 +85,7 @@ func TestSQLTaskStore_RetryClaimRefusesADeadGeneration(t *testing.T) {
 			"parent_session_id": "s1", "parent_session_gen": "a-dead-generation",
 			"child_session_id": "child-1", "child_session_gen": "a-dead-generation",
 			"depth": 1, "attempt": 1, "status": string(tasks.StatusFailed),
-			"notify_state": string(tasks.NotifyPending),
-			"created_at":   "2020-01-01 00:00:00+00:00", "updated_at": "2020-01-01 00:00:00+00:00",
+			"created_at": "2020-01-01 00:00:00+00:00", "updated_at": "2020-01-01 00:00:00+00:00",
 		}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}

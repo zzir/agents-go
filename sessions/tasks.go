@@ -45,10 +45,9 @@ type taskRow struct {
 
 	Inherit string `bun:"inherit"`
 
-	Status      string `bun:"status,notnull"`
-	NotifyState string `bun:"notify_state"`
-	Summary     string `bun:"summary"`
-	Result      string `bun:"result"`
+	Status  string `bun:"status,notnull"`
+	Summary string `bun:"summary"`
+	Result  string `bun:"result"`
 
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
@@ -66,7 +65,6 @@ func (r *taskRow) toTask() tasks.Task {
 		Depth:           r.Depth,
 		Attempt:         r.Attempt,
 		Status:          tasks.Status(r.Status),
-		NotifyState:     tasks.NotifyState(r.NotifyState),
 		Summary:         r.Summary,
 		Result:          r.Result,
 		CreatedAt:       r.CreatedAt,
@@ -91,7 +89,6 @@ func rowFrom(t *tasks.Task) *taskRow {
 		Attempt:         t.Attempt,
 		Inherit:         string(t.Inherit),
 		Status:          string(t.Status),
-		NotifyState:     string(t.NotifyState),
 		Summary:         t.Summary,
 		Result:          t.Result,
 		CreatedAt:       t.CreatedAt,
@@ -134,7 +131,6 @@ func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
 	for name, cols := range map[string][]string{
 		"idx_agent_tasks_parent": {"parent_session_id", "parent_session_gen"},
 		"idx_agent_tasks_child":  {"child_session_id", "child_session_gen"},
-		"idx_agent_tasks_notify": {"notify_state"},
 	} {
 		if _, err := db.NewCreateIndex().Model((*taskRow)(nil)).
 			Index(name).Column(cols...).IfNotExists().Exec(ctx); err != nil {
@@ -229,16 +225,6 @@ func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([
 	})
 }
 
-// ListPendingNotify implements tasks.Store, oldest first — the notification
-// lists them in the order they finished.
-func (s *TaskStore) ListPendingNotify(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
-	return s.query(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
-		return q.Where("parent_session_id = ?", parentSessionID).Where(liveParent).
-			Where("notify_state = ?", string(tasks.NotifyPending)).
-			OrderExpr("updated_at ASC")
-	})
-}
-
 // ListNonTerminal implements tasks.Store.
 func (s *TaskStore) ListNonTerminal(ctx context.Context, parentSessionID string) ([]tasks.Task, error) {
 	return s.query(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
@@ -261,17 +247,16 @@ func (s *TaskStore) query(ctx context.Context, apply func(*bun.SelectQuery) *bun
 
 // Finalize implements tasks.Store as one conditional UPDATE.
 //
-// Status, result and the wake-up debt land together, and only while the row is
-// still non-terminal. Writing them separately would let a reader see a terminal
-// task whose result has not arrived — which is exactly what task_status must be
-// able to rely on.
+// Status and result land together, and only while the row is still
+// non-terminal. Writing them separately would let a reader see a terminal
+// task whose result has not arrived — which is exactly what task_status must
+// be able to rely on.
 // The run_id predicate is the other half: a task can leave a terminal state
 // now (RetryClaim), so non-terminality alone no longer says WHICH attempt the
 // finalizer looked at.
 func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(st)).
-		Set("notify_state = ?", string(tasks.NotifyPending)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("run_id = ?", runID).
@@ -305,7 +290,6 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 		Set("attempt = CASE WHEN attempt < 1 THEN 2 ELSE attempt + 1 END").
 		Set("summary = ?", "").
 		Set("result = ?", "").
-		Set("notify_state = ?", string(tasks.NotifyNone)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("status = ?", string(tasks.StatusFailed)).
@@ -344,7 +328,6 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 		Set("attempt = CASE WHEN attempt <= 1 THEN 1 ELSE attempt - 1 END").
 		Set("summary = ?", summary).
 		Set("result = ?", result).
-		Set("notify_state = ?", string(tasks.NotifyPending)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("run_id = ?", runID).
@@ -407,62 +390,32 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool,
 	return false, nil
 }
 
-// ConsumeNotify and MarkNotifyDelivered deliberately leave updated_at alone:
-// for a terminal task it is when the task FINISHED (created→updated is the
-// duration a UI shows), and delivery can happen much later.
-func (s *TaskStore) ConsumeNotify(ctx context.Context, id, runID string) error {
-	return s.setNotify(ctx, id, runID, tasks.NotifyConsumed)
-}
-
-// MarkNotifyDelivered implements tasks.Store.
-func (s *TaskStore) MarkNotifyDelivered(ctx context.Context, id, runID string) error {
-	return s.setNotify(ctx, id, runID, tasks.NotifyDelivered)
-}
-
-func (s *TaskStore) setNotify(ctx context.Context, id, runID string, to tasks.NotifyState) error {
-	_, err := s.db.NewUpdate().Model((*taskRow)(nil)).
-		Set("notify_state = ?", string(to)).
-		Where("id = ?", id).
-		Where("run_id = ?", runID).
-		Where("notify_state = ?", string(tasks.NotifyPending)).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("setting task %q notify state: %w", id, err)
-	}
-	return nil
-}
-
-// PendingNotifyParents implements tasks.Store.
-func (s *TaskStore) PendingNotifyParents(ctx context.Context) ([]string, error) {
-	var ids []string
-	if err := s.db.NewSelect().Model((*taskRow)(nil)).
-		ColumnExpr("DISTINCT parent_session_id").
-		Where("notify_state = ?", string(tasks.NotifyPending)).
-		Where(liveParent).
-		Scan(ctx, &ids); err != nil {
-		return nil, fmt.Errorf("listing notify-pending parents: %w", err)
-	}
-	return ids, nil
-}
-
-// FailOrphans implements tasks.Store.
+// FailOrphans implements tasks.Store, as ONE statement so the rows reported
+// are exactly the rows failed — a select-then-update pair could fail a row the
+// select never saw, or report one that finalized in between. Scoped by
+// liveParent: a row bound to a dead generation matches nothing (§2.13 — it
+// lists nowhere and owes nothing), so the sweep neither fails nor reports it.
 //
 // input_required rows are kept: their pending approval persists and resumes
 // the run, so they are not orphans.
-func (s *TaskStore) FailOrphans(ctx context.Context) (int64, error) {
-	res, err := s.db.NewUpdate().Model((*taskRow)(nil)).
+func (s *TaskStore) FailOrphans(ctx context.Context) ([]tasks.Task, error) {
+	const summary = "the process restarted while the task was running"
+	var rows []taskRow
+	if _, err := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusFailed)).
-		Set("summary = ?", "the process restarted while the task was running").
-		// The failure is news the parent never heard.
-		Set("notify_state = ?", string(tasks.NotifyPending)).
+		Set("summary = ?", summary).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("status = ?", string(tasks.StatusWorking)).
-		Exec(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failing orphaned tasks: %w", err)
+		Where(liveParent).
+		Returning("*").
+		Exec(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("failing orphaned tasks: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	out := make([]tasks.Task, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].toTask())
+	}
+	return out, nil
 }
 
 // Delete implements tasks.Store.
