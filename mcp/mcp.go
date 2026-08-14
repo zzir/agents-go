@@ -621,6 +621,11 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 		Description:      resolveToolDescription(mt),
 		ParamsJSONSchema: schema,
 		Strict:           strict,
+		// The server's own readOnlyHint, recorded for consumers that want it.
+		// It is an OUTSIDE server's claim about itself: the plan-mode gate
+		// deliberately ignores it and admits MCP tools by name only (spec
+		// "A FIRST-PARTY tool's ReadOnly is trusted; an MCP tool's is not").
+		ReadOnly: mt.Annotations != nil && mt.Annotations.ReadOnlyHint,
 		// Tool failures (including isError results) are fed back to the model
 		// so it can recover, matching the SDK-wide default; without this every
 		// MCP error would abort the whole run.

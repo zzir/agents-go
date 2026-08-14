@@ -258,17 +258,25 @@ make another attempt.
 question — a critic agent, a schema check, a compiler.
 
 **Plan mode** (`middleware.Plan`) splits a run into two phases with one pause
-between them. While planning, only the tools named in `ReadOnlyTools`
-(`DefaultReadOnlyTools` when nil) are visible — direct tools through their
-enabled hook, MCP tools by filtering each turn's listing, handoffs through
-`Handoff.IsEnabled` (a target's full toolset would be a side door out of plan
-mode) — plus a `submit_plan` tool that is always approval-gated. The pause IS the plan
-review: an interruption whose tool is `middleware.PlanToolName` carries the
-plan in its arguments; `Approve` unlocks the full toolset and the same run
-continues into execution, `Reject`'s message sends the model back to planning
-with the write tools still hidden. Read-only-ness is a name list, not a tool
-capability — tools carry no side-effect marker, and a list the caller can see
-and edit beats an interface nobody remembers to implement.
+between them. While planning, a tool that is not read-only stays in the
+toolset but REFUSES when called, answering with a refusal that names
+`submit_plan` — hiding it instead produced "tool not found", which a model
+cannot tell from a tool the session never had, so it kept guessing. Handoffs
+are the exception and stay hidden (a target's full toolset would be a side
+door out of plan mode, and the model has no priors about your handoff names).
+A DIRECT tool counts as read-only when it says so (`Tool.ReadOnly`, which
+`sandbox.ReadFileTool`/`ListFilesTool` set) or when `ReadOnlyTools`
+(`DefaultReadOnlyTools` when nil) names it. An MCP tool is admitted ONLY by
+name: its `ReadOnly` came from the server's own `readOnlyHint`, an outside
+claim plan mode's guarantee cannot rest on. A gated call also raises no
+approval while planning — not the tool's own `NeedsApproval` and not the
+agent's `ApproveTools` listing (which `Apply` translates into per-tool
+predicates so the phase can suppress it); pausing a human over a call the
+phase refuses anyway would waste the interruption. `submit_plan` is always
+approval-gated, and that pause IS the plan review: an interruption whose tool
+is `middleware.PlanToolName` carries the plan in its arguments; `Approve`
+unlocks the full toolset and the same run continues into execution, `Reject`'s
+message sends the model back to planning with the write tools still refusing.
 
 **Todo mode** (`middleware.Todo`) adds a `todo_write` tool and a preamble
 telling the model to keep a working list. Every call replaces the whole list —

@@ -88,7 +88,7 @@ type readFileArgs struct {
 // content is returned as a string, truncated to MaxOutputBytes.
 func ReadFileTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
-	return agents.NewTool(
+	t := agents.NewTool(
 		"read_file",
 		"Read the contents of a file in the sandbox. Returns the file content as text.",
 		func(ctx context.Context, _ *agents.ToolContext, args readFileArgs) (string, error) {
@@ -101,6 +101,8 @@ func ReadFileTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 			return truncateWithInfo(string(data), cfg.MaxOutputBytes), nil
 		},
 	)
+	t.ReadOnly = true
+	return t
 }
 
 type writeFileArgs struct {
@@ -132,7 +134,7 @@ type listFilesArgs struct {
 // ListFilesTool returns a tool that lists files in a sandbox directory.
 func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
-	return agents.NewTool(
+	t := agents.NewTool(
 		"list_files",
 		"List files and directories in the sandbox. Returns name, size and type for each entry.",
 		func(ctx context.Context, _ *agents.ToolContext, args listFilesArgs) (string, error) {
@@ -155,4 +157,6 @@ func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 			return truncateWithInfo(b.String(), cfg.MaxOutputBytes), nil
 		},
 	)
+	t.ReadOnly = true
+	return t
 }

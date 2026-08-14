@@ -1781,21 +1781,63 @@ already decided; a middleware's edits to those fields do not apply on resume.
 handoff targets keep their own toolset, the same scoping as every
 instruction-injecting middleware. Their invariants:
 
-- **Plan gates by hiding, not failing.** While planning, tools outside the
-  read-only set are absent from the model's toolset (direct tools via their
-  enabled hook; MCP tools filtered out of each turn's listing; handoffs via
-  `Handoff.IsEnabled` — a target's full toolset would otherwise be a side
-  door out of plan mode), so a write cannot even be attempted. Every gate
-  COMPOSES with the predicate it wraps rather than shadowing it — the
-  resolver consults only the outermost layer, and unlocking the plan gate
-  must not resurrect a tool or handoff the host itself disabled. Read-only-ness
-  is a NAME LIST (`DefaultReadOnlyTools` when nil), not a tool capability:
-  tools carry no side-effect marker, and a visible, editable list beats an
-  interface nobody remembers to implement.
+- **Plan gates by DENYING, not hiding.** While planning, a tool outside the
+  read-only set stays in the model's toolset and answers a call with a refusal
+  naming `submit_plan` — a normal tool OUTPUT, not an error (an error without
+  `FailureErrorFunction` aborts the run, and a phase decision is not a
+  failure). Hiding was worse in practice: a model that cannot see a tool it
+  expects calls it anyway, and "tool not found" teaches it nothing about the
+  phase — it cannot tell a gated tool from one this session never had. MCP
+  tools are gated the same way, per turn, since their set is unknown at build
+  time.
+- **Handoffs, unlike tools, ARE hidden while planning** (`Handoff.IsEnabled` —
+  a target's full toolset would otherwise be a side door out of plan mode).
+  The asymmetry is deliberate: a model carries priors about tool NAMES and
+  reaches for them unprompted, but has none about this agent's handoff
+  targets, so hiding one costs no wasted turn. That gate COMPOSES with the
+  predicate it wraps rather than shadowing it — the resolver consults only the
+  outermost layer, and unlocking must not resurrect a handoff the host itself
+  disabled.
+- **A FIRST-PARTY tool's `ReadOnly` is trusted; an MCP tool's is not.** A
+  direct `*Tool` sets `ReadOnly` about itself and the gate honors it (sandbox
+  `read_file`/`list_files` stay usable while planning). But on an MCP tool that
+  same flag came from the server's `readOnlyHint` — a claim an OUTSIDE server
+  makes about itself, and plan mode's "nothing changes until you approve"
+  guarantee cannot rest on an outside claim: a malicious or mistaken server
+  could mark a write tool read-only and run it mid-plan. So `planMCP` admits an
+  MCP tool ONLY when the CALLER named it in `ReadOnlyTools` (`DefaultReadOnlyTools`
+  when nil) — a first-party allowlist — never on the hint alone. Neither path is
+  enforced beyond that: nothing checks a tool that claims read-only behaves, so
+  the allowlist is a statement of trust in a NAME, which is the caller's to make.
+- **The refusal outranks approval.** The runner's approval partition runs
+  BEFORE a tool invokes, so a gate that only wrapped `OnInvoke` would pause a
+  human over a call the phase then refuses — approving would execute nothing.
+  While planning, a gated call therefore needs NO approval: not the tool's own
+  predicate, and not the agent-level `ApproveTools` listing, which `Apply`
+  translates into per-tool predicates (and clears off the clone) precisely so
+  the phase can suppress it. Once executing, the translated predicates answer
+  exactly as the tool-then-list order did. A READ-ONLY tool the listing names
+  keeps its approval in BOTH phases — the phase never suppresses approval on a
+  call it is not refusing. The translation covers MCP tools per listing
+  (`planMCP` carries the matcher), including a `"*"` wildcard.
+- **The unlock's SCOPE is the host's to decide, and `PlanPhase` is per RUN.**
+  `Apply` mints a fresh phase for every run, so a host that wants an approved
+  plan to hold across later turns consults its own durable record and calls
+  `Unlock` before the run — which is what `OnUnlock` exists to make possible.
+  The SDK offers no session-scoped phase: it has no notion of a session.
+- **`Plan.Apply` is safe to call unconditionally, so WHETHER this run plans is
+  the phase's answer, not the build's.** An already-unlocked phase gates no
+  tool, offers no `submit_plan` (`IsEnabled`) and contributes no preamble —
+  the planning instructions are emitted per run, only while the phase is
+  locked. That is what lets a host decide plan mode outside the agent (per
+  session, per request, per person) and still rebuild the same agent for a
+  durable resume: building it only for a run that plans would leave the
+  rebuild — which happens AFTER the unlock — without the `submit_plan` the
+  paused state names.
 - **The plan review is an ordinary approval pause.** `submit_plan` is
   approval-gated always; the plan text is the call's arguments. Approving it
   unlocks the toolset and the SAME run continues; rejecting feeds the message
-  back and planning continues, write tools still hidden. No second pause
+  back and planning continues, write tools still refusing. No second pause
   mechanism exists for hosts to learn.
 - **`todo_write` replaces the whole list, atomically.** The model always sends
   every item (simpler to prompt for, impossible to desynchronize); a malformed

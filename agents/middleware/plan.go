@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,12 +30,11 @@ const PlanToolName = "submit_plan"
 // carried in agents.RunState.Extra) and call Unlock before ResumeRun — see
 // docs/human_in_the_loop.md "Rebuilding transformed agents".
 
-// DefaultReadOnlyTools are the tool names Plan leaves usable while planning.
-// Read-only-ness is a NAME CONVENTION, not a tool capability: tools carry no
-// side-effect marker, and a list the caller can see and edit beats an
-// interface nobody remembers to implement. todo_write is here so stacking
-// Todo with Plan works in either order — maintaining the list touches nothing
-// outside the run.
+// DefaultReadOnlyTools are extra tool names Plan leaves usable while planning,
+// on top of every tool that declares `Tool.ReadOnly`. The list covers what a
+// caller does not own: a tool from another package, or an MCP server that
+// ships no readOnlyHint. todo_write is here so stacking Todo with Plan works
+// in either order — maintaining the list touches nothing outside the run.
 var DefaultReadOnlyTools = []string{
 	"read_file", "list_files", "read_skill_file", "brave_search", "task_status",
 	TodoToolName,
@@ -44,26 +44,42 @@ var DefaultReadOnlyTools = []string{
 // phase it is in, what it can touch, and how to leave the phase — the three
 // things a hidden toolset cannot say for itself.
 const DefaultPlanInstructions = `You are in PLAN MODE. Before making any changes:
-1. Explore with the available read-only tools and understand the task.
+1. Understand the task, exploring with the read-only tools in your toolset.
+   Work from the tools you can see — this session may have no filesystem or
+   shell access at all, and a tool that is not listed does not exist here.
 2. Write a concrete plan: what you will change, where, and how you will verify it.
 3. Submit the plan with the submit_plan tool and wait for approval.
-Do not attempt any modification while planning — the tools for that are
-disabled and will only become available after your plan is approved. If your
-plan is rejected, revise it using the feedback and submit again.`
+Do not attempt any modification while planning — those tools are listed but
+disabled, and answer with a refusal until your plan is approved. If your plan
+is rejected, revise it using the feedback and submit again.`
 
 // Plan puts a run into plan mode: the agent explores with read-only tools,
 // submits a plan through submit_plan (which pauses for approval, like any
 // approval-gated tool), and only an approved plan unlocks the rest of the
 // toolset — in the SAME run, which then continues into execution. A rejection
-// feeds its message back and the model revises; the write tools stay hidden.
+// feeds its message back and the model revises; the write tools stay locked.
 //
-// Gating hides tools rather than failing them: while planning, non-read-only
-// tools are absent from the model's toolset (direct tools via their enabled
-// hook, MCP tools by filtering each turn's listing), so the model cannot even
-// attempt a write. The preamble tells it why.
+// Gating DENIES rather than hides: a gated tool stays in the model's toolset
+// and answers a call while planning with a refusal naming what to do instead.
+// A model that cannot see a tool it expects reaches for it anyway and gets
+// "tool not found", which teaches it nothing; a refusal teaches it the phase.
+// A FIRST-PARTY tool declares itself read-only through Tool.ReadOnly; an MCP
+// tool's ReadOnly is the server's own readOnlyHint, which the gate does NOT
+// trust — an MCP tool is admitted only when named in ReadOnlyTools.
+//
+// The refusal outranks approval: a gated call while planning raises NO human
+// approval — not the tool's own and not the agent's ApproveTools listing,
+// which Apply translates into per-tool predicates (and clears) so the phase
+// can suppress it. Read-only tools keep their approval in both phases.
 //
 // The middleware rewrites the ENTRY agent only. A handoff target keeps its
 // own toolset — same scoping as every instruction-injecting middleware.
+//
+// Apply is safe to call unconditionally: an already-unlocked phase gates
+// nothing, offers no submit_plan and adds no preamble. Whether THIS run plans
+// is the returned PlanPhase's answer, not a build-time one — which is what
+// lets plan mode be a property of the session (or the person's request)
+// rather than of the agent.
 type Plan struct {
 	// ReadOnlyTools are the tool names usable while planning.
 	// Nil means DefaultReadOnlyTools; an explicit empty slice means none.
@@ -159,29 +175,20 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	phase := &PlanPhase{}
 
 	out := agent.Clone()
+	// The agent-level ApproveTools list is consulted by the runner BEFORE a
+	// tool runs, so it would pause a human over a call the planning gate is
+	// about to refuse. Apply therefore translates the list into each tool's own
+	// predicate — where the gate can suppress it while planning — and clears
+	// it; after unlock the translated predicates answer exactly as the list did.
+	listed := approvalListMatcher(out.ApproveTools)
+	out.ApproveTools = nil
 	tools := make([]*agents.Tool, 0, len(out.Tools)+1)
 	for _, t := range out.Tools {
-		if readOnly[t.Name] {
-			tools = append(tools, t)
+		if t.ReadOnly || readOnly[t.Name] {
+			tools = append(tools, keepListedApproval(t, listed(t.Name)))
 			continue
 		}
-		// The gate COMPOSES with the tool's own enabled hook rather than
-		// shadowing it: a bare phase gate would make every gated tool
-		// unconditionally visible after unlock — including tools the host
-		// disabled for permissions or run context. Capturing IsEnabled before
-		// overwriting it on the copy is what keeps the tool's own answer.
-		gated := *t
-		inner := t.IsEnabled
-		gated.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) (bool, error) {
-			if !phase.Executing() {
-				return false, nil
-			}
-			if inner != nil {
-				return inner(ctx, rc, agent)
-			}
-			return true, nil
-		}
-		tools = append(tools, &gated)
+		tools = append(tools, gateTool(t, phase, listed(t.Name)))
 	}
 	submit := agents.NewTool(PlanToolName,
 		"Submit your plan for approval. Execution tools unlock only after the plan is approved.",
@@ -224,26 +231,125 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		out.Handoffs = hs
 	}
 
-	// MCP tools are listed fresh each turn, so a filtering wrapper gates them
-	// dynamically: while planning only read-only names survive the listing.
+	// MCP tools are listed fresh each turn, so a wrapper gates them per listing
+	// — the same refusal as a direct tool, applied to a set Plan cannot see at
+	// build time. The wrapper also carries the translated ApproveTools listing:
+	// the list was cleared above, and an MCP tool it named must keep requiring
+	// approval once executing.
 	if len(out.MCPServers) > 0 {
 		wrapped := make([]agents.MCPServer, 0, len(out.MCPServers))
 		for _, s := range out.MCPServers {
-			wrapped = append(wrapped, planMCP{inner: s, phase: phase, readOnly: readOnly})
+			wrapped = append(wrapped, planMCP{inner: s, phase: phase, readOnly: readOnly, listed: listed})
 		}
 		out.MCPServers = wrapped
 	}
 
-	out.Instructions = agents.WrapInstructions(out.Instructions,
-		strings.TrimSpace(firstNonEmpty(p.Instructions, DefaultPlanInstructions)), "")
+	// The preamble is emitted only while the phase is LOCKED. Instructions are
+	// computed per run, so an agent that starts (or is rebuilt) already
+	// unlocked carries none of it — which is what lets a host apply Plan
+	// unconditionally and decide the phase separately.
+	preamble := strings.TrimSpace(firstNonEmpty(p.Instructions, DefaultPlanInstructions))
+	inner := out.Instructions
+	out.Instructions = func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) (string, error) {
+		if phase.Executing() {
+			if inner == nil {
+				return "", nil
+			}
+			return inner(ctx, rc, agent)
+		}
+		return agents.WrapInstructions(inner, preamble, "")(ctx, rc, agent)
+	}
 	return out, phase
 }
 
-// planMCP filters an MCP server's per-turn tool listing while planning.
+// gateTool returns a copy of t that refuses to run while the plan phase is
+// still planning. The refusal is a normal tool OUTPUT, not an error: an error
+// without a FailureErrorFunction aborts the run, and a phase decision is not a
+// failure — the model is meant to read it and submit a plan.
+//
+// The refusal fires BEFORE the approval gate: while planning the copy answers
+// "no approval needed", because pausing a human over a call the phase refuses
+// anyway wastes the interruption on a no-op. Once executing, the tool's own
+// predicate answers, then the agent-level listing (`listed`) Apply translated
+// out of ApproveTools — see spec §"Plan gates by DENYING".
+func gateTool(t *agents.Tool, phase *PlanPhase, listed bool) *agents.Tool {
+	gated := *t
+	inner := t.OnInvoke
+	gated.OnInvoke = func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
+		if !phase.Executing() {
+			return agents.TextResult(fmt.Sprintf(
+				"%s is disabled while planning. Finish understanding the task with your read-only tools, "+
+					"then call %s; every tool unlocks once the plan is approved.", t.Name, PlanToolName)), nil
+		}
+		if inner == nil {
+			return agents.ToolResult{}, fmt.Errorf("tool %q has no OnInvoke", t.Name)
+		}
+		return inner(ctx, tc, argsJSON)
+	}
+	if innerFunc, innerBool := t.NeedsApprovalFunc, t.NeedsApproval; innerFunc != nil || innerBool || listed {
+		gated.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
+			if !phase.Executing() {
+				return false, nil
+			}
+			if innerFunc != nil {
+				need, err := innerFunc(ctx, rc, argsJSON, callID)
+				if err != nil || need {
+					return need, err
+				}
+			} else if innerBool {
+				return true, nil
+			}
+			return listed, nil
+		}
+	}
+	return &gated
+}
+
+// keepListedApproval returns t, or — when the agent's ApproveTools named it —
+// a copy whose own predicate now also enforces the listing, since Apply
+// cleared the list itself. Read-only tools keep their approval in BOTH phases.
+func keepListedApproval(t *agents.Tool, listed bool) *agents.Tool {
+	if !listed {
+		return t
+	}
+	kept := *t
+	innerFunc := t.NeedsApprovalFunc
+	kept.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
+		if innerFunc != nil {
+			// Invoked for its error (and any per-call effects), exactly as the
+			// runner would have; a non-error answer is superseded by the listing.
+			if _, err := innerFunc(ctx, rc, argsJSON, callID); err != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	}
+	return &kept
+}
+
+// approvalListMatcher is agentApprovesToolName's semantics as a predicate:
+// exact name, or "*" for every tool.
+func approvalListMatcher(names []string) func(string) bool {
+	all := false
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n == "*" {
+			all = true
+			continue
+		}
+		set[n] = true
+	}
+	return func(name string) bool { return all || set[name] }
+}
+
+// planMCP gates an MCP server's per-turn tool listing while planning, and
+// carries the translated ApproveTools listing in both phases (the agent-level
+// list was cleared by Apply, so MCP tools it named enforce it themselves).
 type planMCP struct {
 	inner    agents.MCPServer
 	phase    *PlanPhase
 	readOnly map[string]bool
+	listed   func(string) bool
 }
 
 func (m planMCP) Name() string { return m.inner.Name() }
@@ -251,18 +357,27 @@ func (m planMCP) Close() error { return m.inner.Close() }
 
 func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.Tool, error) {
 	tools, err := m.inner.ListTools(ctx, rc, agent)
-	if err != nil || m.phase.Executing() {
+	if err != nil {
 		return tools, err
 	}
 	// A fresh slice, never tools[:0]: the inner server may hand out a cached
-	// slice, and filtering in place would corrupt it for every later turn.
-	kept := make([]*agents.Tool, 0, len(tools))
+	// slice, and rewriting in place would corrupt it for every later turn.
+	// The gates check the phase per CALL, so one wrapping serves both phases.
+	out := make([]*agents.Tool, 0, len(tools))
 	for _, t := range tools {
+		// By NAME only — never the tool's own ReadOnly. On an MCP tool that flag
+		// is the server's readOnlyHint, a claim the external server makes about
+		// itself; trusting it would let a server mark a write tool "read-only"
+		// and run it while the person believes nothing can change. Plan mode's
+		// guarantee cannot rest on an outside declaration, so an MCP tool is
+		// admitted only when the CALLER named it in ReadOnlyTools.
 		if m.readOnly[t.Name] {
-			kept = append(kept, t)
+			out = append(out, keepListedApproval(t, m.listed(t.Name)))
+			continue
 		}
+		out = append(out, gateTool(t, m.phase, m.listed(t.Name)))
 	}
-	return kept, nil
+	return out, nil
 }
 
 func firstNonEmpty(a, b string) string {

@@ -38,8 +38,8 @@ func main() {
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
 	// read_file is on middleware.DefaultReadOnlyTools, so it stays usable
-	// while planning; write_file is not, so it is hidden until the plan is
-	// approved.
+	// while planning; write_file is not, so calling it before the plan is
+	// approved answers with a refusal instead of writing.
 	readFile := agents.NewTool("read_file", "Read the project notes.",
 		func(context.Context, *agents.ToolContext, readArgs) (string, error) {
 			return "NOTES: the greeting in hello.txt is outdated.", nil

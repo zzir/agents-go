@@ -48,6 +48,12 @@ type Tool struct {
 	// TextResult for the common case.
 	OnInvoke func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error)
 
+	// ReadOnly marks a tool that only observes — it changes nothing a later
+	// call could see. It is a HINT the tool declares about itself, read by
+	// gates that admit observation while withholding change (plan mode).
+	// Nothing enforces it.
+	ReadOnly bool
+
 	// IsEnabled, when non-nil, is consulted before exposing the tool to the
 	// model; returning false hides the tool for that run.
 	//

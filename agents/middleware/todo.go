@@ -32,8 +32,9 @@ type TodoItem struct {
 }
 
 // DefaultTodoInstructions is the todo preamble.
-const DefaultTodoInstructions = `Maintain a todo list for this task with the todo_write tool:
-1. Break the task into concrete steps before starting.
+const DefaultTodoInstructions = `Maintain a todo list for MULTI-STEP work with the todo_write tool:
+1. Break the task into concrete steps before starting. Skip the list entirely
+   when the task is one or two steps — there it is pure overhead.
 2. Each todo_write call REPLACES the whole list — always send every item.
 3. Mark the step you are working on in_progress (one at a time), and mark
    steps completed as soon as they are done.
