@@ -1871,16 +1871,39 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
 - **Identity and execution are separate.** `Task.ID` is the durable entity,
   `Task.RunID` one attempt at it. Collapsing them makes a retry inexpressible
   without inventing a second task.
-- **Finalization is a compare-and-set**: status, result and the wake-up debt in
-  one atomic transition, only while the task is non-terminal. This is why a
-  task store must be transactional, and why no file-backed one is offered — a
+- **Finalization is a compare-and-set**: status and result in one atomic
+  transition, only while the task is non-terminal. This is why a task store
+  must be transactional, and why no file-backed one is offered — a
   read-modify-write cannot arbitrate between two finalizers.
-- **Four reasons not to wake a parent**, all of which must be clear: it is
-  being deleted, it has a live run, it is paused on a human decision, or the
-  guard could not tell. **A guard that cannot answer must refuse** — "cannot
-  prove it is safe" is not permission. A refused wake KEEPS the debt.
-- **A cancellation never wakes**, nor does a result the model already pulled
-  with `task_status`. Both would burn a turn restating what is already known.
+- **The Manager REPORTS endings; it does not deliver them.** A terminal
+  transition it claimed calls `Config.OnFinished`, and a result the model
+  pulled in-turn with `task_status` calls `Config.OnResultDelivered`. Deciding
+  when a session may be interrupted, and holding the debt until it may, is a
+  host policy — a task that finished while its parent was busy, paused, or
+  down is the host's problem to time, and the SDK owning a wake-up state
+  machine put that policy in the wrong place. **A cancellation is reported as
+  DELIVERED, not finished**: the person did it and a turn restating it would
+  only repeat them. **The reported `*Task` is the claimed snapshot in hand**,
+  built from the finalize's own values rather than a re-read: between the win
+  and a read, a retry can move the row past this attempt (non-terminal, the
+  failure cleared), and a failed read must not cost the parent the report.
+- **What a durable host owes on top of the reports.** `OnFinished` is a call,
+  and a crash can fall between the terminal write and it — so a host whose
+  delivery must survive crashes writes its own debt row ATOMICALLY with its
+  `Store.Finalize` (and `ReleaseRetryClaim`), not from the hook. The same
+  transition discipline holds the other way: a host holding an undelivered
+  debt drops it inside `RetryClaim`'s transition (the task is no longer
+  finished; the next ending owes a fresh one), and its restart sweep writes
+  each orphan's debt in the sweep's own transaction. The interface cannot
+  carry these guarantees (an in-memory store has no debt to write), so they
+  are recorded here instead.
+- **One cap governs every kind of background work.** `Config.ExtraLiveCount`
+  adds the host's OWN background work (e.g. workflow executions) to the
+  per-parent live count a spawn is checked against, and the host's own
+  admission check counts tasks back — counting them apart would let one kind
+  hide behind the other. A count that cannot be read must not wrongly BLOCK a
+  spawn: the host returns 0 on error, the same lenient direction the ceiling's
+  own store predicate backstops.
 - **A task row names sessions by GENERATION, not by id.** A session id names a
   session, not a place (§2.5e2), and a task outlives the turn that spawned it
   by design — so a row matched on the id alone attaches itself to whatever
@@ -1898,16 +1921,16 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   the line delimiter AND the field delimiter, because the line pattern's own
   greediness otherwise lets a crafted result re-aim the task id and status on
   the very same line — forging a card for a task the sender does not own.
-- **A wake-up runs under the configuration snapshotted at spawn**, not resolved
-  fresh: the parent may be configured differently by then.
-- **A wake-up launch carries its lineage.** `LaunchRequest.ParentRunID` names
-  the run that spawned the delivered task(s) — the first task carrying one when
-  several drained at once — so a host can record the relationship on the run's
-  own durable output (its traces) instead of re-deriving it later from task
-  rows or notification text, which a fork or a fold does not carry.
-- **A restart fails what it interrupted** and owes each parent a wake-up, so
-  the news is delivered rather than lost. `input_required` is left alone: its
-  approval persists.
+- **A task carries the configuration snapshotted at spawn** (`Task.Inherit`)
+  and the run that spawned it (`Task.ParentRunID`), so a host delivering the
+  result later runs the turn as the agent that asked and can record the
+  relationship on the run's own durable output (its traces) rather than
+  re-deriving it from task rows or notification text, which a fork or a fold
+  does not carry.
+- **A restart fails what it interrupted and RETURNS the rows.** `FailOrphans`
+  answers with the tasks it failed, not a count: each parent still has to be
+  told, and only the caller can arrange that. `input_required` is left alone:
+  its approval persists.
 - **`input_required` is not terminal.** A task waiting on a human is in flight;
   a notification for it would announce something that has not happened.
 - **A paused task is claimed before the host is told to stop it** (the finalize
@@ -1917,8 +1940,8 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
 - **Rollback of a half-finished spawn uses a detached context.** `Spawn` runs
   inside the parent run, so a parent cancellation racing it would kill the
   cleanup halfway.
-- **A depth check that cannot be made refuses**, the same rule as the wake
-  guard. Depth is read from the store, and a lookup that fails is not the same
+- **A depth check that cannot be made refuses**, the same rule a host's wake
+  guard follows. Depth is read from the store, and a lookup that fails is not the same
   answer as "this parent is not a task" — that one restarts the count at 1, so
   treating them alike makes one transient query error a way past the limit.
   `MetaFor` reports the failure rather than resolving it to "no".
@@ -1929,10 +1952,9 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   once.
 - **A failed task can be retried in place** — `failed → working`, the only
   transition out of a terminal state, and a compare-and-set like `Finalize`:
-  the new run id, the incremented attempt and the cleared summary, result and
-  wake-up debt land with the status, only while the task is failed and under
-  the attempt ceiling. The debt is cleared because the task is no longer
-  finished; the next ending owes a fresh one. **The ceiling is a store
+  the new run id, the incremented attempt and the cleared summary and result
+  land with the status, only while the task is failed and under the attempt
+  ceiling. **The ceiling is a store
   predicate**, not only a Manager check, so two processes cannot both claim the
   last attempt. Resuming is sound because the session is: persistence stops at
   a boundary that never leaves a call without its output (§2.5), so the tail of
@@ -1948,10 +1970,9 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   A stop chases **one** retry, since it names the task rather than the run.
 - **A retry takes a concurrency slot** like a spawn — exempting it would make
   retry the way around the cap — and a launch that fails puts the task back to
-  failed. The debt that ending opens follows the model-path rule below: the
-  `task_retry` tool reports the failure and settles it in hand, while a retry
-  over a host API told only a person, so the model keeps its wake-up — and the
-  parent is drained at once, so an idle conversation hears it immediately.
+  failed. That ending follows the model-path rule below: the `task_retry` tool
+  reports the failure in hand (so it counts as delivered), while a retry over a
+  host API told only a person and the model still has to hear it.
 - **A stop reports what it DID**, not whether it errored, and the four answers
   are not interchangeable. A host asked to stop a run it has never heard of —
   the ordinary state during a launch — has nothing to report but success, and
@@ -1985,20 +2006,20 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   about that run — because cancelling on the row alone cancels tasks that
   simply finished quickly, which is the common case when a run fails its
   pre-flight.
-- **A finished task's debt is consumed on the MODEL's path only, and only for
-  the result the model is actually handed.** When a task ends before the call
-  that started it returns, its result is in the tool output the model is about
-  to read, so the wake-up owes nothing — the rule `task_status` already
-  followed. Two bounds keep that from swallowing news instead: a task still
-  reported as running owes its wake-up however the row reads by the time the
-  debt is written, because a result that landed after the answer was decided is
-  one the model has not seen; and the attempt is checked, since a retry in
-  between makes the pending debt a different attempt's. The rule covers
-  refusals too: `task_retry` answers every call that has task state with that
-  state — success, refusal, or a launch that never started — and whatever
-  terminal result the report carries is thereby in the model's hands. A person
-  reading the same result over an HTTP response has told the model nothing, so
-  a host API must not consume it at all.
+- **A result counts as delivered on the MODEL's path only, and only for the
+  result the model is actually handed.** When a task ends before the call that
+  started it returns, its result is in the tool output the model is about to
+  read, so `OnResultDelivered` fires and the host drops what it was going to
+  deliver — the rule `task_status` already followed. Two bounds keep that from
+  swallowing news instead: a task still reported as running is NOT delivered
+  however the row reads by then, because a result that landed after the answer
+  was decided is one the model has not seen; and the attempt is checked, since
+  a retry in between makes the outstanding delivery a different attempt's. The
+  rule covers refusals too: `task_retry` answers every call that has task state
+  with that state — success, refusal, or a launch that never started — and
+  whatever terminal result the report carries is thereby in the model's hands.
+  A person reading the same result over an HTTP response has told the model
+  nothing, so a host API must not report delivery at all.
 - **Retryability is about the task's own state, and the ceiling is the
   Manager's.** A failed task that has used every attempt looks exactly like one
   that has not, so a caller offering a retry needs the ceiling — `MaxAttempts`
@@ -2026,8 +2047,8 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   just started and report what the task actually is. The second half is what
   covers the terminators that never speak to the host at all: an approval
   reaper, a restart sweep.
-- **Every attempt-scoped write names its attempt.** `Finalize` and the notify
-  pair always did; `MarkInputRequired` and `ReclaimWorking` once ran unbound on
+- **Every attempt-scoped write names its attempt.** `Finalize` always did;
+  `MarkInputRequired` and `ReclaimWorking` once ran unbound on
   the argument that a non-terminal state can only belong to the current
   attempt. An APPROVAL breaks that argument: persisted before the pause lands
   on the task row, it can outlive its attempt across a crash, a `FailOrphans`
@@ -2043,16 +2064,16 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   otherwise spend the retry ceiling on runs that never existed, until every
   attempt was gone without a retry executing. `ReleaseRetryClaim` is the undo:
   bound to the claimed run id like `Finalize`, it puts the task back to failed,
-  rolls the attempt back down (floored at 1 — the original run always counts),
-  records the launch failure as the task's result, and reopens the wake-up
-  debt. Only the launch path releases; a run that registered and then failed
-  is a real attempt and finalizes normally.
+  rolls the attempt back down (floored at 1 — the original run always counts)
+  and records the launch failure as the task's result, which is reported like
+  any other ending. Only the launch path releases; a run that registered and
+  then failed is a real attempt and finalizes normally.
 - **The restart sweep cannot arbitrate a retry**, so ordering must. `FailOrphans`
   fails every row recorded as working and has no notion of a live run; a retry
-  that claimed first would have its fresh run declared dead, its parent woken
-  with a failure that did not happen, and the real result dropped for losing the
-  CAS. The sweep is therefore a separate call from the drain, to run **before**
-  the host accepts requests. Two processes sharing one store keep the race —
+  that claimed first would have its fresh run declared dead, its parent told of
+  a failure that did not happen, and the real result dropped for losing the
+  CAS. The sweep is therefore a separate call from whatever delivers, to run
+  **before** the host accepts requests. Two processes sharing one store keep the race —
   the same exposure the concurrency cap already documents.
 - **The retry hint in a notification is its own line.** A task line is a record
   consumers parse, and text appended inside one is read as part of that task's

@@ -27,7 +27,9 @@ func WithParentRunID(ctx context.Context, runID string) context.Context {
 	return context.WithValue(ctx, parentRunKey{}, runID)
 }
 
-func parentRunIDFrom(ctx context.Context) string {
+// ParentRunID reads back what WithParentRunID put on ctx: the run a tool call
+// is executing inside, empty when the host did not record one.
+func ParentRunID(ctx context.Context) string {
 	id, _ := ctx.Value(parentRunKey{}).(string)
 	return id
 }
@@ -95,7 +97,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 				ToolCallID: tc.ToolCallID,
 				// The host's id for the executing run (WithParentRunID), so
 				// the task ties back to the spawning run's trace.
-				ParentRunID: parentRunIDFrom(ctx),
+				ParentRunID: ParentRunID(ctx),
 			})
 			if err != nil {
 				return agents.ToolResult{}, err

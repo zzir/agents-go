@@ -48,16 +48,6 @@ func (l *fakeLauncher) all() []LaunchRequest {
 	return append([]LaunchRequest(nil), l.launched...)
 }
 
-func (l *fakeLauncher) wakes() []LaunchRequest {
-	var out []LaunchRequest
-	for _, r := range l.all() {
-		if r.Wake {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // countingRepo is a SessionRepo over in-memory storage that records deletes, so
 // a test can assert cleanup happened.
 type countingRepo struct {
@@ -111,10 +101,26 @@ type harness struct {
 	store    *InMemoryStore
 	launcher *fakeLauncher
 	repo     *countingRepo
-	// canWake and guardErr drive the WakeGuard.
-	canWake bool
-	stopped []string
-	mu      sync.Mutex
+	stopped  []string
+	// finished and delivered record the two host hooks: what the Manager
+	// reported as newly terminal, and what it said the parent already has.
+	finished  []Task
+	delivered []Task
+	mu        sync.Mutex
+}
+
+// reportedFinished returns the tasks OnFinished fired for.
+func (h *harness) reportedFinished() []Task {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Task(nil), h.finished...)
+}
+
+// reportedDelivered returns the tasks OnResultDelivered fired for.
+func (h *harness) reportedDelivered() []Task {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Task(nil), h.delivered...)
 }
 
 func newHarness(t *testing.T, tune ...func(*Config)) *harness {
@@ -123,7 +129,6 @@ func newHarness(t *testing.T, tune ...func(*Config)) *harness {
 		store:    NewInMemoryStore(),
 		launcher: &fakeLauncher{},
 		repo:     newCountingRepo(),
-		canWake:  true,
 	}
 	cfg := Config{
 		Store:    h.store,
@@ -135,7 +140,16 @@ func newHarness(t *testing.T, tune ...func(*Config)) *harness {
 			}
 			return Spec{DisplayName: name, Inherit: json.RawMessage(`{"agent":"` + name + `"}`)}, nil
 		}),
-		Guard: WakeGuard(func(context.Context, string) bool { return h.canWake }),
+		OnFinished: func(_ context.Context, t *Task) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.finished = append(h.finished, *t)
+		},
+		OnResultDelivered: func(_ context.Context, t *Task) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.delivered = append(h.delivered, *t)
+		},
 		// A host that knows every run it was asked about: the tests that care
 		// about the launch window override this.
 		Stopper: Stopper(func(_ context.Context, runID string, graceful bool) (StopOutcome, error) {

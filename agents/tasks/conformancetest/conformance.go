@@ -81,9 +81,6 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if got.Status != tasks.StatusCompleted || got.Summary != "sum" || got.Result != "res" {
 			t.Fatalf("finalize did not land whole: %+v", got)
 		}
-		if got.NotifyState != tasks.NotifyPending {
-			t.Fatalf("notify state = %q, want pending — a terminal state owes its wake-up", got.NotifyState)
-		}
 		// Terminal is terminal: a second finalizer loses.
 		if won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "", ""); err != nil || won {
 			t.Fatalf("re-finalize: won=%v err=%v, want a refusal", won, err)
@@ -108,7 +105,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if got.Status != tasks.StatusWorking || got.RunID != "run2" || got.AttemptNo() != 2 {
 			t.Fatalf("claim = %s/%s attempt %d, want working/run2 attempt 2", got.Status, got.RunID, got.AttemptNo())
 		}
-		if got.Summary != "" || got.Result != "" || got.NotifyState != tasks.NotifyNone {
+		if got.Summary != "" || got.Result != "" {
 			t.Fatalf("the failed attempt survived the claim: %+v", got)
 		}
 		// Unknown id is a different answer from a refused claim.
@@ -182,7 +179,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if got.Status != tasks.StatusFailed || got.AttemptNo() != 1 {
 			t.Fatalf("after release: %s attempt %d, want failed attempt 1", got.Status, got.AttemptNo())
 		}
-		if got.NotifyState != tasks.NotifyPending || got.Summary != "never started" {
+		if got.Summary != "never started" {
 			t.Fatalf("release did not record the failure: %+v", got)
 		}
 		// Released, the row is failed — nothing left to undo.
@@ -226,78 +223,23 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		}
 	})
 
-	t.Run("notify writes are attempt-bound and pending-only", func(t *testing.T) {
-		s := newStore(t)
-		task := create(t, s, 1)
-		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "done", ""); err != nil {
-			t.Fatal(err)
-		}
-		// The wrong attempt cannot settle the debt.
-		if err := s.ConsumeNotify(ctx, task.ID, "other-run"); err != nil {
-			t.Fatal(err)
-		}
-		if got, _ := s.Get(ctx, task.ID); got.NotifyState != tasks.NotifyPending {
-			t.Fatalf("foreign consume settled the debt: %q", got.NotifyState)
-		}
-		if err := s.MarkNotifyDelivered(ctx, task.ID, task.RunID); err != nil {
-			t.Fatal(err)
-		}
-		got, _ := s.Get(ctx, task.ID)
-		if got.NotifyState != tasks.NotifyDelivered {
-			t.Fatalf("notify state = %q, want delivered", got.NotifyState)
-		}
-		// Delivered is settled: a later consume must not rewrite it.
-		if err := s.ConsumeNotify(ctx, task.ID, task.RunID); err != nil {
-			t.Fatal(err)
-		}
-		if got, _ := s.Get(ctx, task.ID); got.NotifyState != tasks.NotifyDelivered {
-			t.Fatalf("consume rewrote a settled debt: %q", got.NotifyState)
-		}
-	})
-
-	t.Run("pending notifications list oldest first, parents dedup", func(t *testing.T) {
-		s := newStore(t)
-		a, b := mk(1), mk(2)
-		b.ParentSessionID = a.ParentSessionID // same parent, two debts
-		for _, task := range []*tasks.Task{a, b} {
-			if err := s.Create(ctx, task); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "done", ""); err != nil {
-				t.Fatal(err)
-			}
-		}
-		pending, err := s.ListPendingNotify(ctx, a.ParentSessionID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(pending) != 2 || pending[0].ID != a.ID || pending[1].ID != b.ID {
-			t.Fatalf("pending = %+v, want [t1 t2] oldest first", pending)
-		}
-		parents, err := s.PendingNotifyParents(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parents) != 1 || parents[0] != a.ParentSessionID {
-			t.Fatalf("parents = %v, want the one parent once", parents)
-		}
-	})
-
 	t.Run("fail orphans keeps paused tasks", func(t *testing.T) {
 		s := newStore(t)
 		working, paused := create(t, s, 1), create(t, s, 2)
 		if err := s.MarkInputRequired(ctx, paused.ID, paused.RunID); err != nil {
 			t.Fatal(err)
 		}
-		n, err := s.FailOrphans(ctx)
+		orphans, err := s.FailOrphans(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n != 1 {
-			t.Fatalf("failed %d, want 1 — the paused task is not an orphan", n)
+		// The rows come BACK: each parent still has to be told, and the caller
+		// is the only one who can arrange that.
+		if len(orphans) != 1 || orphans[0].ID != working.ID {
+			t.Fatalf("orphans = %+v, want just the working task — the paused one is not an orphan", orphans)
 		}
-		if got, _ := s.Get(ctx, working.ID); got.Status != tasks.StatusFailed || got.NotifyState != tasks.NotifyPending {
-			t.Fatalf("orphan = %+v, want failed and owing a wake-up", got)
+		if got, _ := s.Get(ctx, working.ID); got.Status != tasks.StatusFailed {
+			t.Fatalf("orphan = %+v, want failed", got)
 		}
 		if got, _ := s.Get(ctx, paused.ID); got.Status != tasks.StatusInputRequired {
 			t.Fatalf("paused task = %s, want input_required preserved", got.Status)

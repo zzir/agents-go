@@ -55,10 +55,6 @@ func TestRetry_KeepsTheTaskAndSessionAndChangesTheRun(t *testing.T) {
 	if after.Summary != "" || after.Result != "" {
 		t.Errorf("failure survived the claim: summary %q, result %q", after.Summary, after.Result)
 	}
-	// Nothing is owed while a task is running again.
-	if after.NotifyState != NotifyNone {
-		t.Errorf("notify state = %q, want cleared", after.NotifyState)
-	}
 
 	launches := h.launcher.all()
 	last := launches[len(launches)-1]
@@ -283,23 +279,14 @@ func TestRetry_LaunchFailurePutsTheTaskBack(t *testing.T) {
 	if !strings.Contains(after.Summary, "retry could not start") {
 		t.Errorf("summary = %q, want it to say the retry never started", after.Summary)
 	}
-	// The debt survives: whether the MODEL has heard is the caller's
-	// knowledge, and Retry alone (the host-API path) has told it nothing. The
-	// immediate drain could not deliver either — the launcher that failed the
-	// run fails the wake-up too — so the news is still owed...
-	if after.NotifyState != NotifyPending {
-		t.Errorf("notify state = %q, want pending", after.NotifyState)
+	// The new ending is reported like any other: whether the MODEL has heard
+	// is the caller's knowledge, and Retry alone (the host-API path) has told
+	// it nothing.
+	if got := h.reportedFinished(); len(got) == 0 || got[len(got)-1].ID != info.TaskID {
+		t.Fatalf("reported = %+v, want the failed retry's ending", got)
 	}
-	// ...and the next boundary that can deliver does.
-	h.launcher.err = nil
-	before := len(h.launcher.wakes())
-	h.m.DrainPending(ctx, "parent")
-	wakes := h.launcher.wakes()
-	if len(wakes) != before+1 {
-		t.Fatalf("%d wake-ups after the drain, want %d — the failed retry's news never left", len(wakes), before+1)
-	}
-	if got := wakes[len(wakes)-1].Input; !strings.Contains(got, "retry could not start") {
-		t.Errorf("the wake-up does not carry the failure: %q", got)
+	if got := h.reportedFinished(); !strings.Contains(got[len(got)-1].Summary, "retry could not start") {
+		t.Errorf("the reported ending does not carry the failure: %q", got[len(got)-1].Summary)
 	}
 }
 
@@ -340,7 +327,6 @@ func TestRetry_LaunchFailureDebtFollowsTheCaller(t *testing.T) {
 
 	t.Run("the tool reports the failure and settles the debt", func(t *testing.T) {
 		h := newHarness(t)
-		h.canWake = false // the parent is mid-run while its tool call executes
 		info := h.spawn(t)
 		h.fail(t, info.TaskID, "boom")
 		h.launcher.err = errors.New("nope")
@@ -356,8 +342,8 @@ func TestRetry_LaunchFailureDebtFollowsTheCaller(t *testing.T) {
 		if s := stringOf(res); !strings.Contains(s, "retry could not start") {
 			t.Fatalf("the model was not told why: %q", s)
 		}
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
-			t.Errorf("notify state = %q, want consumed — the model just read the failure", got)
+		if got := h.reportedDelivered(); len(got) == 0 || got[len(got)-1].ID != info.TaskID {
+			t.Errorf("delivered = %+v, want it reported as read — the model just saw the failure", got)
 		}
 	})
 
@@ -378,15 +364,12 @@ func TestRetry_LaunchFailureDebtFollowsTheCaller(t *testing.T) {
 		if _, err := h.m.Retry(ctx, info.TaskID); err == nil {
 			t.Fatal("retry reported success with no run started")
 		}
-		wakes := h.launcher.wakes()
-		if len(wakes) != 2 {
-			t.Fatalf("%d wake-ups, want 2: the original failure and the failed retry", len(wakes))
+		reported := h.reportedFinished()
+		if len(reported) != 2 {
+			t.Fatalf("%d endings reported, want 2: the original failure and the failed retry", len(reported))
 		}
-		if got := wakes[1].Input; !strings.Contains(got, "retry could not start") {
-			t.Errorf("the wake-up does not carry the failure: %q", got)
-		}
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyDelivered {
-			t.Errorf("notify state = %q, want delivered", got)
+		if got := reported[1].Summary; !strings.Contains(got, "retry could not start") {
+			t.Errorf("the reported ending does not carry the failure: %q", got)
 		}
 	})
 }
@@ -430,9 +413,8 @@ func TestRetry_NextEndingStillWakesTheParent(t *testing.T) {
 	h := newHarness(t)
 	info := h.spawn(t)
 	h.fail(t, info.TaskID, "boom")
-	// The first failure's wake-up, delivered.
-	if n := len(h.launcher.wakes()); n != 1 {
-		t.Fatalf("%d wake-ups after the first failure, want 1", n)
+	if n := len(h.reportedFinished()); n != 1 {
+		t.Fatalf("%d endings reported after the first failure, want 1", n)
 	}
 
 	if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
@@ -442,12 +424,12 @@ func TestRetry_NextEndingStillWakesTheParent(t *testing.T) {
 		RunID: h.get(t, info.TaskID).RunID, Status: StatusCompleted, Text: "finished on the second try",
 	})
 
-	wakes := h.launcher.wakes()
+	wakes := h.reportedFinished()
 	if len(wakes) != 2 {
-		t.Fatalf("%d wake-ups, want 2 — the retry's ending owes one too", len(wakes))
+		t.Fatalf("%d endings reported, want 2 — the retry's ending is news too", len(wakes))
 	}
-	if !strings.Contains(wakes[1].Input, "finished on the second try") {
-		t.Errorf("wake-up = %q, want the retried run's result", wakes[1].Input)
+	if !strings.Contains(wakes[1].Summary, "finished on the second try") {
+		t.Errorf("reported = %q, want the retried run's result", wakes[1].Summary)
 	}
 }
 
@@ -485,40 +467,6 @@ func TestRetry_StaleFinalizeCannotEndTheNewAttempt(t *testing.T) {
 	}
 }
 
-// The same rule for the notify writes: a consume decided against the previous
-// attempt must not swallow the debt of the one that replaced it, or the
-// parent is never told how the task actually ended.
-func TestRetry_StaleNotifyWriteCannotSwallowTheNewDebt(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	info := h.spawn(t)
-	stale := h.get(t, info.TaskID).RunID
-	h.fail(t, info.TaskID, "boom")
-	if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
-		t.Fatal(err)
-	}
-	current := h.get(t, info.TaskID).RunID
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID),
-		RunOutcome{RunID: current, Status: StatusCompleted, Text: "done"})
-
-	// The late arrivals, both naming the attempt that is gone.
-	if err := h.store.ConsumeNotify(ctx, info.TaskID, stale); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.store.MarkNotifyDelivered(ctx, info.TaskID, stale); err != nil {
-		t.Fatal(err)
-	}
-
-	// DrainPending already delivered this one, which is the state that matters:
-	// what must NOT have happened is the stale consume marking it consumed.
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyDelivered {
-		t.Errorf("notify state = %q, want delivered by the retry's own drain", got)
-	}
-}
-
-// A stop of a task that was retried underneath it chases the new attempt: the
-// caller asked to stop the TASK, and reporting "still running" would be a stop
-// that did nothing.
 func TestStop_ChasesOneRetry(t *testing.T) {
 	ctx := context.Background()
 	var stopper func(runID string)
@@ -738,7 +686,7 @@ func TestRetry_RunFinishingInsideTheLaunchWindowIsNotCancelled(t *testing.T) {
 // is about to read — so the wake-up owes nothing. Consuming belongs to the
 // MODEL path: a person reading the same result over REST has told the model
 // nothing, and its wake-up must survive.
-func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
+func TestTools_FastFinishReportsDeliveryOnlyForTheModel(t *testing.T) {
 	ctx := context.Background()
 	finishOnLaunch := func(h *harness) {
 		h.launcher.beforeLaunch = func(req LaunchRequest) {
@@ -751,7 +699,6 @@ func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
 
 	t.Run("model path consumes", func(t *testing.T) {
 		h := newHarness(t)
-		h.canWake = false // hold the debt still so the assertion is about consumption
 		info := h.spawn(t)
 		h.fail(t, info.TaskID, "boom")
 		finishOnLaunch(h)
@@ -764,14 +711,13 @@ func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
 		if !strings.Contains(stringOf(res), "done fast") {
 			t.Fatalf("the model was not handed the result: %q", stringOf(res))
 		}
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
-			t.Errorf("notify state = %q, want consumed — the model already read it", got)
+		if got := h.reportedDelivered(); len(got) == 0 || got[len(got)-1].ID != info.TaskID {
+			t.Errorf("delivered = %+v, want it reported as read — the model already has it", got)
 		}
 	})
 
 	t.Run("host path keeps the debt", func(t *testing.T) {
 		h := newHarness(t)
-		h.canWake = false
 		info := h.spawn(t)
 		h.fail(t, info.TaskID, "boom")
 		finishOnLaunch(h)
@@ -780,8 +726,8 @@ func TestTools_FastFinishConsumesTheDebtOnlyForTheModel(t *testing.T) {
 		if _, err := h.m.Retry(ctx, info.TaskID); err != nil {
 			t.Fatal(err)
 		}
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
-			t.Errorf("notify state = %q, want pending — the model has heard nothing", got)
+		if got := h.reportedDelivered(); len(got) != 0 {
+			t.Errorf("delivered = %+v, want none — the model has heard nothing", got)
 		}
 	})
 }
@@ -798,7 +744,6 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 	// "working", so the wake-up is the only way this result ever arrives.
 	t.Run("a result the model was not shown still owes a wake-up", func(t *testing.T) {
 		h := newHarness(t)
-		h.canWake = false // hold the debt where it can be inspected
 		info := h.spawn(t)
 		h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
 			RunID: h.get(t, info.TaskID).RunID, Status: StatusCompleted, Text: "landed late",
@@ -806,14 +751,13 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 
 		// info is what the tool is about to return — decided before the finish.
 		h.m.modelHasResult(ctx, info)
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
-			t.Errorf("notify state = %q, want pending — the model was told %q", got, info.Status)
+		if got := h.reportedDelivered(); len(got) != 0 {
+			t.Errorf("delivered = %+v, want none — the model was told %q", got, info.Status)
 		}
 	})
 
 	t.Run("the result the model reads cancels its own wake-up", func(t *testing.T) {
 		h := newHarness(t)
-		h.canWake = false
 		info := h.spawn(t)
 		h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{
 			RunID: h.get(t, info.TaskID).RunID, Status: StatusCompleted, Text: "done",
@@ -825,8 +769,8 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.m.modelHasResult(ctx, finished)
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
-			t.Errorf("notify state = %q, want consumed", got)
+		if got := h.reportedDelivered(); len(got) == 0 || got[len(got)-1].ID != info.TaskID {
+			t.Errorf("delivered = %+v, want the task the model was handed", got)
 		}
 	})
 
@@ -834,7 +778,6 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 	// nobody has been told about.
 	t.Run("a later attempt's wake-up is not this result's to cancel", func(t *testing.T) {
 		h := newHarness(t)
-		h.canWake = false
 		info := h.spawn(t)
 		h.fail(t, info.TaskID, "boom")
 		stale := infoFrom(h.get(t, info.TaskID), "") // terminal, attempt 1
@@ -846,9 +789,10 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 			RunID: h.get(t, info.TaskID).RunID, Status: StatusFailed, Err: "boom again",
 		})
 
+		before := len(h.reportedDelivered())
 		h.m.modelHasResult(ctx, stale)
-		if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
-			t.Errorf("notify state = %q, want the second attempt's debt untouched", got)
+		if got := h.reportedDelivered(); len(got) != before {
+			t.Errorf("delivered = %+v, want the second attempt's news untouched", got)
 		}
 	})
 }

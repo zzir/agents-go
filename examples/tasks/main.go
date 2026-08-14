@@ -130,13 +130,12 @@ func main() {
 			return nil
 		}),
 
-		// "May this parent be woken right now?" A real host adds "not being
-		// deleted" and "not paused on an approval".
-		Guard: tasks.WakeGuard(func(_ context.Context, sessionID string) bool {
-			mu.Lock()
-			defer mu.Unlock()
-			return !running[sessionID]
-		}),
+		// A task reached a terminal state and its parent has not heard. The
+		// HOST decides what that means: a real server records a durable debt
+		// and pays it when the parent session is free. Here, one line.
+		OnFinished: func(_ context.Context, t *tasks.Task) {
+			fmt.Printf("  • %q finished (%s) — its parent owes itself a turn\n", t.Label, t.Status)
+		},
 
 		OnTaskUpdate: func(_ context.Context, t *tasks.Task) {
 			fmt.Printf("  • task %q → %s\n", t.Label, t.Status)
@@ -188,17 +187,12 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 	wg.Wait()
 
-	// Nothing is owed any more: the wake-up was delivered.
-	if owed, err := store.PendingNotifyParents(ctx); err == nil && len(owed) > 0 {
-		fmt.Printf("\nstill owed a wake-up: %v\n", owed)
-	}
-
 	all, err := store.ListByParent(ctx, "parent")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("\n%d task(s):\n", len(all))
 	for _, t := range all {
-		fmt.Printf("  %s  %-10s notify=%-9s %s\n", t.ID[:8], t.Status, t.NotifyState, t.Summary)
+		fmt.Printf("  %s  %-10s %s\n", t.ID[:8], t.Status, t.Summary)
 	}
 }

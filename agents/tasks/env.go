@@ -71,23 +71,3 @@ const (
 // only then may StopAfterTurn be returned. It is optional — a Manager without
 // one still finalizes a stopped task's row, but cannot interrupt the run.
 type Stopper func(ctx context.Context, runID string, graceful bool) (StopOutcome, error)
-
-// WakeGuard decides whether a parent session may be woken right now. An
-// implementation MUST return false when it cannot answer: a failed query means
-// "I cannot prove this is safe", and returning true on error would make every
-// outage a source of spurious runs.
-type WakeGuard func(ctx context.Context, parentSessionID string) bool
-
-// AllGuards passes only when every guard does: each names a reason NOT to wake,
-// so any one is sufficient to refuse. A nil guard counts as a refusal — a guard
-// that should be there and is not cannot be read as permission.
-func AllGuards(gs ...WakeGuard) WakeGuard {
-	return func(ctx context.Context, parentSessionID string) bool {
-		for _, g := range gs {
-			if g == nil || !g(ctx, parentSessionID) {
-				return false
-			}
-		}
-		return true
-	}
-}

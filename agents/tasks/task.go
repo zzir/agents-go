@@ -39,22 +39,6 @@ func (s Status) Terminal() bool {
 	return false
 }
 
-// NotifyState is the durable state machine for the wake-up a finished task owes
-// its parent session. It is persisted so the debt survives a restart.
-type NotifyState string
-
-const (
-	// NotifyNone means no debt yet: the task has not finished.
-	NotifyNone NotifyState = ""
-	// NotifyPending means the terminal state is written and a wake-up is owed.
-	NotifyPending NotifyState = "pending"
-	// NotifyConsumed means the model already pulled the result in-turn, so no
-	// wake-up is owed.
-	NotifyConsumed NotifyState = "consumed"
-	// NotifyDelivered means a wake-up run carried the result to the parent.
-	NotifyDelivered NotifyState = "delivered"
-)
-
 // Task is one background job. ID and RunID are separate on purpose: the task is
 // the durable entity, the run is one attempt at it — which is what makes retry
 // expressible.
@@ -83,8 +67,7 @@ type Task struct {
 	// happens much later and the parent's configuration may have changed or gone.
 	Inherit json.RawMessage `json:"inherit,omitzero"`
 
-	Status      Status      `json:"status"`
-	NotifyState NotifyState `json:"notify_state,omitzero"`
+	Status Status `json:"status"`
 
 	// Summary is the truncated result: it goes in the notification and on the
 	// UI card. Result is the whole thing, fetched on demand by task_status —

@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -56,29 +55,6 @@ func TestTask_ChildSessionIsHidden(t *testing.T) {
 	}
 	if !found {
 		t.Error("the task session is missing even with IncludeHidden")
-	}
-}
-
-// #3: the wake-up runs under the configuration the SPAWNING run had. Resolving
-// it fresh would use whatever the parent is configured with now — possibly a
-// different agent entirely.
-func TestTask_WakeUsesTheSnapshottedConfig(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	info := h.spawn(t)
-
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
-
-	wakes := h.launcher.wakes()
-	if len(wakes) != 1 {
-		t.Fatalf("%d wake-ups, want 1", len(wakes))
-	}
-	var got map[string]string
-	if err := json.Unmarshal(wakes[0].Inherit, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["agent"] != "worker" {
-		t.Errorf("wake inherited %v, want the spawning run's config", got)
 	}
 }
 
@@ -147,26 +123,25 @@ func TestTask_ConcurrencyIsCapped(t *testing.T) {
 
 // ── §2.2 notification and wake-up ───────────────────────────────────────────
 
-// #6: the debt is persisted, because a task that finished while the parent was
-// busy and a process that died before delivering look the same from the
-// parent's side — it was never told.
-func TestNotify_DebtIsRecordedOnFinalize(t *testing.T) {
+// #6: a terminal state is REPORTED, once, to whoever is arranging delivery.
+// The Manager keeps no debt of its own: a task that finished while the parent
+// was busy and a process that died before delivering look the same from the
+// parent's side, and only the host can tell them apart.
+func TestNotify_TerminalStateIsReportedOnce(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
-	h.canWake = false // nobody can be woken; the debt must survive
 	info := h.spawn(t)
 
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
 
-	task := h.get(t, info.TaskID)
-	if task.NotifyState != NotifyPending {
-		t.Errorf("notify state = %q, want pending", task.NotifyState)
+	reported := h.reportedFinished()
+	if len(reported) != 1 || reported[0].ID != info.TaskID || reported[0].Status != StatusCompleted {
+		t.Fatalf("reported = %+v, want the one completed task", reported)
 	}
-	// And it is delivered once waking becomes possible.
-	h.canWake = true
-	h.m.DrainPending(ctx, "parent")
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyDelivered {
-		t.Errorf("notify state = %q, want delivered", got)
+	// A second ending for the same attempt loses the CAS and reports nothing.
+	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusFailed})
+	if got := h.reportedFinished(); len(got) != 1 {
+		t.Fatalf("reported %d times, want exactly one", len(got))
 	}
 }
 
@@ -229,59 +204,7 @@ func TestNotify_ConcurrentFinalizersProduceOneWinner(t *testing.T) {
 	}
 }
 
-// #8: four guards, and each one was a bug. A guard that cannot answer must
-// refuse — "cannot prove it is safe" is not permission.
-func TestNotify_GuardRefusalKeepsTheDebt(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.canWake = false
-	info := h.spawn(t)
-
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
-
-	if len(h.launcher.wakes()) != 0 {
-		t.Error("a refused guard still woke the parent")
-	}
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
-		t.Errorf("notify state = %q, want the debt kept", got)
-	}
-}
-
-func TestNotify_AllGuardsRequiresEveryOne(t *testing.T) {
-	ctx := context.Background()
-	yes := WakeGuard(func(context.Context, string) bool { return true })
-	no := WakeGuard(func(context.Context, string) bool { return false })
-
-	if !AllGuards(yes, yes)(ctx, "s") {
-		t.Error("all-yes refused")
-	}
-	if AllGuards(yes, no)(ctx, "s") {
-		t.Error("one refusal was not enough to refuse")
-	}
-	// A guard that was supposed to be there and is not cannot read as
-	// permission.
-	if AllGuards(yes, nil)(ctx, "s") {
-		t.Error("a nil guard counted as permission")
-	}
-	if AllGuards()(ctx, "s") != true {
-		t.Error("an empty set should pass; the refusals are the guards")
-	}
-}
-
-// A Manager with no guard at all never wakes: it cannot tell whether waking is
-// safe, and must not guess.
-func TestNotify_NoGuardNeverWakes(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t, func(c *Config) { c.Guard = nil })
-	info := h.spawn(t)
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
-	if len(h.launcher.wakes()) != 0 {
-		t.Error("a Manager without a guard woke the parent")
-	}
-}
-
-// #9: a cancellation is the user's own doing, the UI already shows it, and a
-// wake-up run would only restate it.
+// #8: a cancellation is the user's own doing, so it is not news to carry back.
 func TestNotify_CancellationDoesNotWake(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -290,59 +213,19 @@ func TestNotify_CancellationDoesNotWake(t *testing.T) {
 	if _, err := h.m.Stop(ctx, info.TaskID, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
-		t.Errorf("notify state = %q, want consumed", got)
+	if got := h.reportedFinished(); len(got) != 0 {
+		t.Errorf("a cancelled task was reported as news: %+v", got)
 	}
-	h.m.DrainPending(ctx, "parent")
-	if len(h.launcher.wakes()) != 0 {
-		t.Error("a cancelled task woke the parent")
+	// It is reported as already delivered instead, so a host holding a debt
+	// from an earlier attempt drops it.
+	if got := h.reportedDelivered(); len(got) != 1 || got[0].ID != info.TaskID {
+		t.Errorf("delivered = %+v, want the cancelled task", got)
 	}
 }
 
 // #10: losing the race for the session keeps the debt, so the winner re-drains
 // at its own boundary.
-func TestNotify_LosingTheLaunchKeepsTheDebt(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	info := h.spawn(t)
-	h.canWake = false
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
-
-	// Waking is allowed now, but the launcher refuses (a user run won).
-	h.canWake = true
-	h.launcher.err = errors.New("session busy")
-	h.m.DrainPending(ctx, "parent")
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyPending {
-		t.Errorf("notify state = %q, want the debt kept after a lost race", got)
-	}
-
-	// The winner's boundary re-drains it.
-	h.launcher.err = nil
-	h.m.DrainPending(ctx, "parent")
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyDelivered {
-		t.Errorf("notify state = %q, want delivered on the retry", got)
-	}
-}
-
-// A parent's own run boundary pays the debts it accumulated while busy.
-func TestNotify_ParentRunBoundaryDrains(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	info := h.spawn(t)
-	h.canWake = false
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
-
-	h.canWake = true
-	// A run finishing on a session that is NOT a task session drains it.
-	h.m.OnRunFinished(ctx, "parent", RunOutcome{Status: StatusCompleted, Text: "user turn done"})
-	if len(h.launcher.wakes()) != 1 {
-		t.Errorf("%d wake-ups, want the parent's boundary to have drained", len(h.launcher.wakes()))
-	}
-}
-
-// #11: a task run does not survive a restart, so a row left at working can
-// never progress on its own.
-func TestNotify_RestartFailsOrphansAndDrains(t *testing.T) {
+func TestNotify_RestartFailsOrphansAndReports(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	info := h.spawn(t)
@@ -357,8 +240,10 @@ func TestNotify_RestartFailsOrphansAndDrains(t *testing.T) {
 	if !strings.Contains(task.Summary, "restart") {
 		t.Errorf("summary = %q, want it to say why", task.Summary)
 	}
-	if len(h.launcher.wakes()) != 1 {
-		t.Errorf("%d wake-ups, want the restart's news delivered", len(h.launcher.wakes()))
+	// The parent still has to hear: the restart is exactly the case a durable
+	// debt exists for, and only the host can hold one.
+	if got := h.reportedFinished(); len(got) != 1 || got[0].ID != info.TaskID {
+		t.Errorf("reported = %+v, want the orphaned task", got)
 	}
 }
 
@@ -380,60 +265,6 @@ func TestNotify_RecoverKeepsInputRequired(t *testing.T) {
 
 // #12: a task returning ten thousand words must not paste them into the
 // parent's context to say it is done.
-func TestNotify_CarriesASummaryNotTheResult(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t, func(c *Config) { c.SummaryLimit = 20 })
-	info := h.spawn(t)
-	long := strings.Repeat("x", 500)
-
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: long})
-
-	task := h.get(t, info.TaskID)
-	if len([]rune(task.Summary)) != 20 {
-		t.Errorf("summary is %d runes, want 20", len([]rune(task.Summary)))
-	}
-	if task.Result != long {
-		t.Error("the full result was not kept")
-	}
-	wakes := h.launcher.wakes()
-	if len(wakes) != 1 {
-		t.Fatalf("%d wake-ups", len(wakes))
-	}
-	if len(wakes[0].Input) > 300 {
-		t.Errorf("the notification is %d bytes; it should carry the summary", len(wakes[0].Input))
-	}
-	if !strings.Contains(wakes[0].Input, "truncated") {
-		t.Error("the notification does not say where the rest is")
-	}
-}
-
-// One wake-up carries every pending task: a dozen finishing together must not
-// mean a dozen runs each restating the others' news.
-func TestNotify_BatchesEveryPendingTask(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.canWake = false
-	a := h.spawn(t)
-	b := h.spawn(t)
-	h.m.OnRunFinished(ctx, h.childOf(t, a.TaskID), RunOutcome{Status: StatusCompleted, Text: "first"})
-	h.m.OnRunFinished(ctx, h.childOf(t, b.TaskID), RunOutcome{Status: StatusFailed, Err: "boom"})
-
-	h.canWake = true
-	h.m.DrainPending(ctx, "parent")
-	wakes := h.launcher.wakes()
-	if len(wakes) != 1 {
-		t.Fatalf("%d wake-ups, want 1 carrying both", len(wakes))
-	}
-	input := wakes[0].Input
-	if !strings.Contains(input, "("+a.TaskID+")") || !strings.Contains(input, "("+b.TaskID+")") {
-		t.Fatalf("wake input %q, want both task ids", input)
-	}
-}
-
-// ── §2.3 consistency and cleanup ────────────────────────────────────────────
-
-// #13: a spawn that fails halfway must not leave a ghost child session the user
-// can open and nothing owns.
 func TestSpawn_RollsBackAGhostSession(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -522,25 +353,20 @@ func TestStatus_WaitsForCompletion(t *testing.T) {
 	}
 }
 
-// Reaching a terminal status through task_status consumes the debt: the model
-// has the result, and waking it later to repeat the news would burn a turn.
-func TestStatus_TerminalReadConsumesTheDebt(t *testing.T) {
+// Reaching a terminal status through task_status means the MODEL has the
+// result: the host is told so it can drop whatever it was going to deliver,
+// which would otherwise burn a turn repeating what the model just read.
+func TestStatus_TerminalReadReportsDelivery(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
-	h.canWake = false
 	info := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
 
 	if _, err := h.m.Status(ctx, info.TaskID, 0); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.get(t, info.TaskID).NotifyState; got != NotifyConsumed {
-		t.Errorf("notify state = %q, want consumed", got)
-	}
-	h.canWake = true
-	h.m.DrainPending(ctx, "parent")
-	if len(h.launcher.wakes()) != 0 {
-		t.Error("a consumed task still woke the parent")
+	if got := h.reportedDelivered(); len(got) != 1 || got[0].ID != info.TaskID {
+		t.Errorf("delivered = %+v, want the task the model just read", got)
 	}
 }
 
@@ -607,11 +433,8 @@ func TestOnRunFinished_InputRequiredIsNotTerminal(t *testing.T) {
 	if task.Status != StatusInputRequired {
 		t.Errorf("status = %q", task.Status)
 	}
-	if task.NotifyState != NotifyNone {
-		t.Errorf("notify state = %q, want no debt for a paused task", task.NotifyState)
-	}
-	if len(h.launcher.wakes()) != 0 {
-		t.Error("a paused task woke the parent")
+	if got := h.reportedFinished(); len(got) != 0 {
+		t.Errorf("a paused task was reported as finished: %+v", got)
 	}
 
 	// The resumed run lands back here with a final status.
@@ -896,32 +719,5 @@ func TestGracefulStopLeavesTheOutcomeToTheRun(t *testing.T) {
 	}
 	if got.Status.Terminal() {
 		t.Fatal("the row was finalized here, racing the run that was told to finish its turn")
-	}
-}
-
-// A wake-up launch carries its lineage: the run whose spawn started the
-// delivered task, handed to the host at launch so it can land on the run's own
-// durable output (traces) instead of being re-derived from task rows or
-// notification text — which a fork or a fold does not carry.
-func TestNotify_WakeLaunchCarriesLineage(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	info, err := h.m.Spawn(ctx, SpawnRequest{
-		ParentSessionID: "parent", AgentName: "worker", Input: "do it",
-		ParentRunID: "run_origin",
-	})
-	if err != nil {
-		t.Fatalf("spawn: %v", err)
-	}
-
-	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
-	h.m.DrainPending(ctx, "parent")
-
-	wakes := h.launcher.wakes()
-	if len(wakes) == 0 {
-		t.Fatal("no wake launch recorded")
-	}
-	if wakes[0].ParentRunID != "run_origin" {
-		t.Fatalf("wake lineage = %q, want run_origin", wakes[0].ParentRunID)
 	}
 }

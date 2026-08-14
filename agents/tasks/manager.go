@@ -3,7 +3,6 @@ package tasks
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -82,9 +81,6 @@ type Config struct {
 	// Stopper cancels a running task. Without one, Stop still finalizes the
 	// row but cannot interrupt the run.
 	Stopper Stopper
-	// Guard decides whether a parent may be woken. Nil never wakes.
-	Guard WakeGuard
-
 	// MaxConcurrentPerParent caps a parent session's live tasks. One Manager
 	// enforces it exactly; several Managers over one Store can each admit up to
 	// the cap, so run one Manager per parent or enforce the ceiling above them.
@@ -96,7 +92,6 @@ type Config struct {
 	// original included. Zero uses DefaultMaxAttemptsPerTask; 1 disables
 	// retrying.
 	MaxAttemptsPerTask int
-	NotifyFormatter    func([]Task) string
 
 	// NewID mints task, run and session ids. Nil uses a built-in generator.
 	NewID func() string
@@ -106,6 +101,26 @@ type Config struct {
 	// so a host can update the UI card for the spawn call that started it —
 	// long after the spawning turn ended.
 	OnTaskUpdate func(ctx context.Context, t *Task)
+	// OnFinished, when set, is called once per task that reaches a terminal
+	// state under THIS manager's claim. The parent has not heard the result:
+	// delivering it is the host's business — a task that finished while its
+	// parent was busy, paused or restarting cannot simply be announced — so the
+	// Manager reports the fact and keeps no debt of its own. t is the claimed
+	// terminal snapshot, built from the finalize's own values rather than a
+	// re-read: by the time the hook runs, a retry may have moved the row on.
+	OnFinished func(ctx context.Context, t *Task)
+	// OnResultDelivered, when set, is called when the result reached the parent
+	// some other way: the MODEL pulled it in-turn. A host that recorded
+	// something to deliver drops it here.
+	OnResultDelivered func(ctx context.Context, t *Task)
+
+	// ExtraLiveCount, when set, adds background work the Manager does not track
+	// — a host's OWN kind, e.g. workflow executions — to the per-parent live
+	// count, so ONE cap governs every kind of background work rather than each
+	// counting only its own. Called under the parent's spawn lock during Spawn.
+	// It returns a plain int: a count that cannot be read must not wrongly BLOCK
+	// a spawn, so the host returns 0 on any error.
+	ExtraLiveCount func(ctx context.Context, parentSessionID string) int
 }
 
 // Manager owns the task lifecycle.
@@ -202,9 +217,6 @@ func New(cfg Config) *Manager {
 	if cfg.MaxAttemptsPerTask <= 0 {
 		cfg.MaxAttemptsPerTask = DefaultMaxAttemptsPerTask
 	}
-	if cfg.NotifyFormatter == nil {
-		cfg.NotifyFormatter = DefaultNotifyFormatter
-	}
 	if cfg.NewID == nil {
 		cfg.NewID = newID
 	}
@@ -277,7 +289,13 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
 	}
-	if len(live) >= m.cfg.MaxConcurrentPerParent {
+	// Count the host's other background work (workflows) against the same cap,
+	// so N workflows leave room for fewer tasks rather than a full N more.
+	total := len(live)
+	if m.cfg.ExtraLiveCount != nil {
+		total += m.cfg.ExtraLiveCount(ctx, req.ParentSessionID)
+	}
+	if total >= m.cfg.MaxConcurrentPerParent {
 		return nil, ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
 	}
 
@@ -424,7 +442,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 		Input:     prompt,
 		Inherit:   t.Inherit,
 	}); err != nil {
-		return m.retryLaunchFailed(ctx, taskID, runID, err)
+		return m.retryLaunchFailed(ctx, t, runID, err)
 	}
 
 	// Reconcile with any stop that raced the launch; see settleLaunch.
@@ -458,33 +476,40 @@ func (m *Manager) notRetryable(t *Task) error {
 // ReleaseRetryClaim rolls the attempt count back: the run never launched, and
 // Attempt counts the runs a task has actually had, so an infrastructure failure
 // must not spend the retry ceiling.
-func (m *Manager) retryLaunchFailed(ctx context.Context, taskID, runID string, cause error) (*Info, error) {
+func (m *Manager) retryLaunchFailed(ctx context.Context, t *Task, runID string, cause error) (*Info, error) {
 	// Detached for the same reason as settleLaunch: a launch usually fails
 	// because the session is being torn down, which has already cancelled ctx.
 	ctx = context.WithoutCancel(ctx)
 	full := "retry could not start: " + cause.Error()
-	won, err := m.cfg.Store.ReleaseRetryClaim(ctx, taskID, runID,
-		truncateRunes(full, m.cfg.SummaryLimit), full)
+	summary := truncateRunes(full, m.cfg.SummaryLimit)
+	won, err := m.cfg.Store.ReleaseRetryClaim(ctx, t.ID, runID, summary, full)
 	if err != nil {
 		m.log.WarnContext(ctx, "failing a task whose retry never started",
-			slog.String("task_id", taskID), slog.String("error", err.Error()))
+			slog.String("task_id", t.ID), slog.String("error", err.Error()))
 	}
 	if won {
-		m.finished(taskID)
+		m.finished(t.ID)
 	}
 	wrapped := fmt.Errorf("tasks: restarting task run: %w", cause)
-	t, gerr := m.cfg.Store.Get(ctx, taskID)
+	// The report carries the released values in hand — a re-read can fail or
+	// race a second retry, and the ending must not go unreported. The release
+	// rolled the attempt back to the pre-claim row's, so t's count is right.
+	rel := *t
+	rel.RunID, rel.Status, rel.Summary, rel.Result = runID, StatusFailed, summary, full
+	rel.UpdatedAt = time.Now().UTC()
+	cur, gerr := m.cfg.Store.Get(ctx, t.ID)
+	if gerr == nil {
+		m.notifyUpdate(ctx, cur)
+	} else if won {
+		m.notifyUpdate(ctx, &rel)
+	}
+	if won {
+		m.finishedTask(ctx, &rel)
+	}
 	if gerr != nil {
 		return nil, wrapped
 	}
-	m.notifyUpdate(ctx, t)
-	if won {
-		// The new ending owes the parent a wake-up. On the tool path this is a
-		// no-op (the parent is mid-run), but a host API's retry has no turn in
-		// flight, so without the drain an idle parent would not hear the failure.
-		m.DrainPending(ctx, t.ParentSessionID)
-	}
-	return infoFrom(t, ""), wrapped
+	return infoFrom(cur, ""), wrapped
 }
 
 // retryPrompt is what a retried run is asked to do. The session already holds
@@ -519,15 +544,22 @@ func (m *Manager) modelHasResult(ctx context.Context, info *Info) {
 	if t.AttemptNo() != info.Attempt || !t.Status.Terminal() {
 		return
 	}
-	m.consumeNotify(ctx, t)
+	m.resultDelivered(ctx, t)
 }
 
-// consumeNotify cancels a finished task's wake-up debt, bound to the attempt
-// the caller read.
-func (m *Manager) consumeNotify(ctx context.Context, t *Task) {
-	if err := m.cfg.Store.ConsumeNotify(ctx, t.ID, t.RunID); err != nil {
-		m.log.WarnContext(ctx, "consuming task notification",
-			slog.String("task_id", t.ID), slog.String("error", err.Error()))
+// resultDelivered tells the host the parent already has this result, so
+// whatever it recorded to deliver can be dropped.
+func (m *Manager) resultDelivered(ctx context.Context, t *Task) {
+	if m.cfg.OnResultDelivered != nil {
+		m.cfg.OnResultDelivered(ctx, t)
+	}
+}
+
+// finishedTask tells the host a terminal state was claimed here, so it can
+// arrange for the parent to hear about it.
+func (m *Manager) finishedTask(ctx context.Context, t *Task) {
+	if m.cfg.OnFinished != nil {
+		m.cfg.OnFinished(ctx, t)
 	}
 }
 
@@ -632,7 +664,7 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 		if t.Status.Terminal() {
 			// The row is in hand and IS what the model reads, so the bound
 			// write needs no re-read.
-			m.consumeNotify(ctx, t)
+			m.resultDelivered(ctx, t)
 			return infoFrom(t, ""), nil
 		}
 		remaining := time.Until(deadline)
@@ -820,11 +852,11 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool)
 	}
 	if won {
 		// A cancellation never wakes the parent: the user initiated it, the UI
-		// already shows it, and a wake-up run would only restate it.
-		if cerr := m.cfg.Store.ConsumeNotify(ctx, t.ID, t.RunID); cerr != nil {
-			m.log.WarnContext(ctx, "consuming cancelled task notification",
-				slog.String("task_id", t.ID), slog.String("error", cerr.Error()))
-		}
+		// already shows it, and a wake-up run would only restate it. Reported
+		// with the claimed values in hand — the pre-claim row still says working.
+		done := *t
+		done.Status, done.Summary, done.UpdatedAt = StatusCancelled, reason, time.Now().UTC()
+		m.resultDelivered(ctx, &done)
 		m.finished(t.ID)
 		return stopClaimed, nil
 	}
@@ -877,9 +909,7 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	task, err := m.cfg.Store.ByChildSession(ctx, sessionID)
 	switch {
 	case errors.Is(err, ErrNotFound) || (err == nil && task == nil):
-		// Not a task session: it may be a parent that was too busy to be woken.
-		m.DrainPending(ctx, sessionID)
-		return
+		return // not a task session
 	case err != nil:
 		// A failure to LOOK is not "not a task session": proceeding would drop
 		// the terminal state on the floor — the task stuck working, its parent
@@ -942,91 +972,33 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 		// stands.
 		return
 	}
-	if status == StatusCancelled {
-		if err := m.cfg.Store.ConsumeNotify(ctx, task.ID, runID); err != nil {
-			m.log.WarnContext(ctx, "consuming cancelled task notification",
-				slog.String("task_id", task.ID), slog.String("error", err.Error()))
-		}
-	}
 	m.finished(task.ID)
-	if t, err := m.cfg.Store.Get(ctx, task.ID); err == nil {
+	// The report carries the claimed values IN HAND, never a re-read: between
+	// the win and a Get, a retry can move the row past this attempt (leaving a
+	// non-terminal row with the failure cleared), and a failed read must not
+	// cost the parent the report. The re-read below only freshens the UI card.
+	done := *task
+	done.RunID, done.Status, done.Summary, done.Result = runID, status, summary, full
+	done.UpdatedAt = time.Now().UTC()
+	if t, gerr := m.cfg.Store.Get(ctx, task.ID); gerr == nil {
 		m.notifyUpdate(ctx, t)
+	} else {
+		m.notifyUpdate(ctx, &done)
 	}
-	m.DrainPending(ctx, task.ParentSessionID)
-}
-
-// DrainPending wakes a parent session with the results of every task that owes
-// it one. Waking is gated by WakeGuard, which refuses when the session is being
-// deleted, already has a live run, is paused on a human decision, or cannot be
-// proven safe.
-func (m *Manager) DrainPending(ctx context.Context, parentSessionID string) {
-	if parentSessionID == "" {
+	// A cancellation is reported as DELIVERED, not finished: the user did it,
+	// the UI already shows it, and a turn restating it would only repeat them.
+	if status == StatusCancelled {
+		m.resultDelivered(ctx, &done)
 		return
 	}
-	if m.cfg.Guard == nil || !m.cfg.Guard(ctx, parentSessionID) {
-		return
-	}
-	pending, err := m.cfg.Store.ListPendingNotify(ctx, parentSessionID)
-	if err != nil {
-		m.log.WarnContext(ctx, "listing pending task notifications",
-			slog.String("session_id", parentSessionID), slog.String("error", err.Error()))
-		return
-	}
-	if len(pending) == 0 {
-		return
-	}
-
-	// The wake-up runs under the configuration the SPAWNING run had, snapshotted
-	// on the task — not whatever the parent is configured with now. Its lineage
-	// is picked the same way: the first task carrying one names the spawning
-	// run.
-	var inherit json.RawMessage
-	var parentRunID string
-	for i := range pending {
-		if inherit == nil && len(pending[i].Inherit) > 0 {
-			inherit = pending[i].Inherit
-		}
-		if parentRunID == "" && pending[i].ParentRunID != "" {
-			parentRunID = pending[i].ParentRunID
-		}
-	}
-
-	if err := m.cfg.Launcher(ctx, LaunchRequest{
-		RunID:       m.cfg.NewID(),
-		SessionID:   parentSessionID,
-		Input:       m.cfg.NotifyFormatter(pending),
-		Inherit:     inherit,
-		Wake:        true,
-		ParentRunID: parentRunID,
-	}); err != nil {
-		// Lost a race with a new user run: the debts stay pending and the
-		// winner's boundary re-drains them.
-		m.log.DebugContext(ctx, "task notification run did not start",
-			slog.String("session_id", parentSessionID), slog.String("error", err.Error()))
-		return
-	}
-	for i := range pending {
-		// Bound to the attempt whose result this run carries: the Launch above
-		// is long enough for a retry to reopen one of these tasks, and marking
-		// THAT delivered would bury a wake-up nobody has heard.
-		if err := m.cfg.Store.MarkNotifyDelivered(ctx, pending[i].ID, pending[i].RunID); err != nil {
-			m.log.WarnContext(ctx, "marking task notification delivered",
-				slog.String("task_id", pending[i].ID), slog.String("error", err.Error()))
-		}
-	}
+	m.finishedTask(ctx, &done)
 }
 
 // Recover reconciles after a restart: tasks recorded as running can never
-// progress (their run died with the process), so they are failed, and every
-// parent then owed a wake-up is drained.
-//
-// A host that can serve requests while this runs should call the two halves
-// itself instead — see FailOrphans for the ordering that matters.
+// progress (their run died with the process), so they are failed and reported
+// through OnFinished, which is where a host arranges to tell their parents.
 func (m *Manager) Recover(ctx context.Context) error {
-	if err := m.FailOrphans(ctx); err != nil {
-		return err
-	}
-	return m.DrainAllPending(ctx)
+	return m.FailOrphans(ctx)
 }
 
 // FailOrphans is the first half of Recover: every task still recorded as
@@ -1036,26 +1008,17 @@ func (m *Manager) Recover(ctx context.Context) error {
 // working row there is, so a retry that got in first would have its fresh run
 // declared dead and its parent woken with a failure that never happened.
 func (m *Manager) FailOrphans(ctx context.Context) error {
-	n, err := m.cfg.Store.FailOrphans(ctx)
+	orphans, err := m.cfg.Store.FailOrphans(ctx)
 	if err != nil {
 		return fmt.Errorf("tasks: failing orphaned tasks: %w", err)
 	}
-	if n > 0 {
-		m.log.InfoContext(ctx, "failed tasks orphaned by a restart", slog.Int64("count", n))
+	if len(orphans) > 0 {
+		m.log.InfoContext(ctx, "failed tasks orphaned by a restart", slog.Int("count", len(orphans)))
 	}
-	return nil
-}
-
-// DrainAllPending is the second half of Recover: every parent owed a wake-up
-// is drained. It starts runs, so a host with its own startup ordering runs it
-// once the rest of the machinery is in place.
-func (m *Manager) DrainAllPending(ctx context.Context) error {
-	parents, err := m.cfg.Store.PendingNotifyParents(ctx)
-	if err != nil {
-		return fmt.Errorf("tasks: listing notify-pending parents: %w", err)
-	}
-	for _, sid := range parents {
-		m.DrainPending(ctx, sid)
+	// Each parent still has to hear about it — the whole point of a durable
+	// debt is that a restart is exactly when one is owed.
+	for i := range orphans {
+		m.finishedTask(ctx, &orphans[i])
 	}
 	return nil
 }

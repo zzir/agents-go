@@ -24,22 +24,28 @@ type Store interface {
 	ByChildSession(ctx context.Context, sessionID string) (*Task, error)
 	ListByParent(ctx context.Context, parentSessionID string) ([]Task, error)
 
-	// Finalize records a terminal status, its result and the wake-up debt in
-	// ONE atomic transition, and only while the task is still non-terminal AND
-	// still on the attempt named by runID.
+	// Finalize records a terminal status and its result in ONE conditional
+	// transition, and only while the task is still non-terminal AND still on the
+	// attempt named by runID.
 	//
 	// won=false means another finalizer already owned the transition, or the
 	// attempt is no longer the current one; the caller must do nothing further.
 	// The runID predicate is what RetryClaim costs — without it, a stop that
 	// read the row before a retry would cancel the new attempt while its run
 	// keeps executing.
+	//
+	// Delivery is the HOST's, not the Store's: a host owing a durable
+	// notification writes that debt atomically with this transition itself —
+	// see spec "What a durable host owes on top of the reports".
 	Finalize(ctx context.Context, id, runID string, st Status, summary, result string) (won bool, err error)
 
 	// RetryClaim reopens a failed task for another attempt, in one atomic
 	// transition and only while the task is failed and under maxAttempts
 	// (which counts the original run; <= 0 means no limit): status returns to
 	// working, run_id becomes newRunID, attempt increments, and the previous
-	// attempt's summary, result and wake-up debt are cleared.
+	// attempt's summary and result are cleared. A host holding an undelivered
+	// notification for the failed attempt must drop it in the same transition
+	// — the task is no longer finished, and the next ending owes a fresh one.
 	//
 	// won=false means the row exists but could not be claimed: not failed, out
 	// of attempts, or another retry won the race. A task that does not exist is
@@ -47,10 +53,11 @@ type Store interface {
 	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
 
 	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status
-	// back to failed, the attempt count back down, the launch failure recorded
-	// as the summary/result, and the wake-up debt reopened (the parent has not
-	// heard this ending). The attempt rolls back because it counts the runs a
-	// task has HAD, and a launch that failed before registering started nothing.
+	// back to failed, the attempt count back down, and the launch failure
+	// recorded as the summary/result — an ending the Manager reports like any
+	// other (the parent has not heard it). The attempt rolls back because it
+	// counts the runs a task has HAD, and a launch that failed before
+	// registering started nothing.
 	//
 	// It applies only while runID is the current attempt and the row is still
 	// working; won=false means another writer moved the task first and its
@@ -69,25 +76,11 @@ type Store interface {
 	// resume must be abandoned (and a stale approval discarded, not retried).
 	ReclaimWorking(ctx context.Context, id, runID string) (bool, error)
 
-	// ConsumeNotify cancels the wake-up debt: the model already has the result.
-	// It applies only while runID is the task's current attempt — a consume
-	// decided against the previous attempt must not swallow the debt of the
-	// one that replaced it.
-	ConsumeNotify(ctx context.Context, id, runID string) error
-	// MarkNotifyDelivered records that a wake-up run carried the result, with
-	// the same attempt bound as ConsumeNotify: a drain spans a Launch call, and
-	// a retry can land inside it.
-	MarkNotifyDelivered(ctx context.Context, id, runID string) error
-	// ListPendingNotify returns the parent's tasks still owed a wake-up,
-	// oldest first — the notification lists them in that order.
-	ListPendingNotify(ctx context.Context, parentSessionID string) ([]Task, error)
-	// PendingNotifyParents returns every session owed at least one wake-up.
-	PendingNotifyParents(ctx context.Context) ([]string, error)
-
-	// FailOrphans marks every still-working task failed, owing each parent a
-	// wake-up. Called at startup: a task run does not survive a restart, so a
-	// row left at working can never progress on its own.
-	FailOrphans(ctx context.Context) (int64, error)
+	// FailOrphans marks every still-working task failed and returns them.
+	// Called at startup: a task run does not survive a restart, so a row left
+	// at working can never progress on its own — and its parent still has to
+	// be told, which is why the rows come back rather than a count.
+	FailOrphans(ctx context.Context) ([]Task, error)
 	// ListNonTerminal returns a parent's unfinished tasks, for a teardown that
 	// must stop them.
 	ListNonTerminal(ctx context.Context, parentSessionID string) ([]Task, error)
@@ -178,7 +171,6 @@ func (s *InMemoryStore) Finalize(_ context.Context, id, runID string, st Status,
 		return false, nil
 	}
 	t.Status = st
-	t.NotifyState = NotifyPending
 	if summary != "" {
 		t.Summary = summary
 	}
@@ -206,9 +198,6 @@ func (s *InMemoryStore) RetryClaim(_ context.Context, id, newRunID string, maxAt
 	// The previous attempt's account, cleared: it describes a run that is no
 	// longer this task's.
 	t.Summary, t.Result = "", ""
-	// No longer finished, so nothing is owed. The next terminal state opens a
-	// fresh debt.
-	t.NotifyState = NotifyNone
 	t.UpdatedAt = time.Now().UTC()
 	return true, nil
 }
@@ -229,7 +218,6 @@ func (s *InMemoryStore) ReleaseRetryClaim(_ context.Context, id, runID, summary,
 	// the rollback can never go below the original run.
 	t.Attempt = max(t.AttemptNo()-1, 1)
 	t.Summary, t.Result = summary, result
-	t.NotifyState = NotifyPending
 	t.UpdatedAt = time.Now().UTC()
 	return true, nil
 }
@@ -261,62 +249,11 @@ func (s *InMemoryStore) ReclaimWorking(_ context.Context, id, runID string) (boo
 	return true, nil
 }
 
-// ConsumeNotify and MarkNotifyDelivered deliberately leave UpdatedAt alone. For
-// a terminal task that column is when it FINISHED — created→updated is the
-// duration a UI shows — and delivery can happen minutes later.
-func (s *InMemoryStore) ConsumeNotify(_ context.Context, id, runID string) error {
-	return s.setNotify(id, runID, NotifyConsumed)
-}
-
-// MarkNotifyDelivered implements Store.
-func (s *InMemoryStore) MarkNotifyDelivered(_ context.Context, id, runID string) error {
-	return s.setNotify(id, runID, NotifyDelivered)
-}
-
-func (s *InMemoryStore) setNotify(id, runID string, to NotifyState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if t, ok := s.tasks[id]; ok && t.NotifyState == NotifyPending && t.RunID == runID {
-		t.NotifyState = to
-	}
-	return nil
-}
-
-// ListPendingNotify implements Store, oldest first.
-func (s *InMemoryStore) ListPendingNotify(_ context.Context, parentSessionID string) ([]Task, error) {
+// FailOrphans implements Store.
+func (s *InMemoryStore) FailOrphans(_ context.Context) ([]Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Task
-	for _, id := range s.order {
-		if t := s.tasks[id]; t != nil && t.ParentSessionID == parentSessionID && t.NotifyState == NotifyPending {
-			out = append(out, *t)
-		}
-	}
-	return out, nil
-}
-
-// PendingNotifyParents implements Store.
-func (s *InMemoryStore) PendingNotifyParents(_ context.Context) ([]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	seen := map[string]bool{}
-	var out []string
-	for _, id := range s.order {
-		t := s.tasks[id]
-		if t == nil || t.NotifyState != NotifyPending || seen[t.ParentSessionID] {
-			continue
-		}
-		seen[t.ParentSessionID] = true
-		out = append(out, t.ParentSessionID)
-	}
-	return out, nil
-}
-
-// FailOrphans implements Store.
-func (s *InMemoryStore) FailOrphans(_ context.Context) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var n int64
 	for _, id := range s.order {
 		t := s.tasks[id]
 		// input_required rows are kept: their pending approval persists and
@@ -326,12 +263,10 @@ func (s *InMemoryStore) FailOrphans(_ context.Context) (int64, error) {
 		}
 		t.Status = StatusFailed
 		t.Summary = "the process restarted while the task was running"
-		// The failure is news the parent never heard, so it owes a wake-up.
-		t.NotifyState = NotifyPending
 		t.UpdatedAt = time.Now().UTC()
-		n++
+		out = append(out, *t)
 	}
-	return n, nil
+	return out, nil
 }
 
 // ListNonTerminal implements Store.
