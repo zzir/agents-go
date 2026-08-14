@@ -254,14 +254,21 @@ func restoreSandboxConfig(typ string, incoming, prev json.RawMessage) json.RawMe
 }
 
 // sanitizeAgentConfig masks the secret-bearing fields of an agent config for
-// API responses (the provider API key and the per-entry fallback-model keys)
-// and projects the ChatGPT token into the derived logged-in signal — the token
-// itself never leaves the server.
+// API responses. Only the per-entry fallback-model keys remain: the provider
+// credential moved to the Provider entity, so an agent body no longer carries
+// one at all.
 func sanitizeAgentConfig(ac *store.AgentConfig) {
-	ac.Provider.APIKey = maskSecret(ac.Provider.APIKey)
 	ac.Resilience.FallbackModels = maskFallbackModels(ac.Resilience.FallbackModels)
-	ac.ChatGPTLoggedIn = ac.ChatGPTToken != ""
-	ac.ChatGPTToken = "" // json:"-" already hides it; cleared as defense in depth
+}
+
+// sanitizeProvider masks a provider's key for API responses and projects the
+// ChatGPT token into the derived logged-in signal — the token itself never
+// leaves the server. This is the ONE place a model-API credential is masked,
+// which is the point of giving providers their own entity.
+func sanitizeProvider(pv *store.Provider) {
+	pv.APIKey = maskSecret(pv.APIKey)
+	pv.ChatGPTLoggedIn = pv.ChatGPTToken != ""
+	pv.ChatGPTToken = "" // json:"-" already hides it; cleared as defense in depth
 }
 
 // secretSettingKeys are the settings whose values are secrets and therefore

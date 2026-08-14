@@ -26,12 +26,15 @@ func NewApprovalHandler(s *store.PendingApprovalStore, runner *bridge.Runner) *A
 	return &ApprovalHandler{store: s, runner: runner}
 }
 
-// SessionApproval is a pending approval enriched with the background task it
-// belongs to (empty for the session's own foreground run).
+// SessionApproval is a pending approval enriched with the background work it
+// belongs to — a task or a workflow execution. Both empty for the session's own
+// foreground run.
 type SessionApproval struct {
 	store.PendingApproval
-	TaskID    string `json:"task_id,omitempty"`
-	TaskLabel string `json:"task_label,omitempty"`
+	TaskID        string `json:"task_id,omitempty"`
+	TaskLabel     string `json:"task_label,omitempty"`
+	WorkflowRunID string `json:"workflow_run_id,omitempty"`
+	WorkflowName  string `json:"workflow_name,omitempty"`
 }
 
 // ListBySession responds with the pending approvals for the session
@@ -67,6 +70,21 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	}
 	for _, it := range taskItems {
 		out = append(out, SessionApproval{PendingApproval: it.PendingApproval, TaskID: it.TaskID, TaskLabel: it.TaskLabel})
+	}
+	// And the ones paused inside a workflow's own session, for the same reason:
+	// the chat is the ONE approval surface, and a step waiting on a decision in
+	// a session nobody can open waits forever.
+	wfItems, err := h.store.ListByParentWorkflows(ctx, c.Param("id"))
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	for _, it := range wfItems {
+		out = append(out, SessionApproval{
+			PendingApproval: it.PendingApproval,
+			WorkflowRunID:   it.WorkflowRunID,
+			WorkflowName:    it.WorkflowName,
+		})
 	}
 	c.JSON(http.StatusOK, out)
 }

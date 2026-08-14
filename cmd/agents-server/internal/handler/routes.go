@@ -18,6 +18,8 @@ type Handlers struct {
 	Memories       *MemoryHandler
 	Settings       *SettingHandler
 	Skills         *SkillHandler
+	Providers      *ProviderHandler
+	Workflows      *WorkflowHandler
 	ProviderRoutes *ProviderRouteHandler
 	Guardrails     *GuardrailHandler
 	Sandboxes      *SandboxHandler
@@ -44,6 +46,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sessions.POST("/:id/runs", h.Runs.Create)
 		sessions.GET("/:id/approvals", h.Approvals.ListBySession)
 		sessions.GET("/:id/tasks", h.Tasks.ListBySession)
+		sessions.GET("/:id/workflow-runs", h.Workflows.ListBySession)
 	}
 	{
 		runs := api.Group("/runs")
@@ -70,9 +73,6 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		agents.GET("/:id/tools", h.Playground.AgentTools)
 		agents.PUT("/:id", h.Agents.Update)
 		agents.DELETE("/:id", h.Agents.Delete)
-		agents.POST("/:id/chatgpt/login", h.ChatGPT.Login)
-		agents.POST("/:id/chatgpt/logout", h.ChatGPT.Logout)
-		agents.GET("/:id/chatgpt/status", h.ChatGPT.Status)
 	}
 	{
 		mcpServers := api.Group("/mcp-servers")
@@ -117,12 +117,37 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	// features), so config UIs stay in sync with it.
 	api.GET("/provider-types", ProviderTypeList)
 	{
+		providers := api.Group("/providers")
+		providers.GET("", h.Providers.List)
+		providers.POST("", h.Providers.Create)
+		providers.GET("/:id", h.Providers.Get)
+		providers.PUT("/:id", h.Providers.Update)
+		providers.DELETE("/:id", h.Providers.Delete)
+		// The OAuth flow belongs to the endpoint, not to any one agent.
+		providers.POST("/:id/chatgpt/login", h.ChatGPT.Login)
+		providers.POST("/:id/chatgpt/logout", h.ChatGPT.Logout)
+		providers.GET("/:id/chatgpt/status", h.ChatGPT.Status)
+
 		providerRoutes := api.Group("/provider-routes")
 		providerRoutes.GET("", h.ProviderRoutes.List)
 		providerRoutes.POST("", h.ProviderRoutes.Create)
 		providerRoutes.GET("/:id", h.ProviderRoutes.Get)
 		providerRoutes.PUT("/:id", h.ProviderRoutes.Update)
 		providerRoutes.DELETE("/:id", h.ProviderRoutes.Delete)
+	}
+	{
+		workflows := api.Group("/workflows")
+		workflows.GET("", h.Workflows.List)
+		workflows.POST("", h.Workflows.Create)
+		workflows.GET("/:id", h.Workflows.Get)
+		workflows.PUT("/:id", h.Workflows.Update)
+		workflows.DELETE("/:id", h.Workflows.Delete)
+
+		workflowRuns := api.Group("/workflow-runs")
+		workflowRuns.GET("/:id", h.Workflows.GetRun)
+		workflowRuns.POST("/:id/stop", h.Workflows.StopRun)
+		workflowRuns.POST("/:id/retry", h.Workflows.RetryRun)
+		workflowRuns.POST("/:id/dismiss", h.Workflows.DismissRun)
 	}
 	{
 		guardrails := api.Group("/guardrails")

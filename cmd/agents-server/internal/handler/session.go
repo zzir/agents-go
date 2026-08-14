@@ -52,14 +52,15 @@ type SessionCompactor interface {
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
 type SessionHandler struct {
-	sessions  *store.SessionStore
-	entries   *store.EntryStore
-	traces    *store.TraceStore
-	agents    *store.AgentConfigStore
-	profiles  *store.ContextProfileStore
-	mcp       MCPToolLister
-	stopper   RunStopper
-	compactor SessionCompactor
+	sessions   *store.SessionStore
+	entries    *store.EntryStore
+	traces     *store.TraceStore
+	agents     *store.AgentConfigStore
+	profiles   *store.ContextProfileStore
+	mcp        MCPToolLister
+	mcpServers *store.McpServerStore
+	stopper    RunStopper
+	compactor  SessionCompactor
 }
 
 // NewSessionHandler returns a handler backed by the session, message, trace,
@@ -69,11 +70,14 @@ func NewSessionHandler(sessions *store.SessionStore, entries *store.EntryStore, 
 }
 
 // WithContextProfiles wires what the Context report needs beyond the session's
-// own entries: the per-session build snapshot, and a way to ask a connected MCP
-// server what it currently exposes.
-func (h *SessionHandler) WithContextProfiles(profiles *store.ContextProfileStore, mcp MCPToolLister) *SessionHandler {
+// own entries: the per-session build snapshot, a way to ask a connected MCP
+// server what it currently exposes, and the server store — which is what
+// resolves a NAME for a disconnected or disabled server (the manager never
+// holds those, and their bucket would otherwise be labelled by raw id).
+func (h *SessionHandler) WithContextProfiles(profiles *store.ContextProfileStore, mcp MCPToolLister, mcpServers *store.McpServerStore) *SessionHandler {
 	h.profiles = profiles
 	h.mcp = mcp
+	h.mcpServers = mcpServers
 	return h
 }
 
@@ -169,6 +173,8 @@ func (h *SessionHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	// `planning` rides on the row now (materialized), so the response carries it
+	// with no extra read — and the list gets it for free too.
 	c.JSON(http.StatusOK, sess)
 }
 
@@ -316,6 +322,10 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		// same conversation over the same file system context.
 		SandboxID: src.SandboxID,
 		WorkDir:   src.WorkDir,
+		// The plan phase carries over: a fork of a session mid-planning inherits
+		// the planning it forked in (what the entry-marker approach gave for
+		// free before the phase was materialized).
+		Planning: src.Planning,
 	}
 	// One transaction creates the session and copies its entries, so a failure
 	// (or a cancelled request) can't leave an orphaned empty session behind.
@@ -409,7 +419,7 @@ func (h *SessionHandler) Context(c *gin.Context) {
 	if sess.AgentConfigID != "" {
 		if ac, err := h.agents.Get(ctx, sess.AgentConfigID); err == nil {
 			rep.Model = ac.Model
-			rep.ContextWindow = ac.Provider.ContextWindow
+			rep.ContextWindow = ac.ContextWindow
 			rep.CompactionEnabled = ac.Compaction.Enabled
 			if ac.Compaction.Enabled {
 				// Same fallback rule as NewCompactionAdapter (<= 0, not just
@@ -500,6 +510,12 @@ func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.T
 	for i, id := range ids {
 		wg.Go(func() {
 			name, tools, err := h.mcp.ListToolsFor(ctx, id)
+			if name == "" {
+				// The manager only knows CONNECTED servers; a disconnected or
+				// disabled one still has its configured name in the store, and
+				// a bucket labelled by raw id names nothing a person set.
+				name = h.mcpServerName(ctx, id)
+			}
 			b := store.ToolBucket{Source: store.ToolSourceMCP + cmp.Or(name, id)}
 			if err != nil {
 				b.Unavailable = true
@@ -514,6 +530,19 @@ func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.T
 	}
 	wg.Wait()
 	return buckets
+}
+
+// mcpServerName reads a server's configured name off its row; empty when the
+// row is gone (a build snapshot can outlive the server it named).
+func (h *SessionHandler) mcpServerName(ctx context.Context, id string) string {
+	if h.mcpServers == nil {
+		return ""
+	}
+	srv, err := h.mcpServers.Get(ctx, id)
+	if err != nil {
+		return ""
+	}
+	return srv.Name
 }
 
 type branchReq struct {

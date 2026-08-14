@@ -24,38 +24,32 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	engine.GET("/agents/:id", h.Get)
 	engine.PUT("/agents/:id", h.Update)
 
-	// Create with a real key.
+	// The provider credential is not an agent field any more; what remains on
+	// this surface is the per-entry fallback-model keys.
 	w := doJSON(t, engine, http.MethodPost, "/agents",
-		`{"name":"a","model":"gpt-4o","provider":{"api_key":"sk-real-123"},"resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"sk-fb-1\"}]"}}`)
+		`{"name":"a","model":"gpt-4o","resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"sk-fb-1\"}]"}}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: got %d: %s", w.Code, w.Body.String())
 	}
 	var created struct {
-		ID       string `json:"id"`
-		Provider struct {
-			APIKey string `json:"api_key"`
-		} `json:"provider"`
+		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatalf("unmarshal create response: %v", err)
 	}
-	if created.Provider.APIKey != SecretMask {
-		t.Errorf("create response api_key = %q, want mask", created.Provider.APIKey)
-	}
 
-	// GET must mask both the key and the fallback-model keys.
 	w = doJSON(t, engine, http.MethodGet, "/agents/"+created.ID, "")
 	body := w.Body.String()
-	if strings.Contains(body, "sk-real-123") || strings.Contains(body, "sk-fb-1") {
+	if strings.Contains(body, "sk-fb-1") {
 		t.Fatalf("GET leaked plaintext secret: %s", body)
 	}
 	if !strings.Contains(body, SecretMask) {
-		t.Fatalf("GET should mask the stored key: %s", body)
+		t.Fatalf("GET should mask the stored fallback key: %s", body)
 	}
 
-	// PUT sending the mask back keeps the stored values.
+	// PUT sending the mask back keeps the stored value.
 	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a2","model":"gpt-4o","provider":{"api_key":"`+SecretMask+`"},"resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"`+SecretMask+`\"}]"}}`)
+		`{"name":"a2","model":"gpt-4o","resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"`+SecretMask+`\"}]"}}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: got %d: %s", w.Code, w.Body.String())
 	}
@@ -63,23 +57,8 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get stored: %v", err)
 	}
-	if stored.Provider.APIKey != "sk-real-123" {
-		t.Errorf("mask round-trip lost api_key: %q", stored.Provider.APIKey)
-	}
 	if !strings.Contains(stored.Resilience.FallbackModels, "sk-fb-1") {
 		t.Errorf("mask round-trip lost fallback key: %q", stored.Resilience.FallbackModels)
-	}
-
-	// PUT with a new value replaces, PUT with "" clears.
-	doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a2","model":"gpt-4o","provider":{"api_key":"sk-new"}}`)
-	stored, _ = st.Get(ctx, created.ID)
-	if stored.Provider.APIKey != "sk-new" {
-		t.Errorf("new value not stored: %q", stored.Provider.APIKey)
-	}
-	doJSON(t, engine, http.MethodPut, "/agents/"+created.ID, `{"name":"a2","model":"gpt-4o","provider":{"api_key":""}}`)
-	stored, _ = st.Get(ctx, created.ID)
-	if stored.Provider.APIKey != "" {
-		t.Errorf("empty value should clear the key: %q", stored.Provider.APIKey)
 	}
 }
 
@@ -127,74 +106,48 @@ func TestSandboxPasswordMasking(t *testing.T) {
 	}
 }
 
-// A masked key round-trips only within the backend it was stored for:
-// switching provider_type while keeping the ******** mask must be rejected,
-// or the old provider's real credential would be sent to the new provider.
-func TestAgentUpdateRejectsMaskedKeyAcrossProviderSwitch(t *testing.T) {
-	engine, _ := newAgentEngine(t)
+// The credential mask now round-trips on ONE surface: the provider. A masked
+// key means "keep the stored one", which only holds while the destination is
+// unchanged — moving the backend or the endpoint must refuse it.
+func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewProviderHandler(store.NewProviderStore(db))
+	engine := gin.New()
+	engine.POST("/providers", h.Create)
+	engine.PUT("/providers/:id", h.Update)
 
-	w := doJSON(t, engine, http.MethodPost, "/agents",
-		`{"name":"a","model":"gpt-4o","provider":{"provider_type":"openai","api_key":"sk-openai-real"}}`)
+	w := doJSON(t, engine, http.MethodPost, "/providers",
+		`{"name":"glm","type":"openai","api_key":"sk-glm-real","base_url":"https://x"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
 	var created struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		APIKey string `json:"api_key"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	if created.APIKey != SecretMask {
+		t.Fatalf("the key must be masked on the way out, got %q", created.APIKey)
+	}
 
-	// Provider switched, mask kept: refused.
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a","model":"claude-opus-5","provider":{"provider_type":"anthropic","api_key":"********"}}`)
+	// Backend change.
+	w = doJSON(t, engine, http.MethodPut, "/providers/"+created.ID,
+		`{"name":"glm","type":"anthropic","api_key":"********","base_url":"https://x"}`)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("masked key across provider switch: got %d, want 400 (body %s)", w.Code, w.Body.String())
+		t.Fatalf("masked key across a type switch: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
-	if msg := errMessage(t, w.Body.Bytes()); !strings.Contains(msg, "provider_type or base_url changed") {
-		t.Errorf("error should explain the destination change: %q", msg)
-	}
-
-	// A replacement key or an explicit clear both pass.
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a","model":"claude-opus-5","provider":{"provider_type":"anthropic","api_key":"sk-ant-new"}}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("replacement key: got %d (body %s)", w.Code, w.Body.String())
-	}
-	// Same provider (spelled explicitly vs the "" default): the mask is fine.
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a","model":"claude-opus-5","provider":{"provider_type":"anthropic","api_key":"********"}}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("masked key, same provider: got %d (body %s)", w.Code, w.Body.String())
-	}
-}
-
-// The same rule for provider routes.
-func TestProviderRouteUpdateRejectsMaskedKeyAcrossProviderSwitch(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewProviderRouteHandler(store.NewProviderRouteStore(db))
-	engine := gin.New()
-	engine.POST("/provider-routes", h.Create)
-	engine.PUT("/provider-routes/:id", h.Update)
-
-	w := doJSON(t, engine, http.MethodPost, "/provider-routes",
-		`{"prefix":"glm","provider_type":"openai","api_key":"sk-glm-real","base_url":"https://x"}`)
-	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
-		t.Fatalf("create: %d %s", w.Code, w.Body.String())
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(w.Body.Bytes(), &created)
-
-	w = doJSON(t, engine, http.MethodPut, "/provider-routes/"+created.ID,
-		`{"prefix":"glm","provider_type":"anthropic","api_key":"********","base_url":"https://x"}`)
+	// Endpoint change.
+	w = doJSON(t, engine, http.MethodPut, "/providers/"+created.ID,
+		`{"name":"glm","type":"openai","api_key":"********","base_url":"https://y"}`)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("masked key across provider switch: got %d, want 400 (body %s)", w.Code, w.Body.String())
+		t.Fatalf("masked key across a base_url change: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
-	w = doJSON(t, engine, http.MethodPut, "/provider-routes/"+created.ID,
-		`{"prefix":"glm","provider_type":"anthropic","api_key":"sk-ant-new","base_url":"https://x"}`)
+	// Same destination: the mask keeps the stored key.
+	w = doJSON(t, engine, http.MethodPut, "/providers/"+created.ID,
+		`{"name":"glm","type":"openai","api_key":"********","base_url":"https://x"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("replacement key: got %d (body %s)", w.Code, w.Body.String())
+		t.Fatalf("masked key, same destination: got %d (body %s)", w.Code, w.Body.String())
 	}
 }
 
@@ -231,36 +184,6 @@ func TestRestoreFallbackModelsMatchesByProviderAndModel(t *testing.T) {
 // The credential's identity includes the ENDPOINT: same provider_type but a
 // different base_url is a different destination, and a masked key must not
 // follow it there. Trailing-slash variants of the same endpoint are not a
-// change.
-func TestMaskedKeyRejectedAcrossBaseURLChange(t *testing.T) {
-	engine, _ := newAgentEngine(t)
-
-	w := doJSON(t, engine, http.MethodPost, "/agents",
-		`{"name":"a","model":"m","provider":{"provider_type":"openai","api_key":"sk-real","base_url":"https://one.example/v1"}}`)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create: %d %s", w.Code, w.Body.String())
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(w.Body.Bytes(), &created)
-
-	// Endpoint switched, mask kept: refused.
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a","model":"m","provider":{"provider_type":"openai","api_key":"********","base_url":"https://two.example/v1"}}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("masked key across base_url change: got %d, want 400 (body %s)", w.Code, w.Body.String())
-	}
-	// A trailing slash is the same endpoint.
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a","model":"m","provider":{"provider_type":"openai","api_key":"********","base_url":"https://one.example/v1/"}}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("slash variant of the same endpoint: got %d (body %s)", w.Code, w.Body.String())
-	}
-}
-
-// Fallback identity includes base_url too: two same-provider entries pointed
-// at different OpenAI-compatible endpoints hold different credentials.
 func TestRestoreFallbackModelsRespectsBaseURL(t *testing.T) {
 	prev := `[{"model":"m","provider_type":"openai","base_url":"https://one.example/v1","api_key":"k-one"},` +
 		`{"model":"m","provider_type":"openai","base_url":"https://two.example/v1","api_key":"k-two"}]`

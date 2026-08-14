@@ -11,7 +11,7 @@ servers, sandboxes, guardrails, memories, and skills.
 
 - [Quick start](#quick-start) — build, flags
 - [Authentication](#authentication)
-- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
+- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
 - [Architecture](#architecture)
 - [Design invariants](#design-invariants) — the rules every panel/handler pair must follow
@@ -113,13 +113,14 @@ detail.
 |--------|---------------------------|----------------------------------------------------------------------|
 | GET    | `/sessions`               | List sessions                                                        |
 | POST   | `/sessions`               | Create session (`{name?, agent_config_id?}`)                         |
-| GET    | `/sessions/:id`           | Get session                                                          |
+| GET    | `/sessions/:id`           | Get session — plus `planning`, whether its next run starts by planning |
 | PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session |
 | DELETE | `/sessions/:id`           | Delete session and its entries and traces                            |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
 | GET    | `/sessions/:id/context`   | Context-window usage report (see [invariant 28](#design-invariants)) |
 | POST   | `/sessions/:id/compact`   | Force one compaction pass now (409 while a run is live)              |
+| GET    | `/sessions/:id/workflow-runs` | List the session's workflow runs                                |
 | POST   | `/sessions/:id/fork`      | Fork session into a new one                                          |
 | POST   | `/sessions/:id/branch`    | Switch the active branch (`{entry_id}`)                              |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
@@ -172,18 +173,19 @@ ends). `input_tokens` is the LAST model call's input: the history, prompt and
 tool schemas in the window right now — not `session_input_tokens`, which totals
 every call and so counts re-sent history once per turn. `context_window` is the
 agent config's declared window (`provider.context_window`; 0 when unset, and the
-panel then shows occupancy without a denominator) and `items` are the heaviest
-entries still in context, each with the `anchor` the UI scrolls to (a tool call
-id, else an entry id) and the `response_id` that ties it to a generation span.
-Compacted and off-path entries keep their usage — the call happened — but leave
-`items` and `compaction_tokens`, because the model no longer sees them.
+panel then shows occupancy without a denominator) and `conversation_tokens` is
+the estimated size of the transcript still in context — every active,
+uncompacted entry summed, the row the "In the window" section shows beside the
+prompt layers. Compacted and off-path entries keep their usage — the call
+happened — but leave `conversation_tokens` and `compaction_tokens`, because the
+model no longer sees them.
 
 The report costs the session's ROW COUNT, not its size: `entries` carries the
-usage and the character estimate of each entry as lifted columns (written by the
-append that stored it), so the endpoint reads bodies only for the five heaviest
-entries it actually names. Without them a report over a 234MB session took ~1.4s
-and re-read every byte; with them it is ~30ms. The compaction check on every
-append reads the same columns.
+usage and the character estimate of each entry as lifted columns (written by
+the append that stored it), so the endpoint reads no entry bodies beyond the
+branch walk's leaf markers. Without the columns a report over a 234MB session
+took ~1.4s and re-read every byte; with them it is ~30ms. The compaction check
+on every append reads the same columns.
 
 `prompt` is what the session's last build put in front of the conversation: the
 instruction layers (`instructions` / `global_prompt` / `memory` /
@@ -358,26 +360,26 @@ queues behind like a spawn.
 | PUT    | `/agents/:id`                | Update agent                             |
 | DELETE | `/agents/:id`                | Delete agent                             |
 | GET    | `/agents/:id/tools`          | The agent's current tool surface as schema-only definitions (`{name, description?, parameters?}`) — built-ins, connected MCP servers' tools, the skills reader; sandbox tools excluded (no sandbox is selected). Nothing here executes; backs the Replay dialog's tool picker |
-| POST   | `/agents/:id/chatgpt/login`  | Start ChatGPT OAuth login for this agent |
-| POST   | `/agents/:id/chatgpt/logout` | Clear this agent's ChatGPT token         |
-| GET    | `/agents/:id/chatgpt/status` | Check this agent's ChatGPT login status  |
 
 Agent config shape — three top-level scalars, then the knobs as **grouped
 nested objects** (each group is one JSON column in the table, so a new knob
 needs no schema change), then a few top-level JSON blobs:
 
-- **Top level**: `name`, `instructions`, `model`
-- **`provider`**: `provider_type` (`openai` default / `anthropic` — selects the
-  API protocol; `chatgpt_login` auth is openai-only), `auth_mode`, `api_key`,
-  `base_url`
+- **Top level**: `name`, `instructions`, `model`, `provider_id` (the endpoint
+  this agent reaches its model through — see [providers](#providers--apiv1providers);
+  empty means the built-in default, the openai backend on the global api-key
+  setting), `context_window` (declared, 0 = unknown)
 - **`behavior`**: `max_turns`, `handoff_description`, `disable_tool_choice_reset`,
   `stop_at_tools` (comma-separated tool names — the run ends after a turn that
   called any of them), `handoff_input_filter`, `max_tool_concurrency`,
-  `tool_not_found_behavior`, `reasoning_item_id_policy` (`preserve` / `omit`),
-  `plan_mode` (each run starts read-only; the plan arrives as a `submit_plan`
-  approval card — the review — and approving it unlocks the full toolset for
-  the rest of the run, resumes after the approval included), `todo_list` (a
-  `todo_write` tool the chat renders as a live checklist)
+  `tool_not_found_behavior` (unset feeds a tool name the agent does not have
+  back to the model so it can correct itself; `error` ends the run instead),
+  `reasoning_item_id_policy` (`preserve` / `omit`)
+
+  Plan and todo mode are NOT here. `todo_write` is on every chat agent — when a
+  job is worth tracking is the model's judgement, like any other tool. Plan mode
+  is a restraint, so it belongs to the session and the person: it rides on the
+  run request (`plan`), and the session reports it as `planning`.
 - **`resilience`**: `retry_enabled`, `retry_policy`, `fallback_models` (JSON
   array of `{model, provider_type, api_key, base_url}`; `provider_type`
   defaults to `openai`, and unknown keys are rejected)
@@ -408,19 +410,16 @@ needs no schema change), then a few top-level JSON blobs:
 {
   "name": "coder",
   "model": "gpt-5.2",
-  "provider": {"provider_type": "openai", "api_key": "sk-…"},
+  "provider_id": "9f2c…",
   "behavior": {"max_turns": 20},
   "approval": {"approve_tools": "[\"exec_command\"]"}
 }
 ```
 
-Secret fields are masked on read — see [Secret handling](#secret-handling): the
-`provider.api_key` and each `resilience.fallback_models[].api_key`.
-
-The ChatGPT OAuth routes are a per-agent capability (previously under `/chatgpt/*`
-with an `?agent_config_id=` query parameter). The browser OAuth redirect lands on
-a temporary listener at the fixed ChatGPT port (localhost:1455), not on an API
-route.
+An agent body carries no model-API credential at all — it names a provider,
+which is where the key lives (the ChatGPT OAuth flow included — see
+[providers](#providers--apiv1providers)). What is still masked here is each
+`resilience.fallback_models[].api_key` (see [Secret handling](#secret-handling)).
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
@@ -495,9 +494,11 @@ Known keys:
 
 - `proxy_url` — HTTP proxy for model and MCP calls
 - `system_prompt` — global system prompt prefix
-- `openai_api_key`, `anthropic_api_key` — fallback provider keys, one per
-  `provider_type`, for agents (and `fallback_models` entries) that have no
-  `api_key` of their own (secret; masked on read — see
+- `openai_api_key`, `anthropic_api_key` — fallback keys, one per backend, used
+  by a provider row (or a `fallback_models` entry) that carries none of its own
+  **and no custom `base_url`** — a key must not follow a redirect to an
+  arbitrary endpoint, so a row pointing elsewhere needs its own key — and by an
+  agent with no `provider_id` at all (secret; masked on read — see
   [Secret handling](#secret-handling))
 - `brave_api_key` — injects a `brave_search` tool into all agents (secret; masked
   on read — see [Secret handling](#secret-handling))
@@ -542,12 +543,114 @@ Clone and maintain whole git repositories of skills.
 Only `http(s)` remotes are accepted (`file://`, `ssh`, and git's `ext::`
 transport are rejected). `sync` replaces the former `PUT /skills/:name`.
 
+### Providers — `/api/v1/providers`
+
+One configured endpoint and the credential that reaches it: `name`, `type`
+(`openai` default / `anthropic` — selects the API protocol), `auth_mode`
+(`chatgpt_login` is openai-only), `api_key`, `base_url`. Agents and provider
+routes REFERENCE a provider by id; nothing else stores a model-API key, so this
+is the one surface a credential crosses (masked on read, `********` keeps the
+stored value — but only while `type` and `base_url` are unchanged, since the
+stored key belongs to that destination).
+
+The ChatGPT OAuth flow lives here too, for the same reason: the token is this
+endpoint's credential, so every agent pointed at the provider shares one login.
+`POST /providers/:id/chatgpt/login` · `/logout` · `GET /status`.
+
+| Method | Path              | Description                                  |
+|--------|-------------------|----------------------------------------------|
+| GET    | `/providers`      | List providers (keys masked)                  |
+| POST   | `/providers`      | Create provider                               |
+| GET    | `/providers/:id`  | Get provider                                  |
+| PUT    | `/providers/:id`  | Update provider                               |
+| DELETE | `/providers/:id`  | Delete; 409 while an agent or route uses it   |
+
+### Workflows — `/api/v1/workflows`
+
+A workflow is a FIXED, ordered sequence of steps run on ONE session. Each step
+names the agent that runs it and the prompt that starts its turn, so
+plan → exec → verify can be three different agents on three different models —
+which is the point. Which step runs next is the definition's answer, not the
+model's; a model-chosen next agent is a handoff, and that already exists.
+
+A step is an ORDINARY RUN on the session, which is what makes the sequence
+cheap: one window, one compaction, one sandbox binding, one transcript, and a
+step may use tools or hand off like any other turn — but NOT spawn background
+tasks or start another workflow: a step is itself a background run, and those
+tools are withheld from one (a sequence cannot fan out into more background
+work). Later steps read what earlier ones did, with no data plumbing between
+them — the conversation is the data flow.
+
+A workflow carries a required `description`: it is what an agent matches a
+request against, and an agent doing so is the ONLY way a workflow starts (see
+[invariant 30](#design-invariants) — there is no start endpoint). A step may
+set `compact_before`, folding the conversation into a summary before it runs: a
+step boundary is the natural place for it, since the exploration that got the
+sequence here is spent and every later step pays for it otherwise.
+
+A step may also name where to go next — `on_success` and `on_failure`, each a
+step id or `end`. Their empty defaults ARE the plain list (success falls through
+to the next step, the last one finishes, and a failure fails the workflow), so a
+linear workflow never mentions them. Naming an EARLIER step is how a sequence
+loops: `test.on_failure = fix`, `fix.on_success = test`. Two rules make that
+safe — an execution stops after `MaxStepRuns` (50) step runs, retries included,
+and a handler's turn is LED by the error it is handling, because a failed run
+leaves no usable account of itself in the transcript.
+
+"Failure" here is structural: the step's run errored. A step deciding its own
+work was no good is judgement, and judgement belongs to the step's agent and its
+handoffs — that line is what keeps a workflow deterministic ([invariant
+30](#design-invariants)).
+
+An execution carries an `input` — the brief, written by the agent that started
+it, because the child session cannot see the conversation. It LEADS the first
+step's turn and is not repeated afterwards: from step two on it is already in
+the transcript the step reads. It is stored on the execution so a retry of the
+first step asks for the same thing rather than running the instruction with no
+subject.
+
+The agent that started one asks after it with `workflow_status`, which reports
+every LIVE execution (it must not redo work in flight) and only the few most
+recent finished ones — a tool whose output grows with the conversation
+eventually costs more than it says.
+
+Each step carries a STABLE id, so inserting a step above another does not
+renumber what a run in flight, a retry, or a record of what happened is naming.
+An execution stores a SNAPSHOT of the definition: editing a workflow never
+steers a sequence already in flight (the rule a task's inherited configuration
+already follows).
+
+| Method | Path                        | Description                                     |
+|--------|-----------------------------|-------------------------------------------------|
+| GET    | `/workflows`                | List definitions                                 |
+| POST   | `/workflows`                | Create definition                                |
+| GET    | `/workflows/:id`            | Get definition                                   |
+| PUT    | `/workflows/:id`            | Update definition                                |
+| DELETE | `/workflows/:id`            | Delete definition (executions keep their snapshot) |
+| GET    | `/workflow-runs/:id`        | Get one execution                                |
+| POST   | `/workflow-runs/:id/stop`   | Stop the whole sequence, not just the step       |
+| POST   | `/workflow-runs/:id/retry`  | Re-run a FAILED execution from the step it stopped at (409 otherwise) |
+| POST   | `/workflow-runs/:id/dismiss` | Hide a terminal execution from the chat strip (the panel keeps it; a retry brings it back) |
+
+A step that fails ends the sequence there and the execution keeps that step, so
+a retry resumes from it rather than repeating what already succeeded. Only a
+FAILED execution retries — re-running a completed or cancelled one would repeat
+its side effects — and a retry is one more piece of background work, so it is
+bounded by `MaxStepRuns` and the shared per-session budget like a fresh start. A
+restart fails whatever was running, at the step it reached, for the same reason.
+Deleting a session STOPS its running workflows first (their steps run on hidden
+child sessions the front-run cancel never touched), so no step keeps causing
+side effects after the row is gone.
+
+A route to a `chatgpt_login` provider is refused at save: its OAuth token only
+works on the direct resolve path, so a routed one would silently never work.
+
 ### Provider Routes — `/api/v1/provider-routes`
 
-Map model-name prefixes to different backends for multi-provider routing: each
-route carries a `provider_type` (`openai` default / `anthropic`), `api_key` and
-`base_url`, so `anthropic/claude-opus-5` can route to the Messages API while
-everything else stays on the agent's own provider.
+Map model-name prefixes to different endpoints for multi-provider routing: a
+route is a `prefix` plus the `provider_id` it routes to, so
+`anthropic/claude-opus-5` can go to the Messages API while everything else stays
+on the agent's own provider.
 
 | Method | Path                   | Description  |
 |--------|------------------------|--------------|
@@ -739,15 +842,15 @@ the plaintext is never sent to a client. On write:
 - sending `""` clears it.
 
 This lets the UI round-trip whole objects without ever seeing the plaintext.
-Masked fields: agent `api_key` and each `fallback_models[].api_key`,
-provider-route `api_key`, MCP `headers` values and `oauth_client_secret`
-(`streamable_http` only), SSH sandbox `password`, and the `brave_api_key` setting.
+Masked fields: provider `api_key`, each agent `fallback_models[].api_key`, MCP
+`headers` values and `oauth_client_secret` (`streamable_http` only), SSH sandbox
+`password`, and the `brave_api_key` setting. A model-API key crosses exactly one
+surface — the provider — which is what giving providers their own entity bought.
 
 **A masked key round-trips only to the destination it was stored for.**
-Changing an agent's or route's `provider_type` OR `base_url` while keeping
-the `********` mask is rejected with 400 (replace the key or clear it) —
-restoring it would send the previous backend's real credential to another
-provider or endpoint. Fallback entries restore their masked keys strictly by
+Changing a provider's `type` OR `base_url` while keeping the `********` mask is
+rejected with 400 (replace the key or clear it) — restoring it would send the
+previous backend's real credential to another endpoint. Fallback entries restore their masked keys strictly by
 `(provider_type, base_url, model)`, never across providers or endpoints and
 never by position; an unmatched mask clears.
 
@@ -1255,18 +1358,149 @@ When a change genuinely doesn't fit, update this list in the same PR.
     next call re-anchors it; without this the number would hold its pre-fold
     height, and a manual Compact would look like it did nothing. It is therefore mostly a provider
     number, not a character sum — a character sum would draw a threshold line
-    that does not match the one that fires — and because it counts output too
-    and only non-folded on-branch entries, it is not comparable to the window
-    bar and gets its own indented row rather than a mark on it. (c) Item sizes
-    and the `prompt` breakdown are character estimates (`CharEstimator`, ~4
-    chars per token): good for ranking and for "roughly what does this cost",
-    never for arithmetic against (a) or (b). The UI does not BADGE them — a
-    badge is skipped by the eye that reads the digits, and four exact-looking
-    digits claim a measurement the estimator never made. It renders them to the
-    precision they have: two significant figures behind a `~`. A figure without
-    one is the provider's own count, which is the whole labelling scheme. Sub-agents appear in none of them — a task runs on its own session with
+    that does not match the one that fires. The panel draws ONE bar (the
+    window's), with the compaction threshold as a TICK on it and the exact
+    comparison (`compaction_tokens / threshold`) as its own indented numbers
+    row: the tick marks roughly where the fold lands on the window's scale,
+    while the row keeps the comparison on its own ruler — the bar and the
+    numbers never pretend to share one. (c) `conversation_tokens` and the
+    `prompt` breakdown are character estimates (`CharEstimator`, ~4 chars per
+    token): good for shares and for "roughly what does this cost", never for
+    arithmetic against (a) or (b) — which is why the "In the window" section's
+    percentages are shares of their OWN estimated total, one ruler throughout
+    (only the section's header line relates that total to the declared window,
+    which is configuration, not a measurement). The UI does not BADGE
+    estimates — a badge is skipped by the eye that reads the digits, and four
+    exact-looking digits claim a measurement the estimator never made. It
+    renders them to the precision they have: two significant figures behind a
+    `~`. A figure without one is the provider's own count, which is the whole
+    labelling scheme. Sub-agents appear in none of them — a task runs on its own session with
     its own window (invariant 22's Inspector shows that one); what lands in the
     parent's context is the result text, counted like any other tool output.
+
+29. **A workflow advances from the run's TEARDOWN, never from the callback of
+    the run that started it.** A step is an ordinary run; when it ends,
+    `postRun` — which every segment reaches, fresh or resumed — asks whether
+    the session has a running workflow whose current run just finished, and
+    only then starts the next step. Hanging the advance off the starting call's
+    own callback loses the sequence at the first approval: a paused step's run
+    ends, the approval endpoint resumes it with NO callback, and that resumed
+    ending is the one that may move the sequence on. The advance is a
+    compare-and-set on `(status = running, run_id = the run that finished)`, so
+    a superseded attempt's late callback cannot drive it, and an INTERRUPTED
+    outcome advances nothing — it is a pause, not an ending.
+
+30. **A workflow runs OFF the conversation that asked for it, and only an
+    AGENT starts one.** The steps execute on a hidden child session, so a
+    sequence's plan-then-write-then-check never enters the chat and no later
+    turn pays for the whole procedure; what comes back is the result, through a
+    wake-up. The steps still share that one session with each other, so a later
+    step reads what an earlier one did — the isolation is between the sequence
+    and the chat, not between the steps. It shares the parent's SANDBOX, which
+    is what lets the deliverable be files rather than a description of files.
+    There is no button and no start endpoint: the child session cannot see the
+    conversation, so someone has to write its brief, and the only participant
+    that read the conversation is the agent. `start_workflow(name, input)` is
+    therefore the whole entry, and a workflow's `description` — what the agent
+    matches a request against — is required for the same reason.
+
+31. **A workflow advances by RUN id, and the execution keeps a log of every
+    step.** The steps run on a child session the run teardown knows nothing
+    about, so the run id is the only name a finished run and the row that owns
+    it share. `workflow_runs.step_runs` records every `(step, run)` produced —
+    `step_id`/`run_id` are only ever the CURRENT one, so without the log a
+    finished sequence could not say which turns belonged to which step, and a
+    retry's second attempt could not be told from the first.
+
+32. **Delivery is a DEBT, not a call, and one waker owns it.** Background work
+    finishes when its session may be busy, paused on a human decision, or gone
+    with the process, so "session S is owed a turn carrying P" is a row
+    (`wakeups`), drained at the moments a session becomes able to take one: the
+    end of any run on it, and startup. One drain pays every debt the session
+    has, so three results that landed while you were typing produce one turn,
+    not three. Tasks and workflows are its two sources and differ in exactly
+    one column — `inherit`, the configuration the turn runs under, and BOTH
+    snapshot the agent that ASKED: a task replays its spawning run's, and a
+    workflow freezes the parent's agent/sandbox at start (`workflow_runs.inherit`),
+    so a session re-pointed at another agent mid-sequence still returns the
+    result through the one that started it. A crash never loses a debt: each
+    kind's terminal write and its `wakeups` row land in ONE transaction (the
+    store's task `Finalize` / workflow `Finish`).
+    The SDK's task manager keeps no debt of its own — it reports endings
+    through `OnFinished` and deliveries through `OnResultDelivered`, because
+    when a session may be interrupted is a host policy. A task's debt is written
+    where its terminal state is: the store's `Finalize` (and the restart sweep's
+    `FailOrphans`) records the `wakeups` row IN THE SAME TRANSACTION as the
+    status, so a crash can never leave a completed task whose parent is never
+    told — a completed/failed task owes, a cancelled one does not. `OnFinished`
+    then only DRAINS (pays now if it can); losing that call loses nothing, since
+    the debt already exists and the next boundary settles it. The debt's inherit
+    strips the task's own agent (`TaskAgentID`): the drain GROUPS debts by the
+    inherit string, and a field the wake run never uses would split one turn
+    into one per task agent. A debt born with no agent config is cancelled at
+    the first drain — its inherit is frozen, so no boundary will ever do
+    better. Wakeup rows match their session by ID ONLY (no generation column,
+    unlike task rows — spec §2.13): the session delete cascade removes them in
+    the same transaction, and both writers CAS on rows that cascade too, so a
+    dead incarnation's debt cannot exist to be inherited. Single insurance,
+    recorded deliberately.
+
+33. **Plan mode is a restraint, so only a PERSON turns it on, and it belongs to
+    the SESSION.** A session executes until somebody asks for a plan — `/plan`
+    in the composer or the `/` menu's checkbox, both riding on the run request's
+    `plan` field (there is no phase endpoint; setting it and starting the run
+    are one step, applied inside the run reservation so a busy-refused request
+    never mutates the phase). It is not an agent setting and not something the
+    model decides: the value of the gate is "a human looks before anything
+    changes", and asking the model whether it needs looking at is asking exactly
+    the wrong participant — a model that judges "simple, no plan needed" is the
+    failure the gate exists to catch. `plan` absent leaves the phase alone, so a
+    client that knows nothing of plan mode cannot knock a session out of it. An
+    approved plan unlocks the SESSION rather than the turn, so the next message
+    does not demand a second plan for work already agreed. The phase is a
+    materialized `sessions.planning` column — read on every run and every
+    session GET, so it is one row, not an O(n) scan of the entry log — written
+    by the person's request and cleared by the approved `submit_plan` (that
+    write is the durable unlock, and its persistence is the precondition for the
+    run leaving the planning phase). A fork copies the column, so a branched
+    session inherits the phase it forked in. The build is unconditional — every
+    chat agent gets the gates and the phase decides whether they bite, because a
+    resume rebuilds the agent AFTER the unlock and one built without
+    `submit_plan` could not answer for the call the paused state names.
+
+34. **A BACKGROUND run is built without plan mode, the task tools or
+    `start_workflow` — and is TOLD that nobody is reading.** One flag, because
+    all of it follows from the same fact: nobody is sitting in front of it.
+    Plan mode is the one that deadlocks — `submit_plan` pauses for approval,
+    and a background run's approval lands in a session the chat cannot open, so
+    the sequence waits forever on a question nobody can see. Removing tools is
+    only half of it: an agent still behaves like one in a conversation, asking
+    for confirmation and stopping, and in a session nobody reads that is a
+    deliverable nobody can answer. So the instructions say so, as a SUFFIX —
+    the agent's own prompt may well tell it to ask. A workflow step learns it
+    is background from its session (`workflow_runs.child_session_id`), and a
+    lookup that FAILS is an error, not a "no" — reading it as a chat run is
+    exactly how the deadlock happens.
+
+35. **A step's approval is answerable from the conversation that asked.**
+    `GET /sessions/:id/approvals` returns the approvals paused inside this
+    session's tasks AND its workflows, tagged with the work they belong to, so
+    the chat is the one approval surface; approve/reject is keyed by tool call
+    id, so answering works from anywhere. The startup sweep follows the same
+    rule as tasks: an execution PAUSED on an approval is not an orphan and is
+    left alone, while one whose run died with the process is failed. An
+    approval that expires unanswered ends its execution too — otherwise the row
+    stays running with nothing left that could finish it.
+
+36. **A finished piece of background work leaves the transcript and enters the
+    panel.** The turn a wake-up injects carries the notification prefix, and a
+    prefixed user message never renders as a bubble — it is the model's input,
+    not something the person said. What a reader gets instead is the Tasks
+    panel, which holds tasks and workflow executions in ONE list: both are work
+    running in a session nobody is sitting in, both report back the same way,
+    and only the endpoint that stops or retries them differs. Its detail lens
+    is the child session's own transcript and trace, so drilling into a
+    sequence shows every step in order.
 
 ## Database
 
@@ -1287,6 +1521,10 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage        |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 | `tasks`             | Background tasks spawned via `spawn_task` (durable identity, status, wake-up state) |
+| `providers`         | Model-API endpoints and their credentials; agents and routes reference one |
+| `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id)         |
+| `workflow_runs`     | One execution: parent + hidden child session, definition snapshot, step log, status |
+| `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind |
 | `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
 
 The database file can be deleted and recreated freely — there is no migration

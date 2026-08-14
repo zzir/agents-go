@@ -20,6 +20,10 @@ type AgentConfigHandler struct {
 	// guardrails, when set, lets save-time validation reject unresolvable
 	// guardrail names before they silently no-op at run time.
 	guardrails *bridge.GuardrailResolver
+	// providers, when set, lets save-time validation reject a provider_id that
+	// names no row — the write side of referential integrity, whose read side
+	// is ProviderStore.DeleteIfUnreferenced.
+	providers *store.ProviderStore
 }
 
 // NewAgentConfigHandler returns a handler backed by the given store.
@@ -31,6 +35,13 @@ func NewAgentConfigHandler(s *store.AgentConfigStore) *AgentConfigHandler {
 // referenced by an agent's tools field. It returns h for chaining.
 func (h *AgentConfigHandler) WithMcpStore(m *store.McpServerStore) *AgentConfigHandler {
 	h.mcpServers = m
+	return h
+}
+
+// WithProviders attaches the provider store used to validate an agent's
+// provider_id. It returns h for chaining.
+func (h *AgentConfigHandler) WithProviders(p *store.ProviderStore) *AgentConfigHandler {
+	h.providers = p
 	return h
 }
 
@@ -57,9 +68,17 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "model is required")
 		return false
 	}
-	if err := bridge.ValidateProviderSelection(ac); err != nil {
-		badRequest(c, err.Error())
-		return false
+	// An agent naming a provider that does not exist would fail at run time
+	// with a confusing "provider not found" mid-stream; refuse at save.
+	if ac.ProviderID != "" && h.providers != nil {
+		if _, err := h.providers.Get(c.Request.Context(), ac.ProviderID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				badRequest(c, "provider_id names no provider")
+			} else {
+				internalError(c, err)
+			}
+			return false
+		}
 	}
 	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.ToolsJSON); err != nil {
 		badRequest(c, err.Error())
@@ -122,14 +141,12 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	// id/timestamps are server-owned (BeforeAppendModel stamps them); the ChatGPT
-	// token is set only via the OAuth flow, never a CRUD body.
-	ac.ID, ac.ChatGPTToken = "", ""
+	// id/timestamps are server-owned (BeforeAppendModel stamps them).
+	ac.ID = ""
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}
 	// There is no stored value yet, so a mask sentinel resolves to empty.
-	ac.Provider.APIKey = resolveSecret(ac.Provider.APIKey, "")
 	ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, "")
 	if err := h.store.Create(c.Request.Context(), &ac); err != nil {
 		saveError(c, err) // duplicate name -> 409
@@ -189,46 +206,24 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	// Load the current row so masked secrets can round-trip to their stored
-	// values. A transient (non-not-found) Get failure must abort: continuing with
-	// an empty prev would resolve the ******** mask to "" and silently WIPE the
-	// stored api_key. Not-found is fine to carry through — the Update below
+	// Load the current row so the masked fallback-model keys can round-trip to
+	// their stored values. A transient (non-not-found) Get failure must abort:
+	// continuing with an empty prev would resolve the ******** mask to "" and
+	// silently WIPE them. Not-found is fine to carry through — the Update below
 	// returns 404 for it.
 	prev, err := h.store.Get(ctx, id)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		internalError(c, err)
 		return
 	}
-	var prevKey, prevFallback, prevProvider, prevBaseURL string
+	var prevFallback string
 	if prev != nil {
-		prevKey, prevFallback = prev.Provider.APIKey, prev.Resilience.FallbackModels
-		prevProvider, prevBaseURL = prev.Provider.ProviderType, prev.Provider.BaseURL
+		prevFallback = prev.Resilience.FallbackModels
 	}
-	// A masked key means "keep the stored one" — which only makes sense for
-	// the DESTINATION it was stored for. Restoring it after the provider or
-	// the endpoint changed would send one backend's real credential to
-	// another (two OpenAI-compatible endpoints differ only in base_url);
-	// refuse instead.
-	if ac.Provider.APIKey == SecretMask && prevKey != "" &&
-		credentialTargetChanged(prevProvider, prevBaseURL, ac.Provider.ProviderType, ac.Provider.BaseURL) {
-		badRequest(c, "provider_type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
-		return
-	}
-	ac.Provider.APIKey = resolveSecret(ac.Provider.APIKey, prevKey)
 	ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prevFallback)
 	if err := h.store.Update(ctx, id, &ac); err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
-	}
-	// Update excludes the chatgpt_token column, so a config that moves OFF
-	// chatgpt_login would otherwise keep a stranded token the UI can no longer
-	// revoke (the disconnect button renders for chatgpt_login agents only).
-	// Clearing an already-empty token is a no-op.
-	if ac.Provider.AuthMode != "chatgpt_login" {
-		if err := h.store.ClearChatGPTToken(ctx, id); err != nil {
-			internalError(c, err)
-			return
-		}
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {

@@ -87,11 +87,17 @@ func storeError(c *gin.Context, err error) {
 
 // saveError maps a create/update store failure: a UNIQUE constraint violation
 // → 409 (so uniqueness is enforced by the DB, not a racy handler pre-check),
-// ErrNotFound → 404, anything else → 500. This centralizes the duplicate-key
-// response so every table's uniqueness costs only its index.
+// a refused provider reference → 400 (the caller's input names a provider that
+// is gone or unroutable — the handler pre-check's answer, arrived at inside
+// the store's tx), ErrNotFound → 404, anything else → 500. This centralizes
+// the duplicate-key response so every table's uniqueness costs only its index.
 func saveError(c *gin.Context, err error) {
 	if cols, ok := store.UniqueViolation(err); ok {
 		conflict(c, "already in use: "+cols)
+		return
+	}
+	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderNotRoutable) {
+		badRequest(c, err.Error())
 		return
 	}
 	storeError(c, err)

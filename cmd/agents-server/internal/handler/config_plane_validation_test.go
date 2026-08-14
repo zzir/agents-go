@@ -127,14 +127,20 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 func TestProviderRoutePrefixUnique(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
-	h := NewProviderRouteHandler(store.NewProviderRouteStore(db))
+	providers := store.NewProviderStore(db)
+	pv := &store.Provider{Name: "p"}
+	if err := providers.Create(t.Context(), pv); err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	h := NewProviderRouteHandler(store.NewProviderRouteStore(db), providers)
 	engine := gin.New()
 	engine.POST("/provider-routes", h.Create)
 
-	if w := doJSON(t, engine, http.MethodPost, "/provider-routes", `{"prefix":"gpt","api_key":"k"}`); w.Code != http.StatusCreated {
+	body := `{"prefix":"gpt","provider_id":"` + pv.ID + `"}`
+	if w := doJSON(t, engine, http.MethodPost, "/provider-routes", body); w.Code != http.StatusCreated {
 		t.Fatalf("first create: got %d (body %s)", w.Code, w.Body.String())
 	}
-	if w := doJSON(t, engine, http.MethodPost, "/provider-routes", `{"prefix":"gpt","api_key":"k2"}`); w.Code != http.StatusConflict {
+	if w := doJSON(t, engine, http.MethodPost, "/provider-routes", body); w.Code != http.StatusConflict {
 		t.Fatalf("duplicate prefix: got %d, want 409 (body %s)", w.Code, w.Body.String())
 	}
 }

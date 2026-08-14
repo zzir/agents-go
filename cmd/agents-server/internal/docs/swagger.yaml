@@ -503,6 +503,10 @@ components:
           type: string
         work_dir:
           type: string
+        workflow_name:
+          type: string
+        workflow_run_id:
+          type: string
       type: object
     handler.approvalResultResp:
       properties:
@@ -539,6 +543,11 @@ components:
           type: string
         input:
           type: string
+        plan:
+          description: |-
+            Plan asks the session to start this run in the planning phase (true) or
+            out of it (false); absent leaves the phase as it stands.
+          type: boolean
         sandbox_id:
           type: string
         work_dir:
@@ -739,19 +748,6 @@ components:
           additionalProperties: {}
           type: object
       type: object
-    handler.providerRouteReq:
-      properties:
-        api_key:
-          type: string
-        base_url:
-          type: string
-        prefix:
-          type: string
-        provider_type:
-          description: ProviderType selects the backend ("openai" / "anthropic");
-            empty is openai.
-          type: string
-      type: object
     handler.rejectReq:
       properties:
         reason:
@@ -895,13 +891,16 @@ components:
           $ref: '#/components/schemas/store.ApprovalGroup'
         behavior:
           $ref: '#/components/schemas/store.BehaviorGroup'
-        chatgpt_logged_in:
-          description: |-
-            ChatGPTLoggedIn is the API-facing derived login signal (set by the
-            handler when sanitizing); the token itself never leaves the server.
-          type: boolean
         compaction:
           $ref: '#/components/schemas/store.CompactionGroup'
+        context_window:
+          description: |-
+            ContextWindow is the model's window in tokens, declared rather than
+            discovered — no provider reports it on a response. It sits beside Model
+            because it describes the model, not the endpoint: two agents on one
+            provider may run different models. 0 leaves the Context panel showing
+            occupancy without a denominator.
+          type: integer
         created_at:
           type: string
         error_handlers:
@@ -927,8 +926,15 @@ components:
           type: string
         name:
           type: string
-        provider:
-          $ref: '#/components/schemas/store.ProviderGroup'
+        provider_id:
+          description: |-
+            ProviderID names the Provider row this agent reaches its model through —
+            a COLUMN rather than a field in a JSON group, because it is a reference
+            and referential integrity has to be expressible in SQL (the same reason
+            sessions.sandbox_id is one). Empty means the built-in default: the
+            openai backend on the global api-key setting, which is what an agent
+            created before any provider existed runs on.
+          type: string
         resilience:
           $ref: '#/components/schemas/store.ResilienceGroup'
         session:
@@ -946,6 +952,10 @@ components:
           type: string
       type: object
     store.BehaviorGroup:
+      description: |-
+        The remaining knobs are grouped into JSON category columns (see
+        agent_config_groups.go) so the table holds only category columns and a new
+        setting needs no schema change. In the REST API each is a nested object.
       properties:
         disable_tool_choice_reset:
           type: boolean
@@ -957,12 +967,6 @@ components:
           type: integer
         max_turns:
           type: integer
-        plan_mode:
-          description: |-
-            PlanMode has each run start read-only: the agent explores, submits a
-            plan through submit_plan (an approval pause — the review), and only an
-            approved plan unlocks the full toolset for the rest of the run.
-          type: boolean
         reasoning_item_id_policy:
           description: |-
             ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
@@ -974,11 +978,6 @@ components:
             turn that called any of them, instead of feeding the results back to the
             model. Empty means the run continues until the model stops on its own.
           type: string
-        todo_list:
-          description: |-
-            TodoList gives the agent a todo_write tool and a preamble telling it to
-            keep a working list; the chat renders the calls as a checklist.
-          type: boolean
         tool_not_found_behavior:
           type: string
       type: object
@@ -1019,31 +1018,6 @@ components:
         tokens_before:
           type: integer
       type: object
-    store.ContextItem:
-      properties:
-        anchor:
-          description: |-
-            Anchor is what the client scrolls to: a tool call id when the entry is
-            part of a tool exchange, the entry id otherwise. RunID is the fallback
-            for an entry the timeline renders under a turn rather than on its own.
-          type: string
-        kind:
-          description: Kind is the entry's display kind (message / tool_output / reasoning
-            / …).
-          type: string
-        label:
-          type: string
-        response_id:
-          description: |-
-            ResponseID names the model call that produced the entry, which is how a
-            non-tool item finds its generation span (a tool item uses Anchor, which
-            is the call id its function span records).
-          type: string
-        run_id:
-          type: string
-        tokens:
-          type: integer
-      type: object
     store.ContextReport:
       properties:
         cache_write_tokens:
@@ -1069,6 +1043,12 @@ components:
             ContextWindow is the agent config's declared window in tokens; 0 means
             unconfigured and the client shows occupancy without a denominator.
           type: integer
+        conversation_tokens:
+          description: |-
+            ConversationTokens is the estimated size of the transcript still in
+            context — every active, uncompacted entry's estimate summed. The
+            conversation's share of the window, on the same ruler as Prompt.
+          type: integer
         growth:
           description: |-
             Growth is each model call's input tokens in order — the curve the panel
@@ -1083,12 +1063,6 @@ components:
             prompt and tool schemas that are in the window right now. OutputTokens is
             that same call's completion.
           type: integer
-        items:
-          description: Items are the heaviest entries still in context, largest first.
-          items:
-            $ref: '#/components/schemas/store.ContextItem'
-          type: array
-          uniqueItems: false
         model:
           type: string
         output_tokens:
@@ -1246,44 +1220,52 @@ components:
           type: array
           uniqueItems: false
       type: object
-    store.ProviderGroup:
-      description: |-
-        The remaining knobs are grouped into JSON category columns (see
-        agent_config_groups.go) so the table holds only category columns and a new
-        setting needs no schema change. In the REST API each is a nested object.
+    store.Provider:
       properties:
         api_key:
+          description: |-
+            APIKey is masked on the way out (see sanitizeProvider) and restored from
+            the stored row when a client sends the mask back.
           type: string
         auth_mode:
+          description: |-
+            AuthMode is "" (API key) or a mode the backend offers, validated against
+            the provider registry on save.
           type: string
         base_url:
           type: string
-        context_window:
+        chatgpt_logged_in:
           description: |-
-            ContextWindow is the model's context window in tokens. Declared rather
-            than discovered: no provider reports it on a response, and a wrong guess
-            would put a fraction on the Context panel that reads as fact. 0 leaves
-            the panel showing occupancy without a denominator.
-          type: integer
-        provider_type:
+            ChatGPTLoggedIn is the API-facing derived login signal (set when
+            sanitizing); the token itself never leaves the server.
+          type: boolean
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          description: |-
+            Type selects the backend (bridge.ProviderType*). Empty means openai, the
+            value that predates the field.
+          type: string
+        updated_at:
           type: string
       type: object
     store.ProviderRoute:
       properties:
-        api_key:
-          type: string
-        base_url:
-          type: string
         created_at:
           type: string
         id:
           type: string
         prefix:
           type: string
-        provider_type:
+        provider_id:
           description: |-
-            ProviderType selects the backend ("openai" / "anthropic"); empty is
-            openai.
+            ProviderID names the Provider this prefix routes to. A route used to
+            carry its own type/key/base_url — a third copy of the same credential —
+            and now references the one row that holds it.
           type: string
         updated_at:
           type: string
@@ -1369,6 +1351,16 @@ components:
           type: string
         pinned:
           type: boolean
+        planning:
+          description: |-
+            Planning is the session's plan phase: true means its next run starts
+            read-only until a plan is approved. It is materialized here — not derived
+            from the entry log — because it is read on every run and every session GET,
+            and a scan of the whole history for the last marker was O(n) per read.
+            The person sets it (the composer's plan toggle / a `/plan` message); the
+            approved submit_plan clears it. A fork copies it, so a branched session
+            inherits the phase it forked in.
+          type: boolean
         sandbox_id:
           description: |-
             SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
@@ -1398,6 +1390,13 @@ components:
         key:
           type: string
         value:
+          type: string
+      type: object
+    store.StepRun:
+      properties:
+        run_id:
+          type: string
+        step_id:
           type: string
       type: object
     store.Task:
@@ -1504,6 +1503,135 @@ components:
         span_id:
           type: string
         started_at:
+          type: string
+      type: object
+    store.Workflow:
+      properties:
+        created_at:
+          type: string
+        description:
+          description: |-
+            Description says WHEN to run this, in one line. An agent matching a
+            request against it is the only way a workflow starts, so it is required.
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        steps:
+          items:
+            $ref: '#/components/schemas/store.WorkflowStep'
+          type: array
+          uniqueItems: false
+        updated_at:
+          type: string
+      type: object
+    store.WorkflowRun:
+      properties:
+        child_session_id:
+          type: string
+        created_at:
+          type: string
+        dismissed:
+          description: |-
+            Dismissed hides a terminal execution from the conversation's live strip;
+            the panel still lists it. A retry clears it — the execution is live again.
+          type: boolean
+        error:
+          type: string
+        id:
+          type: string
+        input:
+          description: |-
+            Input is the brief: what this execution is about, written by the AGENT
+            that read the conversation. It leads the first step's turn only.
+          type: string
+        name:
+          type: string
+        origin_run_id:
+          description: |-
+            OriginRunID is the parent's run whose tool call started this; Inherit is
+            the configuration the result turn runs under. Both frozen at start, from
+            the run that asked (invariant 32).
+          type: string
+        parent_session_id:
+          description: |-
+            ParentSessionID is the conversation that asked for this and is owed the
+            result; ChildSessionID is where the steps actually run.
+          type: string
+        result:
+          description: |-
+            Result is the last step's output, kept on the row so the card can show
+            what came of this without reading the child session.
+          type: string
+        run_id:
+          description: |-
+            RunID is the run executing StepID — also the CAS token: an advance is
+            only accepted from the run the row believes is current.
+          type: string
+        status:
+          type: string
+        step_id:
+          description: |-
+            StepID is the step currently running (or the one a terminal state
+            stopped at, which is what a retry resumes from).
+          type: string
+        step_runs:
+          description: |-
+            StepRuns is every (step, run) this execution has produced, in order —
+            StepID/RunID are only ever the current one.
+          items:
+            $ref: '#/components/schemas/store.StepRun'
+          type: array
+          uniqueItems: false
+        steps:
+          items:
+            $ref: '#/components/schemas/store.WorkflowStep'
+          type: array
+          uniqueItems: false
+        updated_at:
+          type: string
+        workflow_id:
+          description: |-
+            WorkflowID names the definition this came from; it may since have been
+            edited or deleted, which is why Steps is the snapshot that executes.
+          type: string
+      type: object
+    store.WorkflowStep:
+      properties:
+        agent_config_id:
+          description: |-
+            AgentConfigID is which agent runs this step — the point of a workflow:
+            plan, exec and verify are usually different agents on different models.
+          type: string
+        compact_before:
+          description: CompactBefore folds the conversation into a summary before
+            this step runs.
+          type: boolean
+        id:
+          description: |-
+            ID is stable across edits of the definition, so a run in flight and a
+            "retry from here" keep naming the same step; a position would shift.
+          type: string
+        name:
+          type: string
+        on_failure:
+          type: string
+        on_success:
+          description: |-
+            OnSuccess and OnFailure name the step to run next — a step id, or
+            WorkflowStepEnd to stop there. Their empty defaults differ: OnSuccess
+            falls through to the NEXT step in the list (the last one ends the
+            execution), an empty OnFailure fails the execution. A back-edge is how a
+            sequence loops, bounded only by MaxStepRuns. "Failure" is structural —
+            the step's run errored; a step judging its own output is what the step's
+            agent and its handoffs are for.
+          type: string
+        prompt:
+          description: |-
+            Prompt is the step's input, sent as the user turn that starts it. The
+            previous steps are already in the session, so this instructs rather than
+            re-passes their output.
           type: string
       type: object
   securitySchemes:
@@ -1699,79 +1827,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Update agent
-      tags:
-      - agents
-  /agents/{id}/chatgpt/login:
-    post:
-      description: Starts the OAuth flow; open authorize_url in a browser. The callback
-        is served by a temporary local server on port 1455.
-      parameters:
-      - description: Agent ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/bridge.ChatGPTLoginResult'
-          description: OK
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
-      security:
-      - BearerAuth: []
-      summary: Start ChatGPT login
-      tags:
-      - agents
-  /agents/{id}/chatgpt/logout:
-    post:
-      parameters:
-      - description: Agent ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          description: logged out
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
-      security:
-      - BearerAuth: []
-      summary: ChatGPT logout
-      tags:
-      - agents
-  /agents/{id}/chatgpt/status:
-    get:
-      parameters:
-      - description: Agent ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.chatgptStatusResp'
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: ChatGPT login status
       tags:
       - agents
   /agents/{id}/tools:
@@ -2629,15 +2684,14 @@ paths:
       tags:
       - provider-routes
     post:
-      description: Maps a model-name prefix to an API key and base URL. api_key is
-        write-only (******** mask semantics).
+      description: Routes every model name starting with prefix to the named provider.
       requestBody:
         content:
           application/json:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/handler.providerRouteReq'
+              - $ref: '#/components/schemas/store.ProviderRoute'
                 description: Provider route
                 summary: route
         description: Provider route
@@ -2655,12 +2709,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
-        "500":
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
+          description: duplicate prefix
       security:
       - BearerAuth: []
       summary: Create provider route
@@ -2716,12 +2770,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
       security:
       - BearerAuth: []
       summary: Get provider route
@@ -2741,7 +2789,7 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/handler.providerRouteReq'
+              - $ref: '#/components/schemas/store.ProviderRoute'
                 description: Provider route
                 summary: route
         description: Provider route
@@ -2765,12 +2813,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
-        "500":
+        "409":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
+          description: duplicate prefix
       security:
       - BearerAuth: []
       summary: Update provider route
@@ -2795,6 +2843,257 @@ paths:
       summary: List provider types
       tags:
       - provider-routes
+  /providers:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Provider'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List providers
+      tags:
+      - providers
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Provider'
+                description: Provider
+                summary: provider
+        description: Provider
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Provider'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: duplicate name
+      security:
+      - BearerAuth: []
+      summary: Create a provider
+      tags:
+      - providers
+  /providers/{id}:
+    delete:
+      description: Refuses with 409 while an agent or a provider route still references
+        it — repoint or delete those first.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: still referenced
+      security:
+      - BearerAuth: []
+      summary: Delete a provider
+      tags:
+      - providers
+    get:
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Provider'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get a provider
+      tags:
+      - providers
+    put:
+      description: A masked api_key keeps the stored one — but only while the destination
+        (type + base_url) is unchanged, since the stored key belongs to that destination.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Provider'
+                description: Provider
+                summary: provider
+        description: Provider
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Provider'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: duplicate name
+      security:
+      - BearerAuth: []
+      summary: Update a provider
+      tags:
+      - providers
+  /providers/{id}/chatgpt/login:
+    post:
+      description: Starts the OAuth flow; open authorize_url in a browser. The callback
+        is served by a temporary local server on port 1455.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bridge.ChatGPTLoginResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: provider does not use chatgpt_login
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Start ChatGPT login
+      tags:
+      - providers
+  /providers/{id}/chatgpt/logout:
+    post:
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: logged out
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: ChatGPT logout
+      tags:
+      - providers
+  /providers/{id}/chatgpt/status:
+    get:
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.chatgptStatusResp'
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: ChatGPT login status
+      tags:
+      - providers
   /runs/{id}:
     get:
       parameters:
@@ -3694,6 +3993,35 @@ paths:
       summary: List session traces
       tags:
       - sessions
+  /sessions/{id}/workflow-runs:
+    get:
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.WorkflowRun'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List a session's workflow runs
+      tags:
+      - workflows
   /settings:
     get:
       description: 'Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).'
@@ -4077,5 +4405,301 @@ paths:
       summary: Stop a background task
       tags:
       - tasks
+  /workflow-runs/{id}:
+    get:
+      parameters:
+      - description: Workflow run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.WorkflowRun'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get a workflow run
+      tags:
+      - workflows
+  /workflow-runs/{id}/dismiss:
+    post:
+      description: Hides a finished execution from the chat strip; the panel still
+        lists it. Only terminal runs can be dismissed, and a retry brings the run
+        back.
+      parameters:
+      - description: Workflow run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.WorkflowRun'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: still running
+      security:
+      - BearerAuth: []
+      summary: Dismiss a workflow run
+      tags:
+      - workflows
+  /workflow-runs/{id}/retry:
+    post:
+      description: Resumes from the step it stopped at, keeping the steps that already
+        succeeded. Executes the snapshot the run started with.
+      parameters:
+      - description: Workflow run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.WorkflowRun'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: session already has a live run
+      security:
+      - BearerAuth: []
+      summary: Retry a workflow run
+      tags:
+      - workflows
+  /workflow-runs/{id}/stop:
+    post:
+      description: Ends the sequence, not just the running step — the next step does
+        not start.
+      parameters:
+      - description: Workflow run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.WorkflowRun'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Stop a workflow run
+      tags:
+      - workflows
+  /workflows:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Workflow'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List workflows
+      tags:
+      - workflows
+    post:
+      description: An ordered sequence of steps, each naming the agent that runs it
+        and the prompt that starts its turn. A step without an id is given a stable
+        one.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Workflow'
+                description: Workflow
+                summary: workflow
+        description: Workflow
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Workflow'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: duplicate name
+      security:
+      - BearerAuth: []
+      summary: Create a workflow
+      tags:
+      - workflows
+  /workflows/{id}:
+    delete:
+      description: Executions keep their snapshot, so past and in-flight runs still
+        read and finish normally.
+      parameters:
+      - description: Workflow ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Delete a workflow
+      tags:
+      - workflows
+    get:
+      parameters:
+      - description: Workflow ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Workflow'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get a workflow
+      tags:
+      - workflows
+    put:
+      description: Executions already in flight are unaffected — each carries a snapshot
+        of the definition it started with.
+      parameters:
+      - description: Workflow ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Workflow'
+                description: Workflow
+                summary: workflow
+        description: Workflow
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Workflow'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: duplicate name
+      security:
+      - BearerAuth: []
+      summary: Update a workflow
+      tags:
+      - workflows
 servers:
 - url: /api/v1
