@@ -231,6 +231,8 @@ The three content parts mirror the Responses API:
 
 A runnable example lives in `examples/toolimage`. It is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
 
+For a UI, the item's `Display().Output` is the same content list as JSON — `[{"type":"input_text","text":"…"},{"type":"input_image","image_url":"data:…"}]` — so a renderer that reads `type` can show the image (or offer the file) instead of printing the payload.
+
 ### Returning more than a value: `ToolResult`
 
 A tool that needs to say more than "here is the answer" returns a `ToolResult`

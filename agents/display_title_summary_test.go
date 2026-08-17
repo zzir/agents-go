@@ -2,6 +2,8 @@ package agents_test
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
@@ -88,5 +90,32 @@ func TestToolResultTitleSummaryDefaultEmpty(t *testing.T) {
 				t.Errorf("display = %+v, want empty Title/Summary for a plain tool", d)
 			}
 		}
+	}
+}
+
+// A multimodal result displays as the Responses content list — the shape a
+// renderer reads by its "type" discriminators — not as the SDK's Go types.
+func TestDisplay_MultimodalOutputIsTheWireContentList(t *testing.T) {
+	item := &agents.RunItem{Kind: agents.ItemToolCallOutput, Output: []agents.ToolOutputContent{
+		agents.ToolOutputText{Text: "shot"},
+		agents.ToolOutputImage{ImageURL: "data:image/png;base64,AAAA", Detail: agents.DetailLow},
+		agents.ToolOutputFile{FileData: "QUJD", Filename: "a.pdf"},
+	}}
+	var parts []map[string]any
+	if err := json.Unmarshal([]byte(item.Display().Output), &parts); err != nil {
+		t.Fatalf("display output is not a JSON list: %v\n%s", err, item.Display().Output)
+	}
+	want := []map[string]any{
+		{"type": "input_text", "text": "shot"},
+		{"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "low"},
+		{"type": "input_file", "file_data": "QUJD", "filename": "a.pdf"},
+	}
+	if !reflect.DeepEqual(parts, want) {
+		t.Fatalf("display output:\n got %v\nwant %v", parts, want)
+	}
+	// One part, returned bare, is the same one-element list.
+	single := &agents.RunItem{Kind: agents.ItemToolCallOutput, Output: agents.ToolOutputText{Text: "x"}}
+	if err := json.Unmarshal([]byte(single.Display().Output), &parts); err != nil || len(parts) != 1 || parts[0]["type"] != "input_text" {
+		t.Fatalf("single part display = %s (%v)", single.Display().Output, err)
 	}
 }

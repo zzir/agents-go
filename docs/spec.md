@@ -1077,6 +1077,14 @@ that some of what a tool knows is **not for the model**:
 A tool that returns a plain value (string, struct, `ToolOutputContent`) is
 wrapped automatically, so the ordinary tool is unchanged.
 
+- **A multimodal output displays as the wire content list.** `Display().Output`
+  of a `ToolOutputContent` / `[]ToolOutputContent` result is the JSON of the
+  Responses `function_call_output` content list the model receives —
+  `[{"type":"input_text","text":…},{"type":"input_image","image_url":…},
+  {"type":"input_file",…}]` — never this package's Go types. It is the one
+  shape a renderer can read (an image to show, a file to offer) without knowing
+  the SDK, and it is the same on the live stream and in the stored entry.
+
 ### 2.7c Tool capabilities are fields
 
 `*Tool` is the only tool type, and everything a tool can do beyond

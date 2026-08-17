@@ -398,6 +398,10 @@ func stringifyToolOutput(output any) string {
 		return v
 	case nil:
 		return ""
+	case ToolOutputContent:
+		return contentListJSON([]ToolOutputContent{v})
+	case []ToolOutputContent:
+		return contentListJSON(v)
 	default:
 		if b, err := json.Marshal(v); err == nil {
 			return string(b)
@@ -406,6 +410,21 @@ func stringifyToolOutput(output any) string {
 		// rather than silently dropping the output.
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+// contentListJSON is a multimodal output as a renderer reads it: the Responses
+// content list the model receives — input_text / input_image / input_file
+// parts — rather than this package's Go types (spec §2.7b).
+func contentListJSON(parts []ToolOutputContent) string {
+	wire := make([]responses.ResponseFunctionCallOutputItemUnionParam, 0, len(parts))
+	for _, p := range parts {
+		wire = append(wire, p.toContentParam())
+	}
+	b, err := json.Marshal(wire)
+	if err != nil {
+		return fmt.Sprintf("%v", parts)
+	}
+	return string(b)
 }
 
 // EntryFromRunItem builds a session entry from a run item, carrying its
