@@ -115,6 +115,86 @@ weather := agents.NewTool("get_weather", "Look up the current weather for a city
 mathTutor.Tools = []*agents.Tool{weather}
 ```
 
+## Return structured output
+
+Structured output is the same idea in reverse: a Go type on the agent, the
+typed value back out of the result. (From here on, `ctx` and `opts` are the
+context and the `agents.RunOptions` from the run above.)
+
+```go
+type answer struct {
+	Summary string   `json:"summary"`
+	Sources []string `json:"sources"`
+}
+
+historyTutor.OutputType = agents.OutputType[answer]()
+
+res, err := agents.RunSync(ctx, historyTutor, "Who built the Colosseum?", opts)
+if err != nil {
+	log.Fatal(err)
+}
+if a, ok := agents.FinalOutputAs[answer](res); ok {
+	fmt.Println(a.Summary, a.Sources)
+}
+```
+
+See [Structured output types](agents.md#structured-output-types).
+
+## Stream the run
+
+A run *is* an iterator. `Run` returns one plus a control handle; the run
+advances as you consume it, so abandoning the loop stops the run instead of
+leaking a goroutine.
+
+```go
+stream, ctrl := agents.Run(ctx, triage, "tell me about the Roman Republic", opts)
+for event, err := range stream {
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch e := event.(type) {
+	case *agents.RunItemStreamEvent:
+		if e.Item.Kind == agents.ItemMessage {
+			fmt.Println(e.Item.Text())
+		}
+	case *agents.RunCompletedEvent:
+		fmt.Println("done:", e.Result.FinalOutputString())
+	}
+}
+_ = ctrl // StopAfterTurn, and mid-run input: Steer redirects the current
+// exchange, NextTurn rides along with the next turn, FollowUp queues the next
+// exchange; Pending reports what was not consumed.
+```
+
+See [Streaming](streaming.md) for the event types and
+[Controlling a live run](streaming.md#controlling-a-live-run).
+
+## Pause for approval
+
+A tool with `NeedsApproval` set pauses the run instead of executing; the paused
+state survives a process restart.
+
+```go
+weather.NeedsApproval = true
+
+res, err := agents.RunSync(ctx, mathTutor, "What's the weather in Rome?", opts)
+if err != nil {
+	log.Fatal(err)
+}
+for len(res.Interruptions) > 0 {
+	for _, item := range res.Interruptions {
+		res.State.Approve(item, false) // or res.State.Reject(item, false, "no")
+	}
+	if res, err = agents.ResumeRunSync(ctx, res.State, opts); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+The paused state serializes to JSON (`res.State.MarshalJSON()`) and rebuilds
+with `agents.RunStateFromJSON(data, registry)`, so the approval can happen in
+another process — see [Human-in-the-loop](human_in_the_loop.md).
+
 ## Put it all together
 
 See [examples/handoffs](../examples/handoffs/main.go) and [examples/tools](../examples/tools/main.go) for complete runnable programs, and:

@@ -1,7 +1,9 @@
 # Feature reference
 
-A one-line map from every capability to its API. Each section links to the doc
-page with the full story.
+A one-line map from every SDK capability to its API. Each section links to the
+doc page with the full story. The workbench that sits on top of the SDK
+(`cmd/agents-server` — one binary, SQLite, embedded UI) has its own
+[manual](https://github.com/zzir/agents-go/blob/main/cmd/agents-server/README.md).
 
 ## Core
 
@@ -85,7 +87,7 @@ Core module path: `github.com/zzir/agents-go`.
 | `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
 | `skills` | **separate module** — Agent Skills (`SKILL.md`) loader |
-| `cmd/agents-server` | **separate module** — web app (REST + WS + UI) |
+| `cmd/agents-server` | **separate module** — the workbench: web app (REST + WS + embedded UI) over the SDK |
 
 ### Layout notes
 

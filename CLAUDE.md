@@ -2,7 +2,10 @@
 
 ## What this is
 
-A Go SDK for building agents on the OpenAI Responses API. It began as a port of
+A local workbench for building, running and debugging AI agents
+(`cmd/agents-server`: one binary, SQLite, embedded UI), built on a Go SDK for
+the OpenAI Responses API (the root module) that can also be embedded on its own.
+The SDK began as a port of
 [openai-agents-python](https://github.com/openai/openai-agents-python) and shares
 its core concepts (agents, handoffs, guardrails, sessions), but **evolves
 independently** — it no longer tracks upstream.

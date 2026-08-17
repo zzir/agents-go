@@ -1,9 +1,13 @@
-# agents-server
+# agents-server — the agents-go workbench
 
-A full-featured agent platform built on the [agents-go](../../README.md) SDK.
-Single binary, embedded SPA, SQLite — deploy and run in seconds. Provides a REST
-API, WebSocket streaming, and a Primer-styled web UI for configuring agents, MCP
-servers, sandboxes, guardrails, memories, and skills.
+A local workbench for building, running and debugging AI agents, built on the
+[agents-go](../../README.md) SDK: one binary, one SQLite file, an embedded
+Primer-styled UI. Configure agents, providers, MCP servers, sandboxes,
+guardrails, memories, skills and workflows; run conversations with streaming
+output, tool approval, traces, a context lens, replay, interactive sandbox
+terminals and background tasks. This page is the manual — flags, REST API,
+WebSocket protocol, architecture, and the design invariants every
+panel/handler pair follows.
 
 ![screenshot](screenshot.png)
 

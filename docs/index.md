@@ -1,7 +1,18 @@
-# OpenAI Agents SDK for Go
+# agents-go
 
-`agents-go` builds agentic AI apps on the OpenAI **Responses API** from a small
-set of primitives and very few abstractions. It started as a port of the
+**A local workbench for building, running and debugging AI agents — built on a
+Go SDK you can also embed.**
+
+The workbench (`agents-server`) is one binary, one SQLite file and an embedded
+UI: see exactly what the model saw on each turn, replay any generation, fork
+any turn, approve tools in a real sandbox. Get it from
+[Releases](https://github.com/zzir/agents-go/releases); the
+[workbench manual](https://github.com/zzir/agents-go/blob/main/cmd/agents-server/README.md)
+covers flags, the REST API, the WebSocket protocol and the design invariants.
+
+This site documents the SDK underneath. `agents-go` builds agentic AI apps on
+the OpenAI **Responses API** from a small set of primitives and very few
+abstractions. It started as a port of the
 [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/)
 and shares its core concepts, but it now evolves on its own: behavior is
 [specified](spec.md), not inherited.
@@ -76,6 +87,7 @@ func main() {
 
 | Topic | Page |
 |---|---|
+| The workbench | [Manual](https://github.com/zzir/agents-go/blob/main/cmd/agents-server/README.md) — flags, REST API, WebSocket protocol, design invariants |
 | Get started | [Quickstart](quickstart.md) |
 | Configuration | [Configuration](config.md) |
 | Core concepts | [Agents](agents.md) · [Running agents](running_agents.md) · [Results](results.md) |
