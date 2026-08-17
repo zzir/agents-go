@@ -63,6 +63,10 @@ Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
 `/api/v1/auth/*` login/check endpoints, and `GET /health`. Every entry on that
 list must name a route this router actually serves: an exemption for a path
 nothing serves silently unauthenticates whatever gets mounted there later. The
+converse holds for the redirect URI the OAuth handler hands the authorization
+server — `bridge.RedirectURI`, built from `server.APIPrefix`, never a second
+spelling of the path: a callback that lands anywhere else under `/api/` is
+neither routed nor exempt, so every login ends in `401 unauthorized`. The
 ChatGPT login callback is deliberately absent — its redirect lands on a
 temporary listener at 127.0.0.1:1455, never on this server. Webhook triggers
 (`POST /hooks/:id`) live outside `/api/` for the same reason a callback does —

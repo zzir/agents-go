@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -153,7 +154,10 @@ func (c *OAuthCoordinator) clearInflight(id string, a *oauthAttempt) {
 	c.mu.Unlock()
 }
 
-const oauthCallbackPath = "/api/mcp-servers/oauth/callback"
+// oauthCallbackPath must stay the path the router mounts and the token
+// middleware exempts — a redirect_uri pointing anywhere else under /api comes
+// back 401 (no route, no exemption, and a browser redirect carries no bearer).
+const oauthCallbackPath = server.APIPrefix + "/mcp-servers/oauth/callback"
 
 // RedirectURI builds the OAuth callback URL from the origin of the current
 // HTTP request (scheme + host), so it works regardless of bind address.
