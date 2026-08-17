@@ -19,7 +19,7 @@ var schemaModels = []any{
 	(*Setting)(nil),
 	(*Provider)(nil),
 	(*Workflow)(nil),
-	(*WorkflowRun)(nil),
+	(*Trigger)(nil),
 	(*ProviderRoute)(nil),
 	(*SandboxConfig)(nil),
 	(*TraceEvent)(nil),
@@ -181,34 +181,6 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating workflows unique name index: %w", err)
-	}
-	// Executions are read per parent session, newest first.
-	if _, err := db.NewCreateIndex().
-		Model((*WorkflowRun)(nil)).
-		Index("idx_workflow_runs_parent_session_id").
-		Column("parent_session_id").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflow_runs parent session index: %w", err)
-	}
-	// Every run that ends asks "does an execution own you?" — by run id, since
-	// the steps run on a child session the asker knows nothing about.
-	if _, err := db.NewCreateIndex().
-		Model((*WorkflowRun)(nil)).
-		Index("idx_workflow_runs_run_id").
-		Column("run_id").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflow_runs run index: %w", err)
-	}
-	// Every run start asks "am I a workflow's step?" by child session.
-	if _, err := db.NewCreateIndex().
-		Model((*WorkflowRun)(nil)).
-		Index("idx_workflow_runs_child_session_id").
-		Column("child_session_id").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflow_runs child session index: %w", err)
 	}
 	// Draining asks for one session's debts, and the restart sweep asks for
 	// every session owed one.

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 )
 
@@ -61,6 +62,25 @@ func (r *ConnRegistry) AttachAll(runID string) {
 		if !subs.has(runID) {
 			r.attach(conn, subs, runID)
 		}
+	}
+}
+
+// Broadcast writes env to every registered connection not attached to
+// exceptRunID's stream (which already carried it) — the bus for a fact a run
+// stream cannot reach everyone with (Runner.OnBroadcast). No replay: a
+// connection that joins later reads the durable rows instead.
+func (r *ConnRegistry) Broadcast(env *protocol.Envelope, exceptRunID string) {
+	r.mu.Lock()
+	conns := make([]*server.WSConn, 0, len(r.conns))
+	for conn, subs := range r.conns {
+		if exceptRunID != "" && subs.has(exceptRunID) {
+			continue
+		}
+		conns = append(conns, conn)
+	}
+	r.mu.Unlock()
+	for _, conn := range conns {
+		wsSink(conn)(env)
 	}
 }
 

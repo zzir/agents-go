@@ -26,6 +26,12 @@ type Launcher func(ctx context.Context, req LaunchRequest) error
 
 // LaunchRequest describes a run to start.
 type LaunchRequest struct {
+	// TaskID, Kind and State name the job this run belongs to, as the Task
+	// carries them — a host launching a multi-run job reads State for where it
+	// stands. Empty on a Wake launch, which is no task's run.
+	TaskID    string
+	Kind      string
+	State     json.RawMessage
 	RunID     string
 	SessionID string
 	Input     string
@@ -34,6 +40,12 @@ type LaunchRequest struct {
 	// A host may treat the two differently — different tools, no task tools on
 	// a task run — and cannot tell them apart otherwise.
 	Wake bool
+	// Retry marks a run started by Retry rather than by a spawn or a
+	// continuation: Input is then the retry prompt (why the last attempt
+	// failed, resume from the progress made), and a host whose job carries its
+	// own instruction for the current stage — a workflow's step — re-issues
+	// that instruction with it rather than leaving the model to infer it.
+	Retry bool
 	// ParentRunID, on a Wake launch, is the run that spawned the task(s) being
 	// delivered (the first one carrying it when several drained at once). It is
 	// the run's LINEAGE, handed to the host at launch so it can be recorded on

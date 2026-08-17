@@ -41,11 +41,15 @@ func (s Status) Terminal() bool {
 
 // Task is one background job. ID and RunID are separate on purpose: the task is
 // the durable entity, the run is one attempt at it — which is what makes retry
-// expressible.
+// expressible. A job may also span SEVERAL runs in sequence (Config.Continue):
+// RunID is always the current one.
 type Task struct {
 	ID    string `json:"id"`
 	RunID string `json:"run_id"`
 	Label string `json:"label"`
+	// Kind names what sort of job this is, in the host's vocabulary; the SDK
+	// does not interpret it. Empty is a plain sub-agent task.
+	Kind string `json:"kind,omitzero"`
 
 	ParentSessionID string `json:"parent_session_id"`
 	ParentRunID     string `json:"parent_run_id,omitzero"`
@@ -66,6 +70,10 @@ type Task struct {
 	// interpret it. It is a snapshot, not a lookup, because the wake-up run
 	// happens much later and the parent's configuration may have changed or gone.
 	Inherit json.RawMessage `json:"inherit,omitzero"`
+	// State is the host's own record of where a multi-run job stands, opaque to
+	// the SDK. Set at spawn, replaced atomically with each run transition
+	// (Store.Advance), handed to the Launcher with every run.
+	State json.RawMessage `json:"state,omitzero"`
 
 	Status Status `json:"status"`
 
@@ -93,21 +101,27 @@ func (t *Task) AttemptNo() int {
 type Info struct {
 	TaskID  string `json:"task_id"`
 	Label   string `json:"label,omitzero"`
+	Kind    string `json:"kind,omitzero"`
 	Agent   string `json:"agent,omitzero"`
 	Status  Status `json:"status"`
 	Attempt int    `json:"attempt,omitzero"`
 	Summary string `json:"summary,omitzero"`
 	Result  string `json:"result,omitzero"`
+	// State is the host's record of the job (Task.State), carried so a host
+	// can say where a job of its kind stands (Config.DescribeState).
+	State json.RawMessage `json:"state,omitzero"`
 }
 
 func infoFrom(t *Task, agent string) *Info {
 	return &Info{
 		TaskID:  t.ID,
 		Label:   t.Label,
+		Kind:    t.Kind,
 		Agent:   agent,
 		Status:  t.Status,
 		Attempt: t.AttemptNo(),
 		Summary: t.Summary,
 		Result:  t.Result,
+		State:   t.State,
 	}
 }

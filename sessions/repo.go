@@ -91,46 +91,85 @@ func (r *Repo) List(ctx context.Context, opts session.ListOptions) ([]session.Me
 	return out, nil
 }
 
-// Delete removes a session and its entries in one transaction, so a failure
-// cannot leave orphaned entries behind pointing at a session that is gone.
+// Delete removes a session, its entries, its task rows and the hidden sessions
+// its tasks ran in — the whole tree, in one transaction, so a failure cannot
+// leave orphans pointing at a session that is gone (spec §2.13).
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// The session ROW goes first, and that ordering is the fence against a
-		// concurrent write: an append proves its destination exists by
-		// updating this row (Session.touchIn), so once it is gone — and this
-		// transaction holds its lock until commit — every concurrent append
-		// either blocks and then fails, or already committed and is deleted
-		// below. Deleting the entries first left a window where an append saw
-		// a live row, committed, and its entries survived as orphans nothing
-		// references (spec §2.5e2).
-		if _, err := tx.NewDelete().Model((*sessionRow)(nil)).
-			Where("id = ?", id).Exec(ctx); err != nil {
-			return err
+		// Breadth-first over the task tree: a task's hidden session is
+		// unreachable once its parent is gone, and it may have tasks of its
+		// own. Only LIVE edges are followed — a row whose parent and child
+		// generations are the ones answering to those ids now (liveParent /
+		// liveChild, the same fence every read applies): a stale row from an
+		// earlier incarnation names a child id that may since have been given
+		// to an unrelated session, and following it would delete that
+		// session's whole history. Stale rows stay inert here as everywhere,
+		// and go with the row deletion below. A visited set makes a cycle in
+		// the rows (a corrupt tree) terminate rather than spin inside the
+		// transaction.
+		queue := []string{id}
+		visited := map[string]bool{id: true}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			var children []string
+			if err := tx.NewSelect().Model((*taskRow)(nil)).
+				Column("child_session_id").
+				Where("parent_session_id = ?", cur).
+				Where(liveParent).Where(liveChild).
+				Scan(ctx, &children); err != nil {
+				return err
+			}
+			for _, c := range children {
+				if !visited[c] {
+					visited[c] = true
+					queue = append(queue, c)
+				}
+			}
+			if err := deleteSessionRows(ctx, tx, cur); err != nil {
+				return err
+			}
 		}
-		// Every generation this REPO made, and only those. The direct scope —
-		// an empty generation — belongs to New(db, id): a session this repo
-		// never created, does not list and cannot open, so deleting it here
-		// would destroy history the caller keeps somewhere else entirely.
-		if _, err := tx.NewDelete().Model((*entry)(nil)).
-			Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx); err != nil {
-			return err
-		}
-		// Task rows go with the session, in both roles. A task row outlives
-		// nothing: as a PARENT reference it owes a wake-up to a conversation
-		// that no longer exists (retried at every restart, forever), and as a
-		// CHILD reference it names a hidden transcript this delete just
-		// removed. The generation columns make a surviving row inert; the
-		// cascade is what stops it surviving at all.
-		//
-		// Deleting by id rather than by (id, gen) is deliberate here: the
-		// session row is already gone, so every generation of this id is
-		// unreachable — including one an older incarnation left behind.
-		_, err := tx.NewDelete().Model((*taskRow)(nil)).
-			Where("parent_session_id = ?", id).
-			WhereOr("child_session_id = ?", id).
-			Exec(ctx)
-		return err
+		return nil
 	})
+}
+
+// deleteSessionRows removes one session's row, entries and task rows.
+func deleteSessionRows(ctx context.Context, tx bun.Tx, id string) error {
+	// The session ROW goes first, and that ordering is the fence against a
+	// concurrent write: an append proves its destination exists by updating
+	// this row (Session.touchIn), so once it is gone — and this transaction
+	// holds its lock until commit — every concurrent append either blocks and
+	// then fails, or already committed and is deleted below. Deleting the
+	// entries first left a window where an append saw a live row, committed,
+	// and its entries survived as orphans nothing references (spec §2.5e2).
+	if _, err := tx.NewDelete().Model((*sessionRow)(nil)).
+		Where("id = ?", id).Exec(ctx); err != nil {
+		return err
+	}
+	// Every generation this REPO made, and only those. The direct scope — an
+	// empty generation — belongs to New(db, id): a session this repo never
+	// created, does not list and cannot open, so deleting it here would
+	// destroy history the caller keeps somewhere else entirely.
+	if _, err := tx.NewDelete().Model((*entry)(nil)).
+		Where("session_id = ?", id).Where("gen <> ?", "").Exec(ctx); err != nil {
+		return err
+	}
+	// Task rows go with the session, in both roles. A task row outlives
+	// nothing: as a PARENT reference it owes a wake-up to a conversation that
+	// no longer exists (retried at every restart, forever), and as a CHILD
+	// reference it names a hidden transcript this delete just removed. The
+	// generation columns make a surviving row inert; the cascade is what stops
+	// it surviving at all.
+	//
+	// Deleting by id rather than by (id, gen) is deliberate here: the session
+	// row is already gone, so every generation of this id is unreachable —
+	// including one an older incarnation left behind.
+	_, err := tx.NewDelete().Model((*taskRow)(nil)).
+		Where("parent_session_id = ?", id).
+		WhereOr("child_session_id = ?", id).
+		Exec(ctx)
+	return err
 }
 
 var _ session.Repo = (*Repo)(nil)

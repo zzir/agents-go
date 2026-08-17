@@ -35,13 +35,11 @@ func extractToken(c *gin.Context) string {
 // ChatGPT OAuth callback is not here for that reason: it is served by a
 // temporary listener on localhost:1455, never by this router.
 func authExempt(path string) bool {
-	for _, p := range []string{"/api/v1", "/api"} {
-		switch {
-		case strings.HasPrefix(path, p+"/auth/"),
-			path == p+"/mcp-servers/oauth/callback",
-			path == p+"/openapi.yaml":
-			return true
-		}
+	switch {
+	case strings.HasPrefix(path, APIPrefix+"/auth/"),
+		path == APIPrefix+"/mcp-servers/oauth/callback",
+		path == APIPrefix+"/openapi.yaml":
+		return true
 	}
 	return false
 }

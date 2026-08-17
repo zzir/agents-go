@@ -8,11 +8,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterAPI mounts register under /api/v1 (canonical) and /api (deprecated
-// alias kept for one release).
+// APIPrefix is where the REST API is mounted; the one place the path is
+// spelled — the auth exemptions and the auth routes read it too.
+const APIPrefix = "/api/v1"
+
+// RegisterAPI mounts register under APIPrefix.
 func (s *Server) RegisterAPI(register func(*gin.RouterGroup)) {
-	register(s.Engine.Group("/api/v1"))
-	register(s.Engine.Group("/api"))
+	register(s.Engine.Group(APIPrefix))
+}
+
+// HooksPrefix is where webhook triggers are called — outside APIPrefix, so
+// the token middleware does not guard it: a hook proves itself by signature.
+const HooksPrefix = "/hooks"
+
+// RegisterHook mounts the webhook endpoint, POST HooksPrefix/:id.
+func (s *Server) RegisterHook(hook gin.HandlerFunc) {
+	s.Engine.POST(HooksPrefix+"/:id", hook)
 }
 
 // RegisterWS mounts the WebSocket endpoints with token auth: /ws for run
@@ -23,11 +34,9 @@ func (s *Server) RegisterWS(ws, terminal WSHandlerFunc) {
 }
 
 // ServeOpenAPI mounts the OpenAPI document (auth-exempt) at
-// /api/v1/openapi.yaml and the /api alias.
+// APIPrefix/openapi.yaml.
 func (s *Server) ServeOpenAPI(spec []byte) {
-	h := func(c *gin.Context) {
+	s.Engine.GET(APIPrefix+"/openapi.yaml", func(c *gin.Context) {
 		c.Data(200, "application/yaml; charset=utf-8", spec)
-	}
-	s.Engine.GET("/api/v1/openapi.yaml", h)
-	s.Engine.GET("/api/openapi.yaml", h)
+	})
 }

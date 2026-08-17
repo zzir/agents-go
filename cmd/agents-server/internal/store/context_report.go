@@ -116,6 +116,27 @@ func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*Conte
 	return rep, nil
 }
 
+// UsageTotals sums what every model call on the session cost — input plus
+// output tokens, every branch and every compacted entry included, since the
+// calls happened. It is what a workflow's token budget is measured against.
+func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, error) {
+	var rows []entryRow
+	if err := s.db.NewSelect().Model(&rows).
+		Column("usage").
+		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
+		Where("usage IS NOT NULL").
+		Scan(ctx); err != nil {
+		return 0, fmt.Errorf("reading usage of session %s: %w", ref.ID, err)
+	}
+	total := 0
+	for i := range rows {
+		if u := sizeOfRow(rows[i]).Usage; u != nil {
+			total += int(u.InputTokens + u.OutputTokens)
+		}
+	}
+	return total, nil
+}
+
 // activeBranchOfRows marks the active branch over rows read without bodies.
 // Links and kinds are columns; the one thing that is not is a leaf marker's
 // target, which lives in its payload — so those few bodies are fetched, and the

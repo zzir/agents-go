@@ -56,8 +56,8 @@ func recordToolsModel(t *testing.T, tools *[]string) *httptest.Server {
 	}))
 }
 
-// startWorkflowModel calls start_workflow on its first turn and answers on
-// every turn after — including the workflow's own steps.
+// startWorkflowModel calls spawn_task with a workflow on its first turn and
+// answers on every turn after — including the workflow's own steps.
 func startWorkflowModel(t *testing.T, name string, tools *[]string) *httptest.Server {
 	t.Helper()
 	var calls atomic.Int32
@@ -71,7 +71,7 @@ func startWorkflowModel(t *testing.T, name string, tools *[]string) *httptest.Se
 		if calls.Load() == 1 {
 			output = []any{map[string]any{
 				"type": "function_call", "id": "fc_1", "call_id": "call_1",
-				"name": StartWorkflowToolName, "arguments": `{"name":"` + name + `","input":"do the thing"}`, "status": "completed",
+				"name": SpawnToolName, "arguments": `{"agent_name":"","workflow":"` + name + `","input":"do the thing","label":""}`, "status": "completed",
 			}}
 		} else {
 			output = []any{map[string]any{
@@ -101,7 +101,6 @@ func TestModelStartsAWorkflow(t *testing.T) {
 
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
-	runner.Deps.WorkflowRuns = store.NewWorkflowRunStore(runner.db)
 	ac := &store.AgentConfig{
 		Name: "chat", Model: "gpt-test",
 		ProviderID: testProvider(t, runner.db, "endpoint", "k", srv.URL),
@@ -125,7 +124,8 @@ func TestModelStartsAWorkflow(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	if _, err := runner.StartRun(sess.ID, ac.ID, "", "", "add a feature", nil, func(*RunOutcome) { close(done) }); err != nil {
+	chatRunID, err := runner.StartRun(sess.ID, ac.ID, "", "", "add a feature", nil, func(*RunOutcome) { close(done) })
+	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	select {
@@ -133,19 +133,26 @@ func TestModelStartsAWorkflow(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the chat run never finished")
 	}
-	if !slices.Contains(offered, StartWorkflowToolName) {
-		t.Fatalf("tools = %v, want %s offered", offered, StartWorkflowToolName)
+	if !slices.Contains(offered, SpawnToolName) {
+		t.Fatalf("tools = %v, want %s offered", offered, SpawnToolName)
+	}
+	// One vocabulary: no separate workflow tools beside the four task verbs.
+	for _, gone := range []string{"start_workflow", "workflow_status"} {
+		if slices.Contains(offered, gone) {
+			t.Fatalf("tools = %v — %s must not exist", offered, gone)
+		}
 	}
 
-	// The sequence starts from the teardown, so it appears just after the run.
+	// The execution is a task of the asking session, started by the tool call
+	// itself, so it is there before the run ends; here it has also finished.
 	deadline := time.Now().Add(15 * time.Second)
-	var wr *store.WorkflowRun
+	var wr *store.Task
 	for {
-		list, err := runner.Deps.WorkflowRuns.ListBySession(ctx, sess.ID)
+		list, err := runner.Deps.Tasks.ListByParent(ctx, sess.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(list) > 0 && list[0].Status != store.WorkflowRunning {
+		if len(list) > 0 && isTerminalTaskStatus(list[0].Status) {
 			wr = &list[0]
 			break
 		}
@@ -154,14 +161,51 @@ func TestModelStartsAWorkflow(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if wr.Name != "codegen" || wr.Status != store.WorkflowCompleted {
-		t.Fatalf("execution = %q %q, want codegen completed (%s)", wr.Name, wr.Status, wr.Error)
+	if wr.Kind != store.TaskKindWorkflow || wr.Label != "codegen" || wr.Status != "completed" {
+		t.Fatalf("execution = %q %q %q, want a codegen workflow completed (%s)", wr.Kind, wr.Label, wr.Status, wr.Summary)
+	}
+	// The card that made the call is the one the execution reports through,
+	// and the run that made it is the execution's lineage — what nests the
+	// result's wake-up run under this run in the trace panel.
+	if wr.ToolCallID != "call_1" {
+		t.Fatalf("tool call = %q, want the spawn_task call", wr.ToolCallID)
+	}
+	if wr.ParentRunID != chatRunID {
+		t.Fatalf("parent run = %q, want the run that called spawn_task (%s)", wr.ParentRunID, chatRunID)
+	}
+	// The wake-up run that delivers the result carries that lineage on its
+	// spans.
+	deadline = time.Now().Add(15 * time.Second)
+	for {
+		rows, err := runner.Deps.Traces.ListBySession(ctx, sess.ID, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wake *store.TraceEvent
+		for i := range rows {
+			if rows[i].RunID != chatRunID && rows[i].RunID != wr.RunID {
+				wake = &rows[i]
+				break
+			}
+		}
+		if wake != nil {
+			if wake.ParentRunID != chatRunID {
+				t.Fatalf("wake run %s spans carry parent %q, want %s", wake.RunID, wake.ParentRunID, chatRunID)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no wake-up run traced on the session")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
 // With no workflows the tool is absent entirely — an empty chooser is a tool
 // that can only be called wrongly.
-func TestStartWorkflowToolAbsentWithoutWorkflows(t *testing.T) {
+// spawn_task is always offered; the workflows on offer are in its DESCRIPTION,
+// only when there are any — a server without workflows offers the plain tool.
+func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	ctx := context.Background()
 	runner, _, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
@@ -169,8 +213,9 @@ func TestStartWorkflowToolAbsentWithoutWorkflows(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	if tool := runner.startWorkflowTool(ctx); tool != nil {
-		t.Fatal("no workflows at all: the tool must be absent")
+	tool := runner.spawnTool(ctx)
+	if tool == nil || tool.Name != SpawnToolName || strings.Contains(tool.Description, "Available:") {
+		t.Fatalf("no workflows: tool = %v, want spawn_task with no workflow list", tool)
 	}
 	wf := &store.Workflow{Name: "deploy", Description: "ship it", Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "ship"}}}
 	if err := store.NormalizeWorkflow(wf); err != nil {
@@ -179,13 +224,57 @@ func TestStartWorkflowToolAbsentWithoutWorkflows(t *testing.T) {
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	if tool := runner.startWorkflowTool(ctx); tool == nil {
-		t.Fatal("a workflow exists: the tool must be offered")
+	tool = runner.spawnTool(ctx)
+	if !strings.Contains(tool.Description, "- deploy: ship it") {
+		t.Fatalf("a workflow exists: the description must list it, got %q", tool.Description)
 	}
 }
 
-// A workflow STEP is a background run: no plan mode, no todo, no task tools,
-// no start_workflow. Plan mode is the one that deadlocks — submit_plan pauses
+// task_status says where a workflow stands — the step it is on, the bound
+// that stopped it — through the manager's DescribeState, so the model needs
+// no second status tool for sequences.
+func TestDescribeTaskStateSaysTheStep(t *testing.T) {
+	st := &store.WorkflowState{
+		Steps:  store.WorkflowSteps{{ID: "a", Name: "plan"}, {ID: "b", Name: "exec"}, {ID: "c"}},
+		StepID: "b",
+	}
+	if got := describeTaskState(store.TaskKindWorkflow, st.Encode()); got != "step 2/3 (exec)" {
+		t.Fatalf("progress = %q", got)
+	}
+	st.StepID, st.Stopped = "c", store.StoppedByBudget
+	if got := describeTaskState(store.TaskKindWorkflow, st.Encode()); got != "step 3/3, stopped by its budget" {
+		t.Fatalf("progress = %q", got)
+	}
+	// A sequence that came back to a step has more runs than steps: said, and
+	// the lap bound that stops such a loop is named.
+	st.StepID, st.Stopped = "b", ""
+	for _, id := range []string{"a", "b", "c", "b"} {
+		st.StepRuns = st.StepRuns.With(id, store.NewID())
+	}
+	if got := describeTaskState(store.TaskKindWorkflow, st.Encode()); got != "step 2/3 (exec), run 4" {
+		t.Fatalf("progress = %q", got)
+	}
+	// A person's retry of a step is one more run, not the sequence looping:
+	// a linear run of three steps retried once is not "run 4".
+	linear := &store.WorkflowState{Steps: st.Steps, StepID: "c"}
+	for _, id := range []string{"a", "b", "c"} {
+		linear.StepRuns = linear.StepRuns.With(id, store.NewID())
+	}
+	linear.StepRuns = linear.StepRuns.WithRetry("c", store.NewID())
+	if got := describeTaskState(store.TaskKindWorkflow, linear.Encode()); got != "step 3/3" {
+		t.Fatalf("progress after a retry = %q, want no run count", got)
+	}
+	st.Stopped = store.StoppedByLaps
+	if got := describeTaskState(store.TaskKindWorkflow, st.Encode()); got != "step 2/3 (exec), run 4, stopped by its loop bound" {
+		t.Fatalf("progress = %q", got)
+	}
+	if got := describeTaskState("", nil); got != "" {
+		t.Fatalf("a plain task has no progress line, got %q", got)
+	}
+}
+
+// A workflow STEP is a background run: no plan mode, no todo, no task tools
+// (spawn_task included). Plan mode is the one that deadlocks — submit_plan pauses
 // for an approval, and a step's approval lands in a session nobody can open, so
 // the sequence would wait forever on a decision nobody can see.
 func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
@@ -196,7 +285,6 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
-	runner.Deps.WorkflowRuns = store.NewWorkflowRunStore(runner.db)
 	ac := &store.AgentConfig{
 		Name: "planner", Model: "gpt-test",
 		ProviderID: testProvider(t, runner.db, "endpoint", "k", srv.URL),
@@ -219,46 +307,16 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wr, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "")
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
-	if done := awaitWorkflow(t, runner, wr.ID, 15*time.Second); done.Status != store.WorkflowCompleted {
-		t.Fatalf("status = %q (%s), want completed — a step must not stop for a plan review", done.Status, done.Error)
+	if done, _ := awaitWorkflow(t, runner, info.TaskID, 15*time.Second); done.Status != "completed" {
+		t.Fatalf("status = %q (%s), want completed — a step must not stop for a plan review", done.Status, done.Summary)
 	}
-	for _, name := range []string{"submit_plan", "todo_write", "spawn_task", StartWorkflowToolName} {
+	for _, name := range []string{"submit_plan", "todo_write", "spawn_task", "task_status"} {
 		if slices.Contains(offered, name) {
 			t.Errorf("a workflow step was offered %q; its toolset = %v", name, offered)
 		}
-	}
-}
-
-// The status report is BOUNDED: a conversation that runs many workflows must
-// not grow this tool's output without limit. Live ones are never dropped —
-// redoing work in flight is the failure this tool exists to prevent.
-func TestWorkflowStatusReportKeepsLiveDropsOldFinished(t *testing.T) {
-	runs := []store.WorkflowRun{
-		{Name: "live-a", Status: store.WorkflowRunning},
-		{Name: "done-1", Status: store.WorkflowCompleted},
-		{Name: "done-2", Status: store.WorkflowCompleted},
-		{Name: "done-3", Status: store.WorkflowFailed, Error: "boom"},
-		{Name: "done-4", Status: store.WorkflowCompleted},
-		{Name: "done-5", Status: store.WorkflowCancelled},
-		{Name: "live-b", Status: store.WorkflowRunning},
-	}
-	got := workflowStatusReport(runs)
-	for _, name := range []string{"live-a", "live-b", "done-1", "done-2", "done-3"} {
-		if !strings.Contains(got, name) {
-			t.Errorf("%q missing from the report:\n%s", name, got)
-		}
-	}
-	for _, name := range []string{"done-4", "done-5"} {
-		if strings.Contains(got, name) {
-			t.Errorf("%q should have been left out:\n%s", name, got)
-		}
-	}
-	// What was dropped is said, not silently swallowed.
-	if !strings.Contains(got, "2 older finished") {
-		t.Errorf("the report must own up to what it omitted:\n%s", got)
 	}
 }

@@ -15,7 +15,7 @@ func TestChatGPTOAuthMissingProvider(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	providers := store.NewProviderStore(db)
-	o := NewChatGPTOAuth(providers)
+	o := NewChatGPTOAuth(providers, store.NewSettingStore(db))
 
 	// Missing provider -> ErrNotFound, not a folded logged_in:false.
 	if _, err := o.IsLoggedIn(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {

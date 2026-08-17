@@ -295,3 +295,93 @@ func TestBindSandboxRefusesAStaleRevision(t *testing.T) {
 		t.Fatalf("current-revision bind: won=%v err=%v", won, err)
 	}
 }
+
+// The title generator names a session only while it still carries the default
+// name: a rename made while it was thinking stands.
+func TestNameIfDefaultKeepsAPersonsRename(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	sess := &Session{ID: NewID(), Name: DefaultSessionName}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := sessions.NameIfDefault(ctx, sess.ID, "Sorting a list"); err != nil || !won {
+		t.Fatalf("first naming = %v, %v — want it to land", won, err)
+	}
+	// A second generator, or one arriving after a rename, loses.
+	if won, err := sessions.NameIfDefault(ctx, sess.ID, "Something else"); err != nil || won {
+		t.Fatalf("second naming = %v, %v — want it to lose", won, err)
+	}
+	if err := sessions.Update(ctx, sess.ID, "My name"); err != nil {
+		t.Fatal(err)
+	}
+	if won, _ := sessions.NameIfDefault(ctx, sess.ID, "Generated"); won {
+		t.Fatal("a generated title must not overwrite a person's name")
+	}
+	got, _ := sessions.Get(ctx, sess.ID)
+	if got.Name != "My name" {
+		t.Fatalf("name = %q, want the person's", got.Name)
+	}
+}
+
+// Delete follows the task tree to any depth — a workflow step's task under a
+// hidden session goes with the conversation — but only over LIVE edges: a
+// stale task row from an earlier incarnation of the parent names a child id
+// that may since have been reused by an unrelated session, and following it
+// would delete that session's history.
+func TestSessionDeleteCascadesTheWholeTreeOverLiveEdges(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	tasks := NewTaskStore(db)
+
+	root := &Session{ID: NewID(), Name: "root"}
+	child := &Session{ID: NewID(), Name: "child", Hidden: true}
+	grandchild := &Session{ID: NewID(), Name: "grandchild", Hidden: true}
+	// A session that shares an id with the root's FORMER incarnation's child:
+	// the stale row below points at it, but was bound to a generation of the
+	// root that no longer exists.
+	bystander := &Session{ID: NewID(), Name: "bystander"}
+	for _, s := range []*Session{root, child, grandchild, bystander} {
+		if err := sessions.Create(ctx, s); err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+	}
+	for _, task := range []*Task{
+		{ID: NewID(), RunID: NewID(), ParentSessionID: root.ID, ChildSessionID: child.ID, Status: "completed"},
+		{ID: NewID(), RunID: NewID(), ParentSessionID: child.ID, ChildSessionID: grandchild.ID, Status: "completed"},
+	} {
+		if err := tasks.Create(ctx, task); err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+	}
+	// The stale edge: root → bystander, bound to a generation the root never
+	// had (what a row left over from a deleted-and-recreated root looks like).
+	stale := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: root.ID, ChildSessionID: bystander.ID, Status: "completed"}
+	if _, err := db.NewInsert().Model(stale).
+		Value("parent_session_gen", "?", "gen-of-a-former-root").
+		Value("child_session_gen", genOf, bystander.ID).
+		Exec(ctx); err != nil {
+		t.Fatalf("insert stale task: %v", err)
+	}
+
+	if err := sessions.Delete(ctx, root.ID); err != nil {
+		t.Fatalf("delete root: %v", err)
+	}
+	for _, id := range []string{root.ID, child.ID, grandchild.ID} {
+		if _, err := sessions.Get(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("session %s should be gone with the tree, got %v", id, err)
+		}
+	}
+	if _, err := sessions.Get(ctx, bystander.ID); err != nil {
+		t.Fatalf("the bystander behind a stale edge must survive: %v", err)
+	}
+	// The stale row itself goes — it named the deleted root as its parent.
+	if _, err := tasks.Get(ctx, stale.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale task row should be deleted with its parent, got %v", err)
+	}
+	if err := sessions.Delete(ctx, root.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: want ErrNotFound, got %v", err)
+	}
+}

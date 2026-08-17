@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/openai/openai-go/v3/option"
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
@@ -42,7 +40,6 @@ type AgentDeps struct {
 	Tasks            *store.TaskStore
 	ContextProfiles  *store.ContextProfileStore
 	Workflows        *store.WorkflowStore
-	WorkflowRuns     *store.WorkflowRunStore
 	Wakeups          *store.WakeupStore
 	Workspace        string
 	// MaxTasks overrides the per-session live background-task cap when > 0
@@ -52,11 +49,12 @@ type AgentDeps struct {
 	// spawn_task / task_status / task_stop tools. A BACKGROUND run never gets
 	// them — that is what bounds recursion.
 	TaskManager *tasks.Manager
-	// WorkflowTools is set by NewRunner and builds the run's workflow tools —
-	// start_workflow and workflow_status — or nothing when no workflow is
-	// defined. A function rather than a slice because the answer changes as
-	// workflows are edited, with no restart.
-	WorkflowTools func(ctx context.Context) []*agents.Tool
+	// SpawnTool is set by NewRunner and builds the run's spawn_task — the
+	// server's own, which starts a workflow when told a name — per run,
+	// because the workflows on offer change as they are edited, with no
+	// restart. Attached beside the manager's TaskTools; never on a background
+	// run.
+	SpawnTool func(ctx context.Context) *agents.Tool
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -167,9 +165,10 @@ with the outcome, not with a question.`
 //
 // A background run is one nobody is sitting in front of — a task's, a workflow
 // step's. Three things follow from that single fact, which is why they share
-// one flag: it gets no task tools (capping spawn depth at one) and no
-// start_workflow (a sequence cannot start a sequence), and no plan or todo
-// mode, because a plan review is an approval nobody would ever answer.
+// one flag: it gets no task tools (capping spawn depth at one — a sequence
+// cannot start a sequence either, since a workflow is what spawn_task starts
+// when told a name), and no plan or todo mode, because a plan review is an
+// approval nobody would ever answer.
 func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, workDir string, background bool) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
@@ -184,18 +183,20 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		result.TraceIncludeSensitive = sensitiveTraceSetting(ctx, deps.Settings)
 	}
 	if err == nil && !background && deps.TaskManager != nil {
-		// The session id reaches the tools through the run context, not the
-		// model: otherwise one conversation could spawn tasks onto another.
+		// The model's background surface: four verbs — spawn (the server's,
+		// which starts a workflow when told a name), status, retry, stop. A
+		// background run never gets them: an execution is a task, and a task
+		// cannot start one — that is what bounds recursion. The session id
+		// reaches the tools through the run context, not the model: otherwise
+		// one conversation could spawn tasks onto another.
 		mark := len(result.Agent.Tools)
-		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.Tools(nil)...)
+		if deps.SpawnTool != nil {
+			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx))
+		} else {
+			result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.SpawnTool(nil))
+		}
+		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.TaskTools(nil)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceTasks, &result.Profile)
-	}
-	// Workflows the model may start. A TASK never gets it: a sequence takes over
-	// a session, and a task's session is not one a person is watching.
-	if err == nil && !background && deps.WorkflowTools != nil {
-		mark := len(result.Agent.Tools)
-		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx)...)
-		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflow, &result.Profile)
 	}
 	if err != nil {
 		// A failed build returns no result to Release, so the sandbox
@@ -296,8 +297,6 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 	result := &BuildResult{}
 
-	globalSystemPrompt := settingValue(ctx, deps.Settings, "system_prompt")
-
 	ac, err := deps.AgentConfigs.Get(ctx, configID)
 	if err != nil {
 		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
@@ -343,23 +342,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		agent.Guardrails = append(agent.Guardrails, gs...)
 	}
 
-	// "exec_command" in the approve list opts into per-command session approval:
-	// route it to the sandbox command gate and strip it from the SDK ApproveTools
-	// list (which would otherwise force approval on every call).
-	approveCommands := false
-	if len(spec.ApproveTools) > 0 {
-		filtered := make([]string, 0, len(spec.ApproveTools))
-		for _, name := range spec.ApproveTools {
-			if name == "exec_command" {
-				approveCommands = true
-				continue
-			}
-			filtered = append(filtered, name)
-		}
-		if len(filtered) > 0 {
-			agent.ApproveTools = filtered
-		}
-	}
+	var approveCommands bool
+	agent.ApproveTools, approveCommands = splitApproveTools(spec.ApproveTools)
 	agent.OutputType = spec.OutputType
 
 	// Stored prompt
@@ -380,21 +364,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	// Every layer below is also MEASURED into result.Profile as it is added —
 	// what each contributes to the request is knowable here and nowhere else
 	// (see store.ContextProfile).
-	result.Profile.InstructionsChars = len(ac.Instructions)
-
-	// Global system prompt
-	if globalSystemPrompt != "" {
-		agent.Instructions = agents.WrapInstructions(agent.Instructions, globalSystemPrompt, "")
-		result.Profile.GlobalPromptChars = len(globalSystemPrompt)
-	}
-
-	// Memory
-	memories, err := deps.Memories.ListForAgent(ctx, configID)
-	if err == nil && len(memories) > 0 {
-		memoryBlock := buildMemoryBlock(memories)
-		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", memoryBlock)
-		result.Profile.MemoryChars = len(memoryBlock)
-	}
+	layerInstructions(ctx, deps, agent, ac, &result.Profile)
 
 	// MCP servers — an id whose server is not currently connected is skipped.
 	// Their tools are not measured here: they live on the server, and asking it
@@ -426,6 +396,36 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	result.Agent = agent
 	bc.cache[configID] = result
 	return result, nil
+}
+
+// splitApproveTools reads the approve list: "exec_command" in it opts into
+// per-command session approval (the sandbox command gate) and is kept OUT of
+// the SDK's ApproveTools, which would force approval on every call.
+func splitApproveTools(names []string) (approveTools []string, approveCommands bool) {
+	for _, name := range names {
+		if name == "exec_command" {
+			approveCommands = true
+			continue
+		}
+		approveTools = append(approveTools, name)
+	}
+	return approveTools, approveCommands
+}
+
+// layerInstructions wraps the agent's own instructions in the global system
+// prompt and its memories, measuring each into the profile.
+func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent, ac *store.AgentConfig, prof *store.PromptProfile) {
+	prof.InstructionsChars = len(ac.Instructions)
+	if global := settingValue(ctx, deps.Settings, "system_prompt"); global != "" {
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, global, "")
+		prof.GlobalPromptChars = len(global)
+	}
+	memories, err := deps.Memories.ListForAgent(ctx, ac.ID)
+	if err == nil && len(memories) > 0 {
+		block := buildMemoryBlock(memories)
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", block)
+		prof.MemoryChars = len(block)
+	}
 }
 
 // buildHandoffs recursively builds each handoff target and wires it onto the
@@ -464,104 +464,6 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 		agent.Handoffs = append(agent.Handoffs, agents.HandoffTo(hResult.Agent))
 	}
 	return nil
-}
-
-// providerKey is a provider's own key, or the global per-backend fallback
-// setting when it carries none. The global key is the DEFAULT endpoint's
-// credential, so it is inherited ONLY for a provider on the default base URL —
-// a custom base_url with no key of its own gets nothing, never the global key
-// sent to an operator-typed host.
-func providerKey(ctx context.Context, deps *AgentDeps, pv *store.Provider) string {
-	if pv.APIKey != "" {
-		return pv.APIKey
-	}
-	if pv.BaseURL != "" {
-		return ""
-	}
-	def, err := providerDefFor(pv.Type)
-	if err != nil {
-		return ""
-	}
-	return settingValue(ctx, deps.Settings, def.SettingKey)
-}
-
-// AgentProvider loads the endpoint an agent reaches its model through. An
-// empty provider_id yields the ZERO provider, which is the built-in default:
-// the openai backend on the global api-key setting, what an agent created
-// before any provider row existed runs on. An agent that NAMES a provider on
-// a host with no provider store is an error, never a silent fall-through to
-// the default — that would run it on the wrong backend with the wrong key.
-func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) (store.Provider, error) {
-	if ac.ProviderID == "" {
-		return store.Provider{}, nil
-	}
-	if deps.Providers == nil {
-		return store.Provider{}, fmt.Errorf("agent %q names provider %s but no provider store is wired", ac.Name, ac.ProviderID)
-	}
-	pv, err := deps.Providers.Get(ctx, ac.ProviderID)
-	if err != nil {
-		return store.Provider{}, fmt.Errorf("agent %q: provider %s: %w", ac.Name, ac.ProviderID, err)
-	}
-	return *pv, nil
-}
-
-// resolveProvider builds the agent's model provider: the endpoint its provider
-// row names, wrapped with retry and fallback decorators when enabled. It
-// returns a nil provider (no error) when no API key is available — the
-// run-without-a-provider path — and always returns the normalized providerType.
-func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, spec *AgentSpec, proxyClient *http.Client) (agents.ModelProvider, string, error) {
-	pv, err := AgentProvider(ctx, deps, ac)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := ValidateProvider(&pv); err != nil {
-		return nil, "", fmt.Errorf("agent %q: %w", ac.Name, err)
-	}
-	def, err := providerDefFor(pv.Type)
-	if err != nil {
-		return nil, "", err // unreachable after validation; fail loud, never default
-	}
-	apiKey := pv.APIKey
-	var chatgptCreds *ChatGPTCredentials
-	if pv.AuthMode == AuthModeChatGPTLogin && deps.ChatGPTOAuth != nil {
-		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, pv.ID); err == nil {
-			apiKey = creds.AccessToken
-			chatgptCreds = creds
-		} else {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("ChatGPT OAuth token unavailable, falling back to api_key")
-		}
-	}
-	// The global per-provider key is the built-in default endpoint's credential,
-	// so it is inherited ONLY when this provider talks to that endpoint. A
-	// provider pointed at a custom base_url must carry its own key — otherwise
-	// the global (e.g. OpenAI) key would be sent to whatever host it names.
-	if apiKey == "" && pv.BaseURL == "" {
-		apiKey = settingValue(ctx, deps.Settings, def.SettingKey)
-	}
-	if apiKey == "" {
-		return nil, def.Type, nil
-	}
-	baseURL := pv.BaseURL
-	// Validation forbids a custom base_url with chatgpt_login, so this only
-	// fills the default; it stays here as the belt to the validation's braces —
-	// the OAuth token never rides to an operator-typed host.
-	if chatgptCreds != nil {
-		baseURL = ChatGPTBaseURL
-	}
-	provider := def.Build(apiKey, baseURL, chatgptCreds, proxyClient)
-	if ac.Resilience.RetryEnabled {
-		provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
-	}
-	if len(spec.FallbackModels) > 0 {
-		provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient, func(providerType string) string {
-			fdef, ferr := providerDefFor(providerType)
-			if ferr != nil {
-				return ""
-			}
-			return settingValue(ctx, deps.Settings, fdef.SettingKey)
-		})
-	}
-	return provider, def.Type, nil
 }
 
 // attachMCPServers wires the config's selected MCP servers onto the agent,
@@ -772,150 +674,6 @@ func sensitiveTraceSetting(ctx context.Context, settings *store.SettingStore) *b
 // Provider selection — validation, construction, auth modes, setting keys —
 // lives in the registry (provider_registry.go); nothing here should switch on
 // a provider type.
-
-func newChatGPTMiddleware(accountID string) option.Middleware {
-	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-		if accountID != "" {
-			req.Header.Set("ChatGPT-Account-ID", accountID)
-		}
-		req.Header.Set("originator", "codex_cli_rs")
-
-		if req.Body != nil && req.Method == http.MethodPost {
-			raw, err := io.ReadAll(req.Body)
-			req.Body.Close()
-			if err == nil {
-				var body map[string]any
-				if json.Unmarshal(raw, &body) == nil {
-					body["store"] = false
-					delete(body, "previous_response_id")
-					if input, ok := body["input"].([]any); ok {
-						body["input"] = sanitizeChatGPTInput(input)
-					}
-					patched, _ := json.Marshal(body)
-					raw = patched
-				}
-				req.Body = io.NopCloser(strings.NewReader(string(raw)))
-				req.ContentLength = int64(len(raw))
-			}
-		}
-
-		return next(req)
-	}
-}
-
-type fallbackEntry struct {
-	Model   string `json:"model"`
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
-	// Provider selects the backend ("openai" / "anthropic"); empty is openai.
-	// The JSON key is provider_type, matching the agent config group and
-	// provider routes — one spelling across all three selector surfaces.
-	Provider string `json:"provider_type"`
-}
-
-// fixedModelProvider pins a provider to one model name, ignoring the name the
-// run requests. The SDK's FallbackProvider asks every fallback for the SAME
-// (primary) model name, so without this a configured fallback model would never
-// be used — the fallback would just retry the primary's model name elsewhere.
-type fixedModelProvider struct {
-	inner agents.ModelProvider
-	model string
-}
-
-func (f fixedModelProvider) Model(string) (agents.Model, error) {
-	return f.inner.Model(f.model)
-}
-
-// wrapFallbackProvider chains one fixed-model provider per decoded fallback
-// entry behind primary. The entries are decoded up front (DecodeAgentSpec), so
-// this is pure construction — callers gate it on len(entries) > 0. keyFor
-// resolves the global per-provider fallback key ("openai_api_key" /
-// "anthropic_api_key") for entries that carry none of their own, the same
-// courtesy the main agent gets.
-func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client, keyFor func(providerType string) string) agents.ModelProvider {
-	var fallbacks []agents.ModelProvider
-	for _, e := range entries {
-		apiKey := e.APIKey
-		// Same target-binding rule as the main path: the global key follows a
-		// fallback entry only on the default endpoint, never to a custom
-		// base_url the entry pointed at without a key of its own.
-		if apiKey == "" && e.BaseURL == "" && keyFor != nil {
-			apiKey = keyFor(e.Provider)
-		}
-		fp, err := buildPlainProvider(e.Provider, apiKey, e.BaseURL, proxyClient)
-		if err != nil {
-			// Unreachable through normal flow — DecodeAgentSpec validates every
-			// entry's provider — and an unbuildable entry must not become an
-			// OpenAI default, so it is left out of the chain.
-			continue
-		}
-		if e.Model != "" {
-			fp = fixedModelProvider{inner: fp, model: e.Model}
-		}
-		fallbacks = append(fallbacks, fp)
-	}
-	return agents.NewFallbackProvider(primary, fallbacks...)
-}
-
-// BuildRouterProvider builds a RouterProvider from all stored provider routes.
-func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.ModelProvider) agents.ModelProvider {
-	// Routes resolve through the provider store; without one they cannot mean
-	// anything — same guard as AgentProvider, minus the error (there is no
-	// specific agent to blame, and the fallback is the correct answer).
-	if deps.ProviderRoutes == nil || deps.Providers == nil {
-		return fallback
-	}
-	routes, err := deps.ProviderRoutes.List(ctx)
-	if err != nil {
-		// Loud, because the silent version was observed: an unreadable table
-		// (e.g. a pre-provider_type database) would otherwise disable ALL
-		// routing with no signal, and every prefixed model name would fall to
-		// the agent's own provider.
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("provider routes unavailable; prefix routing disabled for this run")
-		return fallback
-	}
-	if len(routes) == 0 {
-		return fallback
-	}
-	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
-	routeMap := make(map[string]agents.ModelProvider, len(routes))
-	for _, r := range routes {
-		pv, err := deps.Providers.Get(ctx, r.ProviderID)
-		if err != nil {
-			// Referential integrity refuses to delete a referenced provider, so
-			// this is a row that bypassed the API. Skipped loudly rather than
-			// falling back to the agent's own provider, which would send the
-			// prefixed model name to the wrong backend in silence.
-			zerolog.Ctx(ctx).Warn().Err(err).Str("prefix", r.Prefix).Msg("provider route skipped: provider unavailable")
-			continue
-		}
-		// ChatGPT-login providers can't route: their credential is an OAuth
-		// token fetched (and refreshed) through the full resolveProvider path,
-		// which buildPlainProvider does not run — routing one would send an
-		// empty or wrong key. Skip it loudly rather than authenticate wrongly.
-		if pv.AuthMode == AuthModeChatGPTLogin {
-			zerolog.Ctx(ctx).Warn().Str("prefix", r.Prefix).
-				Msg("provider route skipped: chatgpt_login providers cannot be used through a route")
-			continue
-		}
-		// An unregistered type must not default to OpenAI — the silent
-		// wrong-backend case — so the route is skipped instead.
-		fp, err := buildPlainProvider(pv.Type, providerKey(ctx, deps, pv), pv.BaseURL, proxyClient)
-		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("prefix", r.Prefix).Msg("provider route skipped: invalid provider type")
-			continue
-		}
-		routeMap[r.Prefix] = fp
-	}
-	if len(routeMap) == 0 {
-		return fallback
-	}
-	router := agents.NewRouterProvider(routeMap)
-	if fallback != nil {
-		router.WithFallback(fallback)
-	}
-	return router
-}
 
 // splitList parses a comma-separated config value into trimmed, non-empty
 // entries. Operators type these by hand, so stray spaces and trailing commas

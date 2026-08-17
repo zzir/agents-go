@@ -82,7 +82,9 @@ type SeqEnvelope struct {
 // TaskMeta links a background task run to the parent chat session/run that
 // spawned it. Nil for ordinary runs.
 type TaskMeta struct {
-	TaskID          string `json:"task_id,omitempty"`
+	TaskID string `json:"task_id,omitempty"`
+	// Kind is the task's kind: "" a sub-agent task, "workflow" an execution.
+	Kind            string `json:"kind,omitempty"`
 	ParentSessionID string `json:"parent_session_id"`
 	ParentRunID     string `json:"parent_run_id,omitempty"`
 	ToolCallID      string `json:"tool_call_id,omitempty"`
@@ -517,7 +519,8 @@ func (e ErrRunNotResumable) Error() string {
 
 // publish assigns the next sequence number to env, appends it to the run's
 // replay buffer, advances the terminal status for terminal event types, and
-// fans the event out to all current subscribers.
+// fans the event out to all current subscribers. It reports whether the hub
+// holds the run — false means nobody heard, and the caller decides.
 //
 // Locking: agents.Fanout.Publish serializes sequence assignment through
 // delivery, so subscribers never see events out of order; the record lock is
@@ -526,12 +529,12 @@ func (e ErrRunNotResumable) Error() string {
 // a time — held by the run's own goroutine while its segment is live, and by
 // publishTaskCancelled once the segment has ended. A stop racing an approval
 // resume is caught by the post-resume re-check in ResolveApproval, not here.
-func (h *RunHub) publish(runID string, env *protocol.Envelope) {
+func (h *RunHub) publish(runID string, env *protocol.Envelope) bool {
 	h.mu.Lock()
 	rec := h.runs[runID]
 	h.mu.Unlock()
 	if rec == nil {
-		return
+		return false
 	}
 
 	rec.fanout.Publish(env)
@@ -542,6 +545,7 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) {
 	}
 	rec.info.LastSeq = rec.fanout.LastSeq()
 	rec.mu.Unlock()
+	return true
 }
 
 // Subscribe attaches a plain sink (seq discarded) to the run's live event
@@ -581,12 +585,15 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 				if mkErr == nil {
 					sink(SeqEnvelope{Seq: gap.LastGood, Env: env})
 				}
-				// A gap at the end of the stream has no item after it (nil
-				// envelope); forwarding it would hand the sink a nil to
-				// dereference and panic the process.
-				if gap.AtEnd() {
-					continue
-				}
+			}
+			// A gap can arrive on an item that carries nothing — at the end of
+			// the stream, or the timeline reset a cursor ahead of the head gets
+			// (from_seq is the CLIENT's number). The gap itself was delivered
+			// above; forwarding the empty item would hand the sink a nil
+			// envelope to dereference, and the sink runs on a goroutine of its
+			// own, past any recovery.
+			if item.Value == nil {
+				continue
 			}
 			sink(SeqEnvelope{Seq: item.Seq, Env: item.Value})
 		}

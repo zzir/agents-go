@@ -39,7 +39,7 @@ func TestSandboxList_TerminalCapability(t *testing.T) {
 		}
 	}
 
-	h := NewSandboxHandler(sandboxes, nil, false)
+	h := testSandboxHandler(sandboxes, nil, t.TempDir())
 	engine := gin.New()
 	engine.GET("/sandboxes", h.List)
 
@@ -97,7 +97,7 @@ func TestSandboxList_WorkDirDefaults(t *testing.T) {
 		}
 	}
 
-	h := NewSandboxHandler(sandboxes, nil, false).WithWorkspace(ws)
+	h := testSandboxHandler(sandboxes, nil, ws)
 	engine := gin.New()
 	engine.GET("/sandboxes", h.List)
 
@@ -133,7 +133,7 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	sandboxes := store.NewSandboxStore(db)
 	sessions := store.NewSessionStore(db)
 	manager := bridge.NewSandboxManager(t.TempDir())
-	h := NewSandboxHandler(sandboxes, manager, false)
+	h := testSandboxHandler(sandboxes, manager, t.TempDir())
 	engine := gin.New()
 	engine.PUT("/sandboxes/:id", h.Update)
 

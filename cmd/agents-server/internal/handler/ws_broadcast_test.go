@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -120,4 +121,54 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 	// The mid-run attach itself (register → LiveRunIDs → Subscribe-with-replay)
 	// is covered by TestRunHubLiveRunIDs plus the hub's replay contract that
 	// the SSE handler already depends on.
+
+	// The broadcast hook reaches the connections a run's stream does not: a
+	// connection that joined AFTER the run (never attached to it) hears the
+	// broadcast; one attached to the run — which already carried the event —
+	// does not hear it twice.
+	// Once the second run has left the live set, a connection dialing now is
+	// NOT attached to it — the situation of a browser joining after a run
+	// paused on an approval.
+	readUntil(t, watcher2, protocol.EventRunError)
+	deadline := time.Now().Add(5 * time.Second)
+	for slices.Contains(runner.Hub().LiveRunIDs(), sp2.RunID) {
+		if time.Now().After(deadline) {
+			t.Fatal("the second run never left the live set")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	late := dialWS(t, srv)
+	// The auth ack is written before the connection is registered on the bus;
+	// wait for the registration the broadcast walks.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		wsh.registry.mu.Lock()
+		n := len(wsh.registry.conns)
+		wsh.registry.mu.Unlock()
+		if n == 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("registry holds %d connections, want 4", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	upd, _ := json.Marshal(protocol.TaskUpdated{TaskID: "t1", ParentSessionID: sess.ID, Status: "cancelled"})
+	runner.OnBroadcast(&protocol.Envelope{Type: protocol.EventTaskUpdated, Payload: upd}, sp2.RunID)
+	got := readUntil(t, late, protocol.EventTaskUpdated)
+	var tu protocol.TaskUpdated
+	_ = json.Unmarshal(got.Payload, &tu)
+	if tu.TaskID != "t1" {
+		t.Fatalf("late connection got %+v, want the broadcast task update", tu)
+	}
+	_ = watcher2.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
+	for {
+		var env protocol.Envelope
+		if err := watcher2.ReadJSON(&env); err != nil {
+			break // timed out: nothing more — the attached connection was skipped
+		}
+		if env.Type == protocol.EventTaskUpdated {
+			t.Fatal("a connection attached to the run must not hear the broadcast as well")
+		}
+	}
 }

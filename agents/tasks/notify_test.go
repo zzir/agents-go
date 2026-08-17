@@ -17,9 +17,12 @@ func TestNotification_WireShape(t *testing.T) {
 	msg := DefaultNotifyFormatter(in)
 
 	lines := strings.Split(strings.TrimPrefix(msg, NotificationPrefix), "\n")
-	// Three tasks, plus the retry hint the failed one earns.
-	if len(lines) != 4 {
-		t.Fatalf("%d lines, want 4:\n%s", len(lines), msg)
+	// Three tasks, plus the retry hint the failed one earns, plus the guidance.
+	if len(lines) != 5 {
+		t.Fatalf("%d lines, want 5:\n%s", len(lines), msg)
+	}
+	if lines[4] != NotifyGuidance {
+		t.Errorf("last line = %q, want the guidance", lines[4])
 	}
 	if want := `Task "the 'big' job" (t1) completed. Result: all good`; lines[0] != want {
 		t.Errorf("line 0 = %q\nwant     %q", lines[0], want)
@@ -55,10 +58,10 @@ func TestNotification_RetryHintIsItsOwnLineAndOnlyWhenFailed(t *testing.T) {
 		t.Errorf("hint appears %d times, want 1:\n%s", n, twoFailed)
 	}
 	lines := strings.Split(strings.TrimPrefix(twoFailed, NotificationPrefix), "\n")
-	if got := lines[len(lines)-1]; got != hint {
-		t.Errorf("last line = %q, want the hint alone", got)
+	if got := lines[len(lines)-2]; got != hint {
+		t.Errorf("line before the guidance = %q, want the hint alone", got)
 	}
-	for _, line := range lines[:len(lines)-1] {
+	for _, line := range lines[:len(lines)-2] {
 		if strings.Contains(line, hint) {
 			t.Errorf("hint leaked into a task line: %q", line)
 		}

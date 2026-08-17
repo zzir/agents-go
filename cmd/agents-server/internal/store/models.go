@@ -46,20 +46,27 @@ type Session struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"   json:"updated_at"`
 }
 
-// Task is a background subagent run spawned from a chat session via the
-// spawn_task tool. Its transcript lives in a hidden child session
-// (ChildSessionID); the parent linkage and terminal outcome live here. The id
-// doubles as the task's run id in the hub. Status uses the MCP Tasks
-// five-state vocabulary (protocol.Task*).
+// Task is one piece of background work spawned from a chat session through
+// spawn_task: a sub-agent task, or a workflow execution (Kind
+// TaskKindWorkflow). Its transcript lives in a hidden child session
+// (ChildSessionID); the parent linkage and terminal outcome live here. Status
+// uses the MCP Tasks five-state vocabulary (protocol.Task*).
 type Task struct {
 	bun.BaseModel `bun:"table:tasks,alias:t"`
 
 	ID string `bun:"id,pk"                json:"task_id"`
-	// RunID is the id of the task's CURRENT attempt: a retry replaces it. It is
-	// distinct from the task id because the task is the durable entity and a
-	// run is one try at it — which is what makes a retry expressible at all.
-	RunID           string `bun:"run_id"               json:"run_id,omitempty"`
-	ParentSessionID string `bun:"parent_session_id,notnull" json:"parent_session_id"`
+	// RunID is the id of the task's CURRENT run: a retry replaces it, and so
+	// does each step of a workflow. It is distinct from the task id because the
+	// task is the durable entity and a run is one try at it — which is what
+	// makes a retry expressible at all.
+	RunID string `bun:"run_id"               json:"run_id,omitempty"`
+	// Kind is the SDK's host-defined discriminator: "" for a sub-agent task,
+	// TaskKindWorkflow for a workflow execution.
+	Kind string `bun:"kind" json:"kind,omitempty"`
+	// State is the SDK's opaque per-job record — for a workflow, the encoded
+	// WorkflowState (the definition snapshot and where the sequence stands).
+	State           json.RawMessage `bun:"state,type:text,nullzero" json:"state,omitempty"`
+	ParentSessionID string          `bun:"parent_session_id,notnull" json:"parent_session_id"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
 	// this row names (session.Ref). A session id names a session, not a
 	// place, so a row matched on the id alone attaches itself to a replacement
@@ -98,6 +105,9 @@ type Task struct {
 	// notification) stay truncated to keep prompts and lists lean; the parent
 	// model pulls this on demand through task_status.
 	Result string `bun:"result,nullzero" json:"-"`
+	// Dismissed hides a terminal task from the conversation's live strip; the
+	// panel still lists it. A retry clears it — the work is live again.
+	Dismissed bool `bun:"dismissed" json:"dismissed,omitempty"`
 	// MaxAttempts is the ceiling this row's attempt is measured against —
 	// filled for the wire, not stored, because it is the task manager's
 	// configuration rather than a fact about the task. Clients take the
@@ -108,6 +118,9 @@ type Task struct {
 	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
+
+// TaskKindWorkflow is the Task.Kind of a workflow execution.
+const TaskKindWorkflow = "workflow"
 
 // AgentConfig is the persisted definition of an agent: model, instructions,
 // tools, handoffs, guardrails, and the various run-level behavior settings.
@@ -326,13 +339,12 @@ type ToolBucket struct {
 
 // Tool bucket sources.
 const (
-	ToolSourceSandbox  = "sandbox"
-	ToolSourceBrave    = "brave"
-	ToolSourceSkills   = "skills"
-	ToolSourceTasks    = "tasks"
-	ToolSourceWorkflow = "workflow"
-	ToolSourceTodo     = "todo"
-	ToolSourcePlan     = "plan"
+	ToolSourceSandbox = "sandbox"
+	ToolSourceBrave   = "brave"
+	ToolSourceSkills  = "skills"
+	ToolSourceTasks   = "tasks"
+	ToolSourceTodo    = "todo"
+	ToolSourcePlan    = "plan"
 	// ToolSourceMCP is a prefix: "mcp:<server name>".
 	ToolSourceMCP = "mcp:"
 )
@@ -505,8 +517,13 @@ type GuardrailConfig struct {
 type PendingApproval struct {
 	bun.BaseModel `bun:"table:pending_approvals,alias:pa"`
 
-	RunID         string `bun:"run_id,pk"              json:"run_id"`
-	SessionID     string `bun:"session_id,notnull"     json:"session_id"`
+	RunID     string `bun:"run_id,pk"              json:"run_id"`
+	SessionID string `bun:"session_id,notnull"     json:"session_id"`
+	// Kind is what the decision is about: "" a tool call the run paused on
+	// (State is the run to resume), ApprovalKindStep a workflow step waiting to
+	// start (no run exists yet — approving launches it, rejecting cancels the
+	// execution).
+	Kind          string `bun:"kind"                   json:"kind,omitempty"`
 	AgentConfigID string `bun:"agent_config_id"        json:"agent_config_id,omitempty"`
 	SandboxID     string `bun:"sandbox_id"             json:"sandbox_id,omitempty"`
 	WorkDir       string `bun:"work_dir"               json:"work_dir,omitempty"`
@@ -523,6 +540,13 @@ type PendingApproval struct {
 	CreatedAt time.Time `bun:"created_at,notnull"            json:"created_at"`
 }
 
+// ApprovalKindStep marks a pending approval that gates a workflow step's start
+// (WorkflowStep.PauseBefore); its one tool call is named StepApprovalToolName.
+const (
+	ApprovalKindStep     = "step"
+	StepApprovalToolName = "start_step"
+)
+
 // PendingToolCall is one tool call awaiting approval, projected from a run's
 // interruptions for the approvals listing.
 type PendingToolCall struct {
@@ -531,8 +555,8 @@ type PendingToolCall struct {
 	Arguments  string `json:"arguments"`
 }
 
-// parsedToolCalls decodes the ToolCalls JSON, returning nil on malformed data.
-func (p *PendingApproval) parsedToolCalls() []PendingToolCall {
+// ParsedToolCalls decodes the ToolCalls JSON, returning nil on malformed data.
+func (p *PendingApproval) ParsedToolCalls() []PendingToolCall {
 	if len(p.ToolCalls) == 0 {
 		return nil
 	}
@@ -566,11 +590,6 @@ func (m *Memory) BeforeAppendModel(_ context.Context, q bun.Query) error {
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *Workflow) BeforeAppendModel(_ context.Context, q bun.Query) error {
-	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
-}
-
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
-func (m *WorkflowRun) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

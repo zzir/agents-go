@@ -29,10 +29,7 @@ func TestContextMcpBucketNamesDisconnectedServers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// mcpBuckets touches only the lister and the server store; the rest of the
-	// handler stays unwired.
-	h := NewSessionHandler(store.NewSessionStore(db), nil, nil, store.NewAgentConfigStore(db)).
-		WithContextProfiles(store.NewContextProfileStore(db), deadLister{}, mcpStore)
+	h := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.MCP, d.MCPServers = deadLister{}, mcpStore }))
 
 	buckets := h.mcpBuckets(ctx, []string{srv.ID, "gone-id"})
 	if len(buckets) != 2 {

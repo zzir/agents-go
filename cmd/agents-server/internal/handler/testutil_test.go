@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
 
+	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -44,4 +47,53 @@ func doJSON(t *testing.T, engine *gin.Engine, method, path, body string) *httpte
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	return w
+}
+
+// noopStopper is a RunStopper for handler tests that never start a run.
+type noopStopper struct{}
+
+func (noopStopper) StopSessionTree(string)               {}
+func (noopStopper) AbortSessionDelete(string)            {}
+func (noopStopper) ReleaseSessionBinding(string, string) {}
+
+// noopCompactor is a SessionCompactor that finds nothing to fold.
+type noopCompactor struct{}
+
+func (noopCompactor) CompactSession(context.Context, string) (bool, int, int, error) {
+	return false, 0, 0, nil
+}
+
+// noLister is an MCPToolLister for a server nothing is connected to.
+type noLister struct{}
+
+func (noLister) ListToolsFor(context.Context, string) (string, []*agents.Tool, error) {
+	return "", nil, errors.New("not connected")
+}
+
+// testSessionDeps wires a SessionHandler over db with every store real and
+// the runner-side seams stubbed; tune adjusts the deps before construction.
+func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
+	d := SessionDeps{
+		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
+		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
+		MCP: noLister{}, MCPServers: store.NewMcpServerStore(db),
+		Stopper: noopStopper{}, Compactor: noopCompactor{},
+	}
+	for _, f := range tune {
+		f(&d)
+	}
+	return d
+}
+
+// testAgentConfigHandler wires an AgentConfigHandler over db with every store real.
+func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
+	return NewAgentConfigHandler(store.NewAgentConfigStore(db), store.NewMcpServerStore(db), store.NewProviderStore(db),
+		bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
+}
+
+// testSandboxHandler wires a SandboxHandler over the given store and manager,
+// with a terminal registry over the same pair and the workspace given. Local
+// sandboxes stay refused, as the flag defaults.
+func testSandboxHandler(sandboxes *store.SandboxStore, manager *bridge.SandboxManager, workspace string) *SandboxHandler {
+	return NewSandboxHandler(sandboxes, manager, false, NewTerminalHandler(sandboxes, manager), workspace)
 }

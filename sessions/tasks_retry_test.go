@@ -2,6 +2,7 @@ package sessions_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -11,10 +12,10 @@ import (
 
 // failed drives a task to the one status a retry may resume from.
 func failed(t *testing.T, s interface {
-	Finalize(context.Context, string, string, tasks.Status, string, string) (bool, error)
+	Finalize(context.Context, string, string, tasks.Status, string, string, json.RawMessage) (bool, error)
 }, id string) {
 	t.Helper()
-	won, err := s.Finalize(context.Background(), id, id+"-run", tasks.StatusFailed, "boom", "boom")
+	won, err := s.Finalize(context.Background(), id, id+"-run", tasks.StatusFailed, "boom", "boom", nil)
 	if err != nil || !won {
 		t.Fatalf("failing %s: won=%v err=%v", id, won, err)
 	}

@@ -20,7 +20,6 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/auth/login",
 		"/api/v1/auth/check",
-		"/api/auth/login",
 		"/api/v1/mcp-servers/oauth/callback",
 		"/api/v1/openapi.yaml",
 	} {
@@ -30,7 +29,7 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	}
 	for _, p := range []string{
 		"/api/v1/chatgpt/oauth/callback",
-		"/api/chatgpt/oauth/callback",
+		"/api/auth/login",
 		"/api/v1/sessions",
 		"/api/v1/agents/a1/chatgpt/status",
 	} {

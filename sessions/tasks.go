@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,6 +20,7 @@ type taskRow struct {
 	ID    string `bun:"id,pk"`
 	RunID string `bun:"run_id,notnull"`
 	Label string `bun:"label"`
+	Kind  string `bun:"kind"`
 
 	ParentSessionID string `bun:"parent_session_id,notnull"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
@@ -44,6 +46,8 @@ type taskRow struct {
 	Attempt int `bun:"attempt"`
 
 	Inherit string `bun:"inherit"`
+	// State is the host's opaque JSON, stored as text like Inherit.
+	State string `bun:"state"`
 
 	Status  string `bun:"status,notnull"`
 	Summary string `bun:"summary"`
@@ -58,6 +62,7 @@ func (r *taskRow) toTask() tasks.Task {
 		ID:              r.ID,
 		RunID:           r.RunID,
 		Label:           r.Label,
+		Kind:            r.Kind,
 		ParentSessionID: r.ParentSessionID,
 		ParentRunID:     r.ParentRunID,
 		ToolCallID:      r.ToolCallID,
@@ -73,6 +78,9 @@ func (r *taskRow) toTask() tasks.Task {
 	if r.Inherit != "" {
 		t.Inherit = []byte(r.Inherit)
 	}
+	if r.State != "" {
+		t.State = []byte(r.State)
+	}
 	return t
 }
 
@@ -81,6 +89,7 @@ func rowFrom(t *tasks.Task) *taskRow {
 		ID:              t.ID,
 		RunID:           t.RunID,
 		Label:           t.Label,
+		Kind:            t.Kind,
 		ParentSessionID: t.ParentSessionID,
 		ParentRunID:     t.ParentRunID,
 		ToolCallID:      t.ToolCallID,
@@ -88,6 +97,7 @@ func rowFrom(t *tasks.Task) *taskRow {
 		Depth:           t.Depth,
 		Attempt:         t.Attempt,
 		Inherit:         string(t.Inherit),
+		State:           string(t.State),
 		Status:          string(t.Status),
 		Summary:         t.Summary,
 		Result:          t.Result,
@@ -254,7 +264,7 @@ func (s *TaskStore) query(ctx context.Context, apply func(*bun.SelectQuery) *bun
 // The run_id predicate is the other half: a task can leave a terminal state
 // now (RetryClaim), so non-terminality alone no longer says WHICH attempt the
 // finalizer looked at.
-func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string) (bool, error) {
+func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(st)).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -266,6 +276,9 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Sta
 	}
 	if result != "" {
 		q = q.Set("result = ?", result)
+	}
+	if state != nil {
+		q = q.Set("state = ?", string(state))
 	}
 	res, err := q.Exec(ctx)
 	if err != nil {
@@ -311,6 +324,38 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
 	if eerr != nil {
 		return false, fmt.Errorf("claiming a retry of task %q: %w", id, eerr)
+	}
+	if !exists {
+		return false, tasks.ErrNotFound
+	}
+	return false, nil
+}
+
+// Advance implements tasks.Store as one conditional UPDATE: the run moves and
+// the state lands together, only while runID is the current attempt and the
+// row is working. The generation predicates are RetryClaim's, for the same
+// reason — a row whose sessions are gone must not start a run.
+func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (bool, error) {
+	q := s.db.NewUpdate().Model((*taskRow)(nil)).
+		Set("run_id = ?", nextRunID).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("run_id = ?", runID).
+		Where("status = ?", string(tasks.StatusWorking)).
+		Where(liveParent).Where(liveChild)
+	if state != nil {
+		q = q.Set("state = ?", string(state))
+	}
+	res, err := q.Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("advancing task %q: %w", id, err)
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
+	if eerr != nil {
+		return false, fmt.Errorf("advancing task %q: %w", id, eerr)
 	}
 	if !exists {
 		return false, tasks.ErrNotFound

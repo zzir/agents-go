@@ -61,11 +61,9 @@ func (s *Server) registerAuthRoutes() {
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
-	for _, prefix := range []string{"/api/v1/auth", "/api/auth"} {
-		auth := s.Engine.Group(prefix)
-		auth.POST("/login", login)
-		auth.GET("/check", check)
-	}
+	auth := s.Engine.Group(APIPrefix + "/auth")
+	auth.POST("/login", login)
+	auth.GET("/check", check)
 }
 
 // ServeHealth mounts an unauthenticated liveness endpoint at /health that

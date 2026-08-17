@@ -3,6 +3,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/zzir/agents-go/agents/tasks"
 )
@@ -60,13 +61,15 @@ const (
 	// run permanently bound (sandbox_id, work_dir) to it — published exactly
 	// once, by the run that won the bind.
 	EventSessionSandboxBound = "session.sandbox_bound"
-	// EventWorkflowUpdated tells a parent session's subscribers that one of its
-	// workflow executions changed state. The steps run on a hidden child
-	// session with no parent run to piggyback on, so this rides the STEP run's
-	// stream (every connection is attached to it) and carries the parent id the
-	// client filters on. It is a nudge, not the data — the client refetches.
-	EventWorkflowUpdated = "workflow.updated"
-	EventTraceSpan       = "trace.span"
+	// EventTaskUpdated tells a parent session's subscribers that one of its
+	// background tasks changed state — spawned, paused, moved to its next run,
+	// ended. It rides the TASK run's stream (every connection is attached to
+	// it) and carries the parent id the client files it under; the payload is
+	// the row as the tasks list would return it, so the client merges rather
+	// than refetches. Where the run events say what a RUN did, this says what
+	// it meant for the task — for a job of several runs, not the same thing.
+	EventTaskUpdated = "task.updated"
+	EventTraceSpan   = "trace.span"
 
 	// Terminal events, exchanged on /ws/terminal (one terminal per
 	// connection). Control frames are JSON Envelopes (text); the terminal
@@ -217,10 +220,11 @@ type RunStarted struct {
 	// browser that did not send the prompt renders its user bubble from this
 	// (the sender dedups against its own optimistic bubble).
 	Input string `json:"input,omitempty"`
-	// Task metadata, set only for background task runs (spawn_task): the
-	// parent chat session/run this task belongs to and the spawning tool call.
-	// The client routes such runs into the parent session's task list instead
-	// of a chat timeline (SessionID is the task's own hidden session).
+	// Task metadata, set only for background task runs (spawn_task — a
+	// sub-agent or a workflow): the parent chat session/run this task belongs to and the
+	// spawning tool call. The client routes such runs into the parent session's
+	// task list instead of a chat timeline (SessionID is the task's own hidden
+	// session).
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	ParentRunID     string `json:"parent_run_id,omitempty"`
 	// TaskID is the durable task identity; RunID is this attempt's execution
@@ -228,11 +232,10 @@ type RunStarted struct {
 	TaskID     string `json:"task_id,omitempty"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	Label      string `json:"label,omitempty"`
-	// WorkflowRunID marks a workflow step's run, with ParentSessionID naming
-	// the conversation that owns the execution. The client routes such runs
-	// off the chat path exactly like a task's — SessionID is the hidden child
-	// session the steps share, which no timeline should register.
-	WorkflowRunID string `json:"workflow_run_id,omitempty"`
+	// Kind is the task's kind ("" a sub-agent task, "workflow" an execution's
+	// step run). A client keys what a run's ending means for the task on it: a
+	// step ending is not a workflow ending.
+	Kind string `json:"kind,omitempty"`
 	// Attempt is which run of the task this is: 1 for the original, more after
 	// a retry. A client whose card shows the task as finished uses it to tell a
 	// NEW attempt from a replay, and to stop rendering the previous attempt's
@@ -254,9 +257,8 @@ const (
 	TaskCancelled     = "cancelled"
 )
 
-// TaskNotificationPrefix marks a user-input message injected when background
-// work finishes — a task or a workflow execution (the parent run "wakes" on
-// it). The client renders such messages as notifications rather than user
+// TaskNotificationPrefix marks a user-input message injected when a background
+// task finishes (the parent run "wakes" on it). The client renders such messages as notifications rather than user
 // bubbles; the model sees the prefixed text verbatim. Aliased from the SDK's
 // constant (which formats the task ones) so it cannot drift.
 const TaskNotificationPrefix = tasks.NotificationPrefix
@@ -452,14 +454,32 @@ type SessionSandboxBound struct {
 	WorkDir   string `json:"work_dir,omitempty"`
 }
 
-// WorkflowUpdated notifies a PARENT session's subscribers that one of its
-// workflow executions moved — a step started, paused for approval, advanced, or
-// the sequence ended. The client refetches the session's workflow runs and
-// approvals; the fields are only what it needs to route and log.
-type WorkflowUpdated struct {
-	ParentSessionID string `json:"parent_session_id"`
-	WorkflowRunID   string `json:"workflow_run_id"`
-	Status          string `json:"status"`
+// TaskUpdated is a task's state as its parent session's subscribers should
+// now show it — the same shape as a row of GET /sessions/{id}/tasks, minus
+// the fields only a person sets (dismissed). A client merges it under the
+// task id, with the same no-move-backwards rule the durable row gets.
+type TaskUpdated struct {
+	TaskID          string          `json:"task_id"`
+	ParentSessionID string          `json:"parent_session_id"`
+	ParentRunID     string          `json:"parent_run_id,omitempty"`
+	ToolCallID      string          `json:"tool_call_id,omitempty"`
+	ChildSessionID  string          `json:"child_session_id,omitempty"`
+	Kind            string          `json:"kind,omitempty"`
+	Label           string          `json:"label,omitempty"`
+	Status          string          `json:"status"`
+	Attempt         int             `json:"attempt,omitempty"`
+	MaxAttempts     int             `json:"max_attempts,omitempty"`
+	Summary         string          `json:"summary,omitempty"`
+	State           json.RawMessage `json:"state,omitempty"`
+	// PendingCallID / PendingToolName name the decision an input_required
+	// task waits on — the one thing a client cannot learn from run events when
+	// the pause has no run (a workflow step waiting to start).
+	PendingCallID   string `json:"pending_call_id,omitempty"`
+	PendingToolName string `json:"pending_tool_name,omitempty"`
+	// Dismissed is the row's hidden-from-the-strip flag, so a dismissal made
+	// in one window reaches the others.
+	Dismissed bool      `json:"dismissed,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Tracing events

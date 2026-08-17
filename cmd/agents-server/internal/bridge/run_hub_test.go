@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -70,6 +71,32 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if n := sink.count(); n != 3 {
 		t.Fatalf("unsubscribed sink still received events: %v", sink.gotTypes())
+	}
+
+	// A cursor AHEAD of the head — the client's number, after a restart
+	// recreated the stream, or simply wrong — is a timeline reset: the sink
+	// gets a run.gap that says where to resume (Next), never the empty item
+	// the reset rides on (this sink dereferences Env.Type, as the SSE handler
+	// does — a nil there would panic the hub's goroutine, past any recovery).
+	ahead := newAsyncSink()
+	if _, ok := h.SubscribeSeq("run1", 999, ahead.seq); !ok {
+		t.Fatal("ahead subscribe failed")
+	}
+	if !ahead.wait(t, 1) {
+		t.Fatal("a cursor past the head must be answered with a gap")
+	}
+	if got := ahead.gotTypes(); got[0] != protocol.EventRunGap {
+		t.Fatalf("ahead cursor got %v, want run.gap first", got)
+	}
+	var gapPayload protocol.RunGap
+	_ = json.Unmarshal(ahead.envs[0].Env.Payload, &gapPayload)
+	if gapPayload.LastGood != 0 || gapPayload.Next == 0 {
+		t.Fatalf("gap = %+v, want a reset (LastGood 0, Next set)", gapPayload)
+	}
+	// And the stream is live after it: the next publish arrives.
+	h.publish("run1", env("run.step"))
+	if !ahead.wait(t, 2) {
+		t.Fatalf("after the reset gap the live stream must continue, got %v", ahead.gotTypes())
 	}
 }
 

@@ -26,30 +26,14 @@ type AgentConfigHandler struct {
 	providers *store.ProviderStore
 }
 
-// NewAgentConfigHandler returns a handler backed by the given store.
-func NewAgentConfigHandler(s *store.AgentConfigStore) *AgentConfigHandler {
-	return &AgentConfigHandler{store: s}
-}
-
-// WithMcpStore attaches the MCP server store used to validate the MCP servers
-// referenced by an agent's tools field. It returns h for chaining.
-func (h *AgentConfigHandler) WithMcpStore(m *store.McpServerStore) *AgentConfigHandler {
-	h.mcpServers = m
-	return h
-}
-
-// WithProviders attaches the provider store used to validate an agent's
-// provider_id. It returns h for chaining.
-func (h *AgentConfigHandler) WithProviders(p *store.ProviderStore) *AgentConfigHandler {
-	h.providers = p
-	return h
-}
-
-// WithGuardrails attaches the guardrail resolver used to validate the guardrail
-// names referenced by an agent config. It returns h for chaining.
-func (h *AgentConfigHandler) WithGuardrails(g *bridge.GuardrailResolver) *AgentConfigHandler {
-	h.guardrails = g
-	return h
+// NewAgentConfigHandler returns a handler over the agent store and the three
+// stores its validation reads (the MCP servers, providers and guardrails a
+// config may name). Every one is required; a nil is a wiring error.
+func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServerStore, providers *store.ProviderStore, guardrails *bridge.GuardrailResolver) *AgentConfigHandler {
+	if s == nil || mcpServers == nil || providers == nil || guardrails == nil {
+		panic("handler: NewAgentConfigHandler needs every store")
+	}
+	return &AgentConfigHandler{store: s, mcpServers: mcpServers, providers: providers, guardrails: guardrails}
 }
 
 // validateAgentConfig checks an incoming Create/Update body against the
@@ -70,7 +54,7 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	}
 	// An agent naming a provider that does not exist would fail at run time
 	// with a confusing "provider not found" mid-stream; refuse at save.
-	if ac.ProviderID != "" && h.providers != nil {
+	if ac.ProviderID != "" {
 		if _, err := h.providers.Get(c.Request.Context(), ac.ProviderID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				badRequest(c, "provider_id names no provider")
@@ -92,11 +76,9 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, err.Error())
 		return false
 	}
-	if h.guardrails != nil {
-		if err := h.guardrails.ValidateNames(c.Request.Context(), ac.Guardrails.Guardrails); err != nil {
-			badRequest(c, err.Error())
-			return false
-		}
+	if err := h.guardrails.ValidateNames(c.Request.Context(), ac.Guardrails.Guardrails); err != nil {
+		badRequest(c, err.Error())
+		return false
 	}
 	return true
 }

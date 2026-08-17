@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zzir/agents-go/agents"
@@ -51,7 +52,7 @@ type spawnArgs struct {
 }
 
 type statusArgs struct {
-	TaskID      string `json:"task_id" jsonschema:"The id returned by spawn_task"`
+	TaskID      string `json:"task_id" jsonschema:"The id returned by spawn_task; empty lists every task of this conversation instead (newest first, summaries only)"`
 	WaitSeconds int    `json:"wait_seconds" jsonschema:"Block up to this many seconds for the task to finish before returning (0 = return immediately). Prefer one wait over repeated polling"`
 }
 
@@ -64,7 +65,11 @@ type retryArgs struct {
 	TaskID string `json:"task_id" jsonschema:"The id of the failed task to resume"`
 }
 
-// Tools returns spawn_task, task_status, task_retry and task_stop.
+// Tools returns spawn_task, task_status, task_retry and task_stop — SpawnTool
+// followed by TaskTools. A host with more kinds of background work than a
+// plain task (a job it starts by name) provides its own spawn tool from the
+// public parts (Spawn, ModelHasResult, ToolResult) and attaches TaskTools
+// beside it, so the model still sees ONE vocabulary: start, look, retry, stop.
 //
 // A task's own run must NOT be given these — that is what bounds recursion —
 // so a host attaching them should first ask MetaFor whether the session is a
@@ -73,11 +78,15 @@ type retryArgs struct {
 // sessionID resolves the parent session from the run context; nil uses
 // DefaultSessionID.
 func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
+	return append([]*agents.Tool{m.SpawnTool(sessionID)}, m.TaskTools(sessionID)...)
+}
+
+// SpawnTool is spawn_task alone: start a plain background task with an agent.
+func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
 	if sessionID == nil {
 		sessionID = DefaultSessionID
 	}
-
-	spawn := agents.NewTool("spawn_task",
+	return agents.NewTool("spawn_task",
 		"Start a background task: another agent works on the input while you continue. "+
 			"Returns a task_id immediately. When the task finishes you are notified automatically in a later turn — "+
 			"after spawning, finish your reply and END YOUR TURN instead of polling. "+
@@ -105,16 +114,36 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			// A task that finished before this call returned carries its result
 			// in the tool output below, so the model has it — waking later to
 			// repeat it would burn a turn. A no-op for the ordinary
-			// still-running case; see modelHasResult.
-			m.modelHasResult(ctx, info)
-			return taskResult(info), nil
+			// still-running case; see ModelHasResult.
+			m.ModelHasResult(ctx, info)
+			return m.toolResult(info), nil
 		})
+}
+
+// TaskTools are the three tools that name an existing task: task_status,
+// task_retry and task_stop.
+func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
+	if sessionID == nil {
+		sessionID = DefaultSessionID
+	}
 
 	status := agents.NewTool("task_status",
 		"Check a background task started with spawn_task. Statuses: working, input_required (waiting for a human approval), completed, failed, cancelled. "+
 			"For finished tasks the result field carries the FULL final output — the wake-up notification only shows a truncated summary. "+
-			"Set wait_seconds for one bounded wait instead of calling this in a loop.",
+			"Set wait_seconds for one bounded wait instead of calling this in a loop. "+
+			"With no task_id it lists this conversation's tasks — the way back to an id you no longer have.",
 		func(ctx context.Context, tc *agents.ToolContext, args statusArgs) (agents.ToolResult, error) {
+			if args.TaskID == "" {
+				parent := sessionID(tc.RunContext)
+				if parent == "" {
+					return agents.ToolResult{}, fmt.Errorf("task_status: no session in the run context")
+				}
+				infos, err := m.List(ctx, parent)
+				if err != nil {
+					return agents.ToolResult{}, err
+				}
+				return agents.TextResult(m.describeList(infos)), nil
+			}
 			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
 				return agents.ToolResult{}, err
 			}
@@ -122,7 +151,7 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 			if err != nil {
 				return agents.ToolResult{}, err
 			}
-			return taskResult(info), nil
+			return m.toolResult(info), nil
 		})
 
 	retry := agents.NewTool("task_retry",
@@ -144,13 +173,13 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 				// A refusal, a lost race or a launch that never started: the
 				// task's state travels with the error, so the model can decide.
 				// Reporting it also settles the wake-up debt, as a success would.
-				m.modelHasResult(ctx, info)
-				return refusalResult(info, err), nil
+				m.ModelHasResult(ctx, info)
+				return m.refusalResult(info, err), nil
 			}
 			// As with spawn_task: an attempt that finished this fast reports
 			// its result here, so nothing is owed.
-			m.modelHasResult(ctx, info)
-			return taskResult(info), nil
+			m.ModelHasResult(ctx, info)
+			return m.toolResult(info), nil
 		})
 
 	stop := agents.NewTool("task_stop",
@@ -166,31 +195,48 @@ func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 				// it might retry.
 				var final ErrAlreadyFinal
 				if info != nil && errors.As(err, &final) {
-					r := taskResult(info)
+					r := m.toolResult(info)
 					r.IsError = true
 					return r, nil
 				}
 				return agents.ToolResult{}, err
 			}
-			return taskResult(info), nil
+			return m.toolResult(info), nil
 		})
 
-	return []*agents.Tool{spawn, status, retry, stop}
+	return []*agents.Tool{status, retry, stop}
 }
 
-// taskResult splits what the model reads (Content, the state in words) from
-// what a UI renders (Details, the card's data).
-func taskResult(info *Info) agents.ToolResult {
-	return agents.TextResult(describe(info)).
+// ToolResult renders a task for a tool output: what the model reads (Content,
+// the state in words) apart from what a UI renders (Details, the card's data).
+// progress is the host's one line on where the job stands (Progress), or "".
+// Exported for a host tool that starts a task of its own kind and wants the
+// same card.
+func ToolResult(info *Info, progress string) agents.ToolResult {
+	return agents.TextResult(describe(info, progress)).
 		WithDisplay("task").
 		WithDetails(taskDetails(info))
 }
 
-// refusalResult is a taskResult whose text leads with why the call was refused —
+// Progress is the host's line on where a job stands (Config.DescribeState),
+// or "" — what ToolResult takes beside the Info.
+func (m *Manager) Progress(info *Info) string {
+	if m.cfg.DescribeState == nil || info == nil || info.Kind == "" {
+		return ""
+	}
+	return m.cfg.DescribeState(info.Kind, info.State)
+}
+
+// toolResult is ToolResult with the host's progress line filled in.
+func (m *Manager) toolResult(info *Info) agents.ToolResult {
+	return ToolResult(info, m.Progress(info))
+}
+
+// refusalResult is a ToolResult whose text leads with why the call was refused —
 // the state alone does not explain a refusal the way "already completed" does
 // for task_stop.
-func refusalResult(info *Info, err error) agents.ToolResult {
-	r := agents.TextResult(err.Error() + "\n" + describe(info)).
+func (m *Manager) refusalResult(info *Info, err error) agents.ToolResult {
+	r := agents.TextResult(err.Error() + "\n" + describe(info, m.Progress(info))).
 		WithDisplay("task").
 		WithDetails(taskDetails(info))
 	r.IsError = true
@@ -208,7 +254,43 @@ func taskDetails(info *Info) map[string]any {
 	}
 }
 
-func describe(info *Info) string {
+// describeList is the listing: one line per task, summaries only, the host's
+// progress line where it has one. Reading it consumes no wake-up debt —
+// nothing here is the full result — so the finish of a task seen in it is
+// still delivered. A live task says so, and says what NOT to do: an agent
+// with no way to look concluded a task produced nothing and did the work
+// over.
+func (m *Manager) describeList(infos []*Info) string {
+	if len(infos) == 0 {
+		return "no tasks in this conversation"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d task(s), newest first (task_status with the id fetches a full result):", len(infos))
+	for _, info := range infos {
+		fmt.Fprintf(&b, "\n- %s: %s", info.TaskID, info.Status)
+		if info.Kind != "" {
+			b.WriteString(" · " + info.Kind)
+		}
+		if info.Label != "" {
+			b.WriteString(" · " + info.Label)
+		}
+		if info.Attempt > 1 {
+			fmt.Fprintf(&b, " · attempt %d", info.Attempt)
+		}
+		if p := m.Progress(info); p != "" {
+			b.WriteString(" · " + p)
+		}
+		if info.Summary != "" {
+			b.WriteString(" — " + truncateRunes(info.Summary, m.cfg.SummaryLimit))
+		}
+		if !info.Status.Terminal() {
+			b.WriteString(" (still working — do not redo its work; you will be told when it finishes)")
+		}
+	}
+	return b.String()
+}
+
+func describe(info *Info, progress string) string {
 	out := fmt.Sprintf("task_id: %s\nstatus: %s", info.TaskID, info.Status)
 	// Only past the first attempt — on every task the line is noise the model
 	// learns to ignore.
@@ -218,8 +300,14 @@ func describe(info *Info) string {
 	if info.Label != "" {
 		out += "\nlabel: " + info.Label
 	}
+	if info.Kind != "" {
+		out += "\nkind: " + info.Kind
+	}
 	if info.Agent != "" {
 		out += "\nagent: " + info.Agent
+	}
+	if progress != "" {
+		out += "\nprogress: " + progress
 	}
 	// The full result on a finished task, not the summary: this is the call
 	// that fetches it.

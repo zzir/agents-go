@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sync"
@@ -32,12 +33,15 @@ type Store interface {
 	// attempt is no longer the current one; the caller must do nothing further.
 	// The runID predicate is what RetryClaim costs — without it, a stop that
 	// read the row before a retry would cancel the new attempt while its run
-	// keeps executing.
+	// keeps executing. state, when non-nil, is the job's final State,
+	// written in the same transition — a job of several runs records how its
+	// last run ended (Continuation.State on an ending); nil leaves State as
+	// it is.
 	//
 	// Delivery is the HOST's, not the Store's: a host owing a durable
 	// notification writes that debt atomically with this transition itself —
 	// see spec "What a durable host owes on top of the reports".
-	Finalize(ctx context.Context, id, runID string, st Status, summary, result string) (won bool, err error)
+	Finalize(ctx context.Context, id, runID string, st Status, summary, result string, state json.RawMessage) (won bool, err error)
 
 	// RetryClaim reopens a failed task for another attempt, in one atomic
 	// transition and only while the task is failed and under maxAttempts
@@ -51,6 +55,16 @@ type Store interface {
 	// of attempts, or another retry won the race. A task that does not exist is
 	// ErrNotFound — a different answer, not to be collapsed into won=false.
 	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
+
+	// Advance moves a working task on to its next run in one atomic transition,
+	// only while runID is the current one: run_id becomes nextRunID and State is
+	// replaced by state (nil leaves State as it is — the rule Finalize follows
+	// too). Attempt is untouched — a continuation is not a retry. nextRunID may
+	// equal runID, which rewrites State under the current run.
+	//
+	// won=false means another writer moved the task first (a stop, a sweep, a
+	// retry) and its state stands. An unknown id is ErrNotFound.
+	Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (won bool, err error)
 
 	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status
 	// back to failed, the attempt count back down, and the launch failure
@@ -160,7 +174,7 @@ func (s *InMemoryStore) ListByParent(_ context.Context, parentSessionID string) 
 
 // Finalize implements Store. The whole transition happens under one lock, so a
 // reader can never see a terminal task whose result has not landed.
-func (s *InMemoryStore) Finalize(_ context.Context, id, runID string, st Status, summary, result string) (bool, error) {
+func (s *InMemoryStore) Finalize(_ context.Context, id, runID string, st Status, summary, result string, state json.RawMessage) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.tasks[id]
@@ -176,6 +190,9 @@ func (s *InMemoryStore) Finalize(_ context.Context, id, runID string, st Status,
 	}
 	if result != "" {
 		t.Result = result
+	}
+	if state != nil {
+		t.State = append(json.RawMessage(nil), state...)
 	}
 	t.UpdatedAt = time.Now().UTC()
 	return true, nil
@@ -198,6 +215,25 @@ func (s *InMemoryStore) RetryClaim(_ context.Context, id, newRunID string, maxAt
 	// The previous attempt's account, cleared: it describes a run that is no
 	// longer this task's.
 	t.Summary, t.Result = "", ""
+	t.UpdatedAt = time.Now().UTC()
+	return true, nil
+}
+
+// Advance implements Store.
+func (s *InMemoryStore) Advance(_ context.Context, id, runID, nextRunID string, state json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if t.Status != StatusWorking || t.RunID != runID {
+		return false, nil
+	}
+	t.RunID = nextRunID
+	if state != nil {
+		t.State = slices.Clone(state)
+	}
 	t.UpdatedAt = time.Now().UTC()
 	return true, nil
 }

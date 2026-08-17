@@ -24,7 +24,7 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), false)
+	h := testSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), t.TempDir())
 	engine := gin.New()
 	engine.PUT("/sandboxes/:id", h.Update)
 
@@ -76,7 +76,7 @@ func TestSandboxUpdate_StaleClientRevisionConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), false)
+	h := testSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), t.TempDir())
 	engine := gin.New()
 	engine.PUT("/sandboxes/:id", h.Update)
 

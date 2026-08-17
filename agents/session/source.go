@@ -21,6 +21,9 @@ const (
 	SourceCompaction SourceType = "compaction"
 	// SourceGuardrail is content substituted by a guardrail's Replace decision.
 	SourceGuardrail SourceType = "guardrail"
+	// SourceHost is a note the embedding application wrote onto the session
+	// for people — an annotation, never model input. ID names the note.
+	SourceHost SourceType = "host"
 )
 
 // Source records an item's provenance.

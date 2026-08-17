@@ -50,6 +50,30 @@ type SessionCompactor interface {
 	CompactSession(ctx context.Context, sessionID string) (compacted bool, beforeItems, afterItems int, err error)
 }
 
+// SessionDeps is what a SessionHandler runs on. Every field is required —
+// a handler missing one would serve half its routes (a delete that stops no
+// runs, a Context report with no profile), and only the wiring in cmd could
+// tell — so NewSessionHandler refuses a nil.
+type SessionDeps struct {
+	Sessions *store.SessionStore
+	Entries  *store.EntryStore
+	Traces   *store.TraceStore
+	Agents   *store.AgentConfigStore
+	// Profiles, MCP and MCPServers are what the Context report needs beyond
+	// the session's own entries: the per-session build snapshot, a way to ask
+	// a connected MCP server what it currently exposes, and the server store —
+	// which is what resolves a NAME for a disconnected or disabled server (the
+	// manager never holds those, and their bucket would otherwise be labelled
+	// by raw id).
+	Profiles   *store.ContextProfileStore
+	MCP        MCPToolLister
+	MCPServers *store.McpServerStore
+	// Stopper stops the session tree before a delete's cascade; Compactor is
+	// the manual compaction pass. Both the bridge Runner.
+	Stopper   RunStopper
+	Compactor SessionCompactor
+}
+
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
 type SessionHandler struct {
 	sessions   *store.SessionStore
@@ -63,34 +87,21 @@ type SessionHandler struct {
 	compactor  SessionCompactor
 }
 
-// NewSessionHandler returns a handler backed by the session, message, trace,
-// and agent-config stores.
-func NewSessionHandler(sessions *store.SessionStore, entries *store.EntryStore, traces *store.TraceStore, agents *store.AgentConfigStore) *SessionHandler {
-	return &SessionHandler{sessions: sessions, entries: entries, traces: traces, agents: agents}
-}
-
-// WithContextProfiles wires what the Context report needs beyond the session's
-// own entries: the per-session build snapshot, a way to ask a connected MCP
-// server what it currently exposes, and the server store — which is what
-// resolves a NAME for a disconnected or disabled server (the manager never
-// holds those, and their bucket would otherwise be labelled by raw id).
-func (h *SessionHandler) WithContextProfiles(profiles *store.ContextProfileStore, mcp MCPToolLister, mcpServers *store.McpServerStore) *SessionHandler {
-	h.profiles = profiles
-	h.mcp = mcp
-	h.mcpServers = mcpServers
-	return h
-}
-
-// WithRunStopper wires the runner so deletes stop the session tree first.
-func (h *SessionHandler) WithRunStopper(s RunStopper) *SessionHandler {
-	h.stopper = s
-	return h
-}
-
-// WithCompactor wires the runner's manual compaction pass.
-func (h *SessionHandler) WithCompactor(compactor SessionCompactor) *SessionHandler {
-	h.compactor = compactor
-	return h
+// NewSessionHandler returns a handler over d. It panics on a missing
+// dependency: that is a wiring error, not a runtime condition.
+func NewSessionHandler(d SessionDeps) *SessionHandler {
+	switch {
+	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
+		d.Profiles == nil, d.MCPServers == nil:
+		panic("handler: SessionDeps has a nil store")
+	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil:
+		panic("handler: SessionDeps has a nil MCP lister, stopper or compactor")
+	}
+	return &SessionHandler{
+		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
+		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers,
+		stopper: d.Stopper, compactor: d.Compactor,
+	}
 }
 
 // List responds with all sessions.
@@ -136,7 +147,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	req.Name = cmp.Or(req.Name, "New Session")
+	req.Name = cmp.Or(req.Name, store.DefaultSessionName)
 	ctx := c.Request.Context()
 	if req.AgentConfigID != "" {
 		if _, err := h.agents.Get(ctx, req.AgentConfigID); err != nil {
@@ -251,19 +262,15 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	// Stop the session's live run and all its background tasks (bounded wait)
 	// BEFORE the cascade: a task still executing would keep writing entries
 	// and traces into rows this delete is about to remove.
-	if h.stopper != nil {
-		h.stopper.StopSessionTree(id)
-	}
+	h.stopper.StopSessionTree(id)
 	if err := h.sessions.Delete(c.Request.Context(), id); err != nil {
-		if h.stopper != nil {
-			h.stopper.AbortSessionDelete(id)
-		}
+		h.stopper.AbortSessionDelete(id)
 		storeError(c, err)
 		return
 	}
 	// After the cascade: the reference count the release consults no longer
 	// includes this session (or its cascade-deleted task children).
-	if h.stopper != nil && boundSandbox != "" {
+	if boundSandbox != "" {
 		h.stopper.ReleaseSessionBinding(boundSandbox, boundWorkDir)
 	}
 	c.Status(http.StatusNoContent)
@@ -433,13 +440,11 @@ func (h *SessionHandler) Context(c *gin.Context) {
 	}
 	// What the last run put in front of the conversation. Absent until a run
 	// has built the agent once — nothing else knows what a build assembled.
-	if h.profiles != nil {
-		if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("context report: prompt profile unreadable")
-		} else if prof != nil {
-			prof.Tools = append(prof.Tools, h.mcpBuckets(ctx, prof.MCPServerIDs)...)
-			rep.Prompt = prof
-		}
+	if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("context report: prompt profile unreadable")
+	} else if prof != nil {
+		prof.Tools = append(prof.Tools, h.mcpBuckets(ctx, prof.MCPServerIDs)...)
+		rep.Prompt = prof
 	}
 	c.JSON(http.StatusOK, rep)
 }
@@ -468,10 +473,6 @@ type CompactResponse struct {
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/compact [post]
 func (h *SessionHandler) Compact(c *gin.Context) {
-	if h.compactor == nil {
-		internalError(c, errors.New("compaction is not wired"))
-		return
-	}
 	compacted, before, after, err := h.compactor.CompactSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
@@ -500,7 +501,7 @@ const contextMCPTimeout = 2 * time.Second
 // The servers are asked CONCURRENTLY: sequentially, three slow ones would spend
 // the whole budget one after another and the panel would wait for the sum.
 func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.ToolBucket {
-	if h.mcp == nil || len(ids) == 0 {
+	if len(ids) == 0 {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, contextMCPTimeout)
@@ -535,9 +536,6 @@ func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.T
 // mcpServerName reads a server's configured name off its row; empty when the
 // row is gone (a build snapshot can outlive the server it named).
 func (h *SessionHandler) mcpServerName(ctx context.Context, id string) string {
-	if h.mcpServers == nil {
-		return ""
-	}
 	srv, err := h.mcpServers.Get(ctx, id)
 	if err != nil {
 		return ""

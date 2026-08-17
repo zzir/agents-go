@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -17,7 +18,7 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	st := store.NewAgentConfigStore(db)
-	h := NewAgentConfigHandler(st)
+	h := NewAgentConfigHandler(st, store.NewMcpServerStore(db), store.NewProviderStore(db), bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
 
 	engine := gin.New()
 	engine.POST("/agents", h.Create)

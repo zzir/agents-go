@@ -675,7 +675,7 @@ func roleOf(e session.Entry) string {
 		return "handoff"
 	case agents.SourceCompaction:
 		return "compaction"
-	case agents.SourceErrorHandler, agents.SourceGuardrail:
+	case agents.SourceErrorHandler, agents.SourceGuardrail, agents.SourceHost:
 		return "system"
 	case agents.SourceModel:
 		// The zero source: the model's own output. savePartialTurn puts a failed
@@ -790,6 +790,36 @@ func (s *EntryStore) AppendAnnotation(ctx context.Context, ref session.Ref, runI
 	return store.Append(ctx, session.NewAnnotationEntry(
 		agents.ItemDisplay{Kind: agents.DisplayError, Text: text},
 		agents.Source{Type: agents.SourceErrorHandler},
+	))
+}
+
+// AppendWorkflowStarted leaves the note of a person's or a trigger's workflow
+// start on the session: an annotation (people only), with the data a
+// renderer pairs the result's wake-up run to.
+func (s *EntryStore) AppendWorkflowStarted(ctx context.Context, ref session.Ref, ws WorkflowStarted) error {
+	return s.appendHostNote(ctx, ref, DisplayWorkflowStarted, ws.Text(), ws)
+}
+
+// AppendTriggerFired leaves the note of a trigger's agent turn on the
+// session, before the message the turn sends: an annotation (people only).
+func (s *EntryStore) AppendTriggerFired(ctx context.Context, ref session.Ref, tf TriggerFired) error {
+	return s.appendHostNote(ctx, ref, DisplayTriggerFired, tf.Text(), tf)
+}
+
+// appendHostNote writes a host annotation whose display extra is data's JSON
+// object; text is the line a renderer that knows no better shows.
+func (s *EntryStore) appendHostNote(ctx context.Context, ref session.Ref, kind, text string, data any) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encoding the %s note: %w", kind, err)
+	}
+	var extra map[string]any
+	if err := json.Unmarshal(raw, &extra); err != nil {
+		return fmt.Errorf("encoding the %s note: %w", kind, err)
+	}
+	return s.forRef(ref).Append(ctx, session.NewAnnotationEntry(
+		agents.ItemDisplay{Kind: kind, Text: text, Extra: extra},
+		agents.Source{Type: agents.SourceHost, ID: kind},
 	))
 }
 

@@ -118,6 +118,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 	}
 	return &TaskMeta{
 		TaskID:          task.ID,
+		Kind:            task.Kind,
 		ParentSessionID: task.ParentSessionID,
 		ParentRunID:     task.ParentRunID,
 		ToolCallID:      task.ToolCallID,
@@ -165,6 +166,22 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_retry: tasks are not configured")
 	}
+	// A workflow at a bound is refused HERE, before the claim: the launcher
+	// would refuse it too, but only after RetryClaim — and its release then
+	// owes the parent a wake-up (a run) to say so. Measured as the launcher
+	// measures it: every bound, tokens included, whether or not the last
+	// ending recorded one.
+	if row, err := r.Deps.Tasks.Get(r.hub.rootCtx, taskID); err == nil && row.Kind == store.TaskKindWorkflow {
+		if st, derr := store.DecodeWorkflowState(row.State); derr == nil {
+			tokens, terr := r.executionTokens(r.hub.rootCtx, st, row.ChildSessionID)
+			if terr != nil {
+				return nil, fmt.Errorf("retrying task: %w", terr)
+			}
+			if err := st.StopIfBounded(tokens); err != nil {
+				return nil, fmt.Errorf("retrying task: %w", err)
+			}
+		}
+	}
 	info, err := r.tasks.Retry(r.hub.rootCtx, taskID)
 	if err != nil {
 		return nil, err
@@ -184,14 +201,14 @@ func (r *Runner) MaxTaskAttempts() int {
 }
 
 // postRun runs after every run segment terminates. It hands the outcome to the
-// task manager, which advances a task's state or — for an ordinary chat session
-// — drains the wake-ups that queued while it was busy.
+// task manager, which advances a task's state — a workflow's next step
+// included: it is driven from HERE rather than from the callback of the run
+// that started it, because an approval resume passes no callback and the
+// sequence would be lost at the first paused step (README invariant 29) — or,
+// for an ordinary chat session, drains the wake-ups that queued while it was
+// busy.
 func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	ctx := r.hub.rootCtx
-	// A workflow's next step is driven from HERE rather than from the callback
-	// of the run that started it: an approval resume passes no callback, so the
-	// sequence would be lost at the first paused step.
-	r.advanceWorkflow(ctx, runID, result)
 	// Any run ending is a session becoming free, which is when a debt owed to
 	// it can finally be paid.
 	(Waker{r}).Drain(ctx, sessionID)
@@ -244,8 +261,9 @@ func (r *Runner) Shutdown(ctx context.Context) { r.hub.Shutdown(ctx) }
 func (r *Runner) AbortSessionDelete(sessionID string) { r.hub.unmarkSessionDeleting(sessionID) }
 
 // StopSessionTree cancels the session's live run and every non-terminal task it
-// spawned, then waits (bounded) for their goroutines to finish — postRun
-// included — so the delete cascade that follows cannot race a write.
+// spawned — workflow executions are tasks, so their steps are stopped here too
+// — then waits (bounded) for their goroutines to finish, postRun included, so
+// the delete cascade that follows cannot race a write.
 //
 // The teardown marker goes down FIRST: a task's drain could otherwise start a
 // notification run on the session while it is being deleted, and that run would
@@ -287,33 +305,6 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		cancelStop()
 		if err != nil {
 			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("stopping session tasks")
-		}
-	}
-	// Running workflows are the other background work a delete must stop: their
-	// steps execute on a hidden child session, so the parent-run cancel above
-	// never touched them, and the cascade would otherwise remove the rows while
-	// a step kept running tools and causing external side effects.
-	if r.Deps.WorkflowRuns != nil {
-		runs, err := r.Deps.WorkflowRuns.ListBySession(ctx, sessionID)
-		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("listing workflows for session stop")
-		}
-		for i := range runs {
-			if runs[i].Status != store.WorkflowRunning {
-				continue
-			}
-			// Wait on the run StopWorkflow ACTUALLY cancelled (its return value),
-			// not the snapshot's: the execution may have advanced from run1 to
-			// run2 between the list read and the stop, and run1's goroutine is
-			// already gone while run2 is the one now being torn down.
-			after, serr := r.StopWorkflow(runs[i].ID)
-			if serr != nil {
-				zerolog.Ctx(ctx).Warn().Err(serr).Str("workflow_run_id", runs[i].ID).Msg("stopping a session's workflow")
-				continue
-			}
-			if after != nil && after.RunID != "" {
-				waits = append(waits, after.RunID)
-			}
 		}
 	}
 	for _, rid := range waits {

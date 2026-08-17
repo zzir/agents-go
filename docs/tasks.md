@@ -19,7 +19,10 @@ parent run
 deliberately does not know is your environment — how runs start and stop, and
 when (or whether) a parent may be interrupted with a result. The first arrives
 through injected functions; the second is entirely yours: the Manager REPORTS
-endings, it does not deliver them.
+endings, it does not deliver them. A task is also the one shape of background
+work: a job of SEVERAL runs — a fixed step sequence, a loop until a check
+passes — is a task too, its runs chained by the `Continue` hook (below), so
+stop, retry, the restart sweep and the cap are written once.
 
 ## Wiring
 
@@ -28,7 +31,7 @@ import "github.com/zzir/agents-go/agents/tasks"
 
 mgr := tasks.New(tasks.Config{
 	Store:    tasks.NewInMemoryStore(),   // or sessions.NewTaskStore(db)
-	Sessions: repo,                       // an session.Repo
+	Sessions: repo,                       // a session.Repo — see "Deleting a session" for what its Delete owes
 	Resolver: func(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
 		cfg := lookUpAgent(name)
 		return tasks.Spec{DisplayName: cfg.Name, Inherit: cfg.Snapshot()}, nil
@@ -61,7 +64,7 @@ Then call the Manager at three moments:
 ```go
 mgr.Recover(ctx)                          // at startup, BEFORE serving requests
 mgr.OnRunFinished(ctx, sessionID, out)    // when a task's run ends
-mgr.StopTree(ctx, sessionID)              // before deleting a session
+mgr.StopTree(ctx, sessionID)              // before deleting a session — then delete the tree, see below
 ```
 
 `Recover` fails every task recorded as working — a task run does not survive
@@ -82,7 +85,7 @@ attempt rather than being overwritten by the old one's outcome.
 | `Stopper` | "Cancel this run" — see below |
 | `OnFinished` | Report: a terminal state was claimed; the parent has not heard |
 | `OnResultDelivered` | Report: the model pulled this result in-turn |
-| `ExtraLiveCount` | The host's OWN background work, counted against the same per-parent cap |
+| `Continue` | "Does this run's ending end the task, or is there a next run?" — see below |
 
 A `Stopper` reports **what it did**, not just whether it errored.
 `StopAfterTurn` (still going, will record its own ending — only a graceful stop
@@ -102,12 +105,79 @@ finalize's own values, not a re-read. By the time the hook runs, a retry may
 already have moved the row past this attempt, and a hook that re-read would see
 a working task with the failure cleared.
 
+## Jobs of several runs
+
+A task's work may span runs in sequence. Three fields on the task are the
+host's own and opaque to the SDK: `Kind` names what sort of job it is,
+`State` is where the job stands, and both are set at spawn
+(`SpawnRequest.Kind`/`State`) and handed to the `Launcher` with every run
+(`LaunchRequest.TaskID`/`Kind`/`State`). `Config.Continue` is asked when a
+run of the CURRENT attempt completes or fails — never when it is cancelled: a
+person's stop ends the task whatever the host would do next:
+
+```go
+Continue: func(ctx context.Context, t *tasks.Task, out tasks.RunOutcome) (*tasks.Continuation, error) {
+	if t.Kind != "sequence" {
+		return nil, nil                    // an ordinary task: its run's ending is its own
+	}
+	seq := decode(t.State)
+	next, ok := seq.After(out)             // the host's rule — edges, a check, a counter
+	if !ok {
+		return nil, nil                    // ends with the run's outcome
+	}
+	if seq.Launches >= 50 {
+		return nil, errors.New("looping")  // ends FAILED, with this reason
+	}
+	return &tasks.Continuation{Input: next.Prompt, State: seq.With(next).Encode()}, nil
+},
+```
+
+A `Continuation` WITHOUT an `Input` is an ending: the task ends — with the
+run's own outcome, or failed with `Err` — and `State` is written in the same
+`Finalize` as the ending (`Store.Finalize` takes it), so how the last run
+ended is in the record and cannot disagree with the status. Returning `nil`
+ends the task with `State` untouched.
+
+The chain has a ceiling of its own: `Config.MaxContinuations` (default 50)
+is how many further runs the hook may chain under one task since the spawn
+or the last retry. A hook still asking for another run at the bound ends the
+task failed — a loop no check ever ends stops costing runs — so the counter
+in the example above is the host's own bound, not the only one.
+
+A `Continuation` moves the task on: the Manager claims the transition with
+`Store.Advance` — run id and State replaced together (a nil State keeps the
+recorded one), only while the task is working on the run that just ended —
+then launches the next run and reconciles with a stop that raced it, exactly
+as a spawn does. The hook is only asked when the outcome names its run and
+the row is still working on it: an outcome without a run id finalizes the
+attempt the row names and never advances it, and a row paused for an
+approval is finalized with the ending, not advanced. The attempt count is
+untouched: a continuation is not a retry. A launch that fails ends the task
+failed and reports it, the same as a retry whose run never started — and so
+does a transition that cannot be written or that is not won (the row is
+finalized on the run that just ended, never left working on it; `Finalize`'s
+own predicate yields to whoever moved the row first). At the continuation
+ceiling the task ends failed with the State it had, not the one the hook
+returned. `Advance`
+with the same run id on both sides rewrites State in place, which is how a
+launcher records what it learns at launch (the run it is about to start) under
+the CAS rather than beside it.
+
+What the host gets from this: one lifecycle for every kind of background work.
+Stop chases the current run; retry re-launches the current State — the launch
+is marked `LaunchRequest.Retry`, its `Input` the retry prompt (why the last
+attempt failed, resume from the progress made), and a job whose stage carries
+its own instruction re-issues that instruction with it rather than leaving the
+model to infer it from the transcript; the restart sweep fails the row at the
+step it reached; `task_status` and the wake-up report the task, not its runs. `Task.Kind` is on `Info` and in `task_status`'s
+output, so a model can tell one job from another; the SDK never branches on it.
+
 ## The tools
 
 | | |
 |---|---|
 | `spawn_task` | Start a task; returns a `task_id` immediately |
-| `task_status` | Read one, optionally waiting for it to finish |
+| `task_status` | Read one, optionally waiting for it to finish; with no id, list the conversation's tasks |
 | `task_retry` | Resume a FAILED one from where it stopped |
 | `task_stop` | Cancel one |
 
@@ -123,7 +193,24 @@ the failure in front of it, that the work is worth resuming.
 `task_status(wait_seconds:)` blocks server-side for up to `MaxStatusWait`
 (default 120s). It is one blocked goroutine instead of the model's polling loop,
 which is a real token saving. For a finished task it returns the **full** result;
-the notification only carried a summary.
+the notification only carried a summary. Called with an empty `task_id` it
+lists the conversation's tasks instead — newest first, status and summary per
+line, each live one flagged "still working — do not redo its work" — which is
+the way back to an id a compaction dropped; a listing settles no wake-up debt,
+so a finish seen in it is still delivered. A host with jobs of its own kinds
+says where one stands through `Config.DescribeState(kind, state) string` —
+"step 2/3 (verify)" — and `task_status` shows it as `progress:` beside the
+status, in the listing too; the SDK never reads `State` itself.
+
+Four verbs are the whole surface, and a host keeps it that way even when it has
+more kinds of background work than a plain task: `Manager.Tools` is
+`SpawnTool` (spawn_task) followed by `TaskTools` (status, retry, stop), so a
+host that starts jobs by name provides its OWN spawn tool from the public parts
+— `Manager.Spawn`, `Manager.ModelHasResult` (settle the wake-up debt of a job
+that finished before its tool call returned), `tasks.ToolResult` (the same
+card) — and attaches `TaskTools` beside it. One vocabulary for the model:
+start, look, retry, stop; what kind of thing was started is a parameter of the
+first, not a fifth tool.
 
 A task's own run must not get these tools — that is what bounds recursion. Ask
 `MetaFor` before attaching them:
@@ -160,11 +247,14 @@ parent reads:
 [task-notification] Task "index the docs" (a1b2) completed. Result: indexed 412 files… [truncated — call task_status(a1b2) for the full result]
 Task "check links" (c3d4) failed. Result: 3 dead links
 (task_retry can resume a failed task from where it stopped)
+(Tell the person what happened. The work above is done — do not repeat or re-check it unless they ask.)
 ```
 
-The hint appears when the batch contains a failed task, on a **line of its
-own**: a task line is a record consumers parse, and text appended inside one
-would be read as part of that task's result. Inject it as a **user-role
+The retry hint appears when the batch contains a failed task, and the closing
+guidance always, each on a **line of its own**: a task line is a record
+consumers parse, and text appended inside one would be read as part of that
+task's result. The guidance is there because a diligent model otherwise
+re-runs the finished work before reporting it. Inject it as a **user-role
 entry**: the model reads it verbatim, which is the point — it is news the model
 has to act on. A UI should detect the `tasks.NotificationPrefix` and render the
 message as a notification card rather than a user bubble. Carry the
@@ -218,8 +308,8 @@ result discarded.
 
 **A retry takes a concurrency slot**, like a spawn: it is a task coming back to
 life, and exempting it would make retry the way around
-`MaxConcurrentPerParent` (`ExtraLiveCount` adds the host's other background
-work to the same cap). If its run fails to start, the task goes back to failed
+`MaxConcurrentPerParent` — one cap over every kind of task, which is why a
+host's other background work is a task kind rather than a count of its own. If its run fails to start, the task goes back to failed
 and the ending follows the model-path rule: the `task_retry` tool reports the
 failure in its result (delivered in hand), while a retry over a host API told
 only a person — the model still has to hear it, so `OnFinished` fires.
@@ -241,6 +331,34 @@ would otherwise kill the rollback halfway and leave a child session nothing owns
 **`input_required` is not terminal.** A task waiting on a human is still in
 flight; delivering a notification for it would announce something that has not
 happened.
+
+**A continuation is a run-bound CAS with state.** `Store.Advance` moves a task
+to its next run only while it is working on the run the hook was asked about,
+and the new State lands in the same write — so a stop, a sweep or a retry that
+got there first wins, and a crash can never leave a task pointing at a run
+whose state it does not have. Only completed and failed runs are asked about;
+a cancellation ends the task.
+
+## Deleting a session
+
+`StopTree` stops the tasks; it does not delete anything, and neither does the
+Manager. What must go with a deleted parent is the whole tree: its task rows
+(a surviving one owes a wake-up to a conversation that no longer exists,
+retried at every restart) and the hidden sessions its tasks ran in (a hidden
+session has no listing of its own — anything left behind is unreachable
+forever). **That cascade belongs to the `session.Repo` you pass, on `Delete`**,
+and only a repo that holds both tables can do it:
+
+| Repo | On `Delete` of a parent |
+|---|---|
+| `sessions.NewRepo(db)` (SQL) | Removes the session, its entries, its task rows in both roles, and every hidden session in the task tree, at any depth — one transaction |
+| `filesession.NewRepo(dir)` | Removes the session and its entries only. It has no task table to look in, so with `sessions.NewTaskStore(db)` beside it the rows and the child sessions are yours to remove: `StopTree`, then `ListByParent` and delete each child, then the rows |
+| `session.NewInMemoryRepo()` | Same as filesession — tests only |
+
+The generation columns on the SQL task store are the second line, not the
+first: a task row that survives a delete some other way is inert (it lists
+nowhere, owes nothing, resolves no run), but it still exists. The cascade is
+what stops it existing.
 
 ## Updating the card after the fact
 

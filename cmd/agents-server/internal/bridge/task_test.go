@@ -151,7 +151,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	// transaction as the terminal state — no window where the task is done but
 	// its parent is owed nothing.
 	adapter := store.NewTaskAdapter(tasks)
-	if won, err := adapter.Finalize(ctx, task.ID, task.RunID, sdktasks.StatusCompleted, "all green", ""); err != nil || !won {
+	if won, err := adapter.Finalize(ctx, task.ID, task.RunID, sdktasks.StatusCompleted, "all green", "", nil); err != nil || !won {
 		t.Fatalf("Finalize won=%v err=%v", won, err)
 	}
 	// Busy parent: the debt stays pending — draining refuses while a run holds

@@ -17,12 +17,10 @@ const (
 	WakeCancelled = "cancelled"
 )
 
-// The two sources of a wake-up debt. They name what owes the turn; a source
-// cancels its own debt by (kind, source_id) when the result was already seen.
-const (
-	WakeKindTask     = "task"
-	WakeKindWorkflow = "workflow"
-)
+// WakeKindTask is the one source of a wake-up debt: a task, of any kind. Kind
+// and SourceID name what owes the turn, so a source can cancel its own debt
+// when the result was already seen.
+const WakeKindTask = "task"
 
 // Wakeup is one debt: a session is owed a turn carrying Payload. The debt is a
 // ROW, drained when the session can take it, rather than a call that has to
@@ -33,8 +31,8 @@ type Wakeup struct {
 	ID string `bun:"id,pk" json:"id"`
 	// SessionID is who is owed the turn.
 	SessionID string `bun:"session_id,notnull" json:"session_id"`
-	// Kind and SourceID name what owes it ("task", "workflow") — the source's
-	// bookkeeping handle for cancelling its own debt; the waker never reads them.
+	// Kind and SourceID name what owes it — the source's bookkeeping handle for
+	// cancelling its own debt; the waker never reads them.
 	Kind     string `bun:"kind,notnull" json:"kind"`
 	SourceID string `bun:"source_id"    json:"source_id,omitempty"`
 	// Inherit is the encoded run configuration the turn runs under, frozen at
@@ -120,14 +118,12 @@ func (s *WakeupStore) PendingSessions(ctx context.Context) ([]string, error) {
 // reports whether this caller was the one that moved it, so a drain racing a
 // cancel cannot both claim to have handled it.
 func (s *WakeupStore) Settle(ctx context.Context, id, attempt, state string) (bool, error) {
-	q := s.db.NewUpdate().Model((*Wakeup)(nil)).
+	res, err := s.db.NewUpdate().Model((*Wakeup)(nil)).
 		Set("state = ?", state).
 		Where("id = ?", id).
-		Where("state = ?", WakePending)
-	if attempt != "" {
-		q = q.Where("attempt = ?", attempt)
-	}
-	res, err := q.Exec(ctx)
+		Where("attempt = ?", attempt).
+		Where("state = ?", WakePending).
+		Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("settling wake-up %s: %w", id, err)
 	}
@@ -135,22 +131,18 @@ func (s *WakeupStore) Settle(ctx context.Context, id, attempt, state string) (bo
 	return err == nil && n > 0, nil
 }
 
-// CancelFor drops what a source still owes — its result reached the session
-// another way, or the work was cancelled and restating it would be noise. A
-// non-empty attempt narrows the cancel to THAT try's debt: consuming attempt
-// A's result must not cancel a retry B's fresh debt, so the caller that knows
-// the attempt passes it. An empty attempt cancels every pending debt of the
-// source (a workflow, whose debt has no attempt).
+// CancelFor drops what a source still owes for ONE attempt — its result
+// reached the session another way, or the work was cancelled and restating it
+// would be noise. Bound to the attempt: consuming attempt A's result must not
+// cancel a retry B's fresh debt.
 func (s *WakeupStore) CancelFor(ctx context.Context, kind, sourceID, attempt string) error {
-	q := s.db.NewUpdate().Model((*Wakeup)(nil)).
+	if _, err := s.db.NewUpdate().Model((*Wakeup)(nil)).
 		Set("state = ?", WakeCancelled).
 		Where("kind = ?", kind).
 		Where("source_id = ?", sourceID).
-		Where("state = ?", WakePending)
-	if attempt != "" {
-		q = q.Where("attempt = ?", attempt)
-	}
-	if _, err := q.Exec(ctx); err != nil {
+		Where("attempt = ?", attempt).
+		Where("state = ?", WakePending).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("cancelling wake-ups for %s %s: %w", kind, sourceID, err)
 	}
 	return nil

@@ -35,6 +35,7 @@ type WSHandler struct {
 func NewWSHandler(runner *bridge.Runner) *WSHandler {
 	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub())}
 	runner.OnRunAttach = h.registry.AttachAll
+	runner.OnBroadcast = h.registry.Broadcast
 	return h
 }
 

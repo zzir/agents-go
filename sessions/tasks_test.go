@@ -82,7 +82,7 @@ func TestSQLTaskStore_FinalizeIsCompareAndSet(t *testing.T) {
 			if i%2 == 0 {
 				st = tasks.StatusFailed
 			}
-			won, err := s.Finalize(ctx, "t1", "t1-run", st, "s", "r")
+			won, err := s.Finalize(ctx, "t1", "t1-run", st, "s", "r", nil)
 			if err != nil {
 				t.Error(err)
 				return
@@ -116,7 +116,7 @@ func TestSQLTaskStore_DeliveryDoesNotTouchUpdatedAt(t *testing.T) {
 	if err := s.Create(ctx, mkTask("t1", "parent", "child-1")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Finalize(ctx, "t1", "t1-run", tasks.StatusCompleted, "s", "r"); err != nil {
+	if _, err := s.Finalize(ctx, "t1", "t1-run", tasks.StatusCompleted, "s", "r", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Get(ctx, "t1"); err != nil {
@@ -132,7 +132,7 @@ func TestSQLTaskStore_Listings(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.Finalize(ctx, "t2", "t2-run", tasks.StatusCompleted, "done", "done"); err != nil {
+	if _, err := s.Finalize(ctx, "t2", "t2-run", tasks.StatusCompleted, "done", "done", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +184,7 @@ func TestSQLTaskStore_ListNonTerminalMatchesStatusTerminal(t *testing.T) {
 				t.Fatal(err)
 			}
 		default:
-			if _, err := s.Finalize(ctx, id, id+"-run", st, "", ""); err != nil {
+			if _, err := s.Finalize(ctx, id, id+"-run", st, "", "", nil); err != nil {
 				t.Fatal(err)
 			}
 		}

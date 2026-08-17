@@ -64,13 +64,15 @@ Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
 list must name a route this router actually serves: an exemption for a path
 nothing serves silently unauthenticates whatever gets mounted there later. The
 ChatGPT login callback is deliberately absent — its redirect lands on a
-temporary listener at 127.0.0.1:1455, never on this server.
+temporary listener at 127.0.0.1:1455, never on this server. Webhook triggers
+(`POST /hooks/:id`) live outside `/api/` for the same reason a callback does —
+the caller is another system, with no token — and are authenticated by HMAC
+signature instead (see [Workflows](#workflows--apiv1workflows)).
 
 ## REST API
 
-Base path `/api/v1`. The legacy `/api` prefix still resolves as a **deprecated
-alias** kept for one release — migrate to `/api/v1`. All request and response
-bodies are JSON.
+Base path `/api/v1` — the only mount; there is no unversioned alias. All
+request and response bodies are JSON.
 
 ### Errors
 
@@ -115,12 +117,11 @@ detail.
 | POST   | `/sessions`               | Create session (`{name?, agent_config_id?}`)                         |
 | GET    | `/sessions/:id`           | Get session — plus `planning`, whether its next run starts by planning |
 | PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session |
-| DELETE | `/sessions/:id`           | Delete session and its entries and traces                            |
+| DELETE | `/sessions/:id`           | Delete the session and everything it owns: entries, traces, approvals, wake-ups, triggers, and its task tree (rows and hidden child sessions, at any depth over live edges) |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
 | GET    | `/sessions/:id/context`   | Context-window usage report (see [invariant 28](#design-invariants)) |
 | POST   | `/sessions/:id/compact`   | Force one compaction pass now (409 while a run is live)              |
-| GET    | `/sessions/:id/workflow-runs` | List the session's workflow runs                                |
 | POST   | `/sessions/:id/fork`      | Fork session into a new one                                          |
 | POST   | `/sessions/:id/branch`    | Switch the active branch (`{entry_id}`)                              |
 | POST   | `/sessions/:id/runs`      | Start a run on the session (see [Runs](#runs--apiv1runs))            |
@@ -232,12 +233,17 @@ up without loss.
 | POST   | `/runs/:id/cancel`   | Cancel the run — `204`; `?mode=graceful` finishes the current turn, default aborts |
 
 `POST /sessions/:id/runs` returns `201` with `{run_id, session_id, status}`. With
-`?wait=true` it blocks until the run ends and returns `200` with
-`{run_id, session_id, status, final_output}` — or, when the run pauses for tool
-approval, `{run_id, session_id, status: "interrupted"}` (list
-`/sessions/:id/approvals` and decide; the decision resumes execution on the
-SAME run id, continuing its event sequence). It returns `409` if the session
-already has an active run.
+the header `Prefer: wait=N` ([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240))
+it holds the request up to N seconds and returns `200` with
+`{run_id, session_id, status, final_output}` when the run ends in time — or,
+when the run pauses for tool approval, `{run_id, session_id, status:
+"interrupted"}` (list `/sessions/:id/approvals` and decide; the decision resumes
+execution on the SAME run id, continuing its event sequence). When N passes
+first it returns `202` with `{run_id, session_id, status: "running"}` and the
+run keeps going — follow it on `/runs/:id/events`. `Preference-Applied: wait=N`
+marks the honored wait; there is no unbounded form, and N is capped at ten
+minutes (`MaxPreferWait`) — a longer wait is the events stream's job. It returns `409` if the
+session already has an active run.
 
 The first run that carries a `sandbox_id` **permanently binds**
 `(sandbox_id, work_dir)` to the session (compare-and-set; the winner announces
@@ -290,8 +296,8 @@ RUN=$(curl -s -H "$H" -X POST $BASE/sessions/$SID/runs \
       -d '{"input":"hello","agent_config_id":"<agent-id>"}' | jq -r .run_id)
 curl -N -H "$H" $BASE/runs/$RUN/events          # stream until run.output
 
-# or fire-and-wait in one call:
-curl -s -H "$H" -X POST "$BASE/sessions/$SID/runs?wait=true" \
+# or fire-and-wait in one call, for up to a minute:
+curl -s -H "$H" -H "Prefer: wait=60" -X POST $BASE/sessions/$SID/runs \
      -d '{"input":"hello","agent_config_id":"<agent-id>"}' | jq .final_output
 ```
 
@@ -328,27 +334,35 @@ than silently vanishing.
 
 ### Tasks — `/api/v1/tasks`
 
-Background tasks are sub-agents spawned from a chat via the `spawn_task` tool.
+A task is one piece of background work started from a chat through the ONE
+tool that starts any: `spawn_task` — a sub-agent on a prompt, or, told a
+`workflow` name, a workflow execution (`kind: "workflow"`, see
+[Workflows](#workflows--apiv1workflows)).
 Each runs on its own hidden session and reports back by injecting a
 notification into the parent session (see the SDK's
 [background tasks](../../docs/tasks.md)).
 
 | Method | Path                  | Description                                                                    |
 |--------|-----------------------|--------------------------------------------------------------------------------|
-| GET    | `/sessions/:id/tasks` | List the session's tasks, newest first                                         |
-| POST   | `/tasks/:id/stop`     | Stop a task — cancels a running one, discards a paused one's pending approval  |
-| POST   | `/tasks/:id/retry`    | Resume a FAILED task: same session and progress, a new run                     |
+| GET    | `/sessions/:id/tasks` | List the session's tasks and workflow executions, newest first                 |
+| GET    | `/tasks`              | One page (`{items, total}`) of tasks across every live session, newest first, each with its `session_name` — `?kind=workflow` for executions, `?live=true` for the still-running, `?limit=` (500 at most) and `?offset=` cut the page |
+| POST   | `/tasks/:id/stop`     | Stop a task — cancels a running one, discards a paused one's pending approval; a workflow's whole sequence, not just the step |
+| POST   | `/tasks/:id/retry`    | Resume a FAILED task: same session and progress, a new run — a workflow from the step it stopped at |
+| POST   | `/tasks/:id/dismiss`  | Hide a terminal task from the chat strip (the panel keeps it; a retry brings it back); 409 while it runs |
 
 A task row carries `task_id` (the durable identity clients key state by),
-`run_id` (the current attempt's execution id — events route by it), plus
-`parent_session_id`, `parent_run_id`, `tool_call_id`, `label`, `attempt` (1 for
-the original run, one more per retry) and status. Status uses the MCP Tasks
-five-state vocabulary; it is read live from the hub for a running task and from
-the store after it ends. `stop` returns `200` with the task info, `409` if the
-task is already final. `retry` returns `200` with the reopened task, `409` when
-the task is not failed, has used every attempt (3 by default), or its session is
-at the live-task cap — which is the `--max-tasks` flag, and which a retry
-queues behind like a spawn.
+`run_id` (the current run's execution id — events route by it; a retry
+replaces it, and so does each workflow step), plus `parent_session_id`,
+`parent_run_id`, `tool_call_id`, `label`, `kind`, `attempt` (1 for the
+original run, one more per retry), `dismissed` and status; a workflow's row
+also carries `state` — the definition snapshot, the current `step_id` and the
+`step_runs` launch log. Status uses the MCP Tasks five-state vocabulary; it is
+read live from the hub for a running task and from the store after it ends.
+`stop` returns `200` with the task info, `409` if the task is already final.
+`retry` returns `200` with the reopened task, `409` when the task is not
+failed, has used every attempt (3 by default), or its session is at the
+live-task cap — which is the `--max-tasks` flag, and which a retry queues
+behind like a spawn.
 
 ### Agents — `/api/v1/agents`
 
@@ -573,52 +587,151 @@ plan → exec → verify can be three different agents on three different models
 which is the point. Which step runs next is the definition's answer, not the
 model's; a model-chosen next agent is a handoff, and that already exists.
 
-A step is an ORDINARY RUN on the session, which is what makes the sequence
-cheap: one window, one compaction, one sandbox binding, one transcript, and a
-step may use tools or hand off like any other turn — but NOT spawn background
-tasks or start another workflow: a step is itself a background run, and those
-tools are withheld from one (a sequence cannot fan out into more background
-work). Later steps read what earlier ones did, with no data plumbing between
-them — the conversation is the data flow.
+An execution IS a background task — `kind: "workflow"` in the tasks table and
+API — whose runs are the steps: the SDK's task manager owns its lifecycle
+(the hidden child session, stop, retry, the restart sweep, the approval
+pause, the cap, the wake-up) and this server is only the DRIVER the manager
+calls back into: which step a finished run leads to, and how a step's run is
+launched ([invariant 29](#design-invariants)). There is no second execution
+table and no second set of endpoints: an execution is listed, stopped,
+retried and dismissed as a task.
+
+A step is an ORDINARY RUN on the execution's session, which is what makes the
+sequence cheap: one window, one compaction, one sandbox binding, one
+transcript, and a step may use tools or hand off like any other turn — but NOT
+spawn background tasks or start another workflow: a step is a task's run, and
+those tools are withheld from one (a sequence cannot fan out into more
+background work). Later steps read what earlier ones did, with no data
+plumbing between them — the conversation is the data flow.
 
 A workflow carries a required `description`: it is what an agent matches a
-request against, and an agent doing so is the ONLY way a workflow starts (see
-[invariant 30](#design-invariants) — there is no start endpoint). A step may
-set `compact_before`, folding the conversation into a summary before it runs: a
-step boundary is the natural place for it, since the exploration that got the
-sequence here is spent and every later step pays for it otherwise.
+request against — `spawn_task` lists the workflows on offer, name and
+description, and the agent starts one by naming it — and an agent doing so is
+how a workflow usually starts (see [invariant 30](#design-invariants)); a
+person can start one too, with a brief of their own (`POST /workflows/:id/runs`). A step may set `compact_before`,
+folding the conversation into a summary before it runs — with the step's own
+agent's compaction settings, since that agent is the one about to read the
+summary (an agent whose compaction is off leaves the transcript as it is,
+logged): a step boundary is the
+natural place for it, since the exploration that got the sequence here is
+spent and every later step pays for it otherwise. A step may set
+`pause_before`: the sequence holds there until a person approves it from the
+conversation that asked ([invariant 37](#design-invariants)) — for the deploy
+or the send that must not happen unseen. Rejecting cancels the execution.
 
 A step may also name where to go next — `on_success` and `on_failure`, each a
 step id or `end`. Their empty defaults ARE the plain list (success falls through
 to the next step, the last one finishes, and a failure fails the workflow), so a
 linear workflow never mentions them. Naming an EARLIER step is how a sequence
-loops: `test.on_failure = fix`, `fix.on_success = test`. Two rules make that
-safe — an execution stops after `MaxStepRuns` (50) step runs, retries included,
-and a handler's turn is LED by the error it is handling, because a failed run
-leaves no usable account of itself in the transcript.
+loops: `test.on_failure = fix`, `fix.on_success = test`. Three rules make that
+safe — a **lap bound**: one execution may take the same backward edge
+`budget.max_laps` times (default 3), and the transition that would take it
+once more ends the execution failed, naming the edge (`loop bound reached:
+verify → exec looped 3 times`) — a loop that keeps returning to the same step
+is not converging, and every further lap costs a step run for the same
+answer; an execution stops after `MaxStepRuns` (50) step launches, retries
+included, whatever the shape (a retry past either bound is refused before a
+run — one more lap could only end the same way); and a handler's turn is LED
+by the error it is handling, because a failed run leaves no usable account of
+itself in the transcript.
 
-"Failure" here is structural: the step's run errored. A step deciding its own
-work was no good is judgement, and judgement belongs to the step's agent and its
-handoffs — that line is what keeps a workflow deterministic ([invariant
-30](#design-invariants)).
+"Failure" is structural by default: the step's run errored. A step that CHECKS
+— tests, a review, a verification — sets `gate`, and then its verdict chooses
+the edge instead: the last non-empty line of its output must be the pass
+sentinel (`PASS`, or the gate's own word) for `on_success` or the fail
+sentinel (`FAIL`) for `on_failure`; the instruction to end with one is appended
+to the step's prompt for it. A step whose agent answers in structured output
+carries the verdict as a field instead — a JSON object (bare or fenced) with a
+boolean `passed`, or a `verdict`/`result`/`status` equal to a sentinel — and
+the same routing reads it. A gate that reports neither ends the execution
+failed, saying so — a check that forgot to report is a broken step, not a coin
+flip — and a `FAIL` with no `on_failure` fails the execution too. Either way
+the routing stays the definition's: the step only reports, which is what keeps
+a workflow deterministic ([invariant 30](#design-invariants)); with `gate` and
+a back-edge, `check → FAIL → fix → check` is the fix loop a sequence exists
+for. The launch log (`state.step_runs`) records how each step's run ended —
+`completed`, `failed`, `pass`, `fail` — the last one included: the ending is
+written in the same finalize as the task's terminal status, so a finished
+execution's log needs no reading between the lines and cannot disagree with
+its status.
 
 An execution carries an `input` — the brief, written by the agent that started
 it, because the child session cannot see the conversation. It LEADS the first
 step's turn and is not repeated afterwards: from step two on it is already in
-the transcript the step reads. It is stored on the execution so a retry of the
-first step asks for the same thing rather than running the instruction with no
-subject.
+the transcript the step reads. It is kept in the task's `state` so a reader
+can see what the sequence was about.
 
-The agent that started one asks after it with `workflow_status`, which reports
-every LIVE execution (it must not redo work in flight) and only the few most
-recent finished ones — a tool whose output grows with the conversation
-eventually costs more than it says.
+The agent that started one is told the task id, and asks after it with
+`task_status(task_id)` like any task — the answer says which step it is on
+(`progress: step 2/3 (verify)`), through the SDK's `DescribeState` hook — or
+with `task_status()` and no id, which lists every task of the conversation,
+each live one flagged "still working — do not redo its work". The model's
+whole background vocabulary is the four task verbs: `spawn_task` (with
+`workflow` for a sequence), `task_status`, `task_retry`, `task_stop`; there is
+no separate workflow tool to choose between.
 
 Each step carries a STABLE id, so inserting a step above another does not
 renumber what a run in flight, a retry, or a record of what happened is naming.
-An execution stores a SNAPSHOT of the definition: editing a workflow never
-steers a sequence already in flight (the rule a task's inherited configuration
-already follows).
+A retry re-runs the step the execution stopped at: its turn is the retry
+prompt (why, and to resume from the progress made) followed by the step's own
+prompt again — a gate's verdict rule included — so nothing the step needs is
+left to inference from the failed attempt.
+An execution's `state` stores a SNAPSHOT of the definition: editing a workflow
+never steers a sequence already in flight (the rule a task's inherited
+configuration already follows).
+
+A definition may carry a **budget** — `budget.max_steps`, `max_tokens`,
+`max_minutes`, each zero for no bound, and `max_laps`, whose zero is the
+default of 3 — that every execution of it answers to. Steps count launches
+(retries included; at most `MaxStepRuns`), tokens the input plus output of
+every model call on the execution's session, minutes the step runs' own time
+(a pause on a person's approval costs nothing), laps the times one backward
+edge is taken. Each is checked when the driver is about to launch the next
+step and again before a retry, never mid-run: over any bound the execution
+stops, failed with the reason (`budget exhausted: 4 of 3 tokens`), and a
+retry is refused before it runs anything. The budget is snapshotted into the
+state with the steps.
+
+A start with no run asking — a person's `Run…`, a trigger's fire — leaves a
+**note** on the conversation (an annotation, people-only: `display.kind`
+`workflow_started`, with the task id, the workflow, the brief and who started
+it). It is the exchange's question where the tool call would have been: the
+result's wake-up run is labeled by it in the trace panel (`▶ build (you)`,
+`▶ build (cron @daily)`) and jumps to it, and the chip itself opens that trace
+— so a trace card is always one exchange, a question and what answered it,
+whether the question was a message, a `spawn_task` call, or a note.
+
+Work can also start with no conversation asking, through a **trigger**:
+`kind: cron` fires on a schedule (five fields, or `@hourly` / `@every 30m` —
+no seconds field, and `@every` no shorter than a minute),
+`kind: webhook` when something POSTs to `/hooks/:id`. What it starts is its
+`target`: `workflow` (`workflow_id`) fires the same start `POST
+/workflows/:id/runs` makes — an execution into the trigger's `session_id`,
+reporting back there — and `agent` (`agent_config_id`) sends the brief as a
+MESSAGE of that conversation, run by that agent under the conversation's own
+sandbox binding: the scheduled question, its reply the next turn, with a
+`trigger_fired` note before it so the reader knows an automation asked (a
+session busy with a run refuses, like a session at its cap). Either way the
+turn or execution is led by the `brief` its author wrote in advance, so the
+rule that someone who knows writes the brief holds; a webhook's body (up to
+64 KB) is appended to it as the payload. A webhook proves itself by signature, not
+token: `X-Timestamp` (UNIX seconds, within five minutes of the server's clock)
+and `X-Signature-256` = hex HMAC-SHA256(secret, `timestamp + "." + body`) —
+the secret is minted at creation and shown in that response only (rotate it
+for another). A delivery fires ONCE: the same timestamp and body sent again
+inside the window — a sender's retry, a captured request — is a replay and
+answers 409, so a sender that wants a second run sends a new timestamp (the
+guard is in memory; a restart inside the five-minute window is the one gap).
+Only a delivery that FIRED is held: one refused before anything started —
+the session busy or at its cap, the server draining — may be resent as it
+was, and fires then.
+Cron ticks missed while the process was down are not replayed;
+a tick that finds the session at its background-task cap, or busy with a run,
+is refused like any start would be, and that refusal is what the trigger then
+shows as its `last_error` (`last_started_id` is the task or run the last
+fire started, empty when it started nothing). Deleting the session or the workflow deletes its triggers; a
+deleted agent leaves its triggers standing, failing with the reason, to be
+re-pointed.
 
 | Method | Path                        | Description                                     |
 |--------|-----------------------------|-------------------------------------------------|
@@ -627,20 +740,38 @@ already follows).
 | GET    | `/workflows/:id`            | Get definition                                   |
 | PUT    | `/workflows/:id`            | Update definition                                |
 | DELETE | `/workflows/:id`            | Delete definition (executions keep their snapshot) |
-| GET    | `/workflow-runs/:id`        | Get one execution                                |
-| POST   | `/workflow-runs/:id/stop`   | Stop the whole sequence, not just the step       |
-| POST   | `/workflow-runs/:id/retry`  | Re-run a FAILED execution from the step it stopped at (409 otherwise) |
-| POST   | `/workflow-runs/:id/dismiss` | Hide a terminal execution from the chat strip (the panel keeps it; a retry brings it back) |
+| POST   | `/workflows/:id/runs`       | Start an execution for `session_id` with the brief `input`, optionally binding a still-unbound session first (`sandbox_id?`, `work_dir?` — the same first-run bind a run makes, so the steps have the composer's project) — 201 with the task; 400 no runnable steps / agent gone / an invalid binding, 404 unknown workflow or session, 409 the session's background-task cap or a bind that keeps losing to concurrent config edits (retry) |
+| GET    | `/triggers`                 | List triggers (`?workflow_id=` for one workflow's); secrets never shown, only their tail |
+| POST   | `/triggers`                 | Create — `{target, workflow_id | agent_config_id, session_id, kind, schedule?, brief, enabled}` (target inferred from the id when omitted); a webhook's `secret` is in this response only |
+| GET    | `/triggers/:id`             | Get one                                          |
+| PUT    | `/triggers/:id`             | Update (the kind cannot change; secret and fire record are kept) |
+| DELETE | `/triggers/:id`             | Delete (off the clock at once)                   |
+| POST   | `/triggers/:id/fire`        | Fire by hand — `{payload?}`; 201 with the task (workflow) or `{run_id}` (agent turn), 400 disabled, 409 the session's cap or a run in flight |
+| POST   | `/triggers/:id/rotate-secret` | Mint a webhook trigger a new secret, returned once; the old one stops working |
+| POST   | `/hooks/:id`                | The webhook itself (outside `/api/v1`, no token): signed with `X-Timestamp` + `X-Signature-256`, body = payload; 201 with the task or `{run_id}`, 401 bad or stale signature, 409 a replayed delivery |
 
-A step that fails ends the sequence there and the execution keeps that step, so
-a retry resumes from it rather than repeating what already succeeded. Only a
+In the UI, workflows are a place of their own — the sidebar's **Workflows**
+button, beside New, opens the hub in the middle column: its Definitions (the
+editor, `Run…` into a conversation of your choice, each workflow's triggers),
+every Trigger — of either target — with how it last went and the form to add
+one, and every Run across conversations, live and paged (a row opens its
+conversation with the execution's detail in the Inspector). They are not a
+settings tab: a workflow is authored once and then WATCHED, and a trigger
+runs when nobody is looking. From a conversation, `/workflow <name> <brief>`
+in the composer (typing `/` offers the commands, walked with the arrow keys)
+starts one into it,
+the same start `Run…` makes.
+
+Executions are tasks: `GET /sessions/:id/tasks` lists them (`kind:
+"workflow"`), `GET /tasks?kind=workflow` lists them across sessions, and
+`/tasks/:id/stop`, `/retry`, `/dismiss` act on them — a stop
+ends the whole sequence, not just the running step, and a retry resumes from
+the step it stopped at, keeping the steps that already succeeded. Only a
 FAILED execution retries — re-running a completed or cancelled one would repeat
-its side effects — and a retry is one more piece of background work, so it is
-bounded by `MaxStepRuns` and the shared per-session budget like a fresh start. A
-restart fails whatever was running, at the step it reached, for the same reason.
-Deleting a session STOPS its running workflows first (their steps run on hidden
-child sessions the front-run cancel never touched), so no step keeps causing
-side effects after the row is gone.
+its side effects — under the same attempt ceiling and per-session cap every
+task answers to. A restart fails whatever was running, at the step it reached,
+for the same reason. Deleting a session stops its tasks first — executions
+included — so no step keeps causing side effects after the row is gone.
 
 A route to a `chatgpt_login` provider is refused at save: its OAuth token only
 works on the direct resolve path, so a routed one would silently never work.
@@ -914,16 +1045,17 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 | `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text}`                            |
 | `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
 | `run.tool_progress`     | Partial output from a running tool — `{run_id, call_id, tool_name, delta, renderer?}`; `delta` appends to what the client holds for the call, `renderer` is a display hint (e.g. `terminal`) |
-| `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds |
+| `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (`[{"type":"input_text",…},{"type":"input_image","image_url":…},{"type":"input_file",…}]`, SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
 | `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |
 | `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
-| `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription    |
+| `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |
 | `run.diagnostic`        | Trouble the run survived — `{run_id, type, code?, message?, details?}`; `type` is an open vocabulary (`model_retry`, `model_fallback`, `tool_panic`, …), so show unknown kinds generically |
 | `run.gap`               | This connection fell behind and events were dropped — `{run_id, dropped, last_good, next}`; resubscribe from `last_good` to refetch                     |
 | `run.error`             | Error — `{run_id?, session_id?, code, message, guardrail?, stage?}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`); `guardrail`/`stage` are set when `code` is `guardrail_tripwire` |
 | `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
+| `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
 | `session.sandbox_bound` | The session's first sandbox-carrying run permanently bound `(sandbox_id, work_dir)` — `{session_id, sandbox_id, work_dir?}`; published exactly once, by the run that won the bind |
 | `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, ...}`                                                                                                 |
 
@@ -1193,10 +1325,10 @@ When a change genuinely doesn't fit, update this list in the same PR.
     outran the card. Durable status always comes from the folded entry, never
     from the hub after the fact. Completion wakes
     the parent at its next run boundary via a `[task-notification] ` input;
-    the debt is the row's `notify_state` (pending → consumed by an in-turn
-    `task_status` read, or → delivered by the wake-up run), written in the
-    same UPDATE as the terminal status — the auto-wake survives restarts via
-    the startup sweep. The notification is ordinary user-role input identified by its text
+    the debt is a `wakeups` row inserted in the same transaction as the
+    terminal status (invariant 32), consumed by an in-turn `task_status`
+    read or delivered by the wake-up run — the auto-wake survives restarts
+    via the startup sweep. The notification is ordinary user-role input identified by its text
     prefix. It never renders in the timeline — the chat top bar's Tasks button
     and the Inspector are the human-facing surfaces; the model reads the text
     verbatim. The prefix carries no privileged behavior: a user typing it
@@ -1243,7 +1375,9 @@ When a change genuinely doesn't fit, update this list in the same PR.
     their own wake-up debt (the user did it; completed / failed are the states
     worth waking the parent for). Deleting a session stops its run tree first
     (cancel + bounded wait on the done gate) so no write can land after the
-    cascade.
+    cascade — which then removes the whole tree, every hidden session at any
+    depth, walking LIVE edges only (a stale row's child id may since belong to
+    an unrelated session).
 24. **One entry in, the same entry out.** The `entries` table stores whole
     `agents.SessionEntry` JSON, with only the columns the queries need lifted
     out. The server does not re-derive a display, a role, or provenance at read
@@ -1378,39 +1512,62 @@ When a change genuinely doesn't fit, update this list in the same PR.
     its own window (invariant 22's Inspector shows that one); what lands in the
     parent's context is the result text, counted like any other tool output.
 
-29. **A workflow advances from the run's TEARDOWN, never from the callback of
-    the run that started it.** A step is an ordinary run; when it ends,
-    `postRun` — which every segment reaches, fresh or resumed — asks whether
-    the session has a running workflow whose current run just finished, and
-    only then starts the next step. Hanging the advance off the starting call's
-    own callback loses the sequence at the first approval: a paused step's run
-    ends, the approval endpoint resumes it with NO callback, and that resumed
-    ending is the one that may move the sequence on. The advance is a
-    compare-and-set on `(status = running, run_id = the run that finished)`, so
-    a superseded attempt's late callback cannot drive it, and an INTERRUPTED
-    outcome advances nothing — it is a pause, not an ending.
+29. **A workflow execution is a TASK, and it advances from the run's
+    TEARDOWN, never from the callback of the run that started it.** An
+    execution is a task of kind `workflow`; the SDK's task manager owns its
+    lifecycle, and this server is the driver it calls back into (`Continue`:
+    which step a finished run leads to; the launcher: how a step's run starts).
+    A step is an ordinary run; when it ends, `postRun` — which every segment
+    reaches, fresh or resumed — hands the outcome to the manager, which asks
+    the driver and only then starts the next step. Hanging the advance off the
+    starting call's own callback loses the sequence at the first approval: a
+    paused step's run ends, the approval endpoint resumes it with NO callback,
+    and that resumed ending is the one that may move the sequence on. The
+    advance is the SDK's `Store.Advance` — a compare-and-set on
+    `(status = working, run_id = the run that finished)` that lands the new
+    state in the same write — so a superseded attempt's late callback cannot
+    drive it, a stop that got there first wins, and an INTERRUPTED outcome
+    advances nothing — it is a pause, not an ending. Because it is a task,
+    stop, retry, the restart sweep, the approval expiry, the session-delete
+    teardown, the cap and the wake-up debt are the task's, written once.
 
-30. **A workflow runs OFF the conversation that asked for it, and only an
-    AGENT starts one.** The steps execute on a hidden child session, so a
-    sequence's plan-then-write-then-check never enters the chat and no later
-    turn pays for the whole procedure; what comes back is the result, through a
-    wake-up. The steps still share that one session with each other, so a later
-    step reads what an earlier one did — the isolation is between the sequence
-    and the chat, not between the steps. It shares the parent's SANDBOX, which
-    is what lets the deliverable be files rather than a description of files.
-    There is no button and no start endpoint: the child session cannot see the
-    conversation, so someone has to write its brief, and the only participant
-    that read the conversation is the agent. `start_workflow(name, input)` is
-    therefore the whole entry, and a workflow's `description` — what the agent
-    matches a request against — is required for the same reason.
+30. **A workflow runs OFF the conversation that asked for it, and starts only
+    with a BRIEF written by someone who read that conversation.** The steps
+    execute on a hidden child session, so a sequence's plan-then-write-then-
+    check never enters the chat and no later turn pays for the whole
+    procedure; what comes back is the result, through a wake-up. The steps
+    still share that one session with each other, so a later step reads what
+    an earlier one did — the isolation is between the sequence and the chat,
+    not between the steps. It shares the parent's SANDBOX, which is what lets
+    the deliverable be files rather than a description of files. The child
+    session cannot see the conversation, so someone has to write its brief:
+    the agent, through `spawn_task(workflow=name, input)` — a workflow's
+    `description`, what the agent matches a request against, is required for
+    that — the person, through `POST /workflows/:id/runs {session_id,
+    input}` — or a trigger, whose author wrote the brief in advance for every
+    fire (a webhook's payload rides along with it). What there is not is a
+    bare button: nothing starts an execution without saying what it is about.
+    The tool call's card is the execution's
+    card: the task carries the `tool_call_id`, so the sequence's state follows
+    the call in the transcript, as a spawned task's does. Which step runs next
+    is the DEFINITION's answer, never the model's: a gate step reports a
+    verdict, the edges decide.
 
-31. **A workflow advances by RUN id, and the execution keeps a log of every
-    step.** The steps run on a child session the run teardown knows nothing
-    about, so the run id is the only name a finished run and the row that owns
-    it share. `workflow_runs.step_runs` records every `(step, run)` produced —
-    `step_id`/`run_id` are only ever the CURRENT one, so without the log a
-    finished sequence could not say which turns belonged to which step, and a
-    retry's second attempt could not be told from the first.
+31. **An execution's state keeps a log of every step LAUNCHED.** The task row
+    names only the CURRENT step and run, so without the log a finished
+    sequence could not say which turns belonged to which step, and a retry's
+    second attempt could not be told from the first. `state.step_runs` records
+    every `(step, run)` the launcher started, written by the launcher itself —
+    under the run it is about to start, through the same `Advance` CAS, so it
+    lands atomically with the row and a stop racing the launch loses the
+    write, not the run. A run that never launched (a crash between the claim
+    and the launch) is therefore not in it, which is the truth: the log is of
+    launches, and the bounds — the lap bound reads its laps off it, the step
+    ceiling (`MaxStepRuns`) counts its entries — count launches, because that
+    is what costs. How each run ended is written when the driver decides what
+    follows it — the last one IN the finalize itself (an ending
+    `Continuation` carries the state into `Store.Finalize`), so the log and
+    the task's terminal status are one write and cannot disagree.
 
 32. **Delivery is a DEBT, not a call, and one waker owns it.** Background work
     finishes when its session may be busy, paused on a human decision, or gone
@@ -1418,14 +1575,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     (`wakeups`), drained at the moments a session becomes able to take one: the
     end of any run on it, and startup. One drain pays every debt the session
     has, so three results that landed while you were typing produce one turn,
-    not three. Tasks and workflows are its two sources and differ in exactly
-    one column — `inherit`, the configuration the turn runs under, and BOTH
-    snapshot the agent that ASKED: a task replays its spawning run's, and a
-    workflow freezes the parent's agent/sandbox at start (`workflow_runs.inherit`),
-    so a session re-pointed at another agent mid-sequence still returns the
-    result through the one that started it. A crash never loses a debt: each
-    kind's terminal write and its `wakeups` row land in ONE transaction (the
-    store's task `Finalize` / workflow `Finish`).
+    not three. Tasks are its one source — a workflow execution is a task —
+    and every debt carries `inherit`, the configuration the turn runs under,
+    snapshotted from the agent that ASKED (the spawning run's), so a session
+    re-pointed at another agent mid-sequence still returns the result through
+    the one that started it. A crash never loses a debt: the terminal write and
+    its `wakeups` row land in ONE transaction (the store's `Finalize`).
     The SDK's task manager keeps no debt of its own — it reports endings
     through `OnFinished` and deliveries through `OnResultDelivered`, because
     when a session may be interrupted is a host policy. A task's debt is written
@@ -1446,9 +1601,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     recorded deliberately.
 
 33. **Plan mode is a restraint, so only a PERSON turns it on, and it belongs to
-    the SESSION.** A session executes until somebody asks for a plan — `/plan`
-    in the composer or the `/` menu's checkbox, both riding on the run request's
-    `plan` field (there is no phase endpoint; setting it and starting the run
+    the SESSION.** A session executes until somebody asks for a plan — a
+    `/plan <message>` in the composer (offered when `/` is typed; nothing arms
+    plan mode ahead of a message, the command is the message's; `/plan off
+    <message>` is the way back out, an approved plan the other), riding on the
+    run request's `plan` field (there is no phase endpoint; setting it and starting the run
     are one step, applied inside the run reservation so a busy-refused request
     never mutates the phase). It is not an agent setting and not something the
     model decides: the value of the gate is "a human looks before anything
@@ -1468,8 +1625,8 @@ When a change genuinely doesn't fit, update this list in the same PR.
     resume rebuilds the agent AFTER the unlock and one built without
     `submit_plan` could not answer for the call the paused state names.
 
-34. **A BACKGROUND run is built without plan mode, the task tools or
-    `start_workflow` — and is TOLD that nobody is reading.** One flag, because
+34. **A BACKGROUND run is built without plan mode or the task tools — and is
+    TOLD that nobody is reading.** One flag, because
     all of it follows from the same fact: nobody is sitting in front of it.
     Plan mode is the one that deadlocks — `submit_plan` pauses for approval,
     and a background run's approval lands in a session the chat cannot open, so
@@ -1477,30 +1634,77 @@ When a change genuinely doesn't fit, update this list in the same PR.
     only half of it: an agent still behaves like one in a conversation, asking
     for confirmation and stopping, and in a session nobody reads that is a
     deliverable nobody can answer. So the instructions say so, as a SUFFIX —
-    the agent's own prompt may well tell it to ask. A workflow step learns it
-    is background from its session (`workflow_runs.child_session_id`), and a
-    lookup that FAILS is an error, not a "no" — reading it as a chat run is
-    exactly how the deadlock happens.
+    the agent's own prompt may well tell it to ask. A run learns it is
+    background from its session being a task's child (a workflow step's is —
+    an execution is a task), and a lookup that FAILS is an error, not a "no" —
+    reading it as a chat run is exactly how the deadlock happens.
 
 35. **A step's approval is answerable from the conversation that asked.**
     `GET /sessions/:id/approvals` returns the approvals paused inside this
-    session's tasks AND its workflows, tagged with the work they belong to, so
-    the chat is the one approval surface; approve/reject is keyed by tool call
-    id, so answering works from anywhere. The startup sweep follows the same
-    rule as tasks: an execution PAUSED on an approval is not an orphan and is
-    left alone, while one whose run died with the process is failed. An
-    approval that expires unanswered ends its execution too — otherwise the row
-    stays running with nothing left that could finish it.
+    session's tasks — a workflow step's included, tagged with the task they
+    belong to — so the chat is the one approval surface; approve/reject is
+    keyed by tool call id, so answering works from anywhere. The startup sweep
+    and the approval reaper treat an execution as the task it is: one PAUSED
+    on an approval is not an orphan and is left alone, one whose run died with
+    the process is failed at the step it reached, and one whose approval
+    expires unanswered is cancelled — otherwise the row stays working with
+    nothing left that could finish it.
 
 36. **A finished piece of background work leaves the transcript and enters the
     panel.** The turn a wake-up injects carries the notification prefix, and a
     prefixed user message never renders as a bubble — it is the model's input,
     not something the person said. What a reader gets instead is the Tasks
-    panel, which holds tasks and workflow executions in ONE list: both are work
-    running in a session nobody is sitting in, both report back the same way,
-    and only the endpoint that stops or retries them differs. Its detail lens
+    panel, which holds tasks and workflow executions in ONE list — one list
+    because they are one thing, tasks: work running in a session nobody is
+    sitting in, reporting back the same way, stopped and retried the same way.
+    The list is the socket's task state: the durable rows seed it and
+    `task.updated` keeps it current — a workflow's status is the TASK's, told
+    by that event, since its step runs end without ending it. Its detail lens
     is the child session's own transcript and trace, so drilling into a
     sequence shows every step in order.
+
+37. **A step a person must approve is a PAUSE of the task, filed as an
+    approval — not a run.** Reaching a `pause_before` step, the launcher keeps
+    the turn the step will start with in the state, files a pending approval of
+    kind `step` under the run id the row already claimed (its one "tool call"
+    is `start_step`, naming the step), and marks the task `input_required` —
+    the three in ONE transaction, so no moment exists with a task paused on
+    nothing to answer or an approval answerable for a task still working. No
+    run exists until the decision: approving reclaims the task (the same
+    `input_required → working` CAS a tool approval takes, bound to that run
+    id) and starts the step's run under it; rejecting stops the execution —
+    cancelled, the person's decision, so nobody is woken. A decision is ONE
+    transaction as well — the approval row deleted (the exclusive claim) and
+    the task moved (`ClaimApprovalWorking` / `ClaimApprovalCancelled`), the
+    reaper's expiry included — so of two racing decisions exactly one lands,
+    a claim that does not hold writes nothing (the row stays for the retry of
+    the decision), and no crash between the two halves can leave a task paused
+    on nothing or answered while paused. Because it is a task
+    pause and an approval row, everything a tool approval already has applies
+    unchanged: it is listed on the parent's approvals and answered from the
+    strip, the reaper expires it (cancelling the execution), the restart sweep
+    leaves it alone, a stop discards it, and `task.updated` names the decision
+    (`pending_call_id`) so a client can offer it without a run event to learn
+    it from — and since the pause has no run stream to ride, that event is
+    BROADCAST to every connection rather than published on the (nonexistent)
+    run; the same fallback covers a step transition or a retry announced
+    before its run registers. The one thing it deliberately is not is a `RunState`: there is
+    nothing to resume, so the resume machinery never sees it (`Kind` says so
+    before the state is read).
+
+38. **The chat's session scope is THREE contexts, split by how often each
+    moves — and what moves per streaming delta is in none of them.** A React
+    context has no selectors: every consumer re-renders when its value
+    changes, so one context holding the run's `streaming` text would re-render
+    every finished turn of a long transcript on every delta. `ChatSessionState`
+    (the run lifecycle: flips per run), `ChatActions` (callbacks: change on a
+    session switch), `ChatTasks` (the task-derived lookups: change per task
+    event) are memoized on their inputs in `ChatView`; `streaming`, `reasoning`
+    and the live turn's `parts` stay props of the ONE live `TurnBlock`. A test
+    pins it: a delta re-renders the live turn and nothing else. This is why the
+    deep components (`TurnBlock` → `ProcessTimeline` → `ToolCallCard`, the
+    strip, the Tasks panel) read the scope with `useChatSession` /
+    `useChatActions` / `useChatTasks` instead of receiving it four levels down.
 
 ## Database
 
@@ -1520,10 +1724,9 @@ SQLite in WAL mode. Tables are created automatically on startup:
 | `guardrails`        | Custom guardrail definitions                                                        |
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage        |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
-| `tasks`             | Background tasks spawned via `spawn_task` (durable identity, status, wake-up state) |
+| `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
 | `providers`         | Model-API endpoints and their credentials; agents and routes reference one |
-| `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id)         |
-| `workflow_runs`     | One execution: parent + hidden child session, definition snapshot, step log, status |
+| `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
 | `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind |
 | `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
 
@@ -1543,6 +1746,8 @@ mechanism.
   `display.renderer` hint ("terminal", "diff", "table") on the structured
   display projection. The card does not consume any such hint today: live
   progress renders as a `<pre>` regardless, and a finished result as plain
-  text. Wiring a renderer field end to end (SDK `ToolResult.Display` is a
+  text — a multimodal result (an image, a file: the Responses content list,
+  see `run.tool_result`) is the one shape it renders by content rather than
+  by hint. Wiring a renderer field end to end (SDK `ToolResult.Display` is a
   plain string today) — a terminal view for shell output, a diff view for a
   patch — is the remaining half of the streaming partial-results work.

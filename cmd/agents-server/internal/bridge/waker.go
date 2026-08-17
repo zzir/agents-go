@@ -10,13 +10,10 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// Wake kinds — which subsystem owes the turn. Aliased from the store, where the
-// wake-up model and its vocabulary live (a task's debt is now written there,
-// atomically with the task's terminal state).
-const (
-	WakeKindTask     = store.WakeKindTask
-	WakeKindWorkflow = store.WakeKindWorkflow
-)
+// WakeKindTask is the one wake kind — a task, of any kind, owes the turn.
+// Aliased from the store, where the wake-up model lives (a task's debt is
+// written there, atomically with the task's terminal state).
+const WakeKindTask = store.WakeKindTask
 
 // Waker turns finished background work into a turn on the session that asked
 // for it. The debt is a ROW (store.Wakeup), drained at the moments a session
@@ -33,11 +30,9 @@ func (w Waker) Owe(ctx context.Context, wk *store.Wakeup) error {
 	return w.r.Deps.Wakeups.Owe(ctx, wk)
 }
 
-// Cancel drops what a source still owes: its result already reached the
-// session another way, or the work was cancelled and a turn restating that
-// would only repeat what the user just did.
-// attempt narrows the cancel to one try's debt (a task's run id); "" cancels
-// every pending debt of the source (a workflow's, which carries no attempt).
+// Cancel drops what a source still owes for one attempt (a task's run id):
+// its result already reached the session another way, or the work was
+// cancelled and a turn restating that would only repeat what the user just did.
 func (w Waker) Cancel(ctx context.Context, kind, sourceID, attempt string) {
 	if w.r.Deps.Wakeups == nil {
 		return

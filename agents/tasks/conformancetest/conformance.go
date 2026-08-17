@@ -15,6 +15,7 @@ package conformancetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -50,13 +51,22 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 
 	t.Run("create and read back", func(t *testing.T) {
 		s := newStore(t)
-		task := create(t, s, 1)
+		task := mk(1)
+		task.Kind, task.State = "sequence", json.RawMessage(`{"step":1}`)
+		if err := s.Create(ctx, task); err != nil {
+			t.Fatal(err)
+		}
 		got, err := s.Get(ctx, task.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got.RunID != task.RunID || got.Status != tasks.StatusWorking || got.Label != task.Label {
 			t.Fatalf("roundtrip lost fields: %+v", got)
+		}
+		// The host's own fields travel untouched: Kind as a name, State as the
+		// exact bytes — a store must not re-encode what it does not read.
+		if got.Kind != "sequence" || string(got.State) != `{"step":1}` {
+			t.Fatalf("roundtrip lost the host's fields: kind %q state %s", got.Kind, got.State)
 		}
 		if _, err := s.Get(ctx, "absent"); !errors.Is(err, tasks.ErrNotFound) {
 			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
@@ -70,19 +80,21 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		s := newStore(t)
 		task := create(t, s, 1)
 		// The wrong run cannot end the attempt.
-		if won, err := s.Finalize(ctx, task.ID, "other-run", tasks.StatusFailed, "s", "r"); err != nil || won {
+		if won, err := s.Finalize(ctx, task.ID, "other-run", tasks.StatusFailed, "s", "r", nil); err != nil || won {
 			t.Fatalf("foreign finalize: won=%v err=%v, want a refusal", won, err)
 		}
-		won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "sum", "res")
+		// The ending may carry the job's final State, written in the same
+		// transition; nil leaves it as it was.
+		won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCompleted, "sum", "res", json.RawMessage(`{"last":"pass"}`))
 		if err != nil || !won {
 			t.Fatalf("finalize: won=%v err=%v", won, err)
 		}
 		got, _ := s.Get(ctx, task.ID)
-		if got.Status != tasks.StatusCompleted || got.Summary != "sum" || got.Result != "res" {
+		if got.Status != tasks.StatusCompleted || got.Summary != "sum" || got.Result != "res" || string(got.State) != `{"last":"pass"}` {
 			t.Fatalf("finalize did not land whole: %+v", got)
 		}
 		// Terminal is terminal: a second finalizer loses.
-		if won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "", ""); err != nil || won {
+		if won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "", "", nil); err != nil || won {
 			t.Fatalf("re-finalize: won=%v err=%v, want a refusal", won, err)
 		}
 	})
@@ -94,7 +106,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || won {
 			t.Fatalf("claimed a working task: won=%v err=%v", won, err)
 		}
-		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "boom"); err != nil {
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "boom", nil); err != nil {
 			t.Fatal(err)
 		}
 		won, err := s.RetryClaim(ctx, task.ID, "run2", 3)
@@ -119,7 +131,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		task := create(t, s, 1)
 		// Attempt 1 → 2 → 3, refused at a ceiling of 3.
 		for want := 2; want <= 3; want++ {
-			if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", ""); err != nil {
+			if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", "", nil); err != nil {
 				t.Fatal(err)
 			}
 			if won, err := s.RetryClaim(ctx, task.ID, fmt.Sprintf("run%d", want), 3); err != nil || !won {
@@ -129,7 +141,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 				t.Fatalf("attempt = %d, want %d", got.AttemptNo(), want)
 			}
 		}
-		if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", ""); err != nil {
+		if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if won, err := s.RetryClaim(ctx, task.ID, "run4", 3); err != nil || won {
@@ -147,7 +159,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if err := s.Create(ctx, task); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", ""); err != nil {
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || !won {
@@ -158,10 +170,65 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		}
 	})
 
+	t.Run("advance is a run-bound CAS that carries state", func(t *testing.T) {
+		s := newStore(t)
+		task := create(t, s, 1)
+		// The wrong run cannot move the task on.
+		if won, err := s.Advance(ctx, task.ID, "other-run", "run2", json.RawMessage(`{"step":2}`)); err != nil || won {
+			t.Fatalf("foreign advance: won=%v err=%v, want a refusal", won, err)
+		}
+		won, err := s.Advance(ctx, task.ID, task.RunID, "run2", json.RawMessage(`{"step":2}`))
+		if err != nil || !won {
+			t.Fatalf("advance: won=%v err=%v", won, err)
+		}
+		got, _ := s.Get(ctx, task.ID)
+		if got.RunID != "run2" || string(got.State) != `{"step":2}` || got.Status != tasks.StatusWorking {
+			t.Fatalf("advance did not land whole: %+v", got)
+		}
+		// A continuation is not a retry: the attempt count is untouched.
+		if got.AttemptNo() != 1 {
+			t.Fatalf("advance changed the attempt: %d", got.AttemptNo())
+		}
+		// The same run id rewrites State in place — how a host records what it
+		// learns at launch.
+		if won, err := s.Advance(ctx, task.ID, "run2", "run2", json.RawMessage(`{"step":2,"launched":true}`)); err != nil || !won {
+			t.Fatalf("in-place advance: won=%v err=%v", won, err)
+		}
+		if got, _ := s.Get(ctx, task.ID); string(got.State) != `{"step":2,"launched":true}` {
+			t.Fatalf("in-place advance did not rewrite the state: %s", got.State)
+		}
+		// A nil state leaves State as it is — the rule Finalize follows too.
+		if won, err := s.Advance(ctx, task.ID, "run2", "run2b", nil); err != nil || !won {
+			t.Fatalf("advance with nil state: won=%v err=%v", won, err)
+		}
+		if got, _ := s.Get(ctx, task.ID); got.RunID != "run2b" || string(got.State) != `{"step":2,"launched":true}` {
+			t.Fatalf("a nil state must not clear the state: %+v", got)
+		}
+		if won, err := s.Advance(ctx, task.ID, "run2b", "run2", nil); err != nil || !won {
+			t.Fatalf("advance back: won=%v err=%v", won, err)
+		}
+		// Only a WORKING task advances: paused and terminal rows refuse.
+		if err := s.MarkInputRequired(ctx, task.ID, "run2"); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := s.Advance(ctx, task.ID, "run2", "run3", nil); err != nil || won {
+			t.Fatalf("advanced a paused task: won=%v err=%v", won, err)
+		}
+		if _, err := s.Finalize(ctx, task.ID, "run2", tasks.StatusCancelled, "", "", nil); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := s.Advance(ctx, task.ID, "run2", "run3", nil); err != nil || won {
+			t.Fatalf("advanced a terminal task: won=%v err=%v", won, err)
+		}
+		if _, err := s.Advance(ctx, "absent", "run", "run2", nil); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
+		}
+	})
+
 	t.Run("release retry claim rolls the attempt back", func(t *testing.T) {
 		s := newStore(t)
 		task := create(t, s, 1)
-		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", ""); err != nil {
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || !won {
@@ -212,7 +279,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 			t.Fatalf("reclaim: ok=%v err=%v", ok, err)
 		}
 		// Terminal beats a late reclaim.
-		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCancelled, "", ""); err != nil {
+		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusCancelled, "", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if ok, _ := s.ReclaimWorking(ctx, task.ID, task.RunID); ok {
@@ -255,7 +322,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := s.Finalize(ctx, a.ID, a.RunID, tasks.StatusCompleted, "", ""); err != nil {
+		if _, err := s.Finalize(ctx, a.ID, a.RunID, tasks.StatusCompleted, "", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		live, err := s.ListNonTerminal(ctx, a.ParentSessionID)

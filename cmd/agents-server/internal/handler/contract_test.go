@@ -18,8 +18,8 @@ func TestRestContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sh := NewSessionHandler(sessions, store.NewSharedEntryStore(db), store.NewTraceStore(db), store.NewAgentConfigStore(db))
-	ah := NewAgentConfigHandler(store.NewAgentConfigStore(db))
+	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
+	ah := testAgentConfigHandler(db)
 
 	engine := gin.New()
 	engine.POST("/sessions", sh.Create)
@@ -108,7 +108,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	sh := NewSessionHandler(sessions, store.NewSharedEntryStore(db), store.NewTraceStore(db), store.NewAgentConfigStore(db))
+	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := gin.New()
 	engine.POST("/sessions", sh.Create)
@@ -150,7 +150,7 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	sh := NewSessionHandler(sessions, store.NewSharedEntryStore(db), store.NewTraceStore(db), store.NewAgentConfigStore(db))
+	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := gin.New()
 	engine.POST("/sessions", sh.Create)

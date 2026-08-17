@@ -94,3 +94,87 @@ func TestSessionDeleteCascadesTaskRows(t *testing.T) {
 		t.Error("the task's hidden child session outlived the delete cascade")
 	}
 }
+
+// ListRecent spans sessions: newest first, each row naming its conversation,
+// narrowed by kind and to live rows on request — and, like every by-session
+// read, blind to a dead incarnation's rows.
+func TestListRecentSpansSessions(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	tasks := NewTaskStore(db)
+
+	a := &Session{ID: NewID(), Name: "alpha"}
+	b := &Session{ID: NewID(), Name: "beta"}
+	for _, s := range []*Session{a, b} {
+		if err := sessions.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk := func(parent *Session, kind, status string) *Task {
+		child := &Session{ID: NewID(), Name: "child", Hidden: true}
+		if err := sessions.Create(ctx, child); err != nil {
+			t.Fatal(err)
+		}
+		task := &Task{ID: NewID(), RunID: NewID(), Kind: kind, ParentSessionID: parent.ID, ChildSessionID: child.ID, Status: status}
+		if err := tasks.Create(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	plain := mk(a, "", "working")
+	wfDone := mk(a, TaskKindWorkflow, "completed")
+	wfLive := mk(b, TaskKindWorkflow, "working")
+	// A row of a former incarnation of alpha: bound to a generation that is
+	// not the one answering to the id now.
+	stale := &Task{ID: NewID(), RunID: NewID(), Kind: TaskKindWorkflow, ParentSessionID: a.ID, ChildSessionID: NewID(), Status: "working"}
+	if _, err := db.NewInsert().Model(stale).
+		Value("parent_session_gen", "?", "gen-of-a-former-alpha").
+		Value("child_session_gen", "?", "").
+		Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	all, total, err := tasks.ListRecent(ctx, "", false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 || total != 3 {
+		t.Fatalf("all = %d rows of %d, want 3 (the stale row must not list)", len(all), total)
+	}
+	names := map[string]string{}
+	for _, r := range all {
+		names[r.ID] = r.SessionName
+	}
+	if names[plain.ID] != "alpha" || names[wfDone.ID] != "alpha" || names[wfLive.ID] != "beta" {
+		t.Fatalf("session names = %v", names)
+	}
+
+	wfs, total, err := tasks.ListRecent(ctx, TaskKindWorkflow, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wfs) != 2 || total != 2 {
+		t.Fatalf("workflows = %d rows of %d, want 2", len(wfs), total)
+	}
+	live, _, err := tasks.ListRecent(ctx, TaskKindWorkflow, true, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].ID != wfLive.ID {
+		t.Fatalf("live workflows = %+v, want just %s", live, wfLive.ID)
+	}
+	// A page: one row at a time, the total unchanged, the second page the
+	// next row.
+	first, total, err := tasks.ListRecent(ctx, "", false, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := tasks.ListRecent(ctx, "", false, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || len(second) != 1 || total != 3 || first[0].ID == second[0].ID {
+		t.Fatalf("paging: first %v second %v total %d", first, second, total)
+	}
+}

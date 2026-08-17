@@ -32,7 +32,7 @@ func TestFinalizeWritesTheWakeupAtomically(t *testing.T) {
 	// Completed → one pending wake-up, addressed to the parent, carrying the
 	// notification the model will read.
 	done := mk("audit")
-	if won, err := adapter.Finalize(ctx, done.ID, done.RunID, tasks.StatusCompleted, "all green", "the full report"); err != nil || !won {
+	if won, err := adapter.Finalize(ctx, done.ID, done.RunID, tasks.StatusCompleted, "all green", "the full report", nil); err != nil || !won {
 		t.Fatalf("Finalize won=%v err=%v", won, err)
 	}
 	pending, err := wakeups.Pending(ctx, done.ParentSessionID)
@@ -49,7 +49,7 @@ func TestFinalizeWritesTheWakeupAtomically(t *testing.T) {
 
 	// Cancelled → no debt.
 	cancelled := mk("scratch")
-	if won, err := adapter.Finalize(ctx, cancelled.ID, cancelled.RunID, tasks.StatusCancelled, "stopped", ""); err != nil || !won {
+	if won, err := adapter.Finalize(ctx, cancelled.ID, cancelled.RunID, tasks.StatusCancelled, "stopped", "", nil); err != nil || !won {
 		t.Fatalf("Finalize(cancelled) won=%v err=%v", won, err)
 	}
 	if p, err := wakeups.Pending(ctx, cancelled.ParentSessionID); err != nil || len(p) != 0 {
@@ -59,7 +59,7 @@ func TestFinalizeWritesTheWakeupAtomically(t *testing.T) {
 	// A superseded attempt (wrong run id) changes nothing — no status move, no
 	// debt.
 	other := mk("stale")
-	if won, err := adapter.Finalize(ctx, other.ID, "not-its-run", tasks.StatusCompleted, "x", ""); err != nil || won {
+	if won, err := adapter.Finalize(ctx, other.ID, "not-its-run", tasks.StatusCompleted, "x", "", nil); err != nil || won {
 		t.Fatalf("Finalize(stale run) won=%v err=%v, want won=false", won, err)
 	}
 	if p, err := wakeups.Pending(ctx, other.ParentSessionID); err != nil || len(p) != 0 {
@@ -115,7 +115,7 @@ func TestRetryWakeupLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Attempt A fails → one pending debt.
-	if won, err := adapter.Finalize(ctx, task.ID, "runA", tasks.StatusFailed, "boom", ""); err != nil || !won {
+	if won, err := adapter.Finalize(ctx, task.ID, "runA", tasks.StatusFailed, "boom", "", nil); err != nil || !won {
 		t.Fatalf("finalize A: won=%v err=%v", won, err)
 	}
 	if p, _ := wakeups.Pending(ctx, task.ParentSessionID); len(p) != 1 {

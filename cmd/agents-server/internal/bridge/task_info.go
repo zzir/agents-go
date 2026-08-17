@@ -10,6 +10,8 @@ package bridge
 type TaskInfo struct {
 	TaskID string `json:"task_id"`
 	Label  string `json:"label,omitempty"`
+	// Kind is "" for a sub-agent task, "workflow" for an execution.
+	Kind   string `json:"kind,omitempty"`
 	Agent  string `json:"agent,omitempty"`
 	Status string `json:"status"`
 	// Attempt counts the task's runs: 1 for the original, one more per retry.

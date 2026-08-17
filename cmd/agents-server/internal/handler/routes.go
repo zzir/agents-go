@@ -20,6 +20,7 @@ type Handlers struct {
 	Skills         *SkillHandler
 	Providers      *ProviderHandler
 	Workflows      *WorkflowHandler
+	Triggers       *TriggerHandler
 	ProviderRoutes *ProviderRouteHandler
 	Guardrails     *GuardrailHandler
 	Sandboxes      *SandboxHandler
@@ -46,7 +47,6 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sessions.POST("/:id/runs", h.Runs.Create)
 		sessions.GET("/:id/approvals", h.Approvals.ListBySession)
 		sessions.GET("/:id/tasks", h.Tasks.ListBySession)
-		sessions.GET("/:id/workflow-runs", h.Workflows.ListBySession)
 	}
 	{
 		runs := api.Group("/runs")
@@ -56,8 +56,10 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	}
 	{
 		tasks := api.Group("/tasks")
+		tasks.GET("", h.Tasks.List)
 		tasks.POST("/:id/stop", h.Tasks.Stop)
 		tasks.POST("/:id/retry", h.Tasks.Retry)
+		tasks.POST("/:id/dismiss", h.Tasks.Dismiss)
 
 		approvals := api.Group("/approvals")
 		approvals.POST("/:tool_call_id/approve", h.Approvals.Approve)
@@ -142,12 +144,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		workflows.GET("/:id", h.Workflows.Get)
 		workflows.PUT("/:id", h.Workflows.Update)
 		workflows.DELETE("/:id", h.Workflows.Delete)
-
-		workflowRuns := api.Group("/workflow-runs")
-		workflowRuns.GET("/:id", h.Workflows.GetRun)
-		workflowRuns.POST("/:id/stop", h.Workflows.StopRun)
-		workflowRuns.POST("/:id/retry", h.Workflows.RetryRun)
-		workflowRuns.POST("/:id/dismiss", h.Workflows.DismissRun)
+		workflows.POST("/:id/runs", h.Workflows.Run)
+		h.registerTriggers(api)
 	}
 	{
 		guardrails := api.Group("/guardrails")
@@ -167,4 +165,17 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sandboxes.POST("/:id/test", h.Sandboxes.Test)
 	}
 	api.POST("/playground/generate", h.Playground.Generate)
+}
+
+// registerTriggers mounts the trigger endpoints (the webhook itself is mounted
+// by the server, outside the API prefix).
+func (h Handlers) registerTriggers(api *gin.RouterGroup) {
+	triggers := api.Group("/triggers")
+	triggers.GET("", h.Triggers.List)
+	triggers.POST("", h.Triggers.Create)
+	triggers.GET("/:id", h.Triggers.Get)
+	triggers.PUT("/:id", h.Triggers.Update)
+	triggers.DELETE("/:id", h.Triggers.Delete)
+	triggers.POST("/:id/fire", h.Triggers.Fire)
+	triggers.POST("/:id/rotate-secret", h.Triggers.RotateSecret)
 }

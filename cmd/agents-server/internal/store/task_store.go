@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -79,6 +80,52 @@ func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([
 	return tasks, nil
 }
 
+// TaskWithSession is a task row with the name of the conversation it belongs
+// to, for a listing that spans sessions.
+type TaskWithSession struct {
+	Task        `bun:",extend"`
+	SessionName string `bun:"session_name,scanonly" json:"session_name"`
+}
+
+// ListRecent returns one page of tasks across every live session, newest
+// first — of one kind when kind is set, only still-live ones when liveOnly —
+// and the total the page is cut from. limit is capped at 500 (0 = the cap).
+// liveParent keeps a dead incarnation's rows out, as every by-session read
+// does; the join supplies the session's name.
+func (s *TaskStore) ListRecent(ctx context.Context, kind string, liveOnly bool, limit, offset int) (rows []TaskWithSession, total int, err error) {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	filter := func(q *bun.SelectQuery) *bun.SelectQuery {
+		// A hidden parent is a task's own session: its tasks are nested work,
+		// with no conversation of their own to open.
+		q = q.Join("JOIN sessions AS ps ON ps.id = t.parent_session_id").Where(liveParent).Where("ps.hidden = ?", false)
+		if kind != "" {
+			q = q.Where("t.kind = ?", kind)
+		}
+		if liveOnly {
+			q = q.Where("t.status NOT IN " + taskTerminalSet)
+		}
+		return q
+	}
+	total, err = filter(s.db.NewSelect().Model((*Task)(nil))).Count(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting recent tasks: %w", err)
+	}
+	if err := filter(s.db.NewSelect().Model((*Task)(nil))).
+		ColumnExpr("t.*").
+		ColumnExpr("ps.name AS session_name").
+		OrderExpr("t.created_at DESC, t.id DESC").
+		Limit(limit).Offset(offset).
+		Scan(ctx, &rows); err != nil {
+		return nil, 0, fmt.Errorf("listing recent tasks: %w", err)
+	}
+	return rows, total, nil
+}
+
 // ListNonTerminalByParent returns the given chat session's still-live tasks.
 // liveParent like every other by-session read (spec §2.13): without it a dead
 // incarnation's rows still counted against the live session's concurrency cap
@@ -105,8 +152,6 @@ const (
 // taskTerminalSet is the SQL fragment matching terminal statuses.
 const taskTerminalSet = "('completed', 'failed', 'cancelled')"
 
-// NotifyState values for the completion wake-up owed to the parent session.
-
 // Finalize is the CAS to a terminal status (on non-terminality AND the attempt
 // named by runID), plus the wake-up the finished task owes its parent — BOTH in
 // one transaction, so a crash can never leave a completed task whose parent is
@@ -114,7 +159,7 @@ const taskTerminalSet = "('completed', 'failed', 'cancelled')"
 // read aborts rather than silently dropping the debt — into what is owed; nil
 // (the function, or its answer) owes nothing. The debt is written only when
 // the CAS actually won: a superseded attempt owes nothing.
-func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string, buildWakeup func(*Task) *Wakeup) (bool, error) {
+func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string, state json.RawMessage, buildWakeup func(*Task) *Wakeup) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		row, err := taskRowForWakeup(ctx, tx, id, buildWakeup)
@@ -132,6 +177,14 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 		}
 		if result != "" {
 			q = q.Set("result = ?", result)
+		}
+		if state != nil {
+			// The job's final state, in the transition itself — the wake-up the
+			// row owes is written from the row as it stands here too.
+			q = q.Set("state = ?", string(state))
+			if row != nil {
+				row.State = state
+			}
 		}
 		res, err := q.Exec(ctx)
 		if err != nil {
@@ -185,6 +238,8 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 			Set("attempt = CASE WHEN attempt < 1 THEN 2 ELSE attempt + 1 END").
 			Set("summary = ?", "").
 			Set("result = ?", "").
+			// Live again, so back on the strip whatever the person hid.
+			Set("dismissed = ?", false).
 			Set("updated_at = ?", time.Now().UTC()).
 			Where("id = ?", id).
 			Where("status = ?", "failed").
@@ -230,6 +285,57 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 		return false, ErrNotFound
 	}
 	return false, nil
+}
+
+// Advance implements the tasks.Store contract as one conditional UPDATE: the
+// run moves and the state lands together, only while runID is the current one
+// and the row is working. The generation predicates are RetryClaim's, for the
+// same reason — a row whose sessions are gone must not start a run.
+func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (bool, error) {
+	q := s.db.NewUpdate().Model((*Task)(nil)).
+		Set("run_id = ?", nextRunID).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("run_id = ?", runID).
+		Where("status = ?", taskWorking).
+		Where(liveParent).Where(liveChild)
+	if state != nil {
+		q = q.Set("state = ?", string(state))
+	}
+	res, err := q.Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("advancing task %s: %w", id, err)
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	exists, eerr := s.db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
+	if eerr != nil {
+		return false, fmt.Errorf("advancing task %s: %w", id, eerr)
+	}
+	if !exists {
+		return false, ErrNotFound
+	}
+	return false, nil
+}
+
+// Dismiss hides a terminal task from the live strip. Terminal-only: a running
+// task is exactly what the strip exists to show. Reports whether a row moved.
+func (s *TaskStore) Dismiss(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.NewUpdate().Model((*Task)(nil)).
+		Set("dismissed = ?", true).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("status IN " + taskTerminalSet).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("dismissing task %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("dismissing task %s: %w", id, err)
+	}
+	return n > 0, nil
 }
 
 // ReleaseRetryClaim undoes a RetryClaim whose run never launched: status back
@@ -295,6 +401,168 @@ func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) err
 	}
 	return nil
 }
+
+// Pause holds a working task on a decision, in one transaction: the status
+// flipped to input_required, the approval filed, and the state written when
+// one is given (nil leaves it), all under runID — a partial write could leave
+// a task paused with nothing to answer, or an approval answerable for a task
+// still working. It is the one write for every pause of a task: a workflow
+// step waiting to start, a task's run interrupted on a tool approval, and the
+// undoing of a claim whose resume never happened. Reports whether the row was
+// claimed; false means it was no longer working on runID (a stop, a sweep) and
+// nothing was written.
+func (s *TaskStore) Pause(ctx context.Context, id, runID string, state json.RawMessage, approval *PendingApproval) (bool, error) {
+	var won bool
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		q := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", taskInputRequired).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", id).
+			Where("run_id = ?", runID).
+			Where("status = ?", taskWorking)
+		if state != nil {
+			q = q.Set("state = ?", string(state))
+		}
+		res, err := q.Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		won = true
+		if approval.CreatedAt.IsZero() {
+			approval.CreatedAt = time.Now().UTC()
+		}
+		_, err = tx.NewInsert().Model(approval).
+			On("CONFLICT (run_id) DO UPDATE").
+			Set("state = EXCLUDED.state").
+			Set("tool_calls = EXCLUDED.tool_calls").
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("pausing task %s: %w", id, err)
+	}
+	return won, nil
+}
+
+// ClaimOutcome is what a decision on a task's approval found, when it did not
+// simply win: the row was already claimed by another decision, or the task
+// was not paused on that run any more (or yet).
+type ClaimOutcome int
+
+// The three answers of a claim.
+const (
+	ClaimWon ClaimOutcome = iota
+	// ClaimTaken: the approval row was already gone — a racing decision won.
+	ClaimTaken
+	// ClaimTaskNotPaused: the row was there, but the task is not input_required
+	// on runID (terminal, moved to another attempt, or not paused yet). Nothing
+	// was written; the row is still there for a later decision.
+	ClaimTaskNotPaused
+)
+
+// ClaimApprovalWorking is a decision on a paused task's approval, in one
+// transaction: the approval row deleted — the exclusive claim against a
+// racing decision — and the task flipped input_required → working under
+// runID. Either both land or neither: a task never ends up working with an
+// approval left to answer, nor answered with the task still paused. What the
+// caller does next (resume the run, start the step) is its own launch, and a
+// launch that fails ends the task the way any failed launch does.
+func (s *TaskStore) ClaimApprovalWorking(ctx context.Context, taskID, runID string) (ClaimOutcome, error) {
+	outcome := ClaimTaken
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// The row first — its absence is the answer "another decision took
+		// it" — then the task; a task not paused on this run rolls the
+		// delete back, so the row is still there for a later decision.
+		del, err := tx.NewDelete().Model((*PendingApproval)(nil)).Where("run_id = ?", runID).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, err := del.RowsAffected(); err != nil || n == 0 {
+			if err == nil {
+				return errRollback
+			}
+			return err
+		}
+		res, err := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", taskWorking).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", taskID).
+			Where("run_id = ?", runID).
+			Where("status = ?", taskInputRequired).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			if err == nil {
+				outcome = ClaimTaskNotPaused
+				return errRollback
+			}
+			return err
+		}
+		outcome = ClaimWon
+		return nil
+	})
+	if err != nil && !errors.Is(err, errRollback) {
+		return ClaimTaken, fmt.Errorf("claiming the approval of task %s: %w", taskID, err)
+	}
+	return outcome, nil
+}
+
+// ClaimApprovalCancelled ends a paused task on its approval, in one
+// transaction: the approval row deleted (the claim) and the task finalized
+// cancelled — a rejected step, an expired decision. claimed reports whether
+// this call took the row; ended whether it moved the task (false when the task
+// was already terminal or on another attempt — the stale row is still removed).
+// A cancellation owes no wake-up; a debt of this attempt is dropped here too.
+func (s *TaskStore) ClaimApprovalCancelled(ctx context.Context, taskID, runID, summary string) (claimed, ended bool, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		del, err := tx.NewDelete().Model((*PendingApproval)(nil)).Where("run_id = ?", runID).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, err := del.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		claimed = true
+		res, err := tx.NewUpdate().Model((*Task)(nil)).
+			Set("status = ?", "cancelled").
+			Set("summary = ?", summary).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", taskID).
+			Where("run_id = ?", runID).
+			Where("status NOT IN " + taskTerminalSet).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		ended = n > 0
+		if ended {
+			if _, err := tx.NewUpdate().Model((*Wakeup)(nil)).
+				Set("state = ?", WakeCancelled).
+				Where("kind = ?", WakeKindTask).Where("source_id = ?", taskID).Where("attempt = ?", runID).
+				Where("state = ?", WakePending).
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, false, fmt.Errorf("cancelling task %s on its approval: %w", taskID, err)
+	}
+	return claimed, ended, nil
+}
+
+// errRollback aborts a claim's transaction without a fault: nothing to write.
+var errRollback = errors.New("nothing to write")
 
 // ReclaimWorking flips an input_required task back to working — the approve
 // path's exclusive claim against a concurrent stop — only while runID is the

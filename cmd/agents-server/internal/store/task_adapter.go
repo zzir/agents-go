@@ -60,6 +60,8 @@ func toSDK(t *Task) *tasks.Task {
 		ID:              t.ID,
 		RunID:           t.RunID,
 		Label:           t.Label,
+		Kind:            t.Kind,
+		State:           t.State,
 		ParentSessionID: t.ParentSessionID,
 		ParentRunID:     t.ParentRunID,
 		ToolCallID:      t.ToolCallID,
@@ -99,6 +101,8 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		ID:              t.ID,
 		RunID:           t.RunID,
 		Label:           t.Label,
+		Kind:            t.Kind,
+		State:           t.State,
 		ParentSessionID: t.ParentSessionID,
 		ParentRunID:     t.ParentRunID,
 		ToolCallID:      t.ToolCallID,
@@ -154,8 +158,8 @@ func (a *TaskAdapter) ListByParent(ctx context.Context, parentSessionID string) 
 // task owes its parent from the row the store reads inside the SAME
 // transaction as the terminal write — the delivery cannot be lost to a crash
 // between them, nor to a failed pre-read.
-func (a *TaskAdapter) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string) (bool, error) {
-	return a.store.Finalize(ctx, id, runID, string(st), summary, result, func(row *Task) *Wakeup {
+func (a *TaskAdapter) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
+	return a.store.Finalize(ctx, id, runID, string(st), summary, result, state, func(row *Task) *Wakeup {
 		return taskWakeup(row, st, summary, result, runID)
 	})
 }
@@ -187,6 +191,12 @@ func taskWakeup(row *Task, st tasks.Status, summary, result, attempt string) *Wa
 		Payload:     tasks.DefaultNotifyFormatter([]tasks.Task{*t}),
 		Attempt:     attempt,
 	}
+}
+
+// Advance implements tasks.Store.
+func (a *TaskAdapter) Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (bool, error) {
+	won, err := a.store.Advance(ctx, id, runID, nextRunID, state)
+	return won, mapNotFound(err)
 }
 
 // RetryClaim implements tasks.Store.

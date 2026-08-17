@@ -27,37 +27,27 @@ type SandboxHandler struct {
 	workspaceAbs string
 }
 
-// NewSandboxHandler returns a handler backed by the given store and sandbox manager.
-// allowLocal controls whether type "local" sandboxes may be created.
-func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager, allowLocal bool) *SandboxHandler {
-	return &SandboxHandler{store: s, manager: m, allowLocalSandbox: allowLocal}
-}
-
-// WithTerminals wires the terminal registry so Update/Delete also tear down
-// live web terminals on the affected sandbox.
-func (h *SandboxHandler) WithTerminals(t *TerminalHandler) *SandboxHandler {
-	h.terminals = t
-	return h
-}
-
-// WithWorkspace records the server workspace directory so responses can report
-// each sandbox's default workdir.
-func (h *SandboxHandler) WithWorkspace(dir string) *SandboxHandler {
-	if abs, err := filepath.Abs(dir); err == nil {
-		h.workspaceAbs = abs
-	} else {
-		h.workspaceAbs = dir
+// NewSandboxHandler returns a handler over the sandbox store and manager.
+// allowLocal controls whether type "local" sandboxes may be created; terminals
+// is the web-terminal registry an update or delete tears down; workspace is
+// the server --workspace directory, reported as each sandbox's default workdir.
+func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager, allowLocal bool, terminals *TerminalHandler, workspace string) *SandboxHandler {
+	if s == nil || terminals == nil {
+		panic("handler: NewSandboxHandler needs the sandbox store and the terminal handler")
 	}
-	return h
+	// The workspace is reported absolute — each sandbox's default workdir.
+	abs, err := filepath.Abs(workspace)
+	if err != nil {
+		abs = workspace
+	}
+	return &SandboxHandler{store: s, manager: m, allowLocalSandbox: allowLocal, terminals: terminals, workspaceAbs: abs}
 }
 
 // closeSandboxTerminals tears down live web terminals opened under a config
-// generation below minGen, if the terminal feature is wired — and moves the
-// registry's fence so a terminal still dialing cannot register afterwards.
+// generation below minGen, and moves the registry's fence so a terminal still
+// dialing cannot register afterwards.
 func (h *SandboxHandler) closeSandboxTerminals(id string, minGen int64) {
-	if h.terminals != nil {
-		h.terminals.CloseSandboxTerminals(id, minGen)
-	}
+	h.terminals.CloseSandboxTerminals(id, minGen)
 }
 
 // annotate fills the computed, never-stored response fields: terminal

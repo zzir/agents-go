@@ -100,76 +100,124 @@ func TestPendingApprovalReap(t *testing.T) {
 	if err := s.Save(ctx, fresh); err != nil {
 		t.Fatal(err)
 	}
-
-	removed, err := s.DeleteOlderThan(ctx, time.Now().UTC().Add(-time.Hour))
+	// The listing names the expired candidates; it claims nothing.
+	expired, err := s.ListOlderThan(ctx, time.Now().UTC().Add(-time.Hour))
 	if err != nil {
-		t.Fatalf("reap: %v", err)
+		t.Fatalf("list: %v", err)
 	}
-	if len(removed) != 1 || removed[0].RunID != "old" {
-		t.Fatalf("reap removed wrong set: %+v", removed)
+	if len(expired) != 1 || expired[0].RunID != "old" {
+		t.Fatalf("expired = %+v, want the old one only", expired)
 	}
-	if all, _ := s.List(ctx); len(all) != 1 || all[0].RunID != "fresh" {
-		t.Fatalf("wrong survivor: %+v", all)
+	if all, _ := s.List(ctx); len(all) != 2 {
+		t.Fatalf("listing must not remove anything: %d rows", len(all))
 	}
 }
 
-// TestDeleteOlderThanReturnsOnlyDeleted locks: DeleteOlderThan reports
-// EXACTLY the rows it removed. Two concurrent reaps over the same expired set
-// must, between them, return each row exactly once — never the same row twice.
-// The old SELECT-then-DELETE let both reaps SELECT the same rows before either
-// DELETE, so both returned them, and the reaper then finalized a just-expired
-// (or, in the approve race, just-resumed) task twice. DELETE... RETURNING makes
-// the returned set the deleted set, so a row is reported by whichever statement
-// actually removed it and by no other.
-func TestDeleteOlderThanReturnsOnlyDeleted(t *testing.T) {
+// A paused task's approval is claimed and the task ended in ONE write — and
+// of two racing claims exactly one takes the row: the loser writes nothing.
+func TestClaimApprovalCancelledIsOneWriteAndExclusive(t *testing.T) {
 	ctx := context.Background()
-	s := NewPendingApprovalStore(newTestDB(t))
-
-	old := time.Now().UTC().Add(-2 * time.Hour)
-	const n = 30
-	for range n {
-		if err := s.Save(ctx, &PendingApproval{RunID: NewID(), SessionID: "s", State: "{}", CreatedAt: old}); err != nil {
-			t.Fatal(err)
-		}
+	db := newTestDB(t)
+	approvals, tasks := NewPendingApprovalStore(db), NewTaskStore(db)
+	row := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: "p", ChildSessionID: "c", Status: "input_required", Label: "t"}
+	if err := tasks.Create(ctx, row); err != nil {
+		t.Fatal(err)
 	}
-
-	cutoff := time.Now().UTC().Add(-time.Hour)
-	type result struct {
-		rows []PendingApproval
-		err  error
+	if err := approvals.Save(ctx, &PendingApproval{RunID: row.RunID, SessionID: "c", State: "{}"}); err != nil {
+		t.Fatal(err)
 	}
+	// A pending debt of this attempt goes with the cancellation.
+	if err := NewWakeupStore(db).Owe(ctx, &Wakeup{SessionID: "p", Kind: WakeKindTask, SourceID: row.ID, Attempt: row.RunID, Payload: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	type result struct{ claimed, ended bool }
 	results := make(chan result, 2)
 	for range 2 {
 		go func() {
-			rows, err := s.DeleteOlderThan(ctx, cutoff)
-			results <- result{rows, err}
+			c, e, err := tasks.ClaimApprovalCancelled(ctx, row.ID, row.RunID, "expired")
+			if err != nil {
+				t.Error(err)
+			}
+			results <- result{c, e}
 		}()
 	}
-
-	seen := map[string]int{}
-	total := 0
+	var claims, ends int
 	for range 2 {
 		r := <-results
-		if r.err != nil {
-			t.Fatalf("DeleteOlderThan: %v", r.err)
+		if r.claimed {
+			claims++
 		}
-		for _, row := range r.rows {
-			seen[row.RunID]++
-			total++
-		}
-	}
-	if total != n {
-		t.Fatalf("two concurrent reaps returned %d rows total, want exactly %d (no row twice, none missed)", total, n)
-	}
-	for id, c := range seen {
-		if c != 1 {
-			t.Fatalf("row %s returned %d times; each expired row must be returned exactly once", id, c)
+		if r.ended {
+			ends++
 		}
 	}
-	// Everything is gone; a follow-up reap returns an empty set with no error.
-	rest, err := s.DeleteOlderThan(ctx, cutoff)
-	if err != nil || len(rest) != 0 {
-		t.Fatalf("follow-up reap: rows=%d err=%v, want empty and nil", len(rest), err)
+	if claims != 1 || ends != 1 {
+		t.Fatalf("claims=%d ends=%d, want exactly one of each", claims, ends)
+	}
+	got, _ := tasks.Get(ctx, row.ID)
+	if got.Status != "cancelled" || got.Summary != "expired" {
+		t.Fatalf("task = %s %q, want cancelled by the claim", got.Status, got.Summary)
+	}
+	if _, err := approvals.Get(ctx, row.RunID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the approval must be gone: %v", err)
+	}
+	pending, _ := NewWakeupStore(db).Pending(ctx, "p")
+	if len(pending) != 0 {
+		t.Fatalf("the debt of the cancelled attempt must be dropped: %+v", pending)
+	}
+	// A stale row — its task already on another attempt — is claimed and
+	// removed, and the task untouched.
+	row2 := &Task{ID: NewID(), RunID: "new-run", ParentSessionID: "p", ChildSessionID: "c2", Status: "working", Label: "t"}
+	if err := tasks.Create(ctx, row2); err != nil {
+		t.Fatal(err)
+	}
+	if err := approvals.Save(ctx, &PendingApproval{RunID: "old-run", SessionID: "c2", State: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ended, err := tasks.ClaimApprovalCancelled(ctx, row2.ID, "old-run", "expired")
+	if err != nil || !claimed || ended {
+		t.Fatalf("stale claim = %v,%v,%v — want claimed, not ended", claimed, ended, err)
+	}
+	if got, _ := tasks.Get(ctx, row2.ID); got.Status != "working" {
+		t.Fatalf("a task on another attempt must not be touched: %s", got.Status)
+	}
+}
+
+// ClaimApprovalWorking flips the task and removes the row together, or does
+// neither: a task not paused on that run leaves the row where it is.
+func TestClaimApprovalWorkingIsAllOrNothing(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	approvals, tasks := NewPendingApprovalStore(db), NewTaskStore(db)
+	row := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: "p", ChildSessionID: "c", Status: "working", Label: "t"}
+	if err := tasks.Create(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if err := approvals.Save(ctx, &PendingApproval{RunID: row.RunID, SessionID: "c", State: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	// Not paused yet: nothing written, the row still there.
+	if out, err := tasks.ClaimApprovalWorking(ctx, row.ID, row.RunID); err != nil || out != ClaimTaskNotPaused {
+		t.Fatalf("claim of an unpaused task = %v, %v — want ClaimTaskNotPaused", out, err)
+	}
+	if _, err := approvals.Get(ctx, row.RunID); err != nil {
+		t.Fatalf("the row must survive a claim that did not hold: %v", err)
+	}
+	if err := tasks.MarkInputRequired(ctx, row.ID, row.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := tasks.ClaimApprovalWorking(ctx, row.ID, row.RunID); err != nil || out != ClaimWon {
+		t.Fatalf("claim = %v, %v — want won", out, err)
+	}
+	if got, _ := tasks.Get(ctx, row.ID); got.Status != "working" {
+		t.Fatalf("task = %s, want working again", got.Status)
+	}
+	if _, err := approvals.Get(ctx, row.RunID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("the row must be gone with the claim")
+	}
+	// A second decision finds the row taken.
+	if out, _ := tasks.ClaimApprovalWorking(ctx, row.ID, row.RunID); out != ClaimTaken {
+		t.Fatalf("second claim = %v, want taken", out)
 	}
 }
 

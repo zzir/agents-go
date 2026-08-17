@@ -41,8 +41,7 @@ const chatgptHTTPTimeout = 30 * time.Second
 // ChatGPTOAuth manages the OAuth flow for ChatGPT subscription authentication.
 type ChatGPTOAuth struct {
 	providers *store.ProviderStore
-	// settings, when wired via UseSettings, routes token endpoint calls through
-	// the configured proxy. Optional: nil means a direct (still timed) client.
+	// settings routes token endpoint calls through the configured proxy_url.
 	settings *store.SettingStore
 
 	mu      sync.Mutex
@@ -61,31 +60,25 @@ type chatgptPending struct {
 	cancel       context.CancelFunc
 }
 
-// NewChatGPTOAuth creates a new ChatGPT OAuth manager.
-func NewChatGPTOAuth(providers *store.ProviderStore) *ChatGPTOAuth {
+// NewChatGPTOAuth returns the OAuth manager over the provider rows it logs in
+// and the settings its token calls honor (proxy_url).
+func NewChatGPTOAuth(providers *store.ProviderStore, settings *store.SettingStore) *ChatGPTOAuth {
+	if providers == nil || settings == nil {
+		panic("bridge: NewChatGPTOAuth needs the provider and setting stores")
+	}
 	return &ChatGPTOAuth{
 		providers: providers,
+		settings:  settings,
 		pending:   make(map[string]*chatgptPending),
 	}
 }
 
-// UseSettings wires a settings store so token endpoint calls honor the
-// configured proxy_url. Optional — call once at construction. NOTE for merge:
-// cmd/root.go's NewChatGPTOAuth call site should follow with
-// chatgptOAuth.UseSettings(settingStore) to enable proxying of ChatGPT auth
-// traffic; without it token calls go direct (still timed).
-func (o *ChatGPTOAuth) UseSettings(settings *store.SettingStore) {
-	o.settings = settings
-}
-
 // httpClient returns a timed HTTP client for the token endpoint, routed through
-// the configured proxy when settings are wired.
+// the configured proxy when one is set.
 func (o *ChatGPTOAuth) httpClient(ctx context.Context) *http.Client {
-	if o.settings != nil {
-		if pc := ProxyHTTPClient(ctx, o.settings); pc != nil {
-			pc.Timeout = chatgptHTTPTimeout
-			return pc
-		}
+	if pc := ProxyHTTPClient(ctx, o.settings); pc != nil {
+		pc.Timeout = chatgptHTTPTimeout
+		return pc
 	}
 	return &http.Client{Timeout: chatgptHTTPTimeout}
 }

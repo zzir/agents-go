@@ -10,6 +10,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -45,6 +46,13 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 			}
 		}
 	}
+	// A parent that has never run and is bound to nothing (a workflow started
+	// over REST on a fresh session) has no agent to be woken as; the task's
+	// own agent delivers then — a result nobody could deliver is worse than one
+	// read by the agent that produced it.
+	if parentAgentConfigID == "" {
+		parentAgentConfigID = cfg.ID
+	}
 	return tasks.Spec{
 		DisplayName: cfg.Name,
 		Inherit: store.EncodeInherit(store.Inherit{
@@ -60,7 +68,12 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 type taskLauncher struct{ r *Runner }
 
 // Launch implements tasks.Launcher.
-func (t taskLauncher) Launch(_ context.Context, req tasks.LaunchRequest) error {
+func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error {
+	// A workflow's run is a STEP: which agent, and what to do first, come from
+	// the execution's state rather than the inherit snapshot.
+	if req.Kind == store.TaskKindWorkflow {
+		return t.r.launchWorkflowStep(ctx, req)
+	}
 	in := store.DecodeInherit(req.Inherit)
 	if req.Wake {
 		// The parent's wake-up run: same agent and sandbox the spawning run
@@ -136,12 +149,14 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 	return tasks.StopCancelled, nil
 }
 
-// onTaskUpdate records a task's changed state against the spawn call's card,
-// which happens long after the turn that spawned it ended. It appends an update
-// entry rather than rewriting the card: a fast task can finish before the parent
-// turn is persisted, so the update may be stored first and projection associates
-// it by call id.
+// onTaskUpdate is the task manager's OnTaskUpdate: it tells every connected
+// client (task.updated) and records the change against the spawn call's card,
+// which happens long after the turn that spawned it ended. The card update is
+// appended rather than rewritten: a fast task can finish before the parent turn
+// is persisted, so the update may be stored first and projection associates it
+// by call id.
 func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
+	r.publishTaskUpdated(ctx, t)
 	if t.ToolCallID == "" {
 		return
 	}
@@ -184,6 +199,68 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	}
 }
 
+// AnnounceTask tells the clients what a task now is, for a change made on the
+// store outside the manager (the approval reaper's expiry).
+func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
+	if t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID); err == nil {
+		r.onTaskUpdate(ctx, t)
+	}
+}
+
+// publishTaskUpdated tells the parent session's subscribers what the task now
+// is. It rides the task's CURRENT run's stream when the hub holds that run —
+// replayed to a connection that attaches mid-run — and is broadcast to every
+// connection that stream does not reach: all of them when there is no run (a
+// task paused before its step, a transition or retry announced before its
+// run registers), and the ones that joined after a run was interrupted on an
+// approval, since a new connection attaches to live runs only. A startup
+// sweep tells nobody either way, which is fine: nobody is connected at
+// startup, and the rows are refetched on load.
+func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
+	if t == nil || t.RunID == "" || t.ParentSessionID == "" {
+		return
+	}
+	upd := protocol.TaskUpdated{
+		TaskID:          t.ID,
+		ParentSessionID: t.ParentSessionID,
+		ParentRunID:     t.ParentRunID,
+		ToolCallID:      t.ToolCallID,
+		ChildSessionID:  t.ChildSessionID,
+		Kind:            t.Kind,
+		Label:           t.Label,
+		Status:          string(t.Status),
+		Attempt:         t.AttemptNo(),
+		MaxAttempts:     r.MaxTaskAttempts(),
+		Summary:         t.Summary,
+		State:           t.State,
+		UpdatedAt:       t.UpdatedAt,
+	}
+	// The dismissal is the row's, not the SDK task's: read it off the row.
+	if row, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil {
+		upd.Dismissed = row.Dismissed
+	}
+	// A paused task names its decision, so a client can offer it without a
+	// run event to learn it from.
+	if t.Status == tasks.StatusInputRequired && r.Deps.PendingApprovals != nil {
+		if p, err := r.Deps.PendingApprovals.Get(ctx, t.RunID); err == nil {
+			if calls := p.ParsedToolCalls(); len(calls) > 0 {
+				upd.PendingCallID, upd.PendingToolName = calls[0].ToolCallID, calls[0].ToolName
+			}
+		}
+	}
+	env, err := protocol.NewEnvelope(protocol.EventTaskUpdated, upd)
+	if err != nil {
+		return
+	}
+	except := ""
+	if r.hub.publish(t.RunID, env) {
+		except = t.RunID
+	}
+	if r.OnBroadcast != nil {
+		r.OnBroadcast(env, except)
+	}
+}
+
 // taskInfoFrom converts the SDK's task view to this server's API shape.
 // MaxAttempts comes from the Runner (the manager's configuration), so every
 // response tells a client whether a retry is still on the table.
@@ -194,6 +271,7 @@ func (r *Runner) taskInfoFrom(i *tasks.Info) *TaskInfo {
 	return &TaskInfo{
 		TaskID:      i.TaskID,
 		Label:       i.Label,
+		Kind:        i.Kind,
 		Agent:       i.Agent,
 		Status:      string(i.Status),
 		Attempt:     i.Attempt,

@@ -84,33 +84,6 @@ func (s *PendingApprovalStore) ListByParentTasks(ctx context.Context, parentSess
 	return out, nil
 }
 
-// WorkflowApproval is a pending approval inside a workflow's child session,
-// tagged with the owning execution.
-type WorkflowApproval struct {
-	PendingApproval
-	WorkflowRunID string `bun:"workflow_run_id" json:"workflow_run_id"`
-	WorkflowName  string `bun:"workflow_name"   json:"workflow_name,omitempty"`
-}
-
-// ListByParentWorkflows returns the pending approvals of every workflow running
-// for the given chat session. Without it a step that pauses is unanswerable:
-// its approval lives in a session the chat cannot open, so the sequence waits
-// forever on a decision nobody can see.
-func (s *PendingApprovalStore) ListByParentWorkflows(ctx context.Context, parentSessionID string) ([]WorkflowApproval, error) {
-	var out []WorkflowApproval
-	if err := s.db.NewSelect().Model((*PendingApproval)(nil)).
-		ColumnExpr("pa.*").
-		ColumnExpr("w.id AS workflow_run_id").
-		ColumnExpr("w.name AS workflow_name").
-		Join("JOIN workflow_runs AS w ON w.child_session_id = pa.session_id").
-		Where("w.parent_session_id = ?", parentSessionID).
-		OrderExpr("pa.created_at ASC").
-		Scan(ctx, &out); err != nil {
-		return nil, fmt.Errorf("listing workflow approvals for session %s: %w", parentSessionID, err)
-	}
-	return out, nil
-}
-
 // List returns every pending approval, oldest first (FindByToolCall scans it;
 // recovery after a restart is lazy — approvals resume from these rows on the
 // next approve/reject, nothing is preloaded).
@@ -133,7 +106,7 @@ func (s *PendingApprovalStore) FindByToolCall(ctx context.Context, toolCallID st
 		return nil, nil, err
 	}
 	for i := range all {
-		for _, tc := range all[i].parsedToolCalls() {
+		for _, tc := range all[i].ParsedToolCalls() {
 			if tc.ToolCallID == toolCallID {
 				match := tc
 				return &all[i], &match, nil
@@ -160,24 +133,16 @@ func (s *PendingApprovalStore) Delete(ctx context.Context, runID string) error {
 	return nil
 }
 
-// DeleteOlderThan removes pending approvals created before cutoff and returns
-// the rows it actually removed (so the caller can annotate the affected
-// sessions and finalize their tasks).
-//
-// It uses DELETE... RETURNING so the returned set is EXACTLY what this
-// statement deleted, atomically. A plain SELECT-then-DELETE could return a row
-// that a concurrent approve deleted — and already resumed — in the gap between
-// the two statements; the reaper would then finalize that just-approved task as
-// cancelled, killing a live run. With RETURNING, any row an approve
-// claimed first is simply absent from the result, so the reaper only ever acts
-// on approvals it genuinely expired.
-func (s *PendingApprovalStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) ([]PendingApproval, error) {
-	var removed []PendingApproval
-	if err := s.db.NewDelete().Model(&removed).
-		Where("created_at < ?", cutoff).
-		Returning("*").
-		Scan(ctx); err != nil {
-		return nil, fmt.Errorf("deleting expired approvals: %w", err)
+// ListOlderThan returns the approvals filed before cutoff — the reaper's
+// candidates. This read claims nothing: each row is then claimed on its own
+// (deleted, in the same transaction as the task it ends when it belongs to
+// one — TaskStore.ClaimApprovalCancelled), so a decision racing the reaper
+// either takes the row first or finds it gone; the reaper never acts on an
+// approval it did not itself remove.
+func (s *PendingApprovalStore) ListOlderThan(ctx context.Context, cutoff time.Time) ([]PendingApproval, error) {
+	var out []PendingApproval
+	if err := s.db.NewSelect().Model(&out).Where("created_at < ?", cutoff).OrderExpr("created_at ASC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("listing expired approvals: %w", err)
 	}
-	return removed, nil
+	return out, nil
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/uptrace/bun"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/sessions"
@@ -135,5 +137,90 @@ func TestTaskRowsWorkWithoutASessionRow(t *testing.T) {
 	}
 	if _, err := store.ByChildSession(ctx, "direct-child"); err != nil {
 		t.Fatalf("resolving a task by its child session with no row: %v", err)
+	}
+}
+
+// Deleting a session takes the whole task tree with it: the hidden sessions its
+// tasks ran in (and theirs, at any depth) go too — a hidden session has no
+// listing of its own, so anything left behind would be unreachable forever.
+func TestDeleteRemovesTheTaskTree(t *testing.T) {
+	ctx := context.Background()
+	repo, store, _ := taskRepo(t)
+
+	for _, id := range []string{"root", "child-1", "grandchild-1", "unrelated"} {
+		if _, err := repo.Create(ctx, session.CreateOptions{ID: id, Hidden: id != "root" && id != "unrelated"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spawnedTask(t, store, "t1", "root", "child-1")
+	spawnedTask(t, store, "t2", "child-1", "grandchild-1")
+	// The child transcripts have content, which must go with them.
+	for _, id := range []string{"child-1", "grandchild-1"} {
+		s, err := repo.Open(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AppendItems(ctx, agents.InputItemsFromText("hi"), agents.Source{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := repo.Delete(ctx, "root"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"child-1", "grandchild-1"} {
+		if _, err := repo.Open(ctx, id); err == nil {
+			t.Errorf("hidden session %s survived its owner's delete", id)
+		}
+	}
+	for _, id := range []string{"t1", "t2"} {
+		if _, err := store.Get(ctx, id); err == nil {
+			t.Errorf("task %s survived its tree's delete", id)
+		}
+	}
+	// A session outside the tree is untouched.
+	if _, err := repo.Open(ctx, "unrelated"); err != nil {
+		t.Fatalf("an unrelated session was deleted: %v", err)
+	}
+}
+
+// The cascade follows LIVE edges only: a stale task row — its child id since
+// given to an unrelated session (a new generation) — must not take that
+// session with it. Same fence as every read: a stale row is inert, not wrong.
+func TestDeleteFollowsLiveEdgesOnly(t *testing.T) {
+	ctx := context.Background()
+	repo, _, db := taskRepo(t)
+	for _, id := range []string{"root", "reused"} {
+		if _, err := repo.Create(ctx, session.CreateOptions{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A stale row: root → reused, bound to a generation of the child that
+	// is not the one answering to the id now (what a row of a deleted and
+	// re-created child looks like — the cascade of that delete would have
+	// taken a row it could see, so the stale one is inserted directly).
+	if _, err := db.ExecContext(ctx, `INSERT INTO agent_tasks (id, run_id, label, parent_session_id, parent_session_gen, child_session_id, child_session_gen, depth, status, created_at, updated_at)
+		VALUES ('t-old', 't-old-run', 'old', 'root', COALESCE((SELECT s.gen FROM agent_sessions AS s WHERE s.id = 'root'), ''), 'reused', 'gen-of-a-former-child', 1, ?, ?, ?)`,
+		string(tasks.StatusWorking), time.Now().UTC(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := repo.Open(ctx, "reused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.AppendItems(ctx, agents.InputItemsFromText("someone else's history"), agents.Source{}); err != nil {
+		t.Fatal(err)
+	}
+	// Deleting the old parent must not reach the reused id: the edge is stale.
+	if err := repo.Delete(ctx, "root"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := repo.Open(ctx, "reused")
+	if err != nil {
+		t.Fatalf("the unrelated session that reused the id was deleted: %v", err)
+	}
+	items, err := again.Entries(ctx, session.Cursor{})
+	if err != nil || len(items) == 0 {
+		t.Fatalf("the reused session lost its history: %d entries, %v", len(items), err)
 	}
 }

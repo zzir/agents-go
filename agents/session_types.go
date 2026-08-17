@@ -44,6 +44,7 @@ const (
 	SourceGuardrail    = session.SourceGuardrail
 	SourceCompaction   = session.SourceCompaction
 	SourceErrorHandler = session.SourceErrorHandler
+	SourceHost         = session.SourceHost
 )
 
 // Display kinds, re-exported alongside the ItemDisplay alias.

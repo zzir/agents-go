@@ -48,7 +48,7 @@ func TestMcpServerReqValidate(t *testing.T) {
 func TestSandboxValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
-	h := NewSandboxHandler(store.NewSandboxStore(db), bridge.NewSandboxManager(t.TempDir()), false)
+	h := testSandboxHandler(store.NewSandboxStore(db), bridge.NewSandboxManager(t.TempDir()), t.TempDir())
 	engine := gin.New()
 	engine.POST("/sandboxes", h.Create)
 

@@ -3,6 +3,7 @@ package tasks
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,10 @@ const (
 	// DefaultMaxAttemptsPerTask bounds the runs one task may have, the original
 	// included.
 	DefaultMaxAttemptsPerTask = 3
+	// DefaultMaxContinuations bounds the runs a Continue hook may chain under
+	// one task before the Manager ends it: a job of several runs, not a hook
+	// that never says stop.
+	DefaultMaxContinuations = 50
 )
 
 // ErrTaskLimit reports that a parent session already has its maximum tasks in
@@ -92,6 +97,12 @@ type Config struct {
 	// original included. Zero uses DefaultMaxAttemptsPerTask; 1 disables
 	// retrying.
 	MaxAttemptsPerTask int
+	// MaxContinuations bounds Continue: how many further runs it may chain
+	// under one task since the spawn or the last retry (a person's decision to
+	// go on). A hook still asking for more at the bound ends the task failed
+	// instead, with the State the task had — the ceiling on a loop no check
+	// ever ends. Zero uses DefaultMaxContinuations.
+	MaxContinuations int
 
 	// NewID mints task, run and session ids. Nil uses a built-in generator.
 	NewID func() string
@@ -114,13 +125,37 @@ type Config struct {
 	// something to deliver drops it here.
 	OnResultDelivered func(ctx context.Context, t *Task)
 
-	// ExtraLiveCount, when set, adds background work the Manager does not track
-	// — a host's OWN kind, e.g. workflow executions — to the per-parent live
-	// count, so ONE cap governs every kind of background work rather than each
-	// counting only its own. Called under the parent's spawn lock during Spawn.
-	// It returns a plain int: a count that cannot be read must not wrongly BLOCK
-	// a spawn, so the host returns 0 on any error.
-	ExtraLiveCount func(ctx context.Context, parentSessionID string) int
+	// DescribeState, when set, says in one line where a job of the host's
+	// kind stands — "step 2/3 (verify)" — from its Kind and State; the task
+	// tools show it beside the status. Empty means nothing to add. The SDK
+	// never reads State itself: it is the host's vocabulary.
+	DescribeState func(kind string, state json.RawMessage) string
+
+	// Continue, when set, is asked whether a run's ending ends the task, and
+	// makes a job of several runs expressible: a fixed sequence of steps, a
+	// loop until some check passes. It is called for a completed or failed run
+	// of the task's CURRENT attempt — never a cancelled one: a person's stop
+	// ends the task whatever the host would do next — with the task as the run
+	// left it. Returning a Continuation with an Input starts the next run: the
+	// Manager claims the transition (Store.Advance, State replaced) and
+	// launches it. Returning a Continuation WITHOUT an Input ends the task,
+	// its State written with the ending (in the same Finalize) — how the last
+	// run ended is then in the record, not only in the task's status; Err
+	// makes that ending FAILED with Err as the reason. Returning nil ends the
+	// task with the run's outcome and State untouched. Returning an error ends
+	// it as FAILED with that error as the summary — the host could not, or
+	// would not, carry on.
+	Continue func(ctx context.Context, t *Task, out RunOutcome) (*Continuation, error)
+}
+
+// Continuation is a Continue hook's answer: with Input, the next run — what it
+// starts with, and the State it starts from (replacing the task's); without
+// Input, the ENDING — the State the task ends with, and Err when it ends
+// failed rather than with the run's own outcome.
+type Continuation struct {
+	Input string
+	State json.RawMessage
+	Err   error
 }
 
 // Manager owns the task lifecycle.
@@ -130,8 +165,13 @@ type Manager struct {
 
 	// waiters wakes task_status callers the moment this Manager finalizes a
 	// task; awaitFinish also polls, since another process can be the writer.
-	mu      sync.Mutex
-	waiters map[string][]chan struct{}
+	// continued counts the runs Continue has chained under each live task —
+	// in memory, since a chain lives in one process (a restart's sweep ends
+	// every run) — cleared when the task ends under this Manager or is
+	// retried; an ending written elsewhere leaves its int until then.
+	mu        sync.Mutex
+	waiters   map[string][]chan struct{}
+	continued map[string]int
 
 	// launching holds the runs whose launch has not settled yet, and whether
 	// the host has since reported one of them finishing. One entry per launch
@@ -217,6 +257,9 @@ func New(cfg Config) *Manager {
 	if cfg.MaxAttemptsPerTask <= 0 {
 		cfg.MaxAttemptsPerTask = DefaultMaxAttemptsPerTask
 	}
+	if cfg.MaxContinuations <= 0 {
+		cfg.MaxContinuations = DefaultMaxContinuations
+	}
 	if cfg.NewID == nil {
 		cfg.NewID = newID
 	}
@@ -289,13 +332,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
 	}
-	// Count the host's other background work (workflows) against the same cap,
-	// so N workflows leave room for fewer tasks rather than a full N more.
-	total := len(live)
-	if m.cfg.ExtraLiveCount != nil {
-		total += m.cfg.ExtraLiveCount(ctx, req.ParentSessionID)
-	}
-	if total >= m.cfg.MaxConcurrentPerParent {
+	if len(live) >= m.cfg.MaxConcurrentPerParent {
 		return nil, ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
 	}
 
@@ -319,7 +356,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	childID := m.cfg.NewID()
 	if _, err := m.cfg.Sessions.Create(ctx, session.CreateOptions{
 		ID:    childID,
-		Title: "task: " + label,
+		Title: cmp.Or(req.Kind, "task") + ": " + label,
 		// Hidden: a task's transcript is not a conversation the user started.
 		Hidden: true,
 	}); err != nil {
@@ -330,6 +367,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		ID:              m.cfg.NewID(),
 		RunID:           m.cfg.NewID(),
 		Label:           label,
+		Kind:            req.Kind,
 		ParentSessionID: req.ParentSessionID,
 		ParentRunID:     req.ParentRunID,
 		ToolCallID:      req.ToolCallID,
@@ -337,6 +375,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		Depth:           depth,
 		Attempt:         1,
 		Inherit:         spec.Inherit,
+		State:           req.State,
 		Status:          StatusWorking,
 	}
 	if err := m.cfg.Store.Create(ctx, task); err != nil {
@@ -345,12 +384,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	}
 
 	defer m.beginLaunch(task.RunID)()
-	if err := m.cfg.Launcher(ctx, LaunchRequest{
-		RunID:     task.RunID,
-		SessionID: childID,
-		Input:     req.Input,
-		Inherit:   spec.Inherit,
-	}); err != nil {
+	if err := m.cfg.Launcher(ctx, launchFor(task, req.Input)); err != nil {
 		// The run never started, so unwind rather than leaving a failed husk.
 		if delErr := m.cfg.Store.Delete(cleanupCtx, task.ID); delErr != nil {
 			m.log.WarnContext(ctx, "unstarted task row cleanup", slog.String("task_id", task.ID),
@@ -379,6 +413,22 @@ type SpawnRequest struct {
 	// be updated when the task finishes.
 	ParentRunID string
 	ToolCallID  string
+	// Kind and State are the host's own, copied onto the task (see Task).
+	Kind  string
+	State json.RawMessage
+}
+
+// launchFor is the request that starts a run of t with the given input.
+func launchFor(t *Task, input string) LaunchRequest {
+	return LaunchRequest{
+		TaskID:    t.ID,
+		Kind:      t.Kind,
+		State:     t.State,
+		RunID:     t.RunID,
+		SessionID: t.ChildSessionID,
+		Input:     input,
+		Inherit:   t.Inherit,
+	}
 }
 
 // Retry runs a failed task again, from where it stopped.
@@ -434,14 +484,15 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 		}
 		return infoFrom(cur, ""), ErrRetryConflict
 	}
+	m.resetContinued(taskID)
 
 	defer m.beginLaunch(runID)()
-	if err := m.cfg.Launcher(ctx, LaunchRequest{
-		RunID:     runID,
-		SessionID: t.ChildSessionID,
-		Input:     prompt,
-		Inherit:   t.Inherit,
-	}); err != nil {
+	// The row moved to runID under the claim; t is the pre-claim read.
+	claimed := *t
+	claimed.RunID = runID
+	req := launchFor(&claimed, prompt)
+	req.Retry = true
+	if err := m.cfg.Launcher(ctx, req); err != nil {
 		return m.retryLaunchFailed(ctx, t, runID, err)
 	}
 
@@ -525,15 +576,17 @@ func retryPrompt(t *Task, limit int) string {
 		"completion; avoid repeating work that already succeeded."
 }
 
-// modelHasResult cancels the wake-up debt of a finished task whose result the
-// MODEL now has in hand. It is the model that matters, not the caller: a REST
-// path whose result goes to a person must NOT come through here, or the model
-// never gets its wake-up.
+// ModelHasResult cancels the wake-up debt of a finished task whose result the
+// MODEL now has in hand — a spawn or retry that finished before its tool call
+// returned, a status read of a finished task. It is the model that matters,
+// not the caller: a REST path whose result goes to a person must NOT come
+// through here, or the model never gets its wake-up. Exported for a host that
+// provides its own spawn tool (SpawnTool) and has to settle the same debt.
 //
 // Bound to the attempt and the terminal status the caller read: a retry between
 // the decision and this write makes the pending debt a different attempt's, and
 // a result that landed after the call was decided is one the model has not seen.
-func (m *Manager) modelHasResult(ctx context.Context, info *Info) {
+func (m *Manager) ModelHasResult(ctx context.Context, info *Info) {
 	if info == nil || !info.Status.Terminal() {
 		return
 	}
@@ -647,6 +700,21 @@ func (m *Manager) cleanupSession(ctx context.Context, id string) {
 	}
 }
 
+// List reports every task of a parent session, newest first, as the store
+// keeps them. Nothing here settles a wake-up debt: a listing is not the
+// parent hearing a result (the tools render it without the results).
+func (m *Manager) List(ctx context.Context, parentSessionID string) ([]*Info, error) {
+	rows, err := m.cfg.Store.ListByParent(ctx, parentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]*Info, 0, len(rows))
+	for i := range rows {
+		infos = append(infos, infoFrom(&rows[i], ""))
+	}
+	return infos, nil
+}
+
 // Status reports a task, optionally waiting for it to finish.
 //
 // Reaching a terminal status here CONSUMES the wake-up debt: the model has the
@@ -720,7 +788,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 			// The run is over and its outcome is on its way to the row. Wait
 			// for it, so the next pass reports the real ending instead of
 			// racing it — and, if none arrives, records one of its own.
-			m.awaitSettled(ctx, taskID)
+			m.awaitSettled(ctx, taskID, t.RunID)
 		case stopRetried:
 			// A retry reopened the task on a new run between the read and the
 			// claim. Go round at once, against that attempt.
@@ -759,12 +827,14 @@ const stopSettleWait = 2 * time.Second
 
 // awaitSettled waits, briefly, for a finished run's outcome to reach the row —
 // the difference between a stop that reports a task's real ending and one that
-// overwrites it. The bound covers an outcome that was LOST rather than late.
-func (m *Manager) awaitSettled(ctx context.Context, taskID string) {
+// overwrites it. The outcome has landed when the row is terminal OR has moved
+// on from runID (a continuation or a retry took it to another run); the bound
+// covers an outcome that was LOST rather than late.
+func (m *Manager) awaitSettled(ctx context.Context, taskID, runID string) {
 	deadline := time.Now().Add(stopSettleWait)
 	for time.Now().Before(deadline) {
 		t, err := m.cfg.Store.Get(ctx, taskID)
-		if err != nil || t.Status.Terminal() {
+		if err != nil || t.Status.Terminal() || t.RunID != runID {
 			return
 		}
 		if !m.awaitFinish(ctx, taskID, time.Until(deadline)) {
@@ -835,7 +905,7 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool)
 	if paused {
 		reason = "stopped while awaiting approval"
 	}
-	won, err := m.cfg.Store.Finalize(ctx, t.ID, t.RunID, StatusCancelled, reason, "")
+	won, err := m.cfg.Store.Finalize(ctx, t.ID, t.RunID, StatusCancelled, reason, "", nil)
 	if err != nil {
 		return 0, err
 	}
@@ -960,7 +1030,61 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	// who wins the transition below: the fact is about the run, not the row.
 	m.noteRunReported(runID)
 
-	won, err := m.cfg.Store.Finalize(ctx, task.ID, runID, status, summary, full)
+	// The host may keep the task going. Asked only about the CURRENT attempt's
+	// run of a task still WORKING on it — a superseded attempt's outcome loses
+	// the transition below anyway; a paused row (input_required, its approval
+	// never reclaimed) is not one a next run may be advanced from, so its
+	// ending is finalized as it is rather than dropped by a claim that cannot
+	// win — never about a cancellation, which is the person's decision (a
+	// graceful stop included, whatever status the turn it let finish ended
+	// with), and only for an outcome that NAMES its run: without a run id a
+	// redelivered ending cannot be told from the next run's, and would
+	// advance the job twice.
+	var finalState json.RawMessage
+	consult := m.cfg.Continue != nil && status != StatusCancelled && !out.GracefulStop && task.RunID == runID && task.Status == StatusWorking
+	if consult && out.RunID == "" {
+		m.log.WarnContext(ctx, "task outcome without a run id: Continue not consulted; a job of several runs needs run identity",
+			slog.String("task_id", task.ID))
+		consult = false
+	}
+	if consult {
+		cont, cerr := m.cfg.Continue(ctx, task, out)
+		switch {
+		case cerr != nil:
+			status = StatusFailed
+			full = cerr.Error()
+			summary = truncateRunes(full, m.cfg.SummaryLimit)
+		case cont != nil && cont.Input == "":
+			// The job ends here, its final State written with the ending.
+			finalState = cont.State
+			if cont.Err != nil {
+				status = StatusFailed
+				full = cont.Err.Error()
+				summary = truncateRunes(full, m.cfg.SummaryLimit)
+			}
+		case cont != nil && m.continuations(task.ID) >= m.cfg.MaxContinuations:
+			// The hook wants another run past the ceiling: a loop no check
+			// ends, or a hook that never says stop. It ends here, failed.
+			status = StatusFailed
+			full = fmt.Sprintf("stopped after %d runs: the task's continuation ceiling (%d) was reached", m.continuations(task.ID)+1, m.cfg.MaxContinuations)
+			summary = truncateRunes(full, m.cfg.SummaryLimit)
+		case cont != nil:
+			aerr := m.continueTask(ctx, task, runID, cont)
+			if aerr == nil {
+				return
+			}
+			// The transition could not be written, or was not won: the run has
+			// ended, and a row left on it would be a zombie until a restart's
+			// sweep. It ends failed with the reason instead, below — the same
+			// path as a Continue that refused — where Finalize's own predicate
+			// yields to a stop, a sweep or a retry that moved the row first.
+			status = StatusFailed
+			full = "could not advance to the next run: " + aerr.Error()
+			summary = truncateRunes(full, m.cfg.SummaryLimit)
+		}
+	}
+
+	won, err := m.cfg.Store.Finalize(ctx, task.ID, runID, status, summary, full, finalState)
 	if err != nil {
 		m.log.WarnContext(ctx, "finalizing task",
 			slog.String("task_id", task.ID), slog.String("error", err.Error()))
@@ -979,6 +1103,9 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	// cost the parent the report. The re-read below only freshens the UI card.
 	done := *task
 	done.RunID, done.Status, done.Summary, done.Result = runID, status, summary, full
+	if finalState != nil {
+		done.State = finalState
+	}
 	done.UpdatedAt = time.Now().UTC()
 	if t, gerr := m.cfg.Store.Get(ctx, task.ID); gerr == nil {
 		m.notifyUpdate(ctx, t)
@@ -990,6 +1117,76 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	if status == StatusCancelled {
 		m.resultDelivered(ctx, &done)
 		return
+	}
+	m.finishedTask(ctx, &done)
+}
+
+// errAdvanceLost is a continuation whose claim found the row no longer working
+// on the run that ended.
+var errAdvanceLost = errors.New("the task was moved before the next run could start")
+
+// continueTask moves a task on to the run its Continue hook asked for: claim
+// the transition, then launch — the same two steps as a spawn, reconciled the
+// same way. A launch that fails ends the task failed, reported like any
+// ending. It returns an error for a transition that could not be written or
+// was not won (errAdvanceLost) — the caller then ends the task on the run
+// that finished, and Finalize's own predicate decides who owns the row (spec
+// §2.13) — and nil once the task's fate is settled here.
+func (m *Manager) continueTask(ctx context.Context, t *Task, fromRunID string, cont *Continuation) error {
+	// Detached, as every launch is: the ending that got us here may arrive on
+	// a context the finishing run's teardown has already cancelled.
+	ctx = context.WithoutCancel(ctx)
+	nextRunID := m.cfg.NewID()
+	won, err := m.cfg.Store.Advance(ctx, t.ID, fromRunID, nextRunID, cont.State)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return errAdvanceLost
+	}
+	m.noteContinued(t.ID)
+	next := *t
+	next.RunID = nextRunID
+	if cont.State != nil { // nil keeps the recorded state, as Advance does
+		next.State = cont.State
+	}
+	defer m.beginLaunch(nextRunID)()
+	if lerr := m.cfg.Launcher(ctx, launchFor(&next, cont.Input)); lerr != nil {
+		m.launchFailed(ctx, &next, "could not start the next run: "+lerr.Error())
+		return nil
+	}
+	updated, err := m.settleLaunch(ctx, t.ID, nextRunID)
+	if err != nil {
+		m.log.WarnContext(ctx, "reading an advanced task", slog.String("task_id", t.ID), slog.String("error", err.Error()))
+		return nil
+	}
+	m.notifyUpdate(ctx, updated)
+	return nil
+}
+
+// launchFailed ends a task whose next run never started. Detached context, as
+// retryLaunchFailed: a launch usually fails because the session is being torn
+// down, which has already cancelled ctx.
+func (m *Manager) launchFailed(ctx context.Context, t *Task, reason string) {
+	ctx = context.WithoutCancel(ctx)
+	summary := truncateRunes(reason, m.cfg.SummaryLimit)
+	won, err := m.cfg.Store.Finalize(ctx, t.ID, t.RunID, StatusFailed, summary, reason, nil)
+	if err != nil {
+		m.log.WarnContext(ctx, "failing a task whose next run never started",
+			slog.String("task_id", t.ID), slog.String("error", err.Error()))
+		return
+	}
+	if !won {
+		return
+	}
+	m.finished(t.ID)
+	done := *t
+	done.Status, done.Summary, done.Result = StatusFailed, summary, reason
+	done.UpdatedAt = time.Now().UTC()
+	if cur, gerr := m.cfg.Store.Get(ctx, t.ID); gerr == nil {
+		m.notifyUpdate(ctx, cur)
+	} else {
+		m.notifyUpdate(ctx, &done)
 	}
 	m.finishedTask(ctx, &done)
 }
@@ -1091,10 +1288,35 @@ func (m *Manager) finished(taskID string) {
 	m.mu.Lock()
 	chans := m.waiters[taskID]
 	delete(m.waiters, taskID)
+	delete(m.continued, taskID)
 	m.mu.Unlock()
 	for _, ch := range chans {
 		close(ch)
 	}
+}
+
+// continuations is how many runs Continue has chained under the task so far.
+func (m *Manager) continuations(taskID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.continued[taskID]
+}
+
+// noteContinued counts one more chained run for the task.
+func (m *Manager) noteContinued(taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.continued == nil {
+		m.continued = map[string]int{}
+	}
+	m.continued[taskID]++
+}
+
+// resetContinued starts the count over — a retry is a person choosing to go on.
+func (m *Manager) resetContinued(taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.continued, taskID)
 }
 
 func (m *Manager) dropWaiter(taskID string, ch chan struct{}) {

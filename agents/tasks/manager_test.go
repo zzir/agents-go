@@ -186,7 +186,7 @@ func TestNotify_ConcurrentFinalizersProduceOneWinner(t *testing.T) {
 			if i%2 == 0 {
 				st = StatusFailed
 			}
-			won, err := h.store.Finalize(ctx, info.TaskID, runID, st, "s", "r")
+			won, err := h.store.Finalize(ctx, info.TaskID, runID, st, "s", "r", nil)
 			if err != nil {
 				t.Error(err)
 				return
@@ -618,7 +618,7 @@ func TestStatus_WaitNoticesAFinalizeItDidNotMake(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		// Straight to the store, as another process would.
-		if _, err := h.store.Finalize(ctx, info.TaskID, runID, StatusCompleted, "done", "full"); err != nil {
+		if _, err := h.store.Finalize(ctx, info.TaskID, runID, StatusCompleted, "done", "full", nil); err != nil {
 			t.Error(err)
 		}
 	}()

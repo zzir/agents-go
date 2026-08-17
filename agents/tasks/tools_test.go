@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -88,6 +89,49 @@ func TestTools_StatusReturnsTheFullResult(t *testing.T) {
 	}
 }
 
+// Without an id, task_status lists the conversation's tasks — summaries only,
+// newest first — and consumes no wake-up debt: the finish is still delivered.
+func TestTools_StatusWithoutAnIDListsTheConversation(t *testing.T) {
+	ctx := context.Background()
+	var delivered []string
+	h := newHarness(t, func(c *Config) {
+		c.SummaryLimit = 12
+		c.OnResultDelivered = func(_ context.Context, task *Task) { delivered = append(delivered, task.ID) }
+	})
+	first := h.spawn(t)
+	second := h.spawn(t)
+	h.m.OnRunFinished(ctx, h.childOf(t, first.TaskID), RunOutcome{Status: StatusCompleted, Text: strings.Repeat("y", 100)})
+
+	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent", `{"task_id":"","wait_seconds":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := stringOf(res)
+	if !strings.HasPrefix(out, "2 task(s)") {
+		t.Fatalf("listing = %q, want both tasks counted", out)
+	}
+	if strings.Index(out, second.TaskID) > strings.Index(out, first.TaskID) {
+		t.Fatalf("listing = %q, want newest first", out)
+	}
+	if !strings.Contains(out, first.TaskID+": completed") || !strings.Contains(out, second.TaskID+": working") {
+		t.Fatalf("listing = %q, want each task's status", out)
+	}
+	if strings.Contains(out, strings.Repeat("y", 100)) {
+		t.Fatalf("listing = %q, want summaries, not full results", out)
+	}
+	if len(delivered) != 0 {
+		t.Fatalf("delivered = %v — a listing must not settle the wake-up debt", delivered)
+	}
+	// Another conversation's listing is empty: ids do not leak sideways.
+	res, err = invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "other", `{"task_id":"","wait_seconds":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stringOf(res), "no tasks") {
+		t.Fatalf("listing for another session = %q, want none", stringOf(res))
+	}
+}
+
 // Stopping something already finished is news, not a failure the model should
 // retry.
 func TestTools_StopOfAFinishedTaskIsAResult(t *testing.T) {
@@ -110,11 +154,53 @@ func TestTools_StopOfAFinishedTaskIsAResult(t *testing.T) {
 }
 
 func TestTools_ExposesTheFour(t *testing.T) {
-	tools := newHarness(t).m.Tools(nil)
+	m := newHarness(t).m
+	tools := m.Tools(nil)
 	for _, name := range []string{"spawn_task", "task_status", "task_retry", "task_stop"} {
 		if toolNamed(tools, name) == nil {
 			t.Errorf("missing tool %q", name)
 		}
+	}
+	// The parts a host composes its own surface from: the spawn tool alone,
+	// and the three that name an existing task.
+	if st := m.SpawnTool(nil); st == nil || st.Name != "spawn_task" {
+		t.Fatalf("SpawnTool = %v", st)
+	}
+	tt := m.TaskTools(nil)
+	if len(tt) != 3 || toolNamed(tt, "spawn_task") != nil {
+		t.Fatalf("TaskTools = %v, want status/retry/stop only", tt)
+	}
+}
+
+// The host says where a job of its kind stands (DescribeState) and task_status
+// shows it — beside the status of one task, and on the listing's line.
+func TestTools_StatusShowsTheHostsProgressLine(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, func(c *Config) {
+		c.DescribeState = func(kind string, state json.RawMessage) string {
+			if kind != "sequence" {
+				return ""
+			}
+			return "step 2/3 (verify) from " + string(state)
+		}
+	})
+	info, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "parent", AgentName: "worker", Input: "go", Label: "seq", Kind: "sequence", State: json.RawMessage(`{"n":2}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent", `{"task_id":"`+info.TaskID+`","wait_seconds":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stringOf(res), `progress: step 2/3 (verify) from {"n":2}`) {
+		t.Fatalf("status = %q, want the host's progress line", stringOf(res))
+	}
+	list, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent", `{"task_id":"","wait_seconds":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stringOf(list), "step 2/3 (verify)") || !strings.Contains(stringOf(list), "still working — do not redo its work") {
+		t.Fatalf("listing = %q, want the progress line and the live-task warning", stringOf(list))
 	}
 }
 

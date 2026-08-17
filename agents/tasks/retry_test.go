@@ -318,7 +318,7 @@ func TestRetry_LaunchFailuresDoNotSpendAttempts(t *testing.T) {
 	}
 }
 
-// The wake-up debt a failed retry-launch opens follows the modelHasResult
+// The wake-up debt a failed retry-launch opens follows the ModelHasResult
 // line: the task_retry tool hands the model the failure in its result and
 // settles the debt in hand; a retry over a host API tells only a person, so
 // the model keeps its wake-up — immediately, when the parent is idle.
@@ -447,7 +447,7 @@ func TestRetry_StaleFinalizeCannotEndTheNewAttempt(t *testing.T) {
 	}
 
 	// The stop that was in flight when the retry landed.
-	won, err := h.store.Finalize(ctx, info.TaskID, stale, StatusCancelled, "stopped", "")
+	won, err := h.store.Finalize(ctx, info.TaskID, stale, StatusCancelled, "stopped", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestStop_ChasesOneRetry(t *testing.T) {
 	var once sync.Once
 	stopper = func(string) {
 		once.Do(func() {
-			won, err := h.store.Finalize(ctx, info.TaskID, current, StatusFailed, "boom again", "boom again")
+			won, err := h.store.Finalize(ctx, info.TaskID, current, StatusFailed, "boom again", "boom again", nil)
 			if err != nil || !won {
 				t.Errorf("staging the interleaved failure: won=%v err=%v", won, err)
 			}
@@ -750,7 +750,7 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 		})
 
 		// info is what the tool is about to return — decided before the finish.
-		h.m.modelHasResult(ctx, info)
+		h.m.ModelHasResult(ctx, info)
 		if got := h.reportedDelivered(); len(got) != 0 {
 			t.Errorf("delivered = %+v, want none — the model was told %q", got, info.Status)
 		}
@@ -768,7 +768,7 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		h.m.modelHasResult(ctx, finished)
+		h.m.ModelHasResult(ctx, finished)
 		if got := h.reportedDelivered(); len(got) == 0 || got[len(got)-1].ID != info.TaskID {
 			t.Errorf("delivered = %+v, want the task the model was handed", got)
 		}
@@ -790,7 +790,7 @@ func TestModelHasResult_CancelsOnlyWhatTheModelWasHanded(t *testing.T) {
 		})
 
 		before := len(h.reportedDelivered())
-		h.m.modelHasResult(ctx, stale)
+		h.m.ModelHasResult(ctx, stale)
 		if got := h.reportedDelivered(); len(got) != before {
 			t.Errorf("delivered = %+v, want the second attempt's news untouched", got)
 		}

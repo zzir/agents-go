@@ -80,6 +80,32 @@ func (s *SessionStore) Update(ctx context.Context, id string, name string) error
 	return s.UpdateFields(ctx, id, np, nil)
 }
 
+// DefaultSessionName is the name a session is created with until it is named
+// — by the person, or by the title generator, which only ever names a session
+// still carrying it.
+const DefaultSessionName = "New Session"
+
+// NameIfDefault sets the name only while the session still carries the
+// default one — the CAS the title generator writes through, so a rename made
+// while it was thinking stands, and of two generators only one lands. Reports
+// whether the write took.
+func (s *SessionStore) NameIfDefault(ctx context.Context, id, name string) (bool, error) {
+	res, err := s.db.NewUpdate().Model((*Session)(nil)).
+		Set("name = ?", name).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("name = ?", DefaultSessionName).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("naming session %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("naming session %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // UpdateFields applies a partial update to the session: only non-nil fields
 // are written; updated_at is always refreshed. Returns an ErrNotFound-wrapping
 // error when the session doesn't exist.
@@ -179,106 +205,70 @@ func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, workDir 
 }
 
 // Delete removes the session with the given id together with all of its
-// messages, trace events, and pending approvals in one transaction. Background
-// tasks spawned from the session cascade: their rows and hidden child
-// sessions (with all their data) go too — a hidden session has no UI path of
-// its own, so anything left behind would be unreachable forever.
+// messages, trace events, pending approvals, wake-ups and triggers in one
+// transaction. Background tasks spawned from the session cascade: their rows
+// and hidden child sessions (with all their data) go too, the whole tree — a
+// hidden session has no UI path of its own, so anything left behind would be
+// unreachable forever. Only LIVE edges are followed (liveParent / liveChild,
+// the fence every read applies): a stale task row from an earlier incarnation
+// names a child id that may since have been given to an unrelated session,
+// and following it would delete that session's history. The root's absence
+// is ErrNotFound; a child that is already gone is not.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// Every hidden session this one owns: a task's and a workflow's alike.
-		// Both are unreachable once their owner is gone.
-		var childIDs []string
-		if err := tx.NewSelect().Model((*Task)(nil)).
-			Column("child_session_id").
-			Where("parent_session_id = ?", id).
-			Scan(ctx, &childIDs); err != nil {
-			return fmt.Errorf("listing task sessions for %s: %w", id, err)
-		}
-		var workflowChildren []string
-		if err := tx.NewSelect().Model((*WorkflowRun)(nil)).
-			Column("child_session_id").
-			Where("parent_session_id = ?", id).
-			Scan(ctx, &workflowChildren); err != nil {
-			return fmt.Errorf("listing workflow sessions for %s: %w", id, err)
-		}
-		for _, child := range workflowChildren {
-			if child != "" {
-				childIDs = append(childIDs, child)
+		queue := []string{id}
+		visited := map[string]bool{id: true}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			var childIDs []string
+			if err := tx.NewSelect().Model((*Task)(nil)).
+				Column("child_session_id").
+				Where("parent_session_id = ?", cur).
+				Where(liveParent).Where(liveChild).
+				Scan(ctx, &childIDs); err != nil {
+				return fmt.Errorf("listing task sessions for %s: %w", cur, err)
 			}
-		}
-		for _, child := range childIDs {
-			for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil)} {
-				if _, err := tx.NewDelete().Model(model).
-					Where("session_id = ?", child).
-					Exec(ctx); err != nil {
-					return fmt.Errorf("deleting task session %s data: %w", child, err)
+			for _, c := range childIDs {
+				if !visited[c] {
+					visited[c] = true
+					queue = append(queue, c)
 				}
 			}
-			if _, err := tx.NewDelete().Model((*Session)(nil)).
-				Where("id = ?", child).
-				Exec(ctx); err != nil {
-				return fmt.Errorf("deleting task session %s: %w", child, err)
+			if err := deleteSessionRows(ctx, tx, cur, cur == id); err != nil {
+				return err
 			}
-		}
-		if _, err := tx.NewDelete().Model((*Task)(nil)).
-			Where("parent_session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting tasks for session %s: %w", id, err)
-		}
-		// If id is itself a task's hidden child session (deleting it directly,
-		// e.g. via the REST endpoint), drop the owning task row too — otherwise
-		// its child_session_id dangles at a deleted session forever.
-		if _, err := tx.NewDelete().Model((*Task)(nil)).
-			Where("child_session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting owning task for session %s: %w", id, err)
-		}
-		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
-			Where("session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting entries for session %s: %w", id, err)
-		}
-		if _, err := tx.NewDelete().Model((*appendPointRow)(nil)).
-			Where("session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting the append point for session %s: %w", id, err)
-		}
-		if _, err := tx.NewDelete().Model((*TraceEvent)(nil)).
-			Where("session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting trace events for session %s: %w", id, err)
-		}
-		if _, err := tx.NewDelete().Model((*PendingApproval)(nil)).
-			Where("session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting pending approvals for session %s: %w", id, err)
-		}
-		if _, err := tx.NewDelete().Model((*ContextProfile)(nil)).
-			Where("session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting the context profile for session %s: %w", id, err)
-		}
-		// Both ends: a deleted chat takes its executions with it, and a deleted
-		// child session (a workflow's own) leaves no row pointing at nothing.
-		if _, err := tx.NewDelete().Model((*WorkflowRun)(nil)).
-			Where("parent_session_id = ? OR child_session_id = ?", id, id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting workflow runs for session %s: %w", id, err)
-		}
-		if _, err := tx.NewDelete().Model((*Wakeup)(nil)).
-			Where("session_id = ?", id).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("deleting wake-ups for session %s: %w", id, err)
-		}
-		res, err := tx.NewDelete().Model((*Session)(nil)).
-			Where("id = ?", id).
-			Exec(ctx)
-		if err == nil {
-			err = requireRows(res)
-		}
-		if err != nil {
-			return fmt.Errorf("deleting session %s: %w", id, err)
 		}
 		return nil
 	})
+}
+
+// deleteSessionRows removes one session of the tree: its row and everything
+// keyed by its id, plus the task rows naming it in either role — as a PARENT
+// (its own tasks) and as a CHILD (the task whose hidden session it is; a row
+// pointing at a deleted session would dangle forever) — and the triggers that
+// fire into it. mustExist makes a missing row ErrNotFound (the root); a child
+// already gone is left as such.
+func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
+	for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil), (*Trigger)(nil)} {
+		if _, err := tx.NewDelete().Model(model).
+			Where("session_id = ?", id).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("deleting session %s data: %w", id, err)
+		}
+	}
+	if _, err := tx.NewDelete().Model((*Task)(nil)).
+		Where("parent_session_id = ?", id).
+		WhereOr("child_session_id = ?", id).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("deleting tasks of session %s: %w", id, err)
+	}
+	res, err := tx.NewDelete().Model((*Session)(nil)).Where("id = ?", id).Exec(ctx)
+	if err == nil && mustExist {
+		err = requireRows(res)
+	}
+	if err != nil {
+		return fmt.Errorf("deleting session %s: %w", id, err)
+	}
+	return nil
 }

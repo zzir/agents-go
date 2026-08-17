@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rs/zerolog"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -116,5 +120,153 @@ func ResolveBindingWorkDir(cfg *store.SandboxConfig, workDir string) (string, er
 		// An unknown type fails at buildSandbox with its own error; nothing to
 		// validate here.
 		return workDir, nil
+	}
+}
+
+// bindingPlan is one run request's resolved sandbox context: the effective
+// values the run executes under, and whether this run still owes the session
+// its permanent binding (first sandbox-carrying run on an unbound session).
+type bindingPlan struct {
+	sandboxID string
+	workDir   string
+	needBind  bool
+	// revision is the config revision the workdir was validated against; the
+	// bind CAS matches it, so a config updated between plan and write makes the
+	// bind lose and re-plan rather than land a stale workdir.
+	revision int64
+}
+
+// planSandboxBinding decides a run's sandbox context WITHOUT writing anything.
+// A bound session overrides the request; the client's values are ignored. An
+// unbound session carrying a sandbox has the request validated (config must
+// exist, workdir honored by its backend — ResolveBindingWorkDir) and a bind
+// planned. Runs with no sandbox resolve to none; the session stays bindable.
+// The write happens in reserveRun only after hub registration succeeds.
+func (r *Runner) planSandboxBinding(ctx context.Context, sess *store.Session, sandboxID, workDir string) (bindingPlan, error) {
+	if sess.SandboxID != "" {
+		return bindingPlan{sandboxID: sess.SandboxID, workDir: sess.WorkDir}, nil
+	}
+	if sandboxID == "" {
+		return bindingPlan{}, nil
+	}
+	cfg, err := r.Deps.SandboxConfigs.Get(ctx, sandboxID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bindingPlan{}, ErrInvalidBinding{Reason: "sandbox not found: " + sandboxID}
+		}
+		return bindingPlan{}, err
+	}
+	canonical, err := ResolveBindingWorkDir(cfg, workDir)
+	if err != nil {
+		return bindingPlan{}, err
+	}
+	return bindingPlan{sandboxID: sandboxID, workDir: canonical, needBind: true, revision: cfg.Revision}, nil
+}
+
+// BindSessionSandbox binds a still-unbound session to (sandboxID, workDir)
+// with no run of its own — for a start that is not a message but carries the
+// composer's project: a workflow into a fresh conversation. Same plan and CAS
+// as a run's first bind, and the same announcement, broadcast since there is
+// no run stream to ride. An empty sandboxID or a session already bound binds
+// nothing (false, nil): the standing binding is what the work then uses. A
+// CAS lost to a config edit goes around, up to maxBindAttempts, then
+// ErrBindingContention — never a start on a session left unbound.
+func (r *Runner) BindSessionSandbox(ctx context.Context, sessionID, sandboxID, workDir string) (bool, error) {
+	for attempt := 1; ; attempt++ {
+		sess, err := r.Deps.Sessions.Get(ctx, sessionID)
+		if err != nil {
+			return false, err
+		}
+		plan, err := r.planSandboxBinding(ctx, sess, sandboxID, workDir)
+		if err != nil {
+			return false, err
+		}
+		if !plan.needBind {
+			return false, nil
+		}
+		won, err := r.Deps.Sessions.BindSandboxIfEmpty(ctx, sessionID, plan.sandboxID, plan.workDir, plan.revision)
+		if err != nil {
+			return false, err
+		}
+		if won {
+			if r.OnBroadcast != nil {
+				if env, eerr := protocol.NewEnvelope(protocol.EventSessionSandboxBound, protocol.SessionSandboxBound{
+					SessionID: sessionID, SandboxID: plan.sandboxID, WorkDir: plan.workDir,
+				}); eerr == nil {
+					r.OnBroadcast(env, "")
+				}
+			}
+			return true, nil
+		}
+		// Lost: either a run bound the session meanwhile (the next pass sees it
+		// and binds nothing) or the config's revision moved.
+		if attempt >= maxBindAttempts {
+			return false, ErrBindingContention
+		}
+	}
+}
+
+// maxBindAttempts bounds the plan→register→bind loop in reserveRun:
+// three passes distinguish an unlucky race from a config under active edit.
+const maxBindAttempts = 3
+
+// bindSessionAgent back-fills the session's bound agent config once the run has
+// produced an answer. Detached from the run's context: the run is over, and a
+// client that hung up must not decide whether the binding lands.
+func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
+	if err := r.Deps.Sessions.BindAgentIfEmpty(context.Background(), sessionID, agentConfigID); err != nil {
+		// Best-effort back-fill of the session's bound agent; log rather than
+		// swallow so a persistent failure is diagnosable.
+		zerolog.Ctx(r.hub.rootCtx).Warn().Err(err).Str("session_id", sessionID).
+			Msg("updating session agent config")
+	}
+}
+
+// reserveRun takes the session for a run: plan → register → bind, as ONE
+// reservation. Registration (the gate that can refuse) comes before the bind,
+// so a run that never starts binds nothing; a first-run bind that loses its
+// CAS withdraws the registration and goes around, up to maxBindAttempts. On
+// return the slot is held; boundNow reports that THIS run bound the session.
+func (r *Runner) reserveRun(runID, sessionID, agentConfigID, sandboxID, workDir string) (seg *runSegment, ctx context.Context, plan bindingPlan, boundNow bool, err error) {
+	for attempt := 1; ; attempt++ {
+		// Reject unknown sessions up front so we never register a run (or
+		// write orphaned messages) against a non-existent session. The same
+		// lookup feeds the sandbox binding below.
+		sess, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID)
+		if err != nil {
+			return nil, nil, bindingPlan{}, false, err
+		}
+		plan, err = r.planSandboxBinding(r.hub.rootCtx, sess, sandboxID, workDir)
+		if err != nil {
+			return nil, nil, bindingPlan{}, false, err
+		}
+		meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
+		if err != nil {
+			return nil, nil, bindingPlan{}, false, err
+		}
+		seg, ctx, err = r.hub.register(runID, sessionID, agentConfigID, plan.sandboxID, plan.workDir, meta)
+		if err != nil {
+			return nil, nil, bindingPlan{}, false, err
+		}
+		if !plan.needBind {
+			return seg, ctx, plan, false, nil
+		}
+		won, err := r.Deps.Sessions.BindSandboxIfEmpty(r.hub.rootCtx, sessionID, plan.sandboxID, plan.workDir, plan.revision)
+		if err != nil {
+			r.hub.unregister(runID, seg)
+			return nil, nil, bindingPlan{}, false, err
+		}
+		if won {
+			return seg, ctx, plan, true, nil
+		}
+		// The CAS refused: the sandbox config was deleted or bumped to a new
+		// revision, or the session row was removed. Withdraw the registration and
+		// go around; the next pass re-validates, refusing a vanished config (400)
+		// or session (404). Only a revision moving every pass keeps the loop
+		// alive, and after maxBindAttempts the retry belongs to the client.
+		r.hub.unregister(runID, seg)
+		if attempt == maxBindAttempts {
+			return nil, nil, bindingPlan{}, false, ErrBindingContention
+		}
 	}
 }

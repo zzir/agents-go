@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -13,21 +12,12 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// A workflow run's lifecycle. Terminal states are reached exactly once, by the
-// compare-and-set writes below.
-const (
-	WorkflowRunning   = "running"
-	WorkflowCompleted = "completed"
-	WorkflowFailed    = "failed"
-	WorkflowCancelled = "cancelled"
-)
-
 // WorkflowStep is one step of a fixed sequence: an agent and the prompt that
-// starts its turn. A step is a full RUN on the session — tools and handoffs
-// included, task/workflow tools withheld (it is itself a background run).
+// starts its turn. A step is a full RUN on the execution's session — tools and
+// handoffs included, task/workflow tools withheld (it is a background run).
 type WorkflowStep struct {
-	// ID is stable across edits of the definition, so a run in flight and a
-	// "retry from here" keep naming the same step; a position would shift.
+	// ID is stable across edits of the definition, so an execution in flight
+	// and a "retry from here" keep naming the same step; a position would shift.
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
 	// AgentConfigID is which agent runs this step — the point of a workflow:
@@ -39,41 +29,160 @@ type WorkflowStep struct {
 	Prompt string `json:"prompt"`
 	// CompactBefore folds the conversation into a summary before this step runs.
 	CompactBefore bool `json:"compact_before,omitempty"`
+	// PauseBefore holds the sequence before this step until a person approves
+	// it from the conversation that asked — a step-level gate, for the deploy
+	// or the send that must not happen unseen. Rejecting cancels the execution.
+	PauseBefore bool `json:"pause_before,omitempty"`
+	// Gate makes the step a CHECK: its final output decides which edge is taken
+	// (see StepGate). Nil means the run's own outcome decides — a failure is
+	// then structural, the step's run errored.
+	Gate *StepGate `json:"gate,omitempty"`
 	// OnSuccess and OnFailure name the step to run next — a step id, or
 	// WorkflowStepEnd to stop there. Their empty defaults differ: OnSuccess
 	// falls through to the NEXT step in the list (the last one ends the
 	// execution), an empty OnFailure fails the execution. A back-edge is how a
-	// sequence loops, bounded only by MaxStepRuns. "Failure" is structural —
-	// the step's run errored; a step judging its own output is what the step's
-	// agent and its handoffs are for.
+	// sequence loops, bounded only by MaxStepRuns.
 	OnSuccess string `json:"on_success,omitempty"`
 	OnFailure string `json:"on_failure,omitempty"`
+}
+
+// StepGate makes a step a check: its final output reports one of two
+// sentinels (Verdict) — Pass takes the on_success edge, Fail on_failure, and no
+// verdict fails the execution. The driver appends the instruction to the
+// step's prompt. README "gate" has the rules.
+type StepGate struct {
+	Pass string `json:"pass,omitempty"`
+	Fail string `json:"fail,omitempty"`
+}
+
+// The sentinels a gate reads when it names none.
+const (
+	DefaultGatePass = "PASS"
+	DefaultGateFail = "FAIL"
+)
+
+// gateTrim is what Verdict strips off a candidate line before comparing —
+// markdown emphasis and sentence punctuation — so a configured word is held
+// to the same shape (normalizeGateWord), or it could never match.
+const gateTrim = "*_`.!:"
+
+// normalizeGateWord is a configured word as Verdict compares it.
+func normalizeGateWord(w string) string {
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(w), gateTrim))
+}
+
+// PassWord is the gate's success sentinel.
+func (g *StepGate) PassWord() string {
+	if w := normalizeGateWord(g.Pass); w != "" {
+		return w
+	}
+	return DefaultGatePass
+}
+
+// FailWord is the gate's failure sentinel.
+func (g *StepGate) FailWord() string {
+	if w := normalizeGateWord(g.Fail); w != "" {
+		return w
+	}
+	return DefaultGateFail
+}
+
+// Instruction is the line appended to a gated step's prompt. It asks for the
+// sentinel line; an agent that answers in structured output instead may carry
+// the verdict as a field (Verdict reads both).
+func (g *StepGate) Instruction() string {
+	return fmt.Sprintf("End your reply with exactly one final line that is either %s or %s: %s when the check succeeds, %s when it does not "+
+		"(if you answer as a JSON object, put the verdict in a boolean \"passed\" field instead).",
+		g.PassWord(), g.FailWord(), g.PassWord(), g.FailWord())
+}
+
+// Verdict reads the step's final output. Two shapes are read, so a step's
+// agent may answer in prose or in structured output: a JSON object (the whole
+// output, fenced or not) with a boolean `passed`/`pass`, or a
+// `verdict`/`result`/`status` string equal to a sentinel; otherwise the LAST
+// non-empty line, which must be a sentinel. passed reports the verdict;
+// ok=false means there was none.
+func (g *StepGate) Verdict(output string) (passed, ok bool) {
+	if passed, ok := g.jsonVerdict(output); ok {
+		return passed, true
+	}
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := normalizeGateWord(lines[i])
+		if line == "" {
+			continue
+		}
+		return g.matchWord(line)
+	}
+	return false, false
+}
+
+// matchWord compares one candidate against the two sentinels.
+func (g *StepGate) matchWord(word string) (passed, ok bool) {
+	switch {
+	case strings.EqualFold(word, g.PassWord()):
+		return true, true
+	case strings.EqualFold(word, g.FailWord()):
+		return false, true
+	}
+	return false, false
+}
+
+// jsonVerdict reads a structured answer: the output is one JSON object, bare
+// or in a ```json fence, carrying the verdict under a conventional key.
+func (g *StepGate) jsonVerdict(output string) (passed, ok bool) {
+	text := strings.TrimSpace(output)
+	if strings.HasPrefix(text, "```") {
+		text = strings.TrimSpace(strings.TrimPrefix(text, "```json"))
+		text = strings.TrimSpace(strings.TrimPrefix(text, "```"))
+		text = strings.TrimSpace(strings.TrimSuffix(text, "```"))
+	}
+	if !strings.HasPrefix(text, "{") {
+		return false, false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(text), &obj); err != nil {
+		return false, false
+	}
+	for _, k := range []string{"passed", "pass"} {
+		if b, isBool := obj[k].(bool); isBool {
+			return b, true
+		}
+	}
+	for _, k := range []string{"verdict", "result", "status"} {
+		if s, isStr := obj[k].(string); isStr {
+			if passed, ok := g.matchWord(strings.TrimSpace(s)); ok {
+				return passed, true
+			}
+		}
+	}
+	return false, false
 }
 
 // WorkflowStepEnd is the reserved step id an OnSuccess or OnFailure target
 // names to end the execution there instead of moving to another step.
 const WorkflowStepEnd = "end"
 
-// MaxStepRuns bounds the step runs ONE execution may produce, retries included
-// — the only thing stopping an OnFailure back-edge from looping forever.
+// MaxStepRuns bounds the step runs ONE execution may launch, retries included
+// — the last thing stopping an OnFailure back-edge from looping forever; the
+// lap bound (WorkflowBudget.MaxLaps) stops it long before.
 const MaxStepRuns = 50
 
-// StepRun records which run executed which step, so a reader can group the
-// flat transcript's turns back under the step that produced them (a retry
-// appends another entry for the same step).
-type StepRun struct {
-	StepID string `json:"step_id"`
-	RunID  string `json:"run_id"`
-}
+// DefaultMaxLaps is how many times one execution may take the same BACKWARD
+// edge (a step to an earlier one, or to itself) when its definition sets no
+// bound: three laps of the same loop without getting past it is a loop that
+// is not converging, and every further lap costs a step run for the same
+// answer.
+const DefaultMaxLaps = 3
 
-// StepRuns is the execution's run log, stored as one JSON column.
-type StepRuns []StepRun
+// WorkflowSteps is the ordered sequence, stored as one JSON column.
+type WorkflowSteps []WorkflowStep
 
 // Value implements driver.Valuer.
-func (s StepRuns) Value() (driver.Value, error) { return jsonSliceValue(s) }
+func (s WorkflowSteps) Value() (driver.Value, error) { return jsonSliceValue(s) }
 
 // Scan implements sql.Scanner.
-func (s *StepRuns) Scan(src any) error { return scanJSONColumn(src, s, "workflow step runs") }
+func (s *WorkflowSteps) Scan(src any) error { return scanJSONColumn(src, s, "workflow steps") }
 
 // jsonSliceValue marshals a JSON-backed slice column; nil stores as [] so a
 // reader never has to tell "no rows yet" from "column never written".
@@ -108,20 +217,6 @@ func scanJSONColumn(src, dst any, what string) error {
 	return json.Unmarshal(b, dst)
 }
 
-// With returns the log with one more entry — the append the CAS writes back.
-func (s StepRuns) With(stepID, runID string) StepRuns {
-	return append(append(make(StepRuns, 0, len(s)+1), s...), StepRun{StepID: stepID, RunID: runID})
-}
-
-// WorkflowSteps is the ordered sequence, stored as one JSON column.
-type WorkflowSteps []WorkflowStep
-
-// Value implements driver.Valuer.
-func (s WorkflowSteps) Value() (driver.Value, error) { return jsonSliceValue(s) }
-
-// Scan implements sql.Scanner.
-func (s *WorkflowSteps) Scan(src any) error { return scanJSONColumn(src, s, "workflow steps") }
-
 // Workflow is a fixed, ordered sequence of steps run on ONE session.
 // Deterministic by design — which step runs next is the definition's answer,
 // not the model's (that is what handoffs are for).
@@ -134,75 +229,313 @@ type Workflow struct {
 	// request against it is the only way a workflow starts, so it is required.
 	Description string        `bun:"description,notnull" json:"description"`
 	Steps       WorkflowSteps `bun:"steps,type:text,nullzero" json:"steps"`
+	// Budget bounds every execution of this workflow (zero fields = no bound).
+	Budget WorkflowBudget `bun:"budget,type:text,nullzero" json:"budget"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// WorkflowRun is one execution of a workflow. The steps run on a hidden CHILD
-// session — a sequence's turns never enter the conversation that asked, only
-// its result does, through a wake-up (README invariant 30). It carries a
-// SNAPSHOT of the definition: editing a workflow must not steer an execution
-// in flight.
-type WorkflowRun struct {
-	bun.BaseModel `bun:"table:workflow_runs,alias:wfr"`
+// WorkflowBudget is what one execution may spend before it is stopped, failed
+// with the reason: step launches (retries included, at most MaxStepRuns),
+// tokens (input + output of every model call on the execution's session) and
+// minutes of step run time (the sum of the runs' durations — a pause on a
+// person's approval costs nothing). Each is checked when the driver is about
+// to launch a step; a step already running is not interrupted. Zero = no
+// bound — except MaxLaps, whose zero is DefaultMaxLaps: a loop needs a bound
+// whether or not its author thought of one.
+type WorkflowBudget struct {
+	MaxSteps   int `json:"max_steps,omitempty"`
+	MaxTokens  int `json:"max_tokens,omitempty"`
+	MaxMinutes int `json:"max_minutes,omitempty"`
+	// MaxLaps bounds how many times one execution may take the same backward
+	// edge (verify → exec, fix → review): the loop bound.
+	MaxLaps int `json:"max_laps,omitempty"`
+}
 
-	ID string `bun:"id,pk" json:"id"`
+// LapBound is the laps one backward edge may be taken: the definition's, or
+// the default.
+func (b WorkflowBudget) LapBound() int {
+	if b.MaxLaps > 0 {
+		return b.MaxLaps
+	}
+	return DefaultMaxLaps
+}
+
+// IsZero reports a budget that bounds nothing.
+func (b WorkflowBudget) IsZero() bool { return b == WorkflowBudget{} }
+
+// Value implements driver.Valuer.
+func (b WorkflowBudget) Value() (driver.Value, error) {
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return nil, err
+	}
+	return string(raw), nil
+}
+
+// Scan implements sql.Scanner.
+func (b *WorkflowBudget) Scan(src any) error { return scanJSONColumn(src, b, "workflow budget") }
+
+// BudgetSpent is what an execution has used so far, measured by the driver:
+// steps and minutes from the launch log, tokens from the session's entries.
+type BudgetSpent struct {
+	Steps   int
+	Tokens  int
+	Minutes float64
+}
+
+// The bounds that end an execution and refuse its retry: wrapped so a caller
+// can tell a refusal from a fault.
+var (
+	ErrBudgetExhausted = errors.New("budget exhausted")
+	ErrStepCeiling     = errors.New("the workflow's edges are looping")
+	ErrLoopBound       = errors.New("loop bound reached")
+)
+
+// Exceeded is the error that stops an execution over its budget, or nil.
+func (b WorkflowBudget) Exceeded(spent BudgetSpent) error {
+	switch {
+	case b.MaxSteps > 0 && spent.Steps >= b.MaxSteps:
+		return fmt.Errorf("%w: %d of %d steps", ErrBudgetExhausted, spent.Steps, b.MaxSteps)
+	case b.MaxTokens > 0 && spent.Tokens >= b.MaxTokens:
+		return fmt.Errorf("%w: %d of %d tokens", ErrBudgetExhausted, spent.Tokens, b.MaxTokens)
+	case b.MaxMinutes > 0 && spent.Minutes >= float64(b.MaxMinutes):
+		return fmt.Errorf("%w: %.1f of %d minutes", ErrBudgetExhausted, spent.Minutes, b.MaxMinutes)
+	}
+	return nil
+}
+
+// StepRun records which run executed which step, so a reader can group the
+// flat transcript's turns back under the step that produced them (a retry
+// appends another entry for the same step).
+type StepRun struct {
+	StepID string `json:"step_id"`
+	RunID  string `json:"run_id"`
+	// Outcome is how the run ended, written when the sequence moves on from it
+	// (StepOutcome*). Empty on the current run — the task's status says.
+	Outcome string `json:"outcome,omitempty"`
+	// StartedAt is stamped at launch, EndedAt with the outcome: the run's time,
+	// which is what the minutes budget sums.
+	StartedAt time.Time `json:"started_at,omitzero"`
+	EndedAt   time.Time `json:"ended_at,omitzero"`
+	// Retry marks a run a person's task_retry launched — the same step again,
+	// by hand, which is not a lap of the sequence's own edges.
+	Retry bool `json:"retry,omitempty"`
+}
+
+// How a step's run ended, as the launch log records it.
+const (
+	StepOutcomeCompleted = "completed"
+	StepOutcomeFailed    = "failed"
+	StepOutcomePass      = "pass"
+	StepOutcomeFail      = "fail"
+)
+
+// StepRuns is the execution's launch log.
+type StepRuns []StepRun
+
+// With returns the log with one more entry, started now.
+func (s StepRuns) With(stepID, runID string) StepRuns {
+	return append(append(make(StepRuns, 0, len(s)+1), s...), StepRun{StepID: stepID, RunID: runID, StartedAt: time.Now().UTC()})
+}
+
+// WithRetry is With for a run a person's retry launched.
+func (s StepRuns) WithRetry(stepID, runID string) StepRuns {
+	out := s.With(stepID, runID)
+	out[len(out)-1].Retry = true
+	return out
+}
+
+// SequenceRuns is how many runs the sequence's own edges launched — the log
+// minus the runs a person's retry added.
+func (s StepRuns) SequenceRuns() int {
+	n := 0
+	for i := range s {
+		if !s[i].Retry {
+			n++
+		}
+	}
+	return n
+}
+
+// Minutes is the run time the log accounts for: every ended run's duration.
+func (s StepRuns) Minutes() float64 {
+	var d time.Duration
+	for _, sr := range s {
+		if !sr.StartedAt.IsZero() && !sr.EndedAt.IsZero() && sr.EndedAt.After(sr.StartedAt) {
+			d += sr.EndedAt.Sub(sr.StartedAt)
+		}
+	}
+	return d.Minutes()
+}
+
+// WorkflowState is what a workflow execution keeps in its task's State: a
+// SNAPSHOT of the definition — editing a workflow must not steer an execution
+// in flight — and where the sequence stands. The task row holds the rest
+// (status, current run, parent, child session, result). It is written by the
+// driver at four points, each atomically with the run it belongs to
+// (tasks.Store.Advance): the start, every launch, every step transition, and
+// the end (the last step's outcome, in the Finalize itself).
+type WorkflowState struct {
 	// WorkflowID names the definition this came from; it may since have been
 	// edited or deleted, which is why Steps is the snapshot that executes.
-	WorkflowID string `bun:"workflow_id" json:"workflow_id,omitempty"`
-	// ParentSessionID is the conversation that asked for this and is owed the
-	// result; ChildSessionID is where the steps actually run.
-	ParentSessionID string        `bun:"parent_session_id,notnull" json:"parent_session_id"`
-	ChildSessionID  string        `bun:"child_session_id"          json:"child_session_id,omitempty"`
-	Name            string        `bun:"name"                      json:"name"`
-	Steps           WorkflowSteps `bun:"steps,type:text,nullzero"  json:"steps"`
+	WorkflowID string        `json:"workflow_id,omitempty"`
+	Steps      WorkflowSteps `json:"steps"`
+	// Budget is the definition's, snapshotted with the steps.
+	Budget WorkflowBudget `json:"budget,omitzero"`
 	// Input is the brief: what this execution is about, written by the AGENT
 	// that read the conversation. It leads the first step's turn only.
-	Input string `bun:"input,nullzero" json:"input,omitempty"`
-	// Result is the last step's output, kept on the row so the card can show
-	// what came of this without reading the child session.
-	Result string `bun:"result,nullzero" json:"result,omitempty"`
-	// OriginRunID is the parent's run whose tool call started this; Inherit is
-	// the configuration the result turn runs under. Both frozen at start, from
-	// the run that asked (invariant 32).
-	OriginRunID string `bun:"origin_run_id" json:"origin_run_id,omitempty"`
-	Inherit     string `bun:"inherit,nullzero" json:"-"`
-
+	Input string `json:"input,omitempty"`
 	// StepID is the step currently running (or the one a terminal state
 	// stopped at, which is what a retry resumes from).
-	StepID string `bun:"step_id" json:"step_id,omitempty"`
-	// RunID is the run executing StepID — also the CAS token: an advance is
-	// only accepted from the run the row believes is current.
-	RunID string `bun:"run_id" json:"run_id,omitempty"`
-	// StepRuns is every (step, run) this execution has produced, in order —
-	// StepID/RunID are only ever the current one.
-	StepRuns StepRuns `bun:"step_runs,type:text,nullzero" json:"step_runs,omitempty"`
-	Status   string   `bun:"status,notnull" json:"status"`
-	Error    string   `bun:"error,nullzero" json:"error,omitempty"`
-	// Dismissed hides a terminal execution from the conversation's live strip;
-	// the panel still lists it. A retry clears it — the execution is live again.
-	Dismissed bool `bun:"dismissed" json:"dismissed,omitempty"`
+	StepID string `json:"step_id"`
+	// StepRuns is every (step, run) this execution has LAUNCHED, in order —
+	// appended by the launcher, so a run that never started is not in it.
+	StepRuns StepRuns `json:"step_runs,omitempty"`
+	// PendingInput is the turn a PauseBefore step will start with once a
+	// person approves it — kept here because the launch happens long after the
+	// driver composed it. Cleared at launch.
+	PendingInput string `json:"pending_input,omitempty"`
+	// Stopped names the bound that ended the execution for good — StoppedBy*
+	// — so a client knows a retry would be refused before it asks.
+	Stopped string `json:"stopped,omitempty"`
+}
 
-	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+// The bounds that end an execution for good.
+const (
+	StoppedByBudget  = "budget"
+	StoppedByCeiling = "ceiling"
+	StoppedByLaps    = "laps"
+)
+
+// StopIfBounded checks the execution against its budget and the step ceiling,
+// recording which bound stopped it on the state; nil while it may launch
+// another step. A lap bound already recorded stands, like the others: the
+// laps are counted over the whole log, so a retry that ran the step again
+// and failed again would meet the same count at the same transition — and a
+// definition wanting more laps says so in its budget, for the next run.
+func (w *WorkflowState) StopIfBounded(tokens int) error {
+	if w.Stopped == StoppedByLaps {
+		return fmt.Errorf("%w: the sequence keeps returning to the same step", ErrLoopBound)
+	}
+	if err := w.OverBudget(tokens); err != nil {
+		w.Stopped = StoppedByBudget
+		return err
+	}
+	if err := w.UnderStepCeiling(); err != nil {
+		w.Stopped = StoppedByCeiling
+		return err
+	}
+	return nil
+}
+
+// StopIfLooping checks the transition the sequence is about to make against
+// the lap bound: taking a BACKWARD edge — from the current step to an earlier
+// one, or to itself — one more time than the bound allows ends the execution,
+// recorded on the state. A forward edge is never a lap. Laps are read off the
+// launch log: how many times a run of the current step was followed by a run
+// of the target.
+func (w *WorkflowState) StopIfLooping(next *WorkflowStep) error {
+	if next == nil {
+		return nil
+	}
+	from, to := w.StepIndex(w.StepID), w.StepIndex(next.ID)
+	if from < 0 || to < 0 || to > from {
+		return nil
+	}
+	laps := 0
+	for i := 0; i+1 < len(w.StepRuns); i++ {
+		// A retry re-runs a step by hand: the pair it makes with the run
+		// before it is not the sequence taking an edge.
+		if w.StepRuns[i].StepID == w.StepID && w.StepRuns[i+1].StepID == next.ID && !w.StepRuns[i+1].Retry {
+			laps++
+		}
+	}
+	if bound := w.Budget.LapBound(); laps >= bound {
+		w.Stopped = StoppedByLaps
+		return fmt.Errorf("%w: %s → %s looped %d times", ErrLoopBound, stepLabel(w.Current()), stepLabel(next), laps)
+	}
+	return nil
+}
+
+// stepLabel is how a step is named in a message: its name, else its id.
+func stepLabel(s *WorkflowStep) string {
+	if s == nil {
+		return ""
+	}
+	if s.Name != "" {
+		return s.Name
+	}
+	return s.ID
+}
+
+// DecodeWorkflowState reads a task's State. Nil or unreadable is an error: a
+// workflow task whose state cannot be read has no step to run.
+func DecodeWorkflowState(raw json.RawMessage) (*WorkflowState, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("workflow state is empty")
+	}
+	st := new(WorkflowState)
+	if err := json.Unmarshal(raw, st); err != nil {
+		return nil, fmt.Errorf("decoding workflow state: %w", err)
+	}
+	return st, nil
+}
+
+// Encode returns the state as a task's State payload.
+func (w *WorkflowState) Encode() json.RawMessage {
+	b, err := json.Marshal(w)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // StepPrompt is the turn that starts the given step: the step's own
-// instruction, led by the execution's input when the step is the FIRST one.
-// Only the first, because from step two on the input is already in the
-// transcript the step reads.
-func (w *WorkflowRun) StepPrompt(step WorkflowStep) string {
-	if w.Input == "" || len(w.Steps) == 0 || w.Steps[0].ID != step.ID {
-		return step.Prompt
+// instruction, led by the execution's input when the step is the FIRST one
+// (only the first — from step two on the input is already in the transcript
+// the step reads), and trailed by the verdict instruction when the step is a
+// gate.
+func (w *WorkflowState) StepPrompt(step WorkflowStep) string {
+	prompt := step.Prompt
+	if w.Input != "" && len(w.Steps) > 0 && w.Steps[0].ID == step.ID {
+		prompt = w.Input + "\n\n" + prompt
 	}
-	return w.Input + "\n\n" + step.Prompt
+	if step.Gate != nil {
+		prompt += "\n\n" + step.Gate.Instruction()
+	}
+	return prompt
+}
+
+// RecordOutcome stamps how the CURRENT run ended onto its launch-log entry —
+// the last one, since the launcher appends at every launch.
+func (w *WorkflowState) RecordOutcome(runID, outcome string) {
+	if n := len(w.StepRuns); n > 0 && w.StepRuns[n-1].RunID == runID {
+		w.StepRuns[n-1].Outcome = outcome
+		w.StepRuns[n-1].EndedAt = time.Now().UTC()
+	}
+}
+
+// OverBudget is the error that stops the execution at its budget, given the
+// tokens its session has spent; steps and minutes are read off the log.
+func (w *WorkflowState) OverBudget(tokens int) error {
+	return w.Budget.Exceeded(BudgetSpent{Steps: len(w.StepRuns), Tokens: tokens, Minutes: w.StepRuns.Minutes()})
+}
+
+// UnderStepCeiling is the error that ends an execution at MaxStepRuns, or nil
+// while it may launch another step.
+func (w *WorkflowState) UnderStepCeiling() error {
+	if len(w.StepRuns) >= MaxStepRuns {
+		return fmt.Errorf("stopped after %d steps — %w", len(w.StepRuns), ErrStepCeiling)
+	}
+	return nil
 }
 
 // StepIndex reports where stepID sits in the snapshot, or -1. It is a display
 // concern ("step 2 of 3") and the retry's anchor — NOT how the sequence
 // advances, which follows the edges below.
-func (w *WorkflowRun) StepIndex(stepID string) int {
+func (w *WorkflowState) StepIndex(stepID string) int {
 	for i := range w.Steps {
 		if w.Steps[i].ID == stepID {
 			return i
@@ -212,18 +545,21 @@ func (w *WorkflowRun) StepIndex(stepID string) int {
 }
 
 // Step returns the step with this id, or nil.
-func (w *WorkflowRun) Step(stepID string) *WorkflowStep {
+func (w *WorkflowState) Step(stepID string) *WorkflowStep {
 	if i := w.StepIndex(stepID); i >= 0 {
 		return &w.Steps[i]
 	}
 	return nil
 }
 
+// Current returns the step the execution is on, or nil.
+func (w *WorkflowState) Current() *WorkflowStep { return w.Step(w.StepID) }
+
 // NextStep resolves where the execution goes after the step it is on, given how
 // that step ended. ok=false means the execution is over — the edge said so, the
 // list ran out, or a failure had no handler.
-func (w *WorkflowRun) NextStep(failed bool) (*WorkflowStep, bool) {
-	cur := w.Step(w.StepID)
+func (w *WorkflowState) NextStep(failed bool) (*WorkflowStep, bool) {
+	cur := w.Current()
 	if cur == nil {
 		return nil, false
 	}
@@ -249,6 +585,78 @@ func (w *WorkflowRun) NextStep(failed bool) (*WorkflowStep, bool) {
 	return next, next != nil
 }
 
+// DisplayWorkflowStarted is the display kind of the note a person's or a
+// trigger's start of a workflow leaves on the conversation it reports to: with
+// no run asking, the note is the exchange's question — what the result's
+// wake-up run is labeled by and jumps to (README "Workflows").
+const DisplayWorkflowStarted = "workflow_started"
+
+// WorkflowOrigin says who started an execution when no run did.
+type WorkflowOrigin struct {
+	// Kind is "person" (the Run… button, POST /workflows/:id/runs) or "trigger".
+	Kind        string `json:"kind"`
+	TriggerID   string `json:"trigger_id,omitempty"`
+	TriggerKind string `json:"trigger_kind,omitempty"`
+	Schedule    string `json:"schedule,omitempty"`
+}
+
+// The two origins.
+const (
+	OriginPerson  = "person"
+	OriginTrigger = "trigger"
+)
+
+// OriginOf is the origin a trigger's fire records.
+func OriginOf(t *Trigger) WorkflowOrigin {
+	return WorkflowOrigin{Kind: OriginTrigger, TriggerID: t.ID, TriggerKind: t.Kind, Schedule: t.Schedule}
+}
+
+// WorkflowStarted is the note's data: which execution, of what, with what
+// brief, started by whom.
+type WorkflowStarted struct {
+	TaskID       string         `json:"task_id"`
+	WorkflowID   string         `json:"workflow_id"`
+	WorkflowName string         `json:"workflow_name"`
+	Brief        string         `json:"brief,omitempty"`
+	Origin       WorkflowOrigin `json:"origin"`
+}
+
+// Text is the note as a line, for a renderer that knows no better.
+func (w WorkflowStarted) Text() string {
+	by := "you"
+	if w.Origin.Kind == OriginTrigger {
+		by = "trigger " + w.Origin.TriggerKind
+		if w.Origin.Schedule != "" {
+			by += " " + w.Origin.Schedule
+		}
+	}
+	return fmt.Sprintf("Workflow %q started by %s", w.WorkflowName, by)
+}
+
+// DisplayTriggerFired is the display kind of the note a trigger's AGENT turn
+// leaves on the conversation, right before the message it sends: the person
+// reading sees the next question was an automation's, not typed.
+const DisplayTriggerFired = "trigger_fired"
+
+// TriggerFired is that note's data: which trigger, which agent it prompted,
+// the run the turn is, and the brief.
+type TriggerFired struct {
+	RunID         string         `json:"run_id"`
+	AgentConfigID string         `json:"agent_config_id"`
+	AgentName     string         `json:"agent_name"`
+	Brief         string         `json:"brief,omitempty"`
+	Origin        WorkflowOrigin `json:"origin"`
+}
+
+// Text is the note as a line, for a renderer that knows no better.
+func (t TriggerFired) Text() string {
+	by := "trigger " + t.Origin.TriggerKind
+	if t.Origin.Schedule != "" {
+		by += " " + t.Origin.Schedule
+	}
+	return fmt.Sprintf("Agent %q prompted by %s", t.AgentName, by)
+}
+
 // WorkflowStore persists workflow definitions.
 type WorkflowStore struct {
 	*CrudStore[Workflow]
@@ -258,6 +666,24 @@ type WorkflowStore struct {
 // enforced by the DB (idx_workflows_name).
 func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow", "created_at DESC")}
+}
+
+// Delete removes a definition and the triggers that fire it — a trigger with
+// no workflow could only fail. Executions keep their snapshot.
+func (s *WorkflowStore) Delete(ctx context.Context, id string) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().Model((*Trigger)(nil)).Where("workflow_id = ?", id).Exec(ctx); err != nil {
+			return fmt.Errorf("deleting triggers of workflow %s: %w", id, err)
+		}
+		res, err := tx.NewDelete().Model((*Workflow)(nil)).Where("id = ?", id).Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		if err != nil {
+			return fmt.Errorf("deleting workflow %s: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // NormalizeWorkflow trims the spelling noise and fills each step's stable id,
@@ -277,6 +703,15 @@ func NormalizeWorkflow(w *Workflow) error {
 	if w.Description == "" {
 		return fmt.Errorf("description is required: it is what the agent matches a request against")
 	}
+	if b := w.Budget; b.MaxSteps < 0 || b.MaxTokens < 0 || b.MaxMinutes < 0 || b.MaxLaps < 0 {
+		return fmt.Errorf("budget: a bound cannot be negative")
+	}
+	if w.Budget.MaxSteps > MaxStepRuns {
+		return fmt.Errorf("budget: max_steps cannot exceed %d, the ceiling every execution has", MaxStepRuns)
+	}
+	if w.Budget.MaxLaps > MaxStepRuns {
+		return fmt.Errorf("budget: max_laps cannot exceed %d, the ceiling every execution has", MaxStepRuns)
+	}
 	seen := make(map[string]bool, len(w.Steps))
 	for i := range w.Steps {
 		s := &w.Steps[i]
@@ -291,6 +726,26 @@ func NormalizeWorkflow(w *Workflow) error {
 		}
 		if s.ID == "" {
 			s.ID = NewID()
+		}
+		// A gate's two words must be one line each and tell apart: equal
+		// words (case-insensitively — Verdict compares so) would make the fail
+		// edge unreachable, and a word with a newline could never be a last
+		// line.
+		if g := s.Gate; g != nil {
+			if strings.ContainsAny(g.Pass, "\r\n") || strings.ContainsAny(g.Fail, "\r\n") {
+				return fmt.Errorf("step %d: a gate word must be one line", i+1)
+			}
+			// Stored as Verdict compares them: a word that is nothing but
+			// the punctuation Verdict strips could never be reported.
+			for _, w := range []*string{&g.Pass, &g.Fail} {
+				if strings.TrimSpace(*w) != "" && normalizeGateWord(*w) == "" {
+					return fmt.Errorf("step %d: gate word %q is only punctuation", i+1, *w)
+				}
+				*w = normalizeGateWord(*w)
+			}
+			if strings.EqualFold(g.PassWord(), g.FailWord()) {
+				return fmt.Errorf("step %d: the gate's pass and fail words must differ (got %q for both)", i+1, g.PassWord())
+			}
 		}
 		if s.ID == WorkflowStepEnd {
 			return fmt.Errorf("step %d: %q is reserved — it is what an edge names to stop there", i+1, WorkflowStepEnd)
@@ -314,225 +769,4 @@ func NormalizeWorkflow(w *Workflow) error {
 		}
 	}
 	return nil
-}
-
-// WorkflowRunStore persists workflow executions.
-type WorkflowRunStore struct {
-	db *bun.DB
-}
-
-// NewWorkflowRunStore returns a WorkflowRunStore backed by db.
-func NewWorkflowRunStore(db *bun.DB) *WorkflowRunStore {
-	return &WorkflowRunStore{db: db}
-}
-
-// Create inserts a new execution.
-func (s *WorkflowRunStore) Create(ctx context.Context, w *WorkflowRun) error {
-	if _, err := s.db.NewInsert().Model(w).Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflow run: %w", err)
-	}
-	return nil
-}
-
-// Get returns one execution.
-func (s *WorkflowRunStore) Get(ctx context.Context, id string) (*WorkflowRun, error) {
-	w := new(WorkflowRun)
-	if err := s.db.NewSelect().Model(w).Where("id = ?", id).Scan(ctx); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			err = ErrNotFound
-		}
-		return nil, fmt.Errorf("getting workflow run %s: %w", id, err)
-	}
-	return w, nil
-}
-
-// ListBySession returns the session's executions, newest first.
-func (s *WorkflowRunStore) ListBySession(ctx context.Context, parentSessionID string) ([]WorkflowRun, error) {
-	var out []WorkflowRun
-	if err := s.db.NewSelect().Model(&out).
-		Where("parent_session_id = ?", parentSessionID).
-		OrderExpr("created_at DESC").Scan(ctx); err != nil {
-		return nil, fmt.Errorf("listing workflow runs for session %s: %w", parentSessionID, err)
-	}
-	return out, nil
-}
-
-// ActiveForRun returns the execution whose CURRENT step is this run, or nil —
-// the run id is the only name a finished run and the row that owns it share.
-func (s *WorkflowRunStore) ActiveForRun(ctx context.Context, runID string) (*WorkflowRun, error) {
-	w := new(WorkflowRun)
-	err := s.db.NewSelect().Model(w).
-		Where("run_id = ?", runID).Where("status = ?", WorkflowRunning).
-		Limit(1).Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("finding the workflow run executing %s: %w", runID, err)
-	}
-	return w, nil
-}
-
-// ByChildSessionAny returns the execution whose steps use this session
-// REGARDLESS of status, or nil. The status-filtered ByChildSession is how a run
-// learns it is a live step; this one lets a resume guard tell "a stopped
-// workflow's leftover approval" from "a genuine chat run".
-func (s *WorkflowRunStore) ByChildSessionAny(ctx context.Context, childSessionID string) (*WorkflowRun, error) {
-	if childSessionID == "" {
-		return nil, nil
-	}
-	w := new(WorkflowRun)
-	err := s.db.NewSelect().Model(w).
-		Where("child_session_id = ?", childSessionID).
-		OrderExpr("created_at DESC").Limit(1).Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("finding any workflow for session %s: %w", childSessionID, err)
-	}
-	return w, nil
-}
-
-// ByChildSession returns the running execution whose steps use this session,
-// or nil. It is how a run learns it is a workflow STEP: the child session is
-// all it has, and a step must not get the tools a person's conversation does.
-func (s *WorkflowRunStore) ByChildSession(ctx context.Context, childSessionID string) (*WorkflowRun, error) {
-	if childSessionID == "" {
-		return nil, nil
-	}
-	w := new(WorkflowRun)
-	err := s.db.NewSelect().Model(w).
-		Where("child_session_id = ?", childSessionID).
-		Where("status = ?", WorkflowRunning).
-		Limit(1).Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("finding the workflow run for session %s: %w", childSessionID, err)
-	}
-	return w, nil
-}
-
-// CountLive returns how many executions are still running for a parent — the
-// half of the background-work budget workflows account for.
-func (s *WorkflowRunStore) CountLive(ctx context.Context, parentSessionID string) (int, error) {
-	n, err := s.db.NewSelect().Model((*WorkflowRun)(nil)).
-		Where("parent_session_id = ?", parentSessionID).
-		Where("status = ?", WorkflowRunning).Count(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("counting live workflow runs for session %s: %w", parentSessionID, err)
-	}
-	return n, nil
-}
-
-// ListRunning returns every execution still recorded as running, for the
-// restart reconciliation.
-func (s *WorkflowRunStore) ListRunning(ctx context.Context) ([]WorkflowRun, error) {
-	var out []WorkflowRun
-	if err := s.db.NewSelect().Model(&out).
-		Where("status = ?", WorkflowRunning).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("listing running workflow runs: %w", err)
-	}
-	return out, nil
-}
-
-// Advance moves the execution to the next step, but only while it is still
-// running and still believes fromRunID is its current run — the compare-and-set
-// that keeps a late callback from a superseded run from driving the sequence
-// on. stepRuns is the caller's log with the new step appended; the CAS makes
-// exactly one such derivation the winner.
-func (s *WorkflowRunStore) Advance(ctx context.Context, id, fromRunID, nextStepID, nextRunID string, stepRuns StepRuns) (bool, error) {
-	res, err := s.db.NewUpdate().Model((*WorkflowRun)(nil)).
-		Set("step_id = ?", nextStepID).
-		Set("run_id = ?", nextRunID).
-		Set("step_runs = ?", stepRuns).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Where("status = ?", WorkflowRunning).
-		Where("run_id = ?", fromRunID).
-		Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("advancing workflow run %s: %w", id, err)
-	}
-	n, err := res.RowsAffected()
-	return err == nil && n > 0, nil
-}
-
-// Finish writes a terminal state under the same compare-and-set as Advance, so
-// the ending is claimed exactly once, AND — in the same transaction — records
-// the wake-up the parent is owed (nil owes nothing, e.g. a cancellation). One
-// tx so a crash can never leave a finished execution whose parent is never told,
-// the same guarantee the task path has. An empty fromRunID skips the run check —
-// the stop path, which ends whatever is current.
-func (s *WorkflowRunStore) Finish(ctx context.Context, id, fromRunID, status, errMsg, result string, wakeup *Wakeup) (bool, error) {
-	var won bool
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		q := tx.NewUpdate().Model((*WorkflowRun)(nil)).
-			Set("status = ?", status).
-			Set("error = ?", errMsg).
-			Set("result = ?", result).
-			Set("updated_at = ?", time.Now().UTC()).
-			Where("id = ?", id).
-			Where("status = ?", WorkflowRunning)
-		if fromRunID != "" {
-			q = q.Where("run_id = ?", fromRunID)
-		}
-		res, err := q.Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("finishing workflow run %s: %w", id, err)
-		}
-		n, _ := res.RowsAffected()
-		won = n > 0
-		if won && wakeup != nil {
-			if _, err := tx.NewInsert().Model(wakeup).Exec(ctx); err != nil {
-				return fmt.Errorf("recording workflow %s wake-up: %w", id, err)
-			}
-		}
-		return nil
-	})
-	return won, err
-}
-
-// Restart reopens a FAILED execution at stepID with a fresh run id — the
-// "retry from here" write. The compare-and-set names both the status (only a
-// failure retries: reopening a completed execution would re-run side effects
-// a person already has) and fromRunID, the run the caller's read believed
-// current — so two retries derive exactly one winner and the run log cannot
-// lose entries to a stale read.
-func (s *WorkflowRunStore) Restart(ctx context.Context, id, fromRunID, stepID, runID string, stepRuns StepRuns) (bool, error) {
-	res, err := s.db.NewUpdate().Model((*WorkflowRun)(nil)).
-		Set("status = ?", WorkflowRunning).
-		Set("step_id = ?", stepID).
-		Set("run_id = ?", runID).
-		Set("step_runs = ?", stepRuns).
-		Set("error = ?", "").
-		Set("dismissed = ?", false).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Where("status = ?", WorkflowFailed).
-		Where("run_id = ?", fromRunID).
-		Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("restarting workflow run %s: %w", id, err)
-	}
-	n, err := res.RowsAffected()
-	return err == nil && n > 0, nil
-}
-
-// Dismiss hides a terminal execution from the live strip. Terminal-only: a
-// running sequence is exactly what the strip exists to show.
-func (s *WorkflowRunStore) Dismiss(ctx context.Context, id string) (bool, error) {
-	res, err := s.db.NewUpdate().Model((*WorkflowRun)(nil)).
-		Set("dismissed = ?", true).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).
-		Where("status != ?", WorkflowRunning).
-		Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("dismissing workflow run %s: %w", id, err)
-	}
-	n, err := res.RowsAffected()
-	return err == nil && n > 0, nil
 }

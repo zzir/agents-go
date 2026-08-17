@@ -324,6 +324,40 @@ components:
         state:
           type: string
       type: object
+    bridge.Fired:
+      properties:
+        agent:
+          type: string
+        attempt:
+          description: 'Attempt counts the task''s runs: 1 for the original, one more
+            per retry.'
+          type: integer
+        kind:
+          description: Kind is "" for a sub-agent task, "workflow" for an execution.
+          type: string
+        label:
+          type: string
+        max_attempts:
+          description: |-
+            MaxAttempts is the ceiling Attempt is measured against: a client offering
+            a retry compares the two rather than being told the answer, so its offer
+            follows the status it already tracks. Capacity is not part of it — a
+            retry can still be refused when the parent session is full.
+          type: integer
+        result:
+          description: |-
+            Result carries the task's full final output (task_status only — the
+            wake notification and the UI card stay on the truncated Summary).
+          type: string
+        run_id:
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+        task_id:
+          type: string
+      type: object
     bridge.GuardrailDef:
       properties:
         blocking:
@@ -410,6 +444,9 @@ components:
           description: 'Attempt counts the task''s runs: 1 for the original, one more
             per retry.'
           type: integer
+        kind:
+          description: Kind is "" for a sub-agent task, "workflow" for an execution.
+          type: string
         label:
           type: string
         max_attempts:
@@ -442,6 +479,10 @@ components:
             retry. It rides on run.started so a client can tell a NEW attempt from a
             replay of the old one.
           type: integer
+        kind:
+          description: 'Kind is the task''s kind: "" a sub-agent task, "workflow"
+            an execution.'
+          type: string
         label:
           type: string
         max_attempts:
@@ -476,6 +517,13 @@ components:
           type: string
         created_at:
           type: string
+        kind:
+          description: |-
+            Kind is what the decision is about: "" a tool call the run paused on
+            (State is the run to resume), ApprovalKindStep a workflow step waiting to
+            start (no run exists yet — approving launches it, rejecting cancels the
+            execution).
+          type: string
         run_id:
           type: string
         sandbox_id:
@@ -503,9 +551,72 @@ components:
           type: string
         work_dir:
           type: string
-        workflow_name:
+      type: object
+    handler.TaskPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/store.TaskWithSession'
+          type: array
+          uniqueItems: false
+        total:
+          description: Total is how many rows match the filter, for a pager.
+          type: integer
+      type: object
+    handler.TriggerView:
+      properties:
+        agent_config_id:
           type: string
-        workflow_run_id:
+        brief:
+          description: |-
+            Brief leads every execution or turn this trigger starts; a webhook's
+            payload is appended to it.
+          type: string
+        created_at:
+          type: string
+        enabled:
+          type: boolean
+        hook_path:
+          description: HookPath is where a webhook trigger is called (POST, signed).
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        last_error:
+          type: string
+        last_fired_at:
+          description: |-
+            What the last fire did, for the panel and for a cron that keeps failing:
+            the id it started — a task for a workflow, a run for an agent turn — or
+            why it started nothing.
+          type: string
+        last_started_id:
+          type: string
+        schedule:
+          description: |-
+            Schedule is the cron expression (five fields, or a descriptor such as
+            @hourly or @every 10m). Cron kind only.
+          type: string
+        secret:
+          description: Secret is set on the response that minted it, and never again.
+          type: string
+        secret_hint:
+          description: SecretHint is the secret's tail, to tell one from another.
+          type: string
+        session_id:
+          description: |-
+            SessionID is the conversation the work reports to — or, for an agent
+            turn, happens in.
+          type: string
+        target:
+          description: |-
+            Target says what a fire starts; WorkflowID or AgentConfigID names it,
+            the other stays empty.
+          type: string
+        updated_at:
+          type: string
+        workflow_id:
           type: string
       type: object
     handler.approvalResultResp:
@@ -583,6 +694,11 @@ components:
             last-writer-wins. Ignored on create.
           type: integer
         type:
+          type: string
+      type: object
+    handler.fireReq:
+      properties:
+        payload:
           type: string
       type: object
     handler.mcpConnectResp:
@@ -752,6 +868,23 @@ components:
       properties:
         reason:
           type: string
+      type: object
+    handler.runWorkflowReq:
+      properties:
+        input:
+          type: string
+        sandbox_id:
+          description: |-
+            SandboxID/WorkDir bind a still-unbound session first — the project the
+            composer had picked, or the dialog's — so the execution has its file and
+            command tools; a bound session ignores them, as a run request's does.
+          type: string
+        session_id:
+          type: string
+        work_dir:
+          type: string
+      required:
+      - session_id
       type: object
     handler.sandboxTestResp:
       properties:
@@ -1392,11 +1525,15 @@ components:
         value:
           type: string
       type: object
-    store.StepRun:
+    store.StepGate:
+      description: |-
+        Gate makes the step a CHECK: its final output decides which edge is taken
+        (see StepGate). Nil means the run's own outcome decides — a failure is
+        then structural, the step's run errored.
       properties:
-        run_id:
+        fail:
           type: string
-        step_id:
+        pass:
           type: string
       type: object
     store.Task:
@@ -1423,6 +1560,16 @@ components:
             report depth 0, so MaxDepth — the documented backstop against a task
             spawning tasks forever — could never trip on this host.
           type: integer
+        dismissed:
+          description: |-
+            Dismissed hides a terminal task from the conversation's live strip; the
+            panel still lists it. A retry clears it — the work is live again.
+          type: boolean
+        kind:
+          description: |-
+            Kind is the SDK's host-defined discriminator: "" for a sub-agent task,
+            TaskKindWorkflow for a workflow execution.
+          type: string
         label:
           type: string
         max_attempts:
@@ -1440,10 +1587,19 @@ components:
           type: string
         run_id:
           description: |-
-            RunID is the id of the task's CURRENT attempt: a retry replaces it. It is
-            distinct from the task id because the task is the durable entity and a
-            run is one try at it — which is what makes a retry expressible at all.
+            RunID is the id of the task's CURRENT run: a retry replaces it, and so
+            does each step of a workflow. It is distinct from the task id because the
+            task is the durable entity and a run is one try at it — which is what
+            makes a retry expressible at all.
           type: string
+        state:
+          description: |-
+            State is the SDK's opaque per-job record — for a workflow, the encoded
+            WorkflowState (the definition snapshot and where the sequence stands).
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
         status:
           type: string
         summary:
@@ -1453,6 +1609,11 @@ components:
         tool_call_id:
           type: string
         updated_at:
+          type: string
+      type: object
+    store.TaskWithSession:
+      properties:
+        session_name:
           type: string
       type: object
     store.ToolBucket:
@@ -1505,8 +1666,57 @@ components:
         started_at:
           type: string
       type: object
+    store.Trigger:
+      properties:
+        agent_config_id:
+          type: string
+        brief:
+          description: |-
+            Brief leads every execution or turn this trigger starts; a webhook's
+            payload is appended to it.
+          type: string
+        created_at:
+          type: string
+        enabled:
+          type: boolean
+        id:
+          type: string
+        kind:
+          type: string
+        last_error:
+          type: string
+        last_fired_at:
+          description: |-
+            What the last fire did, for the panel and for a cron that keeps failing:
+            the id it started — a task for a workflow, a run for an agent turn — or
+            why it started nothing.
+          type: string
+        last_started_id:
+          type: string
+        schedule:
+          description: |-
+            Schedule is the cron expression (five fields, or a descriptor such as
+            @hourly or @every 10m). Cron kind only.
+          type: string
+        session_id:
+          description: |-
+            SessionID is the conversation the work reports to — or, for an agent
+            turn, happens in.
+          type: string
+        target:
+          description: |-
+            Target says what a fire starts; WorkflowID or AgentConfigID names it,
+            the other stays empty.
+          type: string
+        updated_at:
+          type: string
+        workflow_id:
+          type: string
+      type: object
     store.Workflow:
       properties:
+        budget:
+          $ref: '#/components/schemas/store.WorkflowBudget'
         created_at:
           type: string
         description:
@@ -1526,76 +1736,21 @@ components:
         updated_at:
           type: string
       type: object
-    store.WorkflowRun:
+    store.WorkflowBudget:
+      description: Budget bounds every execution of this workflow (zero fields = no
+        bound).
       properties:
-        child_session_id:
-          type: string
-        created_at:
-          type: string
-        dismissed:
+        max_laps:
           description: |-
-            Dismissed hides a terminal execution from the conversation's live strip;
-            the panel still lists it. A retry clears it — the execution is live again.
-          type: boolean
-        error:
-          type: string
-        id:
-          type: string
-        input:
-          description: |-
-            Input is the brief: what this execution is about, written by the AGENT
-            that read the conversation. It leads the first step's turn only.
-          type: string
-        name:
-          type: string
-        origin_run_id:
-          description: |-
-            OriginRunID is the parent's run whose tool call started this; Inherit is
-            the configuration the result turn runs under. Both frozen at start, from
-            the run that asked (invariant 32).
-          type: string
-        parent_session_id:
-          description: |-
-            ParentSessionID is the conversation that asked for this and is owed the
-            result; ChildSessionID is where the steps actually run.
-          type: string
-        result:
-          description: |-
-            Result is the last step's output, kept on the row so the card can show
-            what came of this without reading the child session.
-          type: string
-        run_id:
-          description: |-
-            RunID is the run executing StepID — also the CAS token: an advance is
-            only accepted from the run the row believes is current.
-          type: string
-        status:
-          type: string
-        step_id:
-          description: |-
-            StepID is the step currently running (or the one a terminal state
-            stopped at, which is what a retry resumes from).
-          type: string
-        step_runs:
-          description: |-
-            StepRuns is every (step, run) this execution has produced, in order —
-            StepID/RunID are only ever the current one.
-          items:
-            $ref: '#/components/schemas/store.StepRun'
-          type: array
-          uniqueItems: false
-        steps:
-          items:
-            $ref: '#/components/schemas/store.WorkflowStep'
-          type: array
-          uniqueItems: false
-        updated_at:
-          type: string
-        workflow_id:
-          description: |-
-            WorkflowID names the definition this came from; it may since have been
-            edited or deleted, which is why Steps is the snapshot that executes.
-          type: string
+            MaxLaps bounds how many times one execution may take the same backward
+            edge (verify → exec, fix → review): the loop bound.
+          type: integer
+        max_minutes:
+          type: integer
+        max_steps:
+          type: integer
+        max_tokens:
+          type: integer
       type: object
     store.WorkflowStep:
       properties:
@@ -1608,10 +1763,12 @@ components:
           description: CompactBefore folds the conversation into a summary before
             this step runs.
           type: boolean
+        gate:
+          $ref: '#/components/schemas/store.StepGate'
         id:
           description: |-
-            ID is stable across edits of the definition, so a run in flight and a
-            "retry from here" keep naming the same step; a position would shift.
+            ID is stable across edits of the definition, so an execution in flight
+            and a "retry from here" keep naming the same step; a position would shift.
           type: string
         name:
           type: string
@@ -1623,10 +1780,14 @@ components:
             WorkflowStepEnd to stop there. Their empty defaults differ: OnSuccess
             falls through to the NEXT step in the list (the last one ends the
             execution), an empty OnFailure fails the execution. A back-edge is how a
-            sequence loops, bounded only by MaxStepRuns. "Failure" is structural —
-            the step's run errored; a step judging its own output is what the step's
-            agent and its handoffs are for.
+            sequence loops, bounded only by MaxStepRuns.
           type: string
+        pause_before:
+          description: |-
+            PauseBefore holds the sequence before this step until a person approves
+            it from the conversation that asked — a step-level gate, for the deploy
+            or the send that must not happen unseen. Rejecting cancels the execution.
+          type: boolean
         prompt:
           description: |-
             Prompt is the step's input, sent as the user turn that starts it. The
@@ -3855,10 +4016,13 @@ paths:
       - sessions
   /sessions/{id}/runs:
     post:
-      description: Starts an agent run on the session. Default returns 201 with a
-        run id; pass wait=true to block until the run ends and receive the final output
-        — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals).
-        Fails 409 if the session already has an active run.
+      description: 'Starts an agent run on the session. Default returns 201 with a
+        run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up
+        to N seconds (capped at 10 minutes): 200 with the final output when the run
+        ends in time — or status "interrupted" when it pauses for tool approval (act
+        via /sessions/{id}/approvals) — else 202 with the run id, still running (`Preference-Applied:
+        wait=N` marks the honored wait). Fails 409 if the session already has an active
+        run.'
       parameters:
       - description: Session ID
         in: path
@@ -3866,11 +4030,11 @@ paths:
         required: true
         schema:
           type: string
-      - description: Block until the run finishes
-        in: query
-        name: wait
+      - description: wait=N — hold the request up to N seconds for the run to end
+        in: header
+        name: Prefer
         schema:
-          type: boolean
+          type: string
       requestBody:
         content:
           application/json:
@@ -3889,13 +4053,19 @@ paths:
               schema:
                 additionalProperties: {}
                 type: object
-          description: Final result (wait=true)
+          description: Final result (the wait ended with the run)
         "201":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.createRunResp'
           description: Created
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.createRunResp'
+          description: Still running when the wait ran out
         "400":
           content:
             application/json:
@@ -3922,8 +4092,10 @@ paths:
       - runs
   /sessions/{id}/tasks:
     get:
-      description: Tasks spawned from this session via spawn_task, newest first. Status
-        is live for running tasks and durable after they end.
+      description: The session's background work — sub-agent tasks and workflow executions
+        (kind "workflow", whose state carries the step sequence), both started through
+        spawn_task — newest first. Status is live for running tasks and durable after
+        they end.
       parameters:
       - description: Session ID
         in: path
@@ -3993,35 +4165,6 @@ paths:
       summary: List session traces
       tags:
       - sessions
-  /sessions/{id}/workflow-runs:
-    get:
-      parameters:
-      - description: Session ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/store.WorkflowRun'
-                type: array
-          description: OK
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
-      security:
-      - BearerAuth: []
-      summary: List a session's workflow runs
-      tags:
-      - workflows
   /settings:
     get:
       description: 'Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).'
@@ -4325,6 +4468,87 @@ paths:
       summary: Get skill content
       tags:
       - skills
+  /tasks:
+    get:
+      description: One page of the tasks of every live session, newest first, each
+        with the name of the conversation it belongs to, plus the total. kind narrows
+        to one kind ("workflow" for executions); live=true keeps only working / input_required
+        rows; limit is the page size (500 at most), offset where the page starts.
+      parameters:
+      - description: 'Task kind: empty for sub-agent tasks and workflows alike, workflow
+          for executions'
+        in: query
+        name: kind
+        schema:
+          type: string
+      - description: Only still-live tasks (working, input_required)
+        in: query
+        name: live
+        schema:
+          type: boolean
+      - description: Page size (default and maximum 500)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Rows to skip
+        in: query
+        name: offset
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.TaskPage'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List background tasks across sessions
+      tags:
+      - tasks
+  /tasks/{id}/dismiss:
+    post:
+      description: Hides a finished task from the chat strip; the panel still lists
+        it. Only terminal tasks can be dismissed, and a retry brings the task back.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Task'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: still running
+      security:
+      - BearerAuth: []
+      summary: Dismiss a background task
+      tags:
+      - tasks
   /tasks/{id}/retry:
     post:
       description: Starts a new attempt at a failed task, resuming its existing conversation.
@@ -4405,10 +4629,96 @@ paths:
       summary: Stop a background task
       tags:
       - tasks
-  /workflow-runs/{id}:
+  /triggers:
     get:
       parameters:
-      - description: Workflow run ID
+      - description: Only this workflow's triggers
+        in: query
+        name: workflow_id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.TriggerView'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List triggers
+      tags:
+      - triggers
+    post:
+      description: 'A cron trigger (schedule: five fields or @hourly/@every 10m) or
+        a webhook trigger, firing its target into the session with the brief: target
+        "workflow" (workflow_id) starts an execution that reports back to the session,
+        target "agent" (agent_config_id) sends the brief as a message of the session,
+        run by that agent. The webhook secret is in this response only; rotate it
+        to get another.'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Trigger'
+                description: Trigger
+                summary: trigger
+        description: Trigger
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.TriggerView'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Create a trigger
+      tags:
+      - triggers
+  /triggers/{id}:
+    delete:
+      parameters:
+      - description: Trigger ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Delete a trigger
+      tags:
+      - triggers
+    get:
+      parameters:
+      - description: Trigger ID
         in: path
         name: id
         required: true
@@ -4419,7 +4729,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.WorkflowRun'
+                $ref: '#/components/schemas/handler.TriggerView'
           description: OK
         "404":
           content:
@@ -4429,63 +4739,84 @@ paths:
           description: Not Found
       security:
       - BearerAuth: []
-      summary: Get a workflow run
+      summary: Get a trigger
       tags:
-      - workflows
-  /workflow-runs/{id}/dismiss:
-    post:
-      description: Hides a finished execution from the chat strip; the panel still
-        lists it. Only terminal runs can be dismissed, and a retry brings the run
-        back.
+      - triggers
+    put:
       parameters:
-      - description: Workflow run ID
+      - description: Trigger ID
         in: path
         name: id
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/store.Trigger'
+                description: Trigger
+                summary: trigger
+        description: Trigger
+        required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.WorkflowRun'
+                $ref: '#/components/schemas/handler.TriggerView'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
         "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: still running
       security:
       - BearerAuth: []
-      summary: Dismiss a workflow run
+      summary: Update a trigger
       tags:
-      - workflows
-  /workflow-runs/{id}/retry:
+      - triggers
+  /triggers/{id}/fire:
     post:
-      description: Resumes from the step it stopped at, keeping the steps that already
-        succeeded. Executes the snapshot the run started with.
+      description: Starts the trigger's workflow into its session, or its agent's
+        turn in it, as a tick or a webhook call would; the optional payload is appended
+        to the brief. 201 with the task (a workflow) or {run_id} (an agent turn).
+        400 when the trigger is disabled or the workflow cannot start, 404 for an
+        unknown trigger, 409 when the session is at its background-task cap or busy
+        with a run.
       parameters:
-      - description: Workflow run ID
+      - description: Trigger ID
         in: path
         name: id
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.fireReq'
+                description: Optional payload
+                summary: request
+        description: Optional payload
       responses:
-        "200":
+        "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.WorkflowRun'
-          description: OK
+                $ref: '#/components/schemas/bridge.Fired'
+          description: Created
         "400":
           content:
             application/json:
@@ -4503,18 +4834,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: session already has a live run
+          description: Conflict
       security:
       - BearerAuth: []
-      summary: Retry a workflow run
+      summary: Fire a trigger
       tags:
-      - workflows
-  /workflow-runs/{id}/stop:
+      - triggers
+  /triggers/{id}/rotate-secret:
     post:
-      description: Ends the sequence, not just the running step — the next step does
-        not start.
+      description: The old secret stops working at once; the new one is in this response
+        only.
       parameters:
-      - description: Workflow run ID
+      - description: Trigger ID
         in: path
         name: id
         required: true
@@ -4525,8 +4856,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.WorkflowRun'
+                $ref: '#/components/schemas/handler.TriggerView'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: not a webhook trigger
         "404":
           content:
             application/json:
@@ -4535,9 +4872,9 @@ paths:
           description: Not Found
       security:
       - BearerAuth: []
-      summary: Stop a workflow run
+      summary: Rotate a webhook trigger's secret
       tags:
-      - workflows
+      - triggers
   /workflows:
     get:
       responses:
@@ -4699,6 +5036,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a workflow
+      tags:
+      - workflows
+  /workflows/{id}/runs:
+    post:
+      description: Starts an execution as a background task of the given session,
+        with the brief in the body (the workflow's session cannot see the conversation,
+        so the brief is what it works from). The result comes back to the session
+        as a notification, like any task's. 400 when the workflow has no runnable
+        steps or an agent is gone, 404 for an unknown workflow or session, 409 when
+        the session is at its background-task cap.
+      parameters:
+      - description: Workflow ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.runWorkflowReq'
+                description: Session and brief
+                summary: request
+        description: Session and brief
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bridge.TaskInfo'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Conflict
+      security:
+      - BearerAuth: []
+      summary: Run a workflow (optionally binding the session's project first)
       tags:
       - workflows
 servers:

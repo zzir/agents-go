@@ -11,10 +11,16 @@ import (
 // a UI must render it as a notification card, not a user bubble — nobody typed it.
 const NotificationPrefix = "[task-notification] "
 
+// NotifyGuidance is the last line of every notification: what the woken
+// parent is to DO with it. Without it a diligent model redoes or re-verifies
+// the finished work before reporting — a second run of the same tests, at
+// the same cost — when the person wanted to be told.
+const NotifyGuidance = "(Tell the person what happened. The work above is done — do not repeat or re-check it unless they ask.)"
+
 // DefaultNotifyFormatter renders one line per finished task. One wake-up carries
 // every pending task, batched so a dozen finishing together do not mean a dozen
 // runs. Each line carries the SUMMARY, not the full result; the truncation
-// marker tells the model where the rest is.
+// marker tells the model where the rest is. The guidance closes it.
 func DefaultNotifyFormatter(ts []Task) string {
 	lines := make([]string, 0, len(ts))
 	for i := range ts {
@@ -34,6 +40,7 @@ func DefaultNotifyFormatter(ts []Task) string {
 	if slices.ContainsFunc(ts, func(t Task) bool { return t.Status == StatusFailed }) {
 		lines = append(lines, "(task_retry can resume a failed task from where it stopped)")
 	}
+	lines = append(lines, NotifyGuidance)
 	return NotificationPrefix + strings.Join(lines, "\n")
 }
 

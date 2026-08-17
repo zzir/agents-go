@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -46,20 +47,23 @@ type createRunResp struct {
 }
 
 // Create starts a run for the session identified by the id path parameter.
-// With ?wait=true it blocks until the run terminates and returns the final
-// output; otherwise it returns 201 immediately with the run id (stream events
-// via GET /runs/{id}/events).
+// By default it returns 201 at once with the run id (stream events via GET
+// /runs/{id}/events). With `Prefer: wait=N` (RFC 7240) it holds the request up
+// to N seconds for the run to end and answers with the final output — or 202
+// with the run id when N passes first. The wait is always bounded: a request
+// that could hold a connection forever is what an unbounded wait was.
 //
 //	@Summary		Start run
-//	@Description	Starts an agent run on the session. Default returns 201 with a run id; pass wait=true to block until the run ends and receive the final output — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals). Fails 409 if the session already has an active run.
+//	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
 //	@Tags			runs
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string			true	"Session ID"
-//	@Param			wait	query		bool			false	"Block until the run finishes"
+//	@Param			Prefer	header		string			false	"wait=N — hold the request up to N seconds for the run to end"
 //	@Param			run		body		createRunReq	true	"Run input"
 //	@Success		201		{object}	createRunResp
-//	@Success		200		{object}	map[string]interface{}	"Final result (wait=true)"
+//	@Success		200		{object}	map[string]interface{}	"Final result (the wait ended with the run)"
+//	@Success		202		{object}	createRunResp			"Still running when the wait ran out"
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
 //	@Failure		409		{object}	ErrorResponse	"session already has an active run, or the sandbox config kept changing under the bind"
@@ -73,9 +77,9 @@ func (h *RunHandler) Create(c *gin.Context) {
 		return
 	}
 
-	wait, _ := strconv.ParseBool(c.Query("wait"))
-	if wait {
-		h.createAndWait(c, sessionID, req)
+	if wait, ok := preferWait(c.Request); ok {
+		c.Header("Preference-Applied", "wait="+strconv.Itoa(int(wait/time.Second)))
+		h.createAndWait(c, sessionID, req, wait)
 		return
 	}
 
@@ -87,9 +91,39 @@ func (h *RunHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, createRunResp{RunID: runID, SessionID: sessionID, Status: string(bridge.RunRunning)})
 }
 
-// createAndWait starts a run and blocks until it terminates, collecting the
-// final output (or error / interruption) to return synchronously.
-func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq) {
+// MaxPreferWait caps how long `Prefer: wait=N` may hold a connection: a run
+// can take longer, and a client wanting more waits again on the run's events.
+const MaxPreferWait = 10 * time.Minute
+
+// preferWait reads the client's `Prefer: wait=N` (RFC 7240): how many seconds
+// it will hold the connection for the run to end, capped at MaxPreferWait.
+// ok=false when the header asks for no wait; other preferences
+// (respond-async, …) are ignored.
+func preferWait(r *http.Request) (time.Duration, bool) {
+	for _, h := range r.Header.Values("Prefer") {
+		for _, pref := range strings.Split(h, ",") {
+			k, v, _ := strings.Cut(strings.TrimSpace(pref), "=")
+			if !strings.EqualFold(strings.TrimSpace(k), "wait") {
+				continue
+			}
+			// Bounded BEFORE the multiplication: seconds past the cap would
+			// overflow the duration.
+			if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
+				if secs > int(MaxPreferWait/time.Second) {
+					return MaxPreferWait, true
+				}
+				return time.Duration(secs) * time.Second, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// createAndWait starts a run and holds the request up to wait for it to
+// terminate, collecting the final output (or error / interruption) to return
+// synchronously. When the wait passes first the answer is 202 with the run
+// id, and the run keeps executing in the hub.
+func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq, wait time.Duration) {
 	// StartRun's onDone delivers the typed outcome directly — no need to
 	// subscribe to our own broadcast and decode the envelopes this process
 	// just marshaled. Buffered so the callback never blocks if the client
@@ -103,10 +137,14 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 		return
 	}
 
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 	select {
 	case <-c.Request.Context().Done():
 		// Client hung up; the run keeps executing in the hub.
 		return
+	case <-timer.C:
+		c.JSON(http.StatusAccepted, createRunResp{RunID: runID, SessionID: sessionID, Status: string(bridge.RunRunning)})
 	case res := <-done:
 		switch {
 		case res.Interrupted:

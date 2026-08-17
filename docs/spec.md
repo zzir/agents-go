@@ -1897,13 +1897,58 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   each orphan's debt in the sweep's own transaction. The interface cannot
   carry these guarantees (an in-memory store has no debt to write), so they
   are recorded here instead.
-- **One cap governs every kind of background work.** `Config.ExtraLiveCount`
-  adds the host's OWN background work (e.g. workflow executions) to the
-  per-parent live count a spawn is checked against, and the host's own
-  admission check counts tasks back — counting them apart would let one kind
-  hide behind the other. A count that cannot be read must not wrongly BLOCK a
-  spawn: the host returns 0 on error, the same lenient direction the ceiling's
-  own store predicate backstops.
+- **A task is the ONE shape of background work, and its work may span several
+  runs.** A job of a fixed step sequence, or a loop until a check passes, is a
+  task whose runs are chained rather than a second lifecycle beside tasks:
+  `Config.Continue` is asked when a run of the current attempt completes or
+  fails — only when the outcome NAMES the run (an outcome without a run id
+  can only finalize the attempt the row names, never advance it: a duplicate
+  delivery would otherwise bind to whichever run is current and advance
+  twice) and only while the row is still working on it (a row paused for an
+  approval is not moved on: its run is not over) — and a `Continuation` moves
+  the task to its next run through
+  `Store.Advance` — run id and the host's `State` replaced in ONE
+  compare-and-set, only while the task is working on the run the hook was
+  asked about (a nil `State` keeps the recorded one, as `Finalize` does) — or,
+  without an `Input`, ends it, its final `State` written in
+  the same `Finalize` as the ending (`Store.Finalize` carries it), so the
+  record of a job's last run and its status are one write. Everything else — the hidden session, stop, retry, the restart
+  sweep, the approval pause, the cap, the wake-up — is then written once. The
+  hook is never asked about a cancellation (a person's stop ends the task
+  whatever the host would do next) nor about a superseded attempt's outcome
+  (it would lose the transition anyway); an error from it ends the task failed
+  with that reason, and a next run that fails to launch ends it failed too,
+  reported like any ending. A transition the claim does NOT win is finalized
+  on the run that ended, failed — `Finalize`'s own predicate then decides: a
+  stop, a sweep or a retry that moved the row wins as before, while a row a
+  pause report of that same run put back to `input_required` inside the
+  hook's window (an ordering the store contract allows) ends rather than
+  strands on a run nobody will resume. The chain is bounded:
+  `Config.MaxContinuations` (default 50) is how many further runs the hook
+  may chain under one task since the spawn or the last retry — a hook still
+  asking at the bound ends the task failed, the ceiling on a loop no check
+  ever ends — the same posture as `MaxAttemptsPerTask` and `MaxDepth`: every
+  axis a task can grow along has one. `Task.Kind` and `Task.State` are the host's
+  vocabulary and record, opaque to the SDK (`Config.DescribeState` is how a
+  host says where a job of its kind stands, in one line the task tools show)
+  — which is the layering: the SDK
+  owns the durable multi-run job, the host owns what a job of a given kind IS
+  (a workflow's definition, its steps, its edges). `Advance` with the same run
+  id on both sides rewrites State under the CAS, which is how a launcher
+  records the run it is about to start beside no second write.
+- **One cap governs every kind of background work** — a consequence of the
+  above: every kind is a task, so `MaxConcurrentPerParent` counts them all,
+  and nothing can hide behind a count of its own.
+- **One vocabulary for the model: four verbs, whatever the kind.** The
+  model-facing surface is `spawn_task`, `task_status`, `task_retry`,
+  `task_stop`, and a host with more kinds of background work than a plain
+  task does not add a fifth tool: it provides its own spawn tool from the
+  public parts (`SpawnTool` / `TaskTools`, `Spawn`, `ModelHasResult`,
+  `ToolResult`) with the kind as a parameter, and `DescribeState` makes
+  `task_status` answer for that kind. Two tools that both mean "start
+  background work", or both mean "look at it", are the tool-choice errors a
+  small model makes; the count of concepts is what is kept small, and it is
+  one.
 - **A task row names sessions by GENERATION, not by id.** A session id names a
   session, not a place (§2.5e2), and a task outlives the turn that spawned it
   by design — so a row matched on the id alone attaches itself to whatever
@@ -1911,11 +1956,15 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   tasks, is woken for results it never asked for, and the debt is retried at
   every restart forever. A store that persists task rows binds the parent's
   and the child's generation when it writes one, and every by-session read
-  compares them against the generation answering to that id NOW. **A store
-  that owns both tables also deletes task rows with the session**, in both
-  roles: the generation makes a surviving row inert, the cascade is what stops
-  it surviving. *Per backend, because only a backend that holds both can
-  answer it; an in-process store has no incarnations to confuse.*
+  compares them against the generation answering to that id NOW. **A
+  session.Repo that owns both tables deletes the task TREE with the session**:
+  the task rows in both roles, and the hidden sessions the tasks ran in, at
+  any depth — the generation makes a surviving row inert, the cascade is what
+  stops it surviving, and a hidden session left behind is unreachable forever.
+  *Per backend, because only a backend that holds both can answer it; the
+  Manager deletes nothing, and a repo without a task table (filesession, the
+  in-memory repo) leaves the rows and the child sessions to the host — the
+  boundary docs/tasks.md "Deleting a session" states.*
 - **A notification line is machine-readable, and its fields come from
   untrusted text.** A label and a result are model output; formatting escapes
   the line delimiter AND the field delimiter, because the line pattern's own
@@ -1961,13 +2010,15 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   a failed attempt is valid model input.
 - **A finalizer names the attempt it observed.** Reopening a terminal task
   removes the invariant the rest rested on — "the row is non-terminal" no
-  longer says WHICH run a writer looked at — so `Finalize`, `ConsumeNotify` and
-  `MarkNotifyDelivered` carry a run id and lose when it is not the current one.
-  A stop that read the row just before a retry would otherwise cancel the new
-  attempt while its run kept executing, unkillable, its own outcome discarded
-  for losing the CAS. `MarkInputRequired` / `ReclaimWorking` are exempt: both
-  move between NON-terminal states, which only the current attempt can reach.
-  A stop chases **one** retry, since it names the task rather than the run.
+  longer says WHICH run a writer looked at — so `Finalize`, `Advance`,
+  `ReleaseRetryClaim`, `MarkInputRequired` and `ReclaimWorking` all carry a
+  run id and lose when it is not the current one (a host's own durable debt,
+  written with the Finalize, is bound the same way). A stop that read the row
+  just before a retry would otherwise cancel the new attempt while its run
+  kept executing, unkillable, its own outcome discarded for losing the CAS;
+  an approval opened on one attempt must not pause or resume the one that
+  replaced it. A stop chases **one** retry, since it names the task rather
+  than the run.
 - **A retry takes a concurrency slot** like a spawn — exempting it would make
   retry the way around the cap — and a launch that fails puts the task back to
   failed. That ending follows the model-path rule below: the `task_retry` tool
@@ -2094,6 +2145,7 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 | Redis / encrypted session backends | Implement the session storage interface. The SDK ships in-memory, JSONL and SQL. |
 | A pop/undo storage primitive | Removed after shipping with zero callers: a run never pops (entries are append-only, §2.5b), and every host that wanted "undo" had its own deletion primitive against its own store. Seven implementations of `EntryPopper`/`ItemPopper` existed for no consumer. |
 | A REPL and graph visualization | Not an SDK concern. |
+| A graph / fan-out orchestrator on top of tasks (map over N inputs, join, branch on model choice) | A task's work may span several runs (`Config.Continue`, §2.13): a fixed sequence, a loop until a check passes — one job, one session, one transcript, which is what keeps it cheap and legible. Fanning out into N parallel children with a join is a different thing: N sessions, N transcripts, a merge nobody has designed the semantics of yet, and a step toward the general workflow engine handoffs and tasks were chosen over (§5.1). Parallel work is what `spawn_task` is for; a host that needs a join writes it against the task API. |
 
 ---
 

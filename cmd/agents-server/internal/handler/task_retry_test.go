@@ -32,6 +32,10 @@ func TestRetryErrorMapping(t *testing.T) {
 		{"not failed", tasks.ErrNotRetryable{Status: tasks.StatusCompleted}, http.StatusConflict, "only a failed task"},
 		{"out of attempts", tasks.ErrRetryLimit{Limit: 3}, http.StatusConflict, "3 attempts"},
 		{"parent at the cap", tasks.ErrTaskLimit{Limit: 6}, http.StatusConflict, "6 tasks running"},
+		// A workflow execution its budget or step ceiling stopped is refused
+		// before a run — a refusal, with its reason, not a fault.
+		{"budget spent", fmt.Errorf("%w: 3 of 3 steps", store.ErrBudgetExhausted), http.StatusConflict, "budget exhausted: 3 of 3 steps"},
+		{"looping", fmt.Errorf("stopped after 50 steps — %w", store.ErrStepCeiling), http.StatusConflict, "looping"},
 		{"unknown task", tasks.ErrNotFound, http.StatusNotFound, "not found"},
 		// The adapter maps the store's sentinel to the SDK's, but a caller
 		// reaching the row directly can still surface the store's.

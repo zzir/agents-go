@@ -58,8 +58,9 @@ func (e *StaleApprovalAttemptError) Error() string {
 
 // persistInterruption serializes an interrupted run's SDK state and its
 // pending tool calls to the store, so the approval survives a restart and can
-// be resumed from any connection. Best-effort: a persistence failure is
-// logged by the caller, and the in-memory hub still holds the live run.
+// be resumed from any connection. It runs BEFORE the pause is announced: a
+// failure fails the segment instead (finishResult) — a pause with no row is a
+// decision nobody can make.
 func (r *Runner) persistInterruption(result *RunOutcome) error {
 	if r.Deps.PendingApprovals == nil || result == nil || !result.Interrupted || result.SDKState == nil {
 		return nil
@@ -77,7 +78,7 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		})
 	}
 	callsJSON, _ := json.Marshal(calls)
-	return r.Deps.PendingApprovals.Save(context.Background(), &store.PendingApproval{
+	approval := &store.PendingApproval{
 		RunID:         result.RunID,
 		SessionID:     result.SessionID,
 		AgentConfigID: result.AgentConfigID,
@@ -89,7 +90,23 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		// rebuild the user bubble on reload — the SDK only writes the turn to
 		// the session once it completes.
 		UserInput: session.UserText(result.SDKState.UserInput),
-	})
+	}
+	// A task's run pauses its TASK too, in the same write: the approval filed
+	// and the row input_required together (store.TaskStore.Pause), so no
+	// failure between them can leave an approval nobody can act on because
+	// the task still says working. The manager's own mark, when the run's
+	// ending is reported to it, then finds the row already paused.
+	if info, ok := r.hub.Info(result.RunID); ok && info.Task != nil && info.Task.TaskID != "" && r.Deps.Tasks != nil {
+		won, err := r.Deps.Tasks.Pause(context.Background(), info.Task.TaskID, result.RunID, nil, approval)
+		if err != nil {
+			return err
+		}
+		if !won {
+			return fmt.Errorf("task %s is no longer working on run %s", info.Task.TaskID, result.RunID)
+		}
+		return nil
+	}
+	return r.Deps.PendingApprovals.Save(context.Background(), approval)
 }
 
 // buildAgentRegistry builds the agent from its config and returns a name→agent
@@ -239,28 +256,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// state changed, which is safe to retry.
 	mctx := context.WithoutCancel(ctx)
 
-	// A step's approval outlives its workflow being stopped: StopWorkflow
-	// deletes the pending row, but a resume already in flight could have read it
-	// first. If the workflow this session belongs to is no longer running,
-	// refuse — resuming would run the step as a foreground chat turn on a hidden
-	// session (isBackgroundRun filters on running), the exact case the stop
-	// meant to end. Checked BEFORE the schema window: a dead workflow's approval
-	// should not be resumed whatever its state decodes to. Discard the stale row
-	// so the decision stops wedging.
-	if r.Deps.WorkflowRuns != nil {
-		wf, wErr := r.Deps.WorkflowRuns.ByChildSessionAny(ctx, pending.SessionID)
-		if wErr != nil {
-			// "Cannot tell" is not "not a workflow's": resuming a stopped step as
-			// a chat-shaped run on a hidden session is exactly what this check
-			// exists to stop. Nothing is claimed yet, so the decision retries.
-			return "", pending.SessionID, fmt.Errorf("resolving the approval's workflow: %w", wErr)
-		}
-		if wf != nil && wf.Status != store.WorkflowRunning {
-			if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
-				zerolog.Ctx(ctx).Warn().Err(delErr).Str("run_id", pending.RunID).Msg("discarding a stopped workflow's approval")
-			}
-			return "", pending.SessionID, fmt.Errorf("%w: its workflow is no longer running", ErrWorkflowUnavailable)
-		}
+	// A workflow step waiting to START: there is no run to resume, so none of
+	// the run-state machinery below applies — the decision starts the step's
+	// run or ends the execution.
+	if pending.Kind == store.ApprovalKindStep {
+		runID, err = r.resolveStepApproval(ctx, pending, approve)
+		return runID, pending.SessionID, err
 	}
 
 	// A RunState outside the SDK's decode window can never be resumed. Detect
@@ -285,11 +286,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// skip its reclaim; refuse rather than guess.
 		return "", pending.SessionID, err
 	}
-	background, err := r.isBackgroundRun(ctx, pending.SessionID, taskMeta)
-	if err != nil {
-		return "", pending.SessionID, err
-	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, background)
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, taskMeta != nil)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -331,10 +328,6 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	if approve {
 		state.Approve(item, false)
-		// A task's exec_command gate reads the PARENT session's trust store
-		// (trustSessionID); record the grant under the same key or it would
-		// never be consulted again.
-		r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta))
 	} else {
 		state.Reject(item, false, reason)
 	}
@@ -349,45 +342,40 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
 
 	// Deleting the record is the exclusive claim on this approval vs. a
-	// concurrent approve: Delete reports ErrNotFound when the row is already
-	// gone, so of two racing decisions exactly one proceeds. It must precede the
-	// resume — the continuation may itself interrupt and persist a fresh record.
-	if err := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); err != nil {
-		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
-	}
-
-	// For a task's approval the row CAS (input_required -> working) is the
-	// second claim, mutually exclusive with a concurrent stop's Finalize —
-	// and bound to THIS approval's attempt: an approval that outlived its
-	// attempt (crash before the pause landed on the row, FailOrphans, retry)
-	// must not reclaim the run that replaced its own.
+	// concurrent approve: of two racing decisions exactly one proceeds. It
+	// must precede the resume — the continuation may itself interrupt and
+	// persist a fresh record. For a task's approval the claim and the row's
+	// CAS (input_required -> working, bound to THIS attempt: an approval that
+	// outlived its attempt must not reclaim the run that replaced its own)
+	// are ONE write — the task never ends up working with an approval left,
+	// nor answered while it stays paused, and a claim that does not hold
+	// writes nothing, so nothing needs putting back.
 	if taskMeta != nil && taskMeta.TaskID != "" {
-		won, cerr := r.Deps.Tasks.ReclaimWorking(mctx, taskMeta.TaskID, pending.RunID)
+		outcome, cerr := r.Deps.Tasks.ClaimApprovalWorking(mctx, taskMeta.TaskID, pending.RunID)
 		if cerr != nil {
-			// A store error is not a definitive loss — put the row back so the
-			// decision survives to be retried instead of vanishing with the run.
-			r.restorePendingApproval(mctx, pending)
 			return "", pending.SessionID, fmt.Errorf("reclaiming task %s: %w", taskMeta.TaskID, cerr)
 		}
-		if !won {
-			// The task is no longer reclaimable by this approval. Three cases:
-			// terminal (a stop/reap won — the decision is void; nothing may
-			// revive a cancelled task); a DIFFERENT attempt (a retry moved the
-			// task past this approval's run — the approval is stale, and
-			// restoring it would just refuse forever, so it stays discarded);
-			// or somehow still this attempt and non-terminal (the settle wait
-			// should have prevented this) — restore the row so the decision is
-			// not lost.
+		switch outcome {
+		case store.ClaimTaken:
+			return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", store.ErrNotFound)
+		case store.ClaimTaskNotPaused:
+			// Terminal (a stop/reap won — the decision is void; nothing may
+			// revive a cancelled task); a DIFFERENT attempt (a retry moved
+			// the task past this approval's run — stale, and it stays as a
+			// row that will refuse); or still this attempt and not paused yet
+			// (the settle wait should have prevented this) — not ready, the
+			// row untouched for the retry of the decision.
 			cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID)
 			if gerr == nil && !isTerminalTaskStatus(cur.Status) {
 				if cur.RunID != pending.RunID {
 					return "", pending.SessionID, &StaleApprovalAttemptError{TaskID: taskMeta.TaskID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
 				}
-				r.restorePendingApproval(mctx, pending)
 				return "", pending.SessionID, &ApprovalNotReadyError{RunID: pending.RunID}
 			}
 			return "", pending.SessionID, &ApprovalVoidError{TaskID: taskMeta.TaskID}
 		}
+	} else if err := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); err != nil {
+		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
 	}
 
 	// The continuation reopens the SAME run id, so the whole turn — both the
@@ -402,7 +390,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 	}
 	// verify runs after the run registers but BEFORE its goroutine launches: a
-	// stop that finalized the task/workflow between our claim and here means the
+	// stop that finalized the task between our claim and here means the
 	// approved tool must not run at all. Checking after the launch (as before)
 	// let the tool fire and cause a side effect before the cancel could land.
 	verify := func() error {
@@ -411,11 +399,14 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 				return errResumeStopped
 			}
 		}
-		if r.Deps.WorkflowRuns != nil {
-			if wf, gerr := r.Deps.WorkflowRuns.ByChildSessionAny(mctx, pending.SessionID); gerr == nil &&
-				wf != nil && wf.Status != store.WorkflowRunning {
-				return errResumeStopped
-			}
+		// The standing trust a scope grants (same_command, all) is written
+		// HERE: after the exclusive claim and the task's CAS held, and before
+		// the continuation launches — so the run's very next exec_command
+		// already reads it, and the loser of two racing decisions never
+		// widened anything. The approved call itself needs no trust: its
+		// decision is in the run state.
+		if approve {
+			r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta))
 		}
 		return nil
 	}
@@ -430,26 +421,19 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		// Give the approval back (e.g. the session has a live run right now) so
 		// the decision can be retried once the session frees up — losing the row
-		// here would strand the paused run forever. The task row goes back to
-		// input_required with it.
-		r.restorePendingApproval(mctx, pending)
+		// here would strand the paused run forever. For a task's run the row
+		// and the task's input_required go back in ONE write (Pause), never
+		// one without the other.
 		if taskMeta != nil && taskMeta.TaskID != "" {
-			if merr := r.Deps.Tasks.MarkInputRequired(mctx, taskMeta.TaskID, pending.RunID); merr != nil {
-				zerolog.Ctx(ctx).Warn().Err(merr).Str("task_id", taskMeta.TaskID).Msg("restoring task input_required after failed resume")
+			if _, perr := r.Deps.Tasks.Pause(mctx, taskMeta.TaskID, pending.RunID, nil, pending); perr != nil {
+				zerolog.Ctx(ctx).Error().Err(perr).Str("task_id", taskMeta.TaskID).Msg("restoring the paused task after a failed resume")
 			}
+		} else {
+			r.restorePendingApproval(mctx, pending)
 		}
 		return "", pending.SessionID, err
 	}
 	handedOff = true
-	// A paused workflow step shows as "needs your decision" on the parent's
-	// strip, derived from the approvals list — and nothing else republishes
-	// when a decision lands (the step's next event is its ending or its next
-	// pause, minutes away). Nudge the strip off that state now.
-	if r.Deps.WorkflowRuns != nil {
-		if wf, gerr := r.Deps.WorkflowRuns.ByChildSession(mctx, pending.SessionID); gerr == nil && wf != nil {
-			r.publishWorkflowUpdate(wf.ParentSessionID, wf.ID, runID, store.WorkflowRunning)
-		}
-	}
 	return runID, pending.SessionID, nil
 }
 

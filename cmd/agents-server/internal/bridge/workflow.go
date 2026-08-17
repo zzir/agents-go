@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,19 +14,23 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
+// A workflow execution is a TASK of kind store.TaskKindWorkflow: the SDK's task
+// manager owns its lifecycle — the child session, the run transitions, stop,
+// retry, the restart sweep, the wake-up debt — and this file is the workflow
+// DRIVER the manager calls back into: how an execution starts, which step a
+// finished run leads to, and how a step's run is launched. README invariant 29.
+
 // ErrWorkflowUnavailable marks a workflow a session cannot run right now — no
-// steps, an agent that no longer exists, or a background budget already spent.
-// The handler maps it to a 400.
+// steps, or an agent that no longer exists. The handler maps it to a 400.
 var ErrWorkflowUnavailable = errors.New("workflow unavailable")
 
-// StartWorkflow begins a workflow for a session: it snapshots the definition,
-// opens a hidden CHILD session for the steps to run in, records the execution
-// and starts the first step. input is the brief — what this execution is
-// about, written by the agent that asked for it. The steps run off the
-// conversation and share the child session with each other; the result comes
-// back through a wake-up — see README invariant 30.
-func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input string) (*store.WorkflowRun, error) {
-	if r.Deps.Workflows == nil || r.Deps.WorkflowRuns == nil {
+// StartWorkflow begins a workflow for a session: it snapshots the definition
+// into the task's State and spawns a task of the workflow kind, whose first
+// run is the first step. input is the brief — what this execution is about,
+// written by the agent that asked for it; toolCallID is the spawn_task
+// call, so the card it produced follows the execution (README invariant 30).
+func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input, toolCallID string) (*tasks.Info, error) {
+	if r.Deps.Workflows == nil || r.tasks == nil {
 		return nil, errors.New("workflows are not wired")
 	}
 	wf, err := r.Deps.Workflows.Get(ctx, workflowID)
@@ -35,10 +40,6 @@ func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID,
 	if len(wf.Steps) == 0 {
 		return nil, fmt.Errorf("%w: %q has no steps", ErrWorkflowUnavailable, wf.Name)
 	}
-	parent, err := r.Deps.Sessions.Get(ctx, parentSessionID)
-	if err != nil {
-		return nil, err
-	}
 	// Every step's agent is checked up front: finding out at step 4 that its
 	// agent was deleted would leave the sequence half-run with no way to finish.
 	for i := range wf.Steps {
@@ -46,448 +47,423 @@ func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID,
 			return nil, fmt.Errorf("%w: step %d (%s) names no agent", ErrWorkflowUnavailable, i+1, wf.Steps[i].Name)
 		}
 	}
-	if err := r.checkBackgroundBudget(ctx, parentSessionID); err != nil {
-		return nil, err
-	}
-
-	// The configuration the RESULT comes back under, snapshotted from the run
-	// whose start_workflow call this is — the agent that asked. A start whose
-	// run is no longer on the hub falls back to the session's own binding.
-	originRunID := tasks.ParentRunID(ctx)
-	originInherit := store.Inherit{AgentConfigID: parent.AgentConfigID, SandboxID: parent.SandboxID, WorkDir: parent.WorkDir}
-	if originRunID != "" {
-		if info, ok := r.hub.Info(originRunID); ok && info.AgentConfigID != "" {
-			originInherit = store.Inherit{AgentConfigID: info.AgentConfigID, SandboxID: info.SandboxID, WorkDir: info.WorkDir}
-		}
-	}
-
-	// The child session inherits the parent's sandbox by CARRYING the pair into
-	// the first run, which CAS-binds it — the same path a task's session takes;
-	// nothing writes a binding onto the row directly. Its agent is the first
-	// step's, because a compaction pass between steps summarizes with the
-	// SESSION's agent and a hidden session nobody picked one for has none.
-	child := &store.Session{ID: store.NewID(), Name: wf.Name, Hidden: true, AgentConfigID: wf.Steps[0].AgentConfigID}
-	if err := r.Deps.Sessions.Create(ctx, child); err != nil {
-		return nil, fmt.Errorf("opening the workflow's session: %w", err)
-	}
-
 	first := wf.Steps[0]
-	wr := &store.WorkflowRun{
-		WorkflowID:      wf.ID,
+	state := &store.WorkflowState{
+		WorkflowID: wf.ID,
+		Steps:      wf.Steps, // the snapshot: editing the definition must not steer a run in flight
+		Budget:     wf.Budget,
+		Input:      input,
+		StepID:     first.ID,
+	}
+	// The manager does the rest: the cap, the hidden child session, the row,
+	// the launch (launchWorkflowStep, through the task launcher) and the
+	// reconciliation with a stop that raced it. AgentName is the first step's
+	// only so the resolver has something to name; each step brings its own.
+	return r.tasks.Spawn(ctx, tasks.SpawnRequest{
 		ParentSessionID: parentSessionID,
-		ChildSessionID:  child.ID,
-		Name:            wf.Name,
-		Steps:           wf.Steps, // the snapshot: editing the definition must not steer a run in flight
-		Input:           input,
-		StepID:          first.ID,
-		RunID:           store.NewID(), // claimed before the launch, so the row is the authority on which run is current
-		// The turn whose start_workflow call this is — what the wake-up's trace
-		// nests under — and the configuration the result comes back through,
-		// both frozen from the run that asked (invariant 32).
-		OriginRunID: originRunID,
-		Inherit:     string(store.EncodeInherit(originInherit)),
-		Status:      store.WorkflowRunning,
-	}
-	wr.StepRuns = wr.StepRuns.With(wr.StepID, wr.RunID)
-	if err := r.Deps.WorkflowRuns.Create(ctx, wr); err != nil {
-		// The child session was created a step above; without the execution row
-		// it is an unreachable hidden orphan. Best-effort remove it so a failed
-		// start leaves nothing behind.
-		if delErr := r.Deps.Sessions.Delete(ctx, child.ID); delErr != nil {
-			zerolog.Ctx(ctx).Warn().Err(delErr).Str("child_session_id", child.ID).
-				Msg("workflow: cleaning up the child session after a failed start")
-		}
-		return nil, err
-	}
-	if err := r.startWorkflowStep(wr, first, parent, ""); err != nil {
-		r.finishWorkflow(ctx, wr, wr.RunID, store.WorkflowFailed, err.Error(), "")
-		// The only caller is the start_workflow tool, so this failure goes back
-		// in the tool output — the model already has it in hand, and the debt
-		// finishWorkflow just recorded would only repeat it later.
-		(Waker{r}).Cancel(ctx, WakeKindWorkflow, wr.ID, "")
-		return nil, err
-	}
-	return wr, nil
+		AgentName:       first.AgentConfigID,
+		Input:           state.StepPrompt(first),
+		Label:           wf.Name,
+		ParentRunID:     tasks.ParentRunID(ctx),
+		ToolCallID:      toolCallID,
+		Kind:            store.TaskKindWorkflow,
+		State:           state.Encode(),
+	})
 }
 
-// checkBackgroundBudget refuses when the session already has as much background
-// work in flight as it is allowed — workflows and tasks share one budget
-// (counting them apart would let one kind hide behind the other).
-func (r *Runner) checkBackgroundBudget(ctx context.Context, parentSessionID string) error {
-	live, err := r.Deps.WorkflowRuns.CountLive(ctx, parentSessionID)
+// RunWorkflow starts a workflow for a session with no run asking — a person's
+// own run of it (the REST endpoint), or a trigger's — with the brief written
+// in advance. It is the same start the agent's tool makes, minus the call the
+// tool's card would follow; in its place the start leaves a NOTE on the
+// conversation (DisplayWorkflowStarted), which is what the result's wake-up
+// run is then labeled by and jumps to.
+func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input string, origin store.WorkflowOrigin) (*TaskInfo, error) {
+	// The tool runs inside the session, so it exists; a request names one and
+	// may be wrong — and a task row bound to no session would list nowhere.
+	// A hidden session (a task's own) is refused too: it is already at the
+	// task depth the manager allows, so the start could only fail there, as
+	// a fault instead of a request error.
+	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sess.Hidden {
+		return nil, fmt.Errorf("%w: session %s is a task's own; a workflow reports to a conversation", ErrWorkflowUnavailable, sessionID)
+	}
+	info, err := r.StartWorkflow(ctx, workflowID, sessionID, input, "")
+	if err != nil {
+		return nil, err
+	}
+	// Best effort, after the start: the note names the task, and a start
+	// that succeeded is not undone by a note that failed to write.
+	if ref, rerr := store.RefFor(ctx, r.db, sessionID); rerr == nil {
+		wf, _ := r.Deps.Workflows.Get(ctx, workflowID)
+		name := workflowID
+		if wf != nil {
+			name = wf.Name
+		}
+		note := store.WorkflowStarted{TaskID: info.TaskID, WorkflowID: workflowID, WorkflowName: name, Brief: input, Origin: origin}
+		if aerr := store.NewEntryStoreFor(r.db, ref).AppendWorkflowStarted(ctx, ref, note); aerr != nil {
+			zerolog.Ctx(ctx).Warn().Err(aerr).Str("task_id", info.TaskID).Msg("recording the workflow-started note")
+		}
+		// A conversation that begins with a workflow has no first message for
+		// the title generator to name it by; the workflow and its brief are
+		// that name — otherwise it stays "New Session" everywhere a run is
+		// listed by its conversation. Same CAS as the generator: a person's
+		// name stands.
+		if sess.Name == store.DefaultSessionName {
+			r.nameSessionAfterWorkflow(ctx, sessionID, name, input)
+		}
+	}
+	return r.taskInfoFrom(info), nil
+}
+
+// nameSessionAfterWorkflow names a still-default session "<workflow>: <brief>"
+// and tells every connection, best effort.
+func (r *Runner) nameSessionAfterWorkflow(ctx context.Context, sessionID, workflowName, brief string) {
+	title := workflowName
+	if b := strings.Join(strings.Fields(brief), " "); b != "" {
+		title += ": " + b
+	}
+	if rs := []rune(title); len(rs) > 40 {
+		title = string(rs[:39]) + "…"
+	}
+	won, err := r.Deps.Sessions.NameIfDefault(ctx, sessionID, title)
+	if err != nil || !won || r.OnBroadcast == nil {
+		return
+	}
+	if env, eerr := protocol.NewEnvelope(protocol.EventSessionTitleUpdated, protocol.SessionTitleUpdated{SessionID: sessionID, Title: title}); eerr == nil {
+		r.OnBroadcast(env, "")
+	}
+}
+
+// continueTask is the task manager's Continue hook: only a workflow's run has
+// a next step; every other task ends with its run. When the sequence ends
+// here, the answer is an ENDING Continuation — no Input, the state carrying
+// the last step's outcome (and the bound that stopped it), Err when it ends
+// failed — which the manager writes in the same Finalize as the ending, so
+// the record and the status cannot disagree.
+func (r *Runner) continueTask(ctx context.Context, t *tasks.Task, out tasks.RunOutcome) (*tasks.Continuation, error) {
+	if t.Kind != store.TaskKindWorkflow {
+		return nil, nil
+	}
+	st, err := store.DecodeWorkflowState(t.State)
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := r.executionTokens(ctx, st, t.ChildSessionID)
+	if err != nil {
+		return nil, err
+	}
+	cont, cerr := continueWorkflow(st, t.RunID, out, tokens)
+	if cont != nil {
+		return cont, nil
+	}
+	return &tasks.Continuation{State: st.Encode(), Err: cerr}, nil
+}
+
+// executionTokens is what the execution has spent so far, for its budget:
+// the child session's usage totals. Not read for a workflow with no token
+// bound — the count is only worth its query when something is measured by it.
+func (r *Runner) executionTokens(ctx context.Context, st *store.WorkflowState, childSessionID string) (int, error) {
+	if st.Budget.MaxTokens <= 0 || childSessionID == "" {
+		return 0, nil
+	}
+	ref, err := store.RefFor(ctx, r.db, childSessionID)
+	if err != nil {
+		return 0, fmt.Errorf("reading the execution's usage: %w", err)
+	}
+	tokens, err := store.NewEntryStoreFor(r.db, ref).UsageTotals(ctx, ref)
+	if err != nil {
+		return 0, fmt.Errorf("reading the execution's usage: %w", err)
+	}
+	return tokens, nil
+}
+
+// continueWorkflow resolves where a workflow goes after the run that just
+// ended: the next step by the definition's edges, or nowhere. It records the
+// run's outcome on st either way. A structural failure with no handler ends
+// the execution with the run's failure (nil, nil — the manager records the
+// outcome); a gate's FAIL with no handler, a gate with no verdict, the budget
+// and the loop bound end it with their own reason. tokens is what the
+// execution has spent, for the budget.
+func continueWorkflow(st *store.WorkflowState, runID string, out tasks.RunOutcome, tokens int) (*tasks.Continuation, error) {
+	failed := out.Status == tasks.StatusFailed
+	reason := out.Err
+	outcome := store.StepOutcomeCompleted
+	if failed {
+		outcome = store.StepOutcomeFailed
+	}
+	// A gate step REPORTS; the routing is still the definition's. No verdict is
+	// a broken check, not a coin flip.
+	var noVerdict error
+	if cur := st.Current(); cur != nil && cur.Gate != nil && !failed {
+		passed, ok := cur.Gate.Verdict(out.Text)
+		switch {
+		case !ok:
+			noVerdict = fmt.Errorf("step %q ended without a verdict: its last line must be %s or %s",
+				stepName(cur), cur.Gate.PassWord(), cur.Gate.FailWord())
+		case passed:
+			outcome = store.StepOutcomePass
+		default:
+			failed, outcome = true, store.StepOutcomeFail
+			reason = "the check reported " + cur.Gate.FailWord()
+		}
+	}
+	st.RecordOutcome(runID, outcome)
+	if noVerdict != nil {
+		return nil, noVerdict
+	}
+	next, ok := st.NextStep(failed)
+	if !ok {
+		if outcome == store.StepOutcomeFail {
+			// The run completed, so only this ending can say the check failed.
+			return nil, fmt.Errorf("check %q failed", stepName(st.Current()))
+		}
+		return nil, nil
+	}
+	// The loop bound on the transition (a backward edge taken too often), then
+	// the definition's budget, then the ceiling every execution has — counted
+	// over step LAUNCHES.
+	if err := st.StopIfLooping(next); err != nil {
+		return nil, err
+	}
+	if err := st.StopIfBounded(tokens); err != nil {
+		return nil, err
+	}
+	prompt := st.StepPrompt(*next)
+	if failed {
+		// A failed run leaves no usable account of itself in the transcript, so
+		// the handler step is told what it is handling.
+		prompt = "The previous step failed: " + reason + "\n\n" + prompt
+	}
+	st.StepID = next.ID
+	return &tasks.Continuation{Input: prompt, State: st.Encode()}, nil
+}
+
+// stepName is how a step is named in a message: its name, else its id.
+func stepName(s *store.WorkflowStep) string {
+	if s == nil {
+		return ""
+	}
+	if s.Name != "" {
+		return s.Name
+	}
+	return s.ID
+}
+
+// launchWorkflowStep is the task launcher's answer for the workflow kind,
+// whether the launch is the spawn, a step transition or a retry: start the
+// step the task is on — or, for a step a person must approve first, hold the
+// sequence there and ask (README invariant 37).
+func (r *Runner) launchWorkflowStep(ctx context.Context, req tasks.LaunchRequest) error {
+	st, err := store.DecodeWorkflowState(req.State)
 	if err != nil {
 		return err
 	}
-	if r.Deps.Tasks != nil {
-		running, err := r.Deps.Tasks.ListNonTerminalByParent(ctx, parentSessionID)
-		if err != nil {
-			return err
-		}
-		live += len(running)
+	step := st.Current()
+	if step == nil {
+		return fmt.Errorf("%w: step %q is not in the snapshot", ErrWorkflowUnavailable, st.StepID)
 	}
-	if live >= r.hub.maxTasks {
-		return fmt.Errorf("%w: this session already has %d pieces of background work running", ErrWorkflowUnavailable, live)
+	// A retry of an execution its budget or the ceiling stopped would run one
+	// whole step only to be stopped by the same bound: refuse before the run,
+	// and say so on the state (best effort — the refusal stands either way).
+	tokens, err := r.executionTokens(ctx, st, req.SessionID)
+	if err != nil {
+		return err
+	}
+	if err := st.StopIfBounded(tokens); err != nil {
+		_, _ = r.Deps.Tasks.Advance(ctx, req.TaskID, req.RunID, req.RunID, st.Encode())
+		return err
+	}
+	// A retry's turn re-issues the step's own instruction under the retry
+	// prompt: the transcript holds the failed attempt, but a gate's verdict
+	// rule and the step's task are not something to leave the model to infer
+	// from it. Composed HERE, before the branch, so a paused step keeps the
+	// same turn for the day it is approved. A continuation's Input already is
+	// the step prompt.
+	if req.Retry {
+		req.Input = req.Input + "\n\nThe step to do again:\n" + st.StepPrompt(*step)
+	}
+	if step.PauseBefore {
+		return r.pauseWorkflowStep(ctx, req, st, step)
+	}
+	return r.startWorkflowStep(ctx, req, st, step)
+}
+
+// startWorkflowStep starts the step's run: it records the launch in the
+// state's log first (atomically under the run it belongs to), compacts if the
+// step asks, then starts the run as the step's agent on the parent's sandbox.
+func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest, st *store.WorkflowState, step *store.WorkflowStep) error {
+	// The log names every run that was launched, and only those: written
+	// BEFORE the launch, under the run id the row already carries, so a stop
+	// racing this launch loses the write rather than the run. A logged run the
+	// sequence never moved on from is one that failed and is being retried —
+	// the one ending Continue could not stamp, so it is stamped here.
+	if n := len(st.StepRuns); n > 0 && st.StepRuns[n-1].Outcome == "" && st.StepRuns[n-1].RunID != req.RunID {
+		st.StepRuns[n-1].Outcome = store.StepOutcomeFailed
+	}
+	if req.Retry {
+		st.StepRuns = st.StepRuns.WithRetry(step.ID, req.RunID)
+	} else {
+		st.StepRuns = st.StepRuns.With(step.ID, req.RunID)
+	}
+	st.PendingInput = ""
+	won, err := r.Deps.Tasks.Advance(ctx, req.TaskID, req.RunID, req.RunID, st.Encode())
+	if err != nil {
+		return fmt.Errorf("recording the step launch: %w", err)
+	}
+	if !won {
+		return fmt.Errorf("%w: the execution moved on before the step could start", ErrWorkflowUnavailable)
+	}
+	if step.CompactBefore {
+		// Best effort, before the launch while the child session is idle, with
+		// the step's own agent — the one about to read the summary.
+		rootCtx := r.hub.rootCtx
+		ac, cerr := r.Deps.AgentConfigs.Get(rootCtx, step.AgentConfigID)
+		if cerr == nil {
+			_, _, _, cerr = r.compactSessionAs(rootCtx, req.SessionID, ac)
+		}
+		if cerr != nil {
+			zerolog.Ctx(rootCtx).Warn().Err(cerr).Str("task_id", req.TaskID).Str("step_id", step.ID).
+				Msg("workflow: compact before step did not run")
+		}
+	}
+	// The sandbox comes from the PARENT (Inherit) — every step shares one
+	// working directory with the conversation that asked; the agent is the
+	// step's own.
+	in := store.DecodeInherit(req.Inherit)
+	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.SandboxID, in.WorkDir, req.Input, "", nil, nil)
+	return err
+}
+
+// pauseWorkflowStep holds the sequence before a PauseBefore step: the turn the
+// step will start with is kept in the state, a step approval is filed under
+// the run id the row already claimed, and the task is paused — all the
+// machinery a tool approval has (the strip, the reaper, the restart sweep, a
+// stop) then applies to it unchanged. Approving starts the run
+// (resolveStepApproval); no run exists until then.
+func (r *Runner) pauseWorkflowStep(ctx context.Context, req tasks.LaunchRequest, st *store.WorkflowState, step *store.WorkflowStep) error {
+	if r.Deps.PendingApprovals == nil {
+		return fmt.Errorf("%w: step %q asks for approval, but approvals are not persisted", ErrWorkflowUnavailable, stepName(step))
+	}
+	st.PendingInput = req.Input
+	args, _ := json.Marshal(map[string]any{
+		"step": stepName(step), "index": st.StepIndex(step.ID) + 1, "count": len(st.Steps),
+	})
+	calls, _ := json.Marshal([]store.PendingToolCall{{
+		ToolCallID: "step-" + req.RunID, ToolName: store.StepApprovalToolName, Arguments: string(args),
+	}})
+	in := store.DecodeInherit(req.Inherit)
+	// The state (the turn to start with), the pause and the approval land in
+	// ONE transaction, under this run: no moment where the task is paused
+	// with no approval to answer, or an approval answerable while the task
+	// still says working. The manager reports the row as it now stands once
+	// the launch settles, which is what tells every client to ask.
+	won, err := r.Deps.Tasks.Pause(ctx, req.TaskID, req.RunID, st.Encode(), &store.PendingApproval{
+		RunID: req.RunID, SessionID: req.SessionID, Kind: store.ApprovalKindStep,
+		AgentConfigID: step.AgentConfigID, SandboxID: in.SandboxID, WorkDir: in.WorkDir,
+		ToolCalls: calls,
+	})
+	if err != nil {
+		return fmt.Errorf("pausing the task: %w", err)
+	}
+	if !won {
+		return fmt.Errorf("%w: the execution moved on before the step could pause", ErrWorkflowUnavailable)
 	}
 	return nil
 }
 
-// startWorkflowStep launches one step under the run id the row already claimed.
-// The sandbox comes from the PARENT session — every step shares one working
-// directory with the conversation that asked. afterFailure is the error of the
-// step this one is handling (empty otherwise); it leads the turn, because a
-// failed run leaves no usable account of itself in the transcript.
-func (r *Runner) startWorkflowStep(wr *store.WorkflowRun, step store.WorkflowStep, parent *store.Session, afterFailure string) error {
-	if step.CompactBefore {
-		// Best effort, before the launch while the child session is idle.
-		ctx := r.hub.rootCtx
-		if _, _, _, err := r.CompactSession(ctx, wr.ChildSessionID); err != nil {
-			zerolog.Ctx(ctx).Info().Err(err).Str("workflow_run_id", wr.ID).Str("step_id", step.ID).
-				Msg("workflow: compact before step did not run")
+// resolveStepApproval applies a person's decision on a paused step. Approving
+// reclaims the task and starts the step's run under the run id the pause
+// filed; rejecting stops the execution — a declined step is the person ending
+// the sequence, so it ends cancelled, owing no wake-up. The pending row's
+// delete is the exclusive claim, as for a tool approval.
+func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.PendingApproval, approve bool) (runID string, err error) {
+	mctx := context.WithoutCancel(ctx)
+	row, err := r.Deps.Tasks.ByChildSession(ctx, pending.SessionID)
+	if err != nil {
+		return "", fmt.Errorf("resolving the paused step's execution: %w", err)
+	}
+	if !approve {
+		// The claim and the ending in one write: the row deleted and the
+		// execution cancelled — the person's decision, so nobody is woken.
+		claimed, ended, err := r.Deps.Tasks.ClaimApprovalCancelled(mctx, row.ID, pending.RunID, "step rejected")
+		if err != nil {
+			return "", err
 		}
-	}
-	prompt := wr.StepPrompt(step)
-	if afterFailure != "" {
-		prompt = "The previous step failed: " + afterFailure + "\n\n" + prompt
-	}
-	_, err := r.startRunWithID(wr.RunID, wr.ChildSessionID, step.AgentConfigID,
-		parent.SandboxID, parent.WorkDir, prompt, "", nil, nil)
-	if err == nil {
-		// A stop that landed between the row moving to this run and the launch
-		// registering found nothing to cancel — its hub.Cancel missed a run that
-		// did not exist yet. Re-read and finish the job for it: the row is
-		// terminal, so this launch is the only thing left running.
-		if cur, gerr := r.Deps.WorkflowRuns.Get(r.hub.rootCtx, wr.ID); gerr == nil && cur.Status != store.WorkflowRunning {
-			r.hub.Cancel(wr.RunID)
-			return nil
+		if !claimed {
+			return "", fmt.Errorf("claiming the step approval: %w", store.ErrNotFound)
 		}
-		r.publishWorkflowUpdate(wr.ParentSessionID, wr.ID, wr.RunID, store.WorkflowRunning)
-	}
-	return err
-}
-
-// publishWorkflowUpdate nudges the parent session's subscribers that this
-// execution moved. It rides the STEP run's stream — there is no live parent
-// run to carry a session event; every connection is attached to every run.
-// The client refetches; the payload only routes the nudge.
-func (r *Runner) publishWorkflowUpdate(parentSessionID, workflowRunID, stepRunID, status string) {
-	if parentSessionID == "" || stepRunID == "" {
-		return
-	}
-	env, err := protocol.NewEnvelope(protocol.EventWorkflowUpdated, protocol.WorkflowUpdated{
-		ParentSessionID: parentSessionID, WorkflowRunID: workflowRunID, Status: status,
-	})
-	if err != nil {
-		return
-	}
-	r.hub.publish(stepRunID, env)
-}
-
-// advanceWorkflow is the driver, called for EVERY run that ends (see postRun)
-// rather than through the starting call's own callback: an approval resume
-// passes no callback, so hanging the advance off the starting call would lose
-// the workflow at the first paused step. The lookup is by RUN id — the only
-// name a finished run and the row that owns it share (invariant 31).
-func (r *Runner) advanceWorkflow(ctx context.Context, runID string, result *RunOutcome) {
-	if r.Deps.WorkflowRuns == nil {
-		return
-	}
-	log := zerolog.Ctx(ctx)
-	wr, err := r.Deps.WorkflowRuns.ActiveForRun(ctx, runID)
-	if err != nil {
-		log.Warn().Err(err).Str("run_id", runID).Msg("workflow: reading the execution")
-		return
-	}
-	// Not a workflow's run, or a superseded attempt's late callback.
-	if wr == nil {
-		return
-	}
-	// An interrupted run is PAUSED, not finished: the approval resume reopens
-	// the same run id, and its ending arrives here later. Nudge the parent so
-	// the strip surfaces the decision.
-	if result.Interrupted {
-		r.publishWorkflowUpdate(wr.ParentSessionID, wr.ID, runID, store.WorkflowRunning)
-		return
-	}
-
-	// A person stopped it: no edge is followed, whatever the definition says.
-	if result.Cancelled {
-		r.finishWorkflow(ctx, wr, runID, store.WorkflowCancelled, "", "")
-		return
-	}
-	failed := result.ErrMessage != ""
-	next, ok := wr.NextStep(failed)
-	if !ok {
-		if failed {
-			// No handler for this failure. The row keeps step_id, so a retry
-			// resumes from the step that failed.
-			r.finishWorkflow(ctx, wr, runID, store.WorkflowFailed, result.ErrMessage, "")
-			return
+		if ended {
+			r.AnnounceTask(mctx, row.ID)
 		}
-		// The last step's output IS the deliverable the wake-up carries back.
-		r.finishWorkflow(ctx, wr, runID, store.WorkflowCompleted, "", result.FinalText)
-		return
+		return "", nil
 	}
-	// The only bound on a looping on_failure edge, counted over step RUNS.
-	if len(wr.StepRuns) >= store.MaxStepRuns {
-		r.finishWorkflow(ctx, wr, runID, store.WorkflowFailed,
-			fmt.Sprintf("stopped after %d steps — the workflow's edges are looping", len(wr.StepRuns)), "")
-		return
-	}
-
-	nextRunID := store.NewID()
-	// Claim the transition BEFORE launching: the row is what makes one advancer
-	// the winner, so a second caller for the same finished run finds the id
-	// already moved and does nothing.
-	claimed, err := r.Deps.WorkflowRuns.Advance(ctx, wr.ID, runID, next.ID, nextRunID, wr.StepRuns.With(next.ID, nextRunID))
+	// The claim and the reclaim in one write: the row deleted (exclusive
+	// against a racing decision) and the task input_required → working under
+	// the pause's run id (exclusive against a concurrent stop). Nothing is
+	// written when either side does not hold, so nothing needs putting back.
+	outcome, err := r.Deps.Tasks.ClaimApprovalWorking(mctx, row.ID, pending.RunID)
 	if err != nil {
-		log.Warn().Err(err).Str("workflow_run_id", wr.ID).Msg("workflow: advancing")
-		return
+		return "", fmt.Errorf("reclaiming the execution: %w", err)
 	}
-	if !claimed {
-		return
-	}
-	parent, err := r.Deps.Sessions.Get(ctx, wr.ParentSessionID)
-	if err != nil {
-		r.finishWorkflow(ctx, wr, nextRunID, store.WorkflowFailed, err.Error(), "")
-		return
-	}
-	wr.RunID, wr.StepID = nextRunID, next.ID
-	if err := r.startWorkflowStep(wr, *next, parent, result.ErrMessage); err != nil {
-		r.finishWorkflow(ctx, wr, nextRunID, store.WorkflowFailed, err.Error(), "")
-	}
-}
-
-// finishWorkflow writes a terminal state and, unless the person cancelled it,
-// records the wake-up the parent is owed — both in one transaction (see
-// WorkflowRunStore.Finish). It logs a failure rather than returning it — the
-// caller is a run's teardown, which has nobody to tell.
-func (r *Runner) finishWorkflow(ctx context.Context, wr *store.WorkflowRun, fromRunID, status, errMsg, result string) {
-	// A cancellation never wakes the parent: the person did it and the UI
-	// already shows it.
-	var wakeup *store.Wakeup
-	if status != store.WorkflowCancelled {
-		wakeup = &store.Wakeup{
-			SessionID:   wr.ParentSessionID,
-			Kind:        WakeKindWorkflow,
-			SourceID:    wr.ID,
-			Inherit:     wr.Inherit,
-			ParentRunID: wr.OriginRunID,
-			Payload:     workflowWakePayload(wr, status, errMsg, result),
-		}
-	}
-	won, err := r.Deps.WorkflowRuns.Finish(ctx, wr.ID, fromRunID, status, errMsg, result, wakeup)
-	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("workflow_run_id", wr.ID).Str("status", status).
-			Msg("workflow: writing the terminal state")
-		return
-	}
-	if !won {
-		return
-	}
-	// The sequence reached a terminal state — the strip drops it, the panel
-	// keeps it. Rides the ending run's stream, same as every other nudge.
-	r.publishWorkflowUpdate(wr.ParentSessionID, wr.ID, fromRunID, status)
-	// The debt is durable now; try to pay it. The guard inside Drain refuses
-	// while the parent is busy or paused, and the next boundary retries.
-	if wakeup != nil {
-		(Waker{r}).Drain(ctx, wr.ParentSessionID)
-	}
-}
-
-// workflowWakePayload is what the parent's turn reads: the sequence's name and
-// the deliverable. It carries the same notification prefix a task's does — the
-// UI would otherwise render the injected turn as a message the PERSON typed.
-func workflowWakePayload(wr *store.WorkflowRun, status, errMsg, result string) string {
-	var b strings.Builder
-	b.WriteString(protocol.TaskNotificationPrefix)
-	fmt.Fprintf(&b, "Workflow %q %s.", wr.Name, status)
-	if errMsg != "" {
-		fmt.Fprintf(&b, " It stopped with: %s", errMsg)
-	}
-	if result != "" {
-		fmt.Fprintf(&b, "\n\n%s", result)
-	}
-	return b.String()
-}
-
-// StopWorkflow ends the whole execution, not just the running step: stopping
-// one step and letting the next start is not what a person clicking stop means.
-func (r *Runner) StopWorkflow(workflowRunID string) (*store.WorkflowRun, error) {
-	// The hub's root context, not the request's: the teardown must complete
-	// even if the HTTP caller disconnects mid-stop — same rule as RetryTask.
-	ctx := r.hub.rootCtx
-	wr, err := r.Deps.WorkflowRuns.Get(ctx, workflowRunID)
-	if err != nil {
-		return nil, err
-	}
-	if wr.Status != store.WorkflowRunning {
-		return wr, nil // already terminal; stopping again is a no-op
-	}
-	// Mark first, THEN cancel: the cancelled run's ending arrives at
-	// advanceWorkflow, which finds a row no longer running and does not start
-	// the next step. A cancellation owes no wake-up (nil).
-	won, err := r.Deps.WorkflowRuns.Finish(ctx, wr.ID, "", store.WorkflowCancelled, "", "", nil)
-	if err != nil {
-		return nil, err
-	}
-	after, err := r.Deps.WorkflowRuns.Get(ctx, workflowRunID)
-	if err != nil {
-		return nil, err
-	}
-	// The CAS is the authority: if a concurrent step already completed/failed,
-	// won is false and its outcome — and the wake-up it owes — stands. Only the
-	// stop that actually cancelled tears down the run and its debt.
-	if !won {
-		return after, nil
-	}
-	// Drop the paused step's approval FIRST, so a stale tool_call_id cannot
-	// resume a cancelled sequence.
-	if r.Deps.PendingApprovals != nil && after.RunID != "" {
-		if err := r.Deps.PendingApprovals.Delete(ctx, after.RunID); err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("run_id", after.RunID).Msg("workflow: clearing a stopped step's approval")
-		}
-	}
-	(Waker{r}).Cancel(ctx, WakeKindWorkflow, wr.ID, "")
-	r.hub.Cancel(after.RunID)
-	// The nudge finishWorkflow's path publishes: Finish was called directly
-	// here (a stop owes no wake-up), and without it every other tab's strip
-	// keeps showing a running sequence.
-	r.publishWorkflowUpdate(after.ParentSessionID, after.ID, after.RunID, store.WorkflowCancelled)
-	return after, nil
-}
-
-// RetryWorkflow re-runs a terminal execution from the step it stopped at,
-// keeping the steps that already succeeded. It executes the SNAPSHOT, so a
-// definition edited since is not silently picked up mid-sequence.
-func (r *Runner) RetryWorkflow(workflowRunID string) (*store.WorkflowRun, error) {
-	// The hub's root context, not the request's: the run this starts outlives
-	// the HTTP call, and a disconnect between the claim and the launch would
-	// otherwise strand the row running with no live run.
-	ctx := r.hub.rootCtx
-	wr, err := r.Deps.WorkflowRuns.Get(ctx, workflowRunID)
-	if err != nil {
-		return nil, err
-	}
-	// Only a FAILED execution retries: re-running a success would repeat its
-	// side effects (a deploy, a send, a charge). The store's Restart CAS
-	// enforces the same predicate.
-	if wr.Status != store.WorkflowFailed {
-		return nil, fmt.Errorf("%w: %q is %s, and only a failed workflow can be retried", ErrWorkflowUnavailable, wr.Name, wr.Status)
-	}
-	idx := wr.StepIndex(wr.StepID)
-	if idx < 0 {
-		return nil, fmt.Errorf("%w: the step it stopped at is no longer in the snapshot", ErrWorkflowUnavailable)
-	}
-	// The ceiling counts step RUNS across the whole execution, retries included,
-	// so a step that keeps failing cannot be retried without end.
-	if len(wr.StepRuns) >= store.MaxStepRuns {
-		return nil, fmt.Errorf("%w: %q has already run %d steps", ErrWorkflowUnavailable, wr.Name, len(wr.StepRuns))
-	}
-	// A retry is one more piece of background work on the parent — subject to
-	// the same shared budget a fresh start is.
-	if err := r.checkBackgroundBudget(ctx, wr.ParentSessionID); err != nil {
-		return nil, err
-	}
-	// The child session is this execution's alone, so the only thing that can
-	// be in the way is the retried step itself.
-	if rid, live := r.hub.ActiveRunForSession(wr.ChildSessionID); live {
-		return nil, ErrSessionBusy{RunID: rid}
-	}
-	parent, err := r.Deps.Sessions.Get(ctx, wr.ParentSessionID)
-	if err != nil {
-		return nil, err
-	}
-	runID := store.NewID()
-	ok, err := r.Deps.WorkflowRuns.Restart(ctx, wr.ID, wr.RunID, wr.StepID, runID, wr.StepRuns.With(wr.StepID, runID))
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%w: it started again while this retry was being prepared", ErrWorkflowUnavailable)
-	}
-	// A retry supersedes whatever the failed attempt was owed: the outcome the
-	// parent has not heard yet is about to be replaced.
-	(Waker{r}).Cancel(ctx, WakeKindWorkflow, wr.ID, "")
-	wr.RunID, wr.Status = runID, store.WorkflowRunning
-	if err := r.startWorkflowStep(wr, wr.Steps[idx], parent, ""); err != nil {
-		r.finishWorkflow(ctx, wr, runID, store.WorkflowFailed, err.Error(), "")
-		return nil, err
-	}
-	return r.Deps.WorkflowRuns.Get(ctx, workflowRunID)
-}
-
-// FailInterruptedWorkflows is the workflow half of the restart reconciliation
-// (see FailOrphanedTasks, and its ordering rule): an execution recorded as
-// running has no live step after a restart, so it is failed at the step it
-// reached — which a retry can resume from.
-func (r *Runner) FailInterruptedWorkflows(ctx context.Context) {
-	if r.Deps.WorkflowRuns == nil {
-		return
-	}
-	running, err := r.Deps.WorkflowRuns.ListRunning(ctx)
-	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("workflow: listing running executions at startup")
-		return
-	}
-	for i := range running {
-		wr := &running[i]
-		// A step PAUSED on an approval is not an orphan: the approval persists,
-		// it is answerable from the parent's strip, and answering resumes the
-		// run. Same rule a task's input_required follows.
-		if r.Deps.PendingApprovals != nil {
-			paused, err := r.Deps.PendingApprovals.ListBySession(ctx, wr.ChildSessionID)
-			if err != nil {
-				zerolog.Ctx(ctx).Warn().Err(err).Str("workflow_run_id", wr.ID).
-					Msg("workflow: checking for a paused step; leaving it alone")
-				continue
+	switch outcome {
+	case store.ClaimTaken:
+		return "", fmt.Errorf("claiming the step approval: %w", store.ErrNotFound)
+	case store.ClaimTaskNotPaused:
+		// As for a tool approval: terminal → void; another attempt → stale;
+		// still this attempt and not paused → not ready; the row is still
+		// there for a later decision.
+		if cur, gerr := r.Deps.Tasks.Get(mctx, row.ID); gerr == nil && !isTerminalTaskStatus(cur.Status) {
+			if cur.RunID != pending.RunID {
+				return "", &StaleApprovalAttemptError{TaskID: row.ID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
 			}
-			if len(paused) > 0 {
-				continue
-			}
+			return "", &ApprovalNotReadyError{RunID: pending.RunID}
 		}
-		// Through finishWorkflow, so the parent is owed the outcome: a sequence
-		// killed by a restart is exactly the case a durable debt exists for.
-		r.finishWorkflow(ctx, wr, wr.RunID, store.WorkflowFailed,
-			"interrupted by a server restart", "")
+		return "", &ApprovalVoidError{TaskID: row.ID}
 	}
-}
-
-// FailWorkflowForExpiredApproval ends the execution whose step was waiting on
-// an approval that has now expired. Without it the row stays running forever:
-// its step will never resume, and nothing else will ever claim the ending.
-func (r *Runner) FailWorkflowForExpiredApproval(ctx context.Context, childSessionID string) {
-	if r.Deps.WorkflowRuns == nil {
-		return
+	// From here the row is working again under the pause's run, so whatever
+	// keeps the step from starting ends the execution failed, reported like
+	// any ending — through the store, so the parent is owed the news — rather
+	// than leaving a working row no run will ever finish. A finalize that
+	// loses means a stop ended the execution first: the decision is void, a
+	// state conflict rather than a fault.
+	fail := func(reason string, err error) (string, error) {
+		reason += ": " + err.Error()
+		won, ferr := store.NewTaskAdapter(r.Deps.Tasks).Finalize(mctx, row.ID, pending.RunID, tasks.StatusFailed, reason, reason, nil)
+		if ferr == nil && !won {
+			return "", &ApprovalVoidError{TaskID: row.ID}
+		}
+		if ferr == nil {
+			if t, gerr := store.NewTaskAdapter(r.Deps.Tasks).Get(mctx, row.ID); gerr == nil {
+				r.onTaskUpdate(mctx, t)
+			}
+			(Waker{r}).Drain(mctx, row.ParentSessionID)
+		}
+		return "", err
 	}
-	wr, err := r.Deps.WorkflowRuns.ByChildSession(ctx, childSessionID)
-	if err != nil || wr == nil {
-		return
-	}
-	r.finishWorkflow(ctx, wr, wr.RunID, store.WorkflowFailed,
-		"a step's approval expired unanswered", "")
-}
-
-// isBackgroundRun reports whether this run is one nobody is sitting in front
-// of. A task knows from its meta; a workflow step only from its session, since
-// the step is an ordinary run started on the execution's child session. ANY
-// status counts: a child session belongs to its execution for good, and a step
-// launch racing a stop must still build as a background run, not pick up the
-// chat toolset because the row went cancelled a moment earlier.
-//
-// A failed lookup is an ERROR, not a "no": reading it as a chat run hands a
-// background agent plan mode, and its submit_plan approval would land in a
-// session nobody can open — a sequence stuck forever on an unanswerable
-// question.
-func (r *Runner) isBackgroundRun(ctx context.Context, sessionID string, task *TaskMeta) (bool, error) {
-	if task != nil {
-		return true, nil
-	}
-	if r.Deps.WorkflowRuns == nil {
-		return false, nil
-	}
-	wr, err := r.Deps.WorkflowRuns.ByChildSessionAny(ctx, sessionID)
+	st, err := store.DecodeWorkflowState(row.State)
 	if err != nil {
-		return false, fmt.Errorf("resolving the workflow for session %s: %w", sessionID, err)
+		return fail("could not read the paused step", err)
 	}
-	return wr != nil, nil
+	step := st.Current()
+	if step == nil {
+		return fail("could not read the paused step", fmt.Errorf("%w: step %q is not in the snapshot", ErrWorkflowUnavailable, st.StepID))
+	}
+	req := tasks.LaunchRequest{
+		TaskID: row.ID, Kind: row.Kind, State: row.State, RunID: pending.RunID, SessionID: row.ChildSessionID,
+		Input: st.PendingInput,
+		Inherit: store.EncodeInherit(store.Inherit{
+			AgentConfigID: row.ParentAgentConfigID, SandboxID: row.ParentSandboxID, WorkDir: row.ParentWorkDir,
+		}),
+	}
+	if lerr := r.startWorkflowStep(mctx, req, st, step); lerr != nil {
+		return fail("could not start step "+stepName(step), lerr)
+	}
+	// Working again: tell the clients — the run's own run.started follows.
+	if t, gerr := store.NewTaskAdapter(r.Deps.Tasks).Get(mctx, row.ID); gerr == nil {
+		r.publishTaskUpdated(mctx, t)
+	}
+	return pending.RunID, nil
 }

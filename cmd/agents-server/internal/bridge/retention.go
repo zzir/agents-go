@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -20,9 +21,7 @@ const defaultApprovalTTLMinutes = 24 * 60
 // past the TTL. On expiry it drops the record and writes a session annotation
 // so the timeout is visible instead of silently vanishing. It runs at startup
 // and hourly until ctx ends — run it in a goroutine.
-// onExpired, when set, is told the session an expired approval belonged to, so
-// a caller that owns other work on it (a workflow execution) can end that too.
-func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, wakeups *store.WakeupStore, onExpired func(context.Context, string)) {
+func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string)) {
 	log := zerolog.Ctx(ctx)
 	reap := func() {
 		ttl := defaultApprovalTTLMinutes
@@ -35,52 +34,67 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 			return // expiry disabled
 		}
 		cutoff := time.Now().UTC().Add(-time.Duration(ttl) * time.Minute)
-		expired, err := approvals.DeleteOlderThan(ctx, cutoff)
+		expired, err := approvals.ListOlderThan(ctx, cutoff)
 		if err != nil {
 			log.Error().Err(err).Msg("approval reaper failed")
 			return
 		}
 		for _, p := range expired {
-			ref, rerr := entries.RefFor(ctx, p.SessionID)
-			if rerr != nil {
-				// The session is gone, or unreadable: there is nowhere to put
-				// the banner, and guessing at a scope is how one lands where
-				// nothing reads it.
-				log.Warn().Err(rerr).Str("session_id", p.SessionID).
-					Msg("cannot record an approval-timeout banner")
-				continue
-			}
-			_ = entries.AppendAnnotation(ctx, ref, p.RunID,
-				"Tool approval timed out after "+strconv.Itoa(ttl)+" minutes; the run was terminated.")
-			// A background task's approval expiring must finalize the task row
-			// too — otherwise it is a zombie stuck at input_required that no
-			// stop or approve can ever advance.
+			// Each row is claimed on its own — deleted in the SAME transaction
+			// as the task it ends, when it belongs to one: an approval that
+			// expires ends its task, and neither half can land without the
+			// other, whatever fails or crashes in between. A decision racing
+			// the reaper takes the row first or not at all; a stale row (its
+			// task moved to another attempt, or ended) is removed and moves
+			// nothing.
+			var task *store.Task
+			claimed := false
 			if tasks != nil {
-				if task, err := tasks.ByChildSession(ctx, p.SessionID); err == nil {
-					// Against p.RunID — the attempt this expired approval
-					// belongs to — NEVER the row's current run id: after a
-					// crash + FailOrphans + retry, the row names the retry's
-					// run, and finalizing against it would cancel a healthy
-					// new attempt because an approval from a previous life
-					// expired. The run-id predicate makes the stale case a
-					// silent no-op instead.
-					if won, _ := tasks.Finalize(ctx, task.ID, p.RunID, "cancelled",
-						"approval expired after "+strconv.Itoa(ttl)+" minutes", "", nil); won {
-						// Cancellations owe no wake-up; the timeout annotation
-						// above is the parent's record.
-						if wakeups != nil {
-							if err := wakeups.CancelFor(ctx, WakeKindTask, task.ID, p.RunID); err != nil {
-								log.Warn().Err(err).Str("task_id", task.ID).Msg("cancelling an expired task's wake-up")
-							}
-						}
-					}
+				var terr error
+				task, terr = tasks.ByChildSession(ctx, p.SessionID)
+				if terr != nil && !errors.Is(terr, store.ErrNotFound) {
+					log.Warn().Err(terr).Str("run_id", p.RunID).Msg("expiring an approval: its task could not be read; kept for the next round")
+					continue
 				}
 			}
-			// A workflow's step waiting on this approval will never resume, so
-			// the execution has to be ended too — otherwise it stays running
-			// forever with nothing left that could finish it.
-			if onExpired != nil {
-				onExpired(ctx, p.SessionID)
+			if task != nil {
+				// Against p.RunID — the attempt this expired approval belongs
+				// to — NEVER the row's current run id: after a crash +
+				// FailOrphans + retry, the row names the retry's run, and
+				// ending against it would cancel a healthy new attempt because
+				// an approval from a previous life expired.
+				var ended bool
+				claimed, ended, err = tasks.ClaimApprovalCancelled(ctx, task.ID, p.RunID, "approval expired after "+strconv.Itoa(ttl)+" minutes")
+				if err != nil {
+					log.Warn().Err(err).Str("run_id", p.RunID).Msg("expiring an approval; kept for the next round")
+					continue
+				}
+				if ended && announce != nil {
+					// Cancellations owe no wake-up (dropped in the same write);
+					// the parent learns of it through the task's own state.
+					announce(ctx, task.ID)
+				}
+			} else if derr := approvals.Delete(ctx, p.RunID); derr == nil {
+				claimed = true
+			} else if !errors.Is(derr, store.ErrNotFound) {
+				log.Warn().Err(derr).Str("run_id", p.RunID).Msg("expiring an approval; kept for the next round")
+				continue
+			}
+			if !claimed {
+				continue // a decision took it first
+			}
+			// The banner goes to the session the approval was filed on — a
+			// task's or a step's hidden child session, whose transcript is
+			// where the pause happened.
+			if ref, rerr := entries.RefFor(ctx, p.SessionID); rerr != nil {
+				log.Warn().Err(rerr).Str("session_id", p.SessionID).
+					Msg("cannot record an approval-timeout banner")
+			} else {
+				banner := "Tool approval timed out after " + strconv.Itoa(ttl) + " minutes; the run was terminated."
+				if p.Kind == store.ApprovalKindStep {
+					banner = "Step approval timed out after " + strconv.Itoa(ttl) + " minutes; the workflow was cancelled."
+				}
+				_ = entries.AppendAnnotation(ctx, ref, p.RunID, banner)
 			}
 			log.Info().Str("run_id", p.RunID).Str("session_id", p.SessionID).Msg("expired pending approval")
 		}
