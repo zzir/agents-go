@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, type ChangeEvent } f
 import { Button, Checkbox, CounterLabel, Dialog, Flash, Link, SegmentedControl, Select, SelectPanel, Textarea, TextInput } from '@primer/react';
 import type { SelectPanelItemInput } from '@primer/react';
 import { api } from '@/lib/api';
+import { useApi } from '@/lib/hooks';
 import { diffLines } from '@/lib/diff';
 import { providerMeta } from '@/lib/providers';
 import {
@@ -215,7 +216,8 @@ function comparableText(items: PayloadRecord[]): string {
 // response. Requests go through POST /playground/generate (no session, no
 // run, tools are schema-only and never executed).
 function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => void }) {
-  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const { data: agentList } = useApi<AgentOption[]>(() => api.agents.list() as Promise<AgentOption[]>);
+  const agents = agentList || [];
   const [agentId, setAgentId] = useState('');
   const [model, setModel] = useState(typeof data.model === 'string' ? data.model : '');
   const [instructions, setInstructions] = useState(typeof data.system_instructions === 'string' ? data.system_instructions : '');
@@ -230,7 +232,6 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
   const [enabledTools, setEnabledTools] = useState<Set<string>>(
     () => new Set(payloadItems(data.tools).map(t => String(t.name || '')).filter(Boolean)),
   );
-  const [agentTools, setAgentTools] = useState<PayloadRecord[]>([]);
   const [includeHandoffs, setIncludeHandoffs] = useState(true);
   const [includeSchema, setIncludeSchema] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -252,14 +253,15 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
   );
   // The agent's CURRENT tool surface — offered by the picker beyond the
   // traced set, for what-if replays (would the model have called this?).
-  useEffect(() => {
-    if (!agentId) { setAgentTools([]); return; }
-    let stale = false;
-    (api.agents.tools(agentId) as Promise<PayloadRecord[]>)
-      .then(list => { if (!stale) setAgentTools(list || []); })
-      .catch(() => { if (!stale) setAgentTools([]); });
-    return () => { stale = true; };
-  }, [agentId]);
+  // A failed fetch offers nothing, not the previous agent's tools.
+  const { data: agentToolList, error: agentToolsError } = useApi<PayloadRecord[]>(
+    () => agentId ? (api.agents.tools(agentId) as Promise<PayloadRecord[]>) : Promise.resolve([]),
+    [agentId],
+  );
+  const agentTools = useMemo(
+    () => (agentToolsError ? [] : agentToolList || []),
+    [agentToolList, agentToolsError],
+  );
   // Traced tools first (their traced schema wins on a name collision), then
   // the agent's extras.
   const allTools = useMemo(() => {
@@ -348,15 +350,13 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
     }
   }, [settingsText]);
 
+  // Initial selection keeps the TRACED model and settings — replay means
+  // the traced request. Only an explicit agent switch reseeds them.
   useEffect(() => {
-    api.agents.list().then((list: AgentOption[]) => {
-      setAgents(list || []);
-      // Initial selection keeps the TRACED model and settings — replay means
-      // the traced request. Only an explicit agent switch reseeds them.
-      const match = (list || []).find(a => a.name === data.name);
-      setAgentId(String(match ? match.id : (list && list[0] ? list[0].id : '')));
-    }).catch(() => {});
-  }, [data.name]);
+    if (!agentList) return;
+    const match = agentList.find(a => a.name === data.name);
+    setAgentId(String(match ? match.id : (agentList[0] ? agentList[0].id : '')));
+  }, [agentList, data.name]);
 
   const selectedAgent = useMemo(() => agents.find(a => String(a.id) === agentId), [agents, agentId]);
   // Switching agents reseeds model + settings from that agent's config, so
@@ -985,8 +985,10 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
         <span
           className="trace-run-jump"
           role="button"
+          tabIndex={0}
           title="Jump to message"
           onClick={e => { e.stopPropagation(); onJump(); }}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onJump(); } }}
         >
           <CommentIcon size={12} />
         </span>
@@ -1004,8 +1006,8 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
     <Disclosure
       ref={ref}
       variant="default"
-      // div header: the jump control is a nested interactive element, which
-      // is invalid inside the default <button> header.
+      // div header: the jump control nests inside it, which a <button> header
+      // cannot hold; Disclosure keeps the div a keyboard-operable role=button.
       as="div"
       label={headerLabel}
       open={isExpanded}

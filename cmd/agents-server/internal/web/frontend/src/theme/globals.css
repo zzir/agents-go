@@ -366,6 +366,29 @@ a:hover {
     background: var(--bgColor-muted);
 }
 
+/* A skill repo in the Skills panel: a plain div-header Disclosure whose header
+   IS the list row (name, count badge, Update/Delete ride inside it), followed
+   by one Box-row per skill when expanded. */
+.skills-repo > .disclosure-header {
+    padding: var(--base-size-8) var(--base-size-16);
+    font-size: var(--base-text-size-sm);
+    font-weight: 500;
+    color: var(--fgColor-default);
+}
+
+.skills-repo > .disclosure-header:hover {
+    color: var(--fgColor-accent);
+    background: var(--bgColor-muted);
+}
+
+.skills-repo.expanded > .disclosure-header {
+    border-bottom: 1px solid var(--borderColor-muted);
+}
+
+.skills-repo .resource-row-actions {
+    margin-left: auto;
+}
+
 .resource-row-main {
     flex: 1;
     min-width: 0;
@@ -487,45 +510,31 @@ a:hover {
     border-top: 1px solid var(--borderColor-muted);
 }
 
-/* Advanced disclosure */
+/* Advanced disclosure — a plain Disclosure; the header is the ruled toggle */
 .advanced-toggle {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: var(--base-size-4);
     margin-top: var(--base-size-28);
+}
+
+.advanced-toggle > .disclosure-header {
     padding: var(--base-size-16) 0 var(--base-size-4);
     font-size: var(--base-text-size-xs);
     font-weight: 600;
     color: var(--fgColor-muted);
-    cursor: pointer;
-    user-select: none;
-    background: none;
-    border: none;
     border-top: 1px solid var(--borderColor-muted);
 }
 
-.advanced-toggle:hover {
+.advanced-toggle > .disclosure-header:hover {
     color: var(--fgColor-default);
 }
 
-.advanced-toggle:focus-visible {
+.advanced-toggle > .disclosure-header:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
 }
 
-.advanced-toggle svg {
-    transition: transform 0.15s ease;
-    flex-shrink: 0;
-}
-
-.advanced-toggle[aria-expanded="true"] svg {
-    transform: rotate(90deg);
-}
-
-/* Advanced body */
+/* Advanced body — sits 24px under the toggle, inside its Disclosure */
 .advanced-section {
-    margin-top: var(--base-size-8);
+    margin-top: var(--base-size-24);
 }
 
 .advanced-section > .form-group:first-child {
@@ -547,47 +556,45 @@ a:hover {
     gap: var(--base-size-4);
 }
 
+/* One skill repo: [checkbox] [toggle] [count] on the first row, the toggle's
+   body under all three. The toggle is a plain Disclosure laid out as
+   display: contents, so its header and body are the grid's own items and the
+   checkbox stays a sibling of the toggle, never a child of it. */
 .checkbox-group-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto auto 1fr;
     align-items: center;
-    gap: var(--base-size-4);
+    column-gap: var(--base-size-4);
 }
 
-.checkbox-group-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--base-size-4);
+.checkbox-group-header > .checkbox-group-toggle {
+    display: contents;
+}
+
+.checkbox-group-toggle > .disclosure-header {
     padding: var(--base-size-4) 0;
     font-size: var(--base-text-size-sm);
     color: var(--fgColor-default);
-    cursor: pointer;
-    user-select: none;
-    background: none;
-    border: none;
 }
 
-.checkbox-group-toggle:hover {
+.checkbox-group-toggle > .disclosure-header:hover {
     color: var(--fgColor-accent);
 }
 
-.checkbox-group-toggle:focus-visible {
+.checkbox-group-toggle > .disclosure-header:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
 }
 
-.checkbox-group-toggle svg {
-    transition: transform 0.15s ease;
-    flex-shrink: 0;
-}
-
-.checkbox-group-toggle[aria-expanded="true"] svg {
-    transform: rotate(90deg);
+.checkbox-group-toggle > .disclosure-body {
+    grid-column: 1 / -1;
 }
 
 .checkbox-group-header-count {
+    grid-area: 1 / 3;
+    justify-self: end;
     font-size: 11px;
     color: var(--fgColor-muted);
-    margin-left: auto;
 }
 
 .checkbox-group-body {

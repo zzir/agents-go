@@ -75,37 +75,6 @@
   line-height: 1.5;
   opacity: 0.85;
 }
-
-/* Compaction reads on a different ruler than the window bar above it, so it is
-   indented behind its own rule rather than sharing that gauge. */
-.ctx-sub {
-  margin-top: var(--base-size-16, 16px);
-  padding-left: 10px;
-  border-left: 2px solid var(--borderColor-muted);
-}
-.ctx-sub-head {
-  display: flex;
-  flex-wrap: wrap; /* a narrow panel wraps the VALUE whole, never inside it */
-  align-items: center;
-  justify-content: space-between;
-  gap: 2px var(--base-size-8, 8px);
-  color: var(--fgColor-muted);
-  font-size: 11px;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-.ctx-sub-val {
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--fgColor-default);
-  white-space: nowrap;
-  margin-left: auto;
-}
-.ctx-sub-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--base-size-8, 8px);
-}
 /* "Compact now" — a quiet inline control beside the sub-head label, sized to
    its 11px type. */
 .ctx-compact-btn {

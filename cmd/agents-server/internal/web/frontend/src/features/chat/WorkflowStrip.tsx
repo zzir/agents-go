@@ -1,18 +1,10 @@
 import { useState } from 'react';
 import { Button, Label } from '@primer/react';
 import { WorkflowIcon } from '@primer/octicons-react';
-import type { BackgroundItem } from '@/lib/background';
+import { useChatActions, useChatBackground } from '@/features/chat/ChatSessionContext';
+import { useDecisionHold } from '@/features/chat/useDecisionHold';
+import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import './workflow.css';
-
-interface WorkflowStripProps {
-  items: BackgroundItem[];
-  onOpen: (id: string) => void;
-  onApprove?: (toolCallId: string) => void;
-  onReject?: (toolCallId: string) => void;
-  onStop: (item: BackgroundItem) => Promise<void>;
-  onRetry: (item: BackgroundItem) => Promise<void>;
-  onDismiss: (item: BackgroundItem) => Promise<void>;
-}
 
 // WorkflowStrip is what a background sequence looks like from the conversation
 // that asked for it: how far it has got, and — the part that cannot be left out
@@ -23,26 +15,31 @@ interface WorkflowStripProps {
 // A finished sequence shows nothing here — its result arrives as a turn, and
 // the Tasks panel keeps the record. A dismissed failure is likewise the
 // panel's alone.
-export function WorkflowStrip({ items, onOpen, onApprove, onReject, onStop, onRetry, onDismiss }: WorkflowStripProps) {
-  const [busy, setBusy] = useState(false);
+export function WorkflowStrip() {
+  const items = useChatBackground();
+  const { approve, reject, inspectTask, stopTask, retryTask, dismissTask } = useChatActions();
+  // One flag per execution with a request in flight: two bars worked at once
+  // must not free each other's buttons.
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
   const live = items.filter(it => it.kind === 'workflow' && it.status !== 'completed' && it.status !== 'cancelled' && !it.dismissed);
   if (live.length === 0) return null;
 
-  const act = async (fn: () => Promise<void>) => {
-    setBusy(true);
+  const act = async (id: string, fn: () => Promise<void>) => {
+    setBusy(prev => new Set(prev).add(id));
     try {
       await fn();
     } finally {
-      setBusy(false);
+      setBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
     }
   };
+  const { held, decide } = useDecisionHold();
 
   return (
     <>
       {live.map(it => (
         <div key={it.id} className="wf-bar" role="button" tabIndex={0}
-          onClick={() => onOpen(it.id)}
-          onKeyDown={e => { if (e.key === 'Enter') onOpen(it.id); }}>
+          onClick={() => inspectTask(it.id)}
+          onKeyDown={e => { if (e.key === 'Enter') inspectTask(it.id); }}>
           <WorkflowIcon size={14} />
           <span className="wf-bar-name">{it.label}</span>
           {it.status === 'failed' ? (
@@ -52,10 +49,14 @@ export function WorkflowStrip({ items, onOpen, onApprove, onReject, onStop, onRe
                 {it.activity}{it.error ? ' — ' + it.error : ''}
               </span>
               <span className="wf-bar-actions" onClick={e => e.stopPropagation()}>
-                <Button size="small" variant="invisible" disabled={busy} onClick={() => act(() => onRetry(it))}>
-                  Retry from here
-                </Button>
-                <Button size="small" variant="invisible" disabled={busy} onClick={() => act(() => onDismiss(it))}>
+                {/* Only when the server would take it: attempts left, and no
+                    bound (budget, step ceiling) that refuses a retry outright. */}
+                {it.retryable && (
+                  <Button size="small" variant="invisible" disabled={busy.has(it.id)} onClick={() => act(it.id, () => retryTask(it.id))}>
+                    Retry from here
+                  </Button>
+                )}
+                <Button size="small" variant="invisible" disabled={busy.has(it.id)} onClick={() => act(it.id, () => dismissTask(it.id))}>
                   Dismiss
                 </Button>
               </span>
@@ -63,13 +64,15 @@ export function WorkflowStrip({ items, onOpen, onApprove, onReject, onStop, onRe
           ) : it.status === 'input_required' && it.pendingCallId ? (
             <>
               <span className="wf-bar-step">
-                {it.activity} needs your decision: <code>{it.pendingToolName}</code>
+                {it.pendingToolName === STEP_APPROVAL_TOOL
+                  ? <>{it.activity} is waiting to start — run it?</>
+                  : <>{it.activity} needs your decision: <code>{it.pendingToolName}</code></>}
               </span>
               <span className="wf-bar-actions" onClick={e => e.stopPropagation()}>
-                <Button size="small" variant="primary" disabled={busy}
-                  onClick={() => onApprove?.(it.pendingCallId!)}>Approve</Button>
-                <Button size="small" variant="danger" disabled={busy}
-                  onClick={() => onReject?.(it.pendingCallId!)}>Reject</Button>
+                <Button size="small" variant="primary" disabled={busy.has(it.id) || held(it.pendingCallId)}
+                  onClick={() => decide(it.pendingCallId!, () => approve?.(it.pendingCallId!))}>Approve</Button>
+                <Button size="small" variant="danger" disabled={busy.has(it.id) || held(it.pendingCallId)}
+                  onClick={() => decide(it.pendingCallId!, () => reject?.(it.pendingCallId!))}>Reject</Button>
               </span>
             </>
           ) : (
@@ -79,7 +82,7 @@ export function WorkflowStrip({ items, onOpen, onApprove, onReject, onStop, onRe
                 <span className="wf-bar-fill" style={{ width: `${(it.progress || 0) * 100}%` }} />
               </span>
               <span className="wf-bar-actions" onClick={e => e.stopPropagation()}>
-                <Button size="small" variant="invisible" disabled={busy} onClick={() => act(() => onStop(it))}>
+                <Button size="small" variant="invisible" disabled={busy.has(it.id)} onClick={() => act(it.id, () => stopTask(it.id))}>
                   Stop
                 </Button>
               </span>

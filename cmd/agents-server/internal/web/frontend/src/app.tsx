@@ -1,15 +1,15 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { TextInput, Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
 import {
-  DependabotIcon, McpIcon, ShieldCheckIcon, ZapIcon, CpuIcon, PlugIcon, WorkflowIcon,
+  DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
   ContainerIcon, DatabaseIcon, GearIcon,
   XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
 import { AppShell } from '@/layout/AppShell';
-import { SessionList } from '@/features/sessions/SessionList';
-import { ChatView, type InspectorPanel } from '@/features/chat/ChatView';
+import { SessionList as SessionListImpl } from '@/features/sessions/SessionList';
+import { ChatView, type ChatViewActions, type InspectorPanel } from '@/features/chat/ChatView';
 
 // Lazy: xterm (+ webgl renderer) is a few hundred KB the first paint never
 // needs — the chunk loads when the terminal panel first opens, then the panel
@@ -18,7 +18,10 @@ const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
 import { login, checkAuth, getToken, api } from '@/lib/api';
-import { EV } from '@/lib/protocol';
+import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
+import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
+import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
+import { SESSIONS_CHANGED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
@@ -74,14 +77,15 @@ function GlobalToast() {
 }
 
 // Ordered so each section builds on the ones above it: a provider is what an
-// agent talks to, an agent is what a workflow step runs, then what an agent
-// attaches (tools, execution, state, the checks around it). General last.
+// agent talks to, an agent is what runs, then what an agent attaches (tools,
+// execution, state, the checks around it). General last. Workflows are not
+// here: they are authored once and then WATCHED, which is the sidebar's
+// Workflows hub, not a settings tab.
 const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }> }[] = [
   { key: 'providers',  label: 'Providers',  icon: CpuIcon,        load: () => import('@/features/providers/ProviderPanel') },
   { key: 'agents',     label: 'Agents',     icon: DependabotIcon, load: () => import('@/features/agents/AgentConfigPanel') },
-  { key: 'workflows',  label: 'Workflows',  icon: WorkflowIcon,   load: () => import('@/features/workflows/WorkflowPanel') },
   { key: 'mcp',        label: 'MCP',        icon: McpIcon,        load: () => import('@/features/mcp/McpServerPanel') },
-  { key: 'skills',     label: 'Skills',     icon: ZapIcon,        load: () => import('@/features/skills/SkillsPanel') },
+  { key: 'skills',     label: 'Skills',     icon: SparkleIcon,    load: () => import('@/features/skills/SkillsPanel') },
   { key: 'sandbox',    label: 'Sandbox',    icon: ContainerIcon,  load: () => import('@/features/sandbox/SandboxPanel') },
   { key: 'memory',     label: 'Memory',     icon: DatabaseIcon,   load: () => import('@/features/memory/MemoryPanel') },
   { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
@@ -190,10 +194,37 @@ let clientMsgSeq = 0;
 function nextClientMsgId(): string { return 'c' + (++clientMsgSeq); }
 
 const MemoizedChatView = memo(ChatView);
+// The sidebar re-renders only when a prop moves — the sets below keep their
+// identity while their membership holds, so a streaming frame does not redraw
+// the whole list.
+const MemoizedSessionList = memo(SessionListImpl);
 
-// PLAN_COMMAND is the one slash command the composer takes: a prefix that puts
-// the session into plan mode before the request it leads runs.
+// sameMembers reports whether two sets hold the same ids.
+function sameMembers(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+// hasPendingApproval reports whether a conversation's latest turns hold a tool
+// call that needs approval and has no decision yet.
+function hasPendingApproval(messages: SessionState['messages']): boolean {
+  for (const m of messages) {
+    if (m.role !== 'turn') continue;
+    for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ needs_approval?: boolean; status?: string | null }> }> }).parts || []) {
+      if (part.type !== 'tools') continue;
+      if ((part.toolCalls || []).some(tc => tc.needs_approval && !tc.status)) return true;
+    }
+  }
+  return false;
+}
+
+// PLAN_COMMAND is the composer's plan-mode command: a prefix that puts the
+// session into plan mode before the request it leads runs. (WORKFLOW_COMMAND,
+// the other one, lives with the menu that types it.)
 const PLAN_COMMAND = /^\/plan\b[ \t]*/;
+// PLAN_OFF_COMMAND leads a message that leaves plan mode: "/plan off <message>".
+const PLAN_OFF_COMMAND = /^\/plan[ \t]+off\b[ \t]*/;
 
 function panelKey(p: InspectorPanel): string {
   if (!p) return '';
@@ -201,21 +232,30 @@ function panelKey(p: InspectorPanel): string {
   return p.kind;
 }
 
-function readHash(): { sessionId: string | null; panel: InspectorPanel } {
+// The URL names the view: a conversation (with the open Inspector lens), or
+// the Workflows hub (with its tab). The hub is a place of its own, so the
+// conversation last open is kept beside it in state, not in the URL.
+interface HashState { sessionId: string | null; panel: InspectorPanel; hub: HubTab | null }
+
+function readHash(): HashState {
   const h = window.location.hash;
+  const hub = /^#\/workflows(?:\/(definitions|triggers|runs))?$/.exec(h);
+  if (hub) return { sessionId: null, panel: null, hub: (hub[1] as HubTab) || 'definitions' };
   const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|context|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
-  if (!m) return { sessionId: null, panel: null };
+  if (!m) return { sessionId: null, panel: null, hub: null };
   let panel: InspectorPanel = null;
   if (m[2] === 'trace') panel = { kind: 'trace' };
   else if (m[2] === 'tasks') panel = { kind: 'tasks' };
   else if (m[2] === 'context') panel = { kind: 'context' };
   else if (m[3]) panel = { kind: 'task', taskId: m[3] };
-  return { sessionId: m[1], panel };
+  return { sessionId: m[1], panel, hub: null };
 }
 
-function writeHash(sessionId: string | null, panel: InspectorPanel) {
+function writeHash(sessionId: string | null, panel: InspectorPanel, hub: HubTab | null) {
   let next = '';
-  if (sessionId) {
+  if (hub) {
+    next = `#/workflows/${hub}`;
+  } else if (sessionId) {
     next = `#/session/${sessionId}`;
     if (panel?.kind === 'trace') next += '/trace';
     else if (panel?.kind === 'tasks') next += '/tasks';
@@ -236,30 +276,19 @@ export default function App() {
   const [checkError, setCheckError] = useState(false);
   const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
   const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
+  // The Workflows hub, when it is the open view (null = a conversation).
+  const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
   // Bumped by workflow.updated: the chat's workflow strip and Tasks panel
   // refetch when a background sequence moves.
-  const [workflowTick, setWorkflowTick] = useState(0);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   // The active session's display name and sandbox binding. Captured from the
   // existence-check fetch below and kept fresh by the title_updated /
   // sandbox_bound events; the id guards against a stale response landing after
   // a session switch.
   const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; sandboxId: string; workDir: string } | null>(null);
-  // What the composer's plan checkbox shows: seeded from the session, then the
-  // person's own intent until the next message carries it. planDirty marks a
-  // hand toggle not yet delivered — only then does a send carry a `plan` flag;
-  // an untouched box sends nothing, so a re-sent stale value can't re-arm a
-  // session the server just unlocked (plan approved between run end and the
-  // refetch).
-  const [planning, setPlanning] = useState(false);
-  const [planDirty, setPlanDirty] = useState(false);
-  const handlePlanningChange = useCallback((v: boolean) => {
-    setPlanning(v);
-    setPlanDirty(true);
-  }, []);
   // Bindings announced over the socket, per session. The session GET races the
   // session.sandbox_bound broadcast (meta is cleared before the fetch, so the
   // event can arrive while prev is null), and a binding is immutable once set
@@ -308,12 +337,14 @@ export default function App() {
   useEffect(() => { runCheck(); }, [runCheck]);
 
   useEffect(() => {
-    writeHash(activeSession, activePanel);
-  }, [activeSession, activePanel]);
+    writeHash(activeSession, activePanel, hubTab);
+  }, [activeSession, activePanel, hubTab]);
 
   useEffect(() => {
     const onHash = () => {
-      const { sessionId, panel } = readHash();
+      const { sessionId, panel, hub } = readHash();
+      setHubTab(hub);
+      if (hub) return; // the conversation beside the hub stays as it was
       setActiveSession(prev => prev === sessionId ? prev : sessionId);
       setActivePanel(prev => panelKey(prev) === panelKey(panel) ? prev : panel);
     };
@@ -327,6 +358,14 @@ export default function App() {
     const handler = () => { setAuthed(false); setCheckError(false); };
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
+  }, []);
+
+  // A conversation made somewhere other than the sidebar (a picker's "New
+  // session") is a conversation the sidebar must list.
+  useEffect(() => {
+    const handler = () => setSessionReloadKey(k => k + 1);
+    window.addEventListener(SESSIONS_CHANGED, handler);
+    return () => window.removeEventListener(SESSIONS_CHANGED, handler);
   }, []);
 
   const updateSS = useCallback((sid: string, fn: (s: SessionState) => SessionState) => {
@@ -368,11 +407,6 @@ export default function App() {
 
   useEffect(() => {
     setSessionMeta(null);
-    // The checkbox belongs to the session: disarm on every switch (and on New
-    // Chat) so the previous session's armed state can't leak into this one
-    // during the window before the GET below seeds the real phase.
-    setPlanning(false);
-    setPlanDirty(false);
     if (!activeSession) return;
     let cancelled = false;
     // The session id can come from the URL hash and may not exist (stale link,
@@ -384,7 +418,7 @@ export default function App() {
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
-        const s = sess as { name?: string; sandbox_id?: string; work_dir?: string; planning?: boolean };
+        const s = sess as { name?: string; sandbox_id?: string; work_dir?: string };
         // A binding announced while this fetch was in flight wins: the fetch
         // read the row before the bind landed, and bindings never change.
         const announced = announcedBindings.current[activeSession];
@@ -394,7 +428,6 @@ export default function App() {
           sandboxId: announced ? announced.sandboxId : (s?.sandbox_id || ''),
           workDir: announced ? announced.workDir : (s?.work_dir || ''),
         });
-        setPlanning(!!s?.planning);
         tryLoad();
       })
       .catch((e: { status?: number }) => {
@@ -404,22 +437,6 @@ export default function App() {
       });
     return () => { cancelled = true; };
   }, [activeSession, loadSession]);
-
-  // An approved plan unlocks the SESSION mid-run, so the checkbox is re-read
-  // when a run ENDS — the phase may have changed with nobody touching the box.
-  // Only on the true→false edge: session open already seeded it above.
-  const activeRunning = activeSession ? !!ss[activeSession]?.running : false;
-  const wasRunning = useRef(false);
-  useEffect(() => {
-    const ended = wasRunning.current && !activeRunning;
-    wasRunning.current = activeRunning;
-    if (!ended || !activeSession) return;
-    let cancelled = false;
-    api.sessions.get(activeSession)
-      .then(sess => { if (!cancelled) setPlanning(!!(sess as { planning?: boolean }).planning); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [activeSession, activeRunning, ss]);
 
   // Persisted traces backfill on the first open of a lens that reads them —
   // the trace panel, or the context panel (it joins its items to spans). Also
@@ -440,11 +457,6 @@ export default function App() {
         setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
       }
     });
-    // A workflow execution moved in some session. The strip and Tasks panel
-    // read REST, and a hidden step has no parent run to flip `running`, so this
-    // is the only signal to refetch. A single counter is enough — the strip is
-    // scoped to the open session, so at worst one cheap refetch of it.
-    wsRef.current.on(EV.workflowUpdated, () => setWorkflowTick(k => k + 1));
     wsRef.current.on(EV.sessionSandboxBound, (p: { session_id?: string; sandbox_id?: string; work_dir?: string }) => {
       if (p?.session_id && p.sandbox_id) {
         // Record first, then patch the live meta. The record is what makes the
@@ -460,22 +472,103 @@ export default function App() {
     });
   }, [wsRef]);
 
+  // reloadTimeline re-reads a session's persisted history after a server-side
+  // change the client cannot patch in — a branch move (a different branch is a
+  // different conversation), a compaction, a note the server wrote.
+  const reloadTimeline = useCallback(async (sid: string) => {
+    forgetLoaded(sid);
+    await loadSession(sid).catch(() => toast.error('Could not reload conversation'));
+  }, [forgetLoaded, loadSession]);
+
+  // runWorkflowCommand is the /workflow command: the first word names the
+  // workflow, the rest is its brief. Without a conversation open it makes
+  // one, as a message would; the started note the server writes into the
+  // conversation is what the reload brings in.
+  const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, sandboxId?: string, workDir?: string) => {
+    const spec = rest.trim();
+    if (!spec) {
+      toast.error('Which workflow? /workflow <name> <brief>');
+      return;
+    }
+    let workflows: { id: string; name: string }[];
+    try {
+      workflows = await api.workflows.list() as { id: string; name: string }[];
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not list workflows');
+      return;
+    }
+    // The name may hold spaces, so it is matched against the list — the
+    // longest name the text starts with — and what follows it is the brief.
+    const lower = spec.toLowerCase();
+    const wf = workflows
+      .filter(w => lower === w.name.toLowerCase() || lower.startsWith(w.name.toLowerCase() + ' '))
+      .sort((a, b) => b.name.length - a.name.length)[0];
+    if (!wf) {
+      toast.error(workflows.length ? `No workflow named "${spec.split(/\s+/)[0]}". Available: ${workflows.map(w => w.name).join(', ')}` : 'No workflows yet — the Workflows hub in the sidebar is where to add one');
+      return;
+    }
+    const brief = spec.slice(wf.name.length).trim();
+    let sid = activeSession;
+    if (!sid) {
+      try {
+        const sess = await api.sessions.create('New Session', agentConfigId) as { id: string };
+        sid = sess.id;
+        setActiveSession(sid);
+        setActivePanel(null);
+        setSessionReloadKey(k => k + 1);
+      } catch {
+        toast.error('Could not start a new session');
+        return;
+      }
+    }
+    try {
+      // The composer's project rides along, as it does on a message: an
+      // unbound conversation is bound to it before the start, so the
+      // execution has its file and command tools.
+      const body: { session_id: string; input: string; sandbox_id?: string; work_dir?: string } = { session_id: sid, input: brief };
+      if (sandboxId) {
+        body.sandbox_id = sandboxId;
+        if (workDir) body.work_dir = workDir;
+      }
+      await api.workflows.run(wf.id, body);
+      toast.success(`Started "${wf.name}" in the background — the result comes back here`);
+      // The one thing the person cannot see from here: a conversation with
+      // no project — bound or picked — gives the workflow no file or command
+      // tools.
+      const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.sandboxId : false) || !!sandboxId;
+      if (!bound) toast.info('This conversation has no project — the workflow has no file or command tools');
+      await reloadTimeline(sid);
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not start the workflow');
+    }
+  }, [activeSession, sessionMeta, reloadTimeline]);
+
   const handleSend = useCallback(async (input: string, agentConfigId?: string, sandboxId?: string, workDir?: string) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('WebSocket disconnected — message not sent');
       return;
     }
-    // `/plan` asks for a plan before any change — the keyboard half of the
-    // composer's toggle. It is handled HERE, not in the composer, because it
-    // sets the SESSION's phase and a brand-new session has no id until the
-    // block below creates one.
-    const planned = PLAN_COMMAND.test(input);
-    const text = planned ? input.replace(PLAN_COMMAND, '') : input;
-    // The command is a hand toggle too: dirty makes a bare "/plan" carry the
-    // phase on the NEXT message.
-    if (planned) { setPlanning(true); setPlanDirty(true); }
-    if (planned && !text.trim()) return; // arms the checkbox for the next message
+    // `/workflow <name> <brief>` starts a workflow into this conversation
+    // instead of a turn — the composer's way to what the hub's Run… does.
+    if (WORKFLOW_COMMAND.test(input)) {
+      await runWorkflowCommand(input.replace(WORKFLOW_COMMAND, ''), agentConfigId, sandboxId, workDir);
+      return;
+    }
+    // `/plan <message>` asks for a plan before any change: the message runs
+    // in plan mode. It is handled HERE, not in the composer, because it sets
+    // the SESSION's phase and a brand-new session has no id until the block
+    // below creates one. Nothing arms plan mode ahead of a message — the
+    // command IS the message's.
+    // `/plan off <message>` is the way out: the message runs with plan mode
+    // off, and the session stays out (an approved plan is the other exit).
+    const planOff = PLAN_OFF_COMMAND.test(input);
+    const planned = !planOff && PLAN_COMMAND.test(input);
+    const text = planOff ? input.replace(PLAN_OFF_COMMAND, '') : planned ? input.replace(PLAN_COMMAND, '') : input;
+    if ((planned || planOff) && !text.trim()) {
+      toast.info(planOff ? '/plan off takes the message to run: /plan off <what to do>' : '/plan takes the message to plan for: /plan <what to do>');
+      return;
+    }
     // Typing straight into the box with no active session starts a new session,
     // instead of silently dropping the message. The freshly-created session has
     // no history, so mark it loaded to protect the optimistic message from the
@@ -497,11 +590,12 @@ export default function App() {
     }
     const clientMsgId = nextClientMsgId();
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId }], ...(isNew ? { loaded: true } : {}) }));
-    // The phase travels WITH the message — but only a message that carries a
-    // hand toggle says anything: an absent `plan` leaves the session's phase
-    // alone, so a send can't re-arm a session the server unlocked mid-window.
+    // The phase travels WITH the message: only a /plan message says anything,
+    // and an absent `plan` leaves the session's phase alone — an approved plan
+    // is what unlocks it again.
     const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
-    if (planned || planDirty) payload.plan = planned || planning;
+    if (planned) payload.plan = true;
+    if (planOff) payload.plan = false;
     if (sandboxId) {
       payload.sandbox_id = sandboxId;
       if (workDir) payload.work_dir = workDir;
@@ -513,15 +607,16 @@ export default function App() {
       toast.error('WebSocket disconnected — message not sent');
       return;
     }
-    // Delivered: the toggle reached the server, the box is clean again.
-    setPlanDirty(false);
-  }, [activeSession, planning, planDirty, updateSS, wsRef]);
+  }, [activeSession, updateSS, wsRef, runWorkflowCommand]);
 
-  const handleCancel = useCallback((graceful?: boolean) => {
-    if (!wsRef.current || !activeSession) return;
+  // handleCancel reports whether the stop was SENT: no live run to stop, or a
+  // socket that is down, is a stop that did not happen and must not read as
+  // one.
+  const handleCancel = useCallback((graceful?: boolean): boolean => {
+    if (!wsRef.current || !activeSession) return false;
     const runId = sessionRunRef.current[activeSession];
-    if (!runId) return;
-    wsRef.current.send(EV.runCancel, { run_id: runId, mode: graceful ? 'graceful' : '' });
+    if (!runId) return false;
+    return wsRef.current.send(EV.runCancel, { run_id: runId, mode: graceful ? 'graceful' : '' });
   }, [activeSession, wsRef, sessionRunRef]);
 
   const updateToolCall = useCallback((toolCallId: string, patch: Record<string, any>) => {
@@ -555,6 +650,9 @@ export default function App() {
   const handleDeleteSession = useCallback((deletedId: string) => {
     deleteSession(deletedId);
     clearSessionPrefs(deletedId);
+    // The conversation kept beside the hub may be the one deleted: the
+    // sidebar only clears the SELECTED one, and the hub shows none as such.
+    setActiveSession(prev => (prev === deletedId ? null : prev));
     setSS(prev => {
       if (!prev[deletedId]) return prev;
       const next = { ...prev };
@@ -588,15 +686,6 @@ export default function App() {
       toast.error((e as Error).message || 'Fork failed');
     }
   }, [activeSession]);
-
-  // reloadTimeline re-reads a session's persisted history after a branch move.
-  // The switch is a server-side append, so the client's assembled timeline is
-  // stale in a way no local patch can fix — a different branch is a different
-  // conversation.
-  const reloadTimeline = useCallback(async (sid: string) => {
-    forgetLoaded(sid);
-    await loadSession(sid).catch(() => toast.error('Could not reload conversation'));
-  }, [forgetLoaded, loadSession]);
 
   const handleSwitchBranch = useCallback(async (tipEntryId: string) => {
     if (!activeSession) return;
@@ -658,11 +747,42 @@ export default function App() {
     }
   }, [activeSession, wsRef, updateSS, loadSession]);
 
+  // One object of stable callbacks: the memo'd view compares it by reference.
+  const chatActions = useMemo<ChatViewActions>(() => ({
+    onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
+    onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
+    onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask,
+    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen,
+  }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleLoadEarlier, handleSwitchBranch, handleCompact,
+    handleRegenerate, watchTask, unwatchTask, patchTask, handleTerminalOpen]);
+
+  // A signature that moves with any execution in any conversation (every
+  // connection hears every session's task.updated), for the hub's Runs view
+  // to refetch on.
+  const tasksSig = useMemo(() => {
+    const sig: string[] = [];
+    for (const state of Object.values(ss)) {
+      for (const t of Object.values(state.tasks)) {
+        if (t.kind !== TASK_KIND_WORKFLOW) continue;
+        // What the Runs table shows — not updatedAt, which every tool call
+        // of a step moves.
+        sig.push(t.taskId + ':' + t.status + ':' + (t.attempt || 1) + ':' + (t.state?.step_id || '') + ':' + (t.state?.step_runs?.length || 0));
+      }
+    }
+    return sig.join('|');
+  }, [ss]);
+
+  // Streaming moves ss every animation frame; these two are derived from it
+  // but hand out the SAME Set while their membership holds, so the sidebar
+  // (memoized on them) redraws on a run starting or ending, not per frame.
+  const runningRef = useRef(new Set<string>());
   const runningSessions = useMemo(() => {
     const set = new Set<string>();
     for (const [sid, state] of Object.entries(ss)) {
       if (state.running) set.add(sid);
     }
+    if (sameMembers(runningRef.current, set)) return runningRef.current;
+    runningRef.current = set;
     return set;
   }, [ss]);
 
@@ -679,18 +799,23 @@ export default function App() {
   // transient socket flag), so it survives a reload — the paused turn is rebuilt
   // from the durable approvals — and self-clears the moment approve/reject sets
   // a status.
+  // The scan is per MESSAGE LIST, cached by its identity: a streaming delta
+  // replaces the session's streaming text, not its messages, so the frame
+  // pays one map lookup per session rather than a walk of every turn.
+  const awaitingCache = useRef(new WeakMap<object, boolean>());
+  const awaitingRef = useRef(new Set<string>());
   const awaitingSessions = useMemo(() => {
     const set = new Set<string>();
     for (const [sid, state] of Object.entries(ss)) {
-      for (const m of state.messages) {
-        if (m.role !== 'turn') continue;
-        for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ needs_approval?: boolean; status?: string | null }> }> }).parts || []) {
-          if (part.type !== 'tools') continue;
-          if ((part.toolCalls || []).some(tc => tc.needs_approval && !tc.status)) { set.add(sid); break; }
-        }
-        if (set.has(sid)) break;
+      let awaiting = awaitingCache.current.get(state.messages);
+      if (awaiting === undefined) {
+        awaiting = hasPendingApproval(state.messages);
+        awaitingCache.current.set(state.messages, awaiting);
       }
+      if (awaiting) set.add(sid);
     }
+    if (sameMembers(awaitingRef.current, set)) return awaitingRef.current;
+    awaitingRef.current = set;
     return set;
   }, [ss]);
 
@@ -704,7 +829,22 @@ export default function App() {
   const handleSelectSession = useCallback((id: string | null) => {
     setActiveSession(id);
     setActivePanel(null);
+    setHubTab(null);
     if (window.innerWidth < 768) setSidebarOpen(false);
+  }, []);
+
+  const handleOpenHub = useCallback(() => {
+    setHubTab(tab => tab || 'definitions');
+    if (window.innerWidth < 768) setSidebarOpen(false);
+  }, []);
+
+  // A run in the hub opens its conversation with the execution's detail in
+  // the Inspector — the run belongs to that conversation, and the panel there
+  // already knows how to show it.
+  const handleOpenRun = useCallback((sessionId: string, taskId: string) => {
+    setActiveSession(sessionId);
+    setActivePanel({ kind: 'task', taskId });
+    setHubTab(null);
   }, []);
 
   if (!authed && checkError) return (
@@ -724,59 +864,31 @@ export default function App() {
   const currentSS = ss[activeSession!] || DEFAULT_SS;
 
   const sidebarPane = (
-    <SessionList
-      activeId={activeSession}
+    <MemoizedSessionList
+      activeId={hubTab ? null : activeSession}
       onSelect={handleSelectSession}
       onDelete={handleDeleteSession}
       onCreated={handleSessionCreated}
       reloadKey={sessionReloadKey}
       runningSessions={runningSessions}
       awaitingSessions={awaitingSessions}
+      onOpenHub={handleOpenHub}
     />
   );
 
-  const main = (
+  const main = hubTab ? (
+    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} />
+  ) : (
     <MemoizedChatView
       sessionId={activeSession}
       sessionName={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.name : ''}
       sessionBinding={sessionBinding}
-      messages={currentSS.messages}
-      entries={currentSS.entries}
-      loaded={currentSS.loaded}
-      streaming={currentSS.streaming}
-      reasoning={currentSS.reasoning}
-      running={currentSS.running}
-      workflowTick={workflowTick}
-      planning={planning}
-      onPlanningChange={handlePlanningChange}
-      compacting={currentSS.compacting}
-      diagnostics={currentSS.diagnostics}
-      traceRuns={currentSS.traceRuns}
-      liveRunId={currentSS.liveRunId}
-      liveStartedAt={currentSS.liveStartedAt}
-      liveAgentName={currentSS.liveAgentName}
+      state={currentSS}
       awaiting={!!activeSession && awaitingSessions.has(activeSession)}
-      tasks={currentSS.tasks}
-      taskView={currentSS.taskView}
-      onWatchTask={watchTask}
-      onUnwatchTask={unwatchTask}
-      onPatchTask={patchTask}
-      onSend={handleSend}
-      onCancel={handleCancel}
-      onApprove={handleApprove}
-      onReject={handleReject}
-      onFork={handleFork}
-      hasMore={currentSS.hasMore}
-      loadingMore={currentSS.loadingMore}
-      onLoadEarlier={handleLoadEarlier}
-      onSwitchBranch={handleSwitchBranch}
-      onCompact={handleCompact}
-      onRegenerate={handleRegenerate}
       settingsReloadKey={settingsReloadKey}
       bindingsVersion={bindingsVersion}
       panel={activePanel}
-      onPanelChange={setActivePanel}
-      onTerminalOpen={handleTerminalOpen}
+      actions={chatActions}
     />
   );
 

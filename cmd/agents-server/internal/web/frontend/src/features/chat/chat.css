@@ -301,6 +301,36 @@
   padding: var(--base-size-4) 0;
 }
 
+/* A workflow-started note: the label, the brief (click to expand), and the
+   trace button of the result's run once it exists. Centered like any system
+   chip, but a row, so the brief can breathe. */
+.wf-started {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--base-size-4) var(--base-size-8);
+}
+.wf-started-label {
+  gap: var(--base-size-4);
+}
+.wf-started-brief {
+  max-width: 60ch;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  text-align: left;
+  cursor: pointer;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.wf-started-brief:hover {
+  color: var(--fgColor-default);
+}
+
 /* Compaction indicator (inline, like tool call groups) */
 .compaction-card {
   max-width: 860px;
@@ -546,12 +576,6 @@
   color: var(--fgColor-danger);
   padding: 0 8px;
 }
-/* The slash button while plan mode is armed — tinted so the standing
-   restraint is visible without opening the menu. */
-.chat-input-toolbar-left .slash-armed {
-  color: var(--fgColor-accent);
-  background: var(--bgColor-accent-muted);
-}
 
 /* Chat layout with trace drawer */
 .chat-content {
@@ -599,6 +623,19 @@
   margin-bottom: 4px;
 }
 .ToolCallCard-output pre { color: var(--fgColor-default); }
+/* A multimodal result: its parts stacked; an image sized to the card, the
+   overlay shows it 1:1. */
+.ToolCallCard-content { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ToolCallCard-content pre { align-self: stretch; }
+.ToolCallCard-image {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+.ToolCallCard-file { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--fgColor-muted); }
 
 /* apply_patch preview: highlighted as a ```diff block via the markdown pipeline
    (same hljs theme + dark mode as every other code block) */
@@ -761,7 +798,8 @@
   padding: 32px;
   flex-shrink: 0;
 }
-.svg-overlay svg {
+.svg-overlay svg,
+.svg-overlay img {
   max-width: none;
   height: auto;
   display: block;

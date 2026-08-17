@@ -1,10 +1,11 @@
 import './sessions.css';
 import { useState, useEffect, useRef, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
 import { ActionList, ActionMenu, IconButton, TextInput } from '@primer/react';
-import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon } from '@primer/octicons-react';
+import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { filterSessionsByName } from '@/lib/sessionFilter';
+import { createOrReuseSession } from '@/lib/newSession';
 import { toast } from '@/lib/toast';
 
 interface Session {
@@ -34,6 +35,9 @@ interface SessionListProps {
   reloadKey: unknown;
   runningSessions?: Set<string>;
   awaitingSessions?: Set<string>;
+  // Opens the Workflows hub — the one place in the sidebar that is not a
+  // conversation, so it sits with the list's controls, not in the list.
+  onOpenHub: () => void;
 }
 
 // ActionMenu.Overlay renders through a portal, but React synthetic events still
@@ -100,7 +104,7 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
   );
 }
 
-export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions, awaitingSessions }: SessionListProps): ReactElement {
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
   const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
@@ -116,8 +120,8 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const sess = await api.sessions.create('New Session') as Session;
-      mutateData(prev => (prev ? [sess, ...prev] : [sess]));
+      const sess = await createOrReuseSession() as Session;
+      mutateData(prev => (prev ? [sess, ...prev.filter(s => s.id !== sess.id)] : [sess]));
       onSelect(sess.id);
       if (onCreated) onCreated();
       reload();
@@ -196,6 +200,12 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
           aria-label="Search"
           value={query}
           onChange={e => setQuery(e.target.value)}
+        />
+        <IconButton
+          icon={WorkflowIcon}
+          variant="invisible"
+          aria-label="Workflows"
+          onClick={onOpenHub}
         />
         <IconButton
           icon={PlusIcon}

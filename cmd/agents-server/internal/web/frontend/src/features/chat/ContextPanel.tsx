@@ -231,20 +231,6 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
               Session totals <span className="ctx-mono">{fmt(data.session_input_tokens)} in</span> ·{' '}
               <span className="ctx-mono">{fmt(data.session_output_tokens)} out</span>
             </div>
-
-            {data.compaction_enabled && (
-              <div className="ctx-sub">
-                {/* The exact trigger comparison, on its own ruler (the last
-                    call's total plus estimates — the tick's title says so). */}
-                <div className="ctx-sub-head">
-                  <span className="ctx-sub-label">Compaction</span>
-                  <span className="ctx-mono ctx-sub-val">
-                    {fmt(data.compaction_tokens)}
-                    {threshold > 0 ? <span className="ctx-muted"> / {fmt(threshold)}</span> : null}
-                  </span>
-                </div>
-              </div>
-            )}
           </section>
 
           {(() => {
@@ -255,11 +241,6 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
               <section className="ctx-sec">
                 <div className="ctx-sec-head">
                   <span>In the window</span>
-                  {windowSize > 0 && total > 0 && (() => {
-                    const share = pctOf(total, windowSize);
-                    // "<1%" already carries its own qualifier; "≈<1%" stacks two.
-                    return <span className="ctx-mono ctx-muted">{share.startsWith('<') ? share : `≈${share}`} of window</span>;
-                  })()}
                 </div>
                 <ul className="ctx-rows ctx-rows-plain">
                   {/* Keyed by position too: two MCP servers may share a display

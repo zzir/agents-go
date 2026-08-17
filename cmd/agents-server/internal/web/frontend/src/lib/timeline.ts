@@ -52,6 +52,12 @@ const DISPLAY = {
   handoff: 'handoff',
   error: 'error',
   cancelled: 'cancelled',
+  // A person's or a trigger's start of a workflow — the exchange's question
+  // when no run asked (server store.DisplayWorkflowStarted).
+  workflowStarted: 'workflow_started',
+  // A trigger's AGENT turn: the note before the message it sends (server
+  // store.DisplayTriggerFired).
+  triggerFired: 'trigger_fired',
 } as const;
 
 // EntryView is one row of GET /sessions/:id/messages — a stored session entry
@@ -185,10 +191,29 @@ interface UserEntry {
   runId?: string;
 }
 
+// WorkflowStartedNote is the data of a started note: a workflow's start (which
+// execution — task_id pairs it with the result's wake-up run — of what, with
+// what brief, started by whom), or a trigger's agent turn (which agent, which
+// run; the message it sent follows the note).
+interface WorkflowStartedNote {
+  taskId: string;
+  workflowId: string;
+  workflowName: string;
+  // A trigger's agent turn, instead of a workflow.
+  agentName?: string;
+  runId?: string;
+  brief: string;
+  origin: { kind: string; trigger_id?: string; trigger_kind?: string; schedule?: string };
+}
+
 interface SystemEntry {
   role: 'system';
   content: string;
   messageId: number | undefined;
+  // The durable entry id, for anchors.
+  entryId?: string;
+  // Present on a workflow-started note; the chip renders it instead of content.
+  note?: WorkflowStartedNote;
 }
 
 interface TurnEntry {
@@ -239,7 +264,7 @@ interface ToolCallPatch {
   task?: ToolCall['task'];
 }
 
-export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, TimelineEntry, HookEvent, ToolCallPatch };
+export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, SystemEntry, WorkflowStartedNote, TimelineEntry, HookEvent, ToolCallPatch };
 export { DISPLAY };
 
 // buildTimeline folds a session's entries into the rendered timeline.
@@ -417,6 +442,23 @@ function assemble(
         ensureTurn();
         anchor(e);
         turn!.parts.push({ type: 'thinking', content: e.content });
+        continue;
+      }
+      case DISPLAY.workflowStarted:
+      case DISPLAY.triggerFired: {
+        // A row of its own, like any system chip; the note's data comes from
+        // the display's extra, the line of text is its fallback.
+        finishTurn();
+        const x = d.extra || {};
+        const origin = (x.origin && typeof x.origin === 'object') ? x.origin as WorkflowStartedNote['origin'] : { kind: 'person' };
+        timeline.push({
+          role: 'system', content: e.content || '', messageId: e.id, entryId: e.entry_id,
+          note: {
+            taskId: String(x.task_id || ''), workflowId: String(x.workflow_id || ''),
+            workflowName: String(x.workflow_name || ''), brief: String(x.brief || ''), origin,
+            ...(d.kind === DISPLAY.triggerFired ? { agentName: String(x.agent_name || ''), runId: String(x.run_id || '') } : {}),
+          },
+        });
         continue;
       }
       case DISPLAY.message: {

@@ -6,7 +6,7 @@ import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
-import { ChevronRightIcon } from '@primer/octicons-react';
+import { Disclosure } from '@/components/Disclosure';
 import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
 import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
 import { BADGE } from '@/lib/badges';
@@ -170,7 +170,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
   const [selectedHandoffs, setSelectedHandoffs] = useState<(string | number)[]>(initHandoffs);
   const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
   // The backend's facts follow the REFERENCED provider: wording from the
   // static table, machine facts (unsupported features) from the server's
@@ -311,21 +310,14 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
             const allSelected = selectedCount === paths.length;
             const expanded = expandedSkillRepos.has(group.repo);
             return (
-              <div key={group.repo}>
-                <div className="checkbox-group-header">
-                  <Checkbox
-                    checked={allSelected}
-                    indeterminate={!allSelected && selectedCount > 0}
-                    aria-label={`Select all skills in ${group.repo}`}
-                    onChange={() => toggleSkillGroup(group)}
-                  />
-                  <button type="button" className="checkbox-group-toggle" aria-expanded={expanded} onClick={() => toggleSkillRepoExpanded(group.repo)}>
-                    <ChevronRightIcon size={12} />
-                    {group.repo}
-                  </button>
-                  <span className="checkbox-group-header-count">{selectedCount}/{paths.length}</span>
-                </div>
-                {expanded && (
+              <div key={group.repo} className="checkbox-group-header">
+                <Checkbox
+                  checked={allSelected}
+                  indeterminate={!allSelected && selectedCount > 0}
+                  aria-label={`Select all skills in ${group.repo}`}
+                  onChange={() => toggleSkillGroup(group)}
+                />
+                <Disclosure variant="plain" className="checkbox-group-toggle" label={group.repo} open={expanded} onToggle={() => toggleSkillRepoExpanded(group.repo)}>
                   <div className="checkbox-group-body">
                     {group.skills.map(sk => (
                       <FormControl key={sk.path}>
@@ -335,7 +327,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
                       </FormControl>
                     ))}
                   </div>
-                )}
+                </Disclosure>
+                <span className="checkbox-group-header-count">{selectedCount}/{paths.length}</span>
               </div>
             );
           })}
@@ -377,64 +370,61 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         </>}
       </div>
 
-      <button type="button" className="advanced-toggle" aria-expanded={showAdvanced} onClick={() => setShowAdvanced(!showAdvanced)}>
-        <ChevronRightIcon size={12} />
-        Advanced
-      </button>
-
-      {showAdvanced && <div className="advanced-section">
-        <div className="form-group">
-          <div className="form-group-title">Behavior</div>
-          {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
-          {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
-          {fc('Stop at tools', <TextInput value={form.stop_at_tools || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('stop_at_tools', e.target.value)} placeholder="tool1, tool2" block />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
-          {/* Older configs spell the default out ("return_to_model" or its
-              alias); it is the default now, so those read as the unset button. */}
-          {seg('Tool not found behavior', RETURN_TO_MODEL.has(form.tool_not_found_behavior || '') ? '' : form.tool_not_found_behavior, [['', 'Return to model (default)'], ['error', 'End the run']], v => set('tool_not_found_behavior', v),
-            'What happens when the model calls a tool it does not have — a name it invented, or one plan mode is hiding')}
-          {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
-            'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
-          <div className="form-checkbox-group">
-            <FormControl>
-              <Checkbox checked={form.disable_tool_choice_reset || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_tool_choice_reset', e.target.checked)} />
-              <FormControl.Label>Disable tool choice reset</FormControl.Label>
-              <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
-            </FormControl>
+      <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
+        <div className="advanced-section">
+          <div className="form-group">
+            <div className="form-group-title">Behavior</div>
+            {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
+            {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
+            {fc('Stop at tools', <TextInput value={form.stop_at_tools || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('stop_at_tools', e.target.value)} placeholder="tool1, tool2" block />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
+            {/* Older configs spell the default out ("return_to_model" or its
+                alias); it is the default now, so those read as the unset button. */}
+            {seg('Tool not found behavior', RETURN_TO_MODEL.has(form.tool_not_found_behavior || '') ? '' : form.tool_not_found_behavior, [['', 'Return to model (default)'], ['error', 'End the run']], v => set('tool_not_found_behavior', v),
+              'What happens when the model calls a tool it does not have — a name it invented, or one plan mode is hiding')}
+            {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
+              'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
+            <div className="form-checkbox-group">
+              <FormControl>
+                <Checkbox checked={form.disable_tool_choice_reset || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_tool_choice_reset', e.target.checked)} />
+                <FormControl.Label>Disable tool choice reset</FormControl.Label>
+                <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
+              </FormControl>
+            </div>
           </div>
-        </div>
 
-        <div className="form-group">
-          <div className="form-group-title">Resilience</div>
-          <FormControl>
-            <Checkbox checked={form.retry_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('retry_enabled', e.target.checked)} />
-            <FormControl.Label>Enable retry</FormControl.Label>
-            <FormControl.Caption>Automatically retry failed model calls with backoff</FormControl.Caption>
-          </FormControl>
-          {form.retry_enabled &&
-            <JsonField label="Retry policy (JSON)" value={form.retry_policy || ''} onChange={v => set('retry_policy', v)} placeholder='{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}' caption="Empty = SDK defaults" />}
-          <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-..."},{"model":"claude-opus-5","provider_type":"anthropic","api_key":"sk-ant-..."}]' caption='JSON array of {model, provider_type, api_key, base_url} — provider_type is "openai" (default) or "anthropic"' />
-        </div>
+          <div className="form-group">
+            <div className="form-group-title">Resilience</div>
+            <FormControl>
+              <Checkbox checked={form.retry_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('retry_enabled', e.target.checked)} />
+              <FormControl.Label>Enable retry</FormControl.Label>
+              <FormControl.Caption>Automatically retry failed model calls with backoff</FormControl.Caption>
+            </FormControl>
+            {form.retry_enabled &&
+              <JsonField label="Retry policy (JSON)" value={form.retry_policy || ''} onChange={v => set('retry_policy', v)} placeholder='{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}' caption="Empty = SDK defaults" />}
+            <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-..."},{"model":"claude-opus-5","provider_type":"anthropic","api_key":"sk-ant-..."}]' caption='JSON array of {model, provider_type, api_key, base_url} — provider_type is "openai" (default) or "anthropic"' />
+          </div>
 
-        <div className="form-group">
-          <div className="form-group-title">Guardrails &amp; output</div>
-          <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
-          <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
-          <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
-        </div>
+          <div className="form-group">
+            <div className="form-group-title">Guardrails &amp; output</div>
+            <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
+            <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
+            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
+          </div>
 
-        <div className="form-group">
-          <div className="form-group-title">Approvals</div>
-          <JsonField label="Approve tools (HITL)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["tool_name1","tool_name2"]' caption='JSON array of tool names requiring human approval before execution. Use ["*"] for all tools.' />
-        </div>
+          <div className="form-group">
+            <div className="form-group-title">Approvals</div>
+            <JsonField label="Approve tools (HITL)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["tool_name1","tool_name2"]' caption='JSON array of tool names requiring human approval before execution. Use ["*"] for all tools.' />
+          </div>
 
-        <div className="form-group">
-          <div className="form-group-title">Session</div>
-          {fc('History limit', <TextInput block type="number" min={0} value={String(form.history_limit || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', parseInt(e.target.value) || 0)} />, 'Max recent session items loaded per turn (0 = full history)')}
-          {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID')}
-          {form.prompt_id && fc('Prompt version', <TextInput value={form.prompt_version || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_version', e.target.value)} placeholder="Optional version pin" block />)}
-        </div>
+          <div className="form-group">
+            <div className="form-group-title">Session</div>
+            {fc('History limit', <TextInput block type="number" min={0} value={String(form.history_limit || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', parseInt(e.target.value) || 0)} />, 'Max recent session items loaded per turn (0 = full history)')}
+            {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID')}
+            {form.prompt_id && fc('Prompt version', <TextInput value={form.prompt_version || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_version', e.target.value)} placeholder="Optional version pin" block />)}
+          </div>
 
-      </div>}
+        </div>
+      </Disclosure>
 
       <div className="form-actions">
         <Button onClick={() => {

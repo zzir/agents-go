@@ -3,28 +3,18 @@ import { ToolsIcon, StackIcon, SyncIcon, CheckIcon, DotFillIcon, CircleIcon } fr
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
+import { useChatActions, useChatTaskLookups } from '@/features/chat/ChatSessionContext';
+import { ToolOutputBody } from '@/features/chat/ToolOutputBody';
 
 interface ToolCallCardProps {
-  onInspectTask?: (taskId: string) => void;
-  // Live status of the task this spawn call started (working/input_required),
-  // from run events; terminal status comes from the display projection.
-  liveTaskStatus?: string;
-  // Live task title (the spawn label) from the run event, so the pre-terminal
-  // card carries it too; the terminal title comes from task.label.
-  liveTaskLabel?: string;
-  // taskId → task label, so task_status / task_stop cards can show the readable
-  // title of the task they act on instead of the opaque id.
-  taskLabelById?: Record<string, string>;
-  // Resumes the failed task this spawn call started. Absent where a retry has
-  // nowhere to report to.
-  onRetryTask?: (taskId: string) => void;
-  // Whether the server would accept that retry. The card's own task state
-  // cannot answer it — "failed" says nothing about attempts left.
-  taskRetryable?: boolean;
   toolCall: ToolCall;
   live?: boolean;
-  onApprove?: (id: string, scope?: string) => void;
-  onReject?: (id: string) => void;
+  // The task offers — passed by the transcript that anchors the task rather
+  // than read from the session, because the same card renders a FOREIGN
+  // transcript in the Inspector, where an Inspect would open a task this
+  // session does not track. Absent = no offer.
+  onInspectTask?: (taskId: string) => void;
+  onRetryTask?: (taskId: string) => void;
 }
 
 interface TodoRow { content: string; status: string }
@@ -148,8 +138,15 @@ function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
   }
 }
 
-export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTask, onRetryTask, taskRetryable, liveTaskStatus, liveTaskLabel, taskLabelById }: ToolCallCardProps) {
+export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: ToolCallCardProps) {
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task, progress } = toolCall;
+  const { approve: onApprove, reject: onReject } = useChatActions();
+  const { retryableByCallId, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById } = useChatTaskLookups();
+  // Keyed by this session's call ids, so a card in a foreign transcript simply
+  // misses — no live badge, no retry offer.
+  const taskRetryable = retryableByCallId[tool_call_id];
+  const liveTaskStatus = liveTaskStatusByCallId[tool_call_id];
+  const liveTaskLabel = liveTaskLabelByCallId[tool_call_id];
 
   // A spawn_task card is the task's anchor in the timeline: the terminal
   // display projection carries the id on the call side; before that lands, the
@@ -199,7 +196,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
     if (!headerSummary && (tool_name === 'task_status' || tool_name === 'task_stop')) {
       try {
         const tid = (JSON.parse(args) as { task_id?: string }).task_id;
-        const lbl = tid ? taskLabelById?.[tid] : '';
+        const lbl = tid ? taskLabelById[tid] : '';
         if (lbl) headerSummary = { text: lbl, mono: false };
       } catch { /* unparseable args → no title */ }
     }
@@ -279,6 +276,9 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
     <Disclosure
       icon={ToolsIcon}
       variant="done"
+      // A div header: the label nests the inspect/retry buttons of a task
+      // card, and a button inside a button is invalid HTML.
+      as="div"
       label={headerLabel}
       forceOpen={pendingApproval || (!output && !!progress) || undefined}
       // The checklist IS the information; a collapsed "3/5 done" hides the
@@ -325,7 +325,7 @@ export function ToolCallCard({ toolCall, live, onApprove, onReject, onInspectTas
       {output && (
         <div className="ToolCallCard-output">
           <div className="ToolCallCard-output-label">Output:</div>
-          <pre>{output}</pre>
+          <ToolOutputBody output={output} />
         </div>
       )}
       {pendingApproval && (

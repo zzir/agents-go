@@ -1,8 +1,9 @@
-import { useState, useCallback, useRef, useEffect, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { IconButton } from '@primer/react';
 import { PaperAirplaneIcon, SquareCircleIcon } from '@primer/octicons-react';
 import { loadDraft, saveDraft, clearDraft } from '@/lib/drafts';
 import { onComposerInsert } from '@/lib/composer';
+import { SlashCommandPopup, matchCommands, slashOptionID, slashQuery, useSlashCommands, type SlashCommand } from '@/features/chat/SlashMenu';
 
 interface MessageInputProps {
   sessionId: string;
@@ -16,6 +17,7 @@ interface MessageInputProps {
 export function MessageInput({ sessionId, onSend, onCancel, disabled, running, toolbar }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLFormElement>(null);
 
   const updateText = useCallback((v: string) => {
     setText(v);
@@ -45,6 +47,22 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
     return () => onComposerInsert(null);
   }, [sessionId]);
 
+  // The slash commands: offered while the box holds nothing but a command
+  // prefix, narrowed as it is typed, walked with the arrow keys and taken
+  // with Enter or Tab — the way "/" works in an editor. Escape dismisses the
+  // offer until the text changes.
+  const commands = useSlashCommands();
+  const query = slashQuery(text);
+  const offered = useMemo(() => (query === null ? [] : matchCommands(commands, query)), [commands, query]);
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const popupOpen = query !== null && offered.length > 0 && dismissedFor !== text;
+  useEffect(() => { setActiveIndex(0); }, [query]);
+  const pick = useCallback((cmd: SlashCommand) => {
+    updateText(cmd.insert);
+    textareaRef.current?.focus();
+  }, [updateText]);
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
@@ -60,6 +78,27 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
     // `isComposing` is set for the whole composition; keyCode 229 is the
     // legacy signal browsers emit for the same in-composition key.
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (popupOpen) {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          setActiveIndex(i => (i + 1) % offered.length);
+          return;
+        case 'ArrowUp':
+          e.preventDefault();
+          setActiveIndex(i => (i - 1 + offered.length) % offered.length);
+          return;
+        case 'Enter':
+        case 'Tab':
+          e.preventDefault();
+          pick(offered[Math.min(activeIndex, offered.length - 1)]);
+          return;
+        case 'Escape':
+          e.preventDefault();
+          setDismissedFor(text);
+          return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       handleSubmit(e);
     }
@@ -67,7 +106,9 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
 
   return (
     <div className="chat-input-container">
-      <form onSubmit={handleSubmit} className="chat-input-box">
+      <form ref={boxRef} onSubmit={handleSubmit} className="chat-input-box">
+        <SlashCommandPopup anchorRef={boxRef} open={popupOpen} commands={offered} activeIndex={activeIndex}
+          onPick={pick} onClose={() => setDismissedFor(text)} />
         <textarea
           ref={textareaRef}
           value={text}
@@ -75,6 +116,9 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
           onKeyDown={handleKeyDown}
           placeholder="type something here…"
           rows={2}
+          aria-autocomplete="list"
+          aria-controls={popupOpen ? 'slash-commands' : undefined}
+          aria-activedescendant={popupOpen ? slashOptionID(Math.min(activeIndex, offered.length - 1)) : undefined}
         />
         <div className="chat-input-toolbar">
           {toolbar}

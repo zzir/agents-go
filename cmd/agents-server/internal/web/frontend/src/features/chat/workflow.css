@@ -86,3 +86,47 @@
   gap: var(--base-size-8, 8px) var(--base-size-16, 16px);
   align-items: center;
 }
+
+/* The detail lens's Steps tab: the launch log, one row per started step. */
+.wf-steps {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.wf-steps td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--borderColor-muted);
+  vertical-align: middle;
+}
+.wf-steps-index { width: 2em; color: var(--fgColor-muted); text-align: right; }
+.wf-steps-name { font-weight: 500; }
+.wf-steps-retry { font-weight: 400; color: var(--fgColor-muted); }
+.wf-steps-num { text-align: right; color: var(--fgColor-muted); font-family: var(--fontStack-monospace); white-space: nowrap; }
+.wf-steps-live td { background: var(--bgColor-accent-muted); }
+.wf-outcome {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 18px;
+  background: var(--bgColor-neutral-muted);
+  color: var(--fgColor-muted);
+}
+.wf-outcome-completed, .wf-outcome-pass { background: var(--bgColor-success-muted); color: var(--fgColor-success); }
+.wf-outcome-failed, .wf-outcome-fail { background: var(--bgColor-danger-muted); color: var(--fgColor-danger); }
+.wf-outcome-running, .wf-outcome-input_required { background: var(--bgColor-accent-muted); color: var(--fgColor-accent); }
+.wf-outcome-cancelled { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
+.wf-steps-brief {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bgColor-muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.wf-steps-brief-label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--fgColor-muted);
+}

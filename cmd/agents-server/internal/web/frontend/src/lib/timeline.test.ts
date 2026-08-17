@@ -580,3 +580,24 @@ describe('stream/replay isomorphism', () => {
     expect(tools.toolCalls[0].task).toEqual({ id: 't1', label: 'audit', status: 'completed', summary: 'all green' });
   });
 });
+
+describe('workflow-started note', () => {
+  it('replays as a system row carrying the note, its own turn boundary', () => {
+    const rows: EntryView[] = [
+      { id: 1, kind: 'annotation', role: 'system', content: 'Workflow "build" started by you', display: {
+        kind: 'workflow_started', text: 'Workflow "build" started by you',
+        extra: { task_id: 't1', workflow_id: 'w1', workflow_name: 'build', brief: 'ship it', origin: { kind: 'person' } },
+      } },
+      { id: 2, run_id: 'w-run', kind: 'item', role: 'user', content: '[task-notification] Task "build" (t1) completed. Result: done' },
+      { id: 3, run_id: 'w-run', kind: 'item', role: 'assistant', content: 'It finished.', display: { kind: 'message', text: 'It finished.' } },
+    ];
+    const msgs = buildTimeline(rows);
+    expect(msgs.map(m => m.role)).toEqual(['system', 'user', 'turn']);
+    const note = (msgs[0] as { note?: unknown }).note;
+    expect(note).toEqual({ taskId: 't1', workflowId: 'w1', workflowName: 'build', brief: 'ship it', origin: { kind: 'person' } });
+    // A note with no extra still renders as the plain line, never crashes.
+    const bare = buildTimeline([{ id: 1, kind: 'annotation', role: 'system', content: 'Workflow "x" started by you', display: { kind: 'workflow_started' } }]);
+    expect((bare[0] as { note?: { taskId: string } }).note?.taskId).toBe('');
+    expect((bare[0] as { content?: string }).content).toBe('Workflow "x" started by you');
+  });
+});

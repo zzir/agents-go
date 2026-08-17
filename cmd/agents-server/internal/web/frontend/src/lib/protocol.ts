@@ -45,10 +45,13 @@ export const EV = {
   // The session's first sandbox-carrying run permanently bound
   // (sandbox_id, work_dir) — published once, by the run that won the bind.
   sessionSandboxBound: 'session.sandbox_bound',
-  // One of a session's workflow executions moved (a step started, paused for
-  // approval, advanced, or the sequence ended). Rides the step run's stream —
-  // there is no live parent run — so the client refetches the parent's strip.
-  workflowUpdated: 'workflow.updated',
+  // One of a session's background tasks changed state — spawned, paused,
+  // moved to its next run (a workflow step), ended. Rides the task run's
+  // stream (there is no live parent run) and carries the row as the tasks
+  // list returns it, so the client merges rather than refetches. What a RUN
+  // ending means for the TASK is this event's to say: a step ending is not a
+  // workflow ending.
+  taskUpdated: 'task.updated',
   traceSpan: 'trace.span',
 
   // terminal (on /ws/terminal; binary frames carry the byte stream)
@@ -142,6 +145,57 @@ export function parseTaskNotification(content: string | undefined | null): null 
 
 // MCP-Tasks-aligned task statuses (mirror of the Go protocol.Task* consts).
 export type TaskStatus = 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled';
+
+// TaskKindWorkflow is the task kind of a workflow execution (store.TaskKindWorkflow).
+export const TASK_KIND_WORKFLOW = 'workflow';
+// The "tool" a workflow step waiting for a person's go-ahead pauses on
+// (store.StepApprovalToolName): approving starts the step, rejecting cancels
+// the execution.
+export const STEP_APPROVAL_TOOL = 'start_step';
+
+// WorkflowState is a workflow task's `state`: the definition snapshot and where
+// the sequence stands (mirror of store.WorkflowState).
+export interface WorkflowState {
+  workflow_id?: string;
+  steps: { id: string; name?: string; agent_config_id?: string; gate?: { pass?: string; fail?: string } | null; pause_before?: boolean }[];
+  input?: string;
+  step_id: string;
+  // Every launched (step, run); outcome is set once the sequence moved on
+  // from that run: completed | failed | pass | fail. started_at is stamped at
+  // launch, ended_at with the outcome.
+  step_runs?: { step_id: string; run_id: string; outcome?: string; started_at?: string; ended_at?: string; retry?: boolean }[];
+  pending_input?: string;
+  // The definition's budget, snapshotted; absent when it bounds nothing.
+  budget?: { max_steps?: number; max_tokens?: number; max_minutes?: number };
+  // The bound that ended the execution for good ('budget' | 'ceiling'): a
+  // retry would be refused before a run, so none is offered.
+  stopped?: string;
+}
+
+// TaskRow is a background task as GET /sessions/{id}/tasks returns it and as
+// task.updated carries it (mirror of store.Task / protocol.TaskUpdated).
+export interface TaskRow {
+  task_id: string;
+  parent_session_id?: string;
+  parent_run_id?: string;
+  tool_call_id?: string;
+  child_session_id?: string;
+  kind?: string;
+  label?: string;
+  status?: string;
+  attempt?: number;
+  max_attempts?: number;
+  summary?: string;
+  state?: WorkflowState;
+  dismissed?: boolean;
+  // task.updated only: the decision an input_required task waits on, for a
+  // pause with no run event to learn it from (a workflow step waiting to
+  // start).
+  pending_call_id?: string;
+  pending_tool_name?: string;
+  created_at?: string;
+  updated_at?: string;
+}
 
 // RunDiagnostic mirrors protocol.RunDiagnostic. `type` is an open vocabulary:
 // an unrecognized one is shown generically rather than dropped, which is what

@@ -1,14 +1,18 @@
 import { useState, useEffect, useMemo, memo } from 'react';
-import { Button, IconButton } from '@primer/react';
+import { Button, IconButton, useConfirm } from '@primer/react';
 import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
 import { useAsyncMarkdown } from '@/lib/markdown';
-import type { BackgroundItem } from '@/lib/background';
+import { fmtDuration, itemDuration, stepRows, type BackgroundItem } from '@/lib/background';
 import type { TaskViewState } from '@/lib/useAgentSocket';
 import type { TurnPart } from '@/lib/timeline';
+import { useChatActions, useChatSession, useChatBackground } from '@/features/chat/ChatSessionContext';
+import { useDecisionHold } from '@/features/chat/useDecisionHold';
+import { api } from '@/lib/api';
+import { toast } from '@/lib/toast';
 
 // This is the panel behind the top bar's Tasks button. It holds both kinds of
 // background work — spawned tasks and workflow executions — because to a
@@ -19,32 +23,15 @@ import type { TurnPart } from '@/lib/timeline';
 // tooltip/aria-label): in the list the group headers name the state, in the
 // detail header the action buttons spell it out. Live states pulse, same
 // rhythm as the trace live dot.
-function statusDot(status: string) {
+// statusDot is the task's status as the colored dot every list shows beside
+// its title (form-status-dot's task cousin).
+export function statusDot(status: string) {
   const text = status.replace('_', ' ');
   return <span className={'task-status-dot task-status-dot-' + status} title={text} aria-label={text} role="img" />;
 }
 
-// fmtDuration renders a millisecond span as a compact duration (12s, 4m32s,
-// 1h03m) for the list's right-hand label.
-function fmtDuration(ms: number): string {
-  if (!isFinite(ms) || ms < 0) return '';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return s + 's';
-  const m = Math.floor(s / 60);
-  if (m < 60) return m + 'm' + String(s % 60).padStart(2, '0') + 's';
-  return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') + 'm';
-}
-
 function isLive(status: string): boolean {
   return status === 'working' || status === 'input_required';
-}
-
-// itemDuration: live work ticks against now; finished work is fixed at its
-// finish time (updatedAt).
-function itemDuration(it: BackgroundItem, now: number): string {
-  if (!it.createdAt) return '';
-  const end = isLive(it.status) ? now : (it.updatedAt || 0);
-  return end > it.createdAt ? fmtDuration(end - it.createdAt) : '';
 }
 
 // The list's group order: live work first, then terminal states by kind.
@@ -55,21 +42,14 @@ const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boo
   { title: 'Cancelled', match: s => s === 'cancelled' },
 ];
 
-interface BackgroundListPanelProps {
-  items: BackgroundItem[];
-  onOpen: (id: string) => void;
-  onClose: () => void;
-  onApprove?: (id: string, scope?: string) => void;
-  onReject?: (id: string) => void;
-  onStop: (item: BackgroundItem) => void;
-  onRetry: (item: BackgroundItem) => void;
-}
-
 // BackgroundListPanel is the Inspector's "tasks" lens: background work grouped
 // by state (Active first, then terminal kinds), newest first inside each group.
 // State is the row's leading dot + its group header; the right-hand label is
 // the duration (ticking while live). Rows open the detail lens.
-export function BackgroundListPanel({ items, onOpen, onClose, onApprove, onReject, onStop, onRetry }: BackgroundListPanelProps) {
+export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
+  const items = useChatBackground();
+  const { approve: onApprove, reject: onReject, inspectTask: onOpen, stopTask, retryTask } = useChatActions();
+  const { held, decide } = useDecisionHold();
   const hasActive = items.some(it => isLive(it.status));
   // Live durations tick once a second while anything is active.
   const [now, setNow] = useState(() => Date.now());
@@ -109,19 +89,19 @@ export function BackgroundListPanel({ items, onOpen, onClose, onApprove, onRejec
                   {(it.attempt || 1) > 1 && <span className="task-row-activity">attempt {it.attempt}</span>}
                   {/* Derived from the ceiling the server sends, so the offer
                       follows the status: an exhausted task shows nothing. */}
-                  {it.retryable && <Button size="small" className="task-row-stop" onClick={() => onRetry(it)}>Retry</Button>}
+                  {it.retryable && <Button size="small" className="task-row-stop" onClick={() => retryTask(it.id)}>Retry</Button>}
                 </div>
               )}
               {isLive(it.status) && (
                 <div className="task-row-actions" onClick={e => e.stopPropagation()}>
                   {it.status === 'input_required' && it.pendingCallId && onApprove && onReject && (
                     <>
-                      <Button size="small" variant="primary" onClick={() => onApprove(it.pendingCallId!)}>Approve</Button>
-                      <Button size="small" variant="danger" onClick={() => onReject(it.pendingCallId!)}>Reject</Button>
+                      <Button size="small" variant="primary" disabled={held(it.pendingCallId)} onClick={() => decide(it.pendingCallId!, () => onApprove(it.pendingCallId!))}>Approve</Button>
+                      <Button size="small" variant="danger" disabled={held(it.pendingCallId)} onClick={() => decide(it.pendingCallId!, () => onReject(it.pendingCallId!))}>Reject</Button>
                     </>
                   )}
                   {it.activity && <span className="task-row-activity">{it.activity}</span>}
-                  <Button size="small" className="task-row-stop" onClick={() => onStop(it)}>Stop</Button>
+                  <Button size="small" className="task-row-stop" onClick={() => stopTask(it.id)}>Stop</Button>
                 </div>
               )}
             </div>
@@ -143,20 +123,55 @@ interface BackgroundDetailPanelProps {
   view: TaskViewState | null;
   onBack: () => void;
   onClose: () => void;
-  onApprove?: (id: string, scope?: string) => void;
-  onReject?: (id: string) => void;
-  onStop: (item: BackgroundItem) => void;
-  onRetry: (item: BackgroundItem) => void;
 }
 
 // BackgroundDetailPanel is the Inspector's "task" lens: the child session's
 // transcript (read-only, live-tailing while the work runs) and its trace. For a
 // workflow that transcript is every step's turns in order — the sequence shares
 // one session, which is the point of it.
-export function BackgroundDetailPanel({ item, view, onBack, onClose, onApprove, onReject, onStop, onRetry }: BackgroundDetailPanelProps) {
-  const [tab, setTab] = useState<'transcript' | 'trace'>('transcript');
+// BackgroundMissingPanel stands in for the detail lens while the task named
+// by a deep link is not in the conversation's list: still loading, or gone —
+// a row removed with its conversation, or one a fork's copy never carried.
+// Either way the panel opens, says so, and leads back to the list.
+export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { taskId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
+  return (
+    <SidePanel icon={StackIcon} title={loading ? 'Task' : 'Task not found'} onClose={onClose} storageKey="inspectorWidth">
+      <div className="task-detail-head">
+        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" onClick={onBack} />
+        <div className="task-detail-spacer" />
+        <span className="task-detail-id"><span className="task-detail-id-text">{taskId}</span></span>
+      </div>
+      <div className="trace-empty">
+        {loading ? 'Loading the task…' : 'This task is not in the conversation\'s list — it may have been removed, belong to another conversation, or the list could not be loaded (reopen the conversation to try again).'}
+      </div>
+    </SidePanel>
+  );
+}
+
+export function BackgroundDetailPanel({ item, view, onBack, onClose }: BackgroundDetailPanelProps) {
+  const { approve: onApprove, reject: onReject, stopTask, retryTask } = useChatActions();
+  const { sessionId } = useChatSession();
+  const confirm = useConfirm();
+  // A finished workflow can be run again with the same brief — a NEW execution
+  // (its side effects happen again, hence the confirmation), unlike a retry,
+  // which resumes this one from where it stopped.
+  const rerunnable = item.kind === 'workflow' && !isLive(item.status) && !!item.state?.workflow_id && !!sessionId;
+  const runAgain = async () => {
+    if (!item.state?.workflow_id || !sessionId) return;
+    if (!await confirm({ title: 'Run again?', content: 'A new execution starts from the first step, with the same brief. Whatever the steps do — files, commands, sends — happens again.', confirmButtonContent: 'Run again' })) return;
+    try {
+      await api.workflows.run(item.state.workflow_id, { session_id: sessionId, input: item.state.input || '' });
+      toast.success(`Started "${item.label}" again`);
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not start the workflow');
+    }
+  };
+  // A workflow opens on its steps: how far it got and what each cost is the
+  // question a sequence gets asked; a task's only shape is its transcript.
+  const [tab, setTab] = useState<'steps' | 'transcript' | 'trace'>(item.kind === 'workflow' ? 'steps' : 'transcript');
   const [traceExpanded, setTraceExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
+  const { held, decide } = useDecisionHold();
   const live = isLive(item.status);
   // One segment per RUN — a retry starts a new run on the same child session,
   // and a workflow's steps are runs in their own right, so their spans must not
@@ -175,6 +190,12 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose, onApprove, 
     }));
     return { traceSegments: segments, spanTotal: segments.reduce((n, s) => n + s.events.length, 0) };
   }, [view?.traceRuns]);
+  // The launch log joined with each run's trace: which step ran, how it
+  // ended, what it cost. Empty for a task.
+  const steps = useMemo(
+    () => (item.kind === 'workflow' ? stepRows(item.state, item.status, view?.traceRuns as Record<string, TraceEventData[]> | undefined) : []),
+    [item.kind, item.state, item.status, view?.traceRuns],
+  );
 
   return (
     <SidePanel icon={item.kind === 'workflow' ? WorkflowIcon : StackIcon} title={item.label} onClose={onClose} storageKey="inspectorWidth">
@@ -192,23 +213,50 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose, onApprove, 
         </button>
         {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
           <>
-            <Button size="small" variant="primary" onClick={() => onApprove(item.pendingCallId!)}>Approve</Button>
-            <Button size="small" variant="danger" onClick={() => onReject(item.pendingCallId!)}>Reject</Button>
+            <Button size="small" variant="primary" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onApprove(item.pendingCallId!))}>Approve</Button>
+            <Button size="small" variant="danger" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onReject(item.pendingCallId!))}>Reject</Button>
           </>
         )}
-        {live && <Button size="small" onClick={() => onStop(item)}>Stop</Button>}
+        {live && <Button size="small" onClick={() => stopTask(item.id)}>Stop</Button>}
         {/* The transcript below is what a retry resumes from, so the action
             belongs beside it. */}
-        {item.retryable && <Button size="small" onClick={() => onRetry(item)}>Retry</Button>}
+        {item.retryable && <Button size="small" onClick={() => retryTask(item.id)}>Retry</Button>}
+        {rerunnable && <Button size="small" onClick={runAgain}>Run again</Button>}
       </div>
       <div className="task-detail-tabs">
+        {item.kind === 'workflow' && (
+          <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
+            Steps{steps.length > 0 ? ` (${steps.length})` : ''}
+          </button>
+        )}
         <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
         <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
           Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
         </button>
       </div>
 
-      {!view || !view.loaded ? (
+      {tab === 'steps' ? (
+        <div className="task-view">
+          {steps.length === 0 ? (
+            <div className="trace-empty">No step has started yet.</div>
+          ) : (
+            <table className="wf-steps">
+              <tbody>
+                {steps.map((row, i) => (
+                  <tr key={row.runId} className={i === steps.length - 1 && isLive(item.status) ? 'wf-steps-live' : undefined}>
+                    <td className="wf-steps-index">{row.index}</td>
+                    <td className="wf-steps-name">{row.name}{row.retry && <span className="wf-steps-retry"> · retry</span>}</td>
+                    <td className="wf-steps-outcome"><span className={'wf-outcome wf-outcome-' + row.outcome}>{row.outcome}</span></td>
+                    <td className="wf-steps-num">{row.durationMs !== undefined ? fmtDuration(row.durationMs) : ''}</td>
+                    <td className="wf-steps-num">{row.tokens ? `↑${row.tokens.input} ↓${row.tokens.output}` : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {item.state?.input && <div className="wf-steps-brief"><span className="wf-steps-brief-label">Brief</span>{item.state.input}</div>}
+        </div>
+      ) : !view || !view.loaded ? (
         <div className="trace-empty">Loading…</div>
       ) : tab === 'transcript' ? (
         <div className="task-view">
@@ -231,7 +279,9 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose, onApprove, 
                         </details>
                       );
                     case 'tools':
-                      return part.toolCalls.map(tc => <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live} onApprove={onApprove} onReject={onReject} />);
+                      // A foreign transcript: approvals still route by call id, but the
+                      // task offers (inspect/retry) belong to the parent's cards only.
+                      return part.toolCalls.map(tc => <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live} />);
                     case 'error':
                       return <div key={j} className="task-view-error">{part.content}</div>;
                     case 'cancelled':

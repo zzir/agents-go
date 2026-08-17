@@ -91,9 +91,8 @@ export const api = {
       const qs = q.toString();
       return request(`/sessions/${id}/messages` + (qs ? '?' + qs : ''));
     },
+    // The session's background work — tasks and workflow executions — newest first.
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
-    // The session's workflow executions, newest first.
-    workflowRuns: (id: string | number) => request(`/sessions/${id}/workflow-runs`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
     // What the session's active branch occupies of the model's context window.
     // Recomputed per call from the entries — there is no live event for it, so
@@ -211,23 +210,45 @@ export const api = {
     list: () => request('/guardrails'),
   },
   providers: crud('/providers'),
-  workflows: crud('/workflows'),
-  workflowRuns: {
-    get: (id: string | number) => request(`/workflow-runs/${id}`),
-    // Stop ends the whole sequence; retry resumes from the step it stopped at.
-    stop: (id: string | number) => request(`/workflow-runs/${id}/stop`, { method: 'POST' }),
-    retry: (id: string | number) => request(`/workflow-runs/${id}/retry`, { method: 'POST' }),
-    // Hides a terminal execution from the chat strip (409 while running); a
-    // retry brings it back.
-    dismiss: (id: string | number) => request(`/workflow-runs/${id}/dismiss`, { method: 'POST' }),
+  workflows: {
+    ...crud('/workflows'),
+    // A person's own run of a workflow: the brief they wrote, for the session
+    // the result comes back to.
+    // sandbox_id/work_dir bind a still-unbound session first, so the
+    // execution has its file and command tools; a bound session ignores them.
+    run: (id: string | number, body: { session_id: string; input: string; sandbox_id?: string; work_dir?: string }) =>
+      request(`/workflows/${id}/runs`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+  // Triggers start a workflow without a conversation asking: on a cron
+  // schedule, or on a signed webhook call. fire runs one by hand.
+  triggers: {
+    ...crud('/triggers'),
+    listFor: (workflowId: string) => request(`/triggers?workflow_id=${encodeURIComponent(workflowId)}`),
+    fire: (id: string | number, payload = '') => request(`/triggers/${id}/fire`, { method: 'POST', body: JSON.stringify({ payload }) }),
+    rotateSecret: (id: string | number) => request(`/triggers/${id}/rotate-secret`, { method: 'POST' }),
   },
   providerRoutes: crud('/provider-routes'),
   providerTypes: {
     list: () => request('/provider-types'),
   },
   tasks: {
+    // One page across every conversation, newest first ({items, total}): the
+    // hub's Runs view. kind narrows ("workflow"), live keeps only working /
+    // input_required rows, limit/offset cut the page.
+    list: (q: { kind?: string; live?: boolean; limit?: number; offset?: number } = {}) => {
+      const p = new URLSearchParams();
+      if (q.kind) p.set('kind', q.kind);
+      if (q.live) p.set('live', 'true');
+      if (q.limit) p.set('limit', String(q.limit));
+      if (q.offset) p.set('offset', String(q.offset));
+      const qs = p.toString();
+      return request(`/tasks${qs ? '?' + qs : ''}`);
+    },
     stop: (id: string | number, graceful = false) => request(`/tasks/${id}/stop`, { method: 'POST', body: JSON.stringify({ graceful }) }),
     retry: (id: string | number) => request(`/tasks/${id}/retry`, { method: 'POST' }),
+    // Hides a finished task from the chat strip; the panel keeps it, a retry
+    // brings it back.
+    dismiss: (id: string | number) => request(`/tasks/${id}/dismiss`, { method: 'POST' }),
   },
   sandboxes: {
     ...crud('/sandboxes'),

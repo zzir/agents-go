@@ -1,0 +1,80 @@
+/* The Workflows hub: the middle column when the sidebar's entry is selected.
+   Its header reuses .chat-topbar so it sits on the same 48px line; the body
+   scrolls, at the settings pages' width and padding. */
+.hub {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.hub-topbar .chat-topbar-info:last-child {
+  justify-content: flex-end;
+}
+
+.hub-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--base-size-24);
+}
+
+.hub-content {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* A hint on the left, the one action on the right. */
+.hub-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-16);
+}
+
+/* Runs table: one line per run. Cells are grid items, so they need min-width
+   0 to let their content clip; a clipped span ends in an ellipsis and holds
+   the full text as its title. */
+.hub-runs td,
+.hub-runs th {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.hub-clip {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-clip-name { max-width: 200px; }
+.hub-clip-session { max-width: 220px; }
+
+.hub-run-name,
+.hub-run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.hub-run-badge {
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
+.hub-run-activity {
+  color: var(--fgColor-muted);
+}
+
+.hub-run-error {
+  color: var(--fgColor-danger);
+}
+
+.hub-nowrap {
+  white-space: nowrap;
+}

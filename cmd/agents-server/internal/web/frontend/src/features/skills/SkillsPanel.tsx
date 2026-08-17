@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Button, TextInput, Label, Stack, PageHeader } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { ChevronRightIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
+import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
 import { type Skill, groupByRepo } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
+import { Disclosure } from '@/components/Disclosure';
 
 export function SkillsPanel() {
-  const [skills, setSkills] = useState<Skill[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: skills, loading, error, reload } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const [repoUrl, setRepoUrl] = useState('');
   const [cloning, setCloning] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -25,15 +25,6 @@ export function SkillsPanel() {
       return next;
     });
   };
-  const reload = useCallback(() => {
-    setLoading(true);
-    api.skills.list()
-      .then((data: unknown) => setSkills((data as Skill[]) || []))
-      .catch(() => setSkills([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { reload(); }, [reload]);
 
   const handleClone = async () => {
     const url = repoUrl.trim();
@@ -113,43 +104,43 @@ export function SkillsPanel() {
         {!loading && grouped.length === 0 && (
           <div className="Box">
             <Blankslate>
-              <Blankslate.Description>No skills installed.</Blankslate.Description>
+              {/* A scan that failed says so — an empty list would read as
+                  "nothing installed" while the workspace was merely unreadable. */}
+              <Blankslate.Description>{error ? 'Could not scan skills: ' + error : 'No skills installed.'}</Blankslate.Description>
+              {error && <Blankslate.PrimaryAction onClick={() => reload()}>Retry</Blankslate.PrimaryAction>}
             </Blankslate>
           </div>
         )}
 
-        {grouped.map(group => {
-          const expanded = expandedRepos.has(group.repo);
-          return (
-            <div key={group.repo} className="Box">
-              <div className="Box-row" style={{ fontWeight: 500 }}>
-                <div className="resource-row-head">
-                  <button
-                    type="button"
-                    className="checkbox-group-toggle"
-                    aria-expanded={expanded}
-                    onClick={() => toggleRepo(group.repo)}
-                  >
-                    <ChevronRightIcon size={12} />
-                    {group.repo}
-                  </button>
-                  <Label variant={BADGE.count}>{'Skills·' + group.skills.length}</Label>
-                </div>
+        {grouped.map(group => (
+          <div key={group.repo} className="Box">
+            {/* The row is the toggle; Update/Delete ride inside it, so a div
+                header (a <button> cannot nest them) with the clicks stopped. */}
+            <Disclosure
+              as="div"
+              variant="plain"
+              className="skills-repo"
+              open={expandedRepos.has(group.repo)}
+              onToggle={() => toggleRepo(group.repo)}
+              label={<>
+                {group.repo}
+                <Label variant={BADGE.count}>{'Skills·' + group.skills.length}</Label>
                 <div className="resource-row-actions">
                   <Button
                     size="small"
                     variant="invisible"
-                    onClick={() => handleUpdate(group.repo)}
+                    onClick={e => { e.stopPropagation(); handleUpdate(group.repo); }}
                     disabled={updating === group.repo}
                   >
                     {updating === group.repo ? 'Updating...' : 'Update'}
                   </Button>
-                  <Button size="small" variant="danger" onClick={() => handleDelete(group.repo)}>
+                  <Button size="small" variant="danger" onClick={e => { e.stopPropagation(); handleDelete(group.repo); }}>
                     Delete
                   </Button>
                 </div>
-              </div>
-              {expanded && group.skills.map(s => (
+              </>}
+            >
+              {group.skills.map(s => (
                 <div key={s.path} className="Box-row">
                   <div className="resource-row-main">
                     <div className="resource-row-title">{s.name}</div>
@@ -157,9 +148,9 @@ export function SkillsPanel() {
                   </div>
                 </div>
               ))}
-            </div>
-          );
-        })}
+            </Disclosure>
+          </div>
+        ))}
       </>}
     </Stack>
   );

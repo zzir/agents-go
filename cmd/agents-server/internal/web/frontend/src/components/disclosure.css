@@ -42,7 +42,9 @@
 .disclosure-header:hover {
   background: var(--_headerBgHover);
 }
-.disclosure.expanded .disclosure-header {
+/* :where keeps this at one class, so a caller's `.x > .disclosure-header`
+   can drop or restyle the rule line. */
+:where(.disclosure.expanded) .disclosure-header {
   border-bottom: 1px solid var(--_border);
 }
 
@@ -92,4 +94,34 @@
   color: var(--fgColor-muted);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Plain — an inline toggle, no card chrome: transparent header that inherits
+   its color and type, no border, 4px gap, 12px chevron. The caller's class
+   supplies padding, type and colors; :where keeps these resets at one class
+   so any 2-class caller rule wins. */
+.disclosure[data-variant="plain"] {
+  --_headerBg: transparent;
+  --_headerBgHover: transparent;
+  --_headerFg: currentColor;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+:where(.disclosure[data-variant="plain"]) .disclosure-header {
+  gap: var(--base-size-4);
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  border-bottom: 0;
+}
+:where(.disclosure[data-variant="plain"]) .disclosure-chevron {
+  width: 12px;
+  height: 12px;
+}
+:where(.disclosure[data-variant="plain"]) .disclosure-body {
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
 }

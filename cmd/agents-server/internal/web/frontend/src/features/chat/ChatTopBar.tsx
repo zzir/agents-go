@@ -2,16 +2,13 @@ import { IconButton } from '@primer/react';
 import { FileDirectoryIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
+import { useChatSession, useChatBackground } from '@/features/chat/ChatSessionContext';
 import { projectBase } from '@/lib/binding';
 
 interface ChatTopBarProps {
   sessionName: string;
-  sessionId: string | null;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
-  // Tasks and workflow executions both — the panel holds either, so a session
-  // with only a workflow must not find the button greyed out.
-  backgroundCount: number;
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
   /* The session's sandbox binding, rendered as a quiet read-only label beside
@@ -25,14 +22,16 @@ interface ChatTopBarProps {
 
 export function ChatTopBar({
   sessionName,
-  sessionId,
   panel,
   onPanelChange,
-  backgroundCount,
   terminalEnabled,
   onTerminalOpen,
   binding,
 }: ChatTopBarProps): ReactElement {
+  const { sessionId } = useChatSession();
+  // Tasks and workflow executions both — the panel holds either, so a session
+  // with only a workflow must not find the button greyed out.
+  const backgroundCount = useChatBackground().length;
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-info">
