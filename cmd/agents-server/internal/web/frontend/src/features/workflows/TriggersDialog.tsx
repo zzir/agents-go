@@ -6,6 +6,7 @@ import { useApi } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { BADGE } from '@/lib/badges';
+import { Disclosure } from '@/components/Disclosure';
 import { SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
 
 // A trigger starts work without a conversation asking — on a cron schedule,
@@ -128,13 +129,15 @@ export function useTriggerActions(reload: () => void, sessionName: (id: string) 
   };
 }
 
-// TriggerRow is one trigger as every list shows it, on the panels' resource
-// row: the status dot and what it starts as the title (a workflow or an
-// agent, said by the icon), how it fires as a label; then where it fires and
-// into which conversation; then its brief; then how it last went. Two
-// actions stay in reach — fire, and the switch — the rest sit behind the
-// kebab. targetName is the workflow's or the agent's; a list under one
-// workflow passes none, and the kind takes the title's place.
+// TriggerRow is one trigger as every list shows it: one line — the status
+// dot and what it starts as the title (a workflow or an agent, said by the
+// icon), how it fires as a label — that opens on the rest: where it fires
+// and into which conversation, its brief, how it last went. Two actions stay
+// in reach — fire, and the switch — the rest sit behind the kebab; their box
+// stops the clicks (the kebab's menu included — it bubbles through the React
+// tree from its portal) so none of them toggles the row. targetName is the
+// workflow's or the agent's; a list under one workflow passes none, and the
+// kind takes the title's place.
 export function TriggerRow({ t, sessionName, targetName, actions }:
   { t: Trigger; sessionName: string; targetName?: string; actions: ReturnType<typeof useTriggerActions> }) {
   const busy = actions.busy(t.id);
@@ -145,7 +148,7 @@ export function TriggerRow({ t, sessionName, targetName, actions }:
   const TargetIcon = t.target === 'agent' ? DependabotIcon : WorkflowIcon;
   const KindIcon = t.kind === 'cron' ? ClockIcon : WebhookIcon;
   return (
-    <div className="Box-row wf-trigger-row">
+    <Disclosure as="div" variant="plain" className="disclosure-row hub-row" label={<>
       <div className="resource-row-main">
         <div className="resource-row-head">
           <span className="form-status-dot" style={{ background: dot }} title={!t.enabled ? 'off' : t.last_error ? 'last fire failed' : t.last_fired_at ? 'last fire went' : 'never fired'} />
@@ -159,19 +162,8 @@ export function TriggerRow({ t, sessionName, targetName, actions }:
           )}
           {!t.enabled && <Label variant="secondary">off</Label>}
         </div>
-        <div className="resource-row-meta">
-          <span><code className="wf-trigger-when">{t.kind === 'cron' ? t.schedule : (t.hook_path || '')}</code></span>
-          <span>→ {sessionName}</span>
-          {t.kind === 'webhook' && t.secret_hint && <span>· secret {t.secret_hint}</span>}
-        </div>
-        <div className="resource-row-sub" title={t.brief}>{t.brief}</div>
-        {(t.last_fired_at || t.last_error) && (
-          <div className={'resource-row-sub' + (t.last_error ? ' wf-trigger-error' : '')} title={t.last_error || undefined}>
-            {t.last_error ? `last fire failed: ${t.last_error}` : `last fired ${fmtWhen(t.last_fired_at)}${started}`}
-          </div>
-        )}
       </div>
-      <div className="resource-row-actions">
+      <div className="resource-row-actions" onClick={e => e.stopPropagation()}>
         <Button size="small" variant="invisible" disabled={busy || !t.enabled} onClick={() => actions.fire(t)}>Fire now</Button>
         <Button size="small" variant="invisible" disabled={busy} onClick={() => actions.toggle(t)}>{t.enabled ? 'Disable' : 'Enable'}</Button>
         <ActionMenu>
@@ -189,7 +181,19 @@ export function TriggerRow({ t, sessionName, targetName, actions }:
           </ActionMenu.Overlay>
         </ActionMenu>
       </div>
-    </div>
+    </>}>
+      <div className="hub-row-detail wf-trigger-detail">
+        <div className="resource-row-meta">
+          <span><KindIcon size={12} /> <code className="wf-trigger-when">{t.kind === 'cron' ? t.schedule : (t.hook_path || '')}</code></span>
+          <span>→ {sessionName}</span>
+          {t.kind === 'webhook' && t.secret_hint && <span>· secret {t.secret_hint}</span>}
+        </div>
+        {t.brief && <div className="wf-trigger-brief">{t.brief}</div>}
+        <div className={'wf-trigger-last' + (t.last_error ? ' wf-trigger-error' : '')}>
+          {t.last_error ? `last fire failed: ${t.last_error}` : t.last_fired_at ? `last fired ${fmtWhen(t.last_fired_at)}${started}` : 'never fired'}
+        </div>
+      </div>
+    </Disclosure>
   );
 }
 

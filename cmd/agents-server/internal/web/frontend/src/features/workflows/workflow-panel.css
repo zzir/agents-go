@@ -63,7 +63,14 @@
   width: 7em;
 }
 
-/* Triggers dialog: one card per trigger, and the once-shown secret box. */
+/* A workflow row's detail: the description over the drawn sequence. */
+.wf-row-desc {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+
+/* Trigger rows: the title with its icon on the line, the rest in the detail;
+   and the once-shown secret box. */
 .wf-trigger-title {
   display: inline-flex;
   align-items: center;
@@ -72,6 +79,28 @@
 .wf-trigger-when {
   font-family: var(--fontStack-monospace);
   font-size: 12px;
+}
+.wf-trigger-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wf-trigger-detail .resource-row-meta {
+  margin-top: 0;
+}
+/* The brief in full, as written — it wraps, unlike the row's clipped lines. */
+.wf-trigger-brief {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bgColor-muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wf-trigger-last {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  overflow-wrap: anywhere;
 }
 .wf-trigger-error {
   color: var(--fgColor-danger);

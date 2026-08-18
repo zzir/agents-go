@@ -8,6 +8,7 @@ import { fc } from '@/lib/form';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
 import { useMermaidSvg } from '@/features/chat/MermaidBlock';
+import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
 import { SessionPicker } from '@/features/sessions/SessionPicker';
 import { bindingWorkDirIssue, type SandboxConfigLite } from '@/lib/binding';
@@ -109,30 +110,44 @@ const TEMPLATES: { key: string; label: string; form: () => WorkflowFormData }[] 
 // paragraph gets room, nothing scrolls before a dozen lines.
 const promptRows = (text: string) => Math.min(12, Math.max(3, text.split('\n').length + 1));
 
-// edgeSummary is the sequence's shape in words, shown only when a step names
-// an edge — a plain list needs no diagram, and a loop is hard to read off
-// three dropdowns.
-function edgeSummary(steps: WorkflowStep[]): string[] {
+// A step names an edge, or is a check: the sequence has a shape a list does
+// not show.
+const branches = (steps: WorkflowStep[]) => steps.some(s => s.on_success || s.on_failure || s.gate);
+
+// How the sequence is drawn: by default only a branching one is (a plain list
+// needs no diagram, and a loop is hard to read off three dropdowns); `always`
+// draws a linear one too, as a chain. label names a step's node.
+interface GraphOpts {
+  always?: boolean;
+  label?: (s: WorkflowStep, i: number) => string;
+}
+
+// edgeSummary is the sequence's shape in words.
+function edgeSummary(steps: WorkflowStep[], { always, label = stepLabel }: GraphOpts = {}): string[] {
   const nameOf = (id?: string, i?: number) => {
     if (id === END) return 'end';
-    if (!id) return i !== undefined && i + 1 < steps.length ? stepLabel(steps[i + 1], i + 1) : 'end';
+    if (!id) return i !== undefined && i + 1 < steps.length ? label(steps[i + 1], i + 1) : 'end';
     const j = steps.findIndex(s => s.id === id);
-    return j >= 0 ? stepLabel(steps[j], j) : id;
+    return j >= 0 ? label(steps[j], j) : id;
   };
-  if (!steps.some(s => s.on_success || s.on_failure || s.gate)) return [];
+  if (!branches(steps)) return always && steps.length ? [[...steps.map(label), 'end'].join(' → ')] : [];
   return steps.map((s, i) => {
     const ok = `${s.gate ? 'PASS' : 'ok'} → ${nameOf(s.on_success, i)}`;
     const bad = `${s.gate ? 'FAIL' : 'error'} → ${s.on_failure ? nameOf(s.on_failure) : 'stop, failed'}`;
-    return `${stepLabel(s, i)}: ${ok} · ${bad}`;
+    return `${label(s, i)}: ${ok} · ${bad}`;
   });
 }
 
 // edgeGraph is the same shape as a flowchart: one node per step, a solid
 // edge for the success side, a dotted one for the failure side, and two
-// terminals. Empty when no step names an edge, like edgeSummary.
-function edgeGraph(steps: WorkflowStep[]): string {
-  if (!steps.some(s => s.on_success || s.on_failure || s.gate)) return '';
+// terminals; a linear sequence is one chain into end. Empty when there is
+// nothing to draw, like edgeSummary.
+function edgeGraph(steps: WorkflowStep[], { always, label = stepLabel }: GraphOpts = {}): string {
   const q = (t: string) => '"' + t.replace(/"/g, '#quot;') + '"';
+  const box = (i: number) => `n${i}[${q(label(steps[i], i))}]`;
+  if (!branches(steps)) {
+    return always && steps.length ? `flowchart LR\n  ${[...steps.map((_, i) => box(i)), 'END((end))'].join(' --> ')}` : '';
+  }
   const node = (id?: string, i?: number): string => {
     if (id === END) return 'END';
     if (!id) return i !== undefined && i + 1 < steps.length ? `n${i + 1}` : 'END';
@@ -140,7 +155,7 @@ function edgeGraph(steps: WorkflowStep[]): string {
     return j >= 0 ? `n${j}` : 'END';
   };
   const lines = ['flowchart LR'];
-  steps.forEach((s, i) => lines.push(`  n${i}[${q(stepLabel(s, i))}]`));
+  steps.forEach((_, i) => lines.push('  ' + box(i)));
   lines.push('  END((end))', '  FAILED((failed))');
   steps.forEach((s, i) => {
     lines.push(`  n${i} -->|${s.gate ? 'PASS' : 'ok'}| ${node(s.on_success, i)}`);
@@ -151,9 +166,9 @@ function edgeGraph(steps: WorkflowStep[]): string {
 
 // EdgeGraph draws the sequence; until mermaid has rendered (or if it cannot)
 // the same shape stands in words.
-function EdgeGraph({ steps }: { steps: WorkflowStep[] }) {
-  const { svg, failed } = useMermaidSvg(edgeGraph(steps));
-  const summary = edgeSummary(steps);
+function EdgeGraph({ steps, ...opts }: { steps: WorkflowStep[] } & GraphOpts) {
+  const { svg, failed } = useMermaidSvg(edgeGraph(steps, opts));
+  const summary = edgeSummary(steps, opts);
   if (svg && !failed) {
     return <div className="wf-edge-graph" aria-label={summary.join('; ')} dangerouslySetInnerHTML={{ __html: svg }} />;
   }
@@ -416,6 +431,9 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   const [triggersFor, setTriggersFor] = useState<Workflow | null>(null);
 
   const agentName = (id: string) => (agents || []).find(a => a.id === id)?.name || id.slice(0, 8);
+  // A step in the list goes by its name, or its agent's when it has none —
+  // the summary line and the drawn chart agree.
+  const stepName = (s: WorkflowStep) => s.name || agentName(s.agent_config_id);
   const closeForm = () => { setTemplate(null); cancel(); };
   const page = usePage(workflows, PAGE_SIZE);
 
@@ -448,18 +466,22 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
 
       {!adding && !editing && <div className={page.count > 1 ? 'hub-paged' : undefined}>
         <div className="Box">
+          {/* The row is the toggle (a div header: it nests the buttons, whose
+              clicks are stopped at their box); it opens on what the line
+              leaves out — the words the agent matches a request against, and
+              the sequence drawn. */}
           {page.items.map(w => (
-            <div key={w.id} className="Box-row">
+            <Disclosure key={w.id} as="div" variant="plain" className="disclosure-row hub-row" label={<>
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{w.name}</span>
                   <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
                 </div>
                 <div className="resource-row-sub">
-                  {(w.steps || []).map(s => s.name || agentName(s.agent_config_id)).join(' → ')}
+                  {(w.steps || []).map(stepName).join(' → ')}
                 </div>
               </div>
-              <div className="resource-row-actions">
+              <div className="resource-row-actions" onClick={e => e.stopPropagation()}>
                 <Button onClick={() => setRunning(w)} size="small" variant="invisible" leadingVisual={PlayIcon}
                   title="Run it, with a brief, into a conversation of your choice">
                   Run…
@@ -468,7 +490,12 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
                   title="Run it on a schedule or from a webhook">Triggers</Button>
                 <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>
               </div>
-            </div>
+            </>}>
+              <div className="hub-row-detail">
+                {w.description && <div className="wf-row-desc">{w.description}</div>}
+                {(w.steps || []).length > 0 && <EdgeGraph steps={w.steps} always label={stepName} />}
+              </div>
+            </Disclosure>
           ))}
           {workflows.length === 0 && (
             <Blankslate>

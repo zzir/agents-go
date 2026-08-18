@@ -764,15 +764,18 @@ re-pointed.
 | POST   | `/hooks/:id`                | The webhook itself (outside `/api/v1`, no token): signed with `X-Timestamp` + `X-Signature-256`, body = payload; 201 with the task or `{run_id}`, 401 bad or stale signature, 409 a replayed delivery |
 
 In the UI, workflows are a place of their own — the sidebar's **Workflows**
-button, beside New, opens the hub in the middle column: its Definitions (the
-editor, `Run…` into a conversation of your choice, each workflow's triggers),
-every Trigger — of either target — with how it last went and the form to add
-one, and every Run across conversations, live (a row opens its conversation
-with the execution's detail in the Inspector). All three lists page past 25
-rows. They are not a settings tab: a workflow is authored once and then
-WATCHED, and a trigger runs when nobody is looking. From a conversation,
-`/workflow <name> <brief>` in the composer (typing `/` offers the commands,
-walked with the arrow keys) starts one into it, the same start `Run…` makes.
+button, beside New, opens the hub in the middle column: its Definitions (one
+line per workflow, which opens on a click to its description and the sequence
+drawn as a flowchart; the editor, `Run…` into a conversation of your choice,
+each workflow's triggers), every Trigger — of either target — one line each,
+opening to where it fires, its brief and how it last went, and the form to add
+one, and every Run across conversations, live (a row
+opens its conversation with the execution's detail in the Inspector). All
+three lists page past 25 rows. They are not a settings tab: a workflow is
+authored once and then WATCHED, and a trigger runs when nobody is looking.
+From a conversation, `/workflow <name> <brief>` in the composer (typing `/`
+offers the commands, walked with the arrow keys) starts one into it, the same
+start `Run…` makes.
 
 Executions are tasks: `GET /sessions/:id/tasks` lists them (`kind:
 "workflow"`), `GET /tasks?kind=workflow` lists them across sessions, and

@@ -366,27 +366,34 @@ a:hover {
     background: var(--bgColor-muted);
 }
 
-/* A skill repo in the Skills panel: a plain div-header Disclosure whose header
-   IS the list row (name, count badge, Update/Delete ride inside it), followed
-   by one Box-row per skill when expanded. */
-.skills-repo > .disclosure-header {
+/* A list row that opens: a plain div-header Disclosure whose header IS the
+   Box-row (title, badges, the row's buttons ride inside it — with their
+   clicks stopped, so they do not toggle), followed by what it hides. The
+   Skills panel's repos (one Box each, skill rows inside), the Workflows hub's
+   definitions and triggers (rows of one Box, a detail block inside). */
+.disclosure-row > .disclosure-header {
     padding: var(--base-size-8) var(--base-size-16);
     font-size: var(--base-text-size-sm);
     font-weight: 500;
     color: var(--fgColor-default);
 }
 
-.skills-repo > .disclosure-header:hover {
+.disclosure-row > .disclosure-header:hover {
     color: var(--fgColor-accent);
     background: var(--bgColor-muted);
 }
 
-.skills-repo.expanded > .disclosure-header {
+.disclosure-row.expanded > .disclosure-header {
     border-bottom: 1px solid var(--borderColor-muted);
 }
 
-.skills-repo .resource-row-actions {
+.disclosure-row .resource-row-actions {
     margin-left: auto;
+}
+
+/* Rows of one Box divide like Box-rows do. */
+.Box > .disclosure-row:not(:last-child) {
+    border-bottom: 1px solid var(--borderColor-muted);
 }
 
 .resource-row-main {
@@ -428,6 +435,7 @@ a:hover {
 .resource-row-sub {
     margin-top: 4px;
     font-size: 11px;
+    font-weight: var(--base-text-weight-normal, 400);
     color: var(--fgColor-muted);
     overflow: hidden;
     text-overflow: ellipsis;

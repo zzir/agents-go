@@ -119,7 +119,7 @@ export function SkillsPanel() {
             <Disclosure
               as="div"
               variant="plain"
-              className="skills-repo"
+              className="disclosure-row"
               open={expandedRepos.has(group.repo)}
               onToggle={() => toggleRepo(group.repo)}
               label={<>

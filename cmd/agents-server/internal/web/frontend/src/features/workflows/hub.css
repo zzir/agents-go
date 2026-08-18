@@ -32,6 +32,17 @@
   gap: var(--base-size-16);
 }
 
+/* A hub list row (a disclosure-row) opens on click with no chevron: the hover
+   is the affordance, and the title sits where every other panel's does. Its
+   detail block keeps the row's own left edge. */
+.hub-row > .disclosure-header > .disclosure-chevron {
+  display: none;
+}
+
+.hub-row-detail {
+  padding: var(--base-size-8) var(--base-size-16) var(--base-size-12);
+}
+
 /* A Box list with a Table.Pagination under it: the pagination is drawn as a
    table footer (no top border, bottom corners), so the Box gives up its own
    bottom corners to meet it. */
