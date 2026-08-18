@@ -55,6 +55,11 @@ type AgentDeps struct {
 	// restart. Attached beside the manager's TaskTools; never on a background
 	// run.
 	SpawnTool func(ctx context.Context) *agents.Tool
+	// WorkflowTools is set by NewRunner and builds the run's get_workflow /
+	// save_workflow — per run, like SpawnTool, because the save tool's
+	// description names the agents on offer. Attached only when the config
+	// opts in (behavior.workflow_authoring); never on a background run.
+	WorkflowTools func(ctx context.Context) []*agents.Tool
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -197,6 +202,14 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		}
 		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.TaskTools(nil)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceTasks, &result.Profile)
+	}
+	// Workflow authoring is opt-in per agent and, like the task tools, a
+	// chat-only surface: a background run has nobody to approve a save
+	// (README invariant 39).
+	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
+		mark := len(result.Agent.Tools)
+		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx)...)
+		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflows, &result.Profile)
 	}
 	if err != nil {
 		// A failed build returns no result to Release, so the sandbox

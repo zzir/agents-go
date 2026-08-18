@@ -196,8 +196,8 @@ type TaskPage struct {
 //	@Param			live	query		bool	false	"Only still-live tasks (working, input_required)"
 //	@Param			limit	query		int		false	"Page size (default and maximum 500)"
 //	@Param			offset	query		int		false	"Rows to skip"
-//	@Success		200	{object}	TaskPage
-//	@Failure		500	{object}	ErrorResponse
+//	@Success		200		{object}	TaskPage
+//	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/tasks [get]
 func (h *TaskHandler) List(c *gin.Context) {

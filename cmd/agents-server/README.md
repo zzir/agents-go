@@ -396,12 +396,18 @@ needs no schema change), then a few top-level JSON blobs:
   called any of them), `handoff_input_filter`, `max_tool_concurrency`,
   `tool_not_found_behavior` (unset feeds a tool name the agent does not have
   back to the model so it can correct itself; `error` ends the run instead),
-  `reasoning_item_id_policy` (`preserve` / `omit`)
+  `reasoning_item_id_policy` (`preserve` / `omit`), `workflow_authoring`
+  (gives the agent's chat runs `get_workflow` / `save_workflow`, every save
+  approved — see [workflows](#workflows--apiv1workflows))
 
   Plan and todo mode are NOT here. `todo_write` is on every chat agent — when a
   job is worth tracking is the model's judgement, like any other tool. Plan mode
   is a restraint, so it belongs to the session and the person: it rides on the
-  run request (`plan`), and the session reports it as `planning`.
+  run request (`plan`), and the session reports it as `planning`. Workflow
+  authoring IS here, and off by default, for two reasons that do not apply to
+  todo: its save schema rides on every request of the agent that carries it,
+  and writing definitions is one agent's job — the builder's — not something
+  every coding agent should be offered ([invariant 39](#design-invariants)).
 - **`resilience`**: `retry_enabled`, `retry_policy`, `fallback_models` (JSON
   array of `{model, provider_type, api_key, base_url}`; `provider_type`
   defaults to `openai`, and unknown keys are rejected)
@@ -674,9 +680,32 @@ The agent that started one is told the task id, and asks after it with
 (`progress: step 2/3 (verify)`), through the SDK's `DescribeState` hook — or
 with `task_status()` and no id, which lists every task of the conversation,
 each live one flagged "still working — do not redo its work". The model's
-whole background vocabulary is the four task verbs: `spawn_task` (with
+whole vocabulary for background WORK is the four task verbs: `spawn_task` (with
 `workflow` for a sequence), `task_status`, `task_retry`, `task_stop`; there is
-no separate workflow tool to choose between.
+no separate "run a workflow" tool to choose between.
+
+A workflow DEFINITION can also be written from the chat, by an agent that has
+opted in (`behavior.workflow_authoring` — off by default; see [invariant
+39](#design-invariants) for why this one is a switch when `todo_write` is not):
+`get_workflow(name)` reads a definition and `save_workflow(...)` creates or
+updates one, in a shape the model can hold — steps, their agents and their
+edges by NAME, never by id (`{name, description, steps: [{name, agent,
+prompt, gate, gate_pass, gate_fail, pause_before, compact_before, on_success,
+on_failure}], budget}`, edges naming a step or `end`; the save tool's
+description lists the agents on offer). Saving under a name that exists
+replaces that definition — an update, not a second workflow — and a step that
+keeps its name keeps its id, so a retry and an execution in flight still name
+the same step; a nameless step reads back as `Step N`, which is what saving it
+back then stores. Every save is APPROVED first: the tool is approval-gated on
+its own (not through the agent's `approve_tools`), and the approval card in the
+chat is the review — the definition, drawn as in the hub, and, when it replaces
+one, the stored definition diffed line by line. A save that would not land
+(an unknown agent, a duplicate step name, an edge to nowhere, no description)
+never reaches the person: it is refused to the model at once, as text, and
+nothing is written. A saved workflow can be started in the same turn —
+`spawn_task(workflow=name)` reads the store, not its own listing — and, like
+any edit, changes nothing already in flight. Neither tool exists on a
+background run: a step cannot write definitions.
 
 Each step carries a STABLE id, so inserting a step above another does not
 renumber what a run in flight, a retry, or a record of what happened is naming.
@@ -1720,6 +1749,34 @@ When a change genuinely doesn't fit, update this list in the same PR.
     deep components (`TurnBlock` → `ProcessTimeline` → `ToolCallCard`, the
     strip, the Tasks panel) read the scope with `useChatSession` /
     `useChatActions` / `useChatTasks` instead of receiving it four levels down.
+
+39. **A workflow definition the model writes lands only through an approved
+    `save_workflow`, names steps rather than ids, and never reaches a
+    background run.** Authoring is a WRITE to configuration, so its gate is not
+    the model's to switch off: `save_workflow` carries `NeedsApproval` itself
+    (like `submit_plan`), not through the agent's `approve_tools`, and its
+    approval card is the review — the definition as the hub draws it and, on
+    an update, the stored definition diffed line by line. The gate's other
+    half is `NeedsApprovalFunc`: the same resolve the write does runs before
+    anyone is asked, and a proposal that would not save — an unknown agent, a
+    duplicate or reserved step name, an edge to no step, no description, a
+    gate whose words collide — needs no approval and executes at once into a
+    refusal the model reads; only a fixable fault skips the person, a store
+    fault still asks, so no write ever lands unapproved. The model's shape has
+    no ids: steps, agents and edges are NAMED (`bridge.workflowSpec`), the
+    server owns the ids — assigning them, and on an update reusing the id of a
+    step whose name (or, for a nameless one, its `Step N` as `get_workflow`
+    reports it) is kept, which is what keeps a retry and an execution in
+    flight naming the same step across a model's edit. Same name means the
+    same workflow (`EqualFold`, as the unique index is `NOCASE`): a save is an
+    upsert, and its result says which it did. The pair is per-agent opt-in
+    (`behavior.workflow_authoring`) — a save schema on every request of every
+    agent would be paid for by agents that never author — and attached only
+    where the task tools are, on a chat run: a background run has nobody to
+    approve, and a step that could write definitions would be a sequence
+    editing sequences. `get_workflow` is `ReadOnly`, so plan mode reads
+    definitions and withholds saves; the Context panel meters the pair as its
+    own bucket (`tools · workflows`).
 
 ## Database
 

@@ -86,7 +86,8 @@ sandbox. Built on a Go SDK you can also embed.
 - **Background tasks, workflows, triggers.** `spawn_task` sub-agents that
   outlive the turn and wake the parent when done (a failed one resumes where it
   stopped); fixed step sequences as workflows, started by the model, by hand,
-  by cron, or by a signed webhook.
+  by cron, or by a signed webhook — and, for an agent you opt in, authored
+  from the chat, each save reviewed and approved in the conversation.
 - **The configuration surface.** MCP servers (stdio and streamable HTTP, with
   OAuth), Agent Skills, memories, guardrails, per-model provider routes.
 - **Providers.** OpenAI Responses API (API key or ChatGPT sign-in), Anthropic

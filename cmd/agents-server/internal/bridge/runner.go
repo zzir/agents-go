@@ -85,6 +85,7 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	// when told a name), built per run for the workflows on offer.
 	deps.TaskManager = r.tasks
 	deps.SpawnTool = r.spawnTool
+	deps.WorkflowTools = r.workflowTools
 	return r
 }
 

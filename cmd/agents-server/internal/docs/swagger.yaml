@@ -1113,6 +1113,11 @@ components:
           type: string
         tool_not_found_behavior:
           type: string
+        workflow_authoring:
+          description: |-
+            WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
+            (README invariant 39). Off by default: the save schema costs every request.
+          type: boolean
       type: object
     store.CompactionGroup:
       properties:

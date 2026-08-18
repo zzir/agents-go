@@ -343,8 +343,11 @@ const (
 	ToolSourceBrave   = "brave"
 	ToolSourceSkills  = "skills"
 	ToolSourceTasks   = "tasks"
-	ToolSourceTodo    = "todo"
-	ToolSourcePlan    = "plan"
+	// ToolSourceWorkflows is the workflow-authoring pair, get_workflow and
+	// save_workflow (README invariant 39).
+	ToolSourceWorkflows = "workflows"
+	ToolSourceTodo      = "todo"
+	ToolSourcePlan      = "plan"
 	// ToolSourceMCP is a prefix: "mcp:<server name>".
 	ToolSourceMCP = "mcp:"
 )

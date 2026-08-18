@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 			return cfg, nil
 		}
 		if !alias {
-			return nil, err // explicit name: honest not-found with the available list
+			return nil, fmt.Errorf("spawn_task: %w", err) // explicit name: honest not-found with the available list
 		}
 	}
 	if rid, ok := r.hub.ActiveRunForSession(parentSessionID); ok {
@@ -73,14 +74,18 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 	return nil, fmt.Errorf("spawn_task: agent_name %q not resolvable and no current agent to default to", name)
 }
 
-// agentConfigByName resolves a spawn target by config name (or id).
+// errNoSuchAgent is agentConfigByName's not-found, distinct from a store fault.
+var errNoSuchAgent = errors.New("no agent")
+
+// agentConfigByName resolves an agent by config name (or id); the not-found
+// error lists what exists, for the model to pick from.
 func (r *Runner) agentConfigByName(ctx context.Context, name string) (*store.AgentConfig, error) {
 	if cfg, err := r.Deps.AgentConfigs.Get(ctx, name); err == nil {
 		return cfg, nil
 	}
 	cfgs, err := r.Deps.AgentConfigs.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("spawn_task: %w", err)
+		return nil, err
 	}
 	names := make([]string, 0, len(cfgs))
 	for i := range cfgs {
@@ -89,7 +94,8 @@ func (r *Runner) agentConfigByName(ctx context.Context, name string) (*store.Age
 		}
 		names = append(names, cfgs[i].Name)
 	}
-	return nil, fmt.Errorf("spawn_task: no agent named %q (available: %s)", name, strings.Join(names, ", "))
+	slices.Sort(names)
+	return nil, fmt.Errorf("%w named %q (available: %s)", errNoSuchAgent, name, strings.Join(names, ", "))
 }
 
 // taskMeta reports whether sessionID is a task's hidden child session,
