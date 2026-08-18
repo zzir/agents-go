@@ -237,6 +237,14 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, agents }: WorkflowF
                   placeholder="step name (optional)"
                 />
               </span>
+              {/* The agent beside the name, at a fixed width: the name takes the rest. */}
+              <span className="wf-step-agent">
+                <Select block size="small" aria-label="Agent" value={step.agent_config_id}
+                  onChange={e => setStep(i, { agent_config_id: e.target.value })}>
+                  <Select.Option value="">Select an agent…</Select.Option>
+                  {(agents || []).map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}
+                </Select>
+              </span>
               <IconButton icon={ChevronUpIcon} aria-label="Move up" size="small" variant="invisible"
                 disabled={i === 0} onClick={() => move(i, -1)} />
               <IconButton icon={ChevronDownIcon} aria-label="Move down" size="small" variant="invisible"
@@ -244,10 +252,6 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, agents }: WorkflowF
               <IconButton icon={TrashIcon} aria-label="Remove step" size="small" variant="invisible"
                 disabled={form.steps.length === 1} onClick={() => removeStep(i)} />
             </div>
-            <Select value={step.agent_config_id} onChange={e => setStep(i, { agent_config_id: e.target.value })} block>
-              <Select.Option value="">Select an agent…</Select.Option>
-              {(agents || []).map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}
-            </Select>
             <Textarea block rows={promptRows(step.prompt)} value={step.prompt}
               onChange={e => setStep(i, { prompt: e.target.value })}
               placeholder="What this step should do — the previous steps are already in the conversation" />

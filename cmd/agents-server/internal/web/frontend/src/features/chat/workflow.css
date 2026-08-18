@@ -66,14 +66,21 @@
   border: 1px solid var(--borderColor-muted);
   border-radius: var(--borderRadius-medium, 6px);
 }
+/* Ordinal, name, agent, the three buttons. The name takes what the fixed-width
+   agent picker leaves; on a narrow panel the picker drops to a second line. */
 .wf-step-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--base-size-4, 4px);
 }
 .wf-step-name {
-  flex: 1;
+  flex: 1 1 200px;
   min-width: 0;
+}
+.wf-step-agent {
+  flex: 0 1 200px;
+  min-width: 150px;
 }
 .wf-step-opt {
   font-size: 12px;
