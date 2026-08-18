@@ -482,6 +482,8 @@
   padding-top: 0;
 }
 .chat-input-box {
+  /* The slash popup is positioned off this box. */
+  position: relative;
   max-width: 880px;
   margin: 0 auto;
   display: flex;
@@ -491,6 +493,25 @@
   background: var(--bgColor-default);
   transition: border-color 0.15s, box-shadow 0.15s;
   box-shadow: var(--shadow-resting-xsmall);
+}
+
+/* The slash commands: pinned above the box's left edge, capped and
+   scrolling — the same place whether the box sits under a transcript or in
+   the middle of a greeting. */
+.slash-popup {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: min(100%, 560px);
+  /* Short enough to fit above a greeting's mid-screen composer too. */
+  max-height: min(320px, 34vh);
+  overflow-y: auto;
+  z-index: 20;
+  padding: 4px 0;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 12px;
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  box-shadow: var(--shadow-floating-small, 0 8px 24px rgba(0, 0, 0, 0.12));
 }
 .chat-input-box:focus-within {
   border-color: var(--fgColor-accent);

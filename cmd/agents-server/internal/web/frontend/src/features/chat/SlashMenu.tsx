@@ -1,5 +1,5 @@
-import { useMemo, type RefObject } from 'react';
-import { ActionList, AnchoredOverlay } from '@primer/react';
+import { useEffect, useMemo } from 'react';
+import { ActionList } from '@primer/react';
 import { ChecklistIcon, WorkflowIcon, type Icon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
@@ -68,32 +68,35 @@ export function matchCommands(commands: SlashCommand[], query: string): SlashCom
 // aria-activedescendant.
 export function slashOptionID(i: number): string { return 'slash-command-' + i; }
 
-// SlashCommandPopup offers the commands above the composer while a slash
-// prefix is being typed. It never takes focus — the person keeps typing, and
-// the composer forwards the arrow, Enter and Escape keys — so it is an
-// AnchoredOverlay with its focus management off; the highlighted row is
-// the composer's activeIndex.
-export function SlashCommandPopup({ anchorRef, open, commands, activeIndex, onPick, onClose }: {
-  anchorRef: RefObject<HTMLElement | null>;
+// SlashCommandPopup offers the commands while a slash prefix is being typed:
+// a panel pinned ABOVE the composer's box (positioned by CSS off the box, not
+// by an overlay's fitting logic, so it sits in the same place whether the
+// composer is at the bottom of a transcript or in the middle of a greeting)
+// that scrolls past its cap instead of growing. It never takes focus — the
+// person keeps typing, and the composer forwards the arrow, Enter and Escape
+// keys; the highlighted row is the composer's activeIndex, kept in view.
+export function SlashCommandPopup({ open, commands, activeIndex, onPick }: {
   open: boolean;
   commands: SlashCommand[];
   activeIndex: number;
   onPick: (cmd: SlashCommand) => void;
-  onClose: () => void;
 }) {
+  const shown = open && commands.length > 0;
+  // Keep the highlighted row inside the panel's own scroll — the panel's, not
+  // scrollIntoView's, which would also nudge every scrolling ancestor.
+  useEffect(() => {
+    if (!shown) return;
+    const row = document.getElementById(slashOptionID(activeIndex));
+    const panel = row?.closest('.slash-popup');
+    if (!row || !panel) return;
+    const r = row.getBoundingClientRect();
+    const p = panel.getBoundingClientRect();
+    if (r.top < p.top) panel.scrollTop -= p.top - r.top;
+    else if (r.bottom > p.bottom) panel.scrollTop += r.bottom - p.bottom;
+  }, [shown, activeIndex]);
+  if (!shown) return null;
   return (
-    <AnchoredOverlay
-      renderAnchor={null}
-      anchorRef={anchorRef}
-      open={open && commands.length > 0}
-      onClose={onClose}
-      side="outside-top"
-      align="start"
-      width="medium"
-      focusTrapSettings={{ disabled: true }}
-      focusZoneSettings={{ disabled: true }}
-      overlayProps={{ preventFocusOnOpen: true, role: 'listbox', 'aria-label': 'Commands', id: 'slash-commands' }}
-    >
+    <div className="slash-popup" role="listbox" aria-label="Commands" id="slash-commands">
       <ActionList role="presentation">
         {commands.map((c, i) => (
           <ActionList.Item key={c.id} id={slashOptionID(i)} active={i === activeIndex} role="option" aria-selected={i === activeIndex}
@@ -104,6 +107,6 @@ export function SlashCommandPopup({ anchorRef, open, commands, activeIndex, onPi
           </ActionList.Item>
         ))}
       </ActionList>
-    </AnchoredOverlay>
+    </div>
   );
 }

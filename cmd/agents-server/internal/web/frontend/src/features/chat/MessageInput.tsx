@@ -17,7 +17,6 @@ interface MessageInputProps {
 export function MessageInput({ sessionId, onSend, onCancel, disabled, running, toolbar }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const boxRef = useRef<HTMLFormElement>(null);
 
   const updateText = useCallback((v: string) => {
     setText(v);
@@ -49,8 +48,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
 
   // The slash commands: offered while the box holds nothing but a command
   // prefix, narrowed as it is typed, walked with the arrow keys and taken
-  // with Enter or Tab — the way "/" works in an editor. Escape dismisses the
-  // offer until the text changes.
+  // with Enter or Tab — the way "/" works in an editor. Escape, or leaving
+  // the box, dismisses the offer until the text changes.
   const commands = useSlashCommands();
   const query = slashQuery(text);
   const offered = useMemo(() => (query === null ? [] : matchCommands(commands, query)), [commands, query]);
@@ -106,14 +105,14 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, t
 
   return (
     <div className="chat-input-container">
-      <form ref={boxRef} onSubmit={handleSubmit} className="chat-input-box">
-        <SlashCommandPopup anchorRef={boxRef} open={popupOpen} commands={offered} activeIndex={activeIndex}
-          onPick={pick} onClose={() => setDismissedFor(text)} />
+      <form onSubmit={handleSubmit} className="chat-input-box">
+        <SlashCommandPopup open={popupOpen} commands={offered} activeIndex={activeIndex} onPick={pick} />
         <textarea
           ref={textareaRef}
           value={text}
           onChange={(e) => updateText(e.target.value)}
           onKeyDown={handleKeyDown}
+          onBlur={() => { if (popupOpen) setDismissedFor(text); }}
           placeholder="type something here…"
           rows={2}
           aria-autocomplete="list"
