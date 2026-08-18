@@ -705,9 +705,12 @@ A start with no run asking — a person's `Run…`, a trigger's fire — leaves 
 `workflow_started`, with the task id, the workflow, the brief and who started
 it). It is the exchange's question where the tool call would have been: the
 result's wake-up run is labeled by it in the trace panel (`▶ build (you)`,
-`▶ build (cron @daily)`) and jumps to it, and the chip itself opens that trace
-— so a trace card is always one exchange, a question and what answered it,
-whether the question was a message, a `spawn_task` call, or a note.
+`▶ build (cron @daily)`) and jumps to it — so a trace card is always one
+exchange, a question and what answered it, whether the question was a
+message, a `spawn_task` call, or a note. The chip itself is the label alone —
+what started, who asked — and opens the execution: the brief is read there,
+in the task's detail with the steps and the transcript, not repeated in the
+conversation.
 
 Work can also start with no conversation asking, through a **trigger**:
 `kind: cron` fires on a schedule (five fields, or `@hourly` / `@every 30m` —
@@ -718,8 +721,10 @@ no seconds field, and `@every` no shorter than a minute),
 reporting back there — and `agent` (`agent_config_id`) sends the brief as a
 MESSAGE of that conversation, run by that agent under the conversation's own
 sandbox binding: the scheduled question, its reply the next turn, with a
-`trigger_fired` note before it so the reader knows an automation asked (a
-session busy with a run refuses, like a session at its cap). Either way the
+`trigger_fired` note before it so the reader knows an automation asked — the
+note's chip is the label alone (which agent, which trigger), and the message
+it precedes is the brief (a session busy with a run refuses, like a session
+at its cap). Either way the
 turn or execution is led by the `brief` its author wrote in advance, so the
 rule that someone who knows writes the brief holds; a webhook's body (up to
 64 KB) is appended to it as the payload. A webhook proves itself by signature, not

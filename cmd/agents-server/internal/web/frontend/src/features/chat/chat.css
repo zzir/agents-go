@@ -301,9 +301,8 @@
   padding: var(--base-size-4) 0;
 }
 
-/* A workflow-started note: the label, the brief (click to expand), and the
-   trace button of the result's run once it exists. Centered like any system
-   chip, but a row, so the brief can breathe. */
+/* A workflow-started note: the label alone (a workflow's opens the
+   execution). Centered like any system chip. */
 .wf-started {
   display: flex;
   align-items: center;
@@ -314,21 +313,12 @@
 .wf-started-label {
   gap: var(--base-size-4);
 }
-.wf-started-brief {
-  max-width: 60ch;
+.wf-started-open {
   border: none;
   background: none;
   padding: 0;
   font: inherit;
-  font-size: var(--text-body-size-small);
-  color: var(--fgColor-muted);
-  text-align: left;
   cursor: pointer;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.wf-started-brief:hover {
-  color: var(--fgColor-default);
 }
 
 /* Compaction indicator (inline, like tool call groups) */
