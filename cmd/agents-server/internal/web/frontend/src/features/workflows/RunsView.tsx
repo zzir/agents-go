@@ -3,7 +3,7 @@ import { Button, CounterLabel, Label, Stack } from '@primer/react';
 import { Blankslate, DataTable, Table, type Column } from '@primer/react/experimental';
 import { HistoryIcon, LinkExternalIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { PAGE_SIZE, useApi } from '@/lib/hooks';
 import { TASK_KIND_WORKFLOW, type TaskRow } from '@/lib/protocol';
 import { taskStateFromRow } from '@/lib/useAgentSocket';
 import { itemDuration, taskItem, type BackgroundItem } from '@/lib/background';
@@ -17,8 +17,6 @@ interface RunRow extends BackgroundItem {
 
 interface TaskWithSession extends TaskRow { session_name?: string }
 interface TaskPage { items: TaskWithSession[]; total: number }
-
-const PAGE_SIZE = 25;
 
 // A status as a Label: live states in the accent/attention colors the task
 // dot uses, terminal ones in success/danger/secondary.

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Button, Stack } from '@primer/react';
-import { Blankslate } from '@primer/react/experimental';
+import { Blankslate, Table } from '@primer/react/experimental';
 import { ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { PAGE_SIZE, useApi, usePage } from '@/lib/hooks';
 import { SecretBox, TriggerForm, TriggerRow, useTriggerActions, type Named, type Trigger } from '@/features/workflows/TriggersDialog';
 
 // TriggersView is every trigger in one list — what starts on its own, a
@@ -22,6 +22,7 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
   const actions = useTriggerActions(reload, sessionName);
 
   const list = triggers || [];
+  const page = usePage(list, PAGE_SIZE);
   return (
     <Stack gap="normal">
       <div className="hub-toolbar">
@@ -39,10 +40,16 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
       {loading && <div className="wf-run-hint">Loading…</div>}
       {error && <div className="wf-run-hint">Could not load triggers: {error}</div>}
       {list.length > 0 && (
-        <div className="Box">
-          {list.map(t => (
-            <TriggerRow key={t.id} t={t} sessionName={sessionName(t.session_id)} targetName={targetName(t)} actions={actions} />
-          ))}
+        <div className={page.count > 1 ? 'hub-paged' : undefined}>
+          <div className="Box">
+            {page.items.map(t => (
+              <TriggerRow key={t.id} t={t} sessionName={sessionName(t.session_id)} targetName={targetName(t)} actions={actions} />
+            ))}
+          </div>
+          {page.count > 1 && (
+            <Table.Pagination aria-label="Trigger pages" pageSize={PAGE_SIZE} totalCount={list.length}
+              defaultPageIndex={page.index} onChange={({ pageIndex }) => page.setIndex(pageIndex)} />
+          )}
         </div>
       )}
       {!loading && !error && list.length === 0 && !adding && (

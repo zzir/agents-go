@@ -767,13 +767,12 @@ In the UI, workflows are a place of their own — the sidebar's **Workflows**
 button, beside New, opens the hub in the middle column: its Definitions (the
 editor, `Run…` into a conversation of your choice, each workflow's triggers),
 every Trigger — of either target — with how it last went and the form to add
-one, and every Run across conversations, live and paged (a row opens its
-conversation with the execution's detail in the Inspector). They are not a
-settings tab: a workflow is authored once and then WATCHED, and a trigger
-runs when nobody is looking. From a conversation, `/workflow <name> <brief>`
-in the composer (typing `/` offers the commands, walked with the arrow keys)
-starts one into it,
-the same start `Run…` makes.
+one, and every Run across conversations, live (a row opens its conversation
+with the execution's detail in the Inspector). All three lists page past 25
+rows. They are not a settings tab: a workflow is authored once and then
+WATCHED, and a trigger runs when nobody is looking. From a conversation,
+`/workflow <name> <brief>` in the composer (typing `/` offers the commands,
+walked with the arrow keys) starts one into it, the same start `Run…` makes.
 
 Executions are tasks: `GET /sessions/:id/tasks` lists them (`kind:
 "workflow"`), `GET /tasks?kind=workflow` lists them across sessions, and

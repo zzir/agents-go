@@ -32,6 +32,14 @@
   gap: var(--base-size-16);
 }
 
+/* A Box list with a Table.Pagination under it: the pagination is drawn as a
+   table footer (no top border, bottom corners), so the Box gives up its own
+   bottom corners to meet it. */
+.hub-paged > .Box {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
 /* Runs table: one line per run. Cells are grid items, so they need min-width
    0 to let their content clip; a clipped span ends in an ellipsis and holds
    the full text as its title. */

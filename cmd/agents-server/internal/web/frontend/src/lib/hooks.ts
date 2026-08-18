@@ -253,6 +253,39 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   return { items: data ?? [], loading, reload, adding, editing, startAdd, startEdit, cancel, save, remove };
 }
 
+// PAGE_SIZE is the rows a hub list shows at once, whether it pages on the
+// server (runs) or in the browser (usePage).
+export const PAGE_SIZE = 25;
+
+interface Page<T> {
+  items: T[];
+  index: number;
+  count: number;
+  setIndex: (i: number) => void;
+}
+
+/**
+ * usePage slices a whole list into pages of `size`, for a Table.Pagination fed
+ * `defaultPageIndex={index}`. The index is clamped to the last page rather than
+ * reset, so a delete on the last page shows the page before it, not an empty
+ * one. setIndex ignores the current index: the pagination echoes a changed
+ * defaultPageIndex through onChange while it renders, and a state write from
+ * there would be an update to another component mid-render.
+ */
+export function usePage<T>(all: T[], size: number): Page<T> {
+  const [index, setIndex] = useState(0);
+  const count = Math.max(1, Math.ceil(all.length / size));
+  const cur = Math.min(index, count - 1);
+  // A clamp sticks: a list that grows back must not jump to the old page.
+  useEffect(() => { if (index !== cur) setIndex(cur); }, [index, cur]);
+  return {
+    items: all.slice(cur * size, (cur + 1) * size),
+    index: cur,
+    count,
+    setIndex: i => { if (i !== cur) setIndex(i); },
+  };
+}
+
 interface ScrollAnchor {
   ref: RefCallback<HTMLElement>;
   isSticky: boolean;

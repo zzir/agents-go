@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Button, TextInput, Textarea, Label, CounterLabel, Select, IconButton, Stack, Dialog } from '@primer/react';
-import { Blankslate } from '@primer/react/experimental';
+import { Blankslate, Table } from '@primer/react/experimental';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi, useCrud } from '@/lib/hooks';
+import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
@@ -417,6 +417,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
 
   const agentName = (id: string) => (agents || []).find(a => a.id === id)?.name || id.slice(0, 8);
   const closeForm = () => { setTemplate(null); cancel(); };
+  const page = usePage(workflows, PAGE_SIZE);
 
   return (
     <Stack gap="normal">
@@ -445,41 +446,47 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
         />
       )}
 
-      {!adding && !editing && <div className="Box">
-        {workflows.map(w => (
-          <div key={w.id} className="Box-row">
-            <div className="resource-row-main">
-              <div className="resource-row-head">
-                <span className="resource-row-title">{w.name}</span>
-                <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
+      {!adding && !editing && <div className={page.count > 1 ? 'hub-paged' : undefined}>
+        <div className="Box">
+          {page.items.map(w => (
+            <div key={w.id} className="Box-row">
+              <div className="resource-row-main">
+                <div className="resource-row-head">
+                  <span className="resource-row-title">{w.name}</span>
+                  <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
+                </div>
+                <div className="resource-row-sub">
+                  {(w.steps || []).map(s => s.name || agentName(s.agent_config_id)).join(' → ')}
+                </div>
               </div>
-              <div className="resource-row-sub">
-                {(w.steps || []).map(s => s.name || agentName(s.agent_config_id)).join(' → ')}
+              <div className="resource-row-actions">
+                <Button onClick={() => setRunning(w)} size="small" variant="invisible" leadingVisual={PlayIcon}
+                  title="Run it, with a brief, into a conversation of your choice">
+                  Run…
+                </Button>
+                <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}
+                  title="Run it on a schedule or from a webhook">Triggers</Button>
+                <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>
               </div>
             </div>
-            <div className="resource-row-actions">
-              <Button onClick={() => setRunning(w)} size="small" variant="invisible" leadingVisual={PlayIcon}
-                title="Run it, with a brief, into a conversation of your choice">
-                Run…
-              </Button>
-              <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}
-                title="Run it on a schedule or from a webhook">Triggers</Button>
-              <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>
-            </div>
-          </div>
-        ))}
-        {workflows.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>
-              No workflows yet. A workflow runs a fixed sequence of agents on one session — plan, then execute,
-              then verify, each on the model you choose for it. Start from a shape:
-            </Blankslate.Description>
-            <div className="wf-templates">
-              {TEMPLATES.map(t => (
-                <Button key={t.key} size="small" onClick={() => { setTemplate(t.form()); startAdd(); }}>{t.label}</Button>
-              ))}
-            </div>
-          </Blankslate>
+          ))}
+          {workflows.length === 0 && (
+            <Blankslate>
+              <Blankslate.Description>
+                No workflows yet. A workflow runs a fixed sequence of agents on one session — plan, then execute,
+                then verify, each on the model you choose for it. Start from a shape:
+              </Blankslate.Description>
+              <div className="wf-templates">
+                {TEMPLATES.map(t => (
+                  <Button key={t.key} size="small" onClick={() => { setTemplate(t.form()); startAdd(); }}>{t.label}</Button>
+                ))}
+              </div>
+            </Blankslate>
+          )}
+        </div>
+        {page.count > 1 && (
+          <Table.Pagination aria-label="Workflow pages" pageSize={PAGE_SIZE} totalCount={workflows.length}
+            defaultPageIndex={page.index} onChange={({ pageIndex }) => page.setIndex(pageIndex)} />
         )}
       </div>}
 
