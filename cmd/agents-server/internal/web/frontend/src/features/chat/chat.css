@@ -177,7 +177,8 @@
 }
 
 /* Conversation TOC rail — one bar per user prompt, vertically centered in
-   the left gutter. Hover/focus shows the prompt via Primer Tooltip. */
+   the left gutter. Hover/focus shows the prompt via Primer Tooltip; the
+   pointed bar and its neighbours magnify (--toc-w, set by ChatToc). */
 .chat-toc {
   position: absolute;
   left: var(--base-size-8);
@@ -201,7 +202,7 @@
   cursor: pointer;
 }
 .chat-toc-bar {
-  width: 14px;
+  width: var(--toc-w, 14px);
   height: 3px;
   border-radius: var(--borderRadius-full);
   background: var(--borderColor-default);
@@ -209,14 +210,10 @@
     background var(--base-duration-100) var(--base-easing-easeInOut);
 }
 .chat-toc-item.active .chat-toc-bar { background: var(--fgColor-accent); }
-/* Hovering (or keyboard-entering) the rail stretches every bar; per-bar
-   hover darkens for pointing feedback, the active bar keeps its accent.
-   :has(:focus-visible), NOT :focus-within — a mouse click leaves focus on
-   the button, which would hold the rail expanded after the pointer leaves. */
-.chat-toc:hover .chat-toc-bar,
-.chat-toc:has(:focus-visible) .chat-toc-bar { width: 36px; }
-.chat-toc:hover .chat-toc-item:hover:not(.active) .chat-toc-bar,
-.chat-toc .chat-toc-item:focus-visible:not(.active) .chat-toc-bar { background: var(--fgColor-muted); }
+/* The pointed bar darkens for pointing feedback; the active bar keeps its
+   accent. */
+.chat-toc-item:hover:not(.active) .chat-toc-bar,
+.chat-toc-item:focus-visible:not(.active) .chat-toc-bar { background: var(--fgColor-muted); }
 /* Primer Tooltip wraps long text; the rail wants a single truncated line. */
 .chat-toc [popover] {
   white-space: nowrap;
