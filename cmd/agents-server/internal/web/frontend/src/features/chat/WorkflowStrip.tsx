@@ -21,6 +21,10 @@ export function WorkflowStrip() {
   // One flag per execution with a request in flight: two bars worked at once
   // must not free each other's buttons.
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  // Every hook before the early return: the strip renders empty most of the
+  // time, and a hook that only ran once a sequence appeared would change the
+  // hook order between those two renders (React #310).
+  const { held, decide } = useDecisionHold();
   const live = items.filter(it => it.kind === 'workflow' && it.status !== 'completed' && it.status !== 'cancelled' && !it.dismissed);
   if (live.length === 0) return null;
 
@@ -32,7 +36,6 @@ export function WorkflowStrip() {
       setBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
     }
   };
-  const { held, decide } = useDecisionHold();
 
   return (
     <>
