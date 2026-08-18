@@ -15,7 +15,7 @@ import { BADGE } from '@/lib/badges';
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
@@ -71,6 +71,7 @@ interface AgentFormData {
   max_tool_concurrency: number;
   tool_not_found_behavior: string;
   reasoning_item_id_policy: string;
+  workflow_authoring: boolean;
   approve_tools: string;
   compaction_enabled: boolean;
   compaction_threshold_tokens: number;
@@ -150,7 +151,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
     ...flattenConfig(initial as Record<string, unknown> | undefined),
@@ -353,6 +354,18 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         {handoffTargets.length === 0 && <div className="FormControl-caption">Create other agents to enable handoffs</div>}
         {seg('Handoff input filter', form.handoff_input_filter || '', [['', 'None (default)'], ['nest_history', 'Nest handoff history']], v => set('handoff_input_filter', v))}
         {fc('Handoff description', <TextInput value={form.handoff_description || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('handoff_description', e.target.value)} placeholder="Description when this agent is a handoff target" block />)}
+      </div>
+
+      {/* Opt-in, unlike the task and todo tools every chat agent carries: the
+          save schema costs every request, and authoring workflows is one
+          agent's job, not every agent's. */}
+      <div className="form-group">
+        <div className="form-group-title">Workflows</div>
+        <FormControl>
+          <Checkbox checked={form.workflow_authoring || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('workflow_authoring', e.target.checked)} />
+          <FormControl.Label>Author workflows from the chat</FormControl.Label>
+          <FormControl.Caption>get_workflow / save_workflow — every save is shown to you for approval before it is written. Running one is spawn_task's, which every agent has.</FormControl.Caption>
+        </FormControl>
       </div>
 
       <div className="form-group">

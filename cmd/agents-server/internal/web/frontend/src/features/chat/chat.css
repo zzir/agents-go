@@ -640,6 +640,31 @@
 /* submit_plan review: the plan renders as prose, not JSON */
 .ToolCallCard-plan { margin: 0; font-size: 13px; }
 
+/* save_workflow review: the proposed definition, and what it replaces */
+.ToolCallCard-wf { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.ToolCallCard-wf-desc { color: var(--fgColor-muted); }
+.ToolCallCard-wf-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.ToolCallCard-wf-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.ToolCallCard-wf-step-name { font-weight: 600; }
+.ToolCallCard-wf-step-agent { color: var(--fgColor-muted); font-family: var(--fontStack-monospace, monospace); font-size: 12px; }
+.ToolCallCard-wf-prompt { margin: 2px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--fgColor-default); }
+.ToolCallCard-wf-budget { font-size: 12px; color: var(--fgColor-muted); }
+.ToolCallCard-wf-review { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.ToolCallCard-wf-review .ToolCallCard-wf-diff { align-self: stretch; }
+.ToolCallCard-wf-review-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fgColor-muted); }
+.ToolCallCard-wf-diff {
+  font-family: var(--fontStack-monospace, monospace);
+  font-size: 12px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  padding: 4px 0;
+  overflow-x: auto;
+}
+.ToolCallCard-wf-diff-line { display: flex; gap: 6px; white-space: pre-wrap; word-break: break-word; padding: 0 6px; }
+.ToolCallCard-wf-diff-sign { flex-shrink: 0; user-select: none; width: 1ch; }
+.ToolCallCard-wf-diff-add { background: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15)); color: var(--fgColor-default); }
+.ToolCallCard-wf-diff-del { background: var(--bgColor-danger-muted, rgba(207, 34, 46, 0.1)); color: var(--fgColor-muted); text-decoration: line-through; }
+
 /* todo_write checklist */
 .ToolCallCard-todos {
   list-style: none;

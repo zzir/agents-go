@@ -5,6 +5,8 @@ import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
 import { useChatActions, useChatTaskLookups } from '@/features/chat/ChatSessionContext';
 import { ToolOutputBody } from '@/features/chat/ToolOutputBody';
+import { WorkflowSpecBody } from '@/features/chat/WorkflowSpecBody';
+import { parseWorkflowSpec, type WorkflowSpec } from '@/lib/workflowArgs';
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
@@ -21,19 +23,25 @@ interface TodoRow { content: string; status: string }
 
 type ArgBody =
   | { kind: 'patch' | 'command' | 'json' | 'markdown'; text: string }
-  | { kind: 'todos'; text: string; todos: TodoRow[] };
+  | { kind: 'todos'; text: string; todos: TodoRow[] }
+  | { kind: 'workflow'; text: string; spec: WorkflowSpec };
 
 // primaryArg picks the meaningful content to show for a tool call. For the tools
 // an operator actually reviews at approval time we surface the raw field with
 // real newlines instead of an escaped-JSON blob: apply_patch → the patch,
 // exec_command → the shell command, submit_plan → the plan as markdown (its
-// approval card IS the plan review), todo_write → a checklist. Everything else
+// approval card IS the plan review), todo_write → a checklist, save_workflow →
+// the definition (its approval card is the change review). Everything else
 // falls back to pretty JSON.
 function primaryArg(toolName: string, args: string): ArgBody {
   try {
     const parsed = JSON.parse(args);
     if (toolName === 'apply_patch' && typeof parsed.patch === 'string') {
       return { kind: 'patch', text: parsed.patch };
+    }
+    if (toolName === 'save_workflow') {
+      const spec = parseWorkflowSpec(args);
+      if (spec) return { kind: 'workflow', text: '', spec };
     }
     if (toolName === 'exec_command' && typeof parsed.cmd === 'string') {
       const cmd = parsed.workdir ? `cd ${parsed.workdir} && ${parsed.cmd}` : parsed.cmd;
@@ -101,6 +109,9 @@ function argSummary(toolName: string, args: string): { text: string; mono: boole
       }
       case 'submit_plan':
         return typeof p.plan === 'string' && p.plan ? { text: p.plan.split('\n')[0], mono: false } : null;
+      case 'save_workflow':
+      case 'get_workflow':
+        return typeof p.name === 'string' && p.name ? { text: p.name, mono: false } : null;
       case 'multi_tool_use.parallel': {
         const uses = Array.isArray(p.tool_uses) ? p.tool_uses : [];
         const names = uses
@@ -291,6 +302,8 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
         <div className="ToolCallCard-diff markdown-body" dangerouslySetInnerHTML={{ __html: diffHtml }} />
       ) : body.kind === 'markdown' ? (
         <div className="ToolCallCard-plan markdown-body" dangerouslySetInnerHTML={{ __html: planHtml }} />
+      ) : body.kind === 'workflow' ? (
+        <WorkflowSpecBody spec={body.spec} pending={pendingApproval} />
       ) : body.kind === 'todos' ? (
         <ul className="ToolCallCard-todos">
           {body.todos.map((td, i) => (
@@ -344,7 +357,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
             </>
           ) : (
             <Button size="small" variant="primary" onClick={() => onApprove && onApprove(tool_call_id, 'once')}>
-              {tool_name === 'submit_plan' ? 'Approve plan' : 'Approve'}
+              {tool_name === 'submit_plan' ? 'Approve plan' : tool_name === 'save_workflow' ? 'Save workflow' : 'Approve'}
             </Button>
           )}
           <Button size="small" variant="danger" onClick={() => onReject && onReject(tool_call_id)}>
