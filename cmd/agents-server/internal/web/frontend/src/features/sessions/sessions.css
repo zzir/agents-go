@@ -94,3 +94,14 @@
 .sidebar-scroll .session-row:has(.session-selected) [data-component="ActionList.Item.Label"] {
   font-weight: var(--base-text-weight-normal, 400);
 }
+
+/* --- SessionPicker (the Conversation SelectPanel in forms) --- */
+
+/* One line per conversation, an ellipsis past the panel's width: a long name
+   must not push its neighbours down. The anchor's chosen name, the same. */
+.session-picker-list [data-component="ActionList.Item.Label"],
+.session-picker-anchor [data-component="text"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

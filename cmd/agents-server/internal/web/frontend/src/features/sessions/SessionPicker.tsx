@@ -6,6 +6,7 @@ import { useApi } from '@/lib/hooks';
 import { filterSessionsByName } from '@/lib/sessionFilter';
 import { createOrReuseSession } from '@/lib/newSession';
 import { toast } from '@/lib/toast';
+import './sessions.css';
 
 interface SessionRef { id: string; name: string; pinned?: boolean; sandbox_id?: string }
 
@@ -23,7 +24,8 @@ const NEW_SESSION = '__new_session__';
 // names a conversation must not send the person to the sidebar first. One
 // flat list, "New session" its first row: the choice is short enough not to
 // need headings, and the panel scrolls at a bounded height rather than
-// growing to the page.
+// growing to the page. A row is one line, however long the name (the whole
+// of it is the row's title).
 export function SessionPicker({ value, onChange, placeholder = 'Select a conversation…' }:
   { value: string; onChange: (id: string) => void; placeholder?: string }) {
   const { data: sessions, mutateData } = useApi<SessionRef[]>(() => api.sessions.list() as Promise<SessionRef[]>);
@@ -37,11 +39,10 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a convers
     const ordered = [...visible.filter(s => s.pinned), ...visible.filter(s => !s.pinned)];
     return [
       { id: NEW_SESSION, text: creating ? 'Creating…' : 'New session', leadingVisual: PlusIcon, disabled: creating },
-      ...ordered.map(s => ({
-        id: s.id,
-        text: s.name || s.id.slice(0, 8),
-        leadingVisual: s.pinned ? PinIcon : CommentDiscussionIcon,
-      })),
+      ...ordered.map(s => {
+        const text = s.name || s.id.slice(0, 8);
+        return { id: s.id, text, title: text, leadingVisual: s.pinned ? PinIcon : CommentDiscussionIcon };
+      }),
     ];
   }, [list, filter, creating]);
   const selectedName = value ? (list.find(s => s.id === value)?.name || value.slice(0, 8)) : '';
@@ -65,8 +66,10 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a convers
   return (
     <SelectPanel
       title="Conversation"
+      className="session-picker-list"
       renderAnchor={({ children: _children, ...anchorProps }) => (
-        <Button block alignContent="start" trailingAction={TriangleDownIcon} aria-label={'Conversation: ' + (selectedName || 'none picked')} {...anchorProps}>
+        <Button block alignContent="start" trailingAction={TriangleDownIcon} className="session-picker-anchor"
+          aria-label={'Conversation: ' + (selectedName || 'none picked')} title={selectedName || undefined} {...anchorProps}>
           {selectedName || placeholder}
         </Button>
       )}
