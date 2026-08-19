@@ -94,6 +94,10 @@ export const api = {
     // The session's background work — tasks and workflow executions — newest first.
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
     traces: (id: string | number) => request(`/sessions/${id}/traces`),
+    // Every run that left entries, oldest first, with the user text it started
+    // from and whether it is on the active branch — the trace panel's labels
+    // for runs whose exchange the paged timeline has not loaded.
+    runs: (id: string | number) => request(`/sessions/${id}/runs`),
     // What the session's active branch occupies of the model's context window.
     // Recomputed per call from the entries — there is no live event for it, so
     // the panel refetches when a run ends.

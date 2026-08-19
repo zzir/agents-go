@@ -165,7 +165,7 @@ export function ChatView({
   // the trace panel still lists their runs, so it reads the raw entries.
   const messages: ChatMessage[] = state.messages;
   const {
-    entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns,
+    entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns, runQuestions,
     liveRunId, liveStartedAt, liveAgentName, tasks, tasksLoaded, taskView, hasMore, loadingMore,
   } = state;
   const {
@@ -394,16 +394,28 @@ export function ChatView({
     // and mark them, so "5 traces, 3 exchanges" reads as what it is rather
     // than as a mismatch.
     const stale = new Set<string>();
+    const paged = new Set<string>();
     let lastUser: string | null = null;
     for (const e of entries || []) {
       if (e.role === 'user' && e.content) lastUser = e.content;
       const rid = e.run_id;
       if (!rid || !traceRuns[rid]) continue;
+      paged.add(rid);
       if (e.on_path === false) stale.add(rid);
       if (!labels[rid] && lastUser) labels[rid] = runLabelFor(lastUser);
     }
+    // Runs whose exchange lies before the page of history loaded: the timeline
+    // pages, the traces do not. The server's own walk over ALL the entries
+    // (GET /sessions/:id/runs) names them the same way, and says which of them
+    // the session has branched away from. A run the page holds is the page's
+    // to judge — its entries are current, this snapshot is from the trace load.
+    for (const [rid, q] of Object.entries(runQuestions || {})) {
+      if (!traceRuns[rid] || paged.has(rid)) continue;
+      if (!labels[rid] && q.question) labels[rid] = runLabelFor(q.question);
+      if (!q.onPath) stale.add(rid);
+    }
     return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels, staleRuns: stale };
-  }, [messages, entries, traceRuns, tasks]);
+  }, [messages, entries, traceRuns, runQuestions, tasks]);
 
   // Wake-up run → the run whose spawn_task started the chain, read straight
   // off the trace: a wake run's spans carry parent_run_id, recorded at launch.

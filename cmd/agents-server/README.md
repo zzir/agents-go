@@ -128,6 +128,7 @@ detail.
 | DELETE | `/sessions/:id`           | Delete the session and everything it owns: entries, traces, approvals, wake-ups, triggers, and its task tree (rows and hidden child sessions, at any depth over live edges) |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
+| GET    | `/sessions/:id/runs`      | Every run that left entries, oldest first — `{run_id, question, on_path}`: the user text it started from (a regenerate inherits the message it answered again) and whether it is on the active branch |
 | GET    | `/sessions/:id/context`   | Context-window usage report (see [invariant 28](#design-invariants)) |
 | POST   | `/sessions/:id/compact`   | Force one compaction pass now (409 while a run is live)              |
 | POST   | `/sessions/:id/fork`      | Fork session into a new one                                          |
@@ -173,7 +174,11 @@ EMPTY input: nothing to add, history to answer.
 on. Each carries its `kind` (`item` / `annotation` / `compaction` / …), its
 recorded `display`, and its `usage` / `diagnostics`. Update entries are folded
 into their targets server-side, so a client never applies them itself. The path
-keeps its name for compatibility.
+keeps its name for compatibility. The UI loads the newest 200 and pages
+backwards on demand ("Load earlier messages"), while `/sessions/:id/traces`
+loads the whole session's spans at once — so the trace panel labels a card
+whose exchange is not on screen from `/sessions/:id/runs`, the server's own
+walk over every entry, rather than showing a bare run id.
 
 `/sessions/:id/context` reports what the session's ACTIVE branch occupies of its
 model's context window — the Context panel's whole payload, recomputed per call

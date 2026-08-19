@@ -347,6 +347,51 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 // Branching keeps both attempts and marks which one is current. Deleting the
 // abandoned one is what a fork-a-new-session regenerate did instead, and it is
 // why "show me the other answer" was not offerable.
+// A run is labeled by the user text it started from: its own message, or —
+// for a regenerate, which leaves no user entry of its own — the message it
+// answered again; and a run the session branched away from says so.
+func TestRunQuestionsNameEveryRunByItsQuestion(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewEntryStoreFor(db, session.Direct("s1"))
+	answer := func(text string) session.Entry {
+		return rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":`+quoteJSON(text)+`}]}`, agents.Source{})
+	}
+
+	s.SetRunID("r1")
+	seed(t, s, userEntry(t, "first question"), answer("first answer"))
+	s.SetRunID("r2")
+	seed(t, s, userEntry(t, "second question"), answer("second answer"))
+	// Regenerate the second answer: a new run whose only entries are its turn.
+	stored, err := s.Entries(ctx, session.Cursor{})
+	if err != nil || len(stored) != 4 {
+		t.Fatalf("seeded entries: %v %v", stored, err)
+	}
+	if err := s.Branch(ctx, session.Direct("s1"), stored[2].ID); err != nil {
+		t.Fatalf("branch: %v", err)
+	}
+	s.SetRunID("r3")
+	seed(t, s, answer("second answer, again"))
+
+	runs, err := s.RunQuestions(ctx, session.Direct("s1"))
+	if err != nil {
+		t.Fatalf("run questions: %v", err)
+	}
+	want := []RunQuestion{
+		{RunID: "r1", Question: "first question", OnPath: true},
+		{RunID: "r2", Question: "second question", OnPath: false}, // its answer was branched away
+		{RunID: "r3", Question: "second question", OnPath: true},
+	}
+	if len(runs) != len(want) {
+		t.Fatalf("runs = %+v, want %+v", runs, want)
+	}
+	for i := range want {
+		if runs[i] != want[i] {
+			t.Errorf("run %d = %+v, want %+v", i, runs[i], want[i])
+		}
+	}
+}
+
 func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

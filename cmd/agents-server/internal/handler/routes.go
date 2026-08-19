@@ -44,6 +44,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sessions.POST("/:id/fork", h.Sessions.Fork)
 		sessions.POST("/:id/branch", h.Sessions.Branch)
 		sessions.GET("/:id/traces", h.Traces.ListBySession)
+		sessions.GET("/:id/runs", h.Sessions.Runs)
 		sessions.POST("/:id/runs", h.Runs.Create)
 		sessions.GET("/:id/approvals", h.Approvals.ListBySession)
 		sessions.GET("/:id/tasks", h.Tasks.ListBySession)

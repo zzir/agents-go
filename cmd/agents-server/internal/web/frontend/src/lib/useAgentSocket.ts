@@ -135,6 +135,11 @@ export interface SessionState {
   // first time. Cleared when a new run starts.
   diagnostics: RunDiagnostic[];
   traceRuns: Record<string, TraceEvent[]>;
+  // Every persisted run's question and whether it is on the active branch,
+  // fetched with the traces (loadTraces): what labels a trace card whose
+  // exchange lies outside the page of history loaded — the timeline pages,
+  // the traces do not.
+  runQuestions: Record<string, { question: string; onPath: boolean }>;
   liveRunId: string | null;
   liveStartedAt: number | null;
   liveAgentName: string | null;
@@ -198,7 +203,7 @@ function staleTaskRow(cur: TaskState, status: TaskStatus, attempt?: number): boo
 export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
-    traceRuns: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, loaded: false,
+    traceRuns: {}, runQuestions: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, loaded: false,
     entries: [], hasMore: false, loadingMore: false, tasks: {}, tasksLoaded: false, taskView: null,
   };
 }
@@ -441,10 +446,20 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   // open: stored generation spans carry whole model requests, and every
   // session open paying that download for lenses nobody may open is the wrong
   // default. Live runs stream their spans over the WS regardless; this
-  // backfills history.
+  // backfills history. The runs' questions come with them: the traces cover
+  // the whole session while the timeline is paged, so a card's exchange may
+  // not be on screen to label it from.
   const loadTraces = useCallback((sid: string) => {
     if (!sid || tracesLoadedRef.current.has(sid)) return;
     tracesLoadedRef.current.add(sid);
+    (api.sessions.runs(sid) as Promise<Array<{ run_id: string; question: string; on_path: boolean }> | null>)
+      .then(rows => {
+        if (!rows || rows.length === 0) return;
+        const runQuestions: SessionState['runQuestions'] = {};
+        for (const r of rows) runQuestions[r.run_id] = { question: r.question || '', onPath: r.on_path !== false };
+        updateSS(sid, s => ({ ...s, runQuestions }));
+      })
+      .catch(() => undefined); // labels degrade to run ids; the spans still load
     api.sessions.traces(sid).then((events: Array<{ run_id?: string; parent_run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};

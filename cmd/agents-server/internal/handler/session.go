@@ -391,6 +391,36 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
+// Runs responds with the session's runs and what each was asked.
+//
+//	@Summary		List session runs
+//	@Description	Every run that left entries on the session, oldest first, each with the user text it started from (`question` — its own message, or for a regenerate the message it answered again) and whether its entries are on the active branch (`on_path`). What the trace panel labels a run by when its message lies outside the page of history it has loaded.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{array}		store.RunQuestion
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/runs [get]
+func (h *SessionHandler) Runs(c *gin.Context) {
+	ctx := c.Request.Context()
+	ref, err := h.entries.RefFor(ctx, c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	runs, err := h.entries.RunQuestions(ctx, ref)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	if runs == nil {
+		runs = []store.RunQuestion{}
+	}
+	c.JSON(http.StatusOK, runs)
+}
+
 // Context responds with the session's context-window report.
 //
 //	@Summary		Session context usage

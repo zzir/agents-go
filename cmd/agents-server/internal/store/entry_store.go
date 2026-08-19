@@ -664,6 +664,49 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID i
 	return views, nil
 }
 
+// RunQuestion is one run of a session and what it was asked: the text of the
+// user entry it started from — its own, or for a regenerate the message it
+// answered again — and whether its entries are on the active branch. The trace
+// panel labels a run's card by it when the entry lies outside the page of
+// history it has loaded, and marks a branched-away run stale.
+type RunQuestion struct {
+	RunID    string `json:"run_id"`
+	Question string `json:"question"`
+	OnPath   bool   `json:"on_path"`
+}
+
+// RunQuestions lists every run that left entries on the session's current
+// generation, oldest first — the same walk over the entries the client makes
+// over the page it holds, here over all of them (a GetEntries read, the cost
+// the messages page pays too).
+func (s *EntryStore) RunQuestions(ctx context.Context, ref session.Ref) ([]RunQuestion, error) {
+	views, err := s.GetEntries(ctx, ref, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	var out []RunQuestion
+	at := make(map[string]int)
+	lastUser := ""
+	for _, v := range views {
+		if v.Role == "user" && v.Content != "" {
+			lastUser = v.Content
+		}
+		if v.RunID == "" {
+			continue
+		}
+		i, seen := at[v.RunID]
+		if !seen {
+			i = len(out)
+			at[v.RunID] = i
+			out = append(out, RunQuestion{RunID: v.RunID, Question: lastUser, OnPath: true})
+		}
+		if !v.OnPath {
+			out[i].OnPath = false
+		}
+	}
+	return out, nil
+}
+
 // roleOf maps an entry's provenance to the role a renderer groups by.
 func roleOf(e session.Entry) string {
 	switch e.Source.Type {

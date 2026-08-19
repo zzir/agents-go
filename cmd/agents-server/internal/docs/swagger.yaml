@@ -1417,6 +1417,15 @@ components:
         retry_policy:
           type: string
       type: object
+    store.RunQuestion:
+      properties:
+        on_path:
+          type: boolean
+        question:
+          type: string
+        run_id:
+          type: string
+      type: object
     store.SandboxConfig:
       properties:
         config:
@@ -4020,6 +4029,45 @@ paths:
       tags:
       - sessions
   /sessions/{id}/runs:
+    get:
+      description: Every run that left entries on the session, oldest first, each
+        with the user text it started from (`question` — its own message, or for a
+        regenerate the message it answered again) and whether its entries are on the
+        active branch (`on_path`). What the trace panel labels a run by when its message
+        lies outside the page of history it has loaded.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.RunQuestion'
+                type: array
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List session runs
+      tags:
+      - sessions
     post:
       description: 'Starts an agent run on the session. Default returns 201 with a
         run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up
