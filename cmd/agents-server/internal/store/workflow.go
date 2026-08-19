@@ -713,6 +713,11 @@ func NormalizeWorkflow(w *Workflow) error {
 		return fmt.Errorf("budget: max_laps cannot exceed %d, the ceiling every execution has", MaxStepRuns)
 	}
 	seen := make(map[string]bool, len(w.Steps))
+	// Names are how the model reads and writes a definition (get_workflow /
+	// save_workflow name steps and edges, never ids), so a name must denote
+	// one step — case-insensitively, as the tool matches — and cannot be the
+	// edge target that means "stop".
+	names := make(map[string]bool, len(w.Steps))
 	for i := range w.Steps {
 		s := &w.Steps[i]
 		s.ID = strings.TrimSpace(s.ID)
@@ -723,6 +728,16 @@ func NormalizeWorkflow(w *Workflow) error {
 		}
 		if s.Prompt == "" {
 			return fmt.Errorf("step %d: prompt is required", i+1)
+		}
+		if s.Name != "" {
+			if strings.EqualFold(s.Name, WorkflowStepEnd) {
+				return fmt.Errorf("step %d: %q is reserved — it is what an edge names to stop there", i+1, WorkflowStepEnd)
+			}
+			key := strings.ToLower(s.Name)
+			if names[key] {
+				return fmt.Errorf("step %d: duplicate step name %q", i+1, s.Name)
+			}
+			names[key] = true
 		}
 		if s.ID == "" {
 			s.ID = NewID()

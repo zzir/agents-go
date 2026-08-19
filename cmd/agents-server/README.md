@@ -696,7 +696,11 @@ description lists the agents on offer). Saving under a name that exists
 replaces that definition — an update, not a second workflow — and a step that
 keeps its name keeps its id, so a retry and an execution in flight still name
 the same step; a nameless step reads back as `Step N`, which is what saving it
-back then stores. Every save is APPROVED first: the tool is approval-gated on
+back then stores. Because names are the model's handles, the store holds every
+definition to them — the hub editor's included: a step name denotes one step
+(case-insensitively) and `end` is not one (`NormalizeWorkflow`), so what the
+hub saves is always something the model can read back and edit. Every save is
+APPROVED first: the tool is approval-gated on
 its own (not through the agent's `approve_tools`), and the approval card in the
 chat is the review — the definition, drawn as in the hub, and, when it replaces
 one, the stored definition diffed line by line. A save that would not land
@@ -1783,7 +1787,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     reports it) is kept, which is what keeps a retry and an execution in
     flight naming the same step across a model's edit. Same name means the
     same workflow (`EqualFold`, as the unique index is `NOCASE`): a save is an
-    upsert, and its result says which it did. The pair is per-agent opt-in
+    upsert, and its result says which it did. Names being the handles, the
+    STORE enforces them for every writer (`NormalizeWorkflow`: a step name is
+    unique per definition, case-insensitively, and `end` is reserved), so a
+    definition the hub saved is one the model can read back and edit; and the
+    approval card lays the proposal out as the server would store it — trimmed,
+    gate words as `Verdict` compares them, edges resolved to the step's own
+    spelling — so its chart and its diff against the stored definition show
+    the save, not the model's spelling of it. The pair is per-agent opt-in
     (`behavior.workflow_authoring`) — a save schema on every request of every
     agent would be paid for by agents that never author — and attached only
     where the task tools are, on a chat run: a background run has nobody to

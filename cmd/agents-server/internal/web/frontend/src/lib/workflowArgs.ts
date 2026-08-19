@@ -25,12 +25,35 @@ export interface WorkflowSpec {
   budget: { max_steps: number; max_tokens: number; max_minutes: number; max_laps: number };
 }
 
-const str = (v: unknown) => (typeof v === 'string' ? v : '');
+const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const bool = (v: unknown) => v === true;
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
-// parseWorkflowSpec reads the tool call's arguments defensively: a field the
-// model left out reads as empty, and anything but an object with a name is null.
+// END is the reserved edge target (mirrors store.WorkflowStepEnd; graph.END is
+// the same string, kept here so this module has no dependency on the chart).
+const END = 'end';
+
+// GATE_TRIM is what the server's Verdict strips off a candidate line before
+// comparing, and so off a configured word (store.normalizeGateWord) — the
+// card must show the word as it will be stored and matched.
+const GATE_TRIM = '*_`.!:';
+export function normalizeGateWord(w: string): string {
+  let t = w.trim();
+  let a = 0;
+  let b = t.length;
+  while (a < b && GATE_TRIM.includes(t[a])) a++;
+  while (b > a && GATE_TRIM.includes(t[b - 1])) b--;
+  t = t.slice(a, b);
+  return t.trim();
+}
+
+// parseWorkflowSpec reads the tool call's arguments defensively — a field the
+// model left out reads as empty, and anything but an object with a name is
+// null — into the shape the server would STORE them (bridge.resolveWorkflowSpec
+// + store.NormalizeWorkflow): trimmed, gate words as Verdict compares them,
+// edges resolved case-insensitively to the step's own spelling and `end` in
+// any case to `end`. The card's chart and its diff against the stored
+// definition then show the save, not the model's spelling of it.
 export function parseWorkflowSpec(argsJSON: string): WorkflowSpec | null {
   let raw: unknown;
   try {
@@ -42,18 +65,32 @@ export function parseWorkflowSpec(argsJSON: string): WorkflowSpec | null {
   const o = raw as Record<string, unknown>;
   if (typeof o.name !== 'string') return null;
   const budget = (o.budget && typeof o.budget === 'object' ? o.budget : {}) as Record<string, unknown>;
-  const steps = Array.isArray(o.steps) ? o.steps : [];
+  const rawSteps = Array.isArray(o.steps) ? o.steps : [];
+  const steps: WorkflowSpecStep[] = rawSteps
+    .filter(s => s && typeof s === 'object')
+    .map((s: Record<string, unknown>) => ({
+      name: str(s.name), agent: str(s.agent), prompt: str(s.prompt),
+      gate: bool(s.gate), gate_pass: normalizeGateWord(str(s.gate_pass)), gate_fail: normalizeGateWord(str(s.gate_fail)),
+      pause_before: bool(s.pause_before), compact_before: bool(s.compact_before),
+      on_success: str(s.on_success), on_failure: str(s.on_failure),
+    }));
+  // Edges after every name is known, so one may name a step in either direction.
+  const byLower = new Map<string, string>();
+  for (const s of steps) if (s.name && !byLower.has(s.name.toLowerCase())) byLower.set(s.name.toLowerCase(), s.name);
+  const edge = (t: string) => {
+    const k = t.toLowerCase();
+    if (!k) return '';
+    if (k === END) return END;
+    return byLower.get(k) ?? t; // an unknown target stays as written: the server refuses it
+  };
+  for (const s of steps) {
+    s.on_success = edge(s.on_success);
+    s.on_failure = edge(s.on_failure);
+  }
   return {
-    name: o.name,
+    name: o.name.trim(),
     description: str(o.description),
-    steps: steps
-      .filter(s => s && typeof s === 'object')
-      .map((s: Record<string, unknown>) => ({
-        name: str(s.name), agent: str(s.agent), prompt: str(s.prompt),
-        gate: bool(s.gate), gate_pass: str(s.gate_pass), gate_fail: str(s.gate_fail),
-        pause_before: bool(s.pause_before), compact_before: bool(s.compact_before),
-        on_success: str(s.on_success), on_failure: str(s.on_failure),
-      })),
+    steps,
     budget: {
       max_steps: num(budget.max_steps), max_tokens: num(budget.max_tokens),
       max_minutes: num(budget.max_minutes), max_laps: num(budget.max_laps),

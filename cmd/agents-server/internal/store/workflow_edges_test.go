@@ -89,6 +89,33 @@ func TestNormalizeWorkflowChecksGateWords(t *testing.T) {
 	}
 }
 
+// A step name denotes one step — the model reads and writes definitions by
+// name, never id — case-insensitively, as the tool matches; and "end" is an
+// edge target, not a step. Nameless steps are fine, however many.
+func TestNormalizeWorkflowChecksStepNames(t *testing.T) {
+	named := func(names ...string) *Workflow {
+		steps := make(WorkflowSteps, 0, len(names))
+		for _, n := range names {
+			steps = append(steps, WorkflowStep{Name: n, AgentConfigID: "x", Prompt: "p"})
+		}
+		return &Workflow{Name: "w", Description: "d", Steps: steps}
+	}
+	if err := NormalizeWorkflow(named("plan", "exec", "", "")); err != nil {
+		t.Fatalf("distinct names and nameless steps must be accepted: %v", err)
+	}
+	for name, wf := range map[string]*Workflow{
+		"same name":         named("check", "check"),
+		"same name, cased":  named("check", "Check"),
+		"same name, padded": named("check", " check "),
+		"reserved":          named("plan", "end"),
+		"reserved, cased":   named("plan", "END"),
+	} {
+		if err := NormalizeWorkflow(wf); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
 func TestNormalizeWorkflowChecksEdges(t *testing.T) {
 	// A backward edge is the point — that is how a sequence loops.
 	back := edgeWorkflow(t,

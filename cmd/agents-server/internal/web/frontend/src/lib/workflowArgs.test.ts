@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { diffLines } from '@/lib/diff';
 import {
-  canonicalWorkflowText, parseWorkflowSpec, specFromStored, specSteps, stepFlags, storedStepNames,
+  canonicalWorkflowText, normalizeGateWord, parseWorkflowSpec, specFromStored, specSteps, stepFlags, storedStepNames,
 } from '@/lib/workflowArgs';
+import { edgeGraph, edgeSummary } from '@/features/workflows/graph';
 import type { Workflow } from '@/features/workflows/graph';
 
 const args = JSON.stringify({
@@ -36,6 +37,38 @@ describe('parseWorkflowSpec', () => {
     expect(spec.steps.map(s => s.name)).toEqual(['plan', 'exec', 'verify']);
     expect(spec.steps[2]).toMatchObject({ gate: true, pause_before: true, on_success: 'end', on_failure: 'exec' });
     expect(spec.budget.max_laps).toBe(2);
+  });
+
+  // The server trims, normalizes gate words and resolves edges without regard
+  // to case (bridge.resolveWorkflowSpec + store.NormalizeWorkflow); the card
+  // shows the save as it will be stored, so a person approves what lands.
+  it('reads the arguments as the server would store them', () => {
+    const spec = parseWorkflowSpec(JSON.stringify({
+      name: ' build ', description: ' d ',
+      steps: [
+        { name: ' exec ', agent: ' coder ', prompt: 'Do it.\n\n', gate: false, gate_pass: '', gate_fail: '', pause_before: false, compact_before: false, on_success: '', on_failure: '' },
+        { name: 'verify', agent: 'reviewer', prompt: 'Check.', gate: true, gate_pass: '**ok.**', gate_fail: 'NOPE!', pause_before: false, compact_before: false, on_success: 'END', on_failure: ' Exec ' },
+      ],
+      budget: { max_steps: 0, max_tokens: 0, max_minutes: 0, max_laps: 0 },
+    }))!;
+    expect(spec.name).toBe('build');
+    expect(spec.description).toBe('d');
+    expect(spec.steps[0]).toMatchObject({ name: 'exec', agent: 'coder', prompt: 'Do it.' });
+    expect(spec.steps[1]).toMatchObject({ gate_pass: 'ok', gate_fail: 'NOPE', on_success: 'end', on_failure: 'exec' });
+    // …and the chart draws the resolved edges: FAIL loops back to exec, not
+    // off to end for a target it could not find.
+    const steps = specSteps(spec);
+    expect(edgeGraph(steps)).toContain('n1 -.->|FAIL| n0');
+    expect(edgeSummary(steps)[1]).toBe('verify: PASS → end · FAIL → exec');
+    // An edge to no step stays as written — the server refuses that save.
+    expect(parseWorkflowSpec('{"name":"x","steps":[{"name":"a","on_success":"nowhere"}]}')!.steps[0].on_success).toBe('nowhere');
+  });
+
+  it('normalizes gate words as Verdict compares them', () => {
+    expect(normalizeGateWord(' **OK!** ')).toBe('OK');
+    expect(normalizeGateWord('LGTM')).toBe('LGTM');
+    expect(normalizeGateWord('!!!')).toBe('');
+    expect(normalizeGateWord('')).toBe('');
   });
 
   it('tolerates missing fields and refuses non-objects', () => {
@@ -99,6 +132,22 @@ describe('canonicalWorkflowText', () => {
       'step verify · agent reviewer · gate PASS/FAIL · pause before · compact before · PASS → end · FAIL → exec',
       '  Run the tests.',
     ]);
+  });
+
+  // Whitespace and case the server would normalize away must not read as a
+  // change: the stored side is normalized, so the proposal is brought to it.
+  it('shows no change for spelling the server normalizes', () => {
+    const before = canonicalWorkflowText(specFromStored(stored, agentName));
+    const respelled = parseWorkflowSpec(JSON.stringify({
+      name: 'build ', description: ' Implement a feature end to end',
+      steps: [
+        { name: 'Step 1', agent: 'planner', prompt: 'Write a plan.\n', gate: false, gate_pass: '', gate_fail: '', pause_before: false, compact_before: false, on_success: '', on_failure: '' },
+        { name: 'exec', agent: 'coder', prompt: 'Carry out the plan.\nAdd tests.', gate: false, gate_pass: '', gate_fail: '', pause_before: false, compact_before: false, on_success: '', on_failure: '' },
+        { name: 'verify', agent: 'reviewer', prompt: 'Run the tests.', gate: true, gate_pass: '', gate_fail: '', pause_before: true, compact_before: true, on_success: 'END', on_failure: 'Exec' },
+      ],
+      budget: { max_steps: 0, max_tokens: 0, max_minutes: 0, max_laps: 2 },
+    }))!;
+    expect(diffLines(before, canonicalWorkflowText(respelled)).filter(l => l.type !== 'same')).toEqual([]);
   });
 
   it('a changed prompt diffs as that line alone', () => {

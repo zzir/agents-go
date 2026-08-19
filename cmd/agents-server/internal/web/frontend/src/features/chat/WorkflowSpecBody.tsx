@@ -40,9 +40,16 @@ interface AgentRef { id: string; name: string }
 // while the approval is pending, since afterwards the store holds the result.
 function WorkflowSaveReview({ spec }: { spec: WorkflowSpec }) {
   // An empty list arrives as null, so "loaded" is the loading flag, not the data.
-  const { data: workflows, loading } = useApi<Workflow[] | null>(() => api.workflows.list() as Promise<Workflow[] | null>);
-  const { data: agents } = useApi<AgentRef[] | null>(() => api.agents.list() as Promise<AgentRef[] | null>);
-  if (loading) return null;
+  const { data: workflows, loading, error } = useApi<Workflow[] | null>(() => api.workflows.list() as Promise<Workflow[] | null>);
+  const { data: agents, loading: agentsLoading } = useApi<AgentRef[] | null>(() => api.agents.list() as Promise<AgentRef[] | null>);
+  // Both, before a line is drawn: a diff over agent ids would flash every
+  // step's agent line as a change until the names arrive.
+  if (loading || agentsLoading) return null;
+  if (error) {
+    // Not "new workflow": the store was not read, so what the save replaces
+    // is unknown — say so rather than review against nothing.
+    return <div className="ToolCallCard-wf-review ToolCallCard-wf-review-error">Could not load the stored workflows to review against: {error}</div>;
+  }
   const name = spec.name.trim().toLowerCase();
   const existing = (workflows || []).find(w => (w.name || '').trim().toLowerCase() === name);
   if (!existing) {
