@@ -839,8 +839,8 @@ type modelCallOutcome struct {
 
 // callModelOnce performs one turn's model call and everything that wraps it:
 // the one-time user-input save, ModelOptions.InputFilter, the generation span,
-// the three shapes the call can take (raced by the first turn's non-blocking
-// input guardrails, streamed, or plain), and the overflow recovery that asks
+// the call itself (streamed or plain; raced by the first turn's non-blocking
+// input guardrails when there are any), and the overflow recovery that asks
 // for the turn to be run again.
 //
 // req is the request as the loop resolved it. InputFilter may still rewrite its
@@ -887,18 +887,22 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 	span := r.startGenerationSpan(st.agent, req)
 	// Retries happen inside the model call, where the runner cannot reach; the
 	// span rides on the context so they nest under it.
-	callCtx := tracing.WithSpan(ctx, span)
+	call := func(ctx context.Context) (*ModelResponse, error) {
+		ctx = tracing.WithSpan(ctx, span)
+		if r.rawEvents {
+			return r.streamOneModelCall(ctx, span, snap.Model, req)
+		}
+		return snap.Model.Respond(ctx, req)
+	}
 	var resp *ModelResponse
 	var err error
-	switch {
-	case r.inputRace != nil:
-		// First-turn racing input guardrails: the call runs under a cancelable
-		// context with the verdict watched from the side.
-		out := r.raceModelCall(callCtx, span, snap.Model, req, r.inputRace, st.originalInput)
-		// The race is decided — release its cancel context now, not at loop
-		// exit: with a long-lived parent ctx the registration would otherwise
+	if race := r.inputRace; race != nil {
+		// First-turn racing input guardrails watch the call from the side.
+		out := r.raceModelCall(span, call, race, st.originalInput)
+		// The race is decided — release its contexts now, not at loop exit:
+		// with a long-lived parent ctx the registrations would otherwise
 		// outlive the run. Idempotent with the consumer-stopped path's own stop.
-		r.inputRace.stop()
+		race.stop()
 		r.inputRace = nil
 		st.originalInput = out.original
 		if out.stopped {
@@ -908,10 +912,8 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 			return modelCallOutcome{err: r.fail(out.guardErr)}
 		}
 		resp, err = out.resp, out.modelErr
-	case r.rawEvents:
-		resp, err = r.streamOneModelCall(callCtx, span, snap.Model, req)
-	default:
-		resp, err = snap.Model.Respond(callCtx, req)
+	} else {
+		resp, err = call(ctx)
 	}
 	if err != nil {
 		span.SetError(err.Error(), nil)

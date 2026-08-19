@@ -26,18 +26,25 @@ type inputGuardOutcome struct {
 }
 
 // inputGuardRace is the in-flight non-blocking input guardrails racing the
-// first model call: ch delivers their collected verdict, cancel stops them.
+// first model call: ch delivers their collected verdict, and modelCtx is what
+// the raced call runs under — a tripwire or a guardrail failure cancels it, so
+// the call stops instead of completing into a run that has already failed.
 type inputGuardRace struct {
-	ch     chan inputGuardOutcome
-	cancel context.CancelFunc
+	ch          chan inputGuardOutcome
+	modelCtx    context.Context
+	cancelModel context.CancelFunc
+	cancelGuard context.CancelFunc
 }
 
-// stop cancels the in-flight guardrails. Nil-safe and idempotent, so the loop
-// can defer it unconditionally to stop an LLM-based guardrail on any early exit.
+// stop cancels the in-flight guardrails and releases the raced call's context.
+// Nil-safe and idempotent, so the loop can defer it unconditionally to stop an
+// LLM-based guardrail on any early exit.
 func (g *inputGuardRace) stop() {
-	if g != nil && g.cancel != nil {
-		g.cancel()
+	if g == nil {
+		return
 	}
+	g.cancelGuard()
+	g.cancelModel()
 }
 
 // inputGateResult is what the first turn's guardrail gate produced. original
@@ -124,7 +131,8 @@ func (r *runner) firstTurnInputGuardrails(
 	// guardrail that must rewrite what the model sees sets Blocking.
 	if len(parallel) > 0 {
 		gctx, gcancel := context.WithCancel(ctx)
-		race := &inputGuardRace{ch: make(chan inputGuardOutcome, 1), cancel: gcancel}
+		modelCtx, modelCancel := context.WithCancel(ctx)
+		race := &inputGuardRace{ch: make(chan inputGuardOutcome, 1), modelCtx: modelCtx, cancelModel: modelCancel, cancelGuard: gcancel}
 		parentID := r.agentParentID() // read before the goroutine races a handoff
 		payloadInput := out.original
 		go func() {
@@ -133,6 +141,9 @@ func (r *runner) firstTurnInputGuardrails(
 				GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: payloadInput})
 			if gerr != nil {
 				gspan.SetError(gerr.Error(), nil)
+				// The verdict stops the raced call; delivered on ch, it outranks
+				// whatever the call then returns.
+				modelCancel()
 			}
 			gspan.Finish()
 			race.ch <- inputGuardOutcome{results: res, err: gerr}
@@ -161,37 +172,23 @@ type racedCallOutcome struct {
 }
 
 // raceModelCall runs the first turn's model call with the non-blocking input
-// guardrails watching the verdict from the side, so a tripwire cancels the
-// in-flight call. The call stays on THIS goroutine in its usual (streamed) form,
-// because racing must not de-stream it.
+// guardrails watching from the side: call runs under race.modelCtx, which a
+// tripwire cancels. The call stays on THIS goroutine in its usual (streamed)
+// form, because racing must not de-stream it.
 //
 // A tripped guardrail aborts the turn WITHOUT billing usage or firing OnLLMEnd
 // — the model outcome is discarded. Raw events already yielded by a streamed
 // call stand; the run's error is what says they came to nothing.
-func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest, race *inputGuardRace, originalInput []InputItem) racedCallOutcome {
+func (r *runner) raceModelCall(span *tracing.SpanHandle, call func(context.Context) (*ModelResponse, error), race *inputGuardRace, originalInput []InputItem) racedCallOutcome {
 	out := racedCallOutcome{original: originalInput}
-	modelCtx, modelCancel := context.WithCancel(ctx)
-	relay := make(chan inputGuardOutcome, 1)
-	go func() {
-		g := <-race.ch
-		if g.err != nil {
-			modelCancel()
-		}
-		relay <- g
-	}()
 	var err error
-	if r.rawEvents {
-		out.resp, err = r.streamOneModelCall(modelCtx, span, model, req)
-	} else {
-		out.resp, err = model.Respond(modelCtx, req)
-	}
+	out.resp, err = call(race.modelCtx)
 	// An abandoned stream must stop the run WHERE IT STANDS (spec §2.0): don't
 	// wait on the guardrails here, or a slow one parks the consumer's break for
 	// its full duration. Cancel them and leave — their verdict is about a turn
 	// nobody will read.
 	if r.consumerStopped.Load() || errors.Is(err, errConsumerStopped) {
 		race.stop()
-		modelCancel()
 		span.Finish()
 		out.resp, out.stopped = nil, true
 		return out
@@ -203,8 +200,7 @@ func (r *runner) raceModelCall(ctx context.Context, span *tracing.SpanHandle, mo
 	if err != nil {
 		race.stop()
 	}
-	g := <-relay
-	modelCancel()
+	g := <-race.ch
 	r.recordGuardrailResults(g.results...)
 	if repl, ok := inputReplacement(g.results); ok {
 		if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
