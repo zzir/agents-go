@@ -550,17 +550,28 @@ Memories can be scoped to a specific agent via `agent_config_id`.
 
 ### Settings — `/api/v1/settings`
 
-| Method | Path             | Description              |
-|--------|------------------|--------------------------|
-| GET    | `/settings`      | List all key-value pairs |
-| GET    | `/settings/:key` | Get value                |
-| PUT    | `/settings/:key` | Set value                |
-| DELETE | `/settings/:key` | Delete                   |
+| Method | Path             | Description                                      |
+|--------|------------------|--------------------------------------------------|
+| GET    | `/settings`      | List all stored key-value pairs                  |
+| GET    | `/settings/:key` | Get value                                        |
+| PUT    | `/settings/:key` | Set value (400 on an unknown key or a bad value) |
+| DELETE | `/settings/:key` | Delete                                           |
+| GET    | `/setting-defs`  | The registry: every key, its kind and default    |
 
 The keys, their types, defaults and how the panel presents them all come from
-ONE table — `internal/settings`'s registry. Nothing here is a second source of
-truth: the backend reads a key through it, secret masking derives from it, and
-the panel renders from it. Adding a global setting is one entry there.
+ONE table — `internal/settings`'s registry, served at `/setting-defs`. Nothing
+here is a second source of truth: the backend reads a key through it, secret
+masking derives from it, and the panel renders from it. Adding a global setting
+is one entry there.
+
+A write names a defined key and carries a value its kind accepts, or it is a
+`400`: `trace_span_data_kb: "abc"` used to be stored and then silently ignored
+at read time, and a mistyped key used to become a row nothing would ever read.
+An EMPTY value is always accepted — that is how a setting is returned to its
+default. Reads are laxer than writes on purpose: `GET /settings` lists a key the
+registry no longer defines with `"unknown": true`, and `DELETE` takes it, so a
+value left behind by an older build can be seen and cleared rather than being
+hidden with no way to remove it.
 
 Known keys:
 

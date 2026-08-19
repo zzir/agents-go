@@ -552,6 +552,19 @@ components:
         work_dir:
           type: string
       type: object
+    handler.SettingView:
+      properties:
+        key:
+          type: string
+        unknown:
+          description: |-
+            Unknown marks a row the registry does not define — stored before
+            validation existed, or left behind by a removed feature. Reads list it
+            so it can be seen and deleted; writes refuse it.
+          type: boolean
+        value:
+          type: string
+      type: object
     handler.TaskPage:
       properties:
         items:
@@ -1016,6 +1029,50 @@ components:
         reasoning_tokens:
           type: integer
       type: object
+    settings.Def:
+      properties:
+        default:
+          description: |-
+            Default is the value that applies when the setting is unset. Empty means
+            the feature is off (or, for KeyTraceIncludeSensitiveData, that the SDK
+            decides) — never "the zero value happens to be right".
+          type: string
+        description:
+          type: string
+        group:
+          type: string
+        key:
+          type: string
+        kind:
+          $ref: '#/components/schemas/settings.Kind'
+        label:
+          type: string
+        max:
+          type: integer
+        min:
+          description: Min and Max bound a KindInt value. A zero Max means unbounded.
+          type: integer
+        placeholder:
+          type: string
+      type: object
+    settings.Kind:
+      enum:
+      - string
+      - text
+      - secret
+      - int
+      - bool
+      type: string
+      x-enum-comments:
+        KindSecret: masked on read, sentinel-resolved on write
+        KindString: single-line free text
+        KindText: multi-line free text
+      x-enum-varnames:
+      - KindString
+      - KindText
+      - KindSecret
+      - KindInt
+      - KindBool
     store.AgentConfig:
       properties:
         approval:
@@ -1528,13 +1585,6 @@ components:
         prompt_id:
           type: string
         prompt_version:
-          type: string
-      type: object
-    store.Setting:
-      properties:
-        key:
-          type: string
-        value:
           type: string
       type: object
     store.StepGate:
@@ -4272,16 +4322,34 @@ paths:
       summary: Get one trace span
       tags:
       - sessions
-  /settings:
+  /setting-defs:
     get:
-      description: 'Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).'
       responses:
         "200":
           content:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/store.Setting'
+                  $ref: '#/components/schemas/settings.Def'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List setting definitions
+      tags:
+      - settings
+  /settings:
+    get:
+      description: Every stored key/value. Secrets are masked; a key the registry
+        no longer defines is flagged `unknown` so it can be deleted. The definitions
+        themselves are at /setting-defs.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.SettingView'
                 type: array
           description: OK
         "500":
@@ -4337,7 +4405,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.Setting'
+                $ref: '#/components/schemas/handler.SettingView'
           description: OK
         "404":
           content:
@@ -4357,6 +4425,9 @@ paths:
       tags:
       - settings
     put:
+      description: The key must be one the registry defines (see /setting-defs) and
+        the value must suit its kind; either failure is a 400. An empty value returns
+        the setting to its default.
       parameters:
       - description: Setting key
         in: path
@@ -4380,7 +4451,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.Setting'
+                $ref: '#/components/schemas/handler.SettingView'
           description: OK
         "400":
           content:

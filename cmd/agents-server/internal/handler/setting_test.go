@@ -1,0 +1,162 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+)
+
+func newSettingEngine(t *testing.T) (*gin.Engine, *store.SettingStore) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	st := store.NewSettingStore(newTestDB(t))
+	h := NewSettingHandler(st)
+	e := gin.New()
+	e.GET("/settings", h.List)
+	e.GET("/settings/:key", h.Get)
+	e.PUT("/settings/:key", h.Set)
+	e.DELETE("/settings/:key", h.Delete)
+	e.GET("/setting-defs", SettingDefList)
+	return e, st
+}
+
+// A key the registry does not name is refused, so a typo cannot become a row
+// that is stored forever and read by nobody.
+func TestSetRejectsUnknownKey(t *testing.T) {
+	e, st := newSettingEngine(t)
+	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_urlll", `{"value":"http://127.0.0.1:1"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body)
+	}
+	if _, err := st.Get(t.Context(), "proxy_urlll"); err == nil {
+		t.Fatal("a refused key must not have been stored")
+	}
+}
+
+// The value has to suit the kind. Before this, "abc" for a number was stored
+// and then silently ignored at read time.
+func TestSetRejectsMalformedValues(t *testing.T) {
+	e, _ := newSettingEngine(t)
+	for _, tc := range []struct{ name, key, body string }{
+		{"int gets words", settings.KeyTraceSpanDataKB, `{"value":"lots"}`},
+		{"int below min", settings.KeyTraceSpanDataKB, `{"value":"0"}`},
+		{"int above max", settings.KeyMaxTerminalsPerSandbox, `{"value":"500"}`},
+		{"bool gets maybe", settings.KeyTraceIncludeSensitiveData, `{"value":"maybe"}`},
+		{"proxy without a scheme", settings.KeyProxyURL, `{"value":"127.0.0.1:7890"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := doJSON(t, e, http.MethodPut, "/settings/"+tc.key, tc.body); w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestSetAcceptsValidValues(t *testing.T) {
+	e, st := newSettingEngine(t)
+	for _, tc := range []struct{ key, value string }{
+		{settings.KeyProxyURL, "socks5://127.0.0.1:1080"},
+		{settings.KeyTraceSpanDataKB, "4096"},
+		{settings.KeyApprovalTTLMinutes, "0"},
+		{settings.KeyTraceIncludeSensitiveData, "false"},
+		// Empty is how a setting is returned to its default; never a 400.
+		{settings.KeyTraceRetentionDays, ""},
+	} {
+		w := doJSON(t, e, http.MethodPut, "/settings/"+tc.key, `{"value":`+mustQuote(tc.value)+`}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200: %s", tc.key, w.Code, w.Body)
+		}
+		got, err := st.Get(t.Context(), tc.key)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.key, err)
+		}
+		if got.Value != tc.value {
+			t.Errorf("%s stored %q, want %q", tc.key, got.Value, tc.value)
+		}
+	}
+}
+
+// Validation runs AFTER the mask resolves, so echoing the mask back keeps the
+// stored secret instead of being read as a literal value.
+func TestSecretMaskStillRoundTrips(t *testing.T) {
+	e, st := newSettingEngine(t)
+	if w := doJSON(t, e, http.MethodPut, "/settings/"+settings.KeyBraveAPIKey, `{"value":"BSA-real"}`); w.Code != http.StatusOK {
+		t.Fatalf("store: %d %s", w.Code, w.Body)
+	}
+	w := doJSON(t, e, http.MethodPut, "/settings/"+settings.KeyBraveAPIKey, `{"value":"`+SecretMask+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("mask echo: %d %s", w.Code, w.Body)
+	}
+	var view SettingView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Value != SecretMask {
+		t.Errorf("response value = %q, want the mask", view.Value)
+	}
+	got, err := st.Get(t.Context(), settings.KeyBraveAPIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "BSA-real" {
+		t.Errorf("stored secret = %q, want it kept", got.Value)
+	}
+}
+
+// A row the registry no longer names is still listed — and deletable. Hiding
+// it would leave a value nobody can see or clear.
+func TestListFlagsUnknownKeysAndDeleteClearsThem(t *testing.T) {
+	e, st := newSettingEngine(t)
+	if err := st.Set(t.Context(), "retired_key", "leftover"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set(t.Context(), settings.KeyProxyURL, "http://127.0.0.1:7890"); err != nil {
+		t.Fatal(err)
+	}
+	var list []SettingView
+	if err := json.Unmarshal(doJSON(t, e, http.MethodGet, "/settings", "").Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]SettingView{}
+	for _, v := range list {
+		byKey[v.Key] = v
+	}
+	if !byKey["retired_key"].Unknown {
+		t.Error("a key the registry dropped must be flagged, not hidden")
+	}
+	if byKey[settings.KeyProxyURL].Unknown {
+		t.Error("a defined key must not be flagged unknown")
+	}
+	if w := doJSON(t, e, http.MethodDelete, "/settings/retired_key", ""); w.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d, want 204: %s", w.Code, w.Body)
+	}
+}
+
+// The panel renders from this, so it must carry what a control needs.
+func TestSettingDefsAreServed(t *testing.T) {
+	e, _ := newSettingEngine(t)
+	var defs []settings.Def
+	if err := json.Unmarshal(doJSON(t, e, http.MethodGet, "/setting-defs", "").Body.Bytes(), &defs); err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != len(settings.Defs()) {
+		t.Fatalf("served %d defs, registry has %d", len(defs), len(settings.Defs()))
+	}
+	for _, d := range defs {
+		if d.Key == "" || d.Kind == "" || d.Label == "" || d.Group == "" {
+			t.Errorf("def %+v lost a field the panel needs", d)
+		}
+	}
+}
+
+func mustQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}

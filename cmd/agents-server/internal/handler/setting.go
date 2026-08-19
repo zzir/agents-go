@@ -20,13 +20,36 @@ func NewSettingHandler(s *store.SettingStore) *SettingHandler {
 	return &SettingHandler{store: s}
 }
 
-// List responds with all settings, secret values masked.
+// SettingView is a stored setting as the API returns it: the value (masked for
+// secrets) and whether the registry still names the key.
+type SettingView struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// Unknown marks a row the registry does not define — stored before
+	// validation existed, or left behind by a removed feature. Reads list it
+	// so it can be seen and deleted; writes refuse it.
+	Unknown bool `json:"unknown,omitempty"`
+}
+
+func settingViewOf(st store.Setting) SettingView {
+	v := SettingView{Key: st.Key, Value: st.Value}
+	if _, known := settings.Lookup(st.Key); !known {
+		v.Unknown = true
+		return v
+	}
+	if settings.IsSecret(st.Key) {
+		v.Value = maskSecret(v.Value)
+	}
+	return v
+}
+
+// List responds with all stored settings, secret values masked.
 //
 //	@Summary		List settings
-//	@Description	Known keys: proxy_url, system_prompt, brave_api_key (secret, masked).
+//	@Description	Every stored key/value. Secrets are masked; a key the registry no longer defines is flagged `unknown` so it can be deleted. The definitions themselves are at /setting-defs.
 //	@Tags			settings
 //	@Produce		json
-//	@Success		200	{array}		store.Setting
+//	@Success		200	{array}		SettingView
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/settings [get]
@@ -36,12 +59,11 @@ func (h *SettingHandler) List(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	for i := range stored {
-		if settings.IsSecret(stored[i].Key) {
-			stored[i].Value = maskSecret(stored[i].Value)
-		}
+	out := make([]SettingView, len(stored))
+	for i, st := range stored {
+		out[i] = settingViewOf(st)
 	}
-	c.JSON(http.StatusOK, stored)
+	c.JSON(http.StatusOK, out)
 }
 
 // Get responds with the setting identified by the key path parameter, secret
@@ -51,7 +73,7 @@ func (h *SettingHandler) List(c *gin.Context) {
 //	@Tags		settings
 //	@Produce	json
 //	@Param		key	path		string	true	"Setting key"
-//	@Success	200	{object}	store.Setting
+//	@Success	200	{object}	SettingView
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
@@ -62,10 +84,7 @@ func (h *SettingHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	if settings.IsSecret(st.Key) {
-		st.Value = maskSecret(st.Value)
-	}
-	c.JSON(http.StatusOK, st)
+	c.JSON(http.StatusOK, settingViewOf(*st))
 }
 
 type setSettingReq struct {
@@ -76,17 +95,18 @@ type setSettingReq struct {
 // and responds with the stored setting (secret values masked). For secret
 // settings, a masked value keeps the stored one.
 //
-//	@Summary	Set setting
-//	@Tags		settings
-//	@Accept		json
-//	@Produce	json
-//	@Param		key		path		string			true	"Setting key"
-//	@Param		setting	body		setSettingReq	true	"Value to store"
-//	@Success	200		{object}	store.Setting
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	500		{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/settings/{key} [put]
+//	@Summary		Set setting
+//	@Description	The key must be one the registry defines (see /setting-defs) and the value must suit its kind; either failure is a 400. An empty value returns the setting to its default.
+//	@Tags			settings
+//	@Accept			json
+//	@Produce		json
+//	@Param			key		path		string			true	"Setting key"
+//	@Param			setting	body		setSettingReq	true	"Value to store"
+//	@Success		200		{object}	SettingView
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/settings/{key} [put]
 func (h *SettingHandler) Set(c *gin.Context) {
 	var req setSettingReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -110,18 +130,20 @@ func (h *SettingHandler) Set(c *gin.Context) {
 			req.Value = prev.Value
 		}
 	}
+	// Validated AFTER the mask resolves, so what is checked is what is stored.
+	if err := settings.Validate(key, req.Value); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	if err := h.store.Set(ctx, key, req.Value); err != nil {
 		internalError(c, err)
 		return
 	}
-	st := store.Setting{Key: key, Value: req.Value}
-	if settings.IsSecret(key) {
-		st.Value = maskSecret(st.Value)
-	}
-	c.JSON(http.StatusOK, st)
+	c.JSON(http.StatusOK, settingViewOf(store.Setting{Key: key, Value: req.Value}))
 }
 
-// Delete removes the setting identified by the key path parameter.
+// Delete removes the setting identified by the key path parameter. Deliberately
+// unvalidated: deleting is how an unknown key left by an older build is cleared.
 //
 //	@Summary	Delete setting
 //	@Tags		settings
@@ -137,4 +159,18 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// SettingDefList responds with the setting registry: every key the server
+// accepts, its kind, default and presentation. The panel renders from this, so
+// a new global setting needs no frontend change.
+//
+//	@Summary	List setting definitions
+//	@Tags		settings
+//	@Produce	json
+//	@Success	200	{array}	settings.Def
+//	@Security	BearerAuth
+//	@Router		/setting-defs [get]
+func SettingDefList(c *gin.Context) {
+	c.JSON(http.StatusOK, settings.Defs())
 }

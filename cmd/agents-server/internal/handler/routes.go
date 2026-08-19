@@ -117,9 +117,11 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		repos.POST("/:name/sync", h.Skills.Sync)
 		repos.DELETE("/:name", h.Skills.Delete)
 	}
-	// The provider registry's machine facts (types, auth modes, unsupported
-	// features), so config UIs stay in sync with it.
+	// The two registries a config UI renders from, so a panel never keeps its
+	// own copy of what the server accepts: provider machine facts (types, auth
+	// modes, unsupported features) and the global settings table.
 	api.GET("/provider-types", ProviderTypeList)
+	api.GET("/setting-defs", SettingDefList)
 	{
 		providers := api.Group("/providers")
 		providers.GET("", h.Providers.List)
