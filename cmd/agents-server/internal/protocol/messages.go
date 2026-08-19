@@ -500,4 +500,7 @@ type TraceSpan struct {
 	StartedAt   string         `json:"started_at"`
 	EndedAt     string         `json:"ended_at,omitempty"`
 	Data        map[string]any `json:"data,omitempty"`
+	// PayloadOmitted marks Data whose payload fields were replaced by the live
+	// cap's marker; the stored row (GET /sessions/:id/traces/:span_id) has them.
+	PayloadOmitted bool `json:"payload_omitted,omitempty"`
 }

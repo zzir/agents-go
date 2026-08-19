@@ -208,6 +208,45 @@ export function defaultSS(): SessionState {
   };
 }
 
+// TraceRow is a stored span as GET /sessions/:id/traces returns it.
+export interface TraceRow {
+  run_id?: string; parent_run_id?: string; kind?: string; name?: string; data?: string; detail?: string;
+  error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string; payload_omitted?: boolean;
+}
+
+// traceEventFromRow is a stored span in the panel's shape: data parsed
+// (pre-JSON rows read as none), the duration computed once.
+export function traceEventFromRow(ev: TraceRow): TraceEvent {
+  let parsed: Record<string, unknown> = {};
+  if (ev.data) {
+    try { parsed = JSON.parse(ev.data); } catch (_e) { /* pre-JSON rows */ }
+  }
+  let duration = '';
+  if (ev.started_at && ev.ended_at) {
+    const ms = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
+    duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+  }
+  return {
+    kind: 'span', name: ev.name || '', type: ev.detail || '',
+    span_id: ev.span_id, parent_id: ev.parent_id, parent_run_id: ev.parent_run_id,
+    error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at,
+    data: Object.keys(parsed).length > 0 ? parsed : null,
+    duration, payloadOmitted: !!ev.payload_omitted,
+  };
+}
+
+// withSpanPayload puts one span's whole row into every trace group that holds
+// it — the chat's and the inspected task's — replacing the summary.
+export function withSpanPayload(runs: Record<string, TraceEvent[]>, runId: string, spanId: string, full: TraceEvent): Record<string, TraceEvent[]> {
+  const events = runs[runId];
+  if (!events) return runs;
+  const idx = events.findIndex(e => e.span_id === spanId);
+  if (idx < 0) return runs;
+  const cur = events[idx];
+  const next = { ...cur, data: full.data ?? cur.data, payloadOmitted: false };
+  return { ...runs, [runId]: [...events.slice(0, idx), next, ...events.slice(idx + 1)] };
+}
+
 export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   const wsRef = useRef<WSClient | null>(null);
   // Conversations deleted in this page (deleteSession): a late event of the
@@ -460,7 +499,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         updateSS(sid, s => ({ ...s, runQuestions }));
       })
       .catch(() => undefined); // labels degrade to run ids; the spans still load
-    api.sessions.traces(sid).then((events: Array<{ run_id?: string; parent_run_id?: string; kind?: string; name?: string; data?: string; detail?: string; error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string }>) => {
+    // The SUMMARY listing: every span's row without its payload — the model
+    // request and reply, a tool's arguments and result are nearly all of a
+    // session's trace bytes (a generation span carries the whole conversation
+    // as its input; a long session's traces run to tens of MB), and parsing
+    // them on open is what made the page stall. A row opens its payload on
+    // demand (loadSpanPayload).
+    (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
       for (const ev of events) {
@@ -469,23 +514,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         if (ev.kind !== 'span') continue;
         const rid = ev.run_id || 'unknown';
         if (!runs[rid]) runs[rid] = [];
-        let parsed: Record<string, unknown> = {};
-        if (ev.data) {
-          try { parsed = JSON.parse(ev.data); } catch (_e) { /* pre-JSON rows */ }
-        }
-        let duration = '';
-        if (ev.started_at && ev.ended_at) {
-          const ms = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
-          duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
-        }
-        runs[rid].push({
-          kind: 'span', name: ev.name || '', type: ev.detail || '',
-          span_id: ev.span_id, parent_id: ev.parent_id, parent_run_id: ev.parent_run_id,
-          error: ev.error,
-          started_at: ev.started_at, ended_at: ev.ended_at,
-          data: Object.keys(parsed).length > 0 ? parsed : null,
-          duration,
-        });
+        runs[rid].push(traceEventFromRow(ev));
       }
       // Merge per run id with live data winning: a run.started that landed
       // during this fetch has already seeded (and keeps updating) its own run's
@@ -496,6 +525,22 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // Roll back the mark so the next lens open retries instead of leaving
       // the panel empty for good.
       tracesLoadedRef.current.delete(sid);
+    });
+  }, [updateSS]);
+
+  // loadSpanPayload fetches one span whole — what the summary listing (or the
+  // live cap) left out — and folds it into the span wherever the panel holds
+  // it: the chat's trace groups, or the inspected task's (spanSessionId is
+  // the session whose stored rows those are — the chat's own, or the task's
+  // child). Rejects when the row is not there (a live span not yet ended).
+  const loadSpanPayload = useCallback(async (sid: string, spanSessionId: string, runId: string, spanId: string): Promise<void> => {
+    const row = await (api.sessions.traceSpan(spanSessionId, spanId) as Promise<TraceRow>);
+    const full = traceEventFromRow(row);
+    updateSS(sid, s => {
+      const traceRuns = withSpanPayload(s.traceRuns, runId, spanId, full);
+      const viewRuns = s.taskView ? withSpanPayload(s.taskView.traceRuns, runId, spanId, full) : null;
+      const taskView = s.taskView && viewRuns && viewRuns !== s.taskView.traceRuns ? { ...s.taskView, traceRuns: viewRuns } : s.taskView;
+      return traceRuns === s.traceRuns && taskView === s.taskView ? s : { ...s, traceRuns, taskView };
     });
   }, [updateSS]);
 
@@ -1204,7 +1249,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       });
     });
 
-    ws.on(EV.traceSpan, (p: { run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown> }) => {
+    ws.on(EV.traceSpan, (p: { run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown>; payload_omitted?: boolean }) => {
       if (isBackgroundRun(p.run_id)) {
         updateTaskView(p.run_id, v => {
           let duration = '';
@@ -1216,7 +1261,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
             kind: 'span', name: p.name, type: p.type || '',
             span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
             error: p.error, started_at: p.started_at, ended_at: p.ended_at,
-            data: p.data || null, duration,
+            data: p.data || null, duration, payloadOmitted: !!p.payload_omitted,
           };
           // Into the span's own run group (a retry's spans open a new group),
           // upserting by span id within it.
@@ -1240,7 +1285,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
           kind: 'span', name: p.name, type: p.type || '',
           span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
           error: p.error, started_at: p.started_at, ended_at: p.ended_at,
-          data: p.data || null, duration,
+          data: p.data || null, duration, payloadOmitted: !!p.payload_omitted,
         };
         // A span arrives twice: pending on start, full on end — upsert by id.
         const idx = p.span_id ? events.findIndex(e => e.span_id === p.span_id) : -1;
@@ -1291,7 +1336,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // its dangling tool call out of messages (persist boundary) — the
       // pending-approval merge is what puts the approval card in the view.
       fetchTimeline(childSessionId),
-      (api.sessions.traces(childSessionId) as Promise<any[]>).catch(() => []),
+      (api.sessions.traces(childSessionId, { summary: true }) as Promise<TraceRow[] | null>).catch(() => [] as TraceRow[]),
     ]).then(([{ timeline }, traceRows]) => {
       if (taskWatchRef.current?.taskId !== taskId) return; // switched away meanwhile
       // Grouped by run — one group per attempt, row order (= time order)
@@ -1299,16 +1344,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       const traceRuns: Record<string, TraceEvent[]> = {};
       for (const ev of traceRows || []) {
         if (ev.kind !== 'span') continue;
-        let parsed: Record<string, unknown> | null = null;
-        if (ev.data) { try { parsed = JSON.parse(ev.data); } catch (_e) { parsed = null; } }
-        let duration = '';
-        if (ev.started_at && ev.ended_at) {
-          const ms = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
-          duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
-        }
         const rid = ev.run_id || 'unknown';
         if (!traceRuns[rid]) traceRuns[rid] = [];
-        traceRuns[rid].push({ kind: 'span', name: ev.name || '', type: ev.detail || '', span_id: ev.span_id, parent_id: ev.parent_id, error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at, data: parsed, duration });
+        traceRuns[rid].push(traceEventFromRow(ev));
       }
       updateSS(sid, s => {
         if (!s.taskView || s.taskView.taskId !== taskId) return s;
@@ -1391,5 +1429,5 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     updateSS(sid, s => ({ ...s, loaded: false, entries: [], hasMore: false }));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, loadSession, loadTraces, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
+  return { wsRef, sessionRunRef, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
 }

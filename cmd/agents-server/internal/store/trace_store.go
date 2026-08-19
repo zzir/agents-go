@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -31,9 +34,40 @@ func (s *TraceStore) Insert(ctx context.Context, ev *TraceEvent) error {
 // limit > 0 selects the newest `limit` rows (optionally only those with
 // id < beforeID); limit <= 0 returns everything.
 func (s *TraceStore) ListBySession(ctx context.Context, sessionID string, beforeID int64, limit int) ([]TraceEvent, error) {
+	return s.list(ctx, sessionID, beforeID, limit, false)
+}
+
+// payloadFields are a span's payload proper — the model's request and reply,
+// a tool's arguments and result — as opposed to what a listing shows on the
+// row (name, timings, tokens, error). They are nearly all of a session's trace
+// bytes: a generation span carries the whole conversation as its input.
+var payloadFields = []string{"input", "output", "system_instructions", "tools", "handoffs", "output_schema"}
+
+// ListSummaryBySession is ListBySession with the payload fields left out of
+// each row's Data (PayloadOmitted marks the rows that had any), done in the
+// database so nothing bulky is read, sent or parsed until GetBySpan is asked
+// for one span.
+func (s *TraceStore) ListSummaryBySession(ctx context.Context, sessionID string, beforeID int64, limit int) ([]TraceEvent, error) {
+	return s.list(ctx, sessionID, beforeID, limit, true)
+}
+
+func (s *TraceStore) list(ctx context.Context, sessionID string, beforeID int64, limit int, summary bool) ([]TraceEvent, error) {
 	var events []TraceEvent
 	q := s.db.NewSelect().Model(&events).
 		Where("session_id = ?", sessionID)
+	if summary {
+		paths := make([]string, len(payloadFields))
+		exists := make([]string, len(payloadFields))
+		for i, f := range payloadFields {
+			paths[i] = "'$." + f + "'"
+			exists[i] = "json_type(te.data, '$." + f + "') IS NOT NULL"
+		}
+		// A row whose data is not JSON (there is none such from this build)
+		// is passed through as it is rather than failing the whole listing.
+		q = q.ExcludeColumn("data").
+			ColumnExpr("CASE WHEN json_valid(te.data) THEN json_remove(te.data, " + strings.Join(paths, ", ") + ") ELSE te.data END AS data").
+			ColumnExpr("CASE WHEN json_valid(te.data) THEN (" + strings.Join(exists, " OR ") + ") ELSE 0 END AS payload_omitted")
+	}
 	if beforeID > 0 {
 		q = q.Where("id < ?", beforeID)
 	}
@@ -51,6 +85,22 @@ func (s *TraceStore) ListBySession(ctx context.Context, sessionID string, before
 		}
 	}
 	return events, nil
+}
+
+// GetBySpan returns one span's row, payload included, or an ErrNotFound-wrapping
+// error — what a summary listing's PayloadOmitted row is opened with.
+func (s *TraceStore) GetBySpan(ctx context.Context, sessionID, spanID string) (*TraceEvent, error) {
+	ev := new(TraceEvent)
+	err := s.db.NewSelect().Model(ev).
+		Where("session_id = ?", sessionID).Where("span_id = ?", spanID).
+		OrderExpr("id DESC").Limit(1).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
+		return nil, fmt.Errorf("getting trace span %s of session %s: %w", spanID, sessionID, err)
+	}
+	return ev, nil
 }
 
 // DeleteOlderThan removes trace events created before cutoff. Returns the

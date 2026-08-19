@@ -14,6 +14,7 @@ import {
 import type { Icon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { Disclosure } from '@/components/Disclosure';
+import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
 
 export interface TraceEventData {
   kind?: string;
@@ -30,6 +31,10 @@ export interface TraceEventData {
   ended_at?: string;
   data?: Record<string, unknown> | null;
   duration?: string;
+  // The payload fields (input, output, …) were left out of data — by the
+  // summary listing, or by the live cap — and load on open from the stored
+  // row (ChatActions.loadSpan).
+  payloadOmitted?: boolean;
 }
 
 // A Context panel jump: which span to open and take the reader to. The nonce
@@ -819,9 +824,10 @@ function spanTimeRange(spans: TraceEventData[]): TimeRange | null {
 
 // spanHasDetails reports whether a span row can expand: the server strips
 // content-free data before sending, so any data at all means real details
-// (payload, counts), and errors always expand.
+// (payload, counts), a payload left out of the listing is details to fetch,
+// and errors always expand.
 function spanHasDetails(s: TraceEventData): boolean {
-  return !!s.error || !!(s.data && Object.keys(s.data).length > 0);
+  return !!s.error || !!s.payloadOmitted || !!(s.data && Object.keys(s.data).length > 0);
 }
 
 // alignChevron: reserve the chevron slot even without details, so icons line
@@ -829,8 +835,14 @@ function spanHasDetails(s: TraceEventData): boolean {
 // reveal: the span the Context panel sent the reader to — it opens, scrolls
 // into view and flashes. Its children are already rendered, so a sandbox or MCP
 // span under it needs no separate reveal. The nonce re-fires the same target.
-function SpanRow({ node, depth, range, alignChevron, reveal }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; reveal?: SpanReveal }) {
+// loadSpan fetches the row's payload when the listing left it out; opening the
+// row asks once, and the parent swaps the whole span in.
+function SpanRow({ node, depth, range, alignChevron, reveal, loadSpan }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; reveal?: SpanReveal; loadSpan?: (spanId: string) => Promise<void> }) {
   const [open, setOpen] = useState(false);
+  // The payload fetch of an opened row: pending, done, or failed — a live span
+  // not yet ended has no stored row. Reset on close, so reopening asks again;
+  // never asked twice while open, whatever the answer.
+  const [payload, setPayload] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   const rowRef = useRef<HTMLDivElement>(null);
   const s = node.span;
   const failed = !!s.error;
@@ -842,6 +854,15 @@ function SpanRow({ node, depth, range, alignChevron, reveal }: { node: SpanNode;
   const extraData = !!s.data && Object.keys(s.data).length > 0;
   const hasData = spanHasDetails(s);
   const childExpandable = node.children.some(c => spanHasDetails(c.span));
+
+  const spanId = s.span_id;
+  const omitted = !!s.payloadOmitted;
+  useEffect(() => {
+    if (!open || !omitted || !loadSpan || !spanId || payload !== 'idle') return;
+    setPayload('loading');
+    loadSpan(spanId).then(() => setPayload('loaded'), () => setPayload('failed'));
+  }, [open, omitted, spanId, loadSpan, payload]);
+  const toggle = () => { setOpen(o => !o); setPayload('idle'); };
 
   const revealed = !!reveal && s.span_id === reveal.spanId;
   useEffect(() => {
@@ -870,7 +891,7 @@ function SpanRow({ node, depth, range, alignChevron, reveal }: { node: SpanNode;
         ref={rowRef}
         className={'trace-span' + (hasData ? ' trace-span-clickable' : '')}
         style={{ paddingLeft: 2 + depth * 10 }}
-        onClick={hasData ? () => setOpen(o => !o) : undefined}
+        onClick={hasData ? toggle : undefined}
       >
         {(hasData || alignChevron) && (
           <span className={'trace-span-chevron' + (open ? ' open' : '')}>
@@ -901,7 +922,13 @@ function SpanRow({ node, depth, range, alignChevron, reveal }: { node: SpanNode;
       {open && failed && (
         <div className="trace-span-error" style={{ marginLeft: 14 + depth * 10 }}>{s.error}</div>
       )}
-      {open && s.data && extraData && (
+      {open && omitted && payload === 'loading' && (
+        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 10 }}>Loading the payload…</div>
+      )}
+      {open && omitted && payload === 'failed' && (
+        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 10 }}>The payload is not stored yet — a span still running has no row; reopen once it ends.</div>
+      )}
+      {open && s.data && extraData && !(omitted && payload === 'loading') && (
         s.type === 'generation' && (s.data.input !== undefined || s.data.output !== undefined)
           ? <GenerationPayload data={s.data} indent={14 + depth * 10} />
           : s.type === 'function' && (s.data.input !== undefined || s.data.output !== undefined)
@@ -910,7 +937,7 @@ function SpanRow({ node, depth, range, alignChevron, reveal }: { node: SpanNode;
                 {JSON.stringify(s.data, null, 2)}
               </pre>
       )}
-      {node.children.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} reveal={reveal} />)}
+      {node.children.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} reveal={reveal} loadSpan={loadSpan} />)}
     </>
   );
 }
@@ -944,10 +971,17 @@ interface TraceRunProps {
   onJump?: () => void;
   // reveal is the span to open and scroll to (a Context panel jump).
   reveal?: SpanReveal;
+  // payloadSessionId is the session whose stored rows hold these spans'
+  // payload — the chat's own by default; an inspected task's child session
+  // for the task inspector.
+  payloadSessionId?: string;
 }
 
-export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, reveal }: TraceRunProps) {
+export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, reveal, payloadSessionId }: TraceRunProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const { loadSpan } = useChatActions();
+  const { sessionId } = useChatSession();
+  const payloadSession = payloadSessionId || sessionId;
 
   const { parts, tokens, spanCount } = useMemo(() => {
     let inp = 0, out = 0, count = 0;
@@ -965,10 +999,11 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
         label: seg.label,
         spanRoots: buildSpanTree(spanEvents),
         range: spanTimeRange(spanEvents),
+        loadSpan: loadSpan && payloadSession ? (spanId: string) => loadSpan(payloadSession, seg.runId, spanId) : undefined,
       };
     });
     return { parts, tokens: inp > 0 ? { input: inp, output: out } : null, spanCount: count };
-  }, [segments]);
+  }, [segments, loadSpan, payloadSession]);
 
   useEffect(() => {
     if (isExpanded && ref.current) {
@@ -1018,7 +1053,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       {parts.map(p => (
         <div key={p.runId} className="trace-run-segment">
           {p.label && <div className="trace-segment-label">{p.label}</div>}
-          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} reveal={reveal} />)}
+          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} reveal={reveal} loadSpan={p.loadSpan} />)}
         </div>
       ))}
     </Disclosure>

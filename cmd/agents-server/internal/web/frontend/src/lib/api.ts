@@ -93,7 +93,13 @@ export const api = {
     },
     // The session's background work — tasks and workflow executions — newest first.
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
-    traces: (id: string | number) => request(`/sessions/${id}/traces`),
+    // summary leaves the payload fields (the model request and reply, a
+    // tool's arguments and result — nearly all of a session's trace bytes)
+    // out of each row, marking it payload_omitted; traceSpan fetches one span
+    // whole when a row is opened.
+    traces: (id: string | number, opts?: { summary?: boolean }) =>
+      request(`/sessions/${id}/traces` + (opts?.summary ? '?summary=true' : '')),
+    traceSpan: (id: string | number, spanId: string) => request(`/sessions/${id}/traces/${encodeURIComponent(spanId)}`),
     // Every run that left entries, oldest first, with the user text it started
     // from and whether it is on the active branch — the trace panel's labels
     // for runs whose exchange the paged timeline has not loaded.

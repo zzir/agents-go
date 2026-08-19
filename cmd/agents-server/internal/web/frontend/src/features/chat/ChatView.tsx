@@ -127,6 +127,9 @@ export interface ChatViewActions {
   // Applies a server-confirmed task state change (the stop API response) —
   // the fallback when no hub broadcast will come (paused task after restart).
   onPatchTask?: (sid: string, taskId: string, patch: Partial<TaskState>) => void;
+  // Loads one trace span's payload (left out of the listing) into the panel
+  // showing it, from the session whose stored rows hold the span.
+  onLoadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. When
@@ -170,7 +173,7 @@ export function ChatView({
   } = state;
   const {
     onSend, onCancel, onApprove, onReject, onFork, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate,
-    onWatchTask, onUnwatchTask, onPatchTask, onPanelChange, onTerminalOpen,
+    onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [sandboxId, setSandboxIdState] = useState(() => loadSessionSandbox(sessionId || ''));
@@ -560,8 +563,8 @@ export function ChatView({
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
     regenerate: onRegenerate ? handleRegen : undefined,
-    openTrace, inspectTask, retryTask, stopTask, dismissTask,
-  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask]);
+    openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan,
+  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan]);
 
   const topBar = (
     <ChatTopBar

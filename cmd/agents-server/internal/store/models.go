@@ -397,6 +397,9 @@ type TraceEvent struct {
 	StartedAt   string    `bun:"started_at"           json:"started_at,omitempty"`
 	EndedAt     string    `bun:"ended_at"             json:"ended_at,omitempty"`
 	CreatedAt   time.Time `bun:"created_at,notnull"   json:"created_at"`
+	// PayloadOmitted marks a summary row (TraceStore.ListSummaryBySession)
+	// whose Data had its payload fields left out; GetBySpan has them.
+	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
 }
 
 // SandboxConfig is the persisted definition of a code-execution sandbox backend.

@@ -40,6 +40,10 @@ export interface ChatActions {
   retryTask: (taskId: string) => Promise<void>;
   stopTask: (taskId: string) => Promise<void>;
   dismissTask: (taskId: string) => Promise<void>;
+  // Loads one trace span's payload — left out of the listing the panel opened
+  // with — from the session whose stored rows hold it (the chat's own, or an
+  // inspected task's child).
+  loadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
 }
 
 export interface ChatTaskLookups {

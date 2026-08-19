@@ -376,7 +376,7 @@ export default function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, loadSession, loadTraces, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  const { wsRef, sessionRunRef, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -747,14 +747,21 @@ export default function App() {
     }
   }, [activeSession, wsRef, updateSS, loadSession]);
 
+  // A trace row opening its payload: fetched into the active session's state
+  // (the panel showing it), from the session whose rows hold the span.
+  const handleLoadSpan = useCallback((spanSessionId: string, runId: string, spanId: string): Promise<void> => {
+    if (!activeSession) return Promise.resolve();
+    return loadSpanPayload(activeSession, spanSessionId, runId, spanId);
+  }, [activeSession, loadSpanPayload]);
+
   // One object of stable callbacks: the memo'd view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
     onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
-    onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask,
+    onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
     onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen,
   }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleLoadEarlier, handleSwitchBranch, handleCompact,
-    handleRegenerate, watchTask, unwatchTask, patchTask, handleTerminalOpen]);
+    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen]);
 
   // A signature that moves with any execution in any conversation (every
   // connection hears every session's task.updated), for the hub's Runs view

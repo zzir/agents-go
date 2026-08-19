@@ -318,6 +318,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
               isLive={live}
               isExpanded={traceExpanded}
               onToggle={() => setTraceExpanded(v => !v)}
+              payloadSessionId={view?.childSessionId}
             />
           )}
         </div>

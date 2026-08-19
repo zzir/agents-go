@@ -29,7 +29,7 @@ func fatSpanData() map[string]any {
 func TestSpanDataCapsAreSeparate(t *testing.T) {
 	data := fatSpanData()
 
-	live, liveJSON := boundSpanData(data, liveSpanDataJSON, liveOmitted)
+	live, liveJSON, _ := boundSpanData(data, liveSpanDataJSON, liveOmitted)
 	if live["input"] != liveOmitted {
 		t.Fatalf("a 400KB input must not go over the websocket, got %T", live["input"])
 	}
@@ -37,7 +37,7 @@ func TestSpanDataCapsAreSeparate(t *testing.T) {
 		t.Fatalf("bounded live payload is still %d bytes", len(liveJSON))
 	}
 
-	stored, storedJSON := boundSpanData(data, storedSpanDataJSON, storedOmitted)
+	stored, storedJSON, _ := boundSpanData(data, storedSpanDataJSON, storedOmitted)
 	items, ok := stored["input"].([]any)
 	if !ok || len(items) != 1 {
 		t.Fatalf("the row must keep the request Replay seeds from, got %T", stored["input"])
@@ -55,9 +55,12 @@ func TestSpanDataCapsAreSeparate(t *testing.T) {
 // Over the stored cap the marker says so, and says what to change: the two
 // markers are the difference between "reopen it" and "it is gone".
 func TestStoredCapMarkerNamesTheSetting(t *testing.T) {
-	_, storedJSON := boundSpanData(fatSpanData(), 1<<10, storedOmitted)
+	_, storedJSON, omitted := boundSpanData(fatSpanData(), 1<<10, storedOmitted)
 	if !strings.Contains(storedJSON, "trace_span_data_kb") {
 		t.Fatalf("the stored marker should name the setting that lifts it: %s", storedJSON)
+	}
+	if !omitted {
+		t.Fatal("a bounded span must say its payload was replaced")
 	}
 	if strings.Contains(storedJSON, "reopen") {
 		t.Fatal("the stored marker must not promise a reopen would bring it back")
@@ -67,7 +70,7 @@ func TestStoredCapMarkerNamesTheSetting(t *testing.T) {
 // The redundant "name" key is dropped whatever the caps: it already travels on
 // the envelope.
 func TestSpanDataDropsTheRedundantName(t *testing.T) {
-	cleaned, raw := boundSpanData(map[string]any{"name": "gpt-5.5", "response_id": "resp_1"}, storedSpanDataJSON, storedOmitted)
+	cleaned, raw, _ := boundSpanData(map[string]any{"name": "gpt-5.5", "response_id": "resp_1"}, storedSpanDataJSON, storedOmitted)
 	if _, ok := cleaned["name"]; ok {
 		t.Fatalf("name should be dropped, got %v", cleaned)
 	}

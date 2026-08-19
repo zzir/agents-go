@@ -439,6 +439,14 @@
   word-break: break-word;
 }
 
+/* An opened row's payload on its way (the listing left it out), or not there. */
+.trace-span-note {
+  padding: 4px 8px;
+  margin: 2px 0 4px;
+  font-size: 11px;
+  color: var(--fgColor-muted);
+}
+
 /* Expand indicator for spans carrying data (e.g. generation payloads) */
 .trace-span-chevron {
   display: inline-flex;

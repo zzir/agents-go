@@ -75,49 +75,52 @@ func newWSProcessor(ctx context.Context, send func(string, any), traces *store.T
 // boundSpanData prepares span data for one consumer: the redundant "name" key
 // is dropped (span.Name already travels on the envelope; the data copy exists
 // for HTTP export), and past limit the bulky payload fields are replaced with
-// marker. Returns the cleaned data map and its JSON.
-func boundSpanData(data map[string]any, limit int, marker string) (map[string]any, string) {
+// marker. Returns the cleaned data map, its JSON, and whether any field was
+// replaced.
+func boundSpanData(data map[string]any, limit int, marker string) (cleaned map[string]any, raw string, omitted bool) {
 	if len(data) == 0 {
-		return nil, ""
+		return nil, "", false
 	}
-	cleaned := make(map[string]any, len(data))
+	cleaned = make(map[string]any, len(data))
 	maps.Copy(cleaned, data)
 	delete(cleaned, "name")
 	if len(cleaned) == 0 {
-		return nil, ""
+		return nil, "", false
 	}
 	b, err := json.Marshal(cleaned)
 	if err != nil {
-		return cleaned, ""
+		return cleaned, "", false
 	}
 	if len(b) <= limit {
-		return cleaned, string(b)
+		return cleaned, string(b), false
 	}
 	for _, k := range []string{"input", "output", "system_instructions", "tools"} {
 		if _, ok := cleaned[k]; ok {
 			cleaned[k] = marker
+			omitted = true
 		}
 	}
 	b, err = json.Marshal(cleaned)
 	if err != nil {
-		return cleaned, ""
+		return cleaned, "", omitted
 	}
-	return cleaned, string(b)
+	return cleaned, string(b), omitted
 }
 
 // spanMessage is what the CLIENT gets: bounded for the wire.
 func (p *wsProcessor) spanMessage(span *tracing.Span) protocol.TraceSpan {
-	data, _ := boundSpanData(span.Data, liveSpanDataJSON, liveOmitted)
+	data, _, omitted := boundSpanData(span.Data, liveSpanDataJSON, liveOmitted)
 	ts := protocol.TraceSpan{
-		RunID:       p.runID,
-		ParentRunID: p.parentRunID,
-		TraceID:     span.TraceID,
-		SpanID:      span.SpanID,
-		ParentID:    span.ParentID,
-		Name:        span.Name,
-		Type:        span.Type,
-		StartedAt:   span.StartedAt.Format(time.RFC3339Nano),
-		Data:        data,
+		RunID:          p.runID,
+		ParentRunID:    p.parentRunID,
+		TraceID:        span.TraceID,
+		SpanID:         span.SpanID,
+		ParentID:       span.ParentID,
+		Name:           span.Name,
+		Type:           span.Type,
+		StartedAt:      span.StartedAt.Format(time.RFC3339Nano),
+		Data:           data,
+		PayloadOmitted: omitted,
 	}
 	if span.Error != nil {
 		ts.Error = span.Error.Message
@@ -144,7 +147,7 @@ func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts := p.spanMessage(span)
 	p.send(protocol.EventTraceSpan, ts)
-	_, dataJSON := boundSpanData(span.Data, p.storedCap, storedOmitted)
+	_, dataJSON, _ := boundSpanData(span.Data, p.storedCap, storedOmitted)
 	te := &store.TraceEvent{
 		SessionID:   p.sessionID,
 		RunID:       p.runID,

@@ -1671,6 +1671,11 @@ components:
             grouping reads it directly — deriving it from task rows or notification
             text broke on every surface that does not carry them (forks above all).
           type: string
+        payload_omitted:
+          description: |-
+            PayloadOmitted marks a summary row (TraceStore.ListSummaryBySession)
+            whose Data had its payload fields left out; GetBySpan has them.
+          type: boolean
         run_id:
           type: string
         session_id:
@@ -4180,7 +4185,11 @@ paths:
     get:
       description: Without limit, returns all events oldest-first. With limit, returns
         the newest `limit` events (still oldest-first); page backwards by passing
-        the smallest received id as before_id.
+        the smallest received id as before_id. `summary=true` leaves the payload fields
+        (input, output, system_instructions, tools, handoffs, output_schema) out of
+        each row's data — they are nearly all of a session's trace bytes — and marks
+        such rows `payload_omitted`; GET /sessions/{id}/traces/{span_id} serves one
+        span whole.
       parameters:
       - description: Session ID
         in: path
@@ -4198,6 +4207,11 @@ paths:
         name: before_id
         schema:
           type: integer
+      - description: Leave the payload fields out of data (rows marked payload_omitted)
+        in: query
+        name: summary
+        schema:
+          type: boolean
       responses:
         "200":
           content:
@@ -4216,6 +4230,48 @@ paths:
       security:
       - BearerAuth: []
       summary: List session traces
+      tags:
+      - sessions
+  /sessions/{id}/traces/{span_id}:
+    get:
+      description: The whole row of one span — what a `summary=true` listing left
+        out (`payload_omitted`), or what the live cap replaced with a marker on the
+        WebSocket.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Span ID
+        in: path
+        name: span_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.TraceEvent'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get one trace span
       tags:
       - sessions
   /settings:

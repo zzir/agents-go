@@ -127,7 +127,8 @@ detail.
 | PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session |
 | DELETE | `/sessions/:id`           | Delete the session and everything it owns: entries, traces, approvals, wake-ups, triggers, and its task tree (rows and hidden child sessions, at any depth over live edges) |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
-| GET    | `/sessions/:id/traces`    | List trace events (paginated)                                        |
+| GET    | `/sessions/:id/traces`    | List trace events (paginated); `?summary=true` leaves each span's payload fields out (`payload_omitted`) — what the trace panel opens with |
+| GET    | `/sessions/:id/traces/:span_id` | One span whole, payload included — what a summary row opens with, or a live span the WebSocket cap trimmed |
 | GET    | `/sessions/:id/runs`      | Every run that left entries, oldest first — `{run_id, question, on_path}`: the user text it started from (a regenerate inherits the message it answered again) and whether it is on the active branch |
 | GET    | `/sessions/:id/context`   | Context-window usage report (see [invariant 28](#design-invariants)) |
 | POST   | `/sessions/:id/compact`   | Force one compaction pass now (409 while a run is live)              |
@@ -548,8 +549,8 @@ Known keys:
   the disk (a 74k-token request is roughly 300KB–1MB per generation span;
   `trace_retention_days` is the other half of that budget). What travels over
   the WEBSOCKET is a separate, fixed 256KB — the browser holds every span of
-  the session at once, and anything it drops is still in the row, one reopen
-  away. Applies to new runs
+  the session at once, and anything it drops (`payload_omitted`) is still in
+  the row, which the panel fetches when the span is opened. Applies to new runs
 - `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
   before it expires (default `1440` = 24h; `0` disables expiry)
 
@@ -1114,14 +1115,21 @@ a run streams live again instead of showing the session idle until it ends).
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
 | `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
 | `session.sandbox_bound` | The session's first sandbox-carrying run permanently bound `(sandbox_id, work_dir)` — `{session_id, sandbox_id, work_dir?}`; published exactly once, by the run that won the bind |
-| `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, ...}`                                                                                                 |
+| `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, data?, payload_omitted?, ...}`; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has |
 
 Generation spans carry the full model request/response in their `data`
 (`model`, `system_instructions`, `input`, `tools`, `model_settings`,
 `handoffs`, `output_schema`, `output`) — the trace panel renders these when
 you expand a generation span, so you can see exactly what each call sent
-after compaction/filters, including MCP/skill tool definitions. Payloads past
-512KB are replaced with a truncation marker; set
+after compaction/filters, including MCP/skill tool definitions. Those payload
+fields are nearly all of a session's trace bytes (every generation span
+carries the whole conversation as its input — a hundred spans of a long
+session run to tens of MB), so the panel opens with the SUMMARY listing
+(`?summary=true`: rows without them, marked `payload_omitted`) and fetches
+one span whole (`GET /sessions/:id/traces/:span_id`) when it is opened —
+what a session's history costs to open no longer grows with what its model
+calls carried. Payloads past `trace_span_data_kb` are replaced with a
+truncation marker in the row itself; set
 `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=false` to keep conversation
 content out of traces entirely.
 
