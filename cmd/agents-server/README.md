@@ -486,6 +486,39 @@ connect again is safe and intended: it supersedes the stale attempt (e.g. the
 user closed the popup, which sends no signal) and returns a fresh authorize
 URL; an abandoned attempt otherwise expires on its own after 5 minutes.
 
+The interactive flow logs its progress, so a stuck `authorizing` is diagnosable
+from the server log. `authorization URL issued` records the exact `redirect_uri`
+the authorization server must send the browser back to; a completing login then
+logs `callback: authorization code delivered` followed by `interactive connect
+established`. Two distinct failures both surface as a stuck button, told apart by
+which line is missing:
+
+- **No callback line at all** (only the panel's `GET /mcp-servers` poll repeats):
+  the browser never reached the callback. The authorization server rejected the
+  `redirect_uri` — a pre-registered `oauth_client_id` whose allowed callback does
+  not list this exact path — or the browser cannot reach this origin (a reverse
+  proxy or non-loopback host, so `redirect_uri` resolves elsewhere;
+  `externalOrigin` derives it from the request's `Forwarded` / `X-Forwarded-*`
+  headers, then the direct host). A callback that arrives but cannot be matched
+  logs `callback: could not deliver authorization code` with the reason.
+- **`code delivered`, then `ended without connecting` with `authorization
+  completed but was not accepted`**: the browser round-trip worked, but the
+  authorization did not yield a working session, so the SDK re-authorized
+  mid-connect; the interactive park is single-shot — the frontend opened one
+  popup, and there is no second one to service — so the attempt fails fast
+  rather than hanging until the 5-minute timeout. `has_oauth_token` splits the
+  cause: still false means the SDK rejected the authorization response before
+  any token exchange — typically AS metadata inconsistent with the authorize
+  redirect (RFC 9207: `iss` arrives but the metadata does not advertise
+  `authorization_response_iss_parameter_supported`, or the advertised `issuer`
+  differs from the `iss` received — common when a gateway proxies a real IdP's
+  endpoints under its own issuer). True means a token was issued and persisted
+  but the resource server rejected it — set the server's `oauth_scopes` to what
+  it requires, or confirm the token's audience is this MCP endpoint. The first
+  case is a server-side metadata bug: its metadata must present the issuer
+  exactly as the IdP responds, or its PRM should point `authorization_servers`
+  at the IdP directly.
+
 OAuth grants obtained during authorization are persisted — the token together
 with the token endpoint and (possibly dynamically registered) client
 credentials — and reported as `has_oauth_token`, so reconnecting — including

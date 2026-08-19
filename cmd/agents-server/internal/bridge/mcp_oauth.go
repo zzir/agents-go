@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"github.com/rs/zerolog"
 	"golang.org/x/oauth2"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -47,20 +48,22 @@ const (
 
 // newConnectFetcher builds the AuthorizationCodeFetcher for one connect
 // attempt, plus the phase the attempt advances as it progresses. Only the
-// interactive phase can service an authorization popup — the fetcher then
-// publishes the authorize URL on urlCh and parks until the OAuth callback
-// delivers the code on codeCh. In every other phase Authorize means the saved
-// grant was rejected (a 401 the refresh token could not fix), and nobody is
-// watching urlCh: fail the request fast instead of parking it until its
-// context expires. During the silent phase that failure makes the caller fall
-// through to the interactive flow immediately; once established, the error
-// tells the user to re-authorize from the MCP settings page, which starts a
-// fresh flow.
+// interactive phase can service an authorization popup: the fetcher publishes
+// the authorize URL on urlCh and parks until the callback delivers the code on
+// codeCh — ONCE. There is exactly one popup, so any other Authorize (silent
+// grant rejected, post-connect re-auth, or a second Authorize after the code
+// was spent because the completed authorization was not accepted) has nobody
+// to service it and must fail fast instead of parking until its context
+// expires — see the README's MCP OAuth diagnostics for the failure shapes.
 func newConnectFetcher(serverName string, urlCh chan string, codeCh chan *auth.AuthorizationResult) (auth.AuthorizationCodeFetcher, *atomic.Int32) {
 	phase := &atomic.Int32{}
+	var parked atomic.Bool
 	fetcher := func(fctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
 		switch phase.Load() {
 		case oauthPhaseInteractive:
+			if !parked.CompareAndSwap(false, true) {
+				return nil, fmt.Errorf("mcp server %q: authorization completed but was not accepted; verify the authorization server metadata (issuer / RFC 9207 iss support) and the server's required scopes or resource (audience)", serverName)
+			}
 			urlCh <- args.URL
 			select {
 			case result := <-codeCh:
@@ -302,6 +305,8 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	c.inflight[cfg.ID] = attempt
 	c.mu.Unlock()
 
+	// Captured now: the flow outlives the request context that carries it.
+	log := zerolog.Ctx(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		// ConnectHTTPWithOAuth releases the manager's connect slot (finishConnect)
@@ -315,6 +320,12 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		connectCancel()
 		c.clearInflight(cfg.ID, attempt)
 		close(attempt.done)
+		// The one log line that says how the interactive flow ended.
+		if err != nil {
+			log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth interactive connect ended without connecting")
+		} else {
+			log.Info().Str("mcp", cfg.Name).Msg("mcp oauth interactive connect established")
+		}
 		errCh <- err
 	}()
 
@@ -328,6 +339,11 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 			codeCh:       codeCh,
 		}
 		c.mu.Unlock()
+
+		// Logs the exact redirect_uri the AS must send the browser back to —
+		// the first thing to compare when no callback ever arrives.
+		log.Info().Str("mcp", cfg.Name).Str("redirect_uri", RedirectURI(requestOrigin)).
+			Msg("mcp oauth authorization URL issued; awaiting browser callback")
 
 		go func() {
 			timer := time.NewTimer(oauthPendingTimeout)
@@ -377,7 +393,7 @@ func (c *OAuthCoordinator) HandleCallback(state, code, iss string) error {
 	c.mu.Unlock()
 
 	if !ok {
-		return fmt.Errorf("unknown or expired oauth state")
+		return fmt.Errorf("no pending authorization for this state — it may have expired (5 min), been superseded by a newer authorize, or already been used; start authorization again from the MCP settings page")
 	}
 
 	select {
