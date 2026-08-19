@@ -66,6 +66,14 @@ replace: pointing records somewhere else is a different handler in
 `logging.Ctx(ctx)`; a context nobody wired yields one that discards, so no call
 site checks and nothing writes anywhere unasked.
 
+The SDK's own run-loop records join the same stream — the run's logger is
+handed to `agents.LogConfig`, so turns, tool calls, handoffs and compaction
+show up beside the server's. Most of what the run loop says is `Debug`, so it
+takes `--log-level debug` to see. Whether those records carry conversation
+content is the `log_sensitive_data` setting, which is NOT
+`trace_include_sensitive_data`: one puts content in the database, the other in
+stderr, and each has to be decided on purpose.
+
 ## Authentication
 
 REST requests authenticate with a Bearer token in the `Authorization` header:
@@ -615,6 +623,11 @@ Known keys:
   the WEBSOCKET is a separate, fixed 256KB — the browser holds every span of
   the session at once, and anything it drops (`payload_omitted`) is still in
   the row, which the panel fetches when the span is opened. Applies to new runs
+- `log_sensitive_data` — include prompts, tool arguments and model output in
+  the SDK's own log records. Deliberately separate from
+  `trace_include_sensitive_data`: traces go into the database, logs go to
+  stderr and whatever collects it, so they are different decisions. Off by
+  default, and visible only at `--log-level debug`. Applies to new runs
 - `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
   before it expires (default `1440` = 24h; `0` disables expiry)
 - `max_terminals_per_sandbox` — concurrent interactive terminals allowed on one

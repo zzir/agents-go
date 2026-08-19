@@ -387,7 +387,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
-	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task))
+	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx))
 
 	// Name the session in parallel with the run — the title needs only the
 	// user's first message, not the answer. Task sessions are pre-named and

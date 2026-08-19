@@ -101,6 +101,11 @@ type BuildResult struct {
 	// seed from, by design.
 	TraceIncludeSensitive *bool
 
+	// LogSensitive gates whether the SDK's own log records carry conversation
+	// content (the log_sensitive_data setting). Separate from the trace
+	// switch: they go to different places, so they are different decisions.
+	LogSensitive bool
+
 	// PlanPhase is set when the agent was built in plan mode: the run starts
 	// read-only and the approved submit_plan unlocks it. A resume that
 	// already executed submit_plan in this run calls Unlock() so the rebuilt
@@ -185,6 +190,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err == nil {
 		result.TraceIncludeSensitive = deps.Settings.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData)
+		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
 	}
 	if err == nil && !background && deps.TaskManager != nil {
 		// The model's background surface: four verbs — spawn (the server's,

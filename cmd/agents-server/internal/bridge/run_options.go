@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
@@ -37,7 +38,7 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 // paths. One constructor so a resume carries the same policies as the run it
 // continues. runContext is the Context value (the exec_command approval gate
 // reads a trusted session id from it).
-func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any) agents.RunOptions {
+func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any, log *slog.Logger) agents.RunOptions {
 	opts := agents.RunOptions{
 		Context: runContext,
 		Conversation: agents.ConversationOptions{
@@ -61,6 +62,9 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		Guardrails: built.RunGuardrails,
 		Model:      agents.ModelOptions{Provider: provider},
 		Observe:    agents.ObserveOptions{Tracer: tracer, IncludeSensitiveData: built.TraceIncludeSensitive},
+		// The run loop's own records join the server's stream. Most of what it
+		// says is Debug, so this shows only at --log-level debug.
+		Log: agents.LogConfig{Logger: log, SensitiveData: built.LogSensitive},
 	}
 	if built.Behavior.HandoffInputFilter == "nest_history" {
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})

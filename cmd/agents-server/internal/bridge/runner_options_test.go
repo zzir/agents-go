@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
@@ -23,7 +24,7 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 		StopAtTools:   []string{"final_answer"},
 		RunGuardrails: []agents.Guardrail{{Name: "g1"}},
 	}
-	opts := runOptionsFor(built, nil, nil, nil, "trust-ctx")
+	opts := runOptionsFor(built, nil, nil, nil, "trust-ctx", nil)
 
 	if opts.Exec.MaxTurns != 7 || opts.Exec.MaxToolConcurrency != 3 {
 		t.Fatalf("exec budgets not carried: %+v", opts.Exec)
@@ -52,7 +53,7 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 
 	// Without nest_history the filter stays nil — the SDK default.
 	built.Behavior.HandoffInputFilter = ""
-	if got := runOptionsFor(built, nil, nil, nil, ""); got.Exec.HandoffInputFilter != nil {
+	if got := runOptionsFor(built, nil, nil, nil, "", nil); got.Exec.HandoffInputFilter != nil {
 		t.Fatal("empty HandoffInputFilter must leave the SDK default")
 	}
 }
@@ -63,11 +64,11 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 // the model corrects on being told. "error" restores the abort.
 func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
 	built := &BuildResult{}
-	if got := runOptionsFor(built, nil, nil, nil, ""); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundReturnToModel {
+	if got := runOptionsFor(built, nil, nil, nil, "", nil); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundReturnToModel {
 		t.Fatalf("unset behavior = %v, want return-to-model", got.Exec.ToolNotFoundBehavior)
 	}
 	built.Behavior.ToolNotFoundBehavior = "error"
-	if got := runOptionsFor(built, nil, nil, nil, ""); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundError {
+	if got := runOptionsFor(built, nil, nil, nil, "", nil); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundError {
 		t.Fatalf("explicit error = %v, want the abort", got.Exec.ToolNotFoundBehavior)
 	}
 }
@@ -77,11 +78,36 @@ func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
 func TestRunOptionsForCarriesSensitiveFlag(t *testing.T) {
 	off := false
 	built := &BuildResult{TraceIncludeSensitive: &off}
-	opts := runOptionsFor(built, nil, nil, nil, "")
+	opts := runOptionsFor(built, nil, nil, nil, "", nil)
 	if opts.Observe.IncludeSensitiveData == nil || *opts.Observe.IncludeSensitiveData {
 		t.Fatal("TraceIncludeSensitive=false must reach Observe.IncludeSensitiveData")
 	}
-	if got := runOptionsFor(&BuildResult{}, nil, nil, nil, ""); got.Observe.IncludeSensitiveData != nil {
+	if got := runOptionsFor(&BuildResult{}, nil, nil, nil, "", nil); got.Observe.IncludeSensitiveData != nil {
 		t.Fatal("unset flag must stay nil (SDK default)")
+	}
+}
+
+// The SDK's own log config comes off the build, and its sensitive-data switch
+// is the settings one — separate from the trace switch, because the two go to
+// different places.
+func TestRunOptionsForCarriesTheSDKLogger(t *testing.T) {
+	log := slog.New(slog.DiscardHandler)
+	got := runOptionsFor(&BuildResult{}, nil, nil, nil, "", log)
+	if got.Log.Logger != log {
+		t.Fatal("the run's logger must reach agents.LogConfig")
+	}
+	if got.Log.SensitiveData {
+		t.Fatal("log_sensitive_data is off unless the build says otherwise")
+	}
+	on := runOptionsFor(&BuildResult{LogSensitive: true}, nil, nil, nil, "", log)
+	if !on.Log.SensitiveData {
+		t.Fatal("LogSensitive must reach the SDK")
+	}
+	// No logger stays no logger: runOptionsFor must not invent one. (In the
+	// server this case does not arise — logging.Ctx yields a discarding
+	// logger, whose Enabled is false at every level — but nothing here should
+	// depend on that.)
+	if off := runOptionsFor(&BuildResult{}, nil, nil, nil, "", nil); off.Log.Logger != nil {
+		t.Fatal("no logger must stay no logger")
 	}
 }

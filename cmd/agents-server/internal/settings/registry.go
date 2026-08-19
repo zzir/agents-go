@@ -37,6 +37,7 @@ const (
 	KeyTraceRetentionDays        = "trace_retention_days"
 	KeyTraceIncludeSensitiveData = "trace_include_sensitive_data"
 	KeyTraceSpanDataKB           = "trace_span_data_kb"
+	KeyLogSensitiveData          = "log_sensitive_data"
 	KeyApprovalTTLMinutes        = "approval_ttl_minutes"
 	KeyMaxTerminalsPerSandbox    = "max_terminals_per_sandbox"
 )
@@ -47,6 +48,7 @@ const (
 	GroupPrompt      = "prompt"
 	GroupCredentials = "credentials"
 	GroupTracing     = "tracing"
+	GroupLogging     = "logging"
 	GroupLimits      = "limits"
 )
 
@@ -135,6 +137,13 @@ var defs = []Def{{
 	Description: "How much of a span's model request and response is stored. Past it the payload is replaced with a marker and a Replay of that call has nothing to seed from — raise it if you replay large turns. Live updates to the browser are capped separately at 256KB; what they drop is still in the trace. Applies to new runs.",
 	Default:     "8192",
 	Min:         1,
+}, {
+	Key:         KeyLogSensitiveData,
+	Kind:        KindBool,
+	Group:       GroupLogging,
+	Label:       "Log sensitive data",
+	Description: "Include prompts, tool arguments and model output in the SDK's own log records. Separate from the tracing switch: this one puts conversation content into stderr and whatever collects it. Off by default, and visible only at --log-level debug. Applies to new runs.",
+	Default:     "false",
 }, {
 	Key:         KeyApprovalTTLMinutes,
 	Kind:        KindInt,
