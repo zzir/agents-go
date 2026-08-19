@@ -138,6 +138,15 @@ the run. That is the cost of a contract, not an oversight: a resumed run's
 snapshot promises "every response so far". Trimming the state to the
 interrupted response alone would make pausing observable in the result.
 
+**The run keeps one item log.** `RunResult.NewItems` and `RunState.SessionItems`
+are that log in full, append-only. The model's view of it is a tail: a handoff
+input filter ([§2.4](#24-handoffs)) or a recompaction ([§2.5f](#25f-compaction),
+[§2.5g](#25g-context-overflow)) folds the log so far into the run input and
+restarts the view at the log's end, so `RunState.GeneratedItems` is the suffix of
+`SessionItems` the model still sees — a projection of the log, never a second
+record, and a resume takes it as such (by length). There is no list an item can
+be appended to and left out of the other.
+
 **A `RunState` decodes across a version window, not on strict equality.**
 `RunStateFromJSON` accepts the same schema major from
 `runStateOldestDecodableMinor` up to `RunStateSchemaVersion`; anything newer,

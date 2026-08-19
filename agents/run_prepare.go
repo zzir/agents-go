@@ -129,10 +129,9 @@ func (r *runner) observeRun(agent *Agent, resumed bool) func() {
 // loopSeed is the state the run loop starts from: fresh for a new run, carried
 // state for a resume.
 type loopSeed struct {
-	agent          *Agent
-	originalInput  []InputItem
-	generatedItems []*RunItem
-	rawResponses   []*ModelResponse
+	agent         *Agent
+	originalInput []InputItem
+	rawResponses  []*ModelResponse
 
 	// pendingResponse, on a resume, is the interrupted response the first
 	// iteration re-processes instead of calling the model.
@@ -152,26 +151,27 @@ type loopSeed struct {
 // resetting the turn budget.
 func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed {
 	seed := loopSeed{
-		agent:          startAgent,
-		originalInput:  originalInput,
-		generatedItems: []*RunItem{},
-		rawResponses:   []*ModelResponse{},
-		startTurn:      1,
+		agent:         startAgent,
+		originalInput: originalInput,
+		rawResponses:  []*ModelResponse{},
+		startTurn:     1,
 	}
 	if r.resume == nil {
 		return seed
 	}
 	seed.agent = r.resume.CurrentAgent
 	seed.originalInput = r.resume.OriginalInput
-	seed.generatedItems = append([]*RunItem{}, r.resume.GeneratedItems...)
 	seed.rawResponses = append([]*ModelResponse{}, r.resume.RawResponses...)
 	seed.pendingResponse = r.resume.InterruptedResponse
 	seed.cursor = r.resume.cursor
+	// GeneratedItems is the tail of the log the model still sees. A state
+	// without SessionItems (pre-field) saw no filter, so the two are one.
 	sessionSeed := r.resume.SessionItems
 	if sessionSeed == nil {
 		sessionSeed = r.resume.GeneratedItems
 	}
 	r.sessionItems = append([]*RunItem{}, sessionSeed...)
+	r.generatedFrom = max(0, len(r.sessionItems)-len(r.resume.GeneratedItems))
 	r.persistedSessionItems = r.resume.PersistedSessionItems
 	r.userInputSaved = true
 	if r.resume.CurrentTurn > 1 {

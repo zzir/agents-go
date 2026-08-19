@@ -14,6 +14,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -164,23 +165,21 @@ func (r *runner) finishStream(res *RunResult, err error) {
 }
 
 // turnState is what the loop carries from turn to turn: the run's input as the
-// model sees it, everything generated so far, every response received, and the
-// agent currently holding the turn.
+// model sees it, every response received, and the agent currently holding the
+// turn.
 //
-// The first four live as one value because every way a run reports itself — a
+// The first three live as one value because every way a run reports itself — a
 // result, a failure, a pause state — reads all of them; pending and
 // runStartHooks are loop-progression state carried alongside.
 //
-// Two stages replace fields wholesale rather than appending: a handoff input
-// filter and a recompaction (mid-run or after an overflow) rewrite
-// originalInput and clear generatedItems, so the model's view restarts from
-// the rewritten context. runner.sessionItems is deliberately NOT part of this
-// — it is the unfiltered log those resets must not touch.
+// The items the run produced are not here: runner.sessionItems is the one log,
+// and the model's view of it is the tail from runner.generatedFrom on. A
+// handoff input filter and a recompaction (mid-run or after an overflow)
+// rewrite originalInput and restart that view; the log itself is never reset.
 type turnState struct {
-	originalInput  []InputItem
-	generatedItems []*RunItem
-	rawResponses   []*ModelResponse
-	agent          *Agent
+	originalInput []InputItem
+	rawResponses  []*ModelResponse
+	agent         *Agent
 
 	// pending is a snapshot prepared by PrepareNextTurn at the last save point,
 	// used next turn instead of resolving from the agent. runStartHooks gates
@@ -240,10 +239,14 @@ type runner struct {
 	// stands). The cause is errConsumerStopped.
 	cancelRun context.CancelCauseFunc
 
-	// sessionItems accumulates every generated item for session persistence.
-	// Unlike the loop's generatedItems it is never reset by a handoff input
-	// filter, so the session keeps the full conversation.
+	// sessionItems is the run's item log: everything the run produced, in
+	// order, for RunResult.NewItems and session persistence. Append-only.
 	sessionItems []*RunItem
+
+	// generatedFrom is where the model's view of the log begins (see
+	// generatedItems): a handoff input filter or a recompaction folds the log
+	// so far into originalInput and moves it to the log's end — spec §2.1.
+	generatedFrom int
 
 	// persistedSessionItems counts how many leading sessionItems have already
 	// been written to the session. The loop persists incrementally — after each
@@ -372,11 +375,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 	// calling the model.
 	seed := r.seedLoop(startAgent, originalInput)
 	st := &turnState{
-		originalInput:  seed.originalInput,
-		generatedItems: seed.generatedItems,
-		rawResponses:   seed.rawResponses,
-		agent:          seed.agent,
-		runStartHooks:  true,
+		originalInput: seed.originalInput,
+		rawResponses:  seed.rawResponses,
+		agent:         seed.agent,
+		runStartHooks: true,
 	}
 	r.state = st
 	pendingResponse := seed.pendingResponse
@@ -470,7 +472,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		// that REPLACES the input rebuilds from the replacement (see the gate
 		// below), so the guarded call itself sees the rewritten input rather
 		// than just later turns.
-		turnInput, prevID, usedOriginalInput, inputErr := r.buildTurnInput(cursor, st.originalInput, st.generatedItems)
+		turnInput, prevID, usedOriginalInput, inputErr := r.buildTurnInput(cursor, st.originalInput, r.generatedItems())
 		if inputErr != nil {
 			return nil, r.fail(inputErr)
 		}
@@ -511,7 +513,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			r.inputGuardrailsRan = true
 			gate, gerr := r.firstTurnInputGuardrails(ctx, startAgent, st.originalInput, usedOriginalInput, snapshot,
 				func(replaced []InputItem) ([]InputItem, error) {
-					in, _, _, err := r.buildTurnInput(cursor, replaced, st.generatedItems)
+					in, _, _, err := r.buildTurnInput(cursor, replaced, r.generatedItems())
 					return in, err
 				})
 			st.originalInput = gate.original
@@ -600,10 +602,10 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			}
 		}
 
-		lenBeforeStep := len(st.generatedItems)
+		preStep := r.generatedItems()
 		step, err := r.executeToolsAndSideEffects(ctx, st.agent, processed, outputSchema, resumedTurn, stepProgress{
 			originalInput: st.originalInput,
-			preStepItems:  st.generatedItems,
+			preStepItems:  preStep,
 			resp:          resp,
 		})
 		if err != nil {
@@ -622,7 +624,6 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			return nil, errConsumerStopped
 		}
 
-		st.generatedItems = append(st.generatedItems, step.NewStepItems...)
 		r.sessionItems = append(r.sessionItems, step.NewStepItems...)
 		if len(processed.ToolsUsed) > 0 {
 			r.markToolsUsed(st.agent)
@@ -634,7 +635,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		// re-processes a response the restored cursor already accounts for, so
 		// it must not advance — the pre-pause tool outputs are still pending.
 		if !resumedTurn {
-			cursor.advance(r.opts.Conversation, resp, lenBeforeStep, len(processed.NewItems))
+			cursor.advance(r.opts.Conversation, resp, len(preStep), len(processed.NewItems))
 		}
 
 		var a stepAction
@@ -674,7 +675,7 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 		// Append before persisting, so the closing write covers the take and
 		// persistSessionItems commits it only once a write persists past it.
 		injected := injectedInput(st.agent, extra)
-		r.appendInjected(st, injected)
+		r.appendInjected(injected)
 		if err := r.persistSessionItems(ctx); err != nil {
 			return loopReturn(nil, r.fail(err))
 		}
@@ -693,8 +694,8 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 // handleHandoff persists the turn, offers the stop hook, applies any input
 // filter, then switches to the new agent.
 func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleStepResult, snapshot *TurnSnapshot, resp *ModelResponse, turn int) stepAction {
-	// Persist before switching: sessionItems is the unfiltered log, so the
-	// input filter below (which rewrites generatedItems) never affects it.
+	// Persist before switching: the log is written whole, so the input filter
+	// below (which restarts the model's view of it) never affects what is stored.
 	if err := r.persistSessionItems(ctx); err != nil {
 		return loopReturn(nil, r.fail(err))
 	}
@@ -722,12 +723,12 @@ func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleS
 				err := NewUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
 				return loopReturn(nil, r.fail(err))
 			}
-			filtered, ferr := applyHandoffInputFilter(filter, st.originalInput, st.generatedItems)
+			filtered, ferr := applyHandoffInputFilter(filter, st.originalInput, r.generatedItems())
 			if ferr != nil {
 				return loopReturn(nil, r.fail(ferr))
 			}
 			st.originalInput = filtered
-			st.generatedItems = nil
+			r.restartGenerated()
 			r.offChainHistory = true
 		}
 	}
@@ -778,13 +779,13 @@ func (r *runner) handleRunAgain(ctx context.Context, st *turnState, step *single
 		return loopReturn(res, nil)
 	}
 	if sp.Recompacted {
-		// The rebuilt context already holds this run's items, so the generated
-		// list starts over.
+		// The rebuilt context already holds this run's items, so the model's
+		// view starts over.
 		st.originalInput = sp.Input
-		st.generatedItems = nil
+		r.restartGenerated()
 	}
 	if len(sp.Injected) > 0 {
-		r.appendInjected(st, sp.Injected)
+		r.appendInjected(sp.Injected)
 		if !r.emitItems(sp.Injected) {
 			return loopReturn(nil, errConsumerStopped)
 		}
@@ -804,14 +805,24 @@ func (r *runner) emitItems(items []*RunItem) bool {
 	return true
 }
 
-// appendInjected records injected input on both the turn's generated items and
-// the session log, and advances the persist-boundary high-water. The caller
-// emits, and when closing an exchange persists, afterward.
-func (r *runner) appendInjected(st *turnState, injected []*RunItem) {
-	st.generatedItems = append(st.generatedItems, injected...)
+// appendInjected records injected input on the log and advances the
+// persist-boundary high-water. The caller emits, and when closing an exchange
+// persists, afterward.
+func (r *runner) appendInjected(injected []*RunItem) {
 	r.sessionItems = append(r.sessionItems, injected...)
 	r.injectedUpTo = len(r.sessionItems)
 }
+
+// generatedItems is the model's view of the log: the items a turn's input is
+// built from, after originalInput. Clipped, so a caller that appends to it
+// reallocates instead of writing into the log's backing array.
+func (r *runner) generatedItems() []*RunItem {
+	return slices.Clip(r.sessionItems[r.generatedFrom:])
+}
+
+// restartGenerated empties the model's view of the log; the caller has folded
+// the log so far into originalInput.
+func (r *runner) restartGenerated() { r.generatedFrom = len(r.sessionItems) }
 
 // modelCallOutcome is how one turn's model call ended. Exactly one of the three
 // is meaningful: resp when the model answered, retry when the context
@@ -912,7 +923,7 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 			if compacted, ok := r.recoverOverflow(ctx, err); ok {
 				r.overflowRetries++
 				st.originalInput = compacted
-				st.generatedItems = nil
+				r.restartGenerated()
 				return modelCallOutcome{retry: true}
 			}
 		}
@@ -942,7 +953,7 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 	return &RunState{
 		CurrentAgent:          st.agent,
 		OriginalInput:         st.originalInput,
-		GeneratedItems:        st.generatedItems,
+		GeneratedItems:        r.generatedItems(),
 		SessionItems:          r.sessionItems,
 		PersistedSessionItems: r.persistedSessionItems,
 		UserInput:             r.userInput,

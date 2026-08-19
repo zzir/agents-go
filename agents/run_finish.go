@@ -17,10 +17,10 @@ func (r *runner) usageSnapshot() *Usage {
 // goes through here, so a field added to RunResult is filled once, not at four
 // returns.
 //
-// NewItems is the unfiltered log (r.sessionItems), never the loop's
-// generatedItems: a handoff input filter or a mid-run recompaction resets the
-// model's view, while the result reports what the run produced. Nil for a fresh
-// run that failed before producing anything; a resume seeds it from the state.
+// NewItems is the whole log (r.sessionItems), never the model's view of it: a
+// handoff input filter or a mid-run recompaction restarts the view, while the
+// result reports what the run produced. Nil for a fresh run that failed before
+// producing anything; a resume seeds it from the state.
 func (r *runner) baseResult() *RunResult {
 	return &RunResult{
 		Input:            r.state.originalInput,

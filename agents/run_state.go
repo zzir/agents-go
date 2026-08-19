@@ -72,9 +72,10 @@ type RunState struct {
 	// session history), so the resumed run can persist it to the session.
 	UserInput []InputItem
 
-	// SessionItems is the full item log for session persistence; it differs from
-	// GeneratedItems only when a handoff input filter rewrote the conversation.
-	// Nil means it equals GeneratedItems.
+	// SessionItems is the run's full item log, for RunResult.NewItems and session
+	// persistence. GeneratedItems is its tail: the items the model still sees,
+	// from the last handoff input filter or recompaction on — a resumed run takes
+	// it as such, by length. Nil means the two are one.
 	SessionItems []*RunItem
 
 	// PersistedSessionItems counts how many leading SessionItems the interrupted
