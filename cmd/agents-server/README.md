@@ -1065,6 +1065,10 @@ connection (or REST call) started it. Two browsers on the same session both
 watch the conversation live. A dropped socket does not cancel a run; after
 reconnecting the server re-attaches the connection, and `run.subscribe` remains
 available to resume from a specific cursor (`from_seq`) without a full replay.
+The replay ring holds a run's last 512 events; its `run.started` is pinned
+outside the ring, so a subscriber from seq 0 is told which run this is even
+when the ring has long moved past the start (a browser reloaded a minute into
+a run streams live again instead of showing the session idle until it ends).
 
 ### Client → Server
 
@@ -1095,7 +1099,7 @@ available to resume from a specific cursor (`from_seq`) without a full replay.
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
 | `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |
 | `run.diagnostic`        | Trouble the run survived — `{run_id, type, code?, message?, details?}`; `type` is an open vocabulary (`model_retry`, `model_fallback`, `tool_panic`, …), so show unknown kinds generically |
-| `run.gap`               | This connection fell behind and events were dropped — `{run_id, dropped, last_good, next}`; resubscribe from `last_good` to refetch                     |
+| `run.gap`               | This connection fell behind and events were dropped — `{run_id, dropped, last_good, next}`; resubscribe from `last_good` to refetch. A gap with `last_good: 0` is the ring having moved past the run's start before this connection attached: nothing to refetch (the UI does not ask) |
 | `run.error`             | Error — `{run_id?, session_id?, code, message, guardrail?, stage?}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`); `guardrail`/`stage` are set when `code` is `guardrail_tripwire` |
 | `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
@@ -1284,7 +1288,17 @@ When a change genuinely doesn't fit, update this list in the same PR.
     Two browsers on the same session both watch the conversation live;
     `run.started` carries the prompt (`input`) so a browser that didn't send
     it can render the user bubble. Never wire an event to "the connection
-    that asked" — that is exactly the bug this replaced.
+    that asked" — that is exactly the bug this replaced. The bus is only as
+    good as a late joiner's ability to PLACE what it hears: `run.started` is
+    the sole event that maps a run id to its session, and the client drops
+    every event of a run it never saw start, so the hub pins each run's latest
+    `run.started` outside the 512-event replay ring and hands it to a
+    subscriber whose cursor lies before it, first, whenever the ring itself
+    no longer will (`RunHub.SubscribeSeq`) — a reload a minute into a run
+    used to show the session idle until it ended. The client, in turn, does
+    not re-subscribe on a `run.gap` whose range the ring has already evicted
+    (`last_good: 0`, or the cursor it already asked for): that would replay
+    the whole ring every few seconds for the run's life.
 15. **Protocol constants have one definition per side.** Event types
     (`run.error`, …) and error codes (`session_busy`, …) live in
     `internal/protocol` (Go) and `src/lib/protocol.ts` (TS mirror). Emitters

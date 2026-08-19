@@ -196,6 +196,11 @@ type runRecord struct {
 
 	mu      sync.Mutex
 	endedAt time.Time
+	// started is the run's latest run.started, pinned OUTSIDE the ring with its
+	// seq: the one event a subscriber from 0 must get even after the ring has
+	// moved past it (README invariant 14).
+	started    *protocol.Envelope
+	startedSeq int
 }
 
 // RunHub owns the lifecycle of active and recently-finished runs: it enforces
@@ -544,6 +549,9 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) bool {
 		rec.info.Status = st
 	}
 	rec.info.LastSeq = rec.fanout.LastSeq()
+	if env.Type == protocol.EventRunStarted {
+		rec.started, rec.startedSeq = env, rec.info.LastSeq
+	}
 	rec.mu.Unlock()
 	return true
 }
@@ -562,6 +570,12 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 // sink cannot affect its peers. If its buffer overflows it gets a gap event
 // naming the range it missed, and resubscribes from LastSeq rather than
 // rendering a quietly incomplete timeline.
+//
+// A cursor before the run's latest run.started gets that event first whenever
+// the ring no longer holds it — the run's identity is never lost to the ring
+// (README invariant 14). Whether the ring holds it is read off the stream's
+// opening item, which the fanout fixed at subscribe time, so no publish can
+// slip between the check and the replay.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -570,10 +584,23 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 		return nil, false
 	}
 
+	var pinned *SeqEnvelope
+	rec.mu.Lock()
+	if rec.started != nil && fromSeq < rec.startedSeq {
+		pinned = &SeqEnvelope{Seq: rec.startedSeq, Env: rec.started}
+	}
+	rec.mu.Unlock()
+
 	stream, cancel := rec.fanout.Subscribe(fromSeq)
 
 	go func() {
 		for item, err := range stream {
+			if pinned != nil {
+				if item.Value == nil || item.Seq > pinned.Seq {
+					sink(*pinned)
+				}
+				pinned = nil
+			}
 			var gap *agents.GapError
 			if errors.As(err, &gap) {
 				env, mkErr := protocol.NewEnvelope(protocol.EventRunGap, protocol.RunGap{

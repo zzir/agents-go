@@ -8,6 +8,7 @@ import {
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
+import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
 
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
@@ -229,9 +230,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   // id — rather than by text — keeps a genuinely repeated identical message from
   // being dropped as if it were a replay.
   const appendedItemsRef = useRef<Record<string, Set<string>>>({});
-  // When each run last resynced after a gap (see the run.gap handler), so a
-  // connection that keeps falling behind asks once in a while, not per gap.
-  const gapResyncRef = useRef<Record<string, number>>({});
+  // Each run's last resync after a gap (see the run.gap handler): when, and
+  // from which cursor, so a range the ring has evicted is asked for once.
+  const gapResyncRef = useRef<Record<string, GapResync>>({});
   const loadedRef = useRef<Set<string>>(new Set());
   // Sessions whose persisted traces have been pulled (see loadTraces).
   const tracesLoadedRef = useRef<Set<string>>(new Set());
@@ -1131,13 +1132,16 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // message item replaces it). Not a refetch of the persisted history: mid-run
     // it stops at the last saved turn, and the dropped events are the newest.
     // Chat runs only — the inspector's live view of a task run keeps no item
-    // ids to dedup a replay by. Once per run per few seconds, so a connection
-    // that cannot keep up does not ask in a loop.
+    // ids to dedup a replay by. A range the ring has already evicted — the gap
+    // an attach from 0 opens on a run past its first 512 events, or a cursor
+    // that gapped once before — is not asked for (resyncAfterGap): the ring
+    // cannot deliver it, and asking would replay the whole ring every few
+    // seconds for the run's life.
     ws.on(EV.runGap, (p: { run_id: string; dropped: number; last_good: number }) => {
       if (!runMapRef.current[p.run_id]) return;
       const now = Date.now();
-      if ((gapResyncRef.current[p.run_id] || 0) > now - 5000) return;
-      gapResyncRef.current[p.run_id] = now;
+      if (!resyncAfterGap(gapResyncRef.current[p.run_id], p.last_good, now)) return;
+      gapResyncRef.current[p.run_id] = { at: now, cursor: p.last_good };
       console.warn(`dropped ${p.dropped} event(s) after seq ${p.last_good}; resyncing from the hub's replay`);
       ws.send(EV.runSubscribe, { run_id: p.run_id, from_seq: p.last_good });
     });
