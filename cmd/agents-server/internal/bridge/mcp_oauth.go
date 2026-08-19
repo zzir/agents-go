@@ -80,12 +80,6 @@ func newConnectFetcher(serverName string, urlCh chan string, codeCh chan *auth.A
 	return fetcher, phase
 }
 
-// OAuthPending represents a pending OAuth authorization awaiting the callback.
-type OAuthPending struct {
-	AuthorizeURL string
-	codeCh       chan *auth.AuthorizationResult
-}
-
 // oauthAttempt tracks one interactive OAuth flow in progress for a server, so a
 // repeat authorize can cancel and supersede it.
 type oauthAttempt struct {
@@ -100,8 +94,10 @@ type oauthAttempt struct {
 type OAuthCoordinator struct {
 	store *store.McpServerStore
 
-	mu      sync.Mutex
-	pending map[string]*OAuthPending // keyed by OAuth state param
+	mu sync.Mutex
+	// pending delivers the authorization code to the parked connect attempt,
+	// keyed by OAuth state param.
+	pending map[string]chan *auth.AuthorizationResult
 	// inflight is the interactive attempt currently holding the connect slot,
 	// keyed by server config id, so a new authorize for the same server can
 	// supersede a stale one (e.g. the user refreshed the page mid-flow).
@@ -113,7 +109,7 @@ type OAuthCoordinator struct {
 func NewOAuthCoordinator(s *store.McpServerStore) *OAuthCoordinator {
 	return &OAuthCoordinator{
 		store:    s,
-		pending:  make(map[string]*OAuthPending),
+		pending:  make(map[string]chan *auth.AuthorizationResult),
 		inflight: make(map[string]*oauthAttempt),
 	}
 }
@@ -176,8 +172,6 @@ type ConnectResult struct {
 	// AuthorizeURL is non-empty when user authorization is needed; the caller
 	// should open this URL in a popup.
 	AuthorizeURL string
-	// State is the OAuth state parameter, used to match the callback.
-	State string
 }
 
 // ConnectWithOAuth attempts to connect an MCP server that uses OAuth. It
@@ -334,10 +328,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		state := extractState(authURL)
 
 		c.mu.Lock()
-		c.pending[state] = &OAuthPending{
-			AuthorizeURL: authURL,
-			codeCh:       codeCh,
-		}
+		c.pending[state] = codeCh
 		c.mu.Unlock()
 
 		// Logs the exact redirect_uri the AS must send the browser back to —
@@ -357,10 +348,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 			c.mu.Unlock()
 		}()
 
-		return &ConnectResult{
-			AuthorizeURL: authURL,
-			State:        state,
-		}, nil
+		return &ConnectResult{AuthorizeURL: authURL}, nil
 
 	case err := <-errCh:
 		connectCancel()
@@ -386,7 +374,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 // on a full channel.
 func (c *OAuthCoordinator) HandleCallback(state, code, iss string) error {
 	c.mu.Lock()
-	p, ok := c.pending[state]
+	ch, ok := c.pending[state]
 	if ok {
 		delete(c.pending, state)
 	}
@@ -397,7 +385,7 @@ func (c *OAuthCoordinator) HandleCallback(state, code, iss string) error {
 	}
 
 	select {
-	case p.codeCh <- &auth.AuthorizationResult{Code: code, State: state, Iss: iss}:
+	case ch <- &auth.AuthorizationResult{Code: code, State: state, Iss: iss}:
 	default:
 		// The fetcher already received (or gave up) — nothing to deliver to.
 	}

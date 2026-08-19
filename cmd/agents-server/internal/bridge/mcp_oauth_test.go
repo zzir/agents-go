@@ -20,7 +20,7 @@ func TestHandleCallbackIdempotentAndNonBlocking(t *testing.T) {
 	const state = "st-1"
 	codeCh := make(chan *auth.AuthorizationResult, 1)
 	c.mu.Lock()
-	c.pending[state] = &OAuthPending{AuthorizeURL: "http://x", codeCh: codeCh}
+	c.pending[state] = codeCh
 	c.mu.Unlock()
 
 	if err := c.HandleCallback(state, "code-1", ""); err != nil {
@@ -39,7 +39,7 @@ func TestHandleCallbackIdempotentAndNonBlocking(t *testing.T) {
 	full := make(chan *auth.AuthorizationResult, 1)
 	full <- &auth.AuthorizationResult{} // pre-fill: no capacity, no receiver
 	c.mu.Lock()
-	c.pending[state2] = &OAuthPending{AuthorizeURL: "http://y", codeCh: full}
+	c.pending[state2] = full
 	c.mu.Unlock()
 
 	done := make(chan struct{})

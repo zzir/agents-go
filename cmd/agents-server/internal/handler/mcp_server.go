@@ -302,7 +302,6 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 type mcpConnectResp struct {
 	Status       string `json:"status"`
 	AuthorizeURL string `json:"authorize_url,omitempty"`
-	State        string `json:"state,omitempty"`
 }
 
 // Connect opens a connection to the MCP server identified by the id path parameter.
@@ -349,7 +348,6 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 				c.JSON(http.StatusOK, mcpConnectResp{
 					Status:       "authorization_required",
 					AuthorizeURL: result.AuthorizeURL,
-					State:        result.State,
 				})
 			}
 			return
