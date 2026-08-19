@@ -511,6 +511,23 @@ components:
         error:
           $ref: '#/components/schemas/protocol.APIError'
       type: object
+    handler.ServerInfo:
+      properties:
+        allow_local_sandbox:
+          type: boolean
+        max_tasks:
+          description: |-
+            MaxTasks is the effective cap, never the raw flag — 0 on the command
+            line means the built-in default, and reporting the 0 would be a lie.
+          type: integer
+        version:
+          type: string
+        workspace:
+          description: |-
+            Workspace is absolute: the relative default (".") means nothing to a
+            browser on another machine.
+          type: string
+      type: object
     handler.SessionApproval:
       properties:
         agent_config_id:
@@ -3650,6 +3667,23 @@ paths:
       summary: Test sandbox
       tags:
       - sandboxes
+  /server:
+    get:
+      description: 'The start-up configuration in force: version, workspace, and the
+        flags a client cannot change. Read-only — these come from the command line,
+        not the settings table.'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ServerInfo'
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Server info
+      tags:
+      - server
   /sessions:
     get:
       responses:

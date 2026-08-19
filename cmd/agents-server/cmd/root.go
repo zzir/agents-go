@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -188,6 +189,12 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	defer triggerScheduler.Stop()
 
+	// Absolute, because "." means nothing to a browser reading it.
+	workspaceAbs, err := filepath.Abs(flagWorkspace)
+	if err != nil {
+		return fmt.Errorf("resolving the workspace path: %w", err)
+	}
+
 	token := flagToken
 	if token == "" {
 		token = server.GenerateToken()
@@ -214,6 +221,12 @@ func run(_ *cobra.Command, _ []string) error {
 		Traces:         traceHandler,
 		Playground:     playgroundHandler,
 		ChatGPT:        chatgptOAuthHandler,
+		Server: handler.ServerInfo{
+			Version:           buildVersion,
+			Workspace:         workspaceAbs,
+			AllowLocalSandbox: flagAllowLocalSandbox,
+			MaxTasks:          runner.Hub().MaxTasks(),
+		},
 	}.Register)
 	srv.RegisterWS(wsHandler.Handle, terminalHandler.Handle)
 	srv.RegisterHook(triggerHandler.Hook)

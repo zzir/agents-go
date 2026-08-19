@@ -27,6 +27,8 @@ type Handlers struct {
 	Traces         *TraceHandler
 	Playground     *PlaygroundHandler
 	ChatGPT        *ChatGPTOAuthHandler
+	// Server is the start-up configuration, served as read-only facts.
+	Server ServerInfo
 }
 
 // Register mounts every REST endpoint under api.
@@ -122,6 +124,9 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	// modes, unsupported features) and the global settings table.
 	api.GET("/provider-types", ProviderTypeList)
 	api.GET("/setting-defs", SettingDefList)
+	// What the command line decided, so the UI can show the rules it is
+	// subject to instead of only their refusals.
+	api.GET("/server", ServerInfoHandler(h.Server))
 	{
 		providers := api.Group("/providers")
 		providers.GET("", h.Providers.List)

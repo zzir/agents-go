@@ -24,6 +24,15 @@ interface SettingDef {
   max?: number;
 }
 
+// The start-up configuration (GET /server): shown, never edited — it comes
+// from the command line, not this table.
+interface ServerInfo {
+  version: string;
+  workspace: string;
+  allow_local_sandbox: boolean;
+  max_tasks: number;
+}
+
 interface ProviderRoute { id: string; prefix: string; provider_id: string }
 
 // The endpoints a route can point at; managed under Providers.
@@ -107,6 +116,7 @@ export function SettingsPanel() {
         </div>
       ))}
       {unknown.length > 0 && <UnknownSection rows={unknown} onDelete={handleDelete} />}
+      <ServerSection />
       <ProviderRoutesSection />
     </Stack>
   );
@@ -221,6 +231,41 @@ function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: (key: s
             </div>
             <div className="resource-row-actions">
               <Button onClick={() => onDelete(r.key)} size="small" variant="danger">Delete</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// The flags in force. Not editable — but a rule you cannot see is one you can
+// only meet as an unexplained refusal.
+function ServerSection() {
+  const { data: info } = useApi<ServerInfo>(() => api.server() as Promise<ServerInfo>);
+  if (!info) return null;
+  const rows: [string, string][] = [
+    ['Version', info.version],
+    ['Workspace', info.workspace],
+    ['Local sandboxes', info.allow_local_sandbox ? 'Allowed' : 'Refused (start with --allow-local-sandbox)'],
+    ['Background tasks per session', String(info.max_tasks)],
+  ];
+  return (
+    <div className="form-group">
+      <PageHeader>
+        <PageHeader.TitleArea>
+          <PageHeader.Title as="h3">Server</PageHeader.Title>
+        </PageHeader.TitleArea>
+        <PageHeader.Description>Set on the command line at start-up. Restart to change.</PageHeader.Description>
+      </PageHeader>
+      <div className="Box">
+        {rows.map(([label, value]) => (
+          <div key={label} className="Box-row">
+            <div className="resource-row-main">
+              <div className="resource-row-head">
+                <span className="resource-row-title">{label}</span>
+              </div>
+              <div className="resource-row-sub" style={{ fontFamily: 'var(--fontStack-monospace)' }}>{value}</div>
             </div>
           </div>
         ))}

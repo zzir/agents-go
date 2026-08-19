@@ -226,6 +226,11 @@ type RunHub struct {
 	deleting map[string]bool
 }
 
+// MaxTasks reports the per-parent live-task cap in force — the flag when one
+// was given, the built-in default otherwise. Resolved here rather than at each
+// reader, so nothing has to re-derive what "0 means default" came to.
+func (h *RunHub) MaxTasks() int { return h.maxTasks }
+
 // NewRunHub returns a hub scoped to rootCtx and starts its GC loop.
 func NewRunHub(rootCtx context.Context) *RunHub {
 	if rootCtx == nil {

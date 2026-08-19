@@ -605,6 +605,20 @@ Known keys:
 - `max_terminals_per_sandbox` — concurrent interactive terminals allowed on one
   sandbox (default `4`, max `32`) — a fat-finger guard, not a scheduler
 
+### Server info — `/api/v1/server` (read-only)
+
+| Method | Path      | Description                              |
+|--------|-----------|------------------------------------------|
+| GET    | `/server` | The start-up configuration now in force  |
+
+`{version, workspace, allow_local_sandbox, max_tasks}` — the flags this process
+was started with, not settings. They are here because a client that cannot see
+them meets them only as unexplained refusals: "local sandboxes are not allowed"
+with nowhere to learn that a flag decides it. `workspace` is absolute (`.`
+means nothing to a browser elsewhere) and `max_tasks` is the EFFECTIVE cap, not
+the raw flag — `--max-tasks 0` means the built-in default, and reporting the
+zero would be a lie.
+
 ### Skills — `/api/v1/skills` (read-only)
 
 Discover skills under `{workspace}/skills/` and read their `SKILL.md`. This

@@ -201,6 +201,8 @@ export const api = {
       return done;
     },
   },
+  // What the command line decided: read-only, fixed for the process.
+  server: () => request('/server'),
   settings: {
     list: () => request('/settings'),
     // The registry the panel renders from — kinds, defaults, labels. A new
